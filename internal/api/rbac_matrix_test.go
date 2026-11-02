@@ -267,6 +267,8 @@ var routeGates = []struct {
 	{"POST", "/api/v1/saml/providers/{id}/test", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/saml/rekey", rbac.PermSystemUpdate},
 	{"POST", "/api/v1/saml/rekey/end", rbac.PermSystemUpdate},
+	{"GET", "/api/v1/sso/rekey", rbac.PermSystemUpdate},
+	{"POST", "/api/v1/sso/rekey/end", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/ldap/providers", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/ldap/providers/{id}", rbac.PermSystemUpdate},
 	{"POST", "/api/v1/ldap/providers", rbac.PermSystemUpdate},

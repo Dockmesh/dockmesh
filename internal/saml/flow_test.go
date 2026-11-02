@@ -134,27 +134,27 @@ func TestRequestIDsAreSingleUse(t *testing.T) {
 	}
 }
 
-// A provider that is deleted, or pointed at another IdP, must not re-key
-// the accounts marked for it.
-func TestProviderChangeDropsRekeyMarkers(t *testing.T) {
+// A provider that is deleted, or pointed at another IdP, keeps neither the
+// links nor the re-key marks of its accounts.
+func TestProviderChangeUnlinksAccounts(t *testing.T) {
 	tests := []struct {
 		name       string
 		change     func(t *testing.T, s *Service, id int64)
 		wantMarked bool
 	}{
 		{name: "delete", change: func(t *testing.T, s *Service, id int64) {
-			if err := s.DeleteProvider(context.Background(), id); err != nil {
+			if _, err := s.DeleteProvider(context.Background(), id); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "other IdP", change: func(t *testing.T, s *Service, id int64) {
 			md := strings.Replace(testIdPMetadataWithCert(t), "https://idp.example/realm", "https://other.example/realm", 1)
-			if _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: md, Enabled: true}); err != nil {
+			if _, _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: md, Enabled: true}); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "same IdP", wantMarked: true, change: func(t *testing.T, s *Service, id int64) {
-			if _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: testIdPMetadataWithCert(t), Enabled: true}); err != nil {
+			if _, _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: testIdPMetadataWithCert(t), Enabled: true}); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -174,12 +174,12 @@ func TestProviderChangeDropsRekeyMarkers(t *testing.T) {
 			}
 			s := &Service{db: database, auth: auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))}
 			tt.change(t, s, id)
-			var marked bool
-			if err := database.QueryRow(`SELECT saml_rekey_until IS NOT NULL FROM users WHERE id = 'u1'`).Scan(&marked); err != nil {
+			var marked, linked bool
+			if err := database.QueryRow(`SELECT saml_rekey_until IS NOT NULL, saml_provider IS NOT NULL AND saml_subject IS NOT NULL FROM users WHERE id = 'u1'`).Scan(&marked, &linked); err != nil {
 				t.Fatal(err)
 			}
-			if marked != tt.wantMarked {
-				t.Errorf("marked = %v, want %v", marked, tt.wantMarked)
+			if marked != tt.wantMarked || linked != tt.wantMarked {
+				t.Errorf("marked = %v, linked = %v, want both %v", marked, linked, tt.wantMarked)
 			}
 		})
 	}

@@ -183,12 +183,13 @@ func (h *Handlers) UpdateOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIdPGrants(w, r, in.DefaultRole, oidc.GroupRules(in.GroupMappings)) {
 		return
 	}
-	p, err := h.OIDC.UpdateProvider(r.Context(), id, in)
+	p, unlinked, err := h.OIDC.UpdateProvider(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "oidc.provider_update", idStr, nil)
+	h.audit(r, "oidc.provider_update", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -203,11 +204,13 @@ func (h *Handlers) DeleteOIDCProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.OIDC.DeleteProvider(r.Context(), id); err != nil {
+	unlinked, err := h.OIDC.DeleteProvider(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "oidc.provider_delete", idStr, nil)
+	h.audit(r, "oidc.provider_delete", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

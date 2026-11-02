@@ -103,6 +103,47 @@
     lastOpen = open;
   });
 
+  // Mirrors the server: subjects are unique only within one identity
+  // provider, so saving another one unlinks the provider's accounts.
+  function urlKey(u: string): string {
+    const s = u.trim().replace(/\/+$/, '');
+    try {
+      const p = new URL(s);
+      return `${p.protocol}//${p.host}${p.pathname}${p.search}`;
+    } catch {
+      return s;
+    }
+  }
+
+  const unlinkNote =
+    'Saving unlinks every account of this provider: users who sign in again get new accounts, or are linked by verified email where that is allowed.';
+
+  const unlinkWarning = $derived.by(() => {
+    if (!editing || editing.kind !== kind) return '';
+    switch (editing.kind) {
+      case 'oidc':
+        return urlKey(editing.issuer_url) !== urlKey(oidc.issuer_url)
+          ? `A different issuer is another identity provider. ${unlinkNote}`
+          : '';
+      case 'oauth2':
+        return urlKey(editing.userinfo_url) !== urlKey(oauth2.userinfo_url) ||
+          (editing.subject_field ?? '').trim() !== oauth2.subject_field.trim()
+          ? `A different userinfo URL or subject field identifies users differently. ${unlinkNote}`
+          : '';
+      case 'ldap':
+        return editing.host.trim().toLowerCase() !== ldap.host.trim().toLowerCase() || editing.port !== ldap.port ||
+          (editing.subject_attribute ?? '').trim().toLowerCase() !== ldap.subject_attribute.trim().toLowerCase()
+          ? `A different directory server or subject attribute identifies users differently. ${unlinkNote}`
+          : '';
+      case 'saml':
+        return saml.idp_metadata_xml.trim() !== '' &&
+          saml.idp_metadata_xml.trim() !== (editing.idp_metadata_xml ?? '').trim()
+          ? 'If the new metadata belongs to another IdP entity, saving unlinks every account of this provider.'
+          : '';
+    }
+    return '';
+  });
+
   function oidcConfigFromProvider(p: OIDCProvider): OIDCConfig {
     const mappings = (p.group_mappings ?? []).map((m) => ({ group: m.group_value, role: m.role_name, scope: m.scope }));
     return {
@@ -133,6 +174,7 @@
       client_id: p.client_id,
       client_secret: '',
       scopes: p.scopes,
+      subject_field: p.subject_field ?? '',
       username_field: p.username_field,
       email_field: p.email_field,
       groups_field: p.groups_field,
@@ -179,6 +221,7 @@
       bind_password: '',
       user_search_base: p.user_search_base,
       user_search_filter: p.user_search_filter,
+      subject_attribute: p.subject_attribute ?? '',
       username_attribute: p.username_attribute,
       email_attribute: p.email_attribute,
       group_search_base: p.group_search_base ?? '',
@@ -216,6 +259,7 @@
         oauth2.token_url = t.token_url;
         oauth2.userinfo_url = t.userinfo_url;
         oauth2.scopes = t.scopes;
+        oauth2.subject_field = t.subject_field;
         oauth2.username_field = t.username_field;
         oauth2.email_field = t.email_field;
         oauth2.groups_field = t.groups_field;
@@ -354,6 +398,7 @@
       client_id: oauth2.client_id.trim(),
       client_secret: oauth2.client_secret,
       scopes: oauth2.scopes.trim(),
+      subject_field: oauth2.subject_field.trim(),
       username_field: oauth2.username_field.trim() || 'username',
       email_field: oauth2.email_field.trim() || 'email',
       groups_field: oauth2.groups_field.trim(),
@@ -407,6 +452,7 @@
       bind_password: ldap.bind_password,
       user_search_base: ldap.user_search_base.trim(),
       user_search_filter: ldap.user_search_filter.trim(),
+      subject_attribute: ldap.subject_attribute.trim(),
       username_attribute: ldap.username_attribute.trim() || 'uid',
       email_attribute: ldap.email_attribute.trim() || 'mail',
       group_search_base: ldap.group_search_base.trim(),
@@ -647,6 +693,10 @@
           {roles}
         />
       {/if}
+
+      {#if unlinkWarning}
+        <p class="pm-unlink" role="alert">{unlinkWarning}</p>
+      {/if}
     </form>
   {/if}
 
@@ -821,6 +871,16 @@
   .pm-enabled input { accent-color: var(--color-brand-500); }
 
   .pm-back { color: var(--fg-subtle); }
+  .pm-unlink {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-warning-500) 45%, var(--border));
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
+    color: var(--fg);
+    font-size: 12px;
+    line-height: 1.5;
+  }
   .pm-form-actions {
     display: flex;
     gap: 8px;

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -205,7 +206,16 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// Accounts still carrying this slug belong to an earlier provider.
+	if _, err := auth.UnlinkProvider(ctx, tx, "oidc", in.Slug); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO oidc_providers
 			(slug, display_name, issuer_url, client_id, client_secret, scopes,
 			 group_claim, default_role, enabled)
@@ -215,6 +225,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 		in.DefaultRole, boolInt(in.Enabled))
 	if err != nil {
 		return nil, fmt.Errorf("insert provider: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	if len(in.GroupMappings) > 0 {
@@ -228,10 +241,26 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.getProvider(ctx, id)
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, error) {
+// UpdateProvider saves the provider. A subject is unique only within its
+// issuer, so a new issuer unlinks the provider's accounts; the count is
+// returned.
+func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug, oldIssuer string
+	if err := tx.QueryRowContext(ctx, `SELECT slug, issuer_url FROM oidc_providers WHERE id = ?`, id).
+		Scan(&slug, &oldIssuer); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, ErrProviderNotFound
+		}
+		return nil, 0, err
+	}
 	// Secret stays unchanged if empty on update.
 	if in.ClientSecret == "" {
-		_, err := s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE oidc_providers SET
 				display_name = ?, issuer_url = ?, client_id = ?, scopes = ?,
 				group_claim = ?,
@@ -240,15 +269,12 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			in.DisplayName, in.IssuerURL, in.ClientID, in.Scopes,
 			nullable(in.GroupClaim),
 			in.DefaultRole, boolInt(in.Enabled), id)
-		if err != nil {
-			return nil, err
-		}
 	} else {
-		enc, err := s.encryptSecret(in.ClientSecret)
-		if err != nil {
-			return nil, err
+		var enc string
+		if enc, err = s.encryptSecret(in.ClientSecret); err != nil {
+			return nil, 0, err
 		}
-		_, err = s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE oidc_providers SET
 				display_name = ?, issuer_url = ?, client_id = ?, client_secret = ?,
 				scopes = ?, group_claim = ?,
@@ -257,15 +283,24 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			in.DisplayName, in.IssuerURL, in.ClientID, enc, in.Scopes,
 			nullable(in.GroupClaim),
 			in.DefaultRole, boolInt(in.Enabled), id)
-		if err != nil {
-			return nil, err
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	var unlinked int64
+	if IssuerKey(oldIssuer) != IssuerKey(in.IssuerURL) {
+		if unlinked, err = auth.UnlinkProvider(ctx, tx, "oidc", slug); err != nil {
+			return nil, 0, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
 	}
 	// Replace the group mappings if the request supplied any. Sending
 	// an empty list clears mappings.
 	if in.GroupMappings != nil {
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
-			return nil, err
+			return nil, unlinked, err
 		}
 	}
 	// Invalidate cache
@@ -273,17 +308,54 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 	delete(s.cache, id)
 	s.mu.Unlock()
 	if err := s.auth.SetEmailLinking(ctx, "oidc", id, in.AllowEmailLink); err != nil {
-		return nil, err
+		return nil, unlinked, err
 	}
-	return s.getProvider(ctx, id)
+	p, err := s.getProvider(ctx, id)
+	return p, unlinked, err
 }
 
-func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM oidc_providers WHERE id = ?`, id)
-	s.mu.Lock()
-	delete(s.cache, id)
-	s.mu.Unlock()
-	return err
+// DeleteProvider removes the provider and unlinks its accounts, so a new
+// provider that reuses the slug cannot sign into them. It returns how many
+// accounts were unlinked.
+func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
+	defer func() {
+		s.mu.Lock()
+		delete(s.cache, id)
+		s.mu.Unlock()
+	}()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT slug FROM oidc_providers WHERE id = ?`, id).Scan(&slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n, err := auth.UnlinkProvider(ctx, tx, "oidc", slug)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oidc_providers WHERE id = ?`, id); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// IssuerKey compares issuers the way an admin means them: a trailing slash
+// or a different case in scheme and host is the same issuer.
+func IssuerKey(issuer string) string {
+	s := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return s
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	return u.String()
 }
 
 // DiscoveryReport is what TestDiscovery returns on success.
@@ -417,11 +489,11 @@ func (s *Service) StartLogin(ctx context.Context, slug string) (string, *Pending
 		RedirectURL:  s.redirectURL(slug),
 		Scopes:       splitScopes(scopes),
 	}
-	url := cfg.AuthCodeURL(state,
+	authURL := cfg.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(verifier),
 		goidc.Nonce(nonce),
 	)
-	return url, &Pending{Slug: slug, Verifier: verifier, State: state, Nonce: nonce}, nil
+	return authURL, &Pending{Slug: slug, Verifier: verifier, State: state, Nonce: nonce}, nil
 }
 
 // HandleCallback exchanges the code, verifies the id_token, finds or

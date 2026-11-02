@@ -75,7 +75,8 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 	if res.User != nil {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": slug, "kind": "ldap"})
 	}
-	writeJSON(w, http.StatusOK, res)
+	h.auditSSORekey(r, res.RekeyedUser, "ldap", slug)
+	writeJSON(w, http.StatusOK, res.LoginResult)
 }
 
 // -----------------------------------------------------------------------------
@@ -154,12 +155,13 @@ func (h *Handlers) UpdateLDAPProvider(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIdPGrants(w, r, in.DefaultRole, ldapauth.GroupRules(in.GroupMappings)) {
 		return
 	}
-	p, err := h.LDAP.UpdateProvider(r.Context(), id, in)
+	p, unlinked, err := h.LDAP.UpdateProvider(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, "ldap.provider_update", idStr, nil)
+	h.audit(r, "ldap.provider_update", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -174,11 +176,13 @@ func (h *Handlers) DeleteLDAPProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.LDAP.DeleteProvider(r.Context(), id); err != nil {
+	unlinked, err := h.LDAP.DeleteProvider(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "ldap.provider_delete", idStr, nil)
+	h.audit(r, "ldap.provider_delete", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

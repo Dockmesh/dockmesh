@@ -13,11 +13,13 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dockmesh/dockmesh/internal/rbac"
 
@@ -64,6 +66,7 @@ type Provider struct {
 	BindDN                   string         `json:"bind_dn,omitempty"`
 	UserSearchBase           string         `json:"user_search_base"`
 	UserSearchFilter         string         `json:"user_search_filter"`
+	SubjectAttribute         string         `json:"subject_attribute"`
 	UsernameAttribute        string         `json:"username_attribute"`
 	EmailAttribute           string         `json:"email_attribute"`
 	GroupSearchBase          string         `json:"group_search_base,omitempty"`
@@ -91,6 +94,7 @@ type ProviderInput struct {
 	BindPassword             string         `json:"bind_password"`
 	UserSearchBase           string         `json:"user_search_base"`
 	UserSearchFilter         string         `json:"user_search_filter"`
+	SubjectAttribute         string         `json:"subject_attribute"`
 	UsernameAttribute        string         `json:"username_attribute"`
 	EmailAttribute           string         `json:"email_attribute"`
 	GroupSearchBase          string         `json:"group_search_base"`
@@ -124,7 +128,7 @@ func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service) 
 
 const selectColumns = `id, slug, display_name, host, port, tls_mode,
 	skip_verify, COALESCE(bind_dn, ''), user_search_base, user_search_filter,
-	username_attribute, email_attribute,
+	subject_attribute, username_attribute, email_attribute,
 	COALESCE(group_search_base, ''), group_membership_attribute,
 	default_role, enabled, is_default,
 	last_tested_at, last_test_ok, last_test_error,
@@ -244,18 +248,27 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// Accounts still carrying this slug belong to an earlier directory.
+	if _, err := auth.UnlinkProvider(ctx, tx, "ldap", in.Slug); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO ldap_providers
 			(slug, display_name, host, port, tls_mode, skip_verify,
 			 bind_dn, bind_password, user_search_base, user_search_filter,
-			 username_attribute, email_attribute,
+			 subject_attribute, username_attribute, email_attribute,
 			 group_search_base, group_membership_attribute,
 			 default_role, enabled, is_default)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, in.Slug, in.DisplayName, in.Host, in.Port, in.TLSMode, boolInt(in.SkipVerify),
 		nullable(in.BindDN), nullable(enc),
 		in.UserSearchBase, in.UserSearchFilter,
-		in.UsernameAttribute, in.EmailAttribute,
+		in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute,
 		nullable(in.GroupSearchBase), in.GroupMembershipAttribute,
 		in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault))
 	if err != nil {
@@ -263,6 +276,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, fmt.Errorf("a provider with that slug already exists")
 		}
 		return nil, fmt.Errorf("insert ldap provider: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	if len(in.GroupMappings) > 0 {
@@ -276,37 +292,51 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.GetProvider(ctx, id)
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, error) {
+// UpdateProvider saves the provider. When the directory server or the
+// subject attribute changes, the stored subjects mean other entries, so the
+// provider's accounts are unlinked; the count is returned.
+func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
 	in = applyDefaults(in)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug, oldHost, oldSubjectAttr string
+	var oldPort int
+	if err := tx.QueryRowContext(ctx, `SELECT slug, host, port, subject_attribute FROM ldap_providers WHERE id = ?`, id).
+		Scan(&slug, &oldHost, &oldPort, &oldSubjectAttr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, ErrProviderNotFound
+		}
+		return nil, 0, err
+	}
 	if in.BindPassword == "" {
-		_, err := s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE ldap_providers SET
 				display_name = ?, host = ?, port = ?, tls_mode = ?, skip_verify = ?,
 				bind_dn = ?, user_search_base = ?, user_search_filter = ?,
-				username_attribute = ?, email_attribute = ?,
+				subject_attribute = ?, username_attribute = ?, email_attribute = ?,
 				group_search_base = ?, group_membership_attribute = ?,
 				default_role = ?, enabled = ?, is_default = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.Host, in.Port, in.TLSMode, boolInt(in.SkipVerify),
 			nullable(in.BindDN), in.UserSearchBase, in.UserSearchFilter,
-			in.UsernameAttribute, in.EmailAttribute,
+			in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute,
 			nullable(in.GroupSearchBase), in.GroupMembershipAttribute,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
-		if err != nil {
-			return nil, err
-		}
 	} else {
-		enc, err := s.encryptSecret(in.BindPassword)
-		if err != nil {
-			return nil, err
+		var enc string
+		if enc, err = s.encryptSecret(in.BindPassword); err != nil {
+			return nil, 0, err
 		}
-		_, err = s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE ldap_providers SET
 				display_name = ?, host = ?, port = ?, tls_mode = ?, skip_verify = ?,
 				bind_dn = ?, bind_password = ?,
 				user_search_base = ?, user_search_filter = ?,
-				username_attribute = ?, email_attribute = ?,
+				subject_attribute = ?, username_attribute = ?, email_attribute = ?,
 				group_search_base = ?, group_membership_attribute = ?,
 				default_role = ?, enabled = ?, is_default = ?,
 				updated_at = CURRENT_TIMESTAMP
@@ -314,27 +344,64 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			in.DisplayName, in.Host, in.Port, in.TLSMode, boolInt(in.SkipVerify),
 			nullable(in.BindDN), nullable(enc),
 			in.UserSearchBase, in.UserSearchFilter,
-			in.UsernameAttribute, in.EmailAttribute,
+			in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute,
 			nullable(in.GroupSearchBase), in.GroupMembershipAttribute,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
-		if err != nil {
-			return nil, err
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	var unlinked int64
+	if IdentityKey(oldHost, oldPort, oldSubjectAttr) != IdentityKey(in.Host, in.Port, in.SubjectAttribute) {
+		if unlinked, err = auth.UnlinkProvider(ctx, tx, "ldap", slug); err != nil {
+			return nil, 0, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
 	}
 	if in.GroupMappings != nil {
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
-			return nil, err
+			return nil, unlinked, err
 		}
 	}
 	if err := s.auth.SetEmailLinking(ctx, "ldap", id, in.AllowEmailLink); err != nil {
-		return nil, err
+		return nil, unlinked, err
 	}
-	return s.GetProvider(ctx, id)
+	p, err := s.GetProvider(ctx, id)
+	return p, unlinked, err
 }
 
-func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM ldap_providers WHERE id = ?`, id)
-	return err
+// DeleteProvider removes the provider and unlinks its accounts, so a new
+// provider that reuses the slug cannot sign into them. It returns how many
+// accounts were unlinked.
+func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT slug FROM ldap_providers WHERE id = ?`, id).Scan(&slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n, err := auth.UnlinkProvider(ctx, tx, "ldap", slug)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ldap_providers WHERE id = ?`, id); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// IdentityKey is what the provider's subjects are unique within: the
+// directory server and the attribute they are read from.
+func IdentityKey(host string, port int, subjectAttr string) string {
+	return fmt.Sprintf("%s:%d\n%s", strings.ToLower(strings.TrimSpace(host)), port, strings.ToLower(strings.TrimSpace(subjectAttr)))
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
@@ -447,10 +514,17 @@ func (s *Service) TestConnection(ctx context.Context, providerID int64) error {
 	return nil
 }
 
+// LoginResult is a completed LDAP sign-in. RekeyedUser is set when it
+// moved an account from its DN to the immutable subject.
+type LoginResult struct {
+	*auth.LoginResult
+	RekeyedUser string `json:"-"`
+}
+
 // Authenticate validates the user's password against the directory.
 // Two-step: bind as service account, search for the user DN, then
 // re-bind as the user with their plaintext password.
-func (s *Service) Authenticate(ctx context.Context, slug, username, password string, userAgent, ip string) (*auth.LoginResult, error) {
+func (s *Service) Authenticate(ctx context.Context, slug, username, password string, userAgent, ip string) (*LoginResult, error) {
 	if username == "" || password == "" {
 		return nil, ErrInvalidCredentials
 	}
@@ -473,7 +547,7 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 	res, err := conn.Search(ldap.NewSearchRequest(
 		p.UserSearchBase, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases,
 		1, 5, false, filter,
-		[]string{p.EmailAttribute, p.UsernameAttribute, p.GroupMembershipAttribute},
+		searchAttributes(p),
 		nil,
 	))
 	if err != nil {
@@ -489,6 +563,10 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 		return nil, ErrInvalidCredentials
 	}
 
+	subject, subjectAttr, err := Subject(p.SubjectAttribute, entry)
+	if err != nil {
+		return nil, err
+	}
 	email := entry.GetAttributeValue(p.EmailAttribute)
 	if email == "" {
 		return nil, ErrEmailRequired
@@ -499,6 +577,14 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 	}
 	groups := entry.GetAttributeValues(p.GroupMembershipAttribute)
 
+	rekeyed, err := s.auth.RekeyLegacy(ctx, auth.LegacyLogin{
+		Kind: "ldap", Provider: p.Slug, Subject: subject,
+		Legacy: dn, SameSource: subjectAttr == subjectDN, Email: email,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	// AD typically returns full DNs in memberOf — match exact first, then
 	// by CN prefix as a convenience for admins who'd rather configure
 	// "Admins" than the full DN.
@@ -506,11 +592,70 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 		return g == want || strings.HasPrefix(strings.ToLower(g), "cn="+strings.ToLower(want)+",")
 	})
 
-	user, err := s.jitProvision(ctx, p, dn, name, email, assignments)
+	user, err := s.jitProvision(ctx, p, subject, name, email, assignments)
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	lr, err := s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{LoginResult: lr, RekeyedUser: rekeyed}, nil
+}
+
+// subjectDN names the DN when it has to stand in for a missing id.
+const subjectDN = "dn"
+
+func searchAttributes(p *Provider) []string {
+	attrs := []string{p.EmailAttribute, p.UsernameAttribute, p.GroupMembershipAttribute}
+	if p.SubjectAttribute != "" {
+		return append(attrs, p.SubjectAttribute)
+	}
+	return append(attrs, "objectGUID", "entryUUID")
+}
+
+// Subject reads the entry's immutable id: the configured attribute, or
+// objectGUID (Active Directory), else entryUUID (OpenLDAP), else the DN.
+// It also returns the attribute it came from.
+func Subject(attr string, e *ldap.Entry) (string, string, error) {
+	attr = strings.TrimSpace(attr)
+	if attr != "" {
+		if v := formatID(attr, e.GetEqualFoldRawAttributeValue(attr)); v != "" {
+			return v, attr, nil
+		}
+		return "", "", fmt.Errorf("directory entry has no %q attribute to identify the user", attr)
+	}
+	if v := formatID("objectGUID", e.GetEqualFoldRawAttributeValue("objectGUID")); v != "" {
+		return v, "objectGUID", nil
+	}
+	if v := formatID("entryUUID", e.GetEqualFoldRawAttributeValue("entryUUID")); v != "" {
+		return v, "entryUUID", nil
+	}
+	if e.DN == "" {
+		return "", "", errors.New("directory entry has no DN")
+	}
+	return e.DN, subjectDN, nil
+}
+
+// formatID writes an id attribute as text. objectGUID is binary, with the
+// first three groups little-endian; objectSid and other binary values are
+// hex. Only entryUUID is case-folded: elsewhere case may be significant.
+func formatID(attr string, raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	switch {
+	case strings.EqualFold(attr, "objectGUID") && len(raw) == 16:
+		var b [16]byte
+		copy(b[:], raw)
+		return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+			b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
+	case strings.EqualFold(attr, "objectGUID"), strings.EqualFold(attr, "objectSid"), !utf8.Valid(raw):
+		return hex.EncodeToString(raw)
+	case strings.EqualFold(attr, "entryUUID"):
+		return strings.ToLower(string(raw))
+	}
+	return string(raw)
 }
 
 func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email string, assignments []rbac.Assignment) (*auth.User, error) {
@@ -597,7 +742,7 @@ func boolInt(b bool) int {
 
 type scannerIface interface{ Scan(dest ...any) error }
 
-// scanRow reads the 22 columns produced by selectColumns into a Provider.
+// scanRow reads the 23 columns produced by selectColumns into a Provider.
 func scanRow(r scannerIface) (*Provider, error) {
 	var p Provider
 	var lastTestErr sql.NullString
@@ -607,7 +752,7 @@ func scanRow(r scannerIface) (*Provider, error) {
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.Host, &p.Port, &p.TLSMode,
 		&skipVerify, &p.BindDN, &p.UserSearchBase, &p.UserSearchFilter,
-		&p.UsernameAttribute, &p.EmailAttribute,
+		&p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute,
 		&p.GroupSearchBase, &p.GroupMembershipAttribute,
 		&p.DefaultRole, &enabled, &isDefault,
 		&lastTestedAt, &lastTestOK, &lastTestErr,
@@ -645,7 +790,7 @@ func scanRowWithSecret(r scannerIface) (*Provider, string, error) {
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.Host, &p.Port, &p.TLSMode,
 		&skipVerify, &p.BindDN, &p.UserSearchBase, &p.UserSearchFilter,
-		&p.UsernameAttribute, &p.EmailAttribute,
+		&p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute,
 		&p.GroupSearchBase, &p.GroupMembershipAttribute,
 		&p.DefaultRole, &enabled, &isDefault,
 		&lastTestedAt, &lastTestOK, &lastTestErr,

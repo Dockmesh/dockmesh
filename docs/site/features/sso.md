@@ -31,11 +31,11 @@ The provider dialog shows the exact URL as **Callback URL** or **ACS URL (read-o
 
 **OIDC:** **Issuer URL** (Dockmesh fetches `/.well-known/openid-configuration` from it), **Client ID**, client secret, **Scopes** (must include `openid`; add `email` and, if needed, the scope that carries groups), **Group claim**. The login uses the authorization code flow with PKCE and a nonce. The ID token must contain an `email` claim. The username comes from `preferred_username`, then `name`, then the part of the e-mail before `@`.
 
-**OAuth2:** **Authorization URL**, **Token URL**, **Userinfo URL**, **Client ID**, client secret, **Scopes**, **Username field**, **Email field**, **Groups field** (all fields of the userinfo JSON). The provider must return an e-mail address in the userinfo response. With GitHub that means the user needs a public e-mail, or the login fails.
+**OAuth2:** **Authorization URL**, **Token URL**, **Userinfo URL**, **Client ID**, client secret, **Scopes**, **Subject field**, **Username field**, **Email field**, **Groups field** (all fields of the userinfo JSON). The subject field is the user id that the Dockmesh account is keyed by; leave it empty to use `sub`, or `id` when there is no `sub` (GitHub, GitLab and Gitea send `id`). Never use a login name or e-mail there: those can be renamed and later taken by someone else. The provider must return an e-mail address in the userinfo response. With GitHub that means the user needs a public e-mail, or the login fails.
 
-**SAML:** **IdP metadata URL** or **IdP metadata XML**, **SP entity ID**, **Signing certificate (PEM)**, **Encryption certificate (PEM)** if the IdP encrypts assertions, **NameID format**, and the **Username attribute**, **Email attribute** and **Groups attribute**.
+**SAML:** **IdP metadata URL** or **IdP metadata XML**, **SP entity ID**, **Signing certificate (PEM)**, **Encryption certificate (PEM)** if the IdP encrypts assertions, **NameID format** (default `persistent`), an optional **Subject attribute**, and the **Username attribute**, **Email attribute** and **Groups attribute**. The account is keyed by the NameID, or by the subject attribute when one is set (for Azure AD the template uses the `objectidentifier` claim). Use a persistent NameID or an attribute that never changes; a transient NameID changes at every sign-in, so the user could not sign in again. The IdP answers with a cross-site POST, so with an IdP on another domain Dockmesh has to be served over HTTPS.
 
-**LDAP:** **Host**, **Port**, **TLS mode** (`ldaps`, `starttls` or `none`), skip-verify, **Bind DN** and password for the service account, **User search base**, **User search filter** (`%s` is replaced by the login name), **Username attribute**, **Email attribute**, **Group search base**, **Group membership attribute** (`memberOf` for Active Directory). Dockmesh binds as the service account, finds the user, then binds as the user to check the password. The service account's password is stored encrypted when secrets encryption is on (`DOCKMESH_SECRETS_ENCRYPT_ENV`, default `true`).
+**LDAP:** **Host**, **Port**, **TLS mode** (`ldaps`, `starttls` or `none`), skip-verify, **Bind DN** and password for the service account, **User search base**, **User search filter** (`%s` is replaced by the login name), **Subject attribute**, **Username attribute**, **Email attribute**, **Group search base**, **Group membership attribute** (`memberOf` for Active Directory). Dockmesh binds as the service account, finds the user, then binds as the user to check the password. The account is keyed by the subject attribute; leave it empty to use `objectGUID` (Active Directory), else `entryUUID` (OpenLDAP), else the DN. Set it for directories that have neither, for example `nsUniqueId` (389 Directory Server) or `ipaUniqueID` (FreeIPA); the DN changes when a user is moved or renamed. The service account's password is stored encrypted when secrets encryption is on (`DOCKMESH_SECRETS_ENCRYPT_ENV`, default `true`).
 
 ## Roles from groups
 
@@ -54,10 +54,26 @@ On every SSO sign-in, Dockmesh works out the user's role and overwrites the role
 
 Without an `admin` or `operator` mapping, every OIDC user gets the default role.
 
-## Security notes
+## How sign-ins find their account
 
-<!-- update after: sso: link by email only when verified and allowed, keep manual roles -->
-When an SSO sign-in comes in, Dockmesh looks for an existing account with the same provider subject or the same e-mail address. It doesn't check whether the provider verified that address. If a provider lets users set their own e-mail, someone can sign in there with an admin's address and take over the matching Dockmesh account. Its role is replaced by the provider's mapped role on that sign-in, but the account, its host-tag scope and its history stay. Accounts that don't exist yet are always created, regardless of the **Auto-create accounts on first SSO sign-in** toggle.
+Each SSO account is linked to one provider and one subject: the OIDC `sub`, the SAML NameID or subject attribute, the OAuth2 subject field, or the LDAP subject attribute. A sign-in enters the account whose provider and subject match. When none does:
+
+- With **Link to existing accounts with the same verified email** on (OIDC and OAuth2), a local account with the same e-mail is linked, but only when the provider marks the address as verified and the account has no second factor, no role that manages users or settings, and no other provider link.
+- Otherwise, if an account already uses the e-mail, the sign-in is refused.
+- Otherwise a new account is created when **Auto-create accounts on first SSO sign-in** is on.
+
+Links are bound to the identity provider they came from, because the same subject at another provider is another person:
+
+- **Deleting a provider** unlinks its accounts. They stay as local accounts without a usable password, so a new provider with the same slug can't sign into them.
+- **Pointing a provider at another identity provider** unlinks its accounts when you save: a different OIDC issuer, SAML metadata of another IdP entity, a different OAuth2 userinfo URL or subject field, or a different LDAP host, port or subject attribute. The provider dialog warns before you save. To re-attach the users, enable linking by verified e-mail or remove the old accounts and let them be created again.
+
+### Re-keying after the upgrade to v0.5.0
+
+Before v0.5.0, OAuth2 accounts were keyed by the username field (for example the GitHub `login`) and LDAP accounts by their DN. Both can be renamed and reused, so the upgrade moves these accounts to the immutable id. An account moves at its next sign-in that presents its old key, within 30 days of the upgrade. When the old key came from a field other than the new subject (a login name, a DN), the e-mail at the provider also has to match the account, so someone who took over a renamed login doesn't get the old account. On that path, accounts with two-factor authentication or a role that manages users or settings are never moved, and neither is a sign-in whose provider marks the e-mail as unverified.
+
+Until then the **Authentication** page and a notice list the accounts that haven't moved yet. **End re-keying** stops waiting for them. Accounts that didn't move in time, accounts excluded above, and accounts whose user was renamed or moved before signing in again can no longer sign in through their provider; remove them and let them be created again. SAML accounts got the same one-time re-key with v0.4.2.
+
+## Security notes
 
 SSO sign-ins skip the Dockmesh second factor and the local account lockout. The provider is fully responsible for authenticating the user.
 

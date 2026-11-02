@@ -4369,7 +4369,10 @@ paths:
       operationId: oidc.update_provider
       tags: [oidc]
       summary: Update an OIDC provider
-      description: Send an empty `client_secret` to keep the existing secret.
+      description: |
+        Send an empty `client_secret` to keep the existing secret. A different
+        issuer unlinks every account of the provider (a subject is unique only
+        within its issuer); the count is written to the audit entry.
       requestBody:
         required: true
         content:
@@ -4389,6 +4392,7 @@ paths:
       operationId: oidc.delete_provider
       tags: [oidc]
       summary: Delete an OIDC provider
+      description: Unlinks the provider's accounts, so a new provider with the same slug cannot sign into them.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -4458,6 +4462,7 @@ paths:
       operationId: saml.provider_update
       tags: [oidc]
       summary: Admin — update SAML provider
+      description: Metadata of another IdP entity unlinks every account of the provider.
       parameters:
         - in: path
           name: id
@@ -4478,6 +4483,7 @@ paths:
       operationId: saml.provider_delete
       tags: [oidc]
       summary: Admin — delete SAML provider
+      description: Unlinks the provider's accounts, so a new provider with the same slug cannot sign into them.
       parameters:
         - in: path
           name: id
@@ -4541,6 +4547,48 @@ paths:
                   ended: {type: integer, format: int64}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /sso/rekey:
+    get:
+      operationId: sso.rekey_pending
+      tags: [oidc]
+      summary: Admin — OAuth2 and LDAP accounts still waiting for their re-key
+      description: |
+        OAuth2 and LDAP accounts linked before subjects became immutable move to
+        the provider's user id at their next sign-in that presents the old key
+        (the username field or the DN), until the date in `until` (30 days after
+        the upgrade). When the old key came from a renameable field, the email
+        has to match the account as well.
+      responses:
+        "200":
+          description: Pending re-keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: {type: string}
+                  until: {type: string, format: date-time, description: Latest end of the re-key window.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /sso/rekey/end:
+    post:
+      operationId: sso.rekey_end
+      tags: [oidc]
+      summary: Admin — end the OAuth2 and LDAP re-key for all remaining accounts
+      description: Drops every pending re-key and writes `auth.sso_rekey_end` to the audit log.
+      responses:
+        "200":
+          description: Number of accounts whose re-key was ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ended: {type: integer, format: int64}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /ldap/providers:
     get:
       operationId: ldap.providers_list
@@ -4589,6 +4637,10 @@ paths:
       operationId: ldap.provider_update
       tags: [oidc]
       summary: Admin — update LDAP provider
+      description: |
+        `subject_attribute` names the attribute that identifies a user (empty:
+        `objectGUID`, else `entryUUID`, else the DN). A different host, port or
+        subject attribute unlinks every account of the provider.
       parameters:
         - in: path
           name: id
@@ -4609,6 +4661,7 @@ paths:
       operationId: ldap.provider_delete
       tags: [oidc]
       summary: Admin — delete LDAP provider
+      description: Unlinks the provider's accounts, so a new provider with the same slug cannot sign into them.
       parameters:
         - in: path
           name: id
@@ -4680,6 +4733,10 @@ paths:
       operationId: oauth2.provider_update
       tags: [oidc]
       summary: Admin — update OAuth2 provider
+      description: |
+        `subject_field` names the userinfo field that identifies a user (empty:
+        `sub`, else `id`). A different userinfo URL or subject field unlinks
+        every account of the provider.
       parameters:
         - in: path
           name: id
@@ -4700,6 +4757,7 @@ paths:
       operationId: oauth2.provider_delete
       tags: [oidc]
       summary: Admin — delete OAuth2 provider
+      description: Unlinks the provider's accounts, so a new provider with the same slug cannot sign into them.
       parameters:
         - in: path
           name: id

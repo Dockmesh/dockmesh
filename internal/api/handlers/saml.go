@@ -205,12 +205,13 @@ func (h *Handlers) UpdateSAMLProvider(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIdPGrants(w, r, in.DefaultRole, saml.GroupRules(in.GroupMappings)) {
 		return
 	}
-	p, err := h.SAML.UpdateProvider(r.Context(), id, in)
+	p, unlinked, err := h.SAML.UpdateProvider(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, "saml.provider_update", idStr, nil)
+	h.audit(r, "saml.provider_update", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -225,11 +226,13 @@ func (h *Handlers) DeleteSAMLProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.SAML.DeleteProvider(r.Context(), id); err != nil {
+	unlinked, err := h.SAML.DeleteProvider(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "saml.provider_delete", idStr, nil)
+	h.audit(r, "saml.provider_delete", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

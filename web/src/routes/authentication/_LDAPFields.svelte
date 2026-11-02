@@ -157,6 +157,13 @@
   <input class="dm-input acc-input-mono" bind:value={config.user_search_filter} />
 </Field>
 
+<Field
+  label="Subject attribute"
+  hint="Immutable id that accounts are keyed by. Empty: objectGUID (Active Directory), else entryUUID (OpenLDAP), else the DN. Use another unique id only, never uid or mail."
+>
+  <input class="dm-input acc-input-mono" bind:value={config.subject_attribute} placeholder="objectGUID, else entryUUID" />
+</Field>
+
 <div class="ldap-grid-2">
   <Field label="Username attribute">
     <input class="dm-input acc-input-mono" bind:value={config.username_attribute} />
