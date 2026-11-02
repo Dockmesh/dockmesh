@@ -372,7 +372,7 @@ if [ "$DO_DATA" = "1" ]; then
 else
   say "   Data directory preserved at ${BOLD}$DATA_DIR${RST}."
   say "   Reinstall later with:"
-  say "     curl -fsSL https://get.dockmesh.dev | sudo bash && sudo dockmesh init"
+  say "     curl -fsSL https://get.dockmesh.dev | sudo bash"
   say "   …and your DB + stacks + keys will be picked back up."
 fi
 say ""
