@@ -85,19 +85,20 @@ func (s *Service) announce(ctx context.Context, r *Rule, a announcement, resolve
 		g = cur
 	} else {
 		s.outbox[gk] = g
-		time.AfterFunc(s.groupWindow, func() { s.flushGroup(gk) })
+		later := context.WithoutCancel(ctx)
+		time.AfterFunc(s.groupWindow, func() { s.flushGroup(later, gk) })
 	}
 	g.add(a)
 	s.outMu.Unlock()
 }
 
-func (s *Service) flushGroup(gk groupKey) {
+func (s *Service) flushGroup(ctx context.Context, gk groupKey) {
 	s.outMu.Lock()
 	g := s.outbox[gk]
 	delete(s.outbox, gk)
 	s.outMu.Unlock()
 	if g != nil {
-		s.deliver(s.sendCtx(), g)
+		s.deliver(ctx, g)
 	}
 }
 
