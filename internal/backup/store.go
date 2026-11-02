@@ -5,14 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
+// store keeps jobs and runs. Target credentials in a job's config are
+// encrypted with sec, like those of saved targets.
 type store struct {
-	db *sql.DB
+	db  *sql.DB
+	sec *secrets.Service
 }
 
-func newStore(db *sql.DB) *store { return &store{db: db} }
+func newStore(db *sql.DB, sec *secrets.Service) *store { return &store{db: db, sec: sec} }
+
+func (s *store) targets() *targets.TargetStore { return targets.NewTargetStore(s.db, s.sec) }
 
 // -----------------------------------------------------------------------------
 // jobs
@@ -32,7 +42,7 @@ func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 	defer rows.Close()
 	out := []Job{}
 	for rows.Next() {
-		j, err := scanJob(rows)
+		j, err := s.scanJob(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +100,7 @@ func (s *store) queryJob(ctx context.Context, id int64, includeDeleted bool) (*J
 		       COALESCE(review_acked, 0),
 		       last_run_at, next_run_at, created_at, updated_at
 		FROM backup_jobs WHERE id = ? AND (? OR deleted_at IS NULL)`, id, includeDeleted)
-	j, err := scanJob(row)
+	j, err := s.scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrJobNotFound
 	}
@@ -98,7 +108,10 @@ func (s *store) queryJob(ctx context.Context, id int64, includeDeleted bool) (*J
 }
 
 func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
-	tcfg, _ := json.Marshal(in.TargetConfig)
+	tcfg, err := targets.SealConfig(s.sec, in.TargetConfig)
+	if err != nil {
+		return 0, err
+	}
 	srcs, _ := json.Marshal(in.Sources)
 	pre, _ := json.Marshal(in.PreHooks)
 	post, _ := json.Marshal(in.PostHooks)
@@ -107,7 +120,7 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 			(name, host_id, target_id, target_type, target_config, sources, schedule,
 			 retention_count, retention_days, encrypt, pre_hooks, post_hooks, enabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, tcfg, string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled))
 	if err != nil {
@@ -118,18 +131,21 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 }
 
 func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
-	tcfg, _ := json.Marshal(in.TargetConfig)
+	tcfg, err := targets.SealConfig(s.sec, in.TargetConfig)
+	if err != nil {
+		return err
+	}
 	srcs, _ := json.Marshal(in.Sources)
 	pre, _ := json.Marshal(in.PreHooks)
 	post, _ := json.Marshal(in.PostHooks)
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		UPDATE backup_jobs SET
 			name = ?, host_id = ?, target_id = ?, target_type = ?, target_config = ?, sources = ?,
 			schedule = ?, retention_count = ?, retention_days = ?,
 			encrypt = ?, pre_hooks = ?, post_hooks = ?, enabled = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, tcfg, string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled), id)
 	return err
@@ -415,7 +431,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanJob(r rowScanner) (*Job, error) {
+func (s *store) scanJob(r rowScanner) (*Job, error) {
 	var j Job
 	var tcfg, srcs, pre, post string
 	var enabled, encrypt, needsReview, reviewAcked int
@@ -432,7 +448,11 @@ func scanJob(r rowScanner) (*Job, error) {
 	j.Encrypt = encrypt == 1
 	j.NeedsReview = needsReview == 1
 	j.ReviewAcked = reviewAcked == 1
-	_ = json.Unmarshal([]byte(tcfg), &j.TargetConfig)
+	j.TargetConfig, j.unreadable = targets.OpenConfigLenient(s.sec, tcfg)
+	if len(j.unreadable) > 0 {
+		j.CredentialsError = "stored target " + strings.Join(j.unreadable, ", ") + " can't be decrypted (check the secrets key)"
+		slog.Warn("backup job target credentials can't be decrypted", "job", j.Name, "fields", j.unreadable)
+	}
 	_ = json.Unmarshal([]byte(srcs), &j.Sources)
 	_ = json.Unmarshal([]byte(pre), &j.PreHooks)
 	_ = json.Unmarshal([]byte(post), &j.PostHooks)
@@ -495,11 +515,11 @@ func (s *store) clearJobReview(ctx context.Context, id int64) error {
 }
 
 func (s *store) setJobTargetConfig(ctx context.Context, id int64, cfg any) error {
-	b, err := json.Marshal(cfg)
+	b, err := targets.SealConfig(s.sec, cfg)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE backup_jobs SET target_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, string(b), id)
+		`UPDATE backup_jobs SET target_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, b, id)
 	return err
 }

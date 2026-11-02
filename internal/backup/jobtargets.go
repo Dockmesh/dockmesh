@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
 // attachTarget makes the input reference a saved target. An inline target
@@ -21,7 +22,7 @@ import (
 // host key carries over while the server stays the same.
 func (s *Service) attachTarget(ctx context.Context, in *JobInput, prev *Job) error {
 	if in.TargetID > 0 {
-		t, err := targets.NewTargetStore(s.store.db).Get(ctx, in.TargetID)
+		t, err := s.store.targets().Get(ctx, in.TargetID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrTargetNotFound
 		}
@@ -38,7 +39,7 @@ func (s *Service) attachTarget(ctx context.Context, in *JobInput, prev *Job) err
 	if prev != nil {
 		prevType, prevCfg = prev.TargetType, prev.TargetConfig
 		if prev.TargetID > 0 {
-			if t, err := targets.NewTargetStore(s.store.db).Get(ctx, prev.TargetID); err == nil {
+			if t, err := s.store.targets().Get(ctx, prev.TargetID); err == nil {
 				prevType, prevCfg = t.Type, t.Config
 			}
 		}
@@ -59,8 +60,8 @@ type execer interface {
 }
 
 // insertTarget saves a target under name, or "name (2)", … when taken.
-func insertTarget(ctx context.Context, db execer, name, typ string, cfg any) (int64, error) {
-	raw, err := json.Marshal(cfg)
+func insertTarget(ctx context.Context, db execer, sec *secrets.Service, name, typ string, cfg any) (int64, error) {
+	raw, err := targets.SealConfig(sec, cfg)
 	if err != nil {
 		return 0, err
 	}
@@ -71,7 +72,7 @@ func insertTarget(ctx context.Context, db execer, name, typ string, cfg any) (in
 		}
 		res, err := db.ExecContext(ctx,
 			`INSERT INTO backup_targets (name, type, config_json) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`,
-			n, typ, string(raw))
+			n, typ, raw)
 		if err != nil {
 			return 0, err
 		}
@@ -83,7 +84,7 @@ func insertTarget(ctx context.Context, db execer, name, typ string, cfg any) (in
 }
 
 func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (int64, error) {
-	return insertTarget(ctx, s.db, name, typ, cfg)
+	return insertTarget(ctx, s.db, s.sec, name, typ, cfg)
 }
 
 // MigrateInlineTargets moves the target config stored on each job into a
@@ -120,8 +121,9 @@ func (s *Service) MigrateInlineTargets(ctx context.Context) (int, error) {
 
 	moved := 0
 	for _, j := range jobs {
-		var cfg map[string]any
-		if err := json.Unmarshal([]byte(j.config), &cfg); err != nil || len(cfg) == 0 {
+		opened, err := targets.OpenConfig(s.store.sec, j.config)
+		cfg, _ := opened.(map[string]any)
+		if err != nil || len(cfg) == 0 {
 			slog.Warn("backup: job target config unreadable, left inline", "job", j.name, "err", err)
 			continue
 		}
@@ -146,12 +148,12 @@ func (s *store) moveJobTarget(ctx context.Context, jobID int64, typ string, cfg 
 	defer func() { _ = tx.Rollback() }()
 	var id int64
 	if !system {
-		if id, err = findTarget(ctx, tx, typ, cfg); err != nil {
+		if id, err = findTarget(ctx, tx, s.sec, typ, cfg); err != nil {
 			return err
 		}
 	}
 	if id == 0 {
-		if id, err = insertTarget(ctx, tx, migratedTargetName(typ, cfg), typ, cfg); err != nil {
+		if id, err = insertTarget(ctx, tx, s.sec, migratedTargetName(typ, cfg), typ, cfg); err != nil {
 			return err
 		}
 	}
@@ -168,7 +170,7 @@ var hostKeyFields = []string{"host_key", "host_key_pending"}
 // findTarget returns a saved target with this type and the same settings
 // apart from SFTP host keys. A recorded key the target lacks is copied to
 // it; targets that recorded a different key don't match.
-func findTarget(ctx context.Context, db execer, typ string, cfg map[string]any) (int64, error) {
+func findTarget(ctx context.Context, db execer, sec *secrets.Service, typ string, cfg map[string]any) (int64, error) {
 	want, err := json.Marshal(withoutHostKeys(cfg))
 	if err != nil {
 		return 0, err
@@ -189,7 +191,8 @@ func findTarget(ctx context.Context, db execer, typ string, cfg map[string]any) 
 			rows.Close()
 			return 0, err
 		}
-		if json.Unmarshal([]byte(raw), &c.cfg) != nil {
+		opened, err := targets.OpenConfig(sec, raw)
+		if c.cfg, _ = opened.(map[string]any); err != nil || c.cfg == nil {
 			continue
 		}
 		if got, err := json.Marshal(withoutHostKeys(c.cfg)); err == nil && string(got) == string(want) {
@@ -263,7 +266,7 @@ var wrapRunTarget = func(t targets.Target) targets.Target { return t }
 
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
-		ts := targets.NewTargetStore(st.db)
+		ts := st.targets()
 		t, err := ts.Get(ctx, job.TargetID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTargetNotFound
@@ -277,6 +280,9 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 			return nil, err
 		}
 		return wrapRunTarget(built), nil
+	}
+	if job.CredentialsError != "" {
+		return nil, fmt.Errorf("backup job %q: %s", job.Name, job.CredentialsError)
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
 	t, err := buildTarget(job.TargetType, job.TargetConfig)

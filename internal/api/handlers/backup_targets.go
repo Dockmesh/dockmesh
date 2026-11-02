@@ -108,6 +108,10 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	t, err := h.BackupTargets.Update(r.Context(), id, in)
+	if errors.Is(err, targets.ErrCredentialsUnreadable) {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

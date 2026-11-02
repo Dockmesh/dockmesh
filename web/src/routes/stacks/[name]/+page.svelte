@@ -2359,8 +2359,19 @@
             since this deploy will still use their current values. If you need to roll env back too,
             restore it manually after rollback.
           </div>
+          {#if rollbackEntry.environment}
+            <div class="text-xs text-[var(--fg-muted)]">
+              This deploy used the <span class="font-mono">{rollbackEntry.environment}</span> environment;
+              the current <span class="font-mono">compose.{rollbackEntry.environment}.yaml</span> is applied again.
+            </div>
+          {/if}
         </div>
       </div>
+      {#if !rollbackEntry.compose_yaml}
+        <div class="text-xs text-[var(--color-danger-400)]">
+          This deploy's compose snapshot was removed because it contained .env values. Roll back to another deploy.
+        </div>
+      {/if}
       {#if rollbackEntry.services && rollbackEntry.services.length > 0}
         <div class="text-xs space-y-0.5 border border-[var(--border)] rounded-md p-3 bg-[var(--surface)]">
           <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">Images that will be redeployed</div>
@@ -2376,7 +2387,7 @@
   {/if}
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showRollbackConfirm = false)} disabled={rollbackBusy}>Cancel</Button>
-    <Button variant="primary" onclick={doRollback} loading={rollbackBusy} disabled={rollbackBusy}>
+    <Button variant="primary" onclick={doRollback} loading={rollbackBusy} disabled={rollbackBusy || !rollbackEntry?.compose_yaml}>
       <RotateCcw class="w-4 h-4" />
       Roll back
     </Button>

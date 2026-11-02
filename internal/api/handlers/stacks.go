@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -32,16 +33,25 @@ import (
 // .env line with the same KEY still wins (the stack's KEY= lines come
 // after globals in the resulting string and later definitions
 // override earlier ones in .env resolution).
-func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) string {
+//
+// A variable that can't be read fails the deploy: deploying without it
+// would silently fall back to compose defaults.
+func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) (string, error) {
 	if h.GlobalEnv == nil {
-		return stackEnv
+		return stackEnv, nil
 	}
 	vars, err := h.GlobalEnv.List(ctx)
-	if err != nil || len(vars) == 0 {
-		return stackEnv
+	if err != nil {
+		return "", fmt.Errorf("read global environment: %w", err)
+	}
+	if len(vars) == 0 {
+		return stackEnv, nil
 	}
 	var b strings.Builder
 	for _, v := range vars {
+		if v.Unreadable {
+			return "", fmt.Errorf("global variable %s can't be decrypted; check the secrets key or set the value again", v.Key)
+		}
 		fmt.Fprintf(&b, "%s=%s\n", v.Key, v.Value)
 	}
 	if stackEnv != "" {
@@ -50,7 +60,7 @@ func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) string {
 		}
 		b.WriteString(stackEnv)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 type stackRequest struct {
@@ -1040,7 +1050,12 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// no override. The empty-string fallback makes this a no-op for
 	// stacks that don't use the overlay pattern at all.
 	composeYAML := detail.Compose
-	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, name, detail.Compose, detail.Env)
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, name, detail.Compose, mergedEnv)
 	if envErr != nil {
 		writeError(w, http.StatusUnprocessableEntity, envErr.Error())
 		return
@@ -1049,7 +1064,6 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		composeYAML = mergedYAML
 	}
 
-	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
 	res, err := target.DeployStack(r.Context(), name, composeYAML, mergedEnv)
 	if err != nil {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
@@ -1070,14 +1084,13 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		for _, s := range res.Services {
 			services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
 		}
-		// History stores the MERGED compose (what was actually deployed)
-		// so rollback can reproduce the deploy without needing the
-		// override file to still be present at the same contents.
+		// The merged compose has the .env values filled in, so history
+		// keeps the base file and the override name.
 		note := ""
 		if envOverride != "" {
 			note = "env: " + envOverride
 		}
-		if _, err := h.DeployHistory.Record(r.Context(), name, target.ID(), composeYAML, note, middleware.UserID(r.Context()), services); err != nil {
+		if _, err := h.DeployHistory.RecordEnvironment(r.Context(), name, target.ID(), detail.Compose, envOverride, note, middleware.UserID(r.Context()), services); err != nil {
 			slog.Warn("record deploy history", "stack", name, "err", err)
 		}
 	}
@@ -1205,7 +1218,10 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep. P.12.7.
 func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
-	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
+	if err != nil {
+		return err
+	}
 	res, err := target.DeployStack(r.Context(), name, detail.Compose, mergedEnv)
 	if err != nil {
 		return err
@@ -1312,7 +1328,9 @@ func (h *Handlers) syncStackToAgent(ctx context.Context, hostID, name, compose, 
 		}
 	}
 	req := agents.StackSyncReq{Name: name, Compose: compose, Env: env, Meta: meta}
+	ctx, cancel := mirrorContext(ctx)
 	go func() {
+		defer cancel()
 		if _, err := ag.Request(ctx, agents.Frame{
 			Type:    agents.FrameReqStackSync,
 			Payload: mustJSON(req),
@@ -1332,7 +1350,9 @@ func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string
 		return
 	}
 	req := agents.StackNameReq{Name: name}
+	ctx, cancel := mirrorContext(ctx)
 	go func() {
+		defer cancel()
 		if _, err := ag.Request(ctx, agents.Frame{
 			Type:    agents.FrameReqStackDelete,
 			Payload: mustJSON(req),
@@ -1340,6 +1360,16 @@ func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string
 			slog.Warn("stack delete from agent", "stack", name, "agent", hostID, "err", err)
 		}
 	}()
+}
+
+// agentMirrorTimeout bounds a background stack sync or delete on an agent.
+const agentMirrorTimeout = 2 * time.Minute
+
+// mirrorContext detaches a background agent call from the request that
+// started it: the handler returns before the call ends, which would
+// cancel the request context and abort the call.
+func mirrorContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), agentMirrorTimeout)
 }
 
 func mustJSON(v any) json.RawMessage {

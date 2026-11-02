@@ -8,6 +8,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/secretsdb"
 )
 
 // ExportBackupKey returns the age private key used to encrypt stack .env
@@ -89,19 +90,28 @@ func (h *Handlers) RotateSecretsKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("reencrypt stacks: %v", err))
 		return
 	}
+	dbCount := 0
+	if h.DB != nil {
+		if dbCount, err = secretsdb.Reseal(r.Context(), h.DB, oldSnap, newSvc); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("reencrypt stored secrets: %v", err))
+			return
+		}
+	}
 	oldRecipient, err := h.Secrets.AdoptAndPersist(newSvc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("persist new key: %v", err))
 		return
 	}
 	h.audit(r, "secrets.rotate", "system", map[string]any{
-		"reencrypted": count,
-		"old_public":  oldRecipient,
-		"new_public":  h.Secrets.PublicRecipient(),
+		"reencrypted":         count,
+		"reencrypted_secrets": dbCount,
+		"old_public":          oldRecipient,
+		"new_public":          h.Secrets.PublicRecipient(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"reencrypted":   count,
-		"old_recipient": oldRecipient,
-		"new_recipient": h.Secrets.PublicRecipient(),
+		"reencrypted":         count,
+		"reencrypted_secrets": dbCount,
+		"old_recipient":       oldRecipient,
+		"new_recipient":       h.Secrets.PublicRecipient(),
 	})
 }

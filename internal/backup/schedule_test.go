@@ -196,7 +196,7 @@ func TestInlineTargetsMigrate(t *testing.T) {
 	if ids["a"] != ids["b"] || ids["a"] == ids["c"] {
 		t.Fatalf("identical configs should share a target: %v", ids)
 	}
-	st := targets.NewTargetStore(db)
+	st := targets.NewTargetStore(db, nil)
 	sftp, err := st.Get(ctx, ids["c"])
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestInlineTargetMigrationFieldsAndNames(t *testing.T) {
 		t.Fatalf("sftp jobs: same settings share a target unless their accepted host keys differ: %v", ids)
 	}
 
-	st := targets.NewTargetStore(db)
+	st := targets.NewTargetStore(db, nil)
 	cfgOf := func(name string) (string, map[string]any) {
 		tg, err := st.Get(ctx, ids[name])
 		if err != nil {
@@ -290,7 +290,7 @@ func TestInlineTargetMigrationFieldsAndNames(t *testing.T) {
 func TestJobWithSavedTarget(t *testing.T) {
 	svc, _, root := newExecTest(t, false)
 	ctx := context.Background()
-	st := targets.NewTargetStore(svc.store.db)
+	st := svc.store.targets()
 	tgt, err := st.Create(ctx, targets.TargetInput{Name: "disk", Type: "local", Config: map[string]any{"path": root}})
 	if err != nil {
 		t.Fatal(err)

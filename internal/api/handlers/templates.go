@@ -199,7 +199,12 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deployRes, err := target.DeployStack(r.Context(), req.StackName, composeYAML, h.mergeGlobalEnv(r.Context(), envContent))
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), envContent)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	deployRes, err := target.DeployStack(r.Context(), req.StackName, composeYAML, mergedEnv)
 	if err != nil {
 		// Leave the stack on disk — the operator might want to
 		// fix the compose and retry via /stacks/{name}/deploy.

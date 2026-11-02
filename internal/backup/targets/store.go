@@ -3,9 +3,11 @@ package targets
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
 // StoredTarget is one row of backup_targets.
@@ -20,9 +22,13 @@ type StoredTarget struct {
 	FreeBytes     int64      `json:"free_bytes"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	// JobCount is the number of backup jobs that write to this target.
-	JobCount  *int      `json:"job_count,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	JobCount *int `json:"job_count,omitempty"`
+	// CredentialsError is set when stored credentials can't be decrypted;
+	// the target can't be used until they are entered again.
+	CredentialsError string `json:"credentials_error,omitempty"`
+	unreadable       []string
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type TargetInput struct {
@@ -31,12 +37,16 @@ type TargetInput struct {
 	Config any    `json:"config"`
 }
 
-// TargetStore provides CRUD for the backup_targets table.
+// TargetStore provides CRUD for the backup_targets table. Credentials in
+// a target's config are stored encrypted with sec.
 type TargetStore struct {
-	db *sql.DB
+	db  *sql.DB
+	sec *secrets.Service
 }
 
-func NewTargetStore(db *sql.DB) *TargetStore { return &TargetStore{db: db} }
+func NewTargetStore(db *sql.DB, sec *secrets.Service) *TargetStore {
+	return &TargetStore{db: db, sec: sec}
+}
 
 func (s *TargetStore) List(ctx context.Context) ([]StoredTarget, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -50,7 +60,7 @@ func (s *TargetStore) List(ctx context.Context) ([]StoredTarget, error) {
 	// Non-nil slice so the JSON response is [] not null.
 	out := make([]StoredTarget, 0)
 	for rows.Next() {
-		t, err := scanTarget(rows)
+		t, err := s.scanTarget(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -64,14 +74,17 @@ func (s *TargetStore) Get(ctx context.Context, id int64) (*StoredTarget, error) 
 		SELECT id, name, type, config_json, status, total_bytes, used_bytes,
 		       last_checked_at, `+jobCountColumn+`, created_at, updated_at
 		FROM backup_targets WHERE id = ?`, id)
-	return scanTarget(row)
+	return s.scanTarget(row)
 }
 
 func (s *TargetStore) Create(ctx context.Context, in TargetInput) (*StoredTarget, error) {
-	cfg, _ := json.Marshal(KeepHostKey("", nil, in.Type, in.Config))
+	cfg, err := SealConfig(s.sec, KeepHostKey("", nil, in.Type, in.Config))
+	if err != nil {
+		return nil, err
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_targets (name, type, config_json) VALUES (?, ?, ?)`,
-		in.Name, in.Type, string(cfg))
+		in.Name, in.Type, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -84,10 +97,21 @@ func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*St
 	if err != nil {
 		return nil, err
 	}
-	cfg, _ := json.Marshal(KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
+	if len(prev.unreadable) > 0 {
+		m, _ := in.Config.(map[string]any)
+		for _, k := range prev.unreadable {
+			if v, _ := m[k].(string); v == "" {
+				return nil, ErrCredentialsUnreadable
+			}
+		}
+	}
+	cfg, err := SealConfig(s.sec, KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
+	if err != nil {
+		return nil, err
+	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE backup_targets SET name = ?, type = ?, config_json = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, in.Name, in.Type, string(cfg), id)
+		WHERE id = ?`, in.Name, in.Type, cfg, id)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +152,7 @@ const jobCountColumn = `(SELECT COUNT(*) FROM backup_jobs j
 
 type scanner interface{ Scan(dest ...any) error }
 
-func scanTarget(r scanner) (*StoredTarget, error) {
+func (s *TargetStore) scanTarget(r scanner) (*StoredTarget, error) {
 	var t StoredTarget
 	var cfgJSON string
 	var checked sql.NullTime
@@ -138,7 +162,10 @@ func scanTarget(r scanner) (*StoredTarget, error) {
 		return nil, err
 	}
 	t.JobCount = &jobs
-	_ = json.Unmarshal([]byte(cfgJSON), &t.Config)
+	t.Config, t.unreadable = OpenConfigLenient(s.sec, cfgJSON)
+	if t.CredentialsError = credentialsError(t.unreadable); t.CredentialsError != "" {
+		slog.Warn("backup target credentials can't be decrypted", "target", t.Name, "fields", t.unreadable)
+	}
 	if checked.Valid {
 		t.LastCheckedAt = &checked.Time
 	}

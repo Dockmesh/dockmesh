@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, s
 			add(j.TargetConfig)
 		}
 	}
-	stored, err := targets.NewTargetStore(db).List(ctx)
+	stored, err := svc.Targets().List(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,18 +147,21 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 
 const jobRepairDoneSetting = "backups.job_repair_done"
 
-// prepareJobTargets runs the one-time job secret repair and then moves
-// inline job targets to saved targets. The order matters: the migration
-// copies whatever secret the job holds, so it must see the repaired one.
+// prepareJobTargets runs the one-time job secret repair, moves inline job
+// targets to saved targets and encrypts credentials still stored in
+// plaintext. The order matters: the migration copies whatever secret the
+// job holds, so it must see the repaired one.
 func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
-	if err := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair); err != nil {
-		return err
-	}
+	repairErr := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair)
 	moved, err := svc.MigrateInlineTargets(ctx)
 	if moved > 0 {
 		slog.Info("backup: job targets moved to saved targets", "jobs", moved)
 	}
-	return err
+	sealed, sealErr := svc.EncryptStoredTargetSecrets(ctx)
+	if sealed > 0 {
+		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
+	}
+	return errors.Join(repairErr, err, sealErr)
 }
 
 // repairJobSecretsOnce runs the job secret repair for the first start

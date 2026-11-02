@@ -52,7 +52,7 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 	}
 
 	// The job's SFTP settings were saved as a target; keys live there.
-	stored := targets.NewTargetStore(svc.store.db)
+	stored := svc.store.targets()
 	targetConfig := func() map[string]any {
 		t, err := stored.Get(ctx, job.TargetID)
 		if err != nil {
@@ -174,7 +174,7 @@ func TestInlineUpdateKeepsHostKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tgt, err := targets.NewTargetStore(svc.store.db).Get(ctx, got.TargetID)
+	tgt, err := svc.store.targets().Get(ctx, got.TargetID)
 	if err != nil {
 		t.Fatal(err)
 	}

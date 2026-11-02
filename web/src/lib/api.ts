@@ -323,6 +323,8 @@ export interface DeployHistoryEntry {
   stack_name: string;
   host_id: string;
   compose_yaml?: string; // only populated on the single-entry GET
+  /** Override (compose.<environment>.yaml) applied on top of compose_yaml. */
+  environment?: string;
   services?: DeployHistoryService[];
   note?: string;
   deployed_by?: string;
@@ -984,6 +986,8 @@ export interface BackupTarget {
   free_bytes: number;
   last_checked_at?: string;
   job_count?: number;
+  /** Set when stored credentials can't be decrypted; enter them again. */
+  credentials_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -1910,7 +1914,7 @@ export const api = {
 
   globalEnv: {
     list: () => request<Array<{ id: number; key: string; value: string; group_name: string; encrypted: boolean; created_at: string; updated_at: string }>>('/global-env'),
-    create: (data: { key: string; value: string; group_name: string }) =>
+    create: (data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>('/global-env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     update: (id: number, data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>(`/global-env/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),

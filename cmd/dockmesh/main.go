@@ -674,7 +674,12 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	globalEnvStore := globalenv.NewStore(database)
+	globalEnvStore := globalenv.NewStore(database, secretsSvc)
+	if n, err := globalEnvStore.EncryptFlagged(ctx); err != nil {
+		slog.Warn("global env: encrypt stored secret values", "err", err)
+	} else if n > 0 {
+		slog.Info("global env: encrypted stored secret values", "count", n)
+	}
 
 	// Roles and assignments, cached in memory; built-in role definitions
 	// follow the binary.
@@ -902,11 +907,10 @@ func main() {
 		slog.Warn("stack templates seed", "err", err)
 	}
 
-	// Audit retention (P.11.13). The TargetWriter adapter turns a
-	// backup_targets row into a live target.Build, streams NDJSON to
-	// it on archive_target runs. Nil-safe if the backup-targets store
-	// is ever unavailable — archive_target mode then reports an error.
-	backupTargetStore := targets.NewTargetStore(database)
+	// Audit retention. The TargetWriter adapter turns a backup_targets
+	// row into a live target.Build, streams NDJSON to it on
+	// archive_target runs.
+	backupTargetStore := backupSvc.Targets()
 	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
 	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
 	auditRetention.Start(ctx)

@@ -66,7 +66,7 @@ func (s *Service) SetNotices(n *notices.Service) {
 }
 
 func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
-	st := newStore(db)
+	st := newStore(db, sec)
 	runCtx, cancel := context.WithCancel(context.Background())
 	return &Service{
 		store:     st,
@@ -140,6 +140,9 @@ func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
 	return j, err
 }
 
+// Targets returns the saved-target store, sharing the job store's key.
+func (s *Service) Targets() *targets.TargetStore { return s.store.targets() }
+
 // DefaultLocalPath is the directory the wizards suggest for a local target.
 func (s *Service) DefaultLocalPath() string {
 	return targets.DefaultLocalDir(s.paths.DataDir)
@@ -206,6 +209,16 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	prev, err := s.store.getJob(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	// Keeping the inline target would save it without the credential that
+	// can't be decrypted, losing it even once the key is back.
+	if in.TargetID == 0 && len(prev.unreadable) > 0 {
+		m, _ := in.TargetConfig.(map[string]any)
+		for _, k := range prev.unreadable {
+			if v, _ := m[k].(string); v == "" {
+				return nil, targets.ErrCredentialsUnreadable
+			}
+		}
 	}
 	if err := s.attachTarget(ctx, &in, prev); err != nil {
 		return nil, err

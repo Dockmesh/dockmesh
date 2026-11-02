@@ -1684,6 +1684,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The inline target's stored credentials can't be decrypted and the update doesn't enter them again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: backups.delete_job
       tags: [backups]
@@ -2213,6 +2218,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The stored credentials can't be decrypted and the update doesn't enter them again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: backups.delete_target
       tags: [backups]
@@ -3274,6 +3284,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: The secret's stored value can't be decrypted and the update leaves the value empty.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: global_env.delete
       tags: [global-env]
@@ -3928,7 +3944,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  reencrypted: {type: integer}
+                  reencrypted: {type: integer, description: Stack .env files re-encrypted.}
+                  reencrypted_secrets: {type: integer, description: Stored backup target credentials and secret global variables re-encrypted.}
                   old_recipient: {type: string}
                   new_recipient: {type: string}
         "400":
@@ -6537,8 +6554,9 @@ paths:
       description: |
         Overwrites `compose.yaml` with the snapshot from the given history
         row and re-runs Deploy. Env is deliberately kept as-is so current
-        secrets aren't clobbered. The rollback itself becomes a new
-        history row tagged "rollback to #ID".
+        secrets aren't clobbered. A deploy that used an environment
+        override applies the current `compose.<environment>.yaml` again.
+        The rollback itself becomes a new history row tagged "rollback to #ID".
       parameters:
         - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
@@ -6557,6 +6575,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "422":
+          description: |
+            The entry's compose snapshot was cleared because it held `.env`
+            values, or the environment override the deploy used no longer
+            exists or can't be merged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "500":
           description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
           content:
@@ -8419,6 +8445,7 @@ components:
           type: object
           description: >-
             Empty for jobs that reference a saved target; the configuration lives on the target. For a job not yet moved to a saved target, secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored.
+        credentials_error: {type: string, description: "Set when the inline target's stored credentials can't be decrypted; the job can't run, and an update that keeps the inline target must enter them again (422 otherwise)."}
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}
@@ -8575,6 +8602,7 @@ components:
         used_bytes: {type: integer, format: int64}
         last_checked_at: {type: string, format: date-time}
         job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
+        credentials_error: {type: string, description: "Set when stored credentials can't be decrypted (wrong secrets key, encryption turned off). The target can't run, and an update must enter them again (422 otherwise)."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:
@@ -8884,7 +8912,10 @@ components:
         group_name: {type: string}
         encrypted:
           type: boolean
-          description: True when the variable is marked secret; its value is write-only.
+          description: True when the variable is marked secret; its value is write-only and stored encrypted.
+        unreadable:
+          type: boolean
+          description: The secret's stored value can't be decrypted (wrong secrets key, encryption turned off). Deploys using global variables fail until it is set again.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     GlobalEnvInput:
@@ -8898,7 +8929,7 @@ components:
         group_name: {type: string, example: production}
         encrypted:
           type: boolean
-          description: Marks the value as secret so it is never returned by the API.
+          description: Marks the value as secret, so it is stored encrypted and never returned by the API. A secret variable stays secret on update.
     HostInfo:
       type: object
       required: [id, name, kind, status]
@@ -9725,7 +9756,12 @@ components:
         id: {type: integer, format: int64}
         stack_name: {type: string}
         host_id: {type: string}
-        compose_yaml: {type: string}
+        compose_yaml:
+          type: string
+          description: The base compose file. Empty for old environment-override deploys whose snapshot held `.env` values; those can't be rolled back to.
+        environment:
+          type: string
+          description: The `compose.<environment>.yaml` override applied on top of `compose_yaml`, if any.
         services:
           type: array
           items:

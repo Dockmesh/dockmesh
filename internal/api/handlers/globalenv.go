@@ -172,10 +172,17 @@ func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Secret values are never sent to the client, so an empty value on a
-	// secret variable means "keep the stored one".
-	if prev.Encrypted && in.Value == "" {
-		in.Value = prev.Value
+	// secret variable means "keep the stored one". A secret stays secret:
+	// clearing the flag would hand the stored value to every reader.
+	if prev.Encrypted {
 		in.Encrypted = true
+		if in.Value == "" {
+			if prev.Unreadable {
+				writeError(w, http.StatusUnprocessableEntity, "the stored value can't be decrypted; enter the value again")
+				return
+			}
+			in.Value = prev.Value
+		}
 	}
 	v, err := h.GlobalEnv.Update(r.Context(), id, in)
 	if err != nil {

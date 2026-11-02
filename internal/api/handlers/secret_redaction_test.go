@@ -85,7 +85,7 @@ func TestSettingsHideAuditWebhookKeys(t *testing.T) {
 }
 
 func TestGlobalEnvRedactsSecretValues(t *testing.T) {
-	store := globalenv.NewStore(openRedactionTestDB(t))
+	store := globalenv.NewStore(openRedactionTestDB(t), nil)
 	ctx := context.Background()
 	secret, err := store.Create(ctx, globalenv.VarInput{Key: "DB_PASSWORD", Value: "s3cr3t-pw", Encrypted: true})
 	if err != nil {
@@ -136,6 +136,7 @@ func TestGlobalEnvRedactsSecretValues(t *testing.T) {
 	}{
 		{"empty value keeps secret", secretPath, globalenv.VarInput{Key: "DB_PASSWORD", Group: "db"}, "s3cr3t-pw", true},
 		{"new value replaces secret", secretPath, globalenv.VarInput{Key: "DB_PASSWORD", Value: "s3cr3t-new", Encrypted: true}, "s3cr3t-new", true},
+		{"update without the flag stays secret", secretPath, globalenv.VarInput{Key: "DB_PASSWORD", Value: "s3cr3t-next"}, "s3cr3t-next", true},
 		{"empty plain value is stored", "/global-env/" + strconv.FormatInt(plain.ID, 10), globalenv.VarInput{Key: "BASE_DOMAIN"}, "", false},
 	}
 	for _, tc := range tests {

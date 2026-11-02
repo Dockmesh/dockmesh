@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/secretsdb"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -63,11 +66,20 @@ func rotateSecrets() error {
 	if err != nil {
 		return fmt.Errorf("reencrypt: %w", err)
 	}
+	database, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer database.Close()
+	dbCount, err := secretsdb.Reseal(context.Background(), database, oldSvc, newSvc)
+	if err != nil {
+		return fmt.Errorf("reencrypt stored secrets: %w", err)
+	}
 	if _, err := oldSvc.AdoptAndPersist(newSvc); err != nil {
 		return fmt.Errorf("persist new key: %w", err)
 	}
 
-	fmt.Printf("rotation complete: %d .env.age files re-encrypted\n", count)
+	fmt.Printf("rotation complete: %d .env.age files and %d stored secrets re-encrypted\n", count, dbCount)
 	fmt.Printf("new recipient: %s\n", newSvc.PublicRecipient())
 	fmt.Printf("previous keys kept in: %s.history\n", cfg.SecretsKeyPath)
 	fmt.Println()

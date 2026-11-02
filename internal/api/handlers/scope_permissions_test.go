@@ -403,7 +403,7 @@ func TestArchiveAccess(t *testing.T) {
 func TestCredentialsAreWriteOnly(t *testing.T) {
 	e := newScopeEnv(t)
 	ctx := context.Background()
-	e.h.BackupTargets = targets.NewTargetStore(e.db)
+	e.h.BackupTargets = targets.NewTargetStore(e.db, nil)
 	e.router.Group(func(r chi.Router) {
 		r.Use(middleware.NewAuth(e.h.Auth))
 		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/targets", e.h.ListBackupTargets)
@@ -620,7 +620,7 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	vol := []backup.Source{{Type: "volume", Name: "data"}}
 	sys := []backup.Source{{Type: "system", Name: "dockmesh"}}
-	s3, err := targets.NewTargetStore(e.db).Create(ctx, targets.TargetInput{Name: "s3", Type: "s3",
+	s3, err := targets.NewTargetStore(e.db, nil).Create(ctx, targets.TargetInput{Name: "s3", Type: "s3",
 		Config: map[string]any{"endpoint": "s3.lan", "bucket": "b", "access_key": "a", "secret_key": "s"}})
 	if err != nil {
 		t.Fatal(err)
@@ -808,7 +808,7 @@ func TestLegacyBackupJobsCanBeDisabled(t *testing.T) {
 func TestSharedTargetWritesNeedEveryJob(t *testing.T) {
 	e := newScopeEnv(t)
 	ctx := context.Background()
-	e.h.BackupTargets = targets.NewTargetStore(e.db)
+	e.h.BackupTargets = targets.NewTargetStore(e.db, nil)
 	e.router.Group(func(r chi.Router) {
 		r.Use(middleware.NewAuth(e.h.Auth))
 		r.Use(e.h.StackScope)

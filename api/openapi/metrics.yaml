@@ -282,7 +282,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  reencrypted: {type: integer}
+                  reencrypted: {type: integer, description: Stack .env files re-encrypted.}
+                  reencrypted_secrets: {type: integer, description: Stored backup target credentials and secret global variables re-encrypted.}
                   old_recipient: {type: string}
                   new_recipient: {type: string}
         "400":

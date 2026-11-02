@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/operations"
@@ -134,6 +135,10 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 	job, err := h.Backups.UpdateJob(r.Context(), id, in)
 	if errors.Is(err, backup.ErrJobNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if errors.Is(err, targets.ErrCredentialsUnreadable) {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if err != nil {
