@@ -69,14 +69,14 @@ func fireLevel(r *Rule, value float64) notify.Level {
 }
 
 // announce queues a notified fire or resolve for delivery.
-func (s *Service) announce(r *Rule, a announcement, resolved bool) {
+func (s *Service) announce(ctx context.Context, r *Rule, a announcement, resolved bool) {
 	g := &outGroup{rule: *r, resolved: resolved, level: notify.LevelInfo}
 	if !resolved {
 		g.level = fireLevel(r, a.value)
 	}
 	if s.groupWindow <= 0 || s.stopped.Load() {
 		g.add(a)
-		s.deliver(g)
+		s.deliver(context.WithoutCancel(ctx), g)
 		return
 	}
 	gk := groupKey{r.ID, a.target.hostID, resolved}
@@ -97,7 +97,7 @@ func (s *Service) flushGroup(gk groupKey) {
 	delete(s.outbox, gk)
 	s.outMu.Unlock()
 	if g != nil {
-		s.deliver(g)
+		s.deliver(s.sendCtx(), g)
 	}
 }
 
@@ -108,26 +108,29 @@ func (s *Service) flushAll() {
 	s.outbox = map[groupKey]*outGroup{}
 	s.outMu.Unlock()
 	for _, g := range groups {
-		s.deliver(g)
+		s.deliver(s.sendCtx(), g)
 	}
 }
 
-func (s *Service) deliver(g *outGroup) {
+func (s *Service) deliver(ctx context.Context, g *outGroup) {
 	if s.send != nil {
 		s.send(g)
 		return
 	}
-	s.sendGroup(g)
+	s.sendGroup(ctx, g)
 }
 
-// sendGroup pings the rule's channels and, for fires, the bell. The send
-// outlives the evaluation that queued it, so it runs on the service's
-// own context.
-func (s *Service) sendGroup(g *outGroup) {
-	ctx := s.baseCtx
-	if ctx == nil {
-		ctx = context.Background()
+// sendCtx is the context of sends that outlive the evaluation that queued
+// them: the service's own, which shutdown does not cancel.
+func (s *Service) sendCtx() context.Context {
+	if s.baseCtx == nil {
+		return context.Background()
 	}
+	return s.baseCtx
+}
+
+// sendGroup pings the rule's channels and, for fires, the bell.
+func (s *Service) sendGroup(ctx context.Context, g *outGroup) {
 	title, body := s.groupText(ctx, g)
 	r := &g.rule
 	if s.notify != nil && len(r.ChannelIDs) > 0 {
