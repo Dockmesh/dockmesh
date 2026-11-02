@@ -72,6 +72,11 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 		return err
 	}()
 	durationMS := time.Since(start).Milliseconds()
+	// A delete while the deploy ran must not leave a deployment row behind.
+	if _, gerr := g.stacks.Get(stackName); deployErr == nil && gerr != nil {
+		slog.Warn("git auto-deploy: stack deleted during the deploy", "stack", stackName)
+		return nil, fmt.Errorf("stack %s was deleted during the deploy", stackName)
+	}
 	if deployErr == nil {
 		if err := g.deployments.Set(ctx, stackName, hostID, "deployed"); err != nil {
 			slog.Warn("git auto-deploy: set stack deployment", "stack", stackName, "host", hostID, "err", err)
