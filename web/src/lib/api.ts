@@ -323,6 +323,8 @@ export interface DeployHistoryEntry {
   stack_name: string;
   host_id: string;
   compose_yaml?: string; // only populated on the single-entry GET
+  /** Override (compose.<environment>.yaml) applied on top of compose_yaml. */
+  environment?: string;
   services?: DeployHistoryService[];
   note?: string;
   deployed_by?: string;

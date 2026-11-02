@@ -20,6 +20,9 @@ type DeployHistoryEntry struct {
 	StackName      string                 `json:"stack_name"`
 	HostID         string                 `json:"host_id"`
 	ComposeYAML    string                 `json:"compose_yaml,omitempty"` // only populated for the detail GET, not list
+	// Environment is the compose.<name>.yaml override the deploy applied
+	// on top of ComposeYAML, which is always the base file.
+	Environment    string                 `json:"environment,omitempty"`
 	Services       []DeployHistoryService `json:"services,omitempty"`
 	Note           string                 `json:"note,omitempty"`
 	DeployedBy     string                 `json:"deployed_by,omitempty"`      // users.id (UUID-style)
@@ -70,6 +73,16 @@ func (s *HistoryStore) Record(ctx context.Context, stackName, hostID, composeYAM
 // duration, optional git commit SHA, and an error message when the
 // deploy failed (note + success=false is the typical fail row).
 func (s *HistoryStore) RecordWithStatus(ctx context.Context, stackName, hostID, composeYAML, note, userID string, services []DeployHistoryService, success bool, durationMS int64, gitCommitSHA, errorMessage string) (int64, error) {
+	return s.insert(ctx, stackName, hostID, composeYAML, "", note, userID, services, success, durationMS, gitCommitSHA, errorMessage)
+}
+
+// RecordEnvironment records a successful deploy of the base compose with
+// the named environment override applied.
+func (s *HistoryStore) RecordEnvironment(ctx context.Context, stackName, hostID, composeYAML, environment, note, userID string, services []DeployHistoryService) (int64, error) {
+	return s.insert(ctx, stackName, hostID, composeYAML, environment, note, userID, services, true, 0, "", "")
+}
+
+func (s *HistoryStore) insert(ctx context.Context, stackName, hostID, composeYAML, environment, note, userID string, services []DeployHistoryService, success bool, durationMS int64, gitCommitSHA, errorMessage string) (int64, error) {
 	var servicesJSON sql.NullString
 	if len(services) > 0 {
 		b, err := json.Marshal(services)
@@ -104,10 +117,10 @@ func (s *HistoryStore) RecordWithStatus(ctx context.Context, stackName, hostID, 
 	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO stack_deploy_history
-			(stack_name, host_id, compose_yaml, services_json, note, deployed_by,
+			(stack_name, host_id, compose_yaml, environment, services_json, note, deployed_by,
 			 success, duration_ms, git_commit_sha, error_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		stackName, hostID, composeYAML, servicesJSON, noteArg, userArg,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		stackName, hostID, composeYAML, environment, servicesJSON, noteArg, userArg,
 		successInt, durArg, shaArg, errArg)
 	if err != nil {
 		return 0, err
@@ -131,7 +144,7 @@ func (s *HistoryStore) List(ctx context.Context, stackName string, limit int) ([
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.id,
 		       ROW_NUMBER() OVER (PARTITION BY h.stack_name ORDER BY h.deployed_at ASC, h.id ASC) AS version,
-		       h.stack_name, h.host_id, h.services_json, h.note,
+		       h.stack_name, h.host_id, h.environment, h.services_json, h.note,
 		       h.deployed_by, u.email, h.deployed_at,
 		       h.success, h.duration_ms, h.git_commit_sha, h.error_message
 		FROM stack_deploy_history h
@@ -152,7 +165,7 @@ func (s *HistoryStore) List(ctx context.Context, stackName string, limit int) ([
 		var servicesJSON, note, deployedBy, deployedByEmail, gitSHA, errMsg sql.NullString
 		var success sql.NullInt64
 		var durationMS sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.Version, &e.StackName, &e.HostID, &servicesJSON, &note,
+		if err := rows.Scan(&e.ID, &e.Version, &e.StackName, &e.HostID, &e.Environment, &servicesJSON, &note,
 			&deployedBy, &deployedByEmail, &e.DeployedAt,
 			&success, &durationMS, &gitSHA, &errMsg); err != nil {
 			return nil, err
@@ -201,7 +214,7 @@ func (s *HistoryStore) Get(ctx context.Context, stackName string, id int64) (*De
 			FROM stack_deploy_history
 			WHERE stack_name = ?
 		)
-		SELECT h.id, v.version, h.stack_name, h.host_id, h.compose_yaml, h.services_json,
+		SELECT h.id, v.version, h.stack_name, h.host_id, h.compose_yaml, h.environment, h.services_json,
 		       h.note, h.deployed_by, u.email, h.deployed_at,
 		       h.success, h.duration_ms, h.git_commit_sha, h.error_message
 		FROM stack_deploy_history h
@@ -212,7 +225,7 @@ func (s *HistoryStore) Get(ctx context.Context, stackName string, id int64) (*De
 	var servicesJSON, note, deployedBy, deployedByEmail, gitSHA, errMsg sql.NullString
 	var success sql.NullInt64
 	var durationMS sql.NullInt64
-	if err := row.Scan(&e.ID, &e.Version, &e.StackName, &e.HostID, &e.ComposeYAML, &servicesJSON,
+	if err := row.Scan(&e.ID, &e.Version, &e.StackName, &e.HostID, &e.ComposeYAML, &e.Environment, &servicesJSON,
 		&note, &deployedBy, &deployedByEmail, &e.DeployedAt,
 		&success, &durationMS, &gitSHA, &errMsg); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

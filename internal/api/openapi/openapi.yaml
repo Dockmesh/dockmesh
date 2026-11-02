@@ -6537,8 +6537,9 @@ paths:
       description: |
         Overwrites `compose.yaml` with the snapshot from the given history
         row and re-runs Deploy. Env is deliberately kept as-is so current
-        secrets aren't clobbered. The rollback itself becomes a new
-        history row tagged "rollback to #ID".
+        secrets aren't clobbered. A deploy that used an environment
+        override applies the current `compose.<environment>.yaml` again.
+        The rollback itself becomes a new history row tagged "rollback to #ID".
       parameters:
         - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
@@ -6557,6 +6558,17 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "422":
+          description: |
+            The entry's compose snapshot was cleared because it held `.env`
+            values, or the environment override the deploy used no longer
+            exists or can't be merged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "500":
           description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
           content:
@@ -8884,7 +8896,7 @@ components:
         group_name: {type: string}
         encrypted:
           type: boolean
-          description: True when the variable is marked secret; its value is write-only.
+          description: True when the variable is marked secret; its value is write-only and stored encrypted.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     GlobalEnvInput:
@@ -8898,7 +8910,7 @@ components:
         group_name: {type: string, example: production}
         encrypted:
           type: boolean
-          description: Marks the value as secret so it is never returned by the API.
+          description: Marks the value as secret, so it is stored encrypted and never returned by the API. A secret variable stays secret on update.
     HostInfo:
       type: object
       required: [id, name, kind, status]
@@ -9725,7 +9737,12 @@ components:
         id: {type: integer, format: int64}
         stack_name: {type: string}
         host_id: {type: string}
-        compose_yaml: {type: string}
+        compose_yaml:
+          type: string
+          description: The base compose file. Empty for old environment-override deploys whose snapshot held `.env` values; those can't be rolled back to.
+        environment:
+          type: string
+          description: The `compose.<environment>.yaml` override applied on top of `compose_yaml`, if any.
         services:
           type: array
           items:

@@ -4,10 +4,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
@@ -112,6 +114,10 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if entry.ComposeYAML == "" {
+		writeError(w, http.StatusUnprocessableEntity, "this deploy's compose snapshot was removed because it contained .env values; roll back to another deploy")
+		return
+	}
 	if !h.checkStackFiles(w, r, name) {
 		return
 	}
@@ -121,14 +127,41 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		writeStackError(w, err)
 		return
 	}
+	dir, err := h.Stacks.Dir(name)
+	if err != nil {
+		writeStackError(w, err)
+		return
+	}
+	if entry.Environment != "" {
+		available, err := compose.DiscoverEnvironments(dir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !slices.Contains(available, entry.Environment) {
+			writeError(w, http.StatusUnprocessableEntity, "this deploy used the environment override "+
+				entry.Environment+", but compose."+entry.Environment+".yaml no longer exists")
+			return
+		}
+	}
 
 	if _, err := h.Stacks.Update(name, entry.ComposeYAML, current.Env); err != nil {
 		writeError(w, http.StatusInternalServerError, "update stack files: "+err.Error())
 		return
 	}
 
-	// Re-deploy with the restored compose.
-	res, err := target.DeployStack(r.Context(), name, entry.ComposeYAML, h.mergeGlobalEnv(r.Context(), current.Env))
+	mergedEnv := h.mergeGlobalEnv(r.Context(), current.Env)
+	deployYAML := entry.ComposeYAML
+	if entry.Environment != "" {
+		_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, mergedEnv, entry.Environment)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "apply environment override "+entry.Environment+": "+err.Error()+
+				". The stack's compose.yaml has already been overwritten with the rollback target.")
+			return
+		}
+		deployYAML = merged
+	}
+	res, err := target.DeployStack(r.Context(), name, deployYAML, mergedEnv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "redeploy failed: "+err.Error()+
 			". The stack's compose.yaml has already been overwritten with the rollback target; inspect the stack and either retry or roll forward.")
@@ -149,7 +182,7 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 	for _, s := range res.Services {
 		services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
 	}
-	if _, err := h.DeployHistory.Record(r.Context(), name, target.ID(), entry.ComposeYAML, note, middleware.UserID(r.Context()), services); err != nil {
+	if _, err := h.DeployHistory.RecordEnvironment(r.Context(), name, target.ID(), entry.ComposeYAML, entry.Environment, note, middleware.UserID(r.Context()), services); err != nil {
 		slog.Warn("record rollback history", "stack", name, "err", err)
 	}
 
