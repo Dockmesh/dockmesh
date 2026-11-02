@@ -84,6 +84,9 @@ type Token struct {
 	CreatedBy *string    `json:"created_by,omitempty"`
 	// Legacy tokens predate owner tracking: no owner, pinned role.
 	Legacy bool `json:"legacy"`
+	// ParentID is the token this one was minted with; it never reaches
+	// beyond that token's current access.
+	ParentID *int64 `json:"parent_id,omitempty"`
 	// OwnerMissing: the owner was deleted, so the token no longer works.
 	OwnerMissing bool       `json:"owner_missing,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
@@ -104,7 +107,7 @@ func scanRow(row interface {
 	err := row.Scan(
 		&t.ID, &hash, &t.Name, &t.Role, &t.Scope.Type, &t.Scope.Host, &t.Scope.Value, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
-		&t.RevokedAt,
+		&t.RevokedAt, &t.ParentID,
 	)
 	if err != nil {
 		return nil, "", err
@@ -126,7 +129,7 @@ func scanRowListing(row interface {
 	err := row.Scan(
 		&t.ID, &t.Prefix, &t.Name, &t.Role, &t.Scope.Type, &t.Scope.Host, &t.Scope.Value, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
-		&t.RevokedAt,
+		&t.RevokedAt, &t.ParentID,
 	)
 	if err != nil {
 		return nil, err
@@ -146,6 +149,7 @@ type CreateInput struct {
 	ExpiresInDays   int        // 0 = no expiry
 	NotAfter        *time.Time // caps the expiry (tokens minted by tokens)
 	CreatedByUserID string     // owner; required
+	ParentID        int64      // token it was minted with, 0 for none
 }
 
 // Service persists tokens and provides middleware-friendly lookup.
@@ -226,11 +230,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 		expiresAt = &t
 	}
 
+	var parent *int64
+	if in.ParentID != 0 {
+		parent = &in.ParentID
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO api_tokens (token_prefix, token_hash, name, role, scope_type, scope_host, scope_value,
-		                        created_by_user_id, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		prefix, hash, in.Name, in.Role, in.Scope.Type, in.Scope.Host, in.Scope.Value, in.CreatedByUserID, expiresAt,
+		                        created_by_user_id, expires_at, parent_token_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		prefix, hash, in.Name, in.Role, in.Scope.Type, in.Scope.Host, in.Scope.Value, in.CreatedByUserID, expiresAt, parent,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("insert: %w", err)
@@ -245,6 +253,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 		Role:      in.Role,
 		Scope:     in.Scope,
 		CreatedBy: &owner,
+		ParentID:  parent,
 		CreatedAt: time.Now(),
 		ExpiresAt: expiresAt,
 	}
@@ -264,7 +273,7 @@ func (s *Service) Validate(ctx context.Context, plaintext string) (*Token, error
 	t, hash, err := scanRow(s.db.QueryRowContext(ctx, `
 		SELECT id, token_hash, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
-		       revoked_at
+		       revoked_at, parent_token_id
 		FROM api_tokens
 		WHERE token_prefix = ?`,
 		prefix,
@@ -377,7 +386,7 @@ func (s *Service) List(ctx context.Context) ([]Token, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, token_prefix, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
-		       revoked_at
+		       revoked_at, parent_token_id
 		FROM api_tokens
 		ORDER BY created_at DESC`,
 	)
@@ -404,7 +413,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*Token, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, token_prefix, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
-		       revoked_at
+		       revoked_at, parent_token_id
 		FROM api_tokens WHERE id = ?`,
 		id,
 	)

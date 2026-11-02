@@ -158,6 +158,7 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresInDays:   in.ExpiresInDays,
 		NotAfter:        notAfter,
 		CreatedByUserID: creator,
+		ParentID:        middleware.APITokenID(r.Context()),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -182,6 +183,7 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		"scope":      token.Scope,
 		"expires_at": token.ExpiresAt,
 		"created_by": token.CreatedBy,
+		"parent_id":  token.ParentID,
 		"legacy":     false,
 		"token":      plaintext,
 	})
