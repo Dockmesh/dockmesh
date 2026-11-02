@@ -265,8 +265,8 @@ paths:
       summary: Check the agent URL from the server's point of view
       description: |
         Resolves the configured agent URL, opens a TCP connection to it and
-        completes a TLS handshake that must present this server's own agent
-        listener certificate. A certificate from another issuer means a proxy
+        completes a TLS handshake that must present a certificate issued by
+        this server's agents CA. A certificate from another issuer means a proxy
         terminates TLS in front of the listener (for example Cloudflare in
         proxy mode), which breaks the agents' mutual TLS. The result reflects
         this server's DNS and network; remote hosts may see something else

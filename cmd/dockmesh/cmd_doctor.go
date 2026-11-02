@@ -69,7 +69,7 @@ func checkConfig() []checkResult {
 	}
 	out := []checkResult{ok("config load", fmt.Sprintf("HTTPAddr=%s, BaseURL=%s", cfg.HTTPAddr, cfg.BaseURL))}
 	if cfg.AgentPublicURL == "" {
-		out = append(out, ok("agent public url", "taken from Settings -> General (DOCKMESH_AGENT_PUBLIC_URL not set); check it with Add host → Check connection"))
+		out = append(out, ok("agent public url", "not set in dockmesh.env; Settings -> General or derived from the base URL (check with Add host -> Check connection)"))
 	} else {
 		out = append(out, ok("agent public url", cfg.AgentPublicURL))
 	}

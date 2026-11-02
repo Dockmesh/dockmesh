@@ -79,8 +79,7 @@ func (m *Manager) CACertPEM() []byte { return m.caCertPEM }
 // The agent installer pins it so enrollment only talks to this server.
 func (m *Manager) CAFingerprint() string { return certFingerprint(m.caCert.Raw) }
 
-// ServerCertPEM / ServerKeyPEM return the listener's identity. Used to
-// build a tls.Config in the caller (so we don't import net/http here).
+// ServerCertPEM / ServerKeyPEM return the listener's identity.
 func (m *Manager) ServerCertPEM() []byte {
 	m.serverMu.RLock()
 	defer m.serverMu.RUnlock()

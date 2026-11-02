@@ -83,8 +83,6 @@ type Service struct {
 	db         *sql.DB
 	pki        *pki.Manager
 	urlMu      sync.RWMutex
-	publicURL  string // public HTTPS URL of the main dockmesh server
-	agentURL   string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
 	endpoints  Endpoints
 	resolve    func() Endpoints
 	listenerOn bool
@@ -330,8 +328,6 @@ func NewService(db *sql.DB, p *pki.Manager, publicURL, agentURL string) *Service
 	return &Service{
 		db:        db,
 		pki:       p,
-		publicURL: publicURL,
-		agentURL:  agentURL,
 		endpoints: Endpoints{BaseURL: publicURL, AgentURL: agentURL},
 		enrollTTL: DefaultEnrollTokenTTL,
 		now:       time.Now,
@@ -354,13 +350,13 @@ func (s *Service) SetEnrollTokenTTL(d time.Duration) {
 func (s *Service) PublicURL() string {
 	s.urlMu.RLock()
 	defer s.urlMu.RUnlock()
-	return s.publicURL
+	return s.endpoints.BaseURL
 }
 
 func (s *Service) AgentURL() string {
 	s.urlMu.RLock()
 	defer s.urlMu.RUnlock()
-	return s.agentURL
+	return s.endpoints.AgentURL
 }
 
 // CAFingerprint is the SHA-256 of the agents CA the installer pins.

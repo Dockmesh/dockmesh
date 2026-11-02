@@ -75,7 +75,7 @@ func (s *Service) CheckReachability(ctx context.Context) Reachability {
 	}
 	u, err := url.Parse(e.AgentURL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "wss" && u.Scheme != "ws") {
-		add("url", CheckFail, "The agent URL "+e.AgentURL+" is not a wss:// URL with a host.")
+		add("url", CheckFail, "The agent URL "+e.AgentURL+" is not a wss:// (or ws://) URL with a host.")
 		return finish()
 	}
 	host := u.Hostname()

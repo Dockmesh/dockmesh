@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -96,10 +97,7 @@ func ValidateAgentURL(raw string) error {
 		return err
 	}
 	u, _ := url.Parse(strings.TrimSpace(raw))
-	if err := pki.ValidateSAN(u.Hostname()); err != nil {
-		return err
-	}
-	return nil
+	return pki.ValidateSAN(u.Hostname())
 }
 
 func validateURL(raw string, schemes ...string) error {
@@ -107,13 +105,7 @@ func validateURL(raw string, schemes ...string) error {
 	if err != nil {
 		return fmt.Errorf("not a URL: %w", err)
 	}
-	ok := false
-	for _, s := range schemes {
-		if u.Scheme == s {
-			ok = true
-		}
-	}
-	if !ok {
+	if !slices.Contains(schemes, u.Scheme) {
 		return fmt.Errorf("must start with %s://", strings.Join(schemes, ":// or "))
 	}
 	if u.Hostname() == "" {
@@ -155,7 +147,7 @@ func (s *Service) Endpoints() Endpoints {
 // without touching the listener cert.
 func (s *Service) UseEndpoints(e Endpoints) {
 	s.urlMu.Lock()
-	s.publicURL, s.agentURL, s.endpoints = e.BaseURL, e.AgentURL, e
+	s.endpoints = e
 	s.urlMu.Unlock()
 }
 
