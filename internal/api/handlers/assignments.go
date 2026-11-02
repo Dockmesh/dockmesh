@@ -155,9 +155,9 @@ func (h *Handlers) DeleteAssignment(w http.ResponseWriter, r *http.Request) {
 type accessCheckRequest struct {
 	UserID string `json:"user_id"`
 	// Area + Level, or Extra, name what the user would do.
-	Area  string `json:"area,omitempty"`
-	Level string `json:"level,omitempty"`
-	Extra string `json:"extra,omitempty"`
+	Area    string `json:"area,omitempty"`
+	Level   string `json:"level,omitempty"`
+	Extra   string `json:"extra,omitempty"`
 	Host    string `json:"host,omitempty"`
 	HostTag string `json:"host_tag,omitempty"`
 	Stack   string `json:"stack,omitempty"`
