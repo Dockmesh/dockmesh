@@ -20,7 +20,7 @@ import (
 // configured registries service can be passed through to every fresh
 // compose.Service this host constructs.
 type authResolver interface {
-	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+	ResolveAuthForImage(ctx context.Context, image string) (string, error)
 }
 
 // progressTracker matches what compose.Service expects via its

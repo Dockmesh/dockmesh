@@ -258,10 +258,15 @@ type ImageRemoveReq struct {
 // StackDeployReq carries the full compose project payload to the agent.
 // The agent writes Compose + Env to a temp directory, parses with
 // compose-go and runs the same DeployProject executor the server uses.
+//
+// Auth maps image references to X-Registry-Auth blobs for the pulls of
+// this request; ForcePull pulls every image even when it is cached.
 type StackDeployReq struct {
-	Name    string `json:"name"`
-	Compose string `json:"compose"`
-	Env     string `json:"env,omitempty"`
+	Name      string            `json:"name"`
+	Compose   string            `json:"compose"`
+	Env       string            `json:"env,omitempty"`
+	Auth      map[string]string `json:"auth,omitempty"`
+	ForcePull bool              `json:"force_pull,omitempty"`
 }
 
 type StackNameReq struct {
@@ -271,19 +276,21 @@ type StackNameReq struct {
 // StackScaleReq carries the compose content alongside the scale
 // request so the agent can parse the project locally. P.8.
 type StackScaleReq struct {
-	Name     string `json:"name"`
-	Compose  string `json:"compose"`
-	Env      string `json:"env,omitempty"`
-	Service  string `json:"service"`
-	Replicas int    `json:"replicas"`
+	Name     string            `json:"name"`
+	Compose  string            `json:"compose"`
+	Env      string            `json:"env,omitempty"`
+	Service  string            `json:"service"`
+	Replicas int               `json:"replicas"`
+	Auth     map[string]string `json:"auth,omitempty"`
 }
 
 // StackCheckScaleReq is the pre-flight check variant. P.8.
 type StackCheckScaleReq struct {
-	Name    string `json:"name"`
-	Compose string `json:"compose"`
-	Env     string `json:"env,omitempty"`
-	Service string `json:"service"`
+	Name    string            `json:"name"`
+	Compose string            `json:"compose"`
+	Env     string            `json:"env,omitempty"`
+	Service string            `json:"service"`
+	Auth    map[string]string `json:"auth,omitempty"`
 }
 
 // VolumeTarReq identifies the volume for tar export/import.

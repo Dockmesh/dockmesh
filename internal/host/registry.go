@@ -15,7 +15,18 @@ type Registry struct {
 	agents *agents.Service
 
 	afterDeploy DeployHook
+	auth        RegistryAuth
 }
+
+// RegistryAuth maps the images a request pulls on a host to their
+// registry credentials.
+type RegistryAuth interface {
+	AuthForImages(ctx context.Context, hostID string, images []string) (map[string]string, error)
+}
+
+// SetRegistryAuth makes agent deploys, scales and scale checks carry the
+// credentials for their images.
+func (r *Registry) SetRegistryAuth(a RegistryAuth) { r.auth = a }
 
 func NewRegistry(dockerCli *docker.Client, agentSvc *agents.Service) *Registry {
 	return &Registry{
@@ -46,6 +57,7 @@ func (r *Registry) Pick(id string) (Host, error) {
 	}
 	rh := NewRemote(live.ID, live.Name, r.agents)
 	rh.afterDeploy = r.afterDeploy
+	rh.auth = r.auth
 	return rh, nil
 }
 

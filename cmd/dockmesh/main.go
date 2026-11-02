@@ -763,10 +763,17 @@ func main() {
 	// image. Without this, compose deploys + the "update image" button
 	// + git-source auto-deploys all hit the daemon API anonymously and
 	// private registries (GHCR, ECR, Quay, …) reply 401.
-	composeSvc.SetAuthResolver(registriesSvc)
-	updaterSvc.SetAuthResolver(registriesSvc)
-	updateWatcher.SetAuthResolver(registriesSvc)
-	hostRegistry.Local().SetAuthResolver(registriesSvc)
+	hostTagsSvc := hosttags.New(database)
+	if err := hostTagsSvc.Load(ctx); err != nil {
+		slog.Warn("host tags load", "err", err)
+	}
+	registriesSvc.SetHostTags(hostTagsSvc.Tags)
+	localAuth := registriesSvc.ForHost("local")
+	composeSvc.SetAuthResolver(localAuth)
+	updaterSvc.SetAuthResolver(localAuth)
+	updateWatcher.SetAuthResolver(localAuth)
+	hostRegistry.Local().SetAuthResolver(localAuth)
+	hostRegistry.SetRegistryAuth(registriesSvc)
 	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
 
 	// Deploy progress tracker — same propagation pattern as the auth
@@ -851,11 +858,7 @@ func main() {
 
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
-	hostTagsSvc := hosttags.New(database)
 	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})
-	if err := hostTagsSvc.Load(ctx); err != nil {
-		slog.Warn("host tags load", "err", err)
-	}
 
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)

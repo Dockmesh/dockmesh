@@ -127,7 +127,7 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 	var registryAuth string
 	var usedRegistryName string
 	if h.Registries != nil {
-		auth, reg, err := h.Registries.ResolveAuth(r.Context(), req.Image, nil)
+		auth, reg, err := h.Registries.ResolveForHost(r.Context(), req.Image, "local")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "resolve registry auth: "+err.Error())
 			return

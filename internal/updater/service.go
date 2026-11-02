@@ -71,7 +71,7 @@ const DefaultRollbackKeep = 3
 // authResolver mirrors compose.authResolver — kept as an interface
 // here so registries.Service can be wired in without an import cycle.
 type authResolver interface {
-	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+	ResolveAuthForImage(ctx context.Context, image string) (string, error)
 }
 
 type deployRecorder interface {
@@ -157,7 +157,7 @@ func (s *Service) resolveImageAuth(ctx context.Context, image string) string {
 	if s.auth == nil {
 		return ""
 	}
-	auth, err := s.auth.ResolveAuthForImage(ctx, image, nil)
+	auth, err := s.auth.ResolveAuthForImage(ctx, image)
 	if err != nil {
 		return ""
 	}

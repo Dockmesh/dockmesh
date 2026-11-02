@@ -1208,6 +1208,10 @@ func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.Stack
 	if err != nil {
 		return nil, err
 	}
+	ctx = compose.WithRegistryAuth(ctx, req.Auth)
+	if req.ForcePull {
+		ctx = compose.WithForcePull(ctx)
+	}
 	return cs.DeployProject(ctx, proj)
 }
 
@@ -1248,7 +1252,7 @@ func agentScaleService(ctx context.Context, cs *compose.Service, req agents.Stac
 	if err != nil {
 		return nil, err
 	}
-	return cs.ScaleService(ctx, proj, req.Service, req.Replicas)
+	return cs.ScaleService(compose.WithRegistryAuth(ctx, req.Auth), proj, req.Service, req.Replicas)
 }
 
 func agentCheckScale(ctx context.Context, cs *compose.Service, req agents.StackCheckScaleReq) (*compose.ScaleCheck, error) {
@@ -1264,7 +1268,7 @@ func agentCheckScale(ctx context.Context, cs *compose.Service, req agents.StackC
 	if err != nil {
 		return nil, err
 	}
-	return cs.CheckScale(ctx, proj, req.Service)
+	return cs.CheckScale(compose.WithRegistryAuth(ctx, req.Auth), proj, req.Service)
 }
 
 // agentRolePaths labels the filesystems holding Docker, containerd, the

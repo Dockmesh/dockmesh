@@ -36,6 +36,36 @@ type RemoteHost struct {
 	agents LiveAgents
 
 	afterDeploy DeployHook
+	auth        RegistryAuth
+}
+
+// registryAuth is the credentials for the images of a compose payload,
+// nil when there are none or the project can't be read (the agent then
+// reports the parse error itself).
+func (h *RemoteHost) registryAuth(ctx context.Context, name, composeYAML, envContent string) map[string]string {
+	if h.auth == nil {
+		return nil
+	}
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		slog.Warn("registry auth for agent: stage compose", "stack", name, "err", err)
+		return nil
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil
+	}
+	images := make([]string, 0, len(proj.Services))
+	for _, svc := range proj.Services {
+		images = append(images, svc.Image)
+	}
+	auth, err := h.auth.AuthForImages(ctx, h.id, images)
+	if err != nil {
+		slog.Warn("registry auth for agent", "stack", name, "host", h.id, "err", err)
+		return nil
+	}
+	return auth
 }
 
 func NewRemote(id, name string, live LiveAgents) *RemoteHost {
@@ -211,9 +241,11 @@ func (s *remoteExecSession) Close() error {
 
 func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
 	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
-		Name:    name,
-		Compose: composeYAML,
-		Env:     envContent,
+		Name:      name,
+		Compose:   composeYAML,
+		Env:       envContent,
+		Auth:      h.registryAuth(ctx, name, composeYAML, envContent),
+		ForcePull: compose.ForcePullRequested(ctx),
 	})
 	if err != nil {
 		return nil, err
@@ -658,6 +690,7 @@ func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envCon
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent,
 		Service: service, Replicas: replicas,
+		Auth: h.registryAuth(ctx, name, composeYAML, envContent),
 	})
 	if err != nil {
 		return nil, err
@@ -672,6 +705,7 @@ func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envCon
 func (h *RemoteHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
 	data, err := h.request(ctx, agents.FrameReqStackCheckScale, agents.StackCheckScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent, Service: service,
+		Auth: h.registryAuth(ctx, name, composeYAML, envContent),
 	})
 	if err != nil {
 		return nil, err
