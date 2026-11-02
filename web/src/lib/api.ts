@@ -1841,8 +1841,8 @@ export const api = {
     active: () => request<Migration[]>('/migrations/active'),
     get: (name: string, id: string) =>
       request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate/${id}`),
-    initiate: (name: string, targetHostId: string) =>
-      request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate`, {
+    initiate: (name: string, targetHostId: string, confirmExternal = false) =>
+      request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate${confirmExternal ? '?confirm_external=1' : ''}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_host_id: targetHostId })
       }),

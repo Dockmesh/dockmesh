@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -23,21 +24,32 @@ import (
 // one migration per stack is allowed at a time.
 type Service struct {
 	store       *Store
-	hosts       *host.Registry
+	hosts       Hosts
 	stacks      *stacks.Manager
 	deployments *stacks.DeploymentStore
 	db          *sql.DB
 	notifs      *notifications.Service
+	globals     deploy.GlobalVars
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel
 }
 
+// Hosts is the part of host.Registry migrations use.
+type Hosts interface {
+	Pick(id string) (host.Host, error)
+	List(ctx context.Context) ([]host.Info, error)
+}
+
+// SetGlobalEnv makes migration deploys use the global variables like a
+// manual deploy does.
+func (s *Service) SetGlobalEnv(g deploy.GlobalVars) { s.globals = g }
+
 // SetNotifier wires in the bell-icon notification center so each
 // finished migration emits a success/failure notification.
 func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
 
-func NewService(db *sql.DB, hr *host.Registry, sm *stacks.Manager, ds *stacks.DeploymentStore) *Service {
+func NewService(db *sql.DB, hr Hosts, sm *stacks.Manager, ds *stacks.DeploymentStore) *Service {
 	return &Service{
 		store:       NewStore(db),
 		hosts:       hr,
@@ -172,9 +184,13 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 				"phase", p.status, "err", err)
 			_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, p.status, err.Error())
 
-			// Auto-rollback if we were past the stopping phase.
-			if p.status == StatusStarting || p.status == StatusPostRestore || p.status == StatusHealthCheck {
-				s.rollback(context.Background(), m)
+			// From Stopping on, the source may be down; from Starting on, the
+			// target may run the stack too.
+			switch p.status {
+			case StatusStopping, StatusSyncing:
+				s.rollback(context.WithoutCancel(ctx), m, false)
+			case StatusStarting, StatusPostRestore, StatusHealthCheck:
+				s.rollback(context.WithoutCancel(ctx), m, true)
 			}
 			if s.notifs != nil {
 				_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
@@ -227,8 +243,48 @@ func (s *Service) phasePreflight(ctx context.Context, m *Migration) error {
 	return nil
 }
 
+// checkFiles refuses stack files changed outside Dockmesh after the
+// migration was started; Initiate's caller confirms them up front.
+func (s *Service) checkFiles(name string) error {
+	changed, err := s.stacks.ModifiedOutside(name)
+	if err != nil {
+		return err
+	}
+	if len(changed) > 0 {
+		return fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(changed, ", "))
+	}
+	return nil
+}
+
+// spec is the compose and env a migration deploys: the same globals and
+// default override as a manual deploy.
+func (s *Service) spec(ctx context.Context, name string) (deploy.Spec, error) {
+	detail, err := s.stacks.Get(name)
+	if err != nil {
+		return deploy.Spec{}, err
+	}
+	dir, err := s.stacks.Dir(name)
+	if err != nil {
+		return deploy.Spec{}, err
+	}
+	spec, err := deploy.Resolve(ctx, s.globals, dir, name, detail.Compose, detail.Env)
+	if err != nil {
+		return deploy.Spec{}, err
+	}
+	if err := s.stacks.CheckOverride(name, spec.Override); err != nil {
+		return deploy.Spec{}, err
+	}
+	return spec, nil
+}
+
 func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	slog.Info("migration prepare", "id", m.ID)
+	if err := s.checkFiles(m.StackName); err != nil {
+		return err
+	}
+	if _, err := s.spec(ctx, m.StackName); err != nil {
+		return err
+	}
 	detail, err := s.stacks.Get(m.StackName)
 	if err != nil {
 		return err
@@ -363,11 +419,14 @@ func (s *Service) phaseStarting(ctx context.Context, m *Migration) error {
 	if err != nil {
 		return fmt.Errorf("target host: %w", err)
 	}
-	detail, err := s.stacks.Get(m.StackName)
+	if err := s.checkFiles(m.StackName); err != nil {
+		return err
+	}
+	spec, err := s.spec(ctx, m.StackName)
 	if err != nil {
 		return err
 	}
-	_, err = target.DeployStack(ctx, m.StackName, detail.Compose, detail.Env)
+	_, err = target.DeployStack(ctx, m.StackName, spec.Compose, spec.Env)
 	return err
 }
 
@@ -429,8 +488,9 @@ func (s *Service) phaseCommit(ctx context.Context, m *Migration) error {
 	return nil
 }
 
-// rollback restarts the source stack after a failed migration.
-func (s *Service) rollback(ctx context.Context, m *Migration) {
+// rollback restarts the source stack after a failed or completed
+// migration, stopping the target first when it may run the stack.
+func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool) {
 	slog.Warn("migration rollback", "id", m.ID, "stack", m.StackName)
 	source, err := s.hosts.Pick(m.SourceHostID)
 	if err != nil {
@@ -438,18 +498,21 @@ func (s *Service) rollback(ctx context.Context, m *Migration) {
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "source host unavailable: "+err.Error())
 		return
 	}
-	detail, err := s.stacks.Get(m.StackName)
+	if err := s.checkFiles(m.StackName); err != nil {
+		slog.Error("rollback: stack files changed outside Dockmesh", "err", err)
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback",
+			"source not restarted: "+err.Error()+"; review the files and deploy the stack on "+m.SourceHostID)
+		return
+	}
+	spec, err := s.spec(ctx, m.StackName)
 	if err != nil {
-		slog.Error("rollback: stack get failed", "err", err)
+		slog.Error("rollback: stack read failed", "err", err)
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "stack read failed: "+err.Error())
 		return
 	}
-	// Rollback on a COMPLETED migration means: undo the move. Stop the
-	// target first (stack is currently running there), then restart on
-	// source. The source's stopped containers + volumes are still on
-	// disk as long as purge-source wasn't called — restarting just
-	// re-attaches the pre-migration volumes. Fixes FINDING-26.
-	if m.Status == StatusCompleted {
+	// The source's volumes stay on disk until purge-source, so a restart
+	// re-attaches the pre-migration data.
+	if stopTarget {
 		if target, terr := s.hosts.Pick(m.TargetHostID); terr == nil {
 			if err := target.StopStack(ctx, m.StackName); err != nil {
 				slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
@@ -458,7 +521,7 @@ func (s *Service) rollback(ctx context.Context, m *Migration) {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
 		}
 	}
-	if _, err := source.DeployStack(ctx, m.StackName, detail.Compose, detail.Env); err != nil {
+	if _, err := source.DeployStack(ctx, m.StackName, spec.Compose, spec.Env); err != nil {
 		slog.Error("rollback: restart source failed", "err", err)
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "source restart failed: "+err.Error())
 		return
@@ -499,6 +562,6 @@ func (s *Service) Rollback(ctx context.Context, migrationID string) error {
 	if m.Status != StatusCompleted {
 		return fmt.Errorf("can only rollback completed migrations (current: %s)", m.Status)
 	}
-	go s.rollback(context.Background(), m)
+	go s.rollback(context.WithoutCancel(ctx), m, true)
 	return nil
 }

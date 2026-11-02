@@ -763,10 +763,18 @@ func main() {
 	// image. Without this, compose deploys + the "update image" button
 	// + git-source auto-deploys all hit the daemon API anonymously and
 	// private registries (GHCR, ECR, Quay, …) reply 401.
-	composeSvc.SetAuthResolver(registriesSvc)
-	updaterSvc.SetAuthResolver(registriesSvc)
-	updateWatcher.SetAuthResolver(registriesSvc)
-	hostRegistry.Local().SetAuthResolver(registriesSvc)
+	// In-memory cache; the service reloads it after every mutation.
+	hostTagsSvc := hosttags.New(database)
+	if err := hostTagsSvc.Load(ctx); err != nil {
+		slog.Warn("host tags load", "err", err)
+	}
+	registriesSvc.SetHostTags(hostTagsSvc.Tags)
+	localAuth := registriesSvc.ForHost("local")
+	composeSvc.SetAuthResolver(localAuth)
+	updaterSvc.SetAuthResolver(localAuth)
+	updateWatcher.SetAuthResolver(localAuth)
+	hostRegistry.Local().SetAuthResolver(localAuth)
+	hostRegistry.SetRegistryAuth(registriesSvc)
 	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
 
 	// Deploy progress tracker — same propagation pattern as the auth
@@ -776,116 +784,34 @@ func main() {
 	composeSvc.SetProgressTracker(deployTracker)
 	hostRegistry.Local().SetProgressTracker(deployTracker)
 
-	// Deployment history store. Created BEFORE gitDeploy so the
-	// auto-deploy closure below can write an entry per git-triggered
-	// deploy — without that, /deployments only ever shows manual ones.
+	// Created before the git deployer, which records an entry per
+	// git-triggered deploy.
 	deployHistoryStore := stacks.NewHistoryStore(database)
 	updaterSvc.SetStacks(stacksMgr, deployHistoryStore)
 
-	// Git-backed stacks (P.11.11). Cache dir sits under the DB data
-	// dir so operators who override DOCKMESH_DB_PATH get the matching
-	// location automatically. Auto-deploy closure uses LocalHost for
-	// now; remote-agent git-auto-deploy is a follow-up slice.
+	deployStore := stacks.NewDeploymentStore(database)
+
+	// Git-backed stacks. Cache dir sits under the DB data dir so
+	// operators who override DOCKMESH_DB_PATH get the matching location
+	// automatically.
 	gitCacheDir := filepath.Join(filepath.Dir(cfg.DBPath), "git-cache")
-	// Forward-declared so the gitDeploy closure can look up the
-	// last-synced commit SHA from the source row when recording the
-	// history entry. gitsource.New populates this slot below.
+	// gitSourceSvc is set below; the deployer reads the synced commit
+	// from it.
 	var gitSourceSvc *gitsource.Service
-	gitDeploy := func(ctx context.Context, stackName string) (any, error) {
-		if dockerCli == nil {
-			return nil, fmt.Errorf("docker unavailable")
-		}
-		if err := stacksMgr.CheckGitDeploy(ctx, stackName); err != nil {
-			return nil, err
-		}
-		detail, err := stacksMgr.Get(stackName)
-		if err != nil {
-			return nil, err
-		}
-		start := time.Now()
-		// Reuse the shared LocalHost so the registries-auth wiring
-		// applied at startup is honoured. compose.WithForcePull forces
-		// every image in the stack to re-pull so a fresh push to GHCR
-		// (or any registry) is actually picked up, even when only the
-		// image manifest changed and the compose.yaml is untouched.
-		res, deployErr := hostRegistry.Local().DeployStack(
-			compose.WithForcePull(ctx), stackName, detail.Compose, detail.Env)
-		durationMS := time.Since(start).Milliseconds()
-
-		// Pull the SHA the source just synced to — gitsource.Sync
-		// persists it before calling the deploy callback, so by the
-		// time we're here the row is up to date.
-		gitSHA := ""
-		if gitSourceSvc != nil {
-			if src, gerr := gitSourceSvc.Get(ctx, stackName); gerr == nil && src != nil {
-				gitSHA = src.LastSyncSHA
+	gitDeploy := (&gitDeployer{
+		stacks:      stacksMgr,
+		deployments: deployStore,
+		history:     deployHistoryStore,
+		hosts:       hostRegistry,
+		globals:     globalEnvStore.List,
+		notifs:      notifSvc,
+		commit: func(ctx context.Context, stack string) string {
+			if src, err := gitSourceSvc.Get(ctx, stack); err == nil && src != nil {
+				return src.LastSyncSHA
 			}
-		}
-
-		// Notification-center event for the bell icon. Broadcast so
-		// every admin sees git auto-deploys, not just whoever triggered
-		// the underlying webhook/poll.
-		if notifSvc != nil {
-			if deployErr != nil {
-				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
-					Kind:      notifications.KindDeployFail,
-					Severity:  notifications.SevError,
-					Title:     "Git auto-deploy failed: " + stackName,
-					Body:      deployErr.Error(),
-					Link:      "/stacks/" + stackName,
-					Perm:      rbac.PermStacksView,
-					HostID:    "local",
-					StackName: stackName,
-				})
-			} else if res != nil {
-				shaShort := ""
-				if gitSHA != "" && len(gitSHA) >= 7 {
-					shaShort = gitSHA[:7]
-				}
-				body := "stack synced from git"
-				if shaShort != "" {
-					body = "synced to " + shaShort + " — " + countServicesString(len(res.Services))
-				}
-				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
-					Kind:      notifications.KindDeployOK,
-					Severity:  notifications.SevSuccess,
-					Title:     "Git auto-deploy: " + stackName,
-					Body:      body,
-					Link:      "/stacks/" + stackName,
-					Perm:      rbac.PermStacksView,
-					HostID:    "local",
-					StackName: stackName,
-				})
-			}
-		}
-
-		// Always record a history entry — success OR failure — so the
-		// timeline reflects every git-triggered attempt, not just the
-		// happy path. ErrorMessage is empty on success.
-		if deployHistoryStore != nil {
-			services := make([]stacks.DeployHistoryService, 0)
-			if res != nil {
-				for _, s := range res.Services {
-					services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
-				}
-			}
-			success := deployErr == nil
-			errMsg := ""
-			if deployErr != nil {
-				errMsg = deployErr.Error()
-			}
-			if _, herr := deployHistoryStore.RecordWithStatus(ctx, stackName, "local",
-				detail.Compose, "git auto-deploy", "", services,
-				success, durationMS, gitSHA, errMsg); herr != nil {
-				slog.Warn("git auto-deploy: record history failed",
-					"stack", stackName, "err", herr)
-			}
-		}
-		if deployErr != nil {
-			return nil, deployErr
-		}
-		return res, nil
-	}
+			return ""
+		},
+	}).deploy
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
 	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
 	gitSourceSvc.Start(ctx)
@@ -930,17 +856,11 @@ func main() {
 	agentUpgrade.Start(ctx)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
-	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
-	// fresh after every mutation via Load() inside the service.
-	hostTagsSvc := hosttags.New(database)
 	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})
-	if err := hostTagsSvc.Load(ctx); err != nil {
-		slog.Warn("host tags load", "err", err)
-	}
 
-	deployStore := stacks.NewDeploymentStore(database)
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
+	migrationSvc.SetGlobalEnv(globalEnvStore.List)
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
 	}

@@ -2,10 +2,8 @@
 // don't have to re-enter them on every private pull. Passwords are
 // age-encrypted at rest via the shared secrets service.
 //
-// P.11.7. Follow-ups tracked in the Slices doc:
-//   - P.12.28: propagate credentials to remote agents over the mTLS link.
-//   - P.12.28: auto-apply a configured docker.io entry to unprefixed
-//     pulls (lifts Docker Hub rate-limit without a .dockerconfigjson).
+// A registry with scope tags is only used for hosts carrying one of
+// them; agents get the credentials for the images of each request.
 package registries
 
 import (
@@ -62,8 +60,61 @@ type Input struct {
 }
 
 type Service struct {
-	db      *sql.DB
-	secrets *secrets.Service
+	db       *sql.DB
+	secrets  *secrets.Service
+	hostTags func(hostID string) []string
+}
+
+// SetHostTags tells the service which tags a host carries, for matching
+// the scope tags of registries.
+func (s *Service) SetHostTags(f func(hostID string) []string) { s.hostTags = f }
+
+func (s *Service) tagsOf(hostID string) []string {
+	if s.hostTags == nil {
+		return nil
+	}
+	return s.hostTags(hostID)
+}
+
+// HostAuth resolves registry credentials for pulls on one host.
+type HostAuth struct {
+	s      *Service
+	hostID string
+}
+
+// ForHost returns the resolver for pulls on hostID.
+func (s *Service) ForHost(hostID string) HostAuth { return HostAuth{s: s, hostID: hostID} }
+
+// ResolveAuthForImage is the X-Registry-Auth blob for image on the host,
+// "" for an anonymous pull.
+func (a HostAuth) ResolveAuthForImage(ctx context.Context, image string) (string, error) {
+	blob, _, err := a.s.ResolveAuth(ctx, image, a.s.tagsOf(a.hostID))
+	return blob, err
+}
+
+// ResolveForHost is ResolveAuth with the tags of hostID.
+func (s *Service) ResolveForHost(ctx context.Context, image, hostID string) (string, *Registry, error) {
+	return s.ResolveAuth(ctx, image, s.tagsOf(hostID))
+}
+
+// AuthForImages maps each image that has credentials on hostID to its
+// X-Registry-Auth blob.
+func (s *Service) AuthForImages(ctx context.Context, hostID string, images []string) (map[string]string, error) {
+	tags := s.tagsOf(hostID)
+	out := map[string]string{}
+	for _, img := range images {
+		if _, done := out[img]; done || img == "" {
+			continue
+		}
+		blob, _, err := s.ResolveAuth(ctx, img, tags)
+		if err != nil {
+			return nil, err
+		}
+		if blob != "" {
+			out[img] = blob
+		}
+	}
+	return out, nil
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service) *Service {
@@ -245,18 +296,8 @@ func (s *Service) RecordTest(ctx context.Context, id int64, ok bool, errMsg stri
 }
 
 // -----------------------------------------------------------------------------
-// Auth resolution (used by the image-pull handler)
+// Auth resolution
 // -----------------------------------------------------------------------------
-
-// ResolveAuthForImage matches the authResolver interface compose +
-// updater use to inject auth into ImagePull. Drops the *Registry from
-// the return tuple so the caller doesn't have to import this package
-// just for that type. Empty string = no matching credential = fall
-// back to anonymous pull.
-func (s *Service) ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error) {
-	blob, _, err := s.ResolveAuth(ctx, image, hostTags)
-	return blob, err
-}
 
 // ResolveAuth looks up credentials for an image reference that will be
 // pulled against hostTags. Returns the base64-encoded X-Registry-Auth

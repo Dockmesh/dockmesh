@@ -1,0 +1,3 @@
+kind: Security
+body: A git sync no longer copies `.dockmesh.meta.json` or `compose.<env>.yaml` override files from the repository, so a repository push can no longer replace migration hooks, scaling rules or the default environment override of a stack.
+time: 2026-11-02T17:59:00Z

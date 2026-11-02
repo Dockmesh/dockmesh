@@ -1,5 +1,5 @@
 // Package gitsource keeps a stack's compose.yaml + .env in sync with a
-// git repository (P.11.11).
+// git repository.
 //
 // The service clones into ./data/git-cache/<stack>/, pulls on demand
 // or via a background poller, and copies the files into the stack's
@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -40,7 +41,7 @@ import (
 var (
 	ErrNotFound         = errors.New("git source not found")
 	ErrInvalidAuthKind  = errors.New("auth_kind must be one of: none, http, ssh")
-	ErrPollTooShort     = errors.New("poll_interval_sec must be >= 60")
+	ErrPollTooShort     = errors.New("poll_interval_sec must be 0 (no polling) or >= 60")
 	ErrComposeMissing   = errors.New("repo did not contain compose.yaml at path_in_repo")
 	ErrStackNameInvalid = errors.New("stack name contains characters that cannot be used on disk")
 	ErrPathOutsideRepo  = errors.New("path_in_repo must be a relative path inside the repository")
@@ -83,7 +84,7 @@ type Input struct {
 	SSHKey          string `json:"ssh_key,omitempty"`
 	ClearSSHKey     bool   `json:"clear_ssh_key,omitempty"`
 	AutoDeploy      bool   `json:"auto_deploy,omitempty"`
-	PollIntervalSec int    `json:"poll_interval_sec,omitempty"`
+	PollIntervalSec *int   `json:"poll_interval_sec,omitempty"`
 	WebhookSecret   string `json:"webhook_secret,omitempty"`
 	ClearWebhook    bool   `json:"clear_webhook_secret,omitempty"`
 }
@@ -101,8 +102,7 @@ type SyncResult struct {
 }
 
 // DeployFunc is the callback the service invokes when auto_deploy is on
-// and the sync pulled a new SHA. The host id is always "local" for now
-// — remote-agent git sources are a follow-up.
+// and the sync pulled a new SHA.
 type DeployFunc func(ctx context.Context, stackName string) (any, error)
 
 type Service struct {
@@ -206,9 +206,14 @@ func (s *Service) Configure(ctx context.Context, stackName string, in Input) (*S
 	if authKind == "" {
 		authKind = "none"
 	}
-	poll := in.PollIntervalSec
-	if poll == 0 {
-		poll = 300
+	// Absent keeps the stored interval (300 s for a new source); 0 means
+	// webhook or manual sync only.
+	poll := defaultPollSec
+	switch {
+	case in.PollIntervalSec != nil:
+		poll = *in.PollIntervalSec
+	case existing != nil:
+		poll = existing.PollIntervalSec
 	}
 
 	// Encrypt-on-update helpers: pick the incoming value, the cleared
@@ -555,9 +560,8 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 //
 // When path_in_repo points at a directory, ALL sibling files in that
 // directory are also mirrored into the stack dir so compose `build:`
-// references (Dockerfiles, config files, etc.) resolve correctly.
-// Files prefixed with . are skipped except .env / .env.age (the
-// canonical secrets). Fixes FINDING-8.
+// references (Dockerfiles, config files, etc.) resolve correctly;
+// skipSibling lists what is never mirrored.
 //
 // .env policy: on first sync (no existing stack) seed from the repo's
 // .env. On every subsequent sync, run mergeEnvFiles so the operator's
@@ -661,23 +665,36 @@ func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
 	return out, nil
 }
 
-// copyTreeSiblings mirrors all non-dotfile entries under srcRel (relative
-// to the clone) into dst, recursively, EXCEPT the compose / .env files the
-// main copy already handled. Tops out at 64 MiB per file to keep
+// skipSibling reports whether a repo path must not be mirrored into the
+// stack dir: the compose/.env files the main copy writes, git metadata, and
+// files Dockmesh owns there. The meta file carries migration hooks run via
+// sh -c and the default override; override files change what a deploy
+// runs. A repo push must not be able to replace either.
+func skipSibling(rel string) bool {
+	// Lower-cased: the stack dir may be on a case-insensitive filesystem.
+	rel = strings.ToLower(rel)
+	if strings.HasPrefix(rel, ".git") {
+		return true
+	}
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	switch rel {
+	case "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml",
+		".env", ".env.age":
+		return true
+	}
+	return strings.HasPrefix(rel, ".dockmesh") || compose.IsEnvironmentFile(rel)
+}
+
+// copyTreeSiblings mirrors the entries under srcRel (relative to the
+// clone) into dst, recursively, except what skipSibling excludes. Tops out at 64 MiB per file to keep
 // build-contexts sane. Symlinks are copied as the file they point to and
 // skipped when that lies outside the clone. dst is written through an
 // os.Root as well: containers bind-mount parts of the stack directory and
 // could leave symlinks there.
 func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 	const maxFile = 64 << 20
-	skip := map[string]bool{
-		"compose.yaml":        true,
-		"compose.yml":         true,
-		"docker-compose.yaml": true,
-		"docker-compose.yml":  true,
-		".env":                true,
-		".git":                true,
-	}
 	out, err := os.OpenRoot(dst)
 	if err != nil {
 		return err
@@ -696,9 +713,7 @@ func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 		if rel == "" || rel == "." {
 			return nil
 		}
-		// skip top-level compose / .env (already written) and anything
-		// git-adjacent.
-		if skip[rel] || strings.HasPrefix(rel, ".git") {
+		if skipSibling(rel) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -906,7 +921,7 @@ func validateInput(in Input) error {
 	default:
 		return ErrInvalidAuthKind
 	}
-	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
+	if p := in.PollIntervalSec; p != nil && *p != 0 && *p < 60 {
 		return ErrPollTooShort
 	}
 	// Only new secrets are checked; shorter ones stored earlier keep working.
@@ -922,6 +937,8 @@ func validateInput(in Input) error {
 
 // minWebhookSecretLen keeps webhook secrets out of guessing range.
 const minWebhookSecretLen = 16
+
+const defaultPollSec = 300
 
 func safeStackName(s string) bool {
 	if s == "" || strings.ContainsAny(s, `/\:*?"<>|`) {

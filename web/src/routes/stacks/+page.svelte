@@ -245,8 +245,8 @@
   }
 
   // Strip secrets the user didn't fill in so the backend doesn't store
-  // empty-string auth (which would shadow a missing field). 5-minute
-  // poll is the backend's enforced minimum — clamp anything lower.
+  // empty-string auth (which would shadow a missing field). 0 turns
+  // polling off; anything else is raised to the backend's 60 s minimum.
   function normalizeGitInput(g: StackGitSourceInput): StackGitSourceInput {
     const out: StackGitSourceInput = {
       repo_url: g.repo_url.trim(),
@@ -254,7 +254,7 @@
       path_in_repo: g.path_in_repo?.trim() || '.',
       auth_kind: g.auth_kind ?? 'none',
       auto_deploy: g.auto_deploy ?? false,
-      poll_interval_sec: Math.max(60, g.poll_interval_sec ?? 300),
+      poll_interval_sec: g.poll_interval_sec === 0 ? 0 : Math.max(60, g.poll_interval_sec ?? 300),
     };
     if (out.auth_kind === 'http') {
       out.username = (g.username ?? '').trim();
@@ -799,9 +799,9 @@
 
       <div class="grid grid-cols-2 gap-3">
         <Input
-          label="Poll interval (seconds)"
+          label="Poll interval (seconds, 0 = webhook / manual only)"
           type="number"
-          min={60}
+          min={0}
           bind:value={newGit.poll_interval_sec as any}
           disabled={creating}
         />

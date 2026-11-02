@@ -1073,7 +1073,13 @@
   async function startMigration() {
     migrateBusy = true;
     try {
-      const m = await api.migrations.initiate(name, migrateTarget);
+      let m;
+      try {
+        m = await api.migrations.initiate(name, migrateTarget);
+      } catch (err) {
+        if (!(await confirmExternalChanges(err))) throw err;
+        m = await api.migrations.initiate(name, migrateTarget, true);
+      }
       activeMigration = m;
       showMigrate = false;
       toast.success('Migration started', `${name} → ${migrateTarget}`);
@@ -2634,7 +2640,7 @@
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-poll">Poll interval (sec)</label>
-        <input id="git-poll" type="number" min="60" class="dm-input" bind:value={gitForm.poll_interval_sec as any} />
+        <input id="git-poll" type="number" min="0" class="dm-input" bind:value={gitForm.poll_interval_sec as any} />
         <p class="text-xs text-[var(--fg-muted)] mt-1">60+ sec, or 0 for manual / webhook-only.</p>
       </div>
       <div>

@@ -20,6 +20,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/convert"
+	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -28,14 +29,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// mergeGlobalEnv prepends the global env vars to the stack's .env so
-// compose substitution resolves ${KEY} against them, while a stack-level
-// .env line with the same KEY still wins (the stack's KEY= lines come
-// after globals in the resulting string and later definitions
-// override earlier ones in .env resolution).
-//
-// A variable that can't be read fails the deploy: deploying without it
-// would silently fall back to compose defaults.
+// mergeGlobalEnv puts the global variables in front of the stack's .env.
 func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) (string, error) {
 	if h.GlobalEnv == nil {
 		return stackEnv, nil
@@ -44,23 +38,7 @@ func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) (string,
 	if err != nil {
 		return "", fmt.Errorf("read global environment: %w", err)
 	}
-	if len(vars) == 0 {
-		return stackEnv, nil
-	}
-	var b strings.Builder
-	for _, v := range vars {
-		if v.Unreadable {
-			return "", fmt.Errorf("global variable %s can't be decrypted; check the secrets key or set the value again", v.Key)
-		}
-		fmt.Fprintf(&b, "%s=%s\n", v.Key, v.Value)
-	}
-	if stackEnv != "" {
-		if !strings.HasSuffix(stackEnv, "\n") {
-			b.WriteString("\n")
-		}
-		b.WriteString(stackEnv)
-	}
-	return b.String(), nil
+	return deploy.MergeGlobalEnv(vars, stackEnv)
 }
 
 type stackRequest struct {
@@ -722,6 +700,12 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.forgetStackTarget(r, name)
+	// A git source left behind would re-create the stack on its next commit.
+	if h.GitSource != nil {
+		if err := h.GitSource.Delete(r.Context(), name); err != nil && !errors.Is(err, gitsource.ErrNotFound) {
+			slog.Warn("delete stack git source", "stack", name, "err", err)
+		}
+	}
 	// Remove every dependency edge this stack participates in (P.12.7)
 	// so the graph doesn't drag around references to a stack that no
 	// longer exists. Other stacks that depended on this one will now
@@ -1068,6 +1052,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
+	}
+	if err := h.Stacks.RecordOverride(name, envOverride); err != nil {
+		slog.Warn("record deployed environment override", "stack", name, "err", err)
 	}
 	// Record the deployment association (P.7).
 	if h.Deployments != nil {

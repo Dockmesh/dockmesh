@@ -1,0 +1,3 @@
+kind: Fixed
+body: Registry credentials with scope tags now apply to hosts carrying those tags, and deploys, scaling and scale checks on agent hosts send the credentials for their images, so private images work there without pre-pulling.
+time: 2026-11-02T17:58:34.2171769+01:00

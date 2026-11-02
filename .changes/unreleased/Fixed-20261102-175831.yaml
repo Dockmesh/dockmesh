@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a stack also deletes its git source and clone, so a new commit no longer brings the deleted stack back.
+time: 2026-11-02T17:58:31.93408+01:00

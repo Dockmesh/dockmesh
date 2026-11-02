@@ -1,0 +1,3 @@
+kind: Fixed
+body: A stack migration that fails while stopping the source or syncing now restarts the stack on the source host, and a failed start on the target stops what was started there before the source comes back.
+time: 2026-11-02T17:59:01Z

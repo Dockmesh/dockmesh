@@ -58,11 +58,9 @@ const (
 // surfaces at deploy time rather than silently in docker ps.
 // authResolver is what compose calls before every image pull so the
 // daemon API gets a proper X-Registry-Auth blob instead of an anonymous
-// request. registries.Service satisfies this — we keep it as an interface
-// to avoid pulling the whole registries package into compose's import
-// graph (would create an import cycle via the handler glue).
+// request; registries.Service.ForHost returns one bound to a host.
 type authResolver interface {
-	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+	ResolveAuthForImage(ctx context.Context, image string) (string, error)
 }
 
 // progressTracker is what compose updates as it walks through a
@@ -118,22 +116,39 @@ func WithForcePull(ctx context.Context) context.Context {
 	return context.WithValue(ctx, forcePullCtxKey{}, true)
 }
 
-func forcePullRequested(ctx context.Context) bool {
+// ForcePullRequested reports whether ctx came from WithForcePull.
+func ForcePullRequested(ctx context.Context) bool {
 	v, _ := ctx.Value(forcePullCtxKey{}).(bool)
 	return v
 }
 
+type registryAuthCtxKey struct{}
+
+// WithRegistryAuth attaches X-Registry-Auth blobs keyed by image
+// reference. They win over the service's resolver; agents get them with
+// each request because they can't read the server's registry list.
+func WithRegistryAuth(ctx context.Context, auth map[string]string) context.Context {
+	if len(auth) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, registryAuthCtxKey{}, auth)
+}
+
 // resolveImageAuth returns the base64 X-Registry-Auth blob for an image,
-// or empty string when no matching registry credential exists (= fall
-// back to anonymous pull, current behaviour). Logs the resolution
+// or empty string when no matching registry credential exists (anonymous
+// pull). Logs the resolution
 // outcome so a 401 on the actual pull can be triaged against whether
 // we even sent credentials.
 func (s *Service) resolveImageAuth(ctx context.Context, image string) string {
+	if auth, ok := ctx.Value(registryAuthCtxKey{}).(map[string]string); ok && auth[image] != "" {
+		slog.Info("image pull: using registry credential", "image", image, "source", "request", "auth_bytes", len(auth[image]))
+		return auth[image]
+	}
 	if s.auth == nil {
 		slog.Debug("image pull: no auth resolver wired", "image", image)
 		return ""
 	}
-	auth, err := s.auth.ResolveAuthForImage(ctx, image, nil)
+	auth, err := s.auth.ResolveAuthForImage(ctx, image)
 	if err != nil {
 		slog.Warn("image pull: auth resolve error", "image", image, "err", err)
 		return ""
@@ -314,7 +329,7 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 		if localErr != nil && !localMissing {
 			return fmt.Errorf("image inspect %s: %w", svc.Image, localErr)
 		}
-		needsPull := localMissing || forcePullRequested(ctx) ||
+		needsPull := localMissing || ForcePullRequested(ctx) ||
 			strings.EqualFold(svc.PullPolicy, "always")
 		if !needsPull {
 			continue

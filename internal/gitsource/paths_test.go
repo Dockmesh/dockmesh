@@ -142,3 +142,66 @@ func TestReadComposeWithRelativeCloneDir(t *testing.T) {
 		t.Fatalf("relative clone dir: %v", err)
 	}
 }
+
+func TestSkipSibling(t *testing.T) {
+	tests := []struct {
+		rel  string
+		skip bool
+	}{
+		{"compose.yaml", true},
+		{"docker-compose.yml", true},
+		{".env", true},
+		{".env.age", true},
+		{".git", true},
+		{".github/workflows/ci.yml", true},
+		{".dockmesh.meta.json", true},
+		{"compose.prod.yaml", true},
+		{"compose.staging-2.yaml", true},
+		{"Dockerfile", false},
+		{"conf/compose.prod.yaml", false},
+		{"conf/.dockmesh.meta.json", false},
+		{"compose.prod.yml", false},
+		{"nginx.conf", false},
+		{".DOCKMESH.meta.json", true},
+		{"COMPOSE.prod.yaml", true},
+		{".ENV", true},
+	}
+	for _, tt := range tests {
+		if got := skipSibling(tt.rel); got != tt.skip {
+			t.Errorf("skipSibling(%q) = %v, want %v", tt.rel, got, tt.skip)
+		}
+	}
+}
+
+func TestCopyTreeSiblingsKeepsDockmeshFiles(t *testing.T) {
+	clone := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(clone, "app", "conf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"compose.yaml":        "services: {}",
+		"conf/a.yml":          "a",
+		".dockmesh.meta.json": `{"migration_hooks":{"pre":"sh -c id"}}`,
+		"compose.prod.yaml":   "services: {evil: {image: x}}",
+	} {
+		if err := os.WriteFile(filepath.Join(clone, "app", filepath.FromSlash(name)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, ".dockmesh.meta.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTreeSiblings(openRepo(t, clone), "app", dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, ".dockmesh.meta.json")); string(b) != "{}" {
+		t.Errorf("meta file replaced from the repo: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "compose.prod.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("override file copied from the repo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "conf", "a.yml")); err != nil {
+		t.Errorf("regular sibling not copied: %v", err)
+	}
+}

@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: "[agent-registry-auth, admins] Registry credentials now also reach agent hosts for the images they deploy; a registry without scope tags applies to every host, so add scope tags to registries that must stay off some hosts. Agents need this version to use the credentials; older agents keep pulling anonymously."
+time: 2026-11-02T17:58:34Z

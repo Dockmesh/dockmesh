@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -35,7 +34,7 @@ type DrainPlan struct {
 func PlanDrain(
 	ctx context.Context,
 	sourceHostID string,
-	hosts *host.Registry,
+	hosts Hosts,
 	deployStore *stacks.DeploymentStore,
 	stacksMgr *stacks.Manager,
 ) (*DrainPlan, error) {

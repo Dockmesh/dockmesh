@@ -219,7 +219,7 @@ func (w *Watcher) poll(ctx context.Context) {
 		if info.LocalDigest != "" {
 			var authBlob string
 			if w.auth != nil {
-				if a, aerr := w.auth.ResolveAuthForImage(ctx, ref, nil); aerr == nil {
+				if a, aerr := w.auth.ResolveAuthForImage(ctx, ref); aerr == nil {
 					authBlob = a
 				}
 			}

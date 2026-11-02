@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -243,4 +244,68 @@ func (m *Manager) RecordUntrackedSums() {
 			slog.Warn("record stack file checksums", "stack", s.Name, "err", err)
 		}
 	}
+}
+
+// overrideRow is the sum row holding the environment override a manual
+// deploy last used, with the checksum of its file.
+const overrideRow = "@override"
+
+// ErrOverrideUnconfirmed refuses a deploy without a request (git
+// auto-deploy, migration) whose environment override is not the one the
+// last manual deploy used. Override files and the meta file naming the
+// default one are not written by Dockmesh, so only a manual deploy
+// confirms them.
+var ErrOverrideUnconfirmed = errors.New("environment override changed since the last manual deploy; deploy the stack once to confirm it")
+
+var overrideName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func (m *Manager) overrideSum(name, override string) (string, error) {
+	if override == "" {
+		return "", nil
+	}
+	if !overrideName.MatchString(override) {
+		return "", fmt.Errorf("invalid environment name %q", override)
+	}
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return "", err
+	}
+	sum, err := fileSum(filepath.Join(dir, "compose."+override+".yaml"))
+	if err != nil {
+		return "", err
+	}
+	return override + ":" + sum, nil
+}
+
+// RecordOverride stores the override a manual deploy applied.
+func (m *Manager) RecordOverride(name, override string) error {
+	if m.sums == nil {
+		return nil
+	}
+	sum, err := m.overrideSum(name, override)
+	if err != nil {
+		return err
+	}
+	return m.sums.set(name, overrideRow, sum)
+}
+
+// CheckOverride refuses override for a deploy without a request unless the
+// last manual deploy used it with the same file content. No override is
+// always fine.
+func (m *Manager) CheckOverride(name, override string) error {
+	if m.sums == nil || override == "" {
+		return nil
+	}
+	sum, err := m.overrideSum(name, override)
+	if err != nil {
+		return err
+	}
+	recorded, err := m.sums.get(name)
+	if err != nil {
+		return err
+	}
+	if recorded[overrideRow] != sum {
+		return fmt.Errorf("%w: %s", ErrOverrideUnconfirmed, override)
+	}
+	return nil
 }

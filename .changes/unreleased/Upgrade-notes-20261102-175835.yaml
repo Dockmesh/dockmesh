@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: "[git-poll-zero, admins] Git sources saved with poll interval 0 before this version were stored as 300 seconds; set 0 again to turn polling off."
+time: 2026-11-02T17:58:35Z
