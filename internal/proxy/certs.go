@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -23,25 +24,51 @@ import (
 // port is filtered, we just leave the cert fields blank. The list
 // endpoint still works.
 func (s *Service) EnrichWithCertInfo(ctx context.Context, routes []Route) []Route {
+	out, _ := enrichCerts(ctx, routes)
+	return out
+}
+
+// maxCertProbes caps the TLS handshakes running at once.
+const maxCertProbes = 8
+
+// probeCertFn is probeCert; tests replace it.
+var probeCertFn = probeCert
+
+// enrichCerts probes the routes at most maxCertProbes at a time. complete
+// is false when ctx ended before every probe finished.
+func enrichCerts(ctx context.Context, routes []Route) ([]Route, bool) {
 	out := make([]Route, len(routes))
+	copy(out, routes)
+	sem := make(chan struct{}, maxCertProbes)
+	var wg sync.WaitGroup
 	for i, r := range routes {
-		out[i] = r
 		if r.TLSMode == "none" || r.Host == "" {
 			continue
 		}
-		cert, err := probeCert(ctx, r.Host)
-		if err != nil {
-			continue
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return out, false
 		}
-		from := cert.NotBefore
-		to := cert.NotAfter
-		days := int(time.Until(to) / (24 * time.Hour))
-		out[i].CertIssuer = certIssuer(cert)
-		out[i].CertValidFrom = &from
-		out[i].CertValidTo = &to
-		out[i].CertDaysLeft = &days
+		wg.Add(1)
+		go func(i int, host string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			cert, err := probeCertFn(ctx, host)
+			if err != nil {
+				return
+			}
+			from, to := cert.NotBefore, cert.NotAfter
+			days := int(time.Until(to) / (24 * time.Hour))
+			out[i].CertIssuer = certIssuer(cert)
+			out[i].CertValidFrom = &from
+			out[i].CertValidTo = &to
+			out[i].CertDaysLeft = &days
+		}(i, r.Host)
 	}
-	return out
+	wg.Wait()
+	return out, ctx.Err() == nil
 }
 
 // probeCert opens a TLS connection to host:443 with InsecureSkipVerify
@@ -78,22 +105,64 @@ func probeCertAt(ctx context.Context, addr, host string) (*x509.Certificate, err
 // validity changes on the scale of days.
 const certCacheTTL = 15 * time.Minute
 
+// certRefreshTimeout bounds one background refresh of every route.
+var certRefreshTimeout = time.Minute
+
 // RouteCerts returns the routes with cert metadata like
 // EnrichWithCertInfo, reusing the last probe for certCacheTTL so pages
-// that poll don't open a TLS handshake per route on every request.
+// that poll don't open a TLS handshake per route on every request. A
+// refresh runs in the background, one at a time; callers wait for it only
+// as long as their ctx allows and then get the previous result, or the
+// routes without cert metadata. A refresh cut short by its timeout is not
+// cached.
 func (s *Service) RouteCerts(ctx context.Context) ([]Route, error) {
 	s.certMu.Lock()
-	defer s.certMu.Unlock()
 	if s.certRoutes != nil && time.Since(s.certAt) < certCacheTTL {
-		return s.certRoutes, nil
+		routes := s.certRoutes
+		s.certMu.Unlock()
+		return routes, nil
 	}
+	done := s.certRefresh
+	if done == nil {
+		done = make(chan struct{})
+		s.certRefresh = done
+		go s.refreshCerts(done) //nolint:gosec,contextcheck // outlives the caller on purpose; bounded by certRefreshTimeout
+	}
+	stale := s.certRoutes
+	s.certMu.Unlock()
+
+	select {
+	case <-done:
+		s.certMu.Lock()
+		routes, fresh := s.certRoutes, time.Since(s.certAt) < certCacheTTL
+		s.certMu.Unlock()
+		if routes != nil && fresh {
+			return routes, nil
+		}
+	case <-ctx.Done():
+	}
+	if stale != nil {
+		return stale, nil
+	}
+	return s.ListRoutes(ctx)
+}
+
+func (s *Service) refreshCerts(done chan struct{}) {
+	defer close(done)
+	ctx, cancel := context.WithTimeout(context.Background(), certRefreshTimeout)
+	defer cancel()
 	routes, err := s.ListRoutes(ctx)
-	if err != nil {
-		return nil, err
+	var enriched []Route
+	complete := false
+	if err == nil {
+		enriched, complete = enrichCerts(ctx, routes)
 	}
-	s.certRoutes = s.EnrichWithCertInfo(ctx, routes)
-	s.certAt = time.Now()
-	return s.certRoutes, nil
+	s.certMu.Lock()
+	defer s.certMu.Unlock()
+	if complete {
+		s.certRoutes, s.certAt = enriched, time.Now()
+	}
+	s.certRefresh = nil
 }
 
 func certIssuer(c *x509.Certificate) string {

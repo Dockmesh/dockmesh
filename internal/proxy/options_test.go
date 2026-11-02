@@ -387,7 +387,7 @@ func TestMaskedHidesCredentials(t *testing.T) {
 		},
 	}
 	m := o.Masked()
-	if got := m.Access.ForwardAuth.URL; got != "http://authelia:9091/api/verify" {
+	if got := m.Access.ForwardAuth.URL; got != "http://authelia:9091" {
 		t.Errorf("forward-auth URL = %q", got)
 	}
 	if m.Access.ForwardAuth.CopyHeaders[0] != "Remote-User" || m.Headers.RequestRemove[0] != "Cookie" {
@@ -429,8 +429,8 @@ func TestSiteConfigMasked(t *testing.T) {
 		if leaked := strings.Contains(string(b), "s3cret"); leaked == mask {
 			t.Errorf("mask=%v: secret in preview = %v: %s", mask, leaked, b)
 		}
-		if mask && (!strings.Contains(string(b), maskedValue) || !strings.Contains(string(b), "/api/verify")) {
-			t.Errorf("masked preview lost the header or the auth path: %s", b)
+		if mask && (!strings.Contains(string(b), maskedValue) || strings.Contains(string(b), "/api/verify")) {
+			t.Errorf("masked preview: header missing or auth path shown: %s", b)
 		}
 	}
 }

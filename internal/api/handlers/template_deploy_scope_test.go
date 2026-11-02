@@ -43,6 +43,17 @@ func TestTemplateDeployEnforcesScope(t *testing.T) {
 	e.scopeUser(tagged.ID, "prod")
 
 	path := "/templates/" + strconv.FormatInt(tpl.ID, 10) + "/deploy"
+
+	// A stack assignment reserves its name for template deploys too.
+	e.role("local-deploy", deployPerms, rbac.Scope{Type: "host", Host: "local"})
+	e.user("localdep", "local-deploy")
+	holder := e.user("holder", "")
+	if _, err := e.h.Roles.AddAssignment(ctx, rbac.Assignment{UserID: holder.ID, Role: "viewer", Scope: rbac.Scope{Type: "stack", Value: "payments"}}); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodPost, path, e.login("localdep").AccessToken, map[string]any{"stack_name": "payments", "host_id": "local"}); rr.Code != http.StatusConflict {
+		t.Errorf("template deploy onto a reserved name: %d, want 409: %s", rr.Code, rr.Body)
+	}
 	tests := []struct{ user, stack string }{
 		{"hostscoped", "t-role"},
 		{"tagged", "t-tag"},

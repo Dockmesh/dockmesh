@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +114,35 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 				return
 			}
 		}
+	})
+	// Reports on every re-check whether the refreshed caller still sees
+	// the local host, the way /ws/events filters its stream.
+	r.Get("/ws/refresh", func(w http.ResponseWriter, r *http.Request) {
+		r, ok := h.wsAuth(w, r, rbac.PermSystemView)
+		if !ok {
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		done := make(chan struct{})
+		var mu sync.Mutex
+		h.wsWatchRefresh(r, conn, rbac.PermSystemView, nil, func(nr *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			_ = conn.WriteJSON(map[string]bool{"local": h.inReadScope(nr, "local", "")})
+		})
+		go func() {
+			defer close(done)
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+		<-done
 	})
 	authSvc.SetAccessHooks(func(ctx context.Context) {
 		if err := roles.Load(ctx); err != nil {
@@ -596,5 +626,47 @@ func TestOpenWebSocketEndsWithItsSession(t *testing.T) {
 				t.Errorf("after revoking: %v, want policy-violation close", err)
 			}
 		})
+	}
+}
+
+// A stream that filters by scope must use the caller's current scope: a
+// user narrowed to a tag stops seeing the local host without reconnecting.
+func TestWebSocketFilterFollowsScopeChange(t *testing.T) {
+	prev := wsRecheckInterval
+	wsRecheckInterval = 20 * time.Millisecond
+	t.Cleanup(func() { wsRecheckInterval = prev })
+
+	e := newAuthzEnv(t)
+	srv := httptest.NewServer(e.router)
+	defer srv.Close()
+	u := e.user("op", "operator")
+	tk := e.ticket(e.login("op").AccessToken, "system.view")
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/refresh?ticket="+tk, nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	read := func() bool {
+		t.Helper()
+		var m struct{ Local bool }
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := conn.ReadJSON(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m.Local
+	}
+	if !read() {
+		t.Fatal("operator on everything: local host not visible")
+	}
+	e.scopeUser(u.ID, "elsewhere")
+	deadline := time.Now().Add(2 * time.Second)
+	for read() {
+		if time.Now().After(deadline) {
+			t.Fatal("narrowed caller still sees the local host on the open stream")
+		}
 	}
 }

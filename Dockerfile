@@ -31,5 +31,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=backend /out/dockmesh /app/dockmesh
 EXPOSE 8080
+LABEL dockmesh.component="server"
 USER nonroot:nonroot
 ENTRYPOINT ["/app/dockmesh"]

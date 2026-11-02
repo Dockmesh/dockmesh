@@ -103,6 +103,7 @@ paths:
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
         The caller needs Stacks: Deploy on the new stack on the target host; the deployment is recorded in the stack's deploy history.
+        The name must be new and not reserved by another user's stack assignment (409), as for `POST /stacks`.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:

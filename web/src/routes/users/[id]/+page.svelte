@@ -5,7 +5,7 @@
   import {
     api, ApiError,
     type ApiToken, type Assignment, type CustomRole, type HostInfo, type RoleCatalog, type StackListEntry,
-    type UserRow, type AccessCheckResult
+    type UserRow, type AccessCheckResult, type Session
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -156,8 +156,11 @@
     return out;
   });
   let chkAction = $state('stacks:deploy');
+  // A host id, or "tag:<tag>" for any host with that tag.
   let chkHost = $state('');
   let chkStack = $state('');
+  const chkTag = $derived(chkHost.startsWith('tag:') ? chkHost.slice(4) : '');
+  const hostTags = $derived([...new Set(hosts.flatMap((h) => h.tags ?? []))].sort());
   let chkBusy = $state(false);
   let chkResult = $state<AccessCheckResult | null>(null);
   async function runCheck() {
@@ -165,12 +168,17 @@
     if (!act || !user) return;
     chkBusy = true;
     try {
-      chkResult = await api.access.check({ user_id: user.id, area: act.area, level: act.level, extra: act.extra, host: chkHost || undefined, stack: chkStack || undefined });
+      chkResult = await api.access.check({
+        user_id: user.id, area: act.area, level: act.level, extra: act.extra,
+        host: (!chkTag && chkHost) || undefined, host_tag: chkTag || undefined, stack: chkStack || undefined
+      });
     } catch (err) {
       toast.error('Check failed', err instanceof ApiError ? err.message : undefined);
     } finally { chkBusy = false; }
   }
-  const chkTarget = $derived(chkStack ? `stack ${chkStack}` : chkHost ? `host ${hostNames[chkHost] ?? chkHost}` : 'everything');
+  const chkTarget = $derived(
+    chkStack ? `stack ${chkStack}` : chkTag ? `hosts tagged ${chkTag}` : chkHost ? `host ${hostNames[chkHost] ?? chkHost}` : 'everything'
+  );
 
   // Security
   let pwOpen = $state(false);
@@ -208,6 +216,44 @@
       toast.error('Unlock failed', err instanceof ApiError ? err.message : undefined);
     }
   }
+  // Another user's sessions, for whoever may manage the account.
+  const canManageSessions = $derived(allowed('users.update') && !isSelf);
+  let sessions = $state<Session[]>([]);
+  let sessionsLoaded = $state(false);
+  async function loadSessions() {
+    if (!user) return;
+    try {
+      sessions = await api.users.sessions(user.id);
+    } catch (err) {
+      sessions = [];
+      toast.error('Could not load sessions', err instanceof ApiError ? err.message : undefined);
+    } finally { sessionsLoaded = true; }
+  }
+  $effect(() => {
+    if (tab === 'security' && canManageSessions && user) untrack(() => loadSessions());
+  });
+  async function endSession(s: Session) {
+    if (!user) return;
+    try {
+      await api.users.revokeSession(user.id, s.family_id);
+      toast.success('Session ended', s.user_agent || s.ip || s.family_id.slice(0, 8));
+      await loadSessions();
+    } catch (err) {
+      toast.error('Could not end the session', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+  async function endAllSessions() {
+    if (!user) return;
+    if (!(await confirm.ask({ title: `Sign ${user.username} out everywhere?`, message: 'Every session of the account ends; open terminals and log streams close within a minute.', confirmLabel: 'Sign out everywhere', danger: true }))) return;
+    try {
+      await api.users.revokeAllSessions(user.id);
+      toast.success('Signed out everywhere', user.username);
+      await loadSessions();
+    } catch (err) {
+      toast.error('Could not end the sessions', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function removeUser() {
     if (!user) return;
     if (!(await confirm.ask({ title: `Delete ${user.username}?`, message: 'The account, its sessions and API tokens are removed.', confirmLabel: 'Delete', danger: true, typeToConfirm: user.username }))) return;
@@ -242,6 +288,7 @@
   const A_COLS = 'minmax(150px, 1fr) minmax(200px, 1.6fr) minmax(160px, 1.2fr) 110px 40px';
   const E_COLS = 'minmax(180px, 1fr) 140px minmax(240px, 2fr)';
   const T_COLS = 'minmax(160px, 1fr) minmax(180px, 1.4fr) 120px 120px 80px';
+  const S_COLS = 'minmax(160px, 1.6fr) 130px 110px 110px 70px';
   const L_COLS = '150px minmax(180px, 1fr) minmax(200px, 2fr)';
 </script>
 
@@ -381,13 +428,20 @@
             {#each actions as a (a.key)}<option value={a.key}>{a.label}</option>{/each}
           </select>
           <span>on</span>
-          <select class="dm-input" aria-label="Host" bind:value={chkHost} onchange={() => (chkStack = '')}>
+          <select class="dm-input" aria-label="Host or host tag" bind:value={chkHost} onchange={() => (chkStack = '')}>
             <option value="">any host</option>
-            {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
+            <optgroup label="Hosts">
+              {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
+            </optgroup>
+            {#if hostTags.length}
+              <optgroup label="Host tags">
+                {#each hostTags as t (t)}<option value={'tag:' + t}>#{t}</option>{/each}
+              </optgroup>
+            {/if}
           </select>
-          <select class="dm-input" aria-label="Stack" bind:value={chkStack}>
+          <select class="dm-input" aria-label="Stack" bind:value={chkStack} disabled={!!chkTag}>
             <option value="">no stack</option>
-            {#each stacks.filter((s) => !chkHost || s.deployment?.host_id === chkHost) as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
+            {#each stacks.filter((s) => !chkHost || (s.deployment?.host_id ?? s.target_host) === chkHost) as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
           </select>
           <button type="button" class="dm-btn" disabled={chkBusy} onclick={runCheck}>Check</button>
         </div>
@@ -431,8 +485,28 @@
             <h2 class="dm-h2">Sessions</h2>
             {#if isSelf}
               <p class="dm-sub">Your own sessions are listed on <a href="/account">your account page</a>.</p>
-            {:else}
+            {:else if !canManageSessions}
               <p class="dm-sub">Resetting the password signs this account out everywhere.</p>
+            {:else if !sessionsLoaded}
+              <Skeleton class="h-16" />
+            {:else if sessions.length === 0}
+              <p class="dm-sub">No active sessions.</p>
+            {:else}
+              <div class="dm-tbl" role="table" aria-label="Sessions">
+                <div class="dm-tr dm-th" role="row" style="grid-template-columns: {S_COLS}">
+                  <span role="columnheader">Client</span><span role="columnheader">IP</span><span role="columnheader">Signed in</span><span role="columnheader">Last seen</span><span></span>
+                </div>
+                {#each sessions as s (s.family_id)}
+                  <div class="dm-tr" role="row" style="grid-template-columns: {S_COLS}">
+                    <span class="dm-trunc" title={s.user_agent}>{s.user_agent || 'unknown client'}</span>
+                    <span class="dm-mono dm-dim dm-trunc">{s.ip || '—'}</span>
+                    <span class="dm-num dm-dim">{fmtAgo(s.created_at, '—')}</span>
+                    <span class="dm-num dm-dim">{fmtAgo(s.last_seen_at, '—')}</span>
+                    <span><button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => endSession(s)}>End</button></span>
+                  </div>
+                {/each}
+              </div>
+              <div><button type="button" class="dm-btn" onclick={endAllSessions}>Sign out everywhere…</button></div>
             {/if}
           </div>
           {#if allowed('users.delete') && !isSelf}

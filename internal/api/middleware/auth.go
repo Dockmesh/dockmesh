@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -129,16 +130,12 @@ func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token)
 	if RBACStore == nil {
 		return id, false
 	}
-	scope := tok.Scope
-	if scope.Type == "" {
-		scope = rbac.Global
-	}
 	if tok.Legacy {
 		perms, ok := RBACStore.RolePerms(tok.Role)
 		if !ok {
 			return id, false
 		}
-		id.Access = RBACStore.RoleAccess(tok.Role).Restrict(perms, scope)
+		id.Access = RBACStore.RoleAccess(tok.Role).Restrict(perms, tokenScope(tok))
 		return id, true
 	}
 	if tok.CreatedBy == nil {
@@ -150,15 +147,49 @@ func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token)
 	}
 	id.TokenOwnerID = owner.ID
 	access := RBACStore.AccessFor(owner.ID)
-	if tok.Role != "" {
-		perms, ok := RBACStore.RolePerms(tok.Role)
-		if !ok {
-			perms = map[rbac.Perm]bool{}
+	access = restrictToToken(access, tok)
+	// A token minted with a token holds at most what its parent holds now,
+	// and ends with it.
+	seen := map[int64]bool{tok.ID: true}
+	for parentID := tok.ParentID; parentID != nil; {
+		if APITokensStore == nil || seen[*parentID] || len(seen) > maxTokenChain {
+			return id, false
 		}
-		access = access.Restrict(perms, scope)
+		seen[*parentID] = true
+		parent, err := APITokensStore.Get(ctx, *parentID)
+		if err != nil || parent.RevokedAt != nil || (parent.ExpiresAt != nil && parent.ExpiresAt.Before(time.Now())) ||
+			parent.CreatedBy == nil || *parent.CreatedBy != owner.ID {
+			return id, false
+		}
+		access = restrictToToken(access, parent)
+		parentID = parent.ParentID
 	}
 	id.Access = access
 	return id, true
+}
+
+// maxTokenChain bounds how many parents TokenIdentity follows.
+const maxTokenChain = 16
+
+// restrictToToken narrows access to tok's role on tok's scope; a token
+// without a role restricts nothing.
+func restrictToToken(access *rbac.Access, tok *apitokens.Token) *rbac.Access {
+	if tok.Role == "" {
+		return access
+	}
+	perms, ok := RBACStore.RolePerms(tok.Role)
+	if !ok {
+		perms = map[rbac.Perm]bool{}
+	}
+	return access.Restrict(perms, tokenScope(tok))
+}
+
+// tokenScope is the scope of tok's restriction; none means everything.
+func tokenScope(tok *apitokens.Token) rbac.Scope {
+	if tok.Scope.Type == "" {
+		return rbac.Global
+	}
+	return tok.Scope
 }
 
 // NewAuth returns middleware that validates Bearer tokens and injects

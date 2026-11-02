@@ -57,11 +57,15 @@ The **Files** tab lists a directory in the container with size, mode and modific
 
 With the terminal extra as well you can also **Edit** a text file and **Save** it, **Upload** a file into the current directory (up to 8 MiB), and **Delete** a file or symbolic link. Writing a file into a container is treated like a shell session, which is why it needs both extras. Delete runs `rm` in the container, so it needs a running container whose image has `rm`. Every upload, save and delete is written to the audit log with the host, the container and the path.
 
-Previews and edits are limited to 1 MiB; larger files can be downloaded. Paths are resolved inside the container: symbolic links are followed within the container's filesystem, and `/proc`, `/sys`, `/dev` and device files can't be opened, even through a link or a bind mount of the host's `/proc`, `/sys` or `/dev` (as monitoring containers such as node-exporter use). Files of Dockmesh's own containers (the proxy, backup helpers) and of containers with the Docker socket mounted are not accessible.
+Previews and edits are limited to 1 MiB; larger files can be downloaded. Paths are resolved inside the container: symbolic links are followed within the container's filesystem, and `/proc`, `/sys`, `/dev` and device files can't be opened, even through a link or a bind mount of the host's `/proc`, `/sys` or `/dev` (as monitoring containers such as node-exporter use). Files of [Dockmesh's own containers](#dockmeshs-own-containers) and of containers with the Docker socket mounted are not accessible.
 
-Uploads and saves are written by Docker as root: a replaced file keeps its owner and permissions, a new file gets the owner of its directory. Setuid, setgid and sticky bits can't be set.
+Uploads and saves are written by Docker as root: a replaced file keeps its owner and permissions, a new file gets the owner of its directory. Setuid, setgid and sticky bits can't be set. Writing as root reaches files the container's own user can't change, such as root-owned files in the image or a writable bind mount of a host directory, so the files and terminal extras together can do more than a terminal in a container that runs as a normal user. Give both only to people you would trust with root in those containers.
 
 The **Files** tab works on the local host and on agent hosts. An agent older than the server answers with a message to update it from the **Hosts** page.
+
+## Dockmesh's own containers
+
+The Dockmesh server (when it runs in a container), the `dockmesh-proxy` reverse proxy, agent containers and the short-lived helper containers Dockmesh starts are its own containers. The server finds its own container when it starts; the others carry the `dockmesh.component` label or run a `ghcr.io/dockmesh/` image. They are shown read-only. Only an admin can start, stop, restart, remove, update or open a terminal in one, and a backup hook can only run in one if an admin sets it up. The **Files** tab is closed for them for everyone, since they hold the secret key, the database, the proxy's TLS keys or an agent's certificate.
 
 ## Permissions
 

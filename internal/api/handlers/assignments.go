@@ -155,11 +155,12 @@ func (h *Handlers) DeleteAssignment(w http.ResponseWriter, r *http.Request) {
 type accessCheckRequest struct {
 	UserID string `json:"user_id"`
 	// Area + Level, or Extra, name what the user would do.
-	Area  string `json:"area,omitempty"`
-	Level string `json:"level,omitempty"`
-	Extra string `json:"extra,omitempty"`
-	Host  string `json:"host,omitempty"`
-	Stack string `json:"stack,omitempty"`
+	Area    string `json:"area,omitempty"`
+	Level   string `json:"level,omitempty"`
+	Extra   string `json:"extra,omitempty"`
+	Host    string `json:"host,omitempty"`
+	HostTag string `json:"host_tag,omitempty"`
+	Stack   string `json:"stack,omitempty"`
 }
 
 type accessCheckResponse struct {
@@ -194,13 +195,21 @@ func (h *Handlers) CheckAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.HostTag != "" && (req.Host != "" || req.Stack != "") {
+		writeError(w, http.StatusBadRequest, "host_tag can't be combined with host or stack")
+		return
+	}
 	hostID := req.Host
-	if req.Stack != "" && h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), req.Stack); err == nil && d != nil && d.HostID != "" {
-			hostID = d.HostID
+	if req.Stack != "" {
+		if sh := h.stackHost(r.Context(), req.Stack); sh != "" {
+			hostID = sh
 		}
 	}
 	res := rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID), StackName: req.Stack}
+	if req.HostTag != "" {
+		// Any host with the tag: no host id an assignment could name.
+		res = rbac.Resource{HostID: "tag:" + req.HostTag, HostTags: []string{req.HostTag}}
+	}
 	access := h.Roles.AccessFor(req.UserID)
 	out := accessCheckResponse{Allowed: true, Needed: needed, Closest: []rbac.Assignment{}}
 	for _, p := range perms {

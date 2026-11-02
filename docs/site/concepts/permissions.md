@@ -56,7 +56,7 @@ Proxy, alert rules and notification channels, users and roles, settings and the 
 
 A stack that exists only as files and was never deployed has no host yet. Only assignments on everything or on that stack without a host see it, change it or deploy it.
 
-Every signed-in user can always see their own profile, sessions, 2FA and API tokens, server health and version, and receive live updates.
+Every signed-in user can always see their own profile, sessions, 2FA and API tokens, server health and version, and receive live updates. With `users.update` you can also see and end another user's sessions on their **Sessions & 2FA** tab, as long as you hold every role they hold. A page none of your roles allows shows a no-access message.
 
 ## Who can grant what
 

@@ -31,6 +31,7 @@
     services: Array<{ name: string; state: string; status: string }>;
     hosts: Array<{ id: string; name: string }>;
     deployment?: StackDeployment;
+    targetHost?: string;
     status?: 'ok' | 'needs_recovery';
   }
 
@@ -148,6 +149,7 @@
           })),
           hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name })),
           deployment: s.deployment,
+          targetHost: s.target_host,
           status: s.status ?? 'ok',
         };
       });
@@ -160,6 +162,16 @@
         refreshing = false;
       }
     }
+  }
+
+  // The new stack belongs to the picked host until it is deployed, so a
+  // user limited to some hosts can keep working on it.
+  const createHosts = $derived(hosts.available.filter((h) => h.kind !== 'all'));
+  function openCreate() {
+    newHostId = hosts.isAll
+      ? (createHosts.find((h) => h.id === 'local') ?? createHosts[0])?.id ?? 'local'
+      : hosts.id;
+    showCreate = true;
   }
 
   async function create(e: Event) {
@@ -182,7 +194,7 @@
     const targetHost = newHostId || 'local';
     try {
       if (createMode === 'git') {
-        const res = await api.stacks.createFromGit(stackName, normalizeGitInput(newGit));
+        const res = await api.stacks.createFromGit(stackName, normalizeGitInput(newGit), targetHost);
         const driftCount =
           (res.sync?.env_drift?.new_from_repo?.length ?? 0) +
           (res.sync?.env_drift?.new_from_compose?.length ?? 0);
@@ -194,7 +206,7 @@
         );
         lastGitDrift = res.sync?.env_drift ?? null;
       } else {
-        await api.stacks.create(stackName, newCompose, newEnv || undefined);
+        await api.stacks.create(stackName, newCompose, newEnv || undefined, targetHost);
         toast.success('Stack created', stackName);
       }
       if (deploy) {
@@ -374,11 +386,12 @@
   }
   const isUnhealthy = (svc: { status: string }) => svc.status.toLowerCase().includes('unhealthy');
   function stackHost(s: StackCard): string {
-    return s.deployment?.host_id ?? s.hosts[0]?.id ?? (hosts.isAll ? 'local' : hosts.id);
+    return s.deployment?.host_id ?? s.hosts[0]?.id ?? s.targetHost ?? (hosts.isAll ? 'local' : hosts.id);
   }
   function hostLabel(s: StackCard): string {
     if (s.deployment) return s.deployment.host_name || s.deployment.host_id;
     if (s.hosts.length) return s.hosts.map((h) => h.name).join(', ');
+    if (s.targetHost) return hosts.available.find((h) => h.id === s.targetHost)?.name ?? s.targetHost;
     return '—';
   }
   const hostCount = $derived(
@@ -453,7 +466,7 @@
       <button
         type="button"
         class="dm-btn dm-btn-primary"
-        onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
+        onclick={openCreate}
       >
         <Plus size={14} strokeWidth={2} /> New stack
       </button>
@@ -524,7 +537,7 @@
     <EmptyState title="No stacks yet" description="Create a stack from a compose.yaml, a git repository or a docker run command.">
       {#snippet action()}
         {#if canWrite}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}>
+          <button type="button" class="dm-btn dm-btn-primary" onclick={openCreate}>
             <Plus size={14} strokeWidth={2} /> New stack
           </button>
         {/if}
@@ -634,22 +647,18 @@
 
     <Input label="Name" placeholder="my-stack" bind:value={newName} disabled={creating} />
 
-    <!-- Host picker — only meaningful when more than one host is wired up.
-         The compose.yaml itself is host-neutral on disk; this picks the
-         target host for the optional "Create & deploy" action. Falls
-         back to whatever the sidebar host switcher had selected. -->
-    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if createHosts.length > 1}
       <div>
         <label for="new-host" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
-          Deploy on host
+          Host
         </label>
         <select id="new-host" class="dm-input text-sm w-full" bind:value={newHostId} disabled={creating}>
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each createHosts as h (h.id)}
             <option value={h.id}>{h.name}{h.id === 'local' ? ' (server)' : ''}</option>
           {/each}
         </select>
         <p class="text-[10.5px] text-[var(--fg-subtle)] mt-1">
-          Only used when you pick <em>Create &amp; deploy</em>. Plain <em>Create</em> saves the compose host-neutrally.
+          The stack belongs to this host until it is deployed; <em>Create &amp; deploy</em> deploys it there.
         </p>
       </div>
     {/if}

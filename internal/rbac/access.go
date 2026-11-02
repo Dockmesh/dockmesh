@@ -213,6 +213,27 @@ func (a *Access) GrantFor(p Perm, res Resource) (Grant, bool) {
 	return Grant{}, false
 }
 
+// AllowsByStack reports whether some grant holds p on res through scopes
+// that name the stack (or everything), not through a host or host tag.
+func (a *Access) AllowsByStack(p Perm, res Resource) bool {
+	if a == nil {
+		return false
+	}
+	for _, g := range a.Grants {
+		if !g.has(p) || !g.Covers(res) {
+			continue
+		}
+		byStack := true
+		for _, s := range g.Scopes {
+			byStack = byStack && (s.IsGlobal() || s.Type == ScopeStack)
+		}
+		if byStack {
+			return true
+		}
+	}
+	return false
+}
+
 // Covers reports whether some grant reaches res, whatever it permits.
 func (a *Access) Covers(res Resource) bool {
 	if a == nil {

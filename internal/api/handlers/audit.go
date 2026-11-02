@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -16,14 +17,13 @@ import (
 // importing database/sql just for that.
 var errNotFound = sql.ErrNoRows
 
-// audit is a convenience wrapper that enriches the call with the
-// authenticated user ID from the request context.
+// audit writes an entry attributed to the caller: the signed-in user, or
+// the owner of the API token in use with the token id in the details.
 func (h *Handlers) audit(r *http.Request, action, target string, details any) {
 	if h.Audit == nil {
 		return
 	}
-	uid := middleware.UserID(r.Context())
-	h.Audit.Write(r.Context(), uid, action, target, details)
+	h.Audit.Write(r.Context(), actorID(r), action, target, withTokenID(r.Context(), details))
 }
 
 // auditDetached writes an audit entry that must survive the request being
@@ -33,7 +33,29 @@ func (h *Handlers) auditDetached(r *http.Request, action, target string, details
 		return
 	}
 	ctx := context.WithoutCancel(r.Context())
-	h.Audit.Write(ctx, middleware.UserID(ctx), action, target, details)
+	h.Audit.Write(ctx, actorID(r), action, target, withTokenID(ctx, details))
+}
+
+// withTokenID adds the API token of the request to details, so entries of
+// a token and of its owner's own sessions can be told apart. Details that
+// are not a JSON object are kept under "details".
+func withTokenID(ctx context.Context, details any) any {
+	tid := middleware.APITokenID(ctx)
+	if tid == 0 {
+		return details
+	}
+	out := map[string]any{}
+	if details != nil {
+		b, err := json.Marshal(details)
+		if err != nil || json.Unmarshal(b, &out) != nil {
+			out = map[string]any{"details": details}
+		}
+	}
+	if out == nil {
+		out = map[string]any{}
+	}
+	out["api_token_id"] = tid
+	return out
 }
 
 func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {

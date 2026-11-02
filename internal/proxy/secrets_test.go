@@ -131,6 +131,9 @@ func TestForwardAuthQueryWriteOnly(t *testing.T) {
 		{"other server refuses", ForwardAuth{URL: "http://evil.example.net/verify"}, "", true},
 		{"other scheme refuses", ForwardAuth{URL: "https://authelia:9091/api/verify"}, "", true},
 		{"other server with clear", ForwardAuth{URL: "http://other:9091/verify", ClearQuery: true}, "http://other:9091/verify", false},
+		{"masked form keeps path and query", ForwardAuth{URL: "http://authelia:9091"}, full, false},
+		{"masked form with clear keeps the path", ForwardAuth{URL: "http://authelia:9091", ClearQuery: true}, "http://authelia:9091/api/verify", false},
+		{"masked form of another server refuses", ForwardAuth{URL: "http://other:9091"}, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

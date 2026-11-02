@@ -36,6 +36,8 @@ On the local host, Dockmesh reads the volume's mountpoint directly. Docker volum
 
 Every directory listing and every file read is written to the audit log with the path.
 
+Dockmesh's own volumes can only be browsed, and only be backed up, by an admin: `dockmesh-caddy-data` holds the proxy's ACME account and TLS private keys, `dockmesh-caddy-config` the proxy's full config with its credentials, and `dockmesh-agent` an agent's client certificate.
+
 <!-- update after: fs: contain paths in volume browse, restore and git sources -->
 > **Warning:** Paths are checked lexically, and symlinks inside a volume are followed. A volume whose content is controlled by a container can therefore expose files outside the volume on the host. Grant `volumes.browse` only to people you would trust with root on the host.
 

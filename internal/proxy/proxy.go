@@ -119,6 +119,9 @@ type Service struct {
 	certMu     sync.Mutex
 	certAt     time.Time
 	certRoutes []Route
+	// certRefresh is closed when the running refresh ends; nil when none
+	// runs.
+	certRefresh chan struct{}
 
 	// containerState reports whether the managed container exists and runs;
 	// nil means ask Docker.

@@ -57,6 +57,9 @@ type stackRequest struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
+	// HostID is the host a new stack is for; scope checks use it until
+	// the stack is deployed. Ignored on update.
+	HostID string `json:"host_id,omitempty"`
 }
 
 // stackListEntry extends the filesystem Stack with the optional
@@ -69,7 +72,10 @@ type stackRequest struct {
 type stackListEntry struct {
 	*stacks.Stack
 	Deployment *stacks.Deployment `json:"deployment,omitempty"`
-	Status     string             `json:"status,omitempty"`
+	// TargetHost is the host the stack was created for; it applies until
+	// the stack is deployed.
+	TargetHost string `json:"target_host,omitempty"`
+	Status     string `json:"status,omitempty"`
 	// Containers counts running containers carrying the
 	// `com.docker.compose.project=<name>` label on the LOCAL docker
 	// daemon. Stacks deployed via a remote agent leave this at 0 until
@@ -85,11 +91,15 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 	list := h.Stacks.List()
 	// Enrich with deployment info when available.
 	var deps map[string]*stacks.Deployment
+	var targets map[string]string
 	if h.Deployments != nil {
 		var err error
 		deps, err = h.Deployments.All(r.Context())
 		if err != nil {
 			slog.Warn("list stacks: deployment query", "err", err)
+		}
+		if targets, err = h.Deployments.Targets(r.Context()); err != nil {
+			slog.Warn("list stacks: target hosts", "err", err)
 		}
 	}
 	// One ContainerList → map of compose-project → running count. Cheap
@@ -122,7 +132,7 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[string]bool, len(list))
 	for _, s := range list {
 		seen[s.Name] = true
-		entry := stackListEntry{Stack: s}
+		entry := stackListEntry{Stack: s, TargetHost: targets[s.Name]}
 		if d, ok := deps[s.Name]; ok {
 			if hostNames != nil {
 				d.HostName = hostNames[d.HostID]
@@ -297,6 +307,7 @@ func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("discard stack: drop deployment row", "stack", name, "err", err)
 		}
 	}
+	h.forgetStackTarget(r, name)
 	if h.Dependencies != nil {
 		if err := h.Dependencies.DeleteAll(r.Context(), name); err != nil {
 			slog.Warn("discard stack: drop dependency edges", "stack", name, "err", err)
@@ -378,13 +389,142 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "compose required")
 		return
 	}
+	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
+		return
+	}
 	d, err := h.Stacks.Create(req.Name, req.Compose, req.Env)
 	if err != nil {
 		writeStackError(w, err)
 		return
 	}
-	h.audit(r, audit.ActionStackCreate, req.Name, nil)
+	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
+		if derr := h.Stacks.Delete(req.Name); derr != nil { //nolint:contextcheck // removes files only
+			slog.Warn("create stack: roll back", "stack", req.Name, "err", derr)
+		}
+		return
+	}
+	var details map[string]any
+	if req.HostID != "" {
+		details = map[string]any{"host_id": req.HostID}
+	}
+	h.audit(r, audit.ActionStackCreate, req.Name, details)
 	writeJSON(w, http.StatusCreated, d)
+}
+
+// requireStackCreate checks that the caller may create stack name for
+// hostID ("" = no host) with perm (stacks.create, or the permission of a
+// route that creates a stack on the way, like template deploy or adopt).
+// The name must be new: no stack files, deployment row or git source, so a
+// create can't take over or retarget an existing stack. A caller whose
+// perm is limited to hosts has to name one of them. A name someone holds a
+// stack assignment for is reserved: only a caller whose own assignment
+// names that stack, or who holds perm everywhere, can take it, so nobody
+// stages a stack that another user's assignment then reaches.
+func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, perm rbac.Perm, name, hostID string) bool {
+	if err := stacks.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if hostID != "" && !h.hostKnown(r.Context(), hostID) {
+		writeError(w, http.StatusBadRequest, "unknown host "+hostID)
+		return false
+	}
+	if exists, err := h.stackNameTaken(r.Context(), name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	} else if exists {
+		writeError(w, http.StatusConflict, "a stack named "+name+" already exists")
+		return false
+	}
+	res := h.stackScopeReq(hostID, name)
+	acc := middleware.AccessOf(r.Context())
+	if !acc.AllowsOn(perm, res) {
+		if hostID == "" {
+			h.audit(r, audit.ActionScopeDenied, "stack "+name, map[string]any{"permission": string(perm), "stack_name": name})
+			writeError(w, http.StatusForbidden, "choose the host this stack is for: you can only create stacks on some hosts")
+			return false
+		}
+		h.writeScopeDenied(w, r, perm, res, "stack "+name)
+		return false
+	}
+	if h.Roles != nil && !acc.AllowsByStack(perm, res) {
+		for _, a := range h.Roles.AllAssignments() {
+			if a.Scope.Type == rbac.ScopeStack && a.Scope.Value == name {
+				writeError(w, http.StatusConflict, "the name "+name+" is reserved by a stack assignment; pick another name or ask an admin")
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// stackNameTaken reports whether name belongs to an existing stack: files
+// on disk, a deployment row (also of a stack whose files are gone) or a
+// git source.
+func (h *Handlers) stackNameTaken(ctx context.Context, name string) (bool, error) {
+	if h.Stacks != nil && h.Stacks.Has(name) {
+		return true, nil
+	}
+	if h.Deployments != nil {
+		d, err := h.Deployments.Get(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if d != nil {
+			return true, nil
+		}
+	}
+	if h.GitSource != nil {
+		if _, err := h.GitSource.Get(ctx, name); err == nil {
+			return true, nil
+		} else if !errors.Is(err, gitsource.ErrNotFound) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// hostKnown reports whether hostID is the server or an enrolled agent,
+// online or not.
+func (h *Handlers) hostKnown(ctx context.Context, hostID string) bool {
+	if hostID == "local" {
+		return true
+	}
+	if h.Agents == nil {
+		return false
+	}
+	_, err := h.Agents.Get(ctx, hostID)
+	return err == nil
+}
+
+// recordStackTarget stores the host a new stack is for and drops a row
+// left from an earlier stack of that name, so the new one inherits nothing.
+func (h *Handlers) recordStackTarget(w http.ResponseWriter, r *http.Request, name, hostID string) bool {
+	if h.Deployments == nil {
+		return true
+	}
+	if hostID == "" {
+		if err := h.Deployments.DeleteTarget(r.Context(), name); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return false
+		}
+		return true
+	}
+	if err := h.Deployments.SetTarget(r.Context(), name, hostID, actorID(r)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	return true
+}
+
+// forgetStackTarget drops the target host of a removed stack.
+func (h *Handlers) forgetStackTarget(r *http.Request, name string) {
+	if h.Deployments == nil {
+		return
+	}
+	if err := h.Deployments.DeleteTarget(r.Context(), name); err != nil {
+		slog.Warn("drop stack target host", "stack", name, "err", err)
+	}
 }
 
 // fromGitRequest is the payload for POST /stacks/from-git. Mirrors
@@ -392,8 +532,9 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 // update via the existing Configure path, so this is just the
 // constructor shortcut.
 type fromGitRequest struct {
-	Name string          `json:"name"`
-	Git  gitsource.Input `json:"git"`
+	Name   string          `json:"name"`
+	HostID string          `json:"host_id,omitempty"`
+	Git    gitsource.Input `json:"git"`
 }
 
 // CreateStackFromGit is the one-shot "new stack imported from a git
@@ -416,12 +557,21 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
+		return
+	}
 	// Persist the git config first. Configure does its own validation
 	// and stores the row before sync runs so a credential error doesn't
 	// leave the user with nothing to retry against.
 	src, err := h.GitSource.Configure(r.Context(), req.Name, req.Git)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
+		if derr := h.GitSource.Delete(r.Context(), req.Name); derr != nil {
+			slog.Warn("create stack from git: roll back", "stack", req.Name, "err", derr)
+		}
 		return
 	}
 	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
@@ -561,6 +711,7 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("delete stack deployment row", "stack", name, "err", err)
 		}
 	}
+	h.forgetStackTarget(r, name)
 	// Remove every dependency edge this stack participates in (P.12.7)
 	// so the graph doesn't drag around references to a stack that no
 	// longer exists. Other stacks that depended on this one will now
@@ -665,7 +816,34 @@ func (h *Handlers) DiscoverStacks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, h.filterDiscovered(r, list))
+}
+
+// filterDiscovered keeps the projects the caller could adopt: the host
+// check above is only a pre-filter, a stack scope reaches its own project,
+// and a project running Dockmesh's own containers is for admins.
+func (h *Handlers) filterDiscovered(r *http.Request, in []adopt.DiscoveredStack) []adopt.DiscoveredStack {
+	if h.callerIsAdmin(r) {
+		return in
+	}
+	unscoped := h.callerUnscoped(r)
+	out := make([]adopt.DiscoveredStack, 0, len(in))
+	for _, d := range in {
+		if discoveredOwn(d) || (!unscoped && !h.allowedOn(r, h.stackScopeReq(d.HostID, d.ProjectName))) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func discoveredOwn(d adopt.DiscoveredStack) bool {
+	for _, s := range d.Services {
+		if isOwnSummary(d.HostID, container.Summary{ID: s.ContainerID, Image: s.Image}) {
+			return true
+		}
+	}
+	return false
 }
 
 // stackAdoptRequest mirrors the StackAdoptInput OpenAPI schema. Bundle
@@ -699,9 +877,11 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, req.HostID) {
 		return
 	}
-	scopeReq := h.stackScopeReq(req.HostID, req.Name)
-	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
+	if !h.requireStackCreate(w, r, rbac.PermStacksAdopt, req.Name, req.HostID) {
+		return
+	}
+	if !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), req.HostID, req.Name) {
+		writeError(w, http.StatusForbidden, "only an admin can adopt a project that runs Dockmesh's own containers")
 		return
 	}
 	adoptReq := adopt.AdoptRequest{

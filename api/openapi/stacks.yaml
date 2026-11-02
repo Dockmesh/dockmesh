@@ -22,6 +22,14 @@ paths:
         Writes the stack to the filesystem under `<stacks_root>/<name>/`.
         Name must match `[a-z0-9][a-z0-9-]*[a-z0-9]` (2..63 chars, not a
         reserved word). `.env` is encrypted at rest via the age key.
+
+        `host_id` names the host the stack is for. Until the stack is
+        deployed, scope checks use that host, so a caller whose
+        `stacks.create` is limited to some hosts must name one of them
+        (403 otherwise) and can then read, edit and deploy the stack. A
+        name that a stack-scoped assignment names is reserved (409) unless
+        the caller holds `stacks.create` on everything or through an
+        assignment on that stack.
       requestBody:
         required: true
         content:
@@ -37,7 +45,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: A stack with this name already exists.
+          description: A stack with this name already exists, or the name is reserved by a stack assignment.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -50,7 +58,8 @@ paths:
         Scans all running containers on the target host for the
         `com.docker.compose.project` label and returns projects that are
         not already tracked by dockmesh. These are candidates for
-        `POST /stacks/adopt`.
+        `POST /stacks/adopt`. Only projects the caller could adopt are
+        listed: a stack-scoped caller sees its own stack only.
       parameters:
         - name: host
           in: query
@@ -78,7 +87,10 @@ paths:
         dockmesh — writes compose.yaml + optional supporting files to
         `<stacks_root>/<name>/`, binds the running containers via their
         `com.docker.compose.project` label, and records the adoption in
-        the audit log. **Does not stop, recreate, or otherwise modify
+        the audit log. The name must be new and not reserved (409, as for
+        `POST /stacks`); a project that runs Dockmesh's own containers can
+        only be adopted by an admin, and only admins change such a stack
+        afterwards. **Does not stop, recreate, or otherwise modify
         the running containers.** The next explicit deploy is the only
         operation that might trigger container recreation, and that is
         gated by the client and shown in the `drift_services` field.
@@ -573,8 +585,10 @@ paths:
       tags: [stacks]
       summary: Current per-service status on the deployed host
       description: |
-        A stack that was never deployed returns an empty list to callers
-        whose scope does not include the requested host.
+        A stack that was never deployed is judged by the host it was
+        created for (or, without one, needs an assignment on everything or
+        on the stack); it returns an empty list to callers whose scope does
+        not include the requested host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/HostQuery"
@@ -908,7 +922,10 @@ paths:
               type: object
               required: [name, git]
               properties:
-                name: {type: string, description: "Stack name (kebab-case)."}
+                name: {type: string, description: "Stack name (kebab-case). Must not belong to an existing stack (409)."}
+                host_id:
+                  type: string
+                  description: Host the stack is for; same rules as `POST /stacks`.
                 git: {$ref: "#/components/schemas/StackGitSourceInput"}
       responses:
         "201":
@@ -1152,6 +1169,11 @@ components:
         env:
           type: string
           description: Optional plaintext .env content. Stored age-encrypted when secrets encryption is enabled.
+        host_id:
+          type: string
+          description: |
+            Create only: the host the stack is for. Scope checks use it
+            until the stack is deployed. Ignored on update.
     StackDetail:
       type: object
       required: [name, compose]
@@ -1183,6 +1205,9 @@ components:
         name: {type: string}
         compose_path: {type: string}
         deployment: {$ref: "#/components/schemas/StackDeployment"}
+        target_host:
+          type: string
+          description: Host the stack was created for; applies until it is deployed.
     DiscoveredStack:
       type: object
       description: |

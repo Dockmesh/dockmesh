@@ -114,3 +114,60 @@ func scanDeployment(r deploymentScanner) (*Deployment, error) {
 	}
 	return &d, nil
 }
+
+// SetTarget records the host a stack was created for. Scope checks use it
+// while the stack has no deployment row.
+func (s *DeploymentStore) SetTarget(ctx context.Context, stackName, hostID, createdBy string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO stack_targets (stack_name, host_id, created_by) VALUES (?, ?, ?)
+		ON CONFLICT(stack_name) DO UPDATE SET host_id = excluded.host_id, created_by = excluded.created_by`,
+		stackName, hostID, createdBy)
+	return err
+}
+
+// Target returns the host a stack was created for, "" when none was given.
+func (s *DeploymentStore) Target(ctx context.Context, stackName string) (string, error) {
+	var hostID string
+	err := s.db.QueryRowContext(ctx, `SELECT host_id FROM stack_targets WHERE stack_name = ?`, stackName).Scan(&hostID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hostID, err
+}
+
+// Targets returns every recorded target host keyed by stack name.
+func (s *DeploymentStore) Targets(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT stack_name, host_id FROM stack_targets`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, hostID string
+		if err := rows.Scan(&name, &hostID); err != nil {
+			return nil, err
+		}
+		out[name] = hostID
+	}
+	return out, rows.Err()
+}
+
+// DeleteTarget forgets the target host of a removed stack.
+func (s *DeploymentStore) DeleteTarget(ctx context.Context, stackName string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM stack_targets WHERE stack_name = ?`, stackName)
+	return err
+}
+
+// HostOf returns the host scope checks use for a stack: its deployment
+// host, or the host it was created for while it is not deployed.
+func (s *DeploymentStore) HostOf(ctx context.Context, stackName string) (string, error) {
+	d, err := s.Get(ctx, stackName)
+	if err != nil {
+		return "", err
+	}
+	if d != nil && d.HostID != "" {
+		return d.HostID, nil
+	}
+	return s.Target(ctx, stackName)
+}

@@ -180,7 +180,21 @@ func (h *Handlers) runForAccess(w http.ResponseWriter, r *http.Request, perm rba
 	if !h.requireRunAccess(w, r, run, perm) {
 		return nil, false
 	}
+	if !h.requireSourcesNotOwn(w, r, run.Sources) {
+		return nil, false
+	}
 	return run, true
+}
+
+// requireSourcesNotOwn keeps runs and jobs that back up Dockmesh's own
+// volumes to admins: their archives hold the proxy's TLS keys.
+func (h *Handlers) requireSourcesNotOwn(w http.ResponseWriter, r *http.Request, sources []backup.Source) bool {
+	for _, src := range sources {
+		if src.Type == "volume" && !h.requireVolumeNotOwn(w, r, src.Name) {
+			return false
+		}
+	}
+	return true
 }
 
 // jobForAccess loads the job named by {id} and applies requireJobAccess.
@@ -200,6 +214,9 @@ func (h *Handlers) jobForAccess(w http.ResponseWriter, r *http.Request) (*backup
 		return nil, false
 	}
 	if !h.requireJobAccess(w, r, job, nil) {
+		return nil, false
+	}
+	if !h.requireSourcesNotOwn(w, r, job.Sources) {
 		return nil, false
 	}
 	return job, true

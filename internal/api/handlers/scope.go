@@ -176,7 +176,7 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
 	}
-	return true
+	return h.requireNotOwnContainer(w, r, perm, hostID, containerID)
 }
 
 // requireStackScope is requireContainerScope for a stack on hostID.
@@ -225,13 +225,12 @@ func (h *Handlers) hostScopeReq(hostID string) rbac.Resource {
 }
 
 // StackScope resolves the stack of /stacks/{name}/... requests: deployed
-// stacks are checked on their deployment host. A stack that is not
-// deployed has no host, which only assignments on everything or on that
-// stack without a host reach, for reads and writes alike: a host scope
-// must not let anyone rewrite or deploy a stack staged for another host.
-// The two status probes expose no files and only need the route's
-// permission somewhere. RequirePerm then tests the route's permission on
-// the resolved resource.
+// stacks are checked on their deployment host, stacks that are not
+// deployed on the host they were created for. A stack with neither has no
+// host, which only assignments on everything or on that stack without a
+// host reach, for reads and writes alike: a host scope must not let anyone
+// rewrite or deploy a stack staged for another host. RequirePerm then
+// tests the route's permission on the resolved resource.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -240,17 +239,9 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		d, err := h.Deployments.Get(r.Context(), name)
+		hostID, err := h.Deployments.HostOf(r.Context(), name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		hostID := ""
-		if d != nil {
-			hostID = d.HostID
-		}
-		if hostID == "" && undeployedProbe(rctx.RoutePattern()) {
-			next.ServeHTTP(w, r)
 			return
 		}
 		res := h.stackScopeReq(hostID, name)
@@ -258,27 +249,38 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
 			return
 		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), hostID, name) {
+			writeError(w, http.StatusForbidden, "only an admin can change a stack that runs Dockmesh's own containers")
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
 	})
 }
 
-// undeployedProbe matches the two read routes that expose no stack files,
-// which clients poll right after creating a stack.
-func undeployedProbe(pattern string) bool {
-	return strings.HasSuffix(pattern, "/status") || strings.HasSuffix(pattern, "/deploy/progress")
+// stackHost is the host scope checks use for stack name: its deployment
+// host, or the host it was created for. "" when it has neither.
+func (h *Handlers) stackHost(ctx context.Context, name string) string {
+	if h.Deployments == nil {
+		return ""
+	}
+	hostID, err := h.Deployments.HostOf(ctx, name)
+	if err != nil {
+		return ""
+	}
+	return hostID
 }
 
 // filterStackListByScope keeps the stacks the caller may view: deployed
-// stacks on their host, others only through an assignment on everything
-// or on that stack.
+// stacks on their host, others on the host they were created for or,
+// without one, only through an assignment on everything or on that stack.
 func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) []stackListEntry {
 	if h.callerUnscoped(r) {
 		return in
 	}
 	out := make([]stackListEntry, 0, len(in))
 	for _, e := range in {
-		hostID := ""
-		if e.Deployment != nil {
+		hostID := e.TargetHost
+		if e.Deployment != nil && e.Deployment.HostID != "" {
 			hostID = e.Deployment.HostID
 		}
 		if h.allowedOn(r, h.stackScopeReq(hostID, e.Name)) {
@@ -354,16 +356,10 @@ func (h *Handlers) hostVisible(r *http.Request, id string) bool {
 }
 
 // stackRes is the resource of stack name: the one StackScope resolved for
-// this request, or the stack on its deployment host.
+// this request, or the stack on the host stackHost names.
 func (h *Handlers) stackRes(r *http.Request, name string) rbac.Resource {
 	if res, ok := middleware.ResourceOf(r.Context()); ok && res.StackName == name {
 		return res
 	}
-	hostID := ""
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			hostID = d.HostID
-		}
-	}
-	return h.stackScopeReq(hostID, name)
+	return h.stackScopeReq(h.stackHost(r.Context(), name), name)
 }

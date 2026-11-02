@@ -66,8 +66,10 @@ components:
         Where an assignment applies. `host` and `stack` carry the host id in
         `host`; `host_tag` and `stack` carry the tag or stack name in
         `value`. Stack names are unique across the instance; a stack scope
-        matches the stack while it is deployed on `host`; without `host` it
-        matches the stack anywhere and while it is not deployed.
+        matches the stack while it is deployed on `host` (or, not deployed
+        yet, was created for `host`); without `host` it matches the stack
+        anywhere and while it is not deployed. A host or host tag scope
+        reaches an undeployed stack only through the host it was created for.
       properties:
         type: {type: string, enum: [global, host, host_tag, stack]}
         host: {type: string, example: local}

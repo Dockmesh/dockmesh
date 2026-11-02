@@ -286,6 +286,9 @@ func TestReadEndpointsEnforceScope(t *testing.T) {
 	if err := e.h.Deployments.Set(ctx, "web", "agent-1", "running"); err != nil {
 		t.Fatal(err)
 	}
+	if err := e.h.Deployments.SetTarget(ctx, "staged", "agent-1", ""); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		user, path string
@@ -299,12 +302,17 @@ func TestReadEndpointsEnforceScope(t *testing.T) {
 		{"tagged", "/api/v1/stacks/db/status", http.StatusForbidden},
 		{"stacky", "/api/v1/stacks/db/status", http.StatusForbidden},
 		{"stacky", "/api/v1/stacks/web/status", http.StatusNoContent},
-		{"tagged", "/api/v1/stacks/undeployed/status", http.StatusNoContent},
-		// An undeployed stack has no host to judge by, so host-limited
-		// callers may not read its files unless a role lists the stack.
+		// An undeployed stack without a target host has no host to judge
+		// by, so host-limited callers may not read it, not even its status,
+		// unless a role lists the stack. With a target host, that host
+		// decides.
+		{"tagged", "/api/v1/stacks/undeployed/status", http.StatusForbidden},
+		{"hosty", "/api/v1/stacks/staged", http.StatusNoContent},
+		{"hosty", "/api/v1/stacks/staged/status", http.StatusNoContent},
+		{"tagged", "/api/v1/stacks/staged/status", http.StatusForbidden},
 		{"free", "/api/v1/stacks/undeployed", http.StatusNoContent},
 		{"hosty", "/api/v1/stacks/undeployed", http.StatusForbidden},
-		{"hosty", "/api/v1/stacks/undeployed/status", http.StatusNoContent},
+		{"hosty", "/api/v1/stacks/undeployed/status", http.StatusForbidden},
 		{"tagged", "/api/v1/stacks/undeployed", http.StatusForbidden},
 		{"mixed", "/api/v1/stacks/undeployed", http.StatusForbidden},
 		{"mixed", "/api/v1/stacks/mine", http.StatusNoContent},

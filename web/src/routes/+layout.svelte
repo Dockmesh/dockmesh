@@ -10,7 +10,7 @@
   import { fmtVersion } from '$lib/version';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac.svelte';
-  import { Toaster, ConfirmDialog, UpdateBanner } from '$lib/components/ui';
+  import { Toaster, ConfirmDialog, UpdateBanner, NoAccess } from '$lib/components/ui';
   import HostLens from '$lib/components/shell/HostLens.svelte';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
   import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
@@ -22,10 +22,12 @@
   import Sidebar, { type Badge } from '$lib/components/shell/Sidebar.svelte';
   import CommandPalette from '$lib/components/shell/CommandPalette.svelte';
   import SettingsNav from '$lib/components/shell/SettingsNav.svelte';
-  import { activeItem, SETTINGS_PATHS, matches } from '$lib/components/shell/nav';
+  import { activeItem, SETTINGS_PATHS, matches, routeAllowed } from '$lib/components/shell/nav';
   import { Sun, Moon, Menu as MenuIcon } from 'lucide-svelte';
 
   let { children } = $props();
+
+  const pageAllowed = $derived(routeAllowed(page.url.pathname));
 
   // Theme: an explicit choice (stored) wins, otherwise follow the OS.
   let theme = $state<'light' | 'dark'>('dark');
@@ -340,10 +342,10 @@
       {#if inSettings}
         <div class="settings-wrap">
           <SettingsNav />
-          <div class="settings-body">{@render children()}</div>
+          <div class="settings-body">{#if pageAllowed}{@render children()}{:else}<NoAccess />{/if}</div>
         </div>
       {:else}
-        <div class="page">{@render children()}</div>
+        <div class="page">{#if pageAllowed}{@render children()}{:else}<NoAccess />{/if}</div>
       {/if}
     </main>
   </div>

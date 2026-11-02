@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 
@@ -32,11 +33,21 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	h.wsWatch(r, conn, rbac.PermSystemView, nil)
+
+	// The filters below read the caller of the latest re-check, so a role
+	// or scope change applies to the open stream, not only after reconnect.
+	type caller struct {
+		r        *http.Request
+		unscoped bool
+	}
+	var cur atomic.Pointer[caller]
+	cur.Store(&caller{r: r, unscoped: h.callerUnscoped(r)})
+	h.wsWatchRefresh(r, conn, rbac.PermSystemView, nil, func(nr *http.Request) {
+		cur.Store(&caller{r: nr, unscoped: h.callerUnscoped(nr)})
+	})
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	unscoped := h.callerUnscoped(r)
 
 	// Cancel ctx when the client disconnects.
 	go func() {
@@ -98,7 +109,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				dockerMsgs = nil
 				continue
 			}
-			if !unscoped && !h.allowedOn(r, h.stackScopeReq("local", ev.stack), rbac.PermContainersView) {
+			if c := cur.Load(); !c.unscoped && !h.allowedOn(c.r, h.stackScopeReq("local", ev.stack), rbac.PermContainersView) {
 				continue
 			}
 			if b, err := json.Marshal(ev); err == nil {
@@ -111,7 +122,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				opCh = nil
 				continue
 			}
-			if !h.operationVisible(r, &ev.Op) {
+			if !h.operationVisible(cur.Load().r, &ev.Op) {
 				continue
 			}
 			payload := map[string]any{"source": "operations", "type": ev.Type, "op": ev.Op}
@@ -128,7 +139,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				stackCh = nil
 				continue
 			}
-			if !unscoped && !h.stackVisible(r, ev.Name) {
+			if c := cur.Load(); !c.unscoped && !h.stackVisible(c.r, ev.Name) {
 				continue
 			}
 			payload := map[string]any{
@@ -159,16 +170,8 @@ type dockerEventLike struct {
 }
 
 // stackVisible reports whether the caller's scope includes the stack on
-// its deployment host, or by name alone while it is not deployed.
+// its deployment host or the host it was created for, or by name alone
+// when it has neither.
 func (h *Handlers) stackVisible(r *http.Request, name string) bool {
-	hostID := ""
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			hostID = d.HostID
-		}
-	}
-	if hostID != "" {
-		return h.allowedOn(r, h.stackScopeReq(hostID, name), rbac.PermStacksView)
-	}
-	return h.allowedOn(r, rbac.Resource{StackName: name}, rbac.PermStacksView)
+	return h.allowedOn(r, h.stackScopeReq(h.stackHost(r.Context(), name), name), rbac.PermStacksView)
 }

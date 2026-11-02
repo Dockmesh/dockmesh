@@ -212,8 +212,8 @@ func orEmpty[T any](in []T) []T {
 // maskedValue stands in for values a caller may not see.
 const maskedValue = "********"
 
-// Masked returns a copy with header values and the forward-auth URL's
-// query hidden, since both can carry credentials.
+// Masked returns a copy with header values hidden and the forward-auth
+// URL cut to scheme://host:port, since all of them can carry credentials.
 func (o SiteOptions) Masked() SiteOptions {
 	o.Headers.RequestSet = maskHeaders(o.Headers.RequestSet)
 	o.Headers.ResponseSet = maskHeaders(o.Headers.ResponseSet)
@@ -221,8 +221,7 @@ func (o SiteOptions) Masked() SiteOptions {
 		m := *f
 		m.URL = ""
 		if u, err := url.Parse(f.URL); err == nil {
-			u.RawQuery, u.ForceQuery = "", false
-			m.URL = u.String()
+			m.URL = (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 		}
 		o.Access.ForwardAuth = &m
 	}
@@ -566,20 +565,34 @@ func (o *SiteOptions) applySecrets(prev *SiteOptions, newUpstream bool) error {
 	drop := f.ClearQuery
 	f.QuerySet, f.ClearQuery = false, false
 	pf := prevOpts.Access.ForwardAuth
-	if drop || pf == nil {
+	if pf == nil {
 		return nil
 	}
 	// A URL that doesn't parse is left to validate, which rejects it.
 	u, uerr := url.Parse(f.URL)
 	old, oerr := url.Parse(pf.URL)
-	keep := uerr == nil && oerr == nil && u.RawQuery == "" && !u.ForceQuery && old.RawQuery != ""
-	if !keep {
+	if uerr != nil || oerr != nil {
+		return nil //nolint:nilerr // validate rejects the URL
+	}
+	// Viewers see only scheme://host:port, since a token can sit in the
+	// path as well; a URL sent back in that form keeps the stored path.
+	keepPath := u.Path == "" && u.RawPath == "" && old.Path != ""
+	keepQuery := !drop && u.RawQuery == "" && !u.ForceQuery && old.RawQuery != ""
+	if !keepPath && !keepQuery {
 		return nil
 	}
 	if !strings.EqualFold(u.Scheme, old.Scheme) || !strings.EqualFold(u.Host, old.Host) {
+		if !keepQuery {
+			return nil
+		}
 		return optErr("access.forward_auth.url", "the stored query is only kept for the same server; enter it again or clear it")
 	}
-	u.RawQuery = old.RawQuery
+	if keepPath {
+		u.Path, u.RawPath = old.Path, old.RawPath
+	}
+	if keepQuery {
+		u.RawQuery = old.RawQuery
+	}
 	f.URL = u.String()
 	return nil
 }
