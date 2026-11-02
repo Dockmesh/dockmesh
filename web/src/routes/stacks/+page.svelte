@@ -360,7 +360,7 @@
       })
       .sort((a, b) => {
         if (sortMode === 'state') {
-          // Attention first, then running, then stopped.
+          // Attention first, then running, stopped, not deployed.
           const order: Record<string, number> = {
             unhealthy: 0, partial: 1, running: 2, stopped: 3, undeployed: 4,
           };

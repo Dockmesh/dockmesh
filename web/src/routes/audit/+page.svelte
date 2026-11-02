@@ -11,7 +11,7 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { Download, ShieldCheck, Settings2, X } from 'lucide-svelte';
   import { auditTargetHref, csvLine, CATEGORY_LABEL, type AuditCategory } from './_links';
-  import { actionPhrase, targetLabel, type AuditNames } from '$lib/auditText';
+  import { actionPhrase, hostNames, loadUserNames, targetLabel, type AuditNames } from '$lib/auditText';
   import { hosts } from '$lib/stores/host.svelte';
 
   interface AuditEntry {
@@ -40,16 +40,9 @@
   let detailOpen = $state(false);
 
   let userNames = $state(new Map<string, string>());
-  const names = $derived<AuditNames>({
-    users: userNames,
-    hosts: new Map(hosts.available.filter((h) => h.kind !== 'all').map((h) => [h.id, h.name]))
-  });
+  const names = $derived<AuditNames>({ users: userNames, hosts: hostNames(hosts.available) });
   $effect(() => {
-    if (!allowed('users.view')) return;
-    api.users
-      .list()
-      .then((list) => (userNames = new Map(list.map((u) => [u.id, u.username]))))
-      .catch(() => {});
+    loadUserNames(allowed('users.view'), api.users.list).then((m) => (userNames = m));
   });
   const target = (e: AuditEntry) => targetLabel(e.action, e.target, names);
 

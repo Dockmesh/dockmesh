@@ -15,7 +15,7 @@
   import { sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { stackInLens } from '$lib/lens';
-  import { actionPhrase, targetLabel } from '$lib/auditText';
+  import { actionPhrase, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -41,13 +41,9 @@
   let changes = $state<Awaited<ReturnType<typeof api.audit.list>>>([]);
   let userNames = $state(new Map<string, string>());
   $effect(() => {
-    if (!allowed('audit.view') || !allowed('users.view')) return;
-    api.users
-      .list()
-      .then((list) => (userNames = new Map(list.map((u) => [u.id, u.username]))))
-      .catch(() => {});
+    loadUserNames(allowed('audit.view') && allowed('users.view'), api.users.list).then((m) => (userNames = m));
   });
-  const hostNames = $derived(new Map(hosts.available.map((h) => [h.id, h.name])));
+  const hostNames = $derived(hostNameMap(hosts.available));
   let attention = $state<AttentionItem[] | null>(null);
   let runs = $state<BackupRun[] | null>(null);
   let hostList = $state<HostInfo[]>([]);

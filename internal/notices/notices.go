@@ -111,7 +111,7 @@ type Viewer struct {
 
 var (
 	ErrNotFound       = errors.New("notice not found")
-	ErrNotDismissible = errors.New("critical notices cannot be dismissed")
+	ErrNotDismissible = errors.New("critical notices that are not blocking cannot be dismissed")
 )
 
 // HideFor is how long a dismissed blocking notice stays out of the banner

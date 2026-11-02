@@ -1,6 +1,5 @@
 // Audit entries carry neutral action codes ("stack.create"); the UI turns
-// them into short phrases. The phrase table is keyed by code so it can move
-// into the translation catalogue as is.
+// them into short phrases.
 
 const PHRASES: Record<string, string> = {
   'stack.create': 'created stack',
@@ -62,14 +61,14 @@ const PHRASES: Record<string, string> = {
   'container.exec_start': 'opened a terminal in',
   'container.exec_end': 'closed a terminal in',
   'image.scan': 'scanned image',
-  'volume.browse': 'browsed files of volume',
-  'volume.read_file': 'read a file in volume',
   'image.pull': 'pulled image',
   'image.remove': 'removed image',
   'image.prune': 'pruned images',
   'volume.create': 'created volume',
   'volume.remove': 'removed volume',
   'volume.prune': 'pruned volumes',
+  'volume.browse': 'browsed files of volume',
+  'volume.read_file': 'read a file in volume',
   'network.create': 'created network',
   'network.remove': 'removed network',
   'proxy.enable': 'turned on the proxy',
@@ -93,6 +92,7 @@ const PHRASES: Record<string, string> = {
   'auth.lockout': 'locked out',
   'auth.refresh': 'renewed a session',
   'auth.scope_denied': 'was refused access to',
+  'auth.sso_login': 'signed in through SSO as',
   'auth.sso_rekey': 're-keyed the sign-in of',
   'auth.saml_rekey': 're-keyed the SAML sign-in of',
   'auth.session_revoke': 'ended a session',
@@ -128,4 +128,19 @@ export function targetLabel(action: string, target: string | undefined, names: A
   }
   if (m?.[1] === 'backup-run') return `run ${raw}`;
   return raw;
+}
+
+/** Host id → name for the hosts the caller can see. */
+export function hostNames(list: { id: string; name: string; kind?: string }[]): Map<string, string> {
+  return new Map(list.filter((h) => h.kind !== 'all').map((h) => [h.id, h.name]));
+}
+
+/** User id → username, or an empty map without users.view. */
+export async function loadUserNames(canView: boolean, list: () => Promise<{ id: string; username: string }[]>): Promise<Map<string, string>> {
+  if (!canView) return new Map();
+  try {
+    return new Map((await list()).map((u) => [u.id, u.username]));
+  } catch {
+    return new Map();
+  }
 }
