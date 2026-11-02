@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -81,6 +82,18 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, e.Key+" is managed via /proxy/settings and /proxy/version")
 			return
 		}
+		if e.Key == settings.KeyBaseURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
+			if err := agents.ValidateBaseURL(e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, "base URL "+err.Error())
+				return
+			}
+		}
+		if e.Key == settings.KeyAgentPublicURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
+			if err := agents.ValidateAgentURL(e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, "agent URL "+err.Error())
+				return
+			}
+		}
 		if e.Key == settings.KeyTrustedProxies {
 			if _, err := clientip.ParseList(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "trusted proxies: "+err.Error())
@@ -128,6 +141,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 // Docker daemon.
 func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 	switch key {
+	case settings.KeyBaseURL, settings.KeyAgentPublicURL:
+		if h.Agents != nil {
+			if _, err := h.Agents.ReloadEndpoints(); err != nil {
+				slog.Error("settings: agent URL", "err", err)
+			}
+		}
 	case settings.KeyTrustedProxies:
 		h.proxyNotice.reset(r.Context())
 	case backup.TimezoneSetting:

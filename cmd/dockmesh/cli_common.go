@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"golang.org/x/term"
 )
 
@@ -39,6 +43,20 @@ func loadCLIDB() (*config.Config, *sql.DB, error) {
 		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
 	return cfg, database, nil
+}
+
+// cliAgentsService builds an agents.Service whose install commands use the
+// same URLs as the running server. The listener cert is left alone; the
+// server adds the agent URL's host to it on start.
+func cliAgentsService(cfg *config.Config, database *sql.DB, mgr *pki.Manager) (*agents.Service, error) {
+	st := settings.NewStore(database)
+	if err := st.Load(context.Background()); err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	svc := agents.NewService(database, mgr, "", "")
+	svc.UseEndpoints(agentEndpoints(cfg, st))
+	svc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
+	return svc, nil
 }
 
 // readPassword reads a password from stdin without echoing. Falls back

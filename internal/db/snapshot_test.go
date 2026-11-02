@@ -161,6 +161,21 @@ func TestSnapshotBeforeMigrate(t *testing.T) {
 			wantSnaps: []string{"test.db.pre-migrate-20261028T000000.000Z.bak"},
 		},
 		{
+			name: "same version but other data is not reused",
+			seed: seedOld,
+			prepare: func(t *testing.T, dir string, database *sql.DB) {
+				old := filepath.Join(dir, "test.db.pre-migrate-20261028T000000.000Z.bak")
+				if _, err := database.Exec(`VACUUM INTO ?`, old); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := database.Exec(`INSERT INTO settings (key, value) VALUES ('restored_marker', 'x')`); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantSnaps:    []string{"test.db.pre-migrate-20261028T000000.000Z.bak", wantName},
+			checkPayload: wantName,
+		},
+		{
 			name: "existing snapshot at older version is not reused",
 			seed: func(t *testing.T, database *sql.DB) {
 				if err := migrateUpTo(database, "057_notifications_per_user.sql"); err != nil {

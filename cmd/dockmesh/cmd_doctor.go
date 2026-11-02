@@ -19,9 +19,9 @@ type checkResult struct {
 	warning bool
 }
 
-func ok(name, detail string) checkResult    { return checkResult{name, true, detail, false} }
-func fail(name, detail string) checkResult  { return checkResult{name, false, detail, false} }
-func warn(name, detail string) checkResult  { return checkResult{name, false, detail, true} }
+func ok(name, detail string) checkResult   { return checkResult{name, true, detail, false} }
+func fail(name, detail string) checkResult { return checkResult{name, false, detail, false} }
+func warn(name, detail string) checkResult { return checkResult{name, false, detail, true} }
 
 // runDoctorCmd handles `dockmesh doctor`.
 func runDoctorCmd(args []string) {
@@ -69,7 +69,7 @@ func checkConfig() []checkResult {
 	}
 	out := []checkResult{ok("config load", fmt.Sprintf("HTTPAddr=%s, BaseURL=%s", cfg.HTTPAddr, cfg.BaseURL))}
 	if cfg.AgentPublicURL == "" {
-		out = append(out, warn("agent public url", "DOCKMESH_AGENT_PUBLIC_URL not set — derived URL may not be reachable from agent hosts"))
+		out = append(out, ok("agent public url", "not set in dockmesh.env; Settings -> General or derived from the base URL (check with Add host -> Check connection)"))
 	} else {
 		out = append(out, ok("agent public url", cfg.AgentPublicURL))
 	}

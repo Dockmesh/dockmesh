@@ -28,7 +28,7 @@ func TestBuildUpgradeReqCarriesChecksumPerArch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	c := NewUpgradeController(&Service{publicURL: "http://srv:8080"}, nil)
+	c := NewUpgradeController(&Service{endpoints: Endpoints{BaseURL: "http://srv:8080"}}, nil)
 
 	for arch, content := range bins {
 		req, err := c.buildUpgradeReq(&ConnectedAgent{Hello: HelloPayload{Arch: arch}})

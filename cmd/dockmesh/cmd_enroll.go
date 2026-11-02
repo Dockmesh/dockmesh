@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
@@ -63,12 +62,10 @@ func enrollCreate(args []string) error {
 		return fmt.Errorf("pki load: %w", err)
 	}
 
-	agentPublic := cfg.AgentPublicURL
-	if agentPublic == "" {
-		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
+	svc, err := cliAgentsService(cfg, database, mgr)
+	if err != nil {
+		return err
 	}
-	svc := agents.NewService(database, mgr, cfg.BaseURL, agentPublic)
-	svc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

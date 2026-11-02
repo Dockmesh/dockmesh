@@ -7,6 +7,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { Skeleton, Switch } from '$lib/components/ui';
   import { createSettingsForm } from './settingsForm.svelte';
+  import AgentReachability from '$lib/components/AgentReachability.svelte';
 
   const form = createSettingsForm();
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
@@ -89,7 +90,7 @@
     <div class="dm-form-sec">
       <div>
         <h4>Base URL</h4>
-        <p>Used for OIDC callbacks, links in notifications and agent enrollment.</p>
+        <p>The address users open. Agent install commands download from it. <span class="dm-mono">DOCKMESH_BASE_URL</span> in dockmesh.env wins over this field.</p>
       </div>
       <div>
         <input
@@ -105,7 +106,7 @@
     <div class="dm-form-sec">
       <div>
         <h4>Agent public URL</h4>
-        <p>The wss:// address agents connect to. Empty derives it from the base URL.</p>
+        <p>The wss:// address agents enroll at and connect to; the agent certificate gets this name added on save. Empty derives it from the base URL. <span class="dm-mono">DOCKMESH_AGENT_PUBLIC_URL</span> wins over this field.</p>
       </div>
       <div>
         <input
@@ -115,6 +116,7 @@
           value={form.get('agent_public_url')}
           oninput={(e) => form.set('agent_public_url', e.currentTarget.value)}
         />
+        <div class="set-reach"><AgentReachability auto={false} showSettingsLink={false} /></div>
       </div>
     </div>
 
@@ -160,5 +162,6 @@
 
 <style>
   .set-in { width: min(460px, 100%); }
+  .set-reach { margin-top: 10px; width: min(560px, 100%); }
   .set-bar { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; }
 </style>

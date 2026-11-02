@@ -8,15 +8,17 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
 // CommitInput is the wizard's final submit payload — every field the
 // operator chose across the seven steps. Validated again on the server
 // before the install runs; the live-validate endpoints are advisory.
 type CommitInput struct {
-	DataDir      string `json:"data_dir"`
-	ServiceUser  struct {
-		Mode      string `json:"mode"`      // "existing" | "create"
+	DataDir     string `json:"data_dir"`
+	ServiceUser struct {
+		Mode      string `json:"mode"` // "existing" | "create"
 		Username  string `json:"username"`
 		AddDocker bool   `json:"add_to_docker_group"`
 	} `json:"service_user"`
@@ -52,6 +54,9 @@ func (in *CommitInput) Validate() error {
 	}
 	if in.PublicURL == "" {
 		return errors.New("public_url is required")
+	}
+	if err := agents.ValidateBaseURL(in.PublicURL); err != nil {
+		return fmt.Errorf("public_url %w", err)
 	}
 	return nil
 }

@@ -230,6 +230,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	defer closeOnDone(ctx, conn)()
 	conn.SetReadLimit(agents.MaxFrameBytes)
 
 	// Send hello
@@ -1388,6 +1389,17 @@ func fileExists(p string) bool {
 // which tripped the agent into a systemd restart loop under even
 // modest load (one stats stream + one heartbeat tick colliding).
 var writeMu sync.Mutex
+
+// closeOnDone closes conn once ctx ends. ReadMessage does not watch ctx,
+// so on SIGTERM the read loop would otherwise block until systemd's stop
+// timeout kills the process. The returned func stops the watch.
+func closeOnDone(ctx context.Context, conn *websocket.Conn) func() bool {
+	return context.AfterFunc(ctx, func() {
+		msg := websocket.FormatCloseMessage(websocket.CloseGoingAway, "agent shutting down")
+		_ = conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(time.Second))
+		_ = conn.Close()
+	})
+}
 
 func writeFrame(conn *websocket.Conn, f agents.Frame) error {
 	b, err := json.Marshal(f)

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
@@ -102,9 +101,10 @@ Moving the server to a new address:
        dockmesh restore --from <backup.tar.gz>
   2. Add the new IP and/or hostname to the agent certificate:
        dockmesh ca reissue-server --add-san <new-ip> --add-san <new-name>
-  3. In dockmesh.env set DOCKMESH_AGENT_PUBLIC_URL=wss://<new-address>:8443/connect
-     (and DOCKMESH_BASE_URL if it names the old address), then start the
-     service (systemctl restart dockmesh).
+  3. Start the service (systemctl restart dockmesh) and set the base URL and
+     agent public URL under Settings -> General to the new address. If
+     dockmesh.env sets DOCKMESH_BASE_URL or DOCKMESH_AGENT_PUBLIC_URL, those
+     win: change them there instead and restart.
   4. On every agent host set DOCKMESH_AGENT_URL=wss://<new-address>:8443/connect
      in /etc/dockmesh-agent/agent.env (or the container's environment) and
      restart the agent (systemctl restart dockmesh-agent).
@@ -163,7 +163,7 @@ func caReissueServer(args []string, out io.Writer) error {
 	fmt.Fprintln(out, "\nNext: restart the server so the agent listener loads the new certificate")
 	fmt.Fprintln(out, "  (systemctl restart dockmesh, or restart the container).")
 	if cfg.AgentPublicURL == "" {
-		fmt.Fprintln(out, "Set DOCKMESH_AGENT_PUBLIC_URL to the new wss://<address>:8443/connect URL so new install commands use it.")
+		fmt.Fprintln(out, "Set the agent public URL under Settings -> General to wss://<address>:8443/connect so new install commands use it.")
 	} else {
 		fmt.Fprintf(out, "DOCKMESH_AGENT_PUBLIC_URL is %s; update it if it names the old address.\n", cfg.AgentPublicURL)
 	}
@@ -243,12 +243,10 @@ func caRotate(args []string) error {
 		return fmt.Errorf("pki regen: %w", err)
 	}
 
-	agentPublic := cfg.AgentPublicURL
-	if agentPublic == "" {
-		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
+	svc, err := cliAgentsService(cfg, database, mgr)
+	if err != nil {
+		return err
 	}
-	svc := agents.NewService(database, mgr, cfg.BaseURL, agentPublic)
-	svc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	touched, err := svc.ReissueAllEnrollTokens(context.Background())
 	if err != nil {
 		return err
