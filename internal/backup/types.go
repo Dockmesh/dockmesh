@@ -18,7 +18,8 @@ type Job struct {
 	TargetConfig any    `json:"target_config"`
 	// CredentialsError is set when the inline target's stored credentials
 	// can't be decrypted.
-	CredentialsError string   `json:"credentials_error,omitempty"`
+	CredentialsError string `json:"credentials_error,omitempty"`
+	unreadable       []string
 	Sources          []Source `json:"sources"`
 	Schedule         string   `json:"schedule"`
 	RetentionCount   int      `json:"retention_count"`

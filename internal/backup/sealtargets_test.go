@@ -203,3 +203,35 @@ func TestUnreadableTargetCredentials(t *testing.T) {
 		t.Errorf("update with a new secret: %v", err)
 	}
 }
+
+// Saving an inline job whose stored credential can't be decrypted must
+// not drop that credential.
+func TestUpdateInlineJobWithUnreadableCredential(t *testing.T) {
+	svc, _ := newTestService(t, true)
+	ctx := context.Background()
+	in := smbJob("legacy", map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "smb-pass"})
+	cfg, err := targets.SealConfig(svc.secrets, in.TargetConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.store.db.Exec(`INSERT INTO backup_jobs (name, encrypt, target_type, target_config, sources)
+		VALUES ('legacy', 0, 'smb', ?, '[{"type":"volume","name":"pgdata"}]')`, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	svc.store.sec = nil
+
+	j, err := svc.GetJob(ctx, id)
+	if err != nil || j.CredentialsError == "" {
+		t.Fatalf("job = %+v, %v", j, err)
+	}
+	in.TargetConfig = map[string]any{"host": "nas", "share": "bk", "username": "u", "password": ""}
+	if _, err := svc.UpdateJob(ctx, id, in); !errors.Is(err, targets.ErrCredentialsUnreadable) {
+		t.Fatalf("update without the password: err = %v", err)
+	}
+	var stored string
+	if err := svc.store.db.QueryRow(`SELECT target_config FROM backup_jobs WHERE id = ?`, id).Scan(&stored); err != nil || stored != cfg {
+		t.Errorf("stored config changed: %v", err)
+	}
+}

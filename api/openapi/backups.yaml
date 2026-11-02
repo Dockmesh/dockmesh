@@ -75,6 +75,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The inline target's stored credentials can't be decrypted and the update doesn't enter them again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: backups.delete_job
       tags: [backups]
@@ -874,7 +879,7 @@ components:
           type: object
           description: >-
             Empty for jobs that reference a saved target; the configuration lives on the target. For a job not yet moved to a saved target, secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored.
-        credentials_error: {type: string, description: "Set when the inline target's stored credentials can't be decrypted; the job can't run."}
+        credentials_error: {type: string, description: "Set when the inline target's stored credentials can't be decrypted; the job can't run, and an update that keeps the inline target must enter them again (422 otherwise)."}
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}

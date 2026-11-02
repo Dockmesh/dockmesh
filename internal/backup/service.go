@@ -210,6 +210,16 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err != nil {
 		return nil, err
 	}
+	// Keeping the inline target would save it without the credential that
+	// can't be decrypted, losing it even once the key is back.
+	if in.TargetID == 0 && len(prev.unreadable) > 0 {
+		m, _ := in.TargetConfig.(map[string]any)
+		for _, k := range prev.unreadable {
+			if v, _ := m[k].(string); v == "" {
+				return nil, targets.ErrCredentialsUnreadable
+			}
+		}
+	}
 	if err := s.attachTarget(ctx, &in, prev); err != nil {
 		return nil, err
 	}

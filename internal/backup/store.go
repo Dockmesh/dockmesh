@@ -448,11 +448,10 @@ func (s *store) scanJob(r rowScanner) (*Job, error) {
 	j.Encrypt = encrypt == 1
 	j.NeedsReview = needsReview == 1
 	j.ReviewAcked = reviewAcked == 1
-	var unreadable []string
-	j.TargetConfig, unreadable = targets.OpenConfigLenient(s.sec, tcfg)
-	if len(unreadable) > 0 {
-		j.CredentialsError = "stored target " + strings.Join(unreadable, ", ") + " can't be decrypted (check the secrets key)"
-		slog.Warn("backup job target credentials can't be decrypted", "job", j.Name, "fields", unreadable)
+	j.TargetConfig, j.unreadable = targets.OpenConfigLenient(s.sec, tcfg)
+	if len(j.unreadable) > 0 {
+		j.CredentialsError = "stored target " + strings.Join(j.unreadable, ", ") + " can't be decrypted (check the secrets key)"
+		slog.Warn("backup job target credentials can't be decrypted", "job", j.Name, "fields", j.unreadable)
 	}
 	_ = json.Unmarshal([]byte(srcs), &j.Sources)
 	_ = json.Unmarshal([]byte(pre), &j.PreHooks)
