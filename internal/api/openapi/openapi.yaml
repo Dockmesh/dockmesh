@@ -6218,7 +6218,10 @@ paths:
         dockmesh — writes compose.yaml + optional supporting files to
         `<stacks_root>/<name>/`, binds the running containers via their
         `com.docker.compose.project` label, and records the adoption in
-        the audit log. **Does not stop, recreate, or otherwise modify
+        the audit log. The name must be new and not reserved (409, as for
+        `POST /stacks`); a project that runs Dockmesh's own containers can
+        only be adopted by an admin, and only admins change such a stack
+        afterwards. **Does not stop, recreate, or otherwise modify
         the running containers.** The next explicit deploy is the only
         operation that might trigger container recreation, and that is
         gated by the client and shown in the `drift_services` field.
@@ -7050,7 +7053,7 @@ paths:
               type: object
               required: [name, git]
               properties:
-                name: {type: string, description: "Stack name (kebab-case)."}
+                name: {type: string, description: "Stack name (kebab-case). Must not belong to an existing stack (409)."}
                 host_id:
                   type: string
                   description: Host the stack is for; same rules as `POST /stacks`.
@@ -7387,6 +7390,7 @@ paths:
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
         The caller needs Stacks: Deploy on the new stack on the target host; the deployment is recorded in the stack's deploy history.
+        The name must be new and not reserved by another user's stack assignment (409), as for `POST /stacks`.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:

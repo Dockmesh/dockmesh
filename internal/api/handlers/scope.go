@@ -249,6 +249,10 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
 			return
 		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), hostID, name) {
+			writeError(w, http.StatusForbidden, "only an admin can change a stack that runs Dockmesh's own containers")
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
 	})
 }

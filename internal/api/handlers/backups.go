@@ -433,6 +433,9 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		writeError(w, http.StatusBadRequest, "run is not a stack backup")
 		return
 	}
+	if kind == "volume" && req.DestVolume != "" && !h.requireVolumeNotOwn(w, r, req.DestVolume) {
+		return
+	}
 	opts := backup.RestoreOptions{Target: req.DestVolume, HostID: req.HostID, Replace: req.Mode == "replace"}
 	if kind == "stack" {
 		opts.Target = req.TargetStack
@@ -561,10 +564,8 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
-	for _, src := range in.Sources {
-		if src.Type == "volume" && !h.requireVolumeNotOwn(w, r, src.Name) {
-			return false
-		}
+	if !h.requireSourcesNotOwn(w, r, in.Sources) {
+		return false
 	}
 	hooks := append(append([]backup.Hook{}, in.PreHooks...), in.PostHooks...)
 	if len(hooks) == 0 {

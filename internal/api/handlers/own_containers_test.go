@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 )
 
 func TestIsOwnContainer(t *testing.T) {
@@ -81,5 +82,29 @@ func TestOwnContainerGuardedPerms(t *testing.T) {
 		if ownContainerGuarded(p) {
 			t.Errorf("%s is guarded", p)
 		}
+	}
+}
+
+// A compose project that runs the server (as the shipped compose file
+// does) is left out of discovery for non-admins.
+func TestDiscoveredOwnProject(t *testing.T) {
+	self := "bbbb000000000000000000000000000000000000000000000000000000000000"
+	host.SetSelfContainerID(self)
+	t.Cleanup(func() { host.SetSelfContainerID("") })
+	tests := []struct {
+		name string
+		d    adopt.DiscoveredStack
+		want bool
+	}{
+		{"server project", adopt.DiscoveredStack{HostID: "local", Services: []adopt.DiscoveredStackService{{ContainerID: self, Image: "dockmesh:dev"}}}, true},
+		{"agent image", adopt.DiscoveredStack{HostID: "agent-1", Services: []adopt.DiscoveredStackService{{ContainerID: "a", Image: "ghcr.io/dockmesh/agent:0.5.0"}}}, true},
+		{"user project", adopt.DiscoveredStack{HostID: "local", Services: []adopt.DiscoveredStackService{{ContainerID: "u", Image: "nginx"}}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := discoveredOwn(tt.d); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -389,7 +389,7 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "compose required")
 		return
 	}
-	if !h.requireStackCreate(w, r, req.Name, req.HostID) {
+	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
 		return
 	}
 	d, err := h.Stacks.Create(req.Name, req.Compose, req.Env)
@@ -412,12 +412,15 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireStackCreate checks that the caller may create stack name for
-// hostID ("" = no host). A caller whose stacks.create is limited to hosts
-// has to name one of them. A name someone holds a stack assignment for is
-// reserved: only a caller whose own assignment names that stack, or who
-// may create stacks everywhere, can take it, so nobody stages a stack that
-// another user's assignment then reaches.
-func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, name, hostID string) bool {
+// hostID ("" = no host) with perm (stacks.create, or the permission of a
+// route that creates a stack on the way, like template deploy or adopt).
+// The name must be new: no stack files, deployment row or git source, so a
+// create can't take over or retarget an existing stack. A caller whose
+// perm is limited to hosts has to name one of them. A name someone holds a
+// stack assignment for is reserved: only a caller whose own assignment
+// names that stack, or who holds perm everywhere, can take it, so nobody
+// stages a stack that another user's assignment then reaches.
+func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, perm rbac.Perm, name, hostID string) bool {
 	if err := stacks.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return false
@@ -426,18 +429,25 @@ func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, na
 		writeError(w, http.StatusBadRequest, "unknown host "+hostID)
 		return false
 	}
+	if exists, err := h.stackNameTaken(r.Context(), name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	} else if exists {
+		writeError(w, http.StatusConflict, "a stack named "+name+" already exists")
+		return false
+	}
 	res := h.stackScopeReq(hostID, name)
 	acc := middleware.AccessOf(r.Context())
-	if !acc.AllowsOn(rbac.PermStacksCreate, res) {
+	if !acc.AllowsOn(perm, res) {
 		if hostID == "" {
-			h.audit(r, audit.ActionScopeDenied, "stack "+name, map[string]any{"permission": string(rbac.PermStacksCreate), "stack_name": name})
+			h.audit(r, audit.ActionScopeDenied, "stack "+name, map[string]any{"permission": string(perm), "stack_name": name})
 			writeError(w, http.StatusForbidden, "choose the host this stack is for: you can only create stacks on some hosts")
 			return false
 		}
-		h.writeScopeDenied(w, r, rbac.PermStacksCreate, res, "stack "+name)
+		h.writeScopeDenied(w, r, perm, res, "stack "+name)
 		return false
 	}
-	if h.Roles != nil && !acc.AllowsByStack(rbac.PermStacksCreate, res) {
+	if h.Roles != nil && !acc.AllowsByStack(perm, res) {
 		for _, a := range h.Roles.AllAssignments() {
 			if a.Scope.Type == rbac.ScopeStack && a.Scope.Value == name {
 				writeError(w, http.StatusConflict, "the name "+name+" is reserved by a stack assignment; pick another name or ask an admin")
@@ -446,6 +456,32 @@ func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, na
 		}
 	}
 	return true
+}
+
+// stackNameTaken reports whether name belongs to an existing stack: files
+// on disk, a deployment row (also of a stack whose files are gone) or a
+// git source.
+func (h *Handlers) stackNameTaken(ctx context.Context, name string) (bool, error) {
+	if h.Stacks != nil && h.Stacks.Has(name) {
+		return true, nil
+	}
+	if h.Deployments != nil {
+		d, err := h.Deployments.Get(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if d != nil {
+			return true, nil
+		}
+	}
+	if h.GitSource != nil {
+		if _, err := h.GitSource.Get(ctx, name); err == nil {
+			return true, nil
+		} else if !errors.Is(err, gitsource.ErrNotFound) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // hostKnown reports whether hostID is the server or an enrolled agent,
@@ -461,9 +497,17 @@ func (h *Handlers) hostKnown(ctx context.Context, hostID string) bool {
 	return err == nil
 }
 
-// recordStackTarget stores the host a new stack is for.
+// recordStackTarget stores the host a new stack is for and drops a row
+// left from an earlier stack of that name, so the new one inherits nothing.
 func (h *Handlers) recordStackTarget(w http.ResponseWriter, r *http.Request, name, hostID string) bool {
-	if hostID == "" || h.Deployments == nil {
+	if h.Deployments == nil {
+		return true
+	}
+	if hostID == "" {
+		if err := h.Deployments.DeleteTarget(r.Context(), name); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return false
+		}
 		return true
 	}
 	if err := h.Deployments.SetTarget(r.Context(), name, hostID, actorID(r)); err != nil {
@@ -513,7 +557,7 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
-	if !h.requireStackCreate(w, r, req.Name, req.HostID) {
+	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
 		return
 	}
 	// Persist the git config first. Configure does its own validation
@@ -525,6 +569,9 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
+		if derr := h.GitSource.Delete(r.Context(), req.Name); derr != nil {
+			slog.Warn("create stack from git: roll back", "stack", req.Name, "err", derr)
+		}
 		return
 	}
 	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
@@ -773,18 +820,30 @@ func (h *Handlers) DiscoverStacks(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterDiscovered keeps the projects the caller could adopt: the host
-// check above is only a pre-filter, a stack scope reaches its own project.
+// check above is only a pre-filter, a stack scope reaches its own project,
+// and a project running Dockmesh's own containers is for admins.
 func (h *Handlers) filterDiscovered(r *http.Request, in []adopt.DiscoveredStack) []adopt.DiscoveredStack {
-	if h.callerUnscoped(r) {
+	if h.callerIsAdmin(r) {
 		return in
 	}
+	unscoped := h.callerUnscoped(r)
 	out := make([]adopt.DiscoveredStack, 0, len(in))
 	for _, d := range in {
-		if h.allowedOn(r, h.stackScopeReq(d.HostID, d.ProjectName)) {
-			out = append(out, d)
+		if discoveredOwn(d) || (!unscoped && !h.allowedOn(r, h.stackScopeReq(d.HostID, d.ProjectName))) {
+			continue
 		}
+		out = append(out, d)
 	}
 	return out
+}
+
+func discoveredOwn(d adopt.DiscoveredStack) bool {
+	for _, s := range d.Services {
+		if isOwnSummary(d.HostID, container.Summary{ID: s.ContainerID, Image: s.Image}) {
+			return true
+		}
+	}
+	return false
 }
 
 // stackAdoptRequest mirrors the StackAdoptInput OpenAPI schema. Bundle
@@ -818,9 +877,11 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, req.HostID) {
 		return
 	}
-	scopeReq := h.stackScopeReq(req.HostID, req.Name)
-	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
+	if !h.requireStackCreate(w, r, rbac.PermStacksAdopt, req.Name, req.HostID) {
+		return
+	}
+	if !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), req.HostID, req.Name) {
+		writeError(w, http.StatusForbidden, "only an admin can adopt a project that runs Dockmesh's own containers")
 		return
 	}
 	adoptReq := adopt.AdoptRequest{

@@ -38,6 +38,12 @@ func TestCreateStackForHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	loc, root := e.login("loc").AccessToken, e.login("root").AccessToken
+	if err := e.h.Deployments.Set(ctx, "ghost", "agent-9", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.h.Deployments.SetTarget(ctx, "stale", "local", ""); err != nil {
+		t.Fatal(err)
+	}
 	compose := "services:\n  a:\n    image: busybox\n"
 
 	tests := []struct {
@@ -50,6 +56,9 @@ func TestCreateStackForHost(t *testing.T) {
 		{"reserved name", loc, "reserved", "local", http.StatusConflict},
 		{"admin takes a reserved name", root, "reserved", "", http.StatusCreated},
 		{"admin without host", root, "plain", "", http.StatusCreated},
+		{"existing stack", loc, "mine", "local", http.StatusConflict},
+		{"name with a deployment row", root, "ghost", "local", http.StatusConflict},
+		{"stale target row", root, "stale", "", http.StatusCreated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -70,6 +79,9 @@ func TestCreateStackForHost(t *testing.T) {
 	}
 	if rr := e.do(http.MethodGet, "/api/v1/stacks/mine", loc, nil); rr.Code != http.StatusNoContent {
 		t.Errorf("creator reading its undeployed stack: %d", rr.Code)
+	}
+	if got, _ := e.h.Deployments.Target(ctx, "stale"); got != "" {
+		t.Errorf("new stack inherited the stale target host %q", got)
 	}
 	if rr := e.do(http.MethodGet, "/api/v1/stacks/plain", loc, nil); rr.Code != http.StatusForbidden {
 		t.Errorf("host-scoped caller reading a stack without host: %d, want 403", rr.Code)

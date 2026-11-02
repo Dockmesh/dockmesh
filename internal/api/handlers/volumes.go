@@ -139,6 +139,9 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireVolumeNotOwn(w, r, name) {
+		return
+	}
 	force := r.URL.Query().Get("force") == "true"
 	if err := h.Docker.RemoveVolume(r.Context(), name, force); err != nil {
 		writeError(w, imageErrorStatus(err), err.Error())
