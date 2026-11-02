@@ -1,9 +1,11 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -49,9 +51,10 @@ func isFinishedSnapshot(dbBase, name string) bool {
 // snapshotBeforeMigrate writes <db>.pre-migrate-<UTC timestamp>.bak next to
 // the database file and prunes older snapshots of the same database.
 // In-memory databases have no file and are skipped. state is the
-// migrationState of db; if the newest snapshot is already in that state it
-// is reused, so a migration that fails on every start does not rotate the
-// pre-upgrade copy out.
+// migrationState of db. When the newest snapshot is in that state and holds
+// the same data it is reused, so a migration that fails on every start does
+// not rotate the pre-upgrade copy out. Same state alone is not enough: a
+// backup restored in that state has its own data and needs its own copy.
 func snapshotBeforeMigrate(db *sql.DB, state string) error {
 	if v := os.Getenv(SkipSnapshotEnv); v == "1" || v == "true" {
 		slog.Warn("skipping pre-migration database snapshot", "env", SkipSnapshotEnv)
@@ -68,13 +71,22 @@ func snapshotBeforeMigrate(db *sql.DB, state string) error {
 	if err != nil {
 		return snapshotError(err)
 	}
-	if n := len(existing); n > 0 && snapshotState(existing[n-1]) == state {
-		slog.Info("reusing existing database snapshot from before migration", "path", existing[n-1])
-		return nil
-	}
 	target, err := writeSnapshot(db, path)
 	if err != nil {
 		return snapshotError(err)
+	}
+	if n := len(existing); n > 0 && snapshotState(existing[n-1]) == state {
+		same, err := sameContent(existing[n-1], target)
+		if err != nil {
+			slog.Warn("comparing database snapshots failed, keeping both", "path", existing[n-1], "err", err)
+		}
+		if same {
+			if err := os.Remove(target); err != nil {
+				return snapshotError(err)
+			}
+			slog.Info("reusing existing database snapshot from before migration", "path", existing[n-1])
+			return nil
+		}
 	}
 	slog.Info("database snapshot written before migration", "path", target)
 	pruneSnapshots(path, target)
@@ -139,6 +151,53 @@ func snapshotState(path string) string {
 		return ""
 	}
 	return state
+}
+
+// sameContent reports whether the files at a and b are byte-identical.
+// VACUUM INTO writes the same bytes for the same data, so equal snapshots
+// mean the database did not change in between.
+func sameContent(a, b string) (bool, error) {
+	fa, err := os.Open(a) //nolint:gosec // snapshot paths derive from the configured DB path
+	if err != nil {
+		return false, err
+	}
+	defer fa.Close()
+	fb, err := os.Open(b) //nolint:gosec // snapshot paths derive from the configured DB path
+	if err != nil {
+		return false, err
+	}
+	defer fb.Close()
+	sa, err := fa.Stat()
+	if err != nil {
+		return false, err
+	}
+	sb, err := fb.Stat()
+	if err != nil {
+		return false, err
+	}
+	if sa.Size() != sb.Size() {
+		return false, nil
+	}
+	bufA := make([]byte, 64<<10)
+	bufB := make([]byte, 64<<10)
+	for {
+		na, errA := io.ReadFull(fa, bufA)
+		nb, errB := io.ReadFull(fb, bufB)
+		if na != nb || !bytes.Equal(bufA[:na], bufB[:nb]) {
+			return false, nil
+		}
+		doneA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		doneB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		if errA != nil && !doneA {
+			return false, errA
+		}
+		if errB != nil && !doneB {
+			return false, errB
+		}
+		if doneA || doneB {
+			return doneA == doneB, nil
+		}
+	}
 }
 
 // writeSnapshot fills <target>.tmp and renames it into place, so a crash
