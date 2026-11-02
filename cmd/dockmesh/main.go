@@ -674,7 +674,12 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	globalEnvStore := globalenv.NewStore(database)
+	globalEnvStore := globalenv.NewStore(database, secretsSvc)
+	if n, err := globalEnvStore.EncryptFlagged(ctx); err != nil {
+		slog.Warn("global env: encrypt stored secret values", "err", err)
+	} else if n > 0 {
+		slog.Info("global env: encrypted stored secret values", "count", n)
+	}
 
 	// Roles and assignments, cached in memory; built-in role definitions
 	// follow the binary.

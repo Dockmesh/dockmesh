@@ -1910,7 +1910,7 @@ export const api = {
 
   globalEnv: {
     list: () => request<Array<{ id: number; key: string; value: string; group_name: string; encrypted: boolean; created_at: string; updated_at: string }>>('/global-env'),
-    create: (data: { key: string; value: string; group_name: string }) =>
+    create: (data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>('/global-env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     update: (id: number, data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>(`/global-env/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),

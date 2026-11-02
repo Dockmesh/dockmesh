@@ -3,9 +3,6 @@
   // once, reference it from 14 stacks via ${BASE_DOMAIN} in their
   // compose files. Dockmesh-eigenes Feature, das die Wettbewerber
   // (Portainer/Komodo) so nicht haben.
-  //
-  // Slice 1: editorial rebuild on existing backend surface. Refs-Count,
-  // "Used by" popover, manual secret-toggle warten auf Backend-Slice.
   import { api, ApiError } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -36,6 +33,7 @@
   let formKey = $state('');
   let formValue = $state('');
   let formGroup = $state('');
+  let formSecret = $state(false);
   let saving = $state(false);
 
   // Templates dropdown
@@ -46,6 +44,8 @@
   let importText = $state('');
   let importGroup = $state('misc');
   let importBusy = $state(false);
+  // Per-key choice in the import preview; keys not in here use the suggestion.
+  let importSecret = $state<Record<string, boolean>>({});
 
   // Collapsed groups
   let collapsed = $state<Set<string>>(new Set());
@@ -151,6 +151,7 @@
     formKey = '';
     formValue = '';
     formGroup = '';
+    formSecret = false;
     showModal = true;
   }
 
@@ -159,6 +160,7 @@
     formKey = v.key;
     formValue = v.encrypted ? '' : v.value;
     formGroup = v.group_name;
+    formSecret = v.encrypted;
     showModal = true;
   }
 
@@ -167,9 +169,9 @@
     if (!formKey.trim()) return;
     saving = true;
     try {
-      const payload = { key: formKey.trim(), value: formValue, group_name: formGroup.trim() };
+      const payload = { key: formKey.trim(), value: formValue, group_name: formGroup.trim(), encrypted: formSecret };
       if (editing) {
-        await api.globalEnv.update(editing.id, { ...payload, encrypted: editing.encrypted });
+        await api.globalEnv.update(editing.id, payload);
         toast.success('Updated', formKey);
       } else {
         await api.globalEnv.create(payload);
@@ -235,10 +237,8 @@
     showTemplates = false;
   }
 
-  // Bulk-import .env parsing — same heuristic as the mockup. Auto-flag
-  // keys containing password/secret/key/token as worth-marking-secret.
-  // Backend can't accept the secret flag yet (Slice 2), but we surface
-  // the heuristic in the preview so operators see what would happen.
+  // Keys containing password/secret/key/token are suggested as secrets;
+  // the preview lets the operator change each one before importing.
   function parseEnv(text: string): Array<{ key: string; value: string; secretSuggested: boolean }> {
     const out: Array<{ key: string; value: string; secretSuggested: boolean }> = [];
     for (const raw of text.split(/\r?\n/)) {
@@ -263,6 +263,10 @@
 
   const parsedImport = $derived(parseEnv(importText));
 
+  function isImportSecret(p: { key: string; secretSuggested: boolean }): boolean {
+    return importSecret[p.key] ?? p.secretSuggested;
+  }
+
   async function runImport() {
     if (parsedImport.length === 0) return;
     importBusy = true;
@@ -274,6 +278,7 @@
           key: entry.key,
           value: entry.value,
           group_name: importGroup.trim().toLowerCase() || 'misc',
+          encrypted: isImportSecret(entry),
         });
         added++;
       } catch { failed++; }
@@ -281,6 +286,7 @@
     importBusy = false;
     showImport = false;
     importText = '';
+    importSecret = {};
     let msg = `${added} added`;
     if (skipped > 0) msg += `, ${skipped} skipped`;
     if (failed > 0) msg += `, ${failed} failed`;
@@ -594,6 +600,18 @@
         rows="4"
       ></textarea>
     </Field>
+
+    <label class="env-secret-check">
+      <input type="checkbox" bind:checked={formSecret} disabled={saving || editing?.encrypted} />
+      <span>
+        Secret
+        <span class="env-secret-check-hint">
+          {editing?.encrypted
+            ? 'Stored encrypted and never shown. To make it plain, delete and re-create the variable.'
+            : 'Stored encrypted and never shown again after saving.'}
+        </span>
+      </span>
+    </label>
   </form>
 
   {#snippet footer()}
@@ -636,7 +654,7 @@
 
     <Field
       label=".env content"
-      hint="One KEY=value per line; comments and blank lines are skipped."
+      hint="One KEY=value per line; comments and blank lines are skipped. Ticked entries are stored as encrypted secrets."
     >
       <textarea
         class="dm-input acc-input-mono env-import-textarea"
@@ -654,14 +672,23 @@
         <div class="env-import-preview-body">
           {#each parsedImport as p (p.key)}
             {@const exists = vars.some((v) => v.key === p.key)}
+            {@const secret = isImportSecret(p)}
             <div class="env-import-preview-row" class:env-import-preview-skip={exists}>
-              {#if p.secretSuggested}
+              <input
+                type="checkbox"
+                checked={secret}
+                disabled={exists}
+                title="Secret: stored encrypted, value never shown"
+                aria-label="Store {p.key} as secret"
+                onchange={(e) => (importSecret = { ...importSecret, [p.key]: (e.target as HTMLInputElement).checked })}
+              />
+              {#if secret}
                 <ShieldAlert size={11} strokeWidth={1.5} class="env-secret-icon" />
               {/if}
               <code class="env-import-preview-key">{p.key}</code>
               <span class="env-import-preview-eq">=</span>
               <span class="env-import-preview-value">
-                {p.secretSuggested ? '•••' : p.value || ' '}
+                {secret ? '•••' : p.value || ' '}
               </span>
               {#if exists}
                 <span class="env-import-preview-skip-label">Already exists</span>
@@ -1125,6 +1152,18 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg);
+  }
+  .env-secret-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: var(--fs-sm);
+  }
+  .env-secret-check input { margin-top: 3px; }
+  .env-secret-check-hint {
+    display: block;
+    color: var(--fg-muted);
+    font-size: 11px;
   }
   .env-import-preview-row :global(.env-secret-icon) {
     color: var(--color-warning-400);
