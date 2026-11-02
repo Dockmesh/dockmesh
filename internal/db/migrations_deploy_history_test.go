@@ -60,15 +60,15 @@ func TestDeployHistoryEnvironmentMigration(t *testing.T) {
 		got[id] = compose
 	}
 	want := map[int64]string{
-		1: rows[0].compose,
-		2: "",
-		3: "",
-		4: "",
-		5: merged,
-		6: rows[5].compose,
-		7: "",
-		8: "",
-		9: "",
+		1:  rows[0].compose,
+		2:  "",
+		3:  "",
+		4:  "",
+		5:  merged,
+		6:  rows[5].compose,
+		7:  "",
+		8:  "",
+		9:  "",
 		10: "",
 	}
 	for id, w := range want {
