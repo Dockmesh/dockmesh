@@ -59,7 +59,9 @@ func isOwnSummary(hostID string, c container.Summary) bool {
 // projectHasOwnContainer reports whether the compose project on hostID
 // runs one of Dockmesh's own containers, as the shipped compose file does
 // for the server. Stopping, scaling or redeploying such a project stops
-// Dockmesh itself.
+// Dockmesh itself. A host whose containers can't be listed counts as one,
+// except a host that can't be resolved or has no Docker, which the action
+// can't reach either.
 func (h *Handlers) projectHasOwnContainer(ctx context.Context, hostID, project string) bool {
 	if hostID == "" {
 		hostID = "local"
@@ -69,8 +71,11 @@ func (h *Handlers) projectHasOwnContainer(ctx context.Context, hostID, project s
 		return false
 	}
 	cs, err := target.ListContainers(ctx, true)
-	if err != nil {
+	if errors.Is(err, host.ErrNoDocker) {
 		return false
+	}
+	if err != nil {
+		return true
 	}
 	for _, c := range cs {
 		if c.Labels["com.docker.compose.project"] == project && isOwnSummary(hostID, c) {
