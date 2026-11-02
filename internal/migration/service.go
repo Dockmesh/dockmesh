@@ -188,9 +188,9 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 			// target may run the stack too.
 			switch p.status {
 			case StatusStopping, StatusSyncing:
-				s.rollback(context.Background(), m, false)
+				s.rollback(context.WithoutCancel(ctx), m, false)
 			case StatusStarting, StatusPostRestore, StatusHealthCheck:
-				s.rollback(context.Background(), m, true)
+				s.rollback(context.WithoutCancel(ctx), m, true)
 			}
 			if s.notifs != nil {
 				_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
@@ -562,6 +562,6 @@ func (s *Service) Rollback(ctx context.Context, migrationID string) error {
 	if m.Status != StatusCompleted {
 		return fmt.Errorf("can only rollback completed migrations (current: %s)", m.Status)
 	}
-	go s.rollback(context.Background(), m, true)
+	go s.rollback(context.WithoutCancel(ctx), m, true)
 	return nil
 }

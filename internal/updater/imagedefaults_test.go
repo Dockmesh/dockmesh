@@ -110,7 +110,7 @@ func TestStandaloneSpecUsesNewImageDefaults(t *testing.T) {
 				{"labels", got.Labels, tt.wantLabels},
 			}
 			for _, c := range checks {
-				if !reflect.DeepEqual(c.got, c.want) && !(isEmpty(c.got) && isEmpty(c.want)) {
+				if !reflect.DeepEqual(c.got, c.want) && (!isEmpty(c.got) || !isEmpty(c.want)) {
 					t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
 				}
 			}

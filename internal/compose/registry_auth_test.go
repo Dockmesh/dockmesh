@@ -7,7 +7,9 @@ import (
 
 type staticAuth string
 
-func (a staticAuth) ResolveAuthForImage(context.Context, string) (string, error) { return string(a), nil }
+func (a staticAuth) ResolveAuthForImage(context.Context, string) (string, error) {
+	return string(a), nil
+}
 
 func TestResolveImageAuthPrefersRequestAuth(t *testing.T) {
 	tests := []struct {
