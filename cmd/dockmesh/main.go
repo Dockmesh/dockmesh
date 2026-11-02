@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -618,18 +617,21 @@ func main() {
 		slog.Error("agent pki init failed", "err", err)
 		os.Exit(1)
 	}
-	agentPublic := cfg.AgentPublicURL
-	if agentPublic == "" {
-		// Best-effort default: replace http(s) base URL host with wss + the
-		// agent listener port. Operator should override via env in prod.
-		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
+	// DB-backed system settings — reads from DB, falls back to env vars.
+	settingsStore := settings.NewStore(database)
+	if err := settingsStore.Load(ctx); err != nil {
+		slog.Warn("settings store load", "err", err)
 	}
-	if h := urlHostname(agentPublic); cfg.AgentListen != "" && h != "" && !pkiMgr.ServerCertCovers(h) {
-		slog.Warn("agent server certificate does not cover the agent public host; agents dialing it will fail TLS verification",
-			"host", h, "cert_sans", pkiMgr.ServerCertSANs(),
-			"fix", "dockmesh ca reissue-server --add-san "+h+", then restart")
+	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, "")
+	agentsSvc.SetEndpointResolver(func() agents.Endpoints {
+		return agentEndpoints(cfg, settingsStore)
+	})
+	agentsSvc.SetListenerEnabled(cfg.AgentListen != "")
+	agentEP, err := agentsSvc.ReloadEndpoints()
+	if err != nil {
+		slog.Warn("agent server certificate does not cover the agent URL host; agents dialing it will fail TLS verification",
+			"agent_url", agentEP.AgentURL, "err", err)
 	}
-	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	agentsSvc.SetMetricsSink(metricsCol.StoreAgentBatch)
 	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
@@ -640,11 +642,6 @@ func main() {
 	// FINDING-33 multi-host backup.
 	backupSvc.SetHostResolver(backup.NewHostResolverFromRegistry(hostRegistry))
 
-	// DB-backed system settings — reads from DB, falls back to env vars.
-	settingsStore := settings.NewStore(database)
-	if err := settingsStore.Load(ctx); err != nil {
-		slog.Warn("settings store load", "err", err)
-	}
 	if err := seedLocalBackupRoots(ctx, settingsStore, database, backupSvc, filepath.Dir(cfg.DBPath)); err != nil {
 		slog.Warn("seed local backup roots", "err", err)
 	}
@@ -1044,10 +1041,12 @@ func main() {
 		// Step 4 — public URL persisted in the settings store
 		if settingsStore != nil {
 			emit("settings", "saving public URL "+in.PublicURL, "info")
-			if err := settingsStore.Set(commitCtx2, settings.KeyBaseURL, in.PublicURL); err != nil {
+			if err := saveSetupURLs(commitCtx2, settingsStore, in.PublicURL, cfg.AgentListen); err != nil {
 				emit("settings", err.Error(), "warn")
+			} else if ep, err := agentsSvc.ReloadEndpoints(); err != nil {
+				emit("settings", "saved; "+err.Error(), "warn")
 			} else {
-				emit("settings", "saved", "ok")
+				emit("settings", "saved; agents connect to "+ep.AgentURL, "ok")
 			}
 		}
 
@@ -1212,7 +1211,7 @@ func main() {
 				IdleTimeout:       2 * time.Minute,
 			}
 			go func() {
-				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentPublic)
+				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentsSvc.AgentURL())
 				if err := agentSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					slog.Error("agent listener error", "err", err)
 				}
@@ -1302,9 +1301,6 @@ func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, nam
 	return w.Close()
 }
 
-// deriveAgentURL builds a default wss:// URL for the agent listener from
-// the API base URL and the agent listen address. Operator can override
-// with DOCKMESH_AGENT_PUBLIC_URL — recommended in production.
 // buildLogger returns a slog.Logger honouring the configured format
 // + level. Called AFTER config.Load so the bootstrap JSON logger
 // handles the narrow window between process start and config parse.
@@ -1355,20 +1351,31 @@ func scrubEnvFlag(path, key string) (bool, error) {
 	return true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
 }
 
-func urlHostname(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
+// saveSetupURLs stores the wizard's public URL and the agent URL derived
+// from it. An agent URL someone set by hand is kept; one that still
+// matches the previous base URL follows the new one.
+func saveSetupURLs(ctx context.Context, st *settings.Store, publicURL, listen string) error {
+	prevBase := st.Get(settings.KeyBaseURL, "")
+	prevAgent := st.Get(settings.KeyAgentPublicURL, "")
+	if err := st.Set(ctx, settings.KeyBaseURL, publicURL); err != nil {
+		return err
 	}
-	return u.Hostname()
+	if prevAgent == "" || prevAgent == agents.DeriveAgentURL(prevBase, listen) {
+		return st.Set(ctx, settings.KeyAgentPublicURL, agents.DeriveAgentURL(publicURL, listen))
+	}
+	return nil
 }
 
-func deriveAgentURL(baseURL, listen string) string {
-	u, err := url.Parse(baseURL)
-	if err != nil || u.Host == "" {
-		return "wss://localhost" + listen + "/connect"
-	}
-	host := u.Hostname()
-	port := strings.TrimPrefix(listen, ":")
-	return "wss://" + host + ":" + port + "/connect"
+// agentEndpoints resolves the agent-facing URLs from dockmesh.env and the
+// settings store. The server and the CLI commands that print install
+// commands share it, so they agree on the address.
+func agentEndpoints(cfg *config.Config, st *settings.Store) agents.Endpoints {
+	return agents.ResolveEndpoints(agents.EndpointInputs{
+		EnvBaseURL:      os.Getenv("DOCKMESH_BASE_URL"),
+		EnvAgentURL:     os.Getenv("DOCKMESH_AGENT_PUBLIC_URL"),
+		SettingBaseURL:  st.Get(settings.KeyBaseURL, ""),
+		SettingAgentURL: st.Get(settings.KeyAgentPublicURL, ""),
+		DefaultBaseURL:  cfg.BaseURL,
+		AgentListen:     cfg.AgentListen,
+	})
 }

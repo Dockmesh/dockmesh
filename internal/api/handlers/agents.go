@@ -81,6 +81,18 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
+// CheckAgentReachability dials the agent URL from this server and reports
+// whether an agent could enroll and connect through it.
+//
+//	POST /api/v1/agents/reachability
+func (h *Handlers) CheckAgentReachability(w http.ResponseWriter, r *http.Request) {
+	if h.Agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Agents.CheckReachability(r.Context()))
+}
+
 func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	if h.Agents == nil {
 		writeError(w, http.StatusServiceUnavailable, "agents not configured")

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,11 +80,19 @@ var (
 
 // Service owns the agents table + the in-memory map of active connections.
 type Service struct {
-	db        *sql.DB
-	pki       *pki.Manager
-	publicURL string // public HTTPS URL of the main dockmesh server
-	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
-	notifs    *notifications.Service
+	db         *sql.DB
+	pki        *pki.Manager
+	urlMu      sync.RWMutex
+	publicURL  string // public HTTPS URL of the main dockmesh server
+	agentURL   string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
+	endpoints  Endpoints
+	resolve    func() Endpoints
+	listenerOn bool
+	// lookup and dial replace the resolver and dialer of the reachability
+	// check in tests.
+	lookup func(ctx context.Context, host string) ([]string, error)
+	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
+	notifs *notifications.Service
 	// metricsSink stores agent history; nil turns it off.
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex
@@ -323,6 +332,7 @@ func NewService(db *sql.DB, p *pki.Manager, publicURL, agentURL string) *Service
 		pki:       p,
 		publicURL: publicURL,
 		agentURL:  agentURL,
+		endpoints: Endpoints{BaseURL: publicURL, AgentURL: agentURL},
 		enrollTTL: DefaultEnrollTokenTTL,
 		now:       time.Now,
 		connected: make(map[string]*ConnectedAgent),
@@ -341,8 +351,17 @@ func (s *Service) SetEnrollTokenTTL(d time.Duration) {
 	}
 }
 
-func (s *Service) PublicURL() string { return s.publicURL }
-func (s *Service) AgentURL() string  { return s.agentURL }
+func (s *Service) PublicURL() string {
+	s.urlMu.RLock()
+	defer s.urlMu.RUnlock()
+	return s.publicURL
+}
+
+func (s *Service) AgentURL() string {
+	s.urlMu.RLock()
+	defer s.urlMu.RUnlock()
+	return s.agentURL
+}
 
 // CAFingerprint is the SHA-256 of the agents CA the installer pins.
 func (s *Service) CAFingerprint() string { return s.pki.CAFingerprint() }
@@ -479,13 +498,13 @@ func (s *Service) createResult(a *Agent, token string, expires time.Time) *Creat
 	// to render the script once the agents CA has rotated.
 	installHint := fmt.Sprintf(
 		"curl -fsSL '%s/install/agent.sh?token=%s&ca=%s' | sudo bash",
-		s.publicURL, token, fp)
+		s.PublicURL(), token, fp)
 	return &CreateResult{
 		Agent:          *a,
 		Token:          token,
 		TokenExpiresAt: expires.UTC(),
 		EnrollURL:      s.EnrollURL(),
-		AgentURL:       s.agentURL,
+		AgentURL:       s.AgentURL(),
 		CAFingerprint:  fp,
 		InstallHint:    installHint,
 	}
@@ -628,7 +647,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		ClientCert: string(certPEM),
 		ClientKey:  string(keyPEM),
 		CACert:     string(s.pki.CACertPEM()),
-		AgentURL:   s.agentURL,
+		AgentURL:   s.AgentURL(),
 	}, nil
 }
 

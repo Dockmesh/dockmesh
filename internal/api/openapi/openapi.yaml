@@ -258,6 +258,32 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /agents/reachability:
+    post:
+      operationId: agents.reachability
+      tags: [agents]
+      summary: Check the agent URL from the server's point of view
+      description: |
+        Resolves the configured agent URL, opens a TCP connection to it and
+        completes a TLS handshake that must present this server's own agent
+        listener certificate. A certificate from another issuer means a proxy
+        terminates TLS in front of the listener (for example Cloudflare in
+        proxy mode), which breaks the agents' mutual TLS. The result reflects
+        this server's DNS and network; remote hosts may see something else
+        (split DNS, hairpin NAT). Takes no input. Requires `hosts.create`.
+      responses:
+        "200":
+          description: URLs in use and the result of each check.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentReachability"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Remote agents are not configured on this server.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /agents/upgrade-policy:
     get:
       operationId: agents.upgrade_policy_get
@@ -8067,6 +8093,50 @@ components:
         token (prefix `dmt_`, from Settings → API Tokens). The route layer
         checks role permissions after authentication.
   schemas:
+    AgentReachability:
+      type: object
+      required: [base_url, base_source, agent_url, agent_source, listener_enabled, checks, ok]
+      properties:
+        base_url:
+          type: string
+          description: URL the install command and agent binaries are served from.
+        base_source:
+          type: string
+          enum: [env, setting, default]
+          description: env = DOCKMESH_BASE_URL, which wins over the base_url setting.
+        agent_url:
+          type: string
+          description: wss:// URL agents enroll at and connect to.
+        agent_source:
+          type: string
+          enum: [env, setting, derived]
+          description: env = DOCKMESH_AGENT_PUBLIC_URL; derived = host of the base URL plus the listener port.
+        listener_enabled:
+          type: boolean
+        cert_sans:
+          type: [array, "null"]
+          items: {type: string}
+          description: Names and IPs the agent listener certificate covers.
+        resolved_ips:
+          type: [array, "null"]
+          items: {type: string}
+          description: Addresses this server resolves the agent URL host to.
+        checks:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [id, status, message]
+            properties:
+              id:
+                type: string
+                enum: [listener, url, cert, dns, connect, tls]
+              status:
+                type: string
+                enum: [ok, warn, fail, skip]
+              message: {type: string}
+        ok:
+          type: boolean
+          description: True when no check failed.
     Agent:
       type: object
       required: [id, name, status, created_at, updated_at]

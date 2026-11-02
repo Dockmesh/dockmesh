@@ -17,6 +17,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -27,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,9 +39,12 @@ type Manager struct {
 	caCert     *x509.Certificate
 	caKey      *ecdsa.PrivateKey
 	caCertPEM  []byte
+
+	serverMu   sync.RWMutex
 	serverCert []byte // PEM
 	serverKey  []byte // PEM
 	serverX509 *x509.Certificate
+	serverTLS  *tls.Certificate
 }
 
 const (
@@ -76,12 +81,36 @@ func (m *Manager) CAFingerprint() string { return certFingerprint(m.caCert.Raw) 
 
 // ServerCertPEM / ServerKeyPEM return the listener's identity. Used to
 // build a tls.Config in the caller (so we don't import net/http here).
-func (m *Manager) ServerCertPEM() []byte { return m.serverCert }
-func (m *Manager) ServerKeyPEM() []byte  { return m.serverKey }
+func (m *Manager) ServerCertPEM() []byte {
+	m.serverMu.RLock()
+	defer m.serverMu.RUnlock()
+	return m.serverCert
+}
+
+func (m *Manager) ServerKeyPEM() []byte {
+	m.serverMu.RLock()
+	defer m.serverMu.RUnlock()
+	return m.serverKey
+}
+
+// ServerTLSCertificate returns the current listener certificate. The
+// agent listener asks for it on every handshake, so a cert re-issued by
+// EnsureServerHosts is served without a restart.
+func (m *Manager) ServerTLSCertificate() (*tls.Certificate, error) {
+	m.serverMu.RLock()
+	c := m.serverTLS
+	m.serverMu.RUnlock()
+	if c == nil {
+		return nil, errors.New("agent server certificate not loaded")
+	}
+	return c, nil
+}
 
 // ServerCertCovers reports whether the listener cert is valid for host
 // (a DNS name or IP, as an agent would put it in its dial URL).
 func (m *Manager) ServerCertCovers(host string) bool {
+	m.serverMu.RLock()
+	defer m.serverMu.RUnlock()
 	if m.serverX509 == nil {
 		return false
 	}
@@ -90,10 +119,26 @@ func (m *Manager) ServerCertCovers(host string) bool {
 
 // ServerCertSANs lists the DNS names and IPs in the listener cert.
 func (m *Manager) ServerCertSANs() []string {
+	m.serverMu.RLock()
+	defer m.serverMu.RUnlock()
 	if m.serverX509 == nil {
 		return nil
 	}
 	return certSANs(m.serverX509)
+}
+
+// EnsureServerHosts re-issues the listener cert when it does not cover
+// every entry in hosts. The new cert keeps all names and IPs of the old
+// one and is signed by the same CA, so enrolled agents keep connecting
+// under their old address. It reports whether a new cert was written.
+func (m *Manager) EnsureServerHosts(hosts []string) (bool, error) {
+	m.serverMu.Lock()
+	defer m.serverMu.Unlock()
+	before := m.serverX509
+	if err := m.ensureServerCertLocked(hosts); err != nil {
+		return false, err
+	}
+	return m.serverX509 != before, nil
 }
 
 // CACertPool returns an x509.CertPool with just the CA cert in it. Use

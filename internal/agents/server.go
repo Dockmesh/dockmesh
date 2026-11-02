@@ -220,12 +220,13 @@ func errorFrame(msg string) []byte {
 // the agent has a cert. ServeHTTP rejects /connect without a verified
 // client cert.
 func ServerTLSConfig(p *pki.Manager) (*tls.Config, error) {
-	cert, err := tls.X509KeyPair(p.ServerCertPEM(), p.ServerKeyPEM())
-	if err != nil {
+	if _, err := p.ServerTLSCertificate(); err != nil {
 		return nil, err
 	}
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return p.ServerTLSCertificate()
+		},
 		ClientCAs:    p.CACertPool(),
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		MinVersion:   tls.VersionTLS12,

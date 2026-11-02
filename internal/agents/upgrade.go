@@ -292,7 +292,7 @@ func (c *UpgradeController) buildUpgradeReq(ag *ConnectedAgent) (*AgentUpgradeRe
 		return nil, err
 	}
 	return &AgentUpgradeReq{
-		BinaryURL: c.agents.publicURL + "/install/" + name,
+		BinaryURL: c.agents.PublicURL() + "/install/" + name,
 		Version:   version.Version,
 		SHA256:    sum,
 	}, nil

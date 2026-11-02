@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
 // CommitInput is the wizard's final submit payload — every field the
@@ -52,6 +54,9 @@ func (in *CommitInput) Validate() error {
 	}
 	if in.PublicURL == "" {
 		return errors.New("public_url is required")
+	}
+	if err := agents.ValidateBaseURL(in.PublicURL); err != nil {
+		return fmt.Errorf("public_url %w", err)
 	}
 	return nil
 }

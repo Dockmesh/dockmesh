@@ -937,6 +937,24 @@ export interface AgentCreateResult {
   install_hint: string;
 }
 
+export interface AgentReachabilityCheck {
+  id: 'listener' | 'url' | 'cert' | 'dns' | 'connect' | 'tls';
+  status: 'ok' | 'warn' | 'fail' | 'skip';
+  message: string;
+}
+
+export interface AgentReachability {
+  base_url: string;
+  base_source: 'env' | 'setting' | 'default';
+  agent_url: string;
+  agent_source: 'env' | 'setting' | 'derived';
+  listener_enabled: boolean;
+  cert_sans: string[] | null;
+  resolved_ips: string[] | null;
+  checks: AgentReachabilityCheck[] | null;
+  ok: boolean;
+}
+
 export interface TopoNetwork {
   id: string;
   name: string;
@@ -2591,6 +2609,7 @@ export const api = {
     // the agent host.
     rotateToken: (id: string) =>
       request<AgentCreateResult>(`/agents/${id}/rotate-token`, { method: 'POST' }),
+    reachability: () => request<AgentReachability>('/agents/reachability', { method: 'POST' }),
     // P.11.16 upgrade policy
     getUpgradePolicy: () => request<AgentUpgradePolicy>('/agents/upgrade-policy'),
     setUpgradePolicy: (input: AgentUpgradeInput) =>
