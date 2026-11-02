@@ -61,6 +61,7 @@ curl -X PUT -H "Authorization: Bearer $DOCKMESH_TOKEN" \
   }'
 ```
 
+<!-- update after: alerts: one message per burst, bounded history, every host, CPU unit -->
 `GET` returns the rules and `DELETE` removes them, on the same path. The rules are stored in the stack's `.dockmesh.meta.json`. Every 30 seconds Dockmesh compares the service's average usage with the thresholds and adds or removes one replica at a time, then waits for the cooldown. A manual scale does not pause or update the auto-scaler; it may scale the service again on its next evaluation.
 
 Before you rely on it, note the limits:

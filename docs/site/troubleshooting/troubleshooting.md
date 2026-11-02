@@ -194,6 +194,7 @@ More in [Backups](../operations/backups.md).
 ## Alerts are not firing
 
 <!-- update after: alerts: fix duration gate, cooldown and mute handling -->
+<!-- update after: alerts: one message per burst, bounded history, every host, CPU unit -->
 Alert rules can only watch `cpu_percent` and `mem_percent` of containers on the local host. The duration check almost never passes: a rule with duration 0 never fires, and rules with a duration fire only rarely. The built-in rules are therefore effectively silent as well. Cooldown and **muted until** are saved but not applied. Don't rely on Dockmesh alert rules for anything important; scrape `/metrics` with Prometheus or use another external monitor.
 
 To check that a channel delivers at all, click **Test** next to it on the channel list of the **Alerts** page. The test does not depend on any rule. See [Alerts](../features/alerts.md).

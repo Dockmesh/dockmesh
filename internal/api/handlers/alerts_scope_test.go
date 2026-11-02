@@ -12,10 +12,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// A host-scoped user may only manage event rules bound to one of their
-// hosts and only sees history from those hosts; otherwise a catch-all
-// rule would forward other teams' events to the user's own channel.
-func TestAlertRulesRespectHostScope(t *testing.T) {
+// Alert rules are instance-wide, so only an assignment on everything may
+// write them, even when the route guard is bypassed; history follows the
+// caller's host scope.
+func TestAlertRulesNeedGlobalAccess(t *testing.T) {
 	e := newAuthzEnv(t)
 	ctx := context.Background()
 	tags := hosttags.New(e.db)
@@ -52,7 +52,7 @@ func TestAlertRulesRespectHostScope(t *testing.T) {
 		{"unscoped user, catch-all rule", globalTok, rule(""), http.StatusCreated},
 		{"scoped user, catch-all rule", scopedTok, rule(""), http.StatusForbidden},
 		{"scoped user, other host", scopedTok, rule("agent-other"), http.StatusForbidden},
-		{"scoped user, own host", scopedTok, rule("agent-prod"), http.StatusCreated},
+		{"scoped user, own host", scopedTok, rule("agent-prod"), http.StatusForbidden},
 		{"scoped user, global backup rule", scopedTok, map[string]any{"name": "b", "kind": "backup_failed", "container_filter": "*", "scope_host": "agent-prod"}, http.StatusForbidden},
 	}
 	for _, tt := range tests {
@@ -67,6 +67,9 @@ func TestAlertRulesRespectHostScope(t *testing.T) {
 		t.Errorf("scoped user rescoping a catch-all rule: %d, want 403", rr.Code)
 	}
 
+	if _, err := e.db.Exec(`INSERT INTO agents (id, name, status) VALUES ('agent-prod', 'prod', 'online'), ('agent-other', 'other', 'online')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.db.Exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, host_id)
 		VALUES (1, 'oom', 'a', 'fired', 'm', 'agent-prod'), (1, 'oom', 'b', 'fired', 'm', 'agent-other'), (1, 'oom', 'c', 'fired', 'm', '')`); err != nil {
 		t.Fatal(err)

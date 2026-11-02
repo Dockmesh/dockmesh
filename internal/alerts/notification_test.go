@@ -21,11 +21,11 @@ func TestAlertNotification(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.severity+"/"+tt.hostID, func(t *testing.T) {
-			in := alertNotification(&Rule{Name: "cpu", Severity: tt.severity}, tt.hostID, "msg")
+			in := alertNotification(&Rule{Name: "cpu", Severity: tt.severity}, tt.hostID, "title", "msg")
 			if in.Severity != tt.want {
 				t.Errorf("severity = %q, want %q", in.Severity, tt.want)
 			}
-			if in.Perm != rbac.PermAlertsView || in.HostID != tt.hostID || in.Unscoped != tt.unscoped || in.UserID != "" {
+			if in.Perm != rbac.PermAlertsHistory || in.HostID != tt.hostID || in.Unscoped != tt.unscoped || in.UserID != "" {
 				t.Errorf("audience: perm %q host %q unscoped %v user %q", in.Perm, in.HostID, in.Unscoped, in.UserID)
 			}
 		})

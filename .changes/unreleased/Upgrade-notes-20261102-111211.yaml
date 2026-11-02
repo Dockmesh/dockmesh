@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: '[cpu-unit, admins] Existing CPU alert and autoscaling rules are labelled "% of one core" and behave as before; edit a rule to switch it to "% of host". API clients that create alert rules or write scaling rules without `cpu_unit` get "% of host".'
+time: 2026-11-02T11:12:11.0667783+01:00

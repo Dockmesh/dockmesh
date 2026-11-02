@@ -178,7 +178,7 @@ func TestEvalCooldownSuppressesRenotify(t *testing.T) {
 	r := createRule(t, s, RuleInput{DurationSeconds: 60, CooldownSeconds: 3600})
 
 	run(t, s, database, r, evalNow, 95, 95, 95, 50, 50, 50, 95, 95, 95, 50, 50, 50)
-	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", true}, historyRow{"fired", false}, historyRow{"resolved", false})
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", false})
 }
 
 func TestEvalMutedUntilSuppressesFireAndResolve(t *testing.T) {
@@ -214,11 +214,11 @@ func TestLoadFiringStateRestoresCooldown(t *testing.T) {
 	if err := restarted.loadFiringState(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	key := stateKey(r.ID, "web")
-	if notified, ok := restarted.firing[key]; !ok || !notified {
+	key := tkey{r.ID, "local", "web"}
+	if notified, ok := restarted.firing.get(key); !ok || !notified {
 		t.Fatalf("firing state after restart = %v,%v; want active and notified", notified, ok)
 	}
-	if _, ok := restarted.lastNotified[key]; !ok {
+	if _, ok := restarted.lastNotified.get(key); !ok {
 		t.Fatal("cooldown timestamp not restored")
 	}
 }

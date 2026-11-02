@@ -342,6 +342,7 @@ paths:
       operationId: alerts.list_rules
       tags: [alerts]
       summary: List alert rules (built-in + user-defined)
+      description: Alert rules are instance-wide; only callers holding alerts.view on everything see them, others get an empty list.
       responses:
         "200":
           description: Rules.
@@ -411,6 +412,7 @@ paths:
       operationId: alerts.history
       tags: [alerts]
       summary: Recent alert events (fire + resolve), newest first
+      description: Entries older than 30 days are pruned, except the newest fire of an alert that is still active. Callers with history access on only some hosts get up to `limit` entries of those hosts.
       parameters:
         - name: limit
           in: query
@@ -510,18 +512,30 @@ paths:
     get:
       operationId: alerts.rule_stats
       tags: [alerts]
-      summary: Per-rule firing stats (last 24h, last fire, etc.)
+      summary: Fires of one rule within a window of days
       parameters:
         - in: path
           name: id
           required: true
           schema: {type: integer, format: int64}
+        - in: query
+          name: days
+          schema: {type: integer, default: 7, minimum: 1}
       responses:
         "200":
-          description: Stats snapshot.
+          description: Stats snapshot. fires_count includes repeats counted on one entry.
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                type: object
+                required: [rule_id, window_days, fires_count]
+                properties:
+                  rule_id: {type: integer, format: int64}
+                  window_days: {type: integer}
+                  fires_count: {type: integer}
+                  last_fired: {type: string, format: date-time}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /settings/api-tokens:
     get:
       operationId: api_tokens.list
@@ -6841,12 +6855,10 @@ paths:
       summary: Auto-scaling rules configured for this stack (P.8)
       responses:
         "200":
-          description: Rules.
+          description: Scaling config; empty when none is stored.
           content:
             application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/ScalingRule"}
+              schema: {$ref: "#/components/schemas/ScalingConfig"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
     put:
@@ -6857,21 +6869,13 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [rules]
-              properties:
-                rules:
-                  type: array
-                  items: {$ref: "#/components/schemas/ScalingRule"}
+            schema: {$ref: "#/components/schemas/ScalingConfig"}
       responses:
         "200":
-          description: Stored rules.
+          description: Stored config.
           content:
             application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/ScalingRule"}
+              schema: {$ref: "#/components/schemas/ScalingConfig"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -8024,9 +8028,10 @@ components:
         container_filter: {type: string, description: '"*" or the exact name of the target the rule watches.'}
         scope_host: {type: string, description: Host id the rule is limited to; empty means every host.}
         scope_tag: {type: string, description: Host tag the rule is limited to; empty means any.}
-        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds); empty means any.}
+        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds only); empty means any.}
         mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
-        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only.}
+        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only. Metric rules evaluate the containers of every host the scope covers.}
+        cpu_unit: {type: string, enum: [host, core, ""], description: 'CPU rules only. "host" compares the share of the whole host, "core" 100 per busy core as docker stats shows it. New rules default to "host"; an update without it keeps the stored unit.'}
         operator: {type: string, enum: [gt, lt, ""], description: Metric kind only.}
         threshold: {type: number}
         duration_seconds: {type: integer, minimum: 0}
@@ -8056,9 +8061,10 @@ components:
         container_filter: {type: string}
         scope_host: {type: string, description: Host id the rule is limited to; empty means every host.}
         scope_tag: {type: string, description: Host tag the rule is limited to; empty means any.}
-        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds); empty means any.}
+        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds only); empty means any.}
         mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
-        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only.}
+        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only. Metric rules evaluate the containers of every host the scope covers.}
+        cpu_unit: {type: string, enum: [host, core, ""], description: 'CPU rules only. "host" compares the share of the whole host, "core" 100 per busy core as docker stats shows it. New rules default to "host"; an update without it keeps the stored unit.'}
         operator: {type: string, enum: [gt, lt, ""], description: Metric kind only.}
         threshold: {type: number}
         duration_seconds: {type: integer, minimum: 0}
@@ -8086,6 +8092,7 @@ components:
         notified:
           type: boolean
           description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).
+        repeats: {type: integer, description: Later occurrences of a one-shot alert (OOM kill, failed backup) inside the cooldown that were counted on this entry instead of adding new ones.: ''}
         occurred_at: {type: string, format: date-time}
     NotificationChannel:
       type: object
@@ -9587,18 +9594,33 @@ components:
         errors:
           type: array
           items: {type: string}
+    ScalingConfig:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        rules:
+          type: array
+          items: {$ref: "#/components/schemas/ScalingRule"}
     ScalingRule:
       type: object
-      required: [service, metric, operator, threshold]
+      required: [service, min_replicas, max_replicas, scale_up]
       properties:
         service: {type: string}
-        metric: {type: string, enum: [cpu_percent, mem_percent]}
-        operator: {type: string, enum: [gt, lt]}
-        threshold: {type: number}
-        min_replicas: {type: integer}
-        max_replicas: {type: integer}
-        cooldown_seconds: {type: integer}
-        duration_seconds: {type: integer}
+        min_replicas: {type: integer, minimum: 0}
+        max_replicas: {type: integer, minimum: 1}
+        scale_up: {$ref: "#/components/schemas/ScalingThreshold"}
+        scale_down: {$ref: "#/components/schemas/ScalingThreshold"}
+        cooldown_seconds: {type: integer, minimum: 0}
+        cpu_unit:
+          type: string
+          enum: [host, core]
+          description: 'Unit of CPU thresholds: "host" is the share of the whole host, "core" 100 per busy core. Reads report "core" for rules saved without a unit; a write without it stores "host".'
+    ScalingThreshold:
+      type: object
+      properties:
+        metric: {type: string, enum: [cpu, memory]}
+        threshold_percent: {type: number, minimum: 0, maximum: 100}
+        duration_seconds: {type: integer, minimum: 0}
     DeployHistoryEntry:
       type: object
       required: [id, stack_name, host_id, deployed_at]

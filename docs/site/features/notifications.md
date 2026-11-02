@@ -57,6 +57,7 @@ Entries come from these producers:
 | `system.upgrade` | A newer Dockmesh release is available |
 | `invite.accepted` | Someone accepts an invite |
 
+<!-- update after: alerts: one message per burst, bounded history, every host, CPU unit -->
 Most events are sent to every active user, not only to users who have access to the affected stack or host. Old entries aren't pruned.
 
 ## Notices
