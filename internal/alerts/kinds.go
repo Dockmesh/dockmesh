@@ -342,9 +342,9 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 	s.evMu.Unlock()
 
 	tgt := target{hostID: ev.HostID, name: targetName(ev.HostID, ev.HostName, ev.Container)}
-	where := ev.Container
-	if ev.HostName != "" {
-		where += " on " + ev.HostName
+	where := i18n.Msg("alert.container_on_host", ev.Container, ev.HostName)
+	if ev.HostName == "" {
+		where = i18n.Msg("alert.container_name", ev.Container)
 	}
 	for _, r := range s.ruleSnapshot() {
 		if !r.Enabled || !containerKind(r.Kind) || !matchTarget(r.ContainerFilter, ev.Container) ||

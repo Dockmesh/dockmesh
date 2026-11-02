@@ -664,7 +664,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	}
 	type seriesOf struct {
 		target  target
-		where   string
+		where   i18n.Text
 		samples []metricSample
 	}
 	series := map[tkey]*seriesOf{}
@@ -689,9 +689,9 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 		k := keyOf(r.ID, t)
 		cur := series[k]
 		if cur == nil {
-			where := name
+			where := i18n.Msg("alert.container_name", name)
 			if hostName != "" {
-				where += " on " + hostName
+				where = i18n.Msg("alert.container_on_host", name, hostName)
 			}
 			cur = &seriesOf{target: t, where: where}
 			series[k] = cur

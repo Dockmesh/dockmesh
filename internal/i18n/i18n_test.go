@@ -59,6 +59,8 @@ func TestRender(t *testing.T) {
 		{"en", Msg("alert.metric_fired", "CPU", "web", "cpu", 93.25, ">", 80.0), "CPU on web: cpu = 93.2 (threshold > 80.0)"},
 		{"fr", Msg("alert.backup_failed", "nightly"), "Backup job nightly failed"},
 		{"de", Msg("no.such.key"), "no.such.key"},
+		{"de", Msg("alert.container_oom", Msg("alert.container_on_host", "web", "dm-agent1")), "Container web auf dm-agent1 wurde wegen Speichermangels beendet"},
+		{"en", Msg("alert.container_oom", Msg("alert.container_on_host", "web", "dm-agent1")), "Container web on dm-agent1 was killed for running out of memory"},
 	}
 	for _, c := range cases {
 		if got := c.text.In(c.lang); got != c.want {

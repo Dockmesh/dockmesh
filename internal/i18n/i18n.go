@@ -8,7 +8,8 @@ import "fmt"
 // Default is the language of a channel or user without a choice.
 const Default = "en"
 
-// Text is a message key plus its arguments, rendered per language later.
+// Text is a message key plus its arguments, rendered per language later. An
+// argument that is itself a Text is rendered in the same language.
 // Templates use explicit argument indexes (%[1]s) so a translation may
 // order them differently.
 type Text struct {
@@ -43,7 +44,14 @@ func T(lang, key string, args ...any) string {
 	if len(args) == 0 {
 		return tmpl
 	}
-	return fmt.Sprintf(tmpl, args...)
+	rendered := make([]any, len(args))
+	for i, a := range args {
+		if t, ok := a.(Text); ok {
+			a = t.In(lang)
+		}
+		rendered[i] = a
+	}
+	return fmt.Sprintf(tmpl, rendered...)
 }
 
 var catalogs = map[string]map[string]string{"en": en, "de": de}
