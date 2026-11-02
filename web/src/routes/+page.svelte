@@ -31,6 +31,7 @@
     running: number;
     unhealthy: number;
     hosts: string[];
+    deployed?: boolean;
   }
 
   let health = $state<{ status: string; version: string; docker: boolean } | null>(null);
@@ -86,7 +87,7 @@
       stackRows = stacksList.filter((s: any) => stackInLens(s, hosts.id, !!sum?.by_stack[s.name])).map((s: any): StackRow => {
         if (!sum) return { name: s.name, state: 'unknown', total: 0, running: 0, unhealthy: 0, hosts: [] };
         const r = sum.by_stack[s.name];
-        if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [] };
+        if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [], deployed: !!s.deployment };
         let state: StackState;
         if (r.unhealthy > 0) state = 'unhealthy';
         else if (r.running === r.total) state = 'running';
@@ -348,8 +349,8 @@
                     onclick={() => goto(`/stacks/${encodeURIComponent(s.name)}`)}
                     onkeydown={(e) => { if (e.key === 'Enter') goto(`/stacks/${encodeURIComponent(s.name)}`); }}
                   >
-                    <span class="dm-trunc"><b>{s.name}</b> <span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span></span>
-                    <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} />
+                    <span class="dm-trunc"><b>{s.name}</b> {#if s.deployed !== false}<span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span>{/if}</span>
+                    <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} notDeployed={s.deployed === false} />
                   </div>
                 {:else}
                   <div class="dm-empty">No stacks match.</div>
