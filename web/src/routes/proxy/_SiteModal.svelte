@@ -3,7 +3,6 @@
   import { Modal, Stepper } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { operations, opRef } from '$lib/stores/operations.svelte';
-  import { hosts } from '$lib/stores/host.svelte';
   import { TLS_LABEL, type Site, type TLSMode } from './_site';
   import OptionsEditor from './_OptionsEditor.svelte';
   import { toForm, toPayload, changedGroups, parseFieldError, type OptionsForm } from './_options';
@@ -62,18 +61,19 @@
     void loadTargets();
   });
 
-  // Caddy reaches containers over the Docker network by name and
-  // internal port.
+  // Caddy runs on the server's host network, so it reaches a container
+  // through a port published on the server, not by container name.
   async function loadTargets() {
     try {
-      const res = await api.containers.list(false, hosts.id === 'all' ? 'local' : hosts.id);
+      const res = await api.containers.list(false, 'local');
       const items: any[] = isFanOut(res) ? (res.items as any[]) : (res as any[]);
       const out: Target[] = [];
       for (const c of items) {
         const name = (c.Names?.[0] ?? '').replace(/^\//, '');
         if (!name) continue;
-        const ports = [...new Set((c.Ports ?? []).map((p: any) => Number(p?.PrivatePort)).filter((n: number) => n > 0))] as number[];
-        out.push({ container: name, stack: c.Labels?.['com.docker.compose.project'] ?? '', ports: ports.length ? ports.sort((a, b) => a - b) : [80] });
+        const ports = [...new Set((c.Ports ?? []).map((p: any) => Number(p?.PublicPort)).filter((n: number) => n > 0))] as number[];
+        if (!ports.length) continue;
+        out.push({ container: name, stack: c.Labels?.['com.docker.compose.project'] ?? '', ports: ports.sort((a, b) => a - b) });
       }
       targets = out.sort((a, b) => (a.stack || '~').localeCompare(b.stack || '~') || a.container.localeCompare(b.container));
       if (!targets.length) kind = 'address';
@@ -87,7 +87,7 @@
   $effect(() => {
     if (picked && !picked.ports.map(String).includes(port)) port = String(picked.ports[0]);
   });
-  const upstream = $derived(kind === 'container' ? (container && port ? `${container}:${port}` : '') : address.trim());
+  const upstream = $derived(kind === 'container' ? (container && port ? `localhost:${port}` : '') : address.trim());
 
   const HOST_RE = /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i;
   const UPSTREAM_RE = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+):\d{1,5}$/i;
@@ -113,7 +113,7 @@
     error = '';
     fieldErrors = {};
     if (editing && !UPSTREAM_RE.test(upstream)) {
-      error = 'Enter host:port, e.g. grafana:3000.';
+      error = 'Enter host:port, e.g. localhost:3000.';
       return;
     }
     saving = true;
@@ -163,7 +163,7 @@
           <span class="lbl">Where should <b class="dm-mono">{host}</b> go?</span>
           <label class="opt" class:on={kind === 'container'}>
             <input type="radio" bind:group={kind} value="container" disabled={!targets.length} />
-            <span><b>A container</b> <span class="dm-dim">on {hosts.id === 'all' || hosts.id === 'local' ? 'the server' : hosts.selected?.name}</span></span>
+            <span><b>A container</b> <span class="dm-dim">on the server, through a published port</span></span>
           </label>
           <label class="opt" class:on={kind === 'address'}>
             <input type="radio" bind:group={kind} value="address" />
@@ -183,7 +183,7 @@
             </select>
           </div>
           <div class="dm-field">
-            <label for="ns-port">Port</label>
+            <label for="ns-port">Published port</label>
             <select id="ns-port" class="dm-input" bind:value={port} disabled={!picked}>
               {#each picked?.ports ?? [] as p (p)}<option value={String(p)}>{p}</option>{/each}
             </select>
@@ -192,11 +192,11 @@
       {:else}
         <div class="dm-field">
           <label for="ns-addr">Goes to</label>
-          <input id="ns-addr" class="dm-input dm-mono" bind:value={address} placeholder="192.168.10.40:5001 or grafana:3000" autocomplete="off" list="ns-targets" />
+          <input id="ns-addr" class="dm-input dm-mono" bind:value={address} placeholder="192.168.10.40:5001 or localhost:3000" autocomplete="off" list="ns-targets" />
           <datalist id="ns-targets">
-            {#each targets as t (t.container)}{#each t.ports as p (p)}<option value="{t.container}:{p}"></option>{/each}{/each}
+            {#each targets as t (t.container)}{#each t.ports as p (p)}<option value="localhost:{p}">{t.container}</option>{/each}{/each}
           </datalist>
-          <span class="hint">host:port; Caddy reaches containers by name over the Docker network.</span>
+          <span class="hint">host:port. Caddy runs on the server's host network: use localhost and a published port for containers there.</span>
         </div>
       {/if}
     {/if}
@@ -206,7 +206,7 @@
         <label for="ns-host">Name</label>
         <input id="ns-host" class="dm-input dm-mono" bind:value={host} placeholder="photos.example.org" autocomplete="off"
           onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); next(); } }} />
-        <span class="hint">One hostname per site; it must point to this server in DNS. *.example.org works with a DNS challenge only.</span>
+        <span class="hint">One hostname per site; it must point to this server in DNS. Wildcard names need a DNS challenge, which Dockmesh does not set up.</span>
       </div>
     {/if}
 

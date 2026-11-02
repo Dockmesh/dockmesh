@@ -226,7 +226,7 @@
           <div class="dm-tr dm-click" role="row" style="grid-template-columns: {U_COLS}">
             <a class="dm-nm lnk" href="/users/{u.id}">
               <span class="dm-t">{u.display_name || u.username}</span>
-              {#if u.email || u.display_name}<span class="dm-sub dm-trunc">{u.display_name ? u.username : ''}{u.display_name && u.email ? ' · ' : ''}{u.email ?? ''}</span>{/if}
+              <span class="dm-sub dm-trunc">{[u.display_name ? u.username : '', u.email ?? ''].filter(Boolean).join(' · ') || 'No email'}</span>
             </a>
             <span class="chips">
               {#if u.assignments.length === 0}<span class="dm-dim">No access</span>{/if}
@@ -251,7 +251,7 @@
       </div>
       {#each roles as r (r.name)}
         <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {R_COLS}" href="/users/roles/{encodeURIComponent(r.name)}">
-          <span class="dm-nm"><span class="dm-t">{r.display}</span>{#if r.description}<span class="dm-sub dm-trunc">{r.description}</span>{/if}</span>
+          <span class="dm-nm"><span class="dm-t">{r.display}</span><span class="dm-sub dm-trunc" title={r.description || undefined}>{r.description || 'No description'}</span></span>
           <span class="dm-dim">{r.builtin ? 'Built-in' : 'Custom'}</span>
           <span class="dm-num">{r.assignments ?? 0}</span>
           <span class="dm-trunc dm-dim" title={roleOneLine(catalog, r)}>{roleOneLine(catalog, r)}</span>
