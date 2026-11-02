@@ -1359,6 +1359,7 @@ export interface LDAPProvider {
   bind_dn?: string;
   user_search_base: string;
   user_search_filter: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   group_search_base?: string;
@@ -1386,6 +1387,7 @@ export interface LDAPProviderInput {
   bind_password: string;
   user_search_base: string;
   user_search_filter: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   group_search_base: string;
@@ -1406,6 +1408,7 @@ export interface OAuth2Provider {
   userinfo_url: string;
   client_id: string;
   scopes: string;
+  subject_field?: string;
   username_field: string;
   email_field: string;
   groups_field: string;
@@ -1430,6 +1433,7 @@ export interface OAuth2ProviderInput {
   client_id: string;
   client_secret: string;
   scopes: string;
+  subject_field?: string;
   username_field: string;
   email_field: string;
   groups_field: string;
@@ -2531,6 +2535,11 @@ export const api = {
         `/saml/providers/${id}/test`,
         { method: 'POST' }
       )
+  },
+
+  sso: {
+    rekeyPending: () => request<{ accounts: string[]; until?: string }>('/sso/rekey'),
+    endRekey: () => request<{ ended: number }>('/sso/rekey/end', { method: 'POST' })
   },
 
   ldap: {

@@ -20,7 +20,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import SAMLRekeyCard from './_SAMLRekeyCard.svelte';
+  import RekeyCard from './_RekeyCard.svelte';
   import {
     Plus, Trash2, Edit2, Globe, Copy,
   } from 'lucide-svelte';
@@ -163,6 +163,7 @@
             client_id: p.client_id,
             client_secret: '',
             scopes: p.scopes,
+            subject_field: p.subject_field ?? '',
             username_field: p.username_field,
             email_field: p.email_field,
             groups_field: p.groups_field,
@@ -200,6 +201,7 @@
             bind_password: '',
             user_search_base: p.user_search_base,
             user_search_filter: p.user_search_filter,
+            subject_attribute: p.subject_attribute ?? '',
             username_attribute: p.username_attribute,
             email_attribute: p.email_attribute,
             group_search_base: p.group_search_base ?? '',
@@ -323,7 +325,8 @@
     </header>
 
     {#if allowed('system.update')}
-      <SAMLRekeyCard />
+      <RekeyCard kind="saml" />
+      <RekeyCard kind="sso" />
     {/if}
 
     {#if !allowed('system.update')}

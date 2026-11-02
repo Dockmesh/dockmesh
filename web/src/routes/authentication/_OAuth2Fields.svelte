@@ -84,6 +84,12 @@
 </Field>
 
 <div class="oa-fieldset">User-info attribute mapping</div>
+<Field
+  label="Subject field"
+  hint="Immutable user id in the userinfo JSON that accounts are keyed by. Empty: sub, else id. Never use a login name or email, which can be renamed and reused."
+>
+  <input class="dm-input acc-input-mono" bind:value={config.subject_field} placeholder="sub, else id" />
+</Field>
 <div class="oa-grid-3">
   <Field label="Username field" hint="Property in userinfo JSON.">
     <input class="dm-input acc-input-mono" bind:value={config.username_field} placeholder="login" />

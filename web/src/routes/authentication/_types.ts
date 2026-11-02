@@ -39,6 +39,7 @@ export interface OAuth2Config extends ProviderBase {
   client_id: string;
   client_secret: string;
   scopes: string;
+  subject_field: string;
   username_field: string;
   email_field: string;
   groups_field: string;
@@ -69,6 +70,7 @@ export interface LDAPConfig extends ProviderBase {
   bind_password: string;
   user_search_base: string;
   user_search_filter: string;
+  subject_attribute: string;
   username_attribute: string;
   email_attribute: string;
   group_search_base: string;
@@ -124,6 +126,7 @@ export interface OAuth2Template {
   token_url: string;
   userinfo_url: string;
   scopes: string;
+  subject_field: string;
   username_field: string;
   email_field: string;
   groups_field: string;
@@ -136,6 +139,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     token_url: 'https://github.com/login/oauth/access_token',
     userinfo_url: 'https://api.github.com/user',
     scopes: 'read:user user:email read:org',
+    subject_field: 'id',
     username_field: 'login',
     email_field: 'email',
     groups_field: '',
@@ -145,6 +149,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     token_url: 'https://gitlab.com/oauth/token',
     userinfo_url: 'https://gitlab.com/api/v4/user',
     scopes: 'read_user',
+    subject_field: 'id',
     username_field: 'username',
     email_field: 'email',
     groups_field: '',
@@ -154,6 +159,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     token_url: 'https://oauth2.googleapis.com/token',
     userinfo_url: 'https://www.googleapis.com/oauth2/v3/userinfo',
     scopes: 'openid email profile',
+    subject_field: 'sub',
     username_field: 'email',
     email_field: 'email',
     groups_field: '',
@@ -163,6 +169,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     token_url: 'https://auth.example/oauth/token',
     userinfo_url: 'https://auth.example/oauth/userinfo',
     scopes: '',
+    subject_field: '',
     username_field: 'username',
     email_field: 'email',
     groups_field: 'groups',
@@ -266,6 +273,7 @@ export function newOAuth2Config(): OAuth2Config {
     client_id: '',
     client_secret: '',
     scopes: '',
+    subject_field: '',
     username_field: 'username',
     email_field: 'email',
     groups_field: 'groups',
@@ -312,6 +320,7 @@ export function newLDAPConfig(): LDAPConfig {
     bind_password: '',
     user_search_base: '',
     user_search_filter: '(&(objectClass=person)(uid=%s))',
+    subject_attribute: '',
     username_attribute: 'uid',
     email_attribute: 'mail',
     group_search_base: '',
