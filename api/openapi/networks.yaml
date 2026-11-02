@@ -66,6 +66,9 @@ paths:
       operationId: networks.topology
       tags: [networks]
       summary: Network → containers graph for the topology view
+      description: |
+        Only containers in the caller's scope, and the networks of stacks in
+        scope or that a visible container is attached to.
       parameters:
         - $ref: "#/components/parameters/HostQuery"
       responses:

@@ -17,6 +17,63 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions:
+    get:
+      operationId: users.sessions_list
+      tags: [users]
+      summary: "Admin: list a user's login sessions"
+      description: |
+        Active sessions of the user, newest first (at most 200). Pass
+        `include_revoked=1` for ended ones too. Needs `users.update` and
+        every role the user holds, like other user management.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+        - name: include_revoked
+          in: query
+          required: false
+          schema: {type: string, enum: ["1"]}
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Session"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions/{family_id}:
+    delete:
+      operationId: users.sessions_revoke
+      tags: [users]
+      summary: "Admin: end one of a user's sessions"
+      description: |
+        The session can't refresh any more; open shells and streams of it
+        close at their next re-check.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+        - name: family_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions/revoke-all:
+    post:
+      operationId: users.sessions_revoke_all
+      tags: [users]
+      summary: "Admin: end every session of a user"
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /me:
     get:
       operationId: users.me

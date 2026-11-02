@@ -236,7 +236,8 @@ paths:
                 area: {type: string, example: stacks}
                 level: {type: string, example: deploy}
                 extra: {type: string, example: terminal}
-                host: {type: string, description: Host id. A deployed stack is checked on its deployment host.}
+                host: {type: string, description: Host id. A deployed stack is checked on its deployment host, an undeployed one on the host it was created for.}
+                host_tag: {type: string, description: "Any host with this tag. Can't be combined with host or stack."}
                 stack: {type: string}
       responses:
         "200":

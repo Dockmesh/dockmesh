@@ -391,8 +391,8 @@ paths:
       summary: List the caller's own login sessions
       description: |
         Returns every session family-id the current user owns with
-        user_agent + IP + created_at + expires_at + revoked_at. No
-        cross-user view — admins see only their own, not everyone's.
+        user_agent + IP + created_at + expires_at + revoked_at. Admins
+        see other users' sessions under `GET /users/{id}/sessions`.
       responses:
         "200":
           description: Sessions.
@@ -814,7 +814,7 @@ components:
     Session:
       type: object
       required: [family_id, created_at, expires_at, is_current]
-      description: One active login session — owned by the caller.
+      description: One login session of a user.
       properties:
         family_id: {type: string}
         user_agent: {type: string}

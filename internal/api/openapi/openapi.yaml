@@ -1193,8 +1193,8 @@ paths:
       summary: List the caller's own login sessions
       description: |
         Returns every session family-id the current user owns with
-        user_agent + IP + created_at + expires_at + revoked_at. No
-        cross-user view — admins see only their own, not everyone's.
+        user_agent + IP + created_at + expires_at + revoked_at. Admins
+        see other users' sessions under `GET /users/{id}/sessions`.
       responses:
         "200":
           description: Sessions.
@@ -4196,6 +4196,9 @@ paths:
       operationId: networks.topology
       tags: [networks]
       summary: Network → containers graph for the topology view
+      description: |
+        Only containers in the caller's scope, and the networks of stacks in
+        scope or that a visible container is attached to.
       parameters:
         - $ref: "#/components/parameters/HostQuery"
       responses:
@@ -4889,7 +4892,8 @@ paths:
       description: |
         Callers without `proxy.update` get the values of `headers.request_set`
         and `headers.response_set` replaced by `********` and
-        `access.forward_auth.url` without its query.
+        `access.forward_auth.url` cut to `scheme://host:port`, since a token
+        can sit in its path or query.
       responses:
         "200":
           description: Routes.
@@ -5567,7 +5571,8 @@ paths:
                 area: {type: string, example: stacks}
                 level: {type: string, example: deploy}
                 extra: {type: string, example: terminal}
-                host: {type: string, description: Host id. A deployed stack is checked on its deployment host.}
+                host: {type: string, description: Host id. A deployed stack is checked on its deployment host, an undeployed one on the host it was created for.: ''}
+                host_tag: {type: string, description: "Any host with this tag. Can't be combined with host or stack."}
                 stack: {type: string}
       responses:
         "200":
@@ -6148,6 +6153,14 @@ paths:
         Writes the stack to the filesystem under `<stacks_root>/<name>/`.
         Name must match `[a-z0-9][a-z0-9-]*[a-z0-9]` (2..63 chars, not a
         reserved word). `.env` is encrypted at rest via the age key.
+
+        `host_id` names the host the stack is for. Until the stack is
+        deployed, scope checks use that host, so a caller whose
+        `stacks.create` is limited to some hosts must name one of them
+        (403 otherwise) and can then read, edit and deploy the stack. A
+        name that a stack-scoped assignment names is reserved (409) unless
+        the caller holds `stacks.create` on everything or through an
+        assignment on that stack.
       requestBody:
         required: true
         content:
@@ -6163,7 +6176,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: A stack with this name already exists.
+          description: A stack with this name already exists, or the name is reserved by a stack assignment.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6176,7 +6189,8 @@ paths:
         Scans all running containers on the target host for the
         `com.docker.compose.project` label and returns projects that are
         not already tracked by dockmesh. These are candidates for
-        `POST /stacks/adopt`.
+        `POST /stacks/adopt`. Only projects the caller could adopt are
+        listed: a stack-scoped caller sees its own stack only.
       parameters:
         - name: host
           in: query
@@ -6699,8 +6713,10 @@ paths:
       tags: [stacks]
       summary: Current per-service status on the deployed host
       description: |
-        A stack that was never deployed returns an empty list to callers
-        whose scope does not include the requested host.
+        A stack that was never deployed is judged by the host it was
+        created for (or, without one, needs an assignment on everything or
+        on the stack); it returns an empty list to callers whose scope does
+        not include the requested host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/HostQuery"
@@ -7035,6 +7051,9 @@ paths:
               required: [name, git]
               properties:
                 name: {type: string, description: "Stack name (kebab-case)."}
+                host_id:
+                  type: string
+                  description: Host the stack is for; same rules as `POST /stacks`.
                 git: {$ref: "#/components/schemas/StackGitSourceInput"}
       responses:
         "201":
@@ -7439,6 +7458,63 @@ paths:
         - $ref: "#/components/parameters/UserIDPath"
       responses:
         "204": {description: Unlocked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions:
+    get:
+      operationId: users.sessions_list
+      tags: [users]
+      summary: "Admin: list a user's login sessions"
+      description: |
+        Active sessions of the user, newest first (at most 200). Pass
+        `include_revoked=1` for ended ones too. Needs `users.update` and
+        every role the user holds, like other user management.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+        - name: include_revoked
+          in: query
+          required: false
+          schema: {type: string, enum: ["1"]}
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Session"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions/{family_id}:
+    delete:
+      operationId: users.sessions_revoke
+      tags: [users]
+      summary: "Admin: end one of a user's sessions"
+      description: |
+        The session can't refresh any more; open shells and streams of it
+        close at their next re-check.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+        - name: family_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/sessions/revoke-all:
+    post:
+      operationId: users.sessions_revoke_all
+      tags: [users]
+      summary: "Admin: end every session of a user"
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": {description: Revoked.}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
@@ -8138,6 +8214,10 @@ components:
         role: {type: string, description: Restriction role; empty = none.}
         scope: {$ref: "#/components/schemas/Scope"}
         created_by: {type: string, description: Owning user id.}
+        parent_id:
+          type: integer
+          format: int64
+          description: Token this one was created with. It never holds more than that token holds at the time of use and stops working when that token is revoked or expires.
         legacy: {type: boolean, description: No owner on record; works with its pinned role.}
         owner_missing:
           type: boolean
@@ -8247,7 +8327,7 @@ components:
     Session:
       type: object
       required: [family_id, created_at, expires_at, is_current]
-      description: One active login session — owned by the caller.
+      description: One login session of a user.
       properties:
         family_id: {type: string}
         user_agent: {type: string}
@@ -8575,8 +8655,10 @@ components:
         Where an assignment applies. `host` and `stack` carry the host id in
         `host`; `host_tag` and `stack` carry the tag or stack name in
         `value`. Stack names are unique across the instance; a stack scope
-        matches the stack while it is deployed on `host`; without `host` it
-        matches the stack anywhere and while it is not deployed.
+        matches the stack while it is deployed on `host` (or, not deployed
+        yet, was created for `host`); without `host` it matches the stack
+        anywhere and while it is not deployed. A host or host tag scope
+        reaches an undeployed stack only through the host it was created for.
       properties:
         type: {type: string, enum: [global, host, host_tag, stack]}
         host: {type: string, example: local}
@@ -9225,7 +9307,7 @@ components:
                 url:
                   type: string
                   example: http://authelia:9091/api/verify?rd=https://auth.example.org
-                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client. Responses never include the query, since it can carry a token.
+                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client. Responses never include the query, since it can carry a token. A URL sent as just `scheme://host:port` of the stored server keeps the stored path.
                 query_set:
                   type: boolean
                   readOnly: true
@@ -9407,6 +9489,11 @@ components:
         env:
           type: string
           description: Optional plaintext .env content. Stored age-encrypted when secrets encryption is enabled.
+        host_id:
+          type: string
+          description: |
+            Create only: the host the stack is for. Scope checks use it
+            until the stack is deployed. Ignored on update.
     StackDetail:
       type: object
       required: [name, compose]
@@ -9438,6 +9525,9 @@ components:
         name: {type: string}
         compose_path: {type: string}
         deployment: {$ref: "#/components/schemas/StackDeployment"}
+        target_host:
+          type: string
+          description: Host the stack was created for; applies until it is deployed.
     DiscoveredStack:
       type: object
       description: |

@@ -53,7 +53,8 @@ paths:
       description: |
         Callers without `proxy.update` get the values of `headers.request_set`
         and `headers.response_set` replaced by `********` and
-        `access.forward_auth.url` without its query.
+        `access.forward_auth.url` cut to `scheme://host:port`, since a token
+        can sit in its path or query.
       responses:
         "200":
           description: Routes.
@@ -588,7 +589,7 @@ components:
                 url:
                   type: string
                   example: http://authelia:9091/api/verify?rd=https://auth.example.org
-                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client. Responses never include the query, since it can carry a token.
+                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client. Responses never include the query, since it can carry a token. A URL sent as just `scheme://host:port` of the stored server keeps the stored path.
                 query_set:
                   type: boolean
                   readOnly: true

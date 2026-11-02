@@ -97,6 +97,10 @@ components:
         role: {type: string, description: Restriction role; empty = none.}
         scope: {$ref: "#/components/schemas/Scope"}
         created_by: {type: string, description: Owning user id.}
+        parent_id:
+          type: integer
+          format: int64
+          description: Token this one was created with. It never holds more than that token holds at the time of use and stops working when that token is revoked or expires.
         legacy: {type: boolean, description: No owner on record; works with its pinned role.}
         owner_missing:
           type: boolean
