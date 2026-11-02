@@ -556,7 +556,7 @@
       {#if freq === 'cron'}
         <div class="wiz-field">
           <label class="wiz-field-label" for="sch-cron">Cron expression</label>
-          <span class="wiz-field-hint">Standard 5-field cron. Backend validates on save.</span>
+          <span class="wiz-field-hint">Standard 5-field cron, e.g. 0 3 * * * for 03:00 every day.</span>
           <input id="sch-cron" class="wiz-input wiz-input-mono" bind:value={cronExpr} placeholder="0 3 * * *" />
         </div>
       {/if}

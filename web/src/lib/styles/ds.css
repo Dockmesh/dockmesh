@@ -107,6 +107,7 @@
   text-decoration: none;
 }
 .dm-nm > a:hover { text-decoration: underline; }
+.dm-nm > .dm-sub { display: block; font-size: var(--fs-xs); }
 .dm-nm small {
   display: block;
   font-size: var(--fs-xs);

@@ -145,6 +145,7 @@ func (s *Service) SyncCertNotices(ctx context.Context, n *notices.Service) error
 				continue
 			}
 			in.Severity = notices.SevCritical
+			in.Blocking = true
 			in.Title = "Agent certificate expired: " + a.Name
 			in.Body = a.Name + " can no longer connect because its client certificate expired on " + date +
 				". Re-issue the enrollment token on the host page and re-run the installer on that host. " +

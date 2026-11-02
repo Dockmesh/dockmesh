@@ -90,8 +90,8 @@
               type="button"
               onclick={() => dismiss(top)}
               class="p-1.5 rounded-md text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)] transition-colors"
-              aria-label="Dismiss this notice"
-              title="Dismiss: it moves to Needs attention until it is resolved"
+              aria-label="Hide this notice for 24 hours"
+              title="Hide for 24 hours; it stays in Needs attention and comes back while the problem lasts"
             >
               <X class="w-4 h-4" />
             </button>
@@ -103,7 +103,7 @@
     {#if panelOpen}
       <section id="notice-panel" aria-label="Notices" class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)]">
         <div class="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
-          <span class="text-xs font-medium text-[var(--fg-muted)]">Action required · {all.length}</span>
+          <span class="text-xs font-medium text-[var(--fg-muted)]">Needs action now · {all.length}</span>
           <button type="button" class={quietBtn} onclick={() => (panelOpen = false)} aria-label="Close notices">
             <X class="w-3.5 h-3.5" /> Close
           </button>
@@ -116,7 +116,7 @@
                 <span class="font-medium text-[var(--fg)] flex-1 min-w-[12rem]">{n.title}</span>
                 <div class="flex items-center gap-1.5 ml-auto">
                   {#if n.dismissible}
-                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title="It moves to Needs attention until it is resolved">Dismiss</button>
+                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title="It stays in Needs attention and comes back in 24 hours while the problem lasts">Hide for 24 h</button>
                   {/if}
                   {#if n.link}
                     <button type="button" class={actionBtn} onclick={() => open(n)}>

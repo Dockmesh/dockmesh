@@ -4,9 +4,10 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
-  import { hosts } from '$lib/stores/host.svelte';
+  import { hosts, isAllHosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { api } from '$lib/api';
+  import { api, isFanOut } from '$lib/api';
+  import { composeProjects, stackInLens } from '$lib/lens';
   import { fmtVersion } from '$lib/version';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac.svelte';
@@ -115,17 +116,22 @@
   });
 
   // Sidebar counts: stacks, containers (warn when some are unhealthy) and
-  // hosts (bad when one is offline). Follows the lens.
+  // hosts (bad when one is offline). Follows the lens with the same rule as
+  // the Stacks page, which needs the lens host's compose projects.
   let counts = $state<{ stacks?: number; containers?: number; unhealthy?: number }>({});
   async function refreshCounts() {
     if (!auth.isAuthenticated) return;
     const host = hosts.id;
-    const [stacks, summary] = await Promise.all([
+    const canContainers = allowed('containers.view') && hosts.usable(allowed('hosts.view'));
+    const [stacks, summary, here] = await Promise.all([
       allowed('stacks.view') ? api.stacks.list().catch(() => null) : Promise.resolve(null),
-      allowed('containers.view') && hosts.usable(allowed('hosts.view')) ? api.containers.summary(host).catch(() => null) : Promise.resolve(null)
+      canContainers ? api.containers.summary(host).catch(() => null) : Promise.resolve(null),
+      canContainers && !isAllHosts(host) && allowed('stacks.view')
+        ? api.containers.list(true, host).then((r) => composeProjects(isFanOut(r) ? r.items : r)).catch(() => new Set<string>())
+        : Promise.resolve(new Set<string>())
     ]);
     counts = {
-      stacks: stacks?.length,
+      stacks: stacks?.filter((s) => stackInLens(s, host, here.has(s.name))).length,
       containers: summary?.total,
       unhealthy: summary?.unhealthy
     };

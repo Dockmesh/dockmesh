@@ -15,6 +15,7 @@
   import { sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { stackInLens } from '$lib/lens';
+  import { actionPhrase, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -30,6 +31,7 @@
     running: number;
     unhealthy: number;
     hosts: string[];
+    deployed?: boolean;
   }
 
   let health = $state<{ status: string; version: string; docker: boolean } | null>(null);
@@ -38,6 +40,11 @@
   let summary = $state<ContainerSummary | null>(null);
   let stackRows = $state<StackRow[]>([]);
   let changes = $state<Awaited<ReturnType<typeof api.audit.list>>>([]);
+  let userNames = $state(new Map<string, string>());
+  $effect(() => {
+    loadUserNames(allowed('audit.view') && allowed('users.view'), api.users.list).then((m) => (userNames = m));
+  });
+  const hostNames = $derived(hostNameMap(hosts.available));
   let attention = $state<AttentionItem[] | null>(null);
   let runs = $state<BackupRun[] | null>(null);
   let hostList = $state<HostInfo[]>([]);
@@ -80,7 +87,7 @@
       stackRows = stacksList.filter((s: any) => stackInLens(s, hosts.id, !!sum?.by_stack[s.name])).map((s: any): StackRow => {
         if (!sum) return { name: s.name, state: 'unknown', total: 0, running: 0, unhealthy: 0, hosts: [] };
         const r = sum.by_stack[s.name];
-        if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [] };
+        if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [], deployed: !!s.deployment };
         let state: StackState;
         if (r.unhealthy > 0) state = 'unhealthy';
         else if (r.running === r.total) state = 'running';
@@ -342,8 +349,8 @@
                     onclick={() => goto(`/stacks/${encodeURIComponent(s.name)}`)}
                     onkeydown={(e) => { if (e.key === 'Enter') goto(`/stacks/${encodeURIComponent(s.name)}`); }}
                   >
-                    <span class="dm-trunc"><b>{s.name}</b> <span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span></span>
-                    <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} />
+                    <span class="dm-trunc"><b>{s.name}</b> {#if s.deployed !== false}<span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span>{/if}</span>
+                    <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} notDeployed={s.deployed === false} />
                   </div>
                 {:else}
                   <div class="dm-empty">No stacks match.</div>
@@ -375,7 +382,7 @@
               {#each changes as e (e.id)}
                 <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
                   <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
-                  <span class="dm-trunc"><b>{e.username || 'system'}</b> <span class="dm-mono act">{e.action}</span> {e.target ?? ''}</span>
+                  <span class="dm-trunc" title={e.action}><b>{e.username || 'System'}</b> {actionPhrase(e.action)} <b>{targetLabel(e.action, e.target, { users: userNames, hosts: hostNames })}</b></span>
                 </div>
               {:else}
                 <div class="dm-empty">No changes recorded yet.</div>
@@ -437,5 +444,4 @@
   .sec-h { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
   .sec-h .dm-h2 { margin: 0; }
   .more { margin-top: 6px; }
-  .act { font-size: 12px; color: var(--muted); }
 </style>

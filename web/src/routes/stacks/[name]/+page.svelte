@@ -3,7 +3,7 @@
   import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
-  import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
+  import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
@@ -20,6 +20,7 @@
   import { EventStream } from '$lib/events';
   import { Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, User, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
+  import DeleteStackDialog from '../_DeleteStackDialog.svelte';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
@@ -27,6 +28,7 @@
   // If the global picker is on "all", we resolve to the deployment's host
   // (from the list response) or fall back to "local".
   let deploymentHostId = $state<string>('local');
+  let everDeployed = $state(true);
   const stackHost = $derived(isAllHosts(hosts.id) ? deploymentHostId : hosts.id);
   const isRemote = $derived(stackHost !== 'local');
 
@@ -1269,6 +1271,7 @@
         const stackList = await api.stacks.list();
         const entry = stackList.find(s => s.name === name);
         const hostOfStack = entry?.deployment?.host_id || entry?.target_host;
+        everDeployed = !!entry?.deployment;
         if (hostOfStack) {
           deploymentHostId = hostOfStack;
         }
@@ -1329,7 +1332,7 @@
         }
       });
       modifiedOutside = [];
-      toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
+      toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'Local'}`);
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.
@@ -1437,77 +1440,9 @@
     }
   }
 
-  // Delete flow. Four orthogonal decisions, each with a different
-  // safety profile:
-  //   - stop containers      ✅ default on  (safe, just docker stop+rm)
-  //   - remove networks      ✅ default on  (project-scoped, no data)
-  //   - remove volumes       ❌ default off (data loss, unrecoverable)
-  //   - remove images        ❌ default off (re-pull cost; can be slow)
-  // Preview endpoint is called on open so the user sees exactly what
-  // would be touched (external volumes + shared images already filtered
-  // out server-side). Remote hosts currently return 501 on the preview
-  // — we catch that and disable the network/volume/image checkboxes.
   let showDelete = $state(false);
-  let delBusy = $state(false);
-  let delStop = $state(true);
-  let delNetworks = $state(true);
-  let delVolumes = $state(false);
-  let delImages = $state(false);
-  let delTyped = $state('');
-  let delPlan = $state<StackCleanupPlan | null>(null);
-  let delPlanError = $state<string | null>(null);
-  let delPlanLoading = $state(false);
-  async function openDelete() {
-    if (anyBusy) return;
-    delStop = services.length > 0;
-    delNetworks = true;
-    delVolumes = false;
-    delImages = false;
-    delTyped = '';
-    delPlan = null;
-    delPlanError = null;
-    showDelete = true;
-    delPlanLoading = true;
-    try {
-      const plan = await api.stacks.cleanupPreview(name);
-      // Empty lists come back as null.
-      delPlan = { ...plan, networks: plan.networks ?? [], volumes: plan.volumes ?? [], images: plan.images ?? [], skipped_in_use: plan.skipped_in_use ?? [] };
-    } catch (err) {
-      delPlanError = err instanceof ApiError ? err.message : String(err);
-    } finally {
-      delPlanLoading = false;
-    }
-  }
-  async function confirmDelete() {
-    if (delBusy || delTyped.trim() !== name) return;
-    delBusy = true;
-    try {
-      const res = await stackOps.run(stackHost, name, () =>
-        api.stacks.delete(name, {
-          stop: delStop,
-          networks: delNetworks,
-          volumes: delVolumes,
-          images: delImages
-        })
-      );
-      const parts: string[] = [];
-      if (delStop && services.length > 0) parts.push(`${services.length} container${services.length === 1 ? '' : 's'}`);
-      if (res?.cleanup) {
-        if (res.cleanup.networks?.length) parts.push(`${res.cleanup.networks.length} network${res.cleanup.networks.length === 1 ? '' : 's'}`);
-        if (res.cleanup.volumes?.length) parts.push(`${res.cleanup.volumes.length} volume${res.cleanup.volumes.length === 1 ? '' : 's'}`);
-        if (res.cleanup.images?.length) parts.push(`${res.cleanup.images.length} image${res.cleanup.images.length === 1 ? '' : 's'}`);
-      }
-      toast.success('Deleted', parts.length > 0 ? `Removed: ${parts.join(', ')}` : name);
-      if (res?.cleanup_error) {
-        toast.error('Cleanup partial', res.cleanup_error);
-      }
-      showDelete = false;
-      goto('/stacks');
-    } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      delBusy = false;
-    }
+  function openDelete() {
+    if (!anyBusy) showDelete = true;
   }
 
   $effect(() => {
@@ -1519,7 +1454,7 @@
   });
   // ── Page header, tabs and the header menu.
   const stackState = $derived.by<{ tone: Tone; label: string }>(() => {
-    if (services.length === 0) return { tone: 'off', label: 'not running' };
+    if (services.length === 0) return { tone: 'off', label: everDeployed ? 'not running' : 'not deployed' };
     const running = services.filter((s) => s.state === 'running');
     if (running.length === 0) return { tone: 'off', label: 'stopped' };
     const unhealthy = running.some((s) => (s.status ?? '').toLowerCase().includes('unhealthy'));
@@ -1545,8 +1480,10 @@
       out.push({ label: 'Edit dependencies', icon: Layers, onclick: openDepsEditor });
     }
     out.push({ label: 'Reload from disk', icon: RefreshCw, onclick: load });
-    out.push({ separator: true });
-    out.push({ label: 'Delete stack…', icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
+    if (allowed('stacks.delete')) {
+      out.push({ separator: true });
+      out.push({ label: 'Delete stack…', icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
+    }
     return out;
   });
 
@@ -1649,7 +1586,7 @@
         </button>
       {/if}
     {/if}
-    {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate')}
+    {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate') && services.some((s) => s.state === 'running')}
       <button type="button" class="dm-btn" onclick={stop} disabled={anyBusy}>
         <Square size={12} strokeWidth={1.8} /> Stop
       </button>
@@ -1868,7 +1805,7 @@
               <dt>CPU</dt><dd class="dm-num">{statsRollup.cpuLabel} <span class="dm-dim">{statsRollup.cpuMeta}</span></dd>
               <dt>Memory</dt><dd class="dm-num">{statsRollup.memLabel} <span class="dm-dim">{statsRollup.memMeta}</span></dd>
               <dt>Network</dt><dd class="dm-num">{statsRollup.netLabel} <span class="dm-dim">{statsRollup.netMeta}</span></dd>
-              <dt>Host</dt><dd>{#if isRemote}<a href={`/hosts/${stackHost}`}>{hosts.selected?.name ?? stackHost}</a>{:else}<a href="/hosts/local">local</a>{/if}</dd>
+              <dt>Host</dt><dd>{#if isRemote}<a href={`/hosts/${stackHost}`}>{hosts.selected?.name ?? stackHost}</a>{:else}<a href="/hosts/local">Local</a>{/if}</dd>
               <dt>Source</dt>
               <dd>
                 {#if gitSource}
@@ -2678,115 +2615,7 @@
   {/snippet}
 </Modal>
 
-<!-- Delete stack. Lets the user cherry-pick which docker resources get
-     cleaned up alongside the compose.yaml. Volume + image removal are
-     opt-in only because they cause data loss / re-pull cost. -->
-<Modal bind:open={showDelete} title="Delete stack {name}" maxWidth="max-w-lg">
-  <div class="space-y-3 text-sm">
-    <p>Removes the stack's <span class="dm-mono">compose.yaml</span>. Choose what else goes with it:</p>
-
-    {#if delPlanError}
-      <div class="p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)] text-xs">
-        <div class="font-medium text-[var(--color-warning-400)]">Resource cleanup unavailable for this host</div>
-        <div class="text-[var(--fg-muted)] mt-1">{delPlanError}</div>
-        <div class="text-[var(--fg-muted)] mt-1">Only the compose.yaml will be removed. You can stop / clean up manually with <span class="font-mono">docker</span> on the host.</div>
-      </div>
-    {/if}
-
-    <!-- Containers -->
-    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer">
-      <input type="checkbox" bind:checked={delStop} class="accent-[var(--color-brand-500)] mt-0.5" />
-      <span class="flex-1">
-        <span class="font-medium">Stop and remove containers</span>
-        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
-          {#if services.length > 0}
-            {services.length} container{services.length === 1 ? '' : 's'}; unchecked, they keep running and can be adopted again.
-          {:else}
-            No containers are currently running for this stack.
-          {/if}
-        </span>
-      </span>
-    </label>
-
-    <!-- Networks -->
-    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
-      <input type="checkbox" bind:checked={delNetworks} disabled={!!delPlanError} class="accent-[var(--color-brand-500)] mt-0.5" />
-      <span class="flex-1">
-        <span class="font-medium">Remove project networks</span>
-        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
-          {#if delPlanLoading}
-            Loading…
-          {:else if delPlan && delPlan.networks.length > 0}
-            Removes {delPlan.networks.length} network{delPlan.networks.length === 1 ? '' : 's'}: <span class="font-mono">{delPlan.networks.join(', ')}</span>
-          {:else}
-            No project networks to remove.
-          {/if}
-        </span>
-      </span>
-    </label>
-
-    <!-- Volumes (opt-in, danger) -->
-    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-danger-500)_5%,transparent)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
-      <input type="checkbox" bind:checked={delVolumes} disabled={!!delPlanError} class="accent-[var(--color-danger-500)] mt-0.5" />
-      <span class="flex-1">
-        <span class="font-medium flex items-center gap-1.5">
-          <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-          Remove volumes
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">Unrecoverable</span>
-        </span>
-        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
-          Deletes data inside these volumes <span class="font-medium">permanently</span>. External volumes are never touched.
-          {#if delPlanLoading}
-            Loading…
-          {:else if delPlan && delPlan.volumes.length > 0}
-            <span class="block mt-1">Removes {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'}: <span class="font-mono">{delPlan.volumes.join(', ')}</span></span>
-          {:else if delPlan}
-            <span class="block mt-1">No project-scoped volumes to remove.</span>
-          {/if}
-        </span>
-      </span>
-    </label>
-    {#if delVolumes && delPlan && delPlan.volumes.length > 0}
-      <div class="px-2.5 py-2 rounded-md bg-[color-mix(in_srgb,var(--color-danger-500)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
-        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
-        <span>
-          The data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'} is deleted for good. Take a backup first if it matters.
-        </span>
-      </div>
-    {/if}
-
-    <!-- Images (opt-in, lighter warning) -->
-    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
-      <input type="checkbox" bind:checked={delImages} disabled={!!delPlanError} class="accent-[var(--color-brand-500)] mt-0.5" />
-      <span class="flex-1">
-        <span class="font-medium">Remove images</span>
-        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
-          {#if delPlanLoading}
-            Loading…
-          {:else if delPlan && delPlan.images.length > 0}
-            Removes {delPlan.images.length} image{delPlan.images.length === 1 ? '' : 's'}: <span class="font-mono break-all">{delPlan.images.join(', ')}</span>
-          {:else if delPlan}
-            No images to remove (or all are shared with other projects).
-          {/if}
-          {#if delPlan && delPlan.skipped_in_use && delPlan.skipped_in_use.length > 0}
-            <span class="block mt-1">Skipped (still used elsewhere): {delPlan.skipped_in_use.length} image{delPlan.skipped_in_use.length === 1 ? '' : 's'}</span>
-          {/if}
-        </span>
-      </span>
-    </label>
-    <div class="dm-field">
-      <label for="del-typed">Type <b class="dm-mono">{name}</b> to confirm</label>
-      <input id="del-typed" class="dm-input" bind:value={delTyped} autocomplete="off" spellcheck="false" />
-    </div>
-  </div>
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showDelete = false)} disabled={delBusy}>Cancel</Button>
-    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy || delTyped.trim() !== name}>
-      <Trash2 class="w-4 h-4" />
-      Delete
-    </Button>
-  {/snippet}
-</Modal>
+<DeleteStackDialog bind:open={showDelete} {name} host={stackHost} containers={services.length} ondeleted={() => goto('/stacks')} />
 
 <style>
   .stk { gap: 18px; }

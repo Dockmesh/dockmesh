@@ -1,0 +1,3 @@
+kind: Changed
+body: The operation dialog explains common errors such as a full disk or a folder Dockmesh can't write, and no longer repeats the failure in a toast.
+time: 2026-11-02T20:49:38.3589937+01:00

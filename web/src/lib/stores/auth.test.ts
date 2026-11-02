@@ -202,13 +202,13 @@ describe('auth store', () => {
     ]);
   });
 
-  it('signs out on a rejected refresh token without a reason', async () => {
+  it('signs out on a rejected refresh token as expired', async () => {
     const tab = browser.tab(1);
     browser.signIn(tab);
     server.valid.clear();
     expect(await tab.refresh()).toBe(false);
     expect(tab.isAuthenticated).toBe(false);
-    expect(browser.reasons).toEqual([]);
+    expect(browser.reasons).toEqual([{ tab: 1, reason: 'expired' }]);
   });
 
   it('propagates sign-in and sign-out to other tabs', async () => {

@@ -239,3 +239,35 @@ func TestExitCode(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupAgentBuilds(t *testing.T) {
+	item := func(name string) AttentionItem {
+		return AttentionItem{ID: "agent_outdated:" + name, Kind: "agent_outdated", Object: AttentionObject{Type: "host", ID: name, Name: name}}
+	}
+	tests := []struct {
+		name      string
+		in        []AttentionItem
+		wantIDs   []string
+		wantTitle string
+	}{
+		{"none", nil, nil, ""},
+		{"one keeps its host", []AttentionItem{item("a1")}, []string{"agent_outdated:a1"}, ""},
+		{"two become one", []AttentionItem{item("a1"), item("a2")}, []string{"agent_outdated:*"}, "2 agents run a different build"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := groupAgentBuilds(tt.in)
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("got %d items, want %d", len(got), len(tt.wantIDs))
+			}
+			for i, it := range got {
+				if it.ID != tt.wantIDs[i] {
+					t.Errorf("id = %q, want %q", it.ID, tt.wantIDs[i])
+				}
+				if tt.wantTitle != "" && it.Title != tt.wantTitle {
+					t.Errorf("title = %q, want %q", it.Title, tt.wantTitle)
+				}
+			}
+		})
+	}
+}

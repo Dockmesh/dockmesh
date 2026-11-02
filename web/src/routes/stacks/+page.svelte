@@ -6,7 +6,7 @@
   } from '$lib/api';
   import { goto } from '$app/navigation';
   import { stackInLens } from '$lib/lens';
-  import { Button, Modal, Input, Skeleton, Segmented, StatBar, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import { Button, Modal, Input, Skeleton, Segmented, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -16,6 +16,7 @@
   import { latest } from '$lib/latest';
   import { hosts } from '$lib/stores/host.svelte';
   import { Plus, Terminal, AlertTriangle, ArrowRight, FileCode2 } from 'lucide-svelte';
+  import DeleteStackDialog from './_DeleteStackDialog.svelte';
 
   const canWrite = $derived(allowed('stacks.create'));
   const canDeploy = $derived(allowed('stacks.deploy'));
@@ -24,7 +25,7 @@
   type SortMode = 'name' | 'state' | 'deployed';
   let sortMode = $state<SortMode>('state');
 
-  type StackState = 'running' | 'stopped' | 'partial' | 'unhealthy';
+  type StackState = 'running' | 'stopped' | 'partial' | 'unhealthy' | 'undeployed';
   interface StackCard {
     name: string;
     state: StackState;
@@ -44,6 +45,9 @@
   let showImport = $state(false);
 
   let filter = $state<'all' | StackState>('all');
+  let deleting = $state<{ name: string; host: string; containers: number } | null>(null);
+  let showDelete = $state(false);
+  const canDelete = $derived(allowed('stacks.delete'));
   let search = $state('');
 
   let newName = $state('');
@@ -124,7 +128,7 @@
           (c.Status ?? '').toLowerCase().includes('unhealthy')
         ).length;
         let state: StackState;
-        if (cs.length === 0) state = 'stopped';
+        if (cs.length === 0) state = s.deployment ? 'stopped' : 'undeployed';
         else if (unhealthy > 0) state = 'unhealthy';
         else if (running === cs.length) state = 'running';
         else if (running === 0) state = 'stopped';
@@ -333,6 +337,7 @@
     running: stackCards.filter((s) => s.state === 'running').length,
     stopped: stackCards.filter((s) => s.state === 'stopped').length,
     unhealthy: stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').length,
+    undeployed: stackCards.filter((s) => s.state === 'undeployed').length,
   });
 
   const needsRecovery = $derived(stackCards.filter((s) => s.status === 'needs_recovery'));
@@ -355,9 +360,9 @@
       })
       .sort((a, b) => {
         if (sortMode === 'state') {
-          // Attention first, then running, then stopped.
+          // Attention first, then running, stopped, not deployed.
           const order: Record<string, number> = {
-            unhealthy: 0, partial: 1, running: 2, stopped: 3,
+            unhealthy: 0, partial: 1, running: 2, stopped: 3, undeployed: 4,
           };
           return (order[a.state] ?? 9) - (order[b.state] ?? 9) || a.name.localeCompare(b.name);
         }
@@ -381,9 +386,6 @@
 
   const COLS = 'minmax(240px, 2.4fr) 210px minmax(100px, 1fr) 110px 40px';
 
-  function stateLabel(s: StackState): string {
-    return { running: 'running', partial: 'degraded', unhealthy: 'unhealthy', stopped: 'stopped' }[s];
-  }
   const isUnhealthy = (svc: { status: string }) => svc.status.toLowerCase().includes('unhealthy');
   function stackHost(s: StackCard): string {
     return s.deployment?.host_id ?? s.hosts[0]?.id ?? s.targetHost ?? (hosts.isAll ? 'local' : hosts.id);
@@ -394,9 +396,6 @@
     if (s.targetHost) return hosts.available.find((h) => h.id === s.targetHost)?.name ?? s.targetHost;
     return '—';
   }
-  const hostCount = $derived(
-    new Set(stackCards.map((s) => s.deployment?.host_id ?? s.hosts[0]?.id).filter(Boolean)).size
-  );
 
   async function confirmExternalChanges(err: unknown, name: string): Promise<boolean> {
     if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
@@ -505,26 +504,14 @@
           { key: 'all', label: 'All', count: counts.all },
           { key: 'running', label: 'Running', count: counts.running },
           { key: 'unhealthy', label: 'Attention', count: counts.unhealthy },
-          { key: 'stopped', label: 'Stopped', count: counts.stopped }
+          { key: 'stopped', label: 'Stopped', count: counts.stopped },
+          ...(counts.undeployed ? [{ key: 'undeployed', label: 'Not deployed', count: counts.undeployed }] : [])
         ]}
       />
       <span class="dm-sp"></span>
       <input type="search" class="dm-filter" placeholder="Filter stacks or services…" aria-label="Filter stacks" bind:value={search} style="width: 240px" />
     </div>
 
-    <StatBar
-      items={[
-        { label: 'Running', value: `${counts.running} of ${counts.all}` },
-        {
-          label: 'Needs attention',
-          value: counts.unhealthy + needsRecovery.length,
-          note: [...stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').map((s) => `${s.name} ${stateLabel(s.state)}`), ...needsRecovery.map((s) => `${s.name} needs recovery`)].join(' · '),
-          tone: counts.unhealthy + needsRecovery.length ? 'warn' : ''
-        },
-        { label: 'Stopped', value: counts.stopped },
-        { label: 'Hosts', value: hostCount }
-      ]}
-    />
   {/if}
 
   {#if loading}
@@ -566,7 +553,7 @@
           <span role="cell" class="dm-nm">
             <a href="/stacks/{encodeURIComponent(s.name)}" onclick={(e) => e.stopPropagation()}>{s.name}</a>
             <small title={s.services.map((x) => `${x.name}: ${x.status || x.state}`).join('\n')}>
-              {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else}No containers{/if}
+              {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else if s.state === 'undeployed'}Deploy to start its services{:else}No containers{/if}
             </small>
           </span>
           <span role="cell">
@@ -575,6 +562,7 @@
               total={s.services.length}
               unhealthy={s.services.filter(isUnhealthy).length}
               members={s.services.map((x) => ({ name: x.name, state: x.state, unhealthy: isUnhealthy(x) }))}
+              notDeployed={s.state === 'undeployed'}
             />
           </span>
           <span role="cell" class="dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
@@ -589,8 +577,14 @@
                 ...(canDeploy
                   ? [
                       { separator: true },
-                      { label: s.state === 'stopped' ? 'Start' : 'Redeploy', disabled: stackOps.isBusy(host, s.name), onclick: () => deployStack(s.name, host) },
-                      ...(s.state !== 'stopped' ? [{ label: 'Stop', disabled: stackOps.isBusy(host, s.name), onclick: () => stopStack(s.name, host) }] : [])
+                      { label: s.state === 'undeployed' ? 'Deploy' : s.state === 'stopped' ? 'Start' : 'Redeploy', disabled: stackOps.isBusy(host, s.name), onclick: () => deployStack(s.name, host) },
+                      ...(running > 0 ? [{ label: 'Stop', disabled: stackOps.isBusy(host, s.name), onclick: () => stopStack(s.name, host) }] : [])
+                    ]
+                  : []),
+                ...(canDelete
+                  ? [
+                      { separator: true },
+                      { label: 'Delete…', danger: true, disabled: stackOps.isBusy(host, s.name), onclick: () => { deleting = { name: s.name, host, containers: s.services.length }; showDelete = true; } }
                     ]
                   : [])
               ]}
@@ -603,6 +597,10 @@
     </div>
   {/if}
 </section>
+
+{#if deleting}
+  <DeleteStackDialog bind:open={showDelete} name={deleting.name} host={deleting.host} containers={deleting.containers} ondeleted={load} />
+{/if}
 
 <Modal bind:open={showAdoptPicker} title="Adopt an existing compose project" maxWidth="max-w-xl">
   <div class="st-adopt">

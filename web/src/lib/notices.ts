@@ -13,10 +13,10 @@ export function sortNotices(list: Notice[]): Notice[] {
   return [...list].sort((a, b) => rank[a.severity] - rank[b.severity] || a.created_at.localeCompare(b.created_at));
 }
 
-/** Notices the banner carries for this user: warnings and critical ones
- * the user has not hidden. Info notices never are. */
+/** Notices the banner carries for this user: blocking ones the user has
+ * not hidden for the day. Everything else lives in Needs attention. */
 export function bannerNotices(list: Notice[]): Notice[] {
-  return sortNotices(list).filter((n) => n.severity !== 'info' && !n.dismissed);
+  return sortNotices(list).filter((n) => n.blocking && !n.dismissed);
 }
 
 /** The one notice the app shell shows as a banner. */

@@ -39,11 +39,12 @@ function createOperationsStore() {
   }
 
   // A toast for work this user started; others' work only shows in the
-  // indicator.
+  // indicator. An open dialog already shows the outcome.
   function announce(op: Operation) {
     if (announced.has(op.id)) return;
     announced.add(op.id);
     if (op.actor && op.actor !== auth.user?.id) return;
+    if (dialogId === op.id) return;
     const what = `${kindLabel(op.kind)} ${op.target}`;
     if (op.status === 'succeeded') {
       const warned = op.steps.find((s) => s.status === 'warning');

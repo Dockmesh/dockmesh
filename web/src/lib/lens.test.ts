@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HostInfo } from './api';
-import { filterHosts, stackInLens } from './lens';
+import { composeProjects, filterHosts, stackInLens } from './lens';
 
 const h = (name: string, tags: string[] = []): HostInfo => ({ id: name, name, kind: 'agent', status: 'online', tags });
 const list = [h('edge-fra-1', ['edge', 'prod']), h('gpu-box', ['gpu']), h('Local', [])];
@@ -33,4 +33,17 @@ describe('stackInLens', () => {
   for (const [name, args, want] of cases) {
     it(name, () => expect(stackInLens(...args)).toBe(want));
   }
+});
+
+describe('composeProjects', () => {
+  it('collects project labels and skips plain containers', () => {
+    const got = composeProjects([
+      { Labels: { 'com.docker.compose.project': 'web' } },
+      { Labels: { 'com.docker.compose.project': 'web' } },
+      { Labels: {} },
+      {},
+      { Labels: { 'com.docker.compose.project': 'db' } }
+    ]);
+    expect([...got].sort()).toEqual(['db', 'web']);
+  });
 });

@@ -1317,8 +1317,10 @@ export interface Notice {
   body?: string;
   link?: string;
   created_at: string;
+  blocking: boolean;
   dismissible: boolean;
   dismissed: boolean;
+  hidden_until?: string;
 }
 
 // SAML / LDAP / OAuth2 — Tier C SSO. Field names match

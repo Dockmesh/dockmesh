@@ -137,6 +137,7 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 		Key:      "backups.encrypt-unavailable",
 		Audience: notices.Admins(),
 		Severity: notices.SevCritical,
+		Blocking: true,
 		Title:    "Encrypted backup jobs can't run",
 		Body: "Secrets encryption is turned off on this server, so these jobs, which are set to " +
 			"encrypt, fail instead of writing unencrypted archives:" + notices.Bullets(jobs) +

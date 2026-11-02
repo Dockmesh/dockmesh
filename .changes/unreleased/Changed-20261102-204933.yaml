@@ -1,0 +1,3 @@
+kind: Changed
+body: Successful backup runs no longer send a notification; they are listed under Activity.
+time: 2026-11-02T20:49:33.6841038+01:00

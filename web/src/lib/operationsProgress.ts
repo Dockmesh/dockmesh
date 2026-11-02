@@ -110,3 +110,21 @@ export function shortMessage(msg: string | null | undefined, max = 140): string 
   if (colon >= 20 && colon <= max) return m.slice(0, colon) + '.';
   return m.slice(0, max - 1).trimEnd() + '…';
 }
+
+const HINTS: [RegExp, string][] = [
+  [/permission denied|operation not permitted|read-only file system|EACCES/i, "Dockmesh can't write there. Make the folder writable for the Dockmesh service, or pick another one."],
+  [/no space left on device|disk quota exceeded|ENOSPC/i, 'The disk is full. Free some space or pick another target.'],
+  [/connection refused|ECONNREFUSED/i, 'Nothing answered at that address. Check the host and port, and that the service is running.'],
+  [/no such host|server misbehaving|name resolution|ENOTFOUND/i, "The host name doesn't resolve. Check the spelling and the DNS settings of the host."],
+  [/i\/o timeout|deadline exceeded|timed out|ETIMEDOUT/i, 'The other side did not answer in time. Check the network path and any firewall in between.'],
+  [/authentication failed|unable to authenticate|unauthorized/i, 'The credentials were refused. Check the user name, password or key.'],
+  [/pull access denied|manifest unknown|repository does not exist/i, 'The image was not found or needs a login. Check the image name and the registry credentials.'],
+  [/address already in use|port is already allocated/i, 'A port is already taken on the host. Stop what uses it or change the port.']
+];
+
+/** A plain-language next step for a common low-level error, if one fits. */
+export function errorHint(msg: string | null | undefined): string {
+  if (!msg) return '';
+  for (const [re, hint] of HINTS) if (re.test(msg)) return hint;
+  return '';
+}

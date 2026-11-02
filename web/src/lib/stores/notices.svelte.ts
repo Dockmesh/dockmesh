@@ -20,7 +20,6 @@ function createNoticeStore() {
 
   return {
     get items() { return items; },
-    get banner() { return items.filter((n) => !n.dismissed); },
     refresh,
     dismiss,
     clear() { items = []; },

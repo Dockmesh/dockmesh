@@ -19,13 +19,13 @@ const BACKGROUND_RETRY_MS = 30_000;
 const LEASE_MS = REFRESH_TIMEOUT_MS * 2;
 const LEASE_WAIT_MS = 30_000;
 
-export type SignOutReason = 'session_outdated';
+export type SignOutReason = 'session_outdated' | 'expired';
 
 export function consumeSignOutReason(): SignOutReason | null {
   try {
     const v = sessionStorage.getItem(SIGNOUT_REASON_KEY);
     sessionStorage.removeItem(SIGNOUT_REASON_KEY);
-    return v === 'session_outdated' ? v : null;
+    return v === 'session_outdated' || v === 'expired' ? v : null;
   } catch {
     return null;
   }
@@ -276,7 +276,7 @@ export function createAuthStore(env: AuthEnv | null) {
       if (state.refreshToken !== token) return state.refreshToken ? 'ok' : 'rejected';
       if (res.status === 400 || res.status === 401) {
         const body = await res.json().catch(() => null);
-        const reason: SignOutReason | undefined = body?.code === 'session_outdated' ? 'session_outdated' : undefined;
+        const reason: SignOutReason = body?.code === 'session_outdated' ? 'session_outdated' : 'expired';
         signOutLocal(reason);
         persist();
         broadcast(reason);

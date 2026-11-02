@@ -7,7 +7,7 @@
   import CancelOpButton from './CancelOpButton.svelte';
   import { api, type Operation } from '$lib/api';
   import { operations, kindLabel, isActive, opRef, failedStep, elapsed } from '$lib/stores/operations.svelte';
-  import { shortMessage } from '$lib/operationsProgress';
+  import { errorHint, shortMessage } from '$lib/operationsProgress';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
@@ -36,7 +36,8 @@
   const statusTone: Record<string, Tone> = { queued: 'off', running: 'acc', succeeded: 'ok', failed: 'bad', cancelled: 'off' };
   const failed = $derived(op ? failedStep(op) : undefined);
   const stoppedAt = $derived(op?.status === 'cancelled' ? op.steps.find((s) => s.status === 'cancelled') : undefined);
-  const reason = $derived(op?.status === 'failed' ? shortMessage(op.error ?? failed?.detail, 160) : '');
+  const reason = $derived(op?.status === 'failed' ? shortMessage(op.error ?? failed?.detail, 300) : '');
+  const hint = $derived(op?.status === 'failed' ? errorHint(op.error ?? failed?.detail) : '');
 
   function when(iso?: string) {
     return iso ? new Date(iso).toLocaleString() : '—';
@@ -104,6 +105,7 @@
       <div class="fail" role="alert">
         <b>{failed ? `Failed at “${failed.label}”` : 'Failed'}</b>
         {#if reason}<p title={op.error ?? ''}>{reason}</p>{/if}
+        {#if hint}<p class="hint">{hint}</p>{/if}
       </div>
     {:else if op.status === 'cancelled'}
       <div class="stopped">
@@ -148,7 +150,8 @@
   section { margin-top: 16px; }
   .fail { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); border-radius: var(--r); padding: 10px 12px; }
   .fail b { color: var(--bad); }
-  .fail p { margin: 4px 0 0; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fail p { margin: 4px 0 0; font-size: var(--fs-sm); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .fail p.hint { color: var(--fg); display: block; }
   .stopped { border: 1px solid var(--border); background: var(--field); border-radius: var(--r); padding: 10px 12px; font-size: var(--fs-sm); }
   .logsec { display: flex; flex-direction: column; }
   .log { height: 220px; overflow: auto; background: var(--code, var(--field)); border-radius: var(--r-sm); padding: 8px 10px; font-size: 11.5px; line-height: 1.55; }

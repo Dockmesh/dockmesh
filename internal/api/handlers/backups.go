@@ -96,7 +96,7 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.syncBackupNameNotice(r)
-	h.audit(r, audit.ActionStackCreate, "backup:"+job.Name, nil)
+	h.audit(r, audit.ActionBackupJobCreate, "backup:"+job.Name, nil)
 	writeJSON(w, http.StatusCreated, redactJob(job))
 }
 
@@ -152,7 +152,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.syncBackupNameNotice(r)
-	h.audit(r, audit.ActionStackUpdate, "backup:"+job.Name, nil)
+	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+job.Name, nil)
 	writeJSON(w, http.StatusOK, redactJob(job))
 }
 
@@ -173,7 +173,7 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.syncBackupNameNotice(r)
-	h.audit(r, audit.ActionStackDelete, "backup:"+strconv.FormatInt(job.ID, 10), nil)
+	h.audit(r, audit.ActionBackupJobDelete, "backup:"+strconv.FormatInt(job.ID, 10), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -198,7 +198,7 @@ func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackUpdate, "backup:"+strconv.FormatInt(job.ID, 10), map[string]string{"review": mode})
+	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+strconv.FormatInt(job.ID, 10), map[string]string{"review": mode})
 	w.WriteHeader(http.StatusNoContent)
 }
 
