@@ -170,16 +170,8 @@ type dockerEventLike struct {
 }
 
 // stackVisible reports whether the caller's scope includes the stack on
-// its deployment host, or by name alone while it is not deployed.
+// its deployment host or the host it was created for, or by name alone
+// when it has neither.
 func (h *Handlers) stackVisible(r *http.Request, name string) bool {
-	hostID := ""
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			hostID = d.HostID
-		}
-	}
-	if hostID != "" {
-		return h.allowedOn(r, h.stackScopeReq(hostID, name), rbac.PermStacksView)
-	}
-	return h.allowedOn(r, rbac.Resource{StackName: name}, rbac.PermStacksView)
+	return h.allowedOn(r, h.stackScopeReq(h.stackHost(r.Context(), name), name), rbac.PermStacksView)
 }

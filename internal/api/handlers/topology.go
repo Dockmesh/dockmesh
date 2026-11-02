@@ -69,6 +69,10 @@ func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// The graph shows the server's own Docker host: containers and
+	// networks of stacks in scope, host-level ones only with the host.
+	containers = h.filterContainersByRoleScope(r, "local", containers)
+	unscoped := h.callerUnscoped(r)
 
 	topo := Topology{
 		Networks:   []TopoNetwork{},
@@ -124,6 +128,10 @@ func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 		if full.Labels != nil {
 			stack = full.Labels["com.docker.compose.project"]
 		}
+		visible := unscoped || h.inReadScope(r, "local", stack)
+		if !visible && !networkHasContainer(full.Containers, containerByID) {
+			continue
+		}
 		topo.Networks = append(topo.Networks, TopoNetwork{
 			ID:       full.ID,
 			Name:     full.Name,
@@ -160,4 +168,16 @@ func stripCIDR(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// networkHasContainer reports whether a network links a container the
+// caller sees, so a stack-scoped caller still sees the shared network its
+// containers sit on.
+func networkHasContainer[E any](eps map[string]E, visible map[string]bool) bool {
+	for cid := range eps {
+		if visible[cid] {
+			return true
+		}
+	}
+	return false
 }

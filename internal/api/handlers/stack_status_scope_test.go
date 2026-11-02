@@ -12,9 +12,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// A host-scoped caller polls the status of a stack it just created: the
-// stack runs nowhere yet, so it gets an empty status, not a 403 for the
-// default host. A deployed stack on a host outside the scope stays 403.
+// A host-scoped caller polls the status of a stack it just created for a
+// host in its scope: the stack runs nowhere yet, so it gets an empty
+// status, not a 403 for the default host. A stack without a target host
+// and a deployed stack on a host outside the scope stay 403.
 func TestStackStatusOfUndeployedStackForScopedCaller(t *testing.T) {
 	e := newScopeEnv(t)
 	ctx := context.Background()
@@ -30,7 +31,13 @@ func TestStackStatusOfUndeployedStackForScopedCaller(t *testing.T) {
 	})
 	tagged := e.user("tagged", "viewer")
 	e.scopeUser(tagged.ID, "prod")
+	if err := tags.Add(ctx, "agent-1", "prod"); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.h.Deployments.Set(ctx, "elsewhere", "local", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.h.Deployments.SetTarget(ctx, "fresh", "agent-1", tagged.ID); err != nil {
 		t.Fatal(err)
 	}
 	tok := e.login("tagged").AccessToken
@@ -39,6 +46,7 @@ func TestStackStatusOfUndeployedStackForScopedCaller(t *testing.T) {
 		want  int
 	}{
 		{"fresh", http.StatusOK},
+		{"untargeted", http.StatusForbidden},
 		{"elsewhere", http.StatusForbidden},
 	}
 	for _, tt := range tests {
