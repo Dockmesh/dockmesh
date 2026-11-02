@@ -385,6 +385,37 @@ jobs:
           ./dist/dockmesh-agent --version
           ./dist/dmctl --version
 
+  e2e:
+    name: e2e
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: |
+          cd web
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+          mkdir -p ../cmd/dockmesh/web_dist
+          cp -r build/* ../cmd/dockmesh/web_dist/
+          cd ..
+          CGO_ENABLED=0 go build -trimpath -o dockmesh ./cmd/dockmesh
+      - name: playwright (en + de) against a throwaway instance
+        run: web/tests/run-ephemeral.sh
+
   licenses:
     name: licenses
     needs: changes
@@ -424,7 +455,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, changelog, migrations, go-test, integration, lint, govulncheck, web, docs-scripts, build, licenses]
+    needs: [changes, changelog, migrations, go-test, integration, lint, govulncheck, web, docs-scripts, build, e2e, licenses]
     runs-on: ubuntu-latest
     steps:
       - name: every job passed or was skipped
