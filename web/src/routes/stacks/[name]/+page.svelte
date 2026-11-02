@@ -1262,8 +1262,9 @@
       try {
         const stackList = await api.stacks.list();
         const entry = stackList.find(s => s.name === name);
-        if (entry?.deployment?.host_id) {
-          deploymentHostId = entry.deployment.host_id;
+        const hostOfStack = entry?.deployment?.host_id || entry?.target_host;
+        if (hostOfStack) {
+          deploymentHostId = hostOfStack;
         }
       } catch { /* ignore — fallback to local */ }
       try {

@@ -216,6 +216,8 @@ export interface StackListEntry {
   name: string;
   compose_path: string;
   deployment?: StackDeployment;
+  // Host the stack was created for; applies until it is deployed.
+  target_host?: string;
   // "needs_recovery" when compose.yaml is missing/empty but a
   // deployment row or running containers still exist. UI groups these
   // under "needs attention" and routes to the recovery panel.
@@ -520,6 +522,7 @@ export interface AccessCheckInput {
   level?: string;
   extra?: string;
   host?: string;
+  host_tag?: string;
   stack?: string;
 }
 
@@ -630,6 +633,7 @@ export interface Session {
   user_agent?: string;
   ip?: string;
   created_at: string;
+  last_seen_at?: string;
   expires_at: string;
   revoked_at?: string;
   is_current: boolean;
@@ -1653,12 +1657,12 @@ export const api = {
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
     get: (name: string) => request<{ name: string; compose: string; env: string; env_hidden?: boolean; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
-    create: (name: string, compose: string, env?: string) =>
-      request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
-    createFromGit: (name: string, git: StackGitSourceInput) =>
+    create: (name: string, compose: string, env?: string, hostId?: string) =>
+      request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env, host_id: hostId }) }),
+    createFromGit: (name: string, git: StackGitSourceInput, hostId?: string) =>
       request<StackFromGitResult>('/stacks/from-git', {
         method: 'POST',
-        body: JSON.stringify({ name, git })
+        body: JSON.stringify({ name, git, host_id: hostId })
       }),
     update: (name: string, compose: string, env?: string) =>
       request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
@@ -2299,6 +2303,11 @@ export const api = {
     me: () => request<UserRow & { permissions: string[]; unscoped: boolean }>('/me'),
     list: () => request<UserRow[]>('/users'),
     get: (id: string) => request<UserRow>(`/users/${encodeURIComponent(id)}`),
+    sessions: (id: string) => request<Session[]>(`/users/${encodeURIComponent(id)}/sessions`),
+    revokeSession: (id: string, familyId: string) =>
+      request<void>(`/users/${encodeURIComponent(id)}/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' }),
+    revokeAllSessions: (id: string) =>
+      request<void>(`/users/${encodeURIComponent(id)}/sessions/revoke-all`, { method: 'POST' }),
     create: (input: { username: string; password: string; email?: string; role?: string; scope?: Scope }) =>
       request<UserRow>('/users', { method: 'POST', body: JSON.stringify(input) }),
     // Public preview of an invite (no auth required — used by the

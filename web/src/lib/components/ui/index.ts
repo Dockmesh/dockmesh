@@ -22,3 +22,4 @@ export { default as LiveIndicator } from './LiveIndicator.svelte';
 export { default as MetricsChart } from './MetricsChart.svelte';
 export { default as InfoTip } from './InfoTip.svelte';
 export { default as StackHealth } from './StackHealth.svelte';
+export { default as NoAccess } from './NoAccess.svelte';

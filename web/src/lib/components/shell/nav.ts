@@ -122,3 +122,27 @@ export const SETTINGS_NAV: SettingsLink[] = [
   { href: '/registries', label: 'Registries', group: 'Integrations', hint: 'Private registries and credentials', show: () => allowed('registries.view') },
   { href: '/environment', label: 'Global environment', group: 'Integrations', hint: 'Variables shared by stacks', show: () => allowed('system.update') }
 ];
+
+// Pages under a nav entry that need a narrower permission than the entry.
+const PAGE_PERMS: Array<{ prefix: string; show: () => boolean }> = [
+  { prefix: '/images', show: () => allowed('images.view') },
+  { prefix: '/volumes', show: () => allowed('volumes.view') },
+  { prefix: '/networks', show: () => allowed('networks.view') },
+  { prefix: '/migrations', show: () => true }
+];
+
+/**
+ * routeAllowed reports whether the caller holds what the page at path
+ * needs anywhere. The layout shows a no-access state instead of pages
+ * that fail it, so they never start loading data they would get 403s for.
+ */
+export function routeAllowed(path: string): boolean {
+  const longest = <T extends { prefix: string }>(xs: T[]) =>
+    xs.filter((x) => matches(path, x.prefix)).sort((a, b) => b.prefix.length - a.prefix.length)[0];
+  const page = longest(PAGE_PERMS);
+  if (page) return page.show();
+  const link = longest(SETTINGS_NAV.map((l) => ({ prefix: l.href, show: l.show })));
+  if (link) return link.show();
+  const hit = activeItem(path);
+  return hit ? hit.item.show() : true;
+}
