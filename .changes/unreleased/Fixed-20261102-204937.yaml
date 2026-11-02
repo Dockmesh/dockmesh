@@ -1,0 +1,3 @@
+kind: Fixed
+body: Creating, changing or deleting a backup job, adding or removing a host, upgrading an agent and draining a host were recorded in the audit log as stack actions.
+time: 2026-11-02T20:49:37.5910752+01:00
