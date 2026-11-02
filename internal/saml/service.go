@@ -335,7 +335,7 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 	if in.IdPMetadataXML != "" {
 		meta, err := parseIdPMetadata(in.IdPMetadataXML)
 		if err != nil {
-			return nil, 0, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
+			return nil, 0, fmt.Errorf("%w: %w", ErrInvalidMetadata, err)
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {

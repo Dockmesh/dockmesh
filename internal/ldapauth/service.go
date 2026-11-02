@@ -646,7 +646,8 @@ func formatID(attr string, raw []byte) string {
 	}
 	switch {
 	case strings.EqualFold(attr, "objectGUID") && len(raw) == 16:
-		b := raw
+		var b [16]byte
+		copy(b[:], raw)
 		return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 			b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
 	case strings.EqualFold(attr, "objectGUID"), strings.EqualFold(attr, "objectSid"), !utf8.Valid(raw):
