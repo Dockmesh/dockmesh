@@ -13,6 +13,7 @@
     LayoutDashboard, Layers, HardDrive, Lock, Clock,
     Check
   } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -23,7 +24,8 @@
   }
   let { open, editing, targets, onclose, onsave }: Props = $props();
 
-  const STEPS = ['Source', 'Schedule', 'Target', 'Retention'];
+  const STEPS = [m.common_source(), m.backups_col_schedule(), m.common_target(), m.backups_retention()];
+  const WEEKDAYS = [m.backups_wd_sun(), m.backups_wd_mon(), m.backups_wd_tue(), m.backups_wd_wed(), m.backups_wd_thu(), m.backups_wd_fri(), m.backups_wd_sat()];
   let step = $state(0);
   let busy = $state(false);
 
@@ -82,7 +84,7 @@
         hookContainers = list
           .filter((c: any) => kind === 'stack'
             ? c.Labels?.['com.docker.compose.project'] === ref
-            : (c.Mounts ?? []).some((m: any) => m.Type === 'volume' && m.Name === ref))
+            : (c.Mounts ?? []).some((mt: any) => mt.Type === 'volume' && mt.Name === ref))
           .map((c: any) => String(c.Names?.[0] ?? '').replace(/^\//, ''))
           .filter(Boolean)
           .sort();
@@ -93,8 +95,8 @@
   });
 
   const HOOK_SECTIONS = [
-    { kind: 'pre' as const, label: 'Pre-backup hooks', hint: 'Run in a container before the archive is written, e.g. to dump a database into its volume. A failure stops the run.' },
-    { kind: 'post' as const, label: 'Post-backup hooks', hint: 'Run after the archive is written. A failure marks the run as a success with warnings.' }
+    { kind: 'pre' as const, label: m.backups_jwiz_pre_hooks(), hint: m.backups_jwiz_pre_hooks_hint() },
+    { kind: 'post' as const, label: m.backups_jwiz_post_hooks(), hint: m.backups_jwiz_post_hooks_hint() }
   ];
 
   function setHooks(kind: 'pre' | 'post', rows: HookRow[]) {
@@ -145,7 +147,7 @@
   });
 
   function hostName(id: string): string {
-    return backupHosts.find((h) => h.id === id)?.name ?? (id === 'local' ? 'Local' : id);
+    return backupHosts.find((h) => h.id === id)?.name ?? (id === 'local' ? m.common_local() : id);
   }
 
   function hostOffered(id: string): boolean {
@@ -189,8 +191,8 @@
 
   function stackUnavailable(s: StackListEntry): string {
     const h = s.deployment?.host_id;
-    if (!h) return 'not deployed';
-    if (!hostOffered(h) && !(editing && editing.sources[0]?.name === s.name)) return `no backup access on ${hostName(h)}`;
+    if (!h) return m.backups_jwiz_not_deployed();
+    if (!hostOffered(h) && !(editing && editing.sources[0]?.name === s.name)) return m.backups_jwiz_no_backup_access({ host: hostName(h) });
     return '';
   }
 
@@ -214,11 +216,11 @@
       else if ((src.type as string) === 'system') { sourceKind = 'system'; sourceRef = ''; }
       else { sourceKind = src.type as 'stack' | 'volume'; sourceRef = src.name; }
       cronExpr = editing.schedule;
-      const m = parseCron(editing.schedule);
-      freq = m.freq;
-      hour = m.hour;
-      minute = m.minute;
-      weekday = m.weekday;
+      const pc = parseCron(editing.schedule);
+      freq = pc.freq;
+      hour = pc.hour;
+      minute = pc.minute;
+      weekday = pc.weekday;
       targetType = editing.target_type as typeof targetType;
       targetConfig = { ...(editing.target_config ?? {}) };
       preTargetId = editing.target_id ?? -1;
@@ -252,9 +254,9 @@
   function parseCron(c: string): { freq: Freq; hour: number; minute: number; weekday: number } {
     // Best-effort parse for common patterns we generated. Anything else
     // falls back to "cron" mode with the string preserved.
-    const m = c.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/);
-    if (!m) return { freq: 'cron', hour: 3, minute: 0, weekday: 0 };
-    const [, mn, hr, dom, , dow] = m;
+    const mm = c.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/);
+    if (!mm) return { freq: 'cron', hour: 3, minute: 0, weekday: 0 };
+    const [, mn, hr, dom, , dow] = mm;
     if (mn.startsWith('*') || hr.startsWith('*/')) {
       if (hr.includes('*/6')) return { freq: 'every-6h', hour: 0, minute: 0, weekday: 0 };
       return { freq: 'hourly', hour: 0, minute: parseInt(mn) || 0, weekday: 0 };
@@ -302,19 +304,19 @@
   function nextFires(cron: string): string {
     // Cheap human preview — we don't ship a full cron evaluator. The
     // backend has the real schedule; this is hint-only.
-    if (cron === '0 3 * * *') return 'tomorrow 03:00, +1d 03:00, +2d 03:00';
-    if (cron === '0 0 * * *') return 'tomorrow 00:00, +1d 00:00, +2d 00:00';
-    if (cron === '0 */6 * * *') return 'every 6 hours from the next 0 / 6 / 12 / 18 boundary';
-    if (cron.endsWith(' * * 0')) return 'next Sunday';
-    return 'see the cron expression — check after save';
+    if (cron === '0 3 * * *') return m.backups_jwiz_next_0300();
+    if (cron === '0 0 * * *') return m.backups_jwiz_next_0000();
+    if (cron === '0 */6 * * *') return m.backups_jwiz_next_6h();
+    if (cron.endsWith(' * * 0')) return m.backups_jwiz_next_sunday();
+    return m.backups_jwiz_next_unknown();
   }
 
   function targetTypeMeta(type: string): { label: string; glyph: string; blurb: string } {
-    if (type === 's3') return { label: 'S3 / object store', glyph: 'S3', blurb: 'AWS S3, MinIO, Wasabi, Backblaze B2, …' };
-    if (type === 'sftp') return { label: 'SFTP over SSH', glyph: 'FTP', blurb: 'Any SSH server with chrooted user.' };
-    if (type === 'smb') return { label: 'SMB / NAS share', glyph: 'NAS', blurb: 'Synology, QNAP, TrueNAS, Windows shares.' };
-    if (type === 'webdav') return { label: 'WebDAV', glyph: 'DAV', blurb: 'Nextcloud, ownCloud, generic WebDAV.' };
-    return { label: 'Local directory', glyph: 'LOC', blurb: 'On-host path. Survives crashes but not fires.' };
+    if (type === 's3') return { label: m.backups_ttype_s3_label(), glyph: 'S3', blurb: m.backups_jwiz_s3_blurb() };
+    if (type === 'sftp') return { label: m.backups_ttype_sftp_label(), glyph: 'FTP', blurb: m.backups_jwiz_sftp_blurb() };
+    if (type === 'smb') return { label: m.backups_ttype_smb_label(), glyph: 'NAS', blurb: m.backups_ttype_smb_blurb() };
+    if (type === 'webdav') return { label: 'WebDAV', glyph: 'DAV', blurb: m.backups_jwiz_webdav_blurb() };
+    return { label: m.backups_ttype_local_label(), glyph: 'LOC', blurb: m.backups_jwiz_local_blurb() };
   }
 
   // ─── Submit
@@ -344,7 +346,7 @@
       };
       await onsave(payload, !!editing, editing?.id);
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+      toast.error(m.backups_save_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
       busy = false;
     }
@@ -352,17 +354,16 @@
 
   // Derived helpers for the summary line on step 3.
   const sourceSummary = $derived.by(() => {
-    if (sourceKind === 'system') return 'whole dockmesh (DB + stacks + data)';
-    return `${sourceKind} · ${sourceRef || '—'} on ${jobHost ? hostName(jobHost) : '—'}`;
+    if (sourceKind === 'system') return m.backups_jwiz_summary_system();
+    return m.backups_jwiz_summary_source({ kind: sourceKind === 'stack' ? m.backups_jwiz_kind_stack() : m.backups_jwiz_kind_volume(), ref: sourceRef || '—', host: jobHost ? hostName(jobHost) : '—' });
   });
   const scheduleSummary = $derived.by(() => {
     if (freq === 'cron') return cronExpr;
-    if (freq === 'hourly') return `every hour at minute ${String(minute).padStart(2, '0')}`;
-    if (freq === 'every-6h') return 'every 6 hours';
-    if (freq === 'daily') return `daily at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    if (freq === 'hourly') return m.backups_jwiz_sched_hourly({ minute: String(minute).padStart(2, '0') });
+    if (freq === 'every-6h') return m.backups_jwiz_sched_6h();
+    if (freq === 'daily') return m.backups_jwiz_sched_daily({ time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` });
     if (freq === 'weekly') {
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      return `weekly · ${days[weekday]} at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      return m.backups_jwiz_sched_weekly({ day: WEEKDAYS[weekday], time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` });
     }
     return cronExpr;
   });
@@ -371,19 +372,18 @@
       const t = targets.find((x) => x.id === preTargetId);
       if (t) return t.name;
     }
-    const m = targetTypeMeta(targetType);
-    return `${m.label} (new)`;
+    return m.backups_jwiz_target_new({ label: targetTypeMeta(targetType).label });
   });
 </script>
 
 <WizardShell
   {open}
-  title={editing ? 'Edit backup job' : 'Schedule a new backup.'}
-  subtitle="A job picks one source, runs on a schedule, writes to one target."
+  title={editing ? m.backups_jwiz_edit_title() : m.backups_jwiz_new_title()}
+  subtitle={m.backups_jwiz_subtitle()}
   steps={STEPS}
   stepIdx={step}
   {busy}
-  finishLabel={editing ? 'Save changes' : 'Create job'}
+  finishLabel={editing ? m.backups_save_changes() : m.backups_jwiz_create_job()}
   nextDisabled={!canContinue}
   {onclose}
   onstep={(i) => (step = i)}
@@ -397,19 +397,19 @@
   {#if step === 0}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label" for="job-name">Job name</label>
-        <span class="wiz-field-hint">Lowercase, dashes ok. Used in logs and target paths.</span>
+        <label class="wiz-field-label" for="job-name">{m.backups_jwiz_name_label()}</label>
+        <span class="wiz-field-hint">{m.backups_jwiz_name_hint()}</span>
         <input id="job-name" class="wiz-input wiz-input-mono" bind:value={name} />
       </div>
 
       <div class="wiz-field">
-        <label class="wiz-field-label">Source</label>
-        <span class="wiz-field-hint">What to back up. Each kind dumps differently.</span>
+        <label class="wiz-field-label">{m.common_source()}</label>
+        <span class="wiz-field-hint">{m.backups_jwiz_source_hint()}</span>
         <div class="wiz-radio-grid">
           {#each [
-            { id: 'system', label: 'Whole dockmesh', meta: 'DB · stacks/ · data/', icon: LayoutDashboard },
-            { id: 'stack',  label: 'Single stack',   meta: 'compose + volumes',    icon: Layers },
-            { id: 'volume', label: 'Single volume',  meta: 'tar of volume mount',  icon: HardDrive }
+            { id: 'system', label: m.backups_jwiz_src_system(), meta: 'DB · stacks/ · data/', icon: LayoutDashboard },
+            { id: 'stack',  label: m.backups_jwiz_src_stack(),  meta: m.backups_jwiz_src_stack_meta(),  icon: Layers },
+            { id: 'volume', label: m.backups_jwiz_src_volume(), meta: m.backups_jwiz_src_volume_meta(), icon: HardDrive }
           ] as opt (opt.id)}
             {@const Icn = opt.icon}
             <button type="button" class="wiz-radio-card" class:active={sourceKind === opt.id} onclick={() => { if (sourceKind !== opt.id) { sourceKind = opt.id as typeof sourceKind; sourceRef = ''; } }}>
@@ -424,13 +424,13 @@
       {#if sourceKind === 'system'}
         <div class="wiz-info-box">
           <HardDrive size={12} strokeWidth={1.5} class="wiz-info-icon" />
-          <span>Runs on the server host: the Dockmesh database, stacks and data directory live there.</span>
+          <span>{m.backups_jwiz_system_info()}</span>
         </div>
       {:else if sourceKind === 'stack'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="src-stack">Pick a stack</label>
+          <label class="wiz-field-label" for="src-stack">{m.backups_jwiz_pick_stack()}</label>
           <select id="src-stack" class="wiz-input wiz-input-mono" bind:value={sourceRef}>
-            <option value="" disabled>— pick one —</option>
+            <option value="" disabled>{m.backups_jwiz_pick_one()}</option>
             {#each availableStacks as s (s.name)}
               {@const why = stackUnavailable(s)}
               <option value={s.name} disabled={!!why}>{s.name}{why ? ` (${why})` : ''}</option>
@@ -440,42 +440,42 @@
         {#if sourceRef}
           {#if stackHost}
             <div class="wiz-field">
-              <span class="wiz-field-label">Host</span>
+              <span class="wiz-field-label">{m.common_host()}</span>
               <span class="wiz-static font-mono" data-testid="stack-host">{hostName(stackHost)}</span>
-              <span class="wiz-field-hint">A stack is backed up on the host it is deployed on.</span>
+              <span class="wiz-field-hint">{m.backups_jwiz_stack_host_hint()}</span>
             </div>
           {:else}
             <div class="wiz-info-box wiz-info-warn">
               <Layers size={12} strokeWidth={1.5} class="wiz-info-icon" />
-              <span>Stack <em>{sourceRef}</em> is not deployed, so there is nothing to back up. Deploy it first.</span>
+              <span>{m.backups_jwiz_stack_not_deployed_before()} <em>{sourceRef}</em> {m.backups_jwiz_stack_not_deployed_after()}</span>
             </div>
           {/if}
         {/if}
       {:else if sourceKind === 'volume'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="src-host">Host</label>
-          <span class="wiz-field-hint">The host whose Docker volume is backed up.</span>
+          <label class="wiz-field-label" for="src-host">{m.common_host()}</label>
+          <span class="wiz-field-hint">{m.backups_jwiz_volume_host_hint()}</span>
           <select id="src-host" class="wiz-input wiz-input-mono" value={hostId} onchange={(e) => pickHost((e.currentTarget as HTMLSelectElement).value)}>
-            <option value="" disabled>— pick a host —</option>
+            <option value="" disabled>{m.backups_jwiz_pick_host()}</option>
             {#each hostChoices as h (h.id)}
               <option value={h.id}>{h.name}{h.status !== 'online' ? ` (${h.status})` : ''}</option>
             {/each}
           </select>
           {#if resourcesLoaded && hostChoices.length === 0}
-            <span class="wiz-field-hint">You can't manage backups on any host.</span>
+            <span class="wiz-field-hint">{m.backups_jwiz_no_hosts()}</span>
           {/if}
         </div>
         {#if hostId}
           <div class="wiz-field">
-            <label class="wiz-field-label" for="src-vol">Pick a volume</label>
+            <label class="wiz-field-label" for="src-vol">{m.backups_jwiz_pick_volume()}</label>
             {#if volumesError}
-              <span class="wiz-field-hint">Can't list the volumes of {hostName(hostId)} ({volumesError}). Type the volume name; it is checked on save.</span>
-              <input id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef} placeholder="volume name" />
+              <span class="wiz-field-hint">{m.backups_jwiz_volumes_error({ host: hostName(hostId), error: volumesError })}</span>
+              <input id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef} placeholder={m.backups_jwiz_volume_placeholder()} />
             {:else}
               <select id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef} disabled={volumesLoading}>
-                <option value="" disabled>{volumesLoading ? 'loading…' : availableVolumes.length ? '— pick one —' : 'no volumes on this host'}</option>
+                <option value="" disabled>{volumesLoading ? m.backups_jwiz_loading_lc() : availableVolumes.length ? m.backups_jwiz_pick_one() : m.backups_jwiz_no_volumes()}</option>
                 {#if sourceRef && !volumesLoading && !availableVolumes.includes(sourceRef)}
-                  <option value={sourceRef}>{sourceRef} (not found)</option>
+                  <option value={sourceRef}>{m.backups_jwiz_not_found({ name: sourceRef })}</option>
                 {/if}
                 {#each availableVolumes as v (v)}
                   <option value={v}>{v}</option>
@@ -494,13 +494,13 @@
   {#if step === 1}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label">Frequency</label>
+        <label class="wiz-field-label">{m.backups_jwiz_frequency()}</label>
         <div class="wiz-segctrl">
           {#each [
-            ['hourly', 'hourly'],
-            ['every-6h', 'every 6h'],
-            ['daily', 'daily'],
-            ['weekly', 'weekly'],
+            ['hourly', m.backups_jwiz_freq_hourly()],
+            ['every-6h', m.backups_jwiz_freq_6h()],
+            ['daily', m.backups_jwiz_freq_daily()],
+            ['weekly', m.backups_jwiz_freq_weekly()],
             ['cron', 'cron']
           ] as [id, label] (id)}
             <button type="button" class="wiz-segctrl-btn" class:active={freq === id} onclick={() => (freq = id as Freq)}>
@@ -512,8 +512,8 @@
 
       {#if freq === 'hourly'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="sch-min">At minute</label>
-          <span class="wiz-field-hint">Within each hour. 0 = on the hour.</span>
+          <label class="wiz-field-label" for="sch-min">{m.backups_jwiz_at_minute()}</label>
+          <span class="wiz-field-hint">{m.backups_jwiz_at_minute_hint()}</span>
           <input
             id="sch-min"
             type="number"
@@ -528,17 +528,17 @@
       {#if freq === 'daily' || freq === 'weekly'}
         {#if freq === 'weekly'}
           <div class="wiz-field">
-            <label class="wiz-field-label">Weekday</label>
+            <label class="wiz-field-label">{m.backups_jwiz_weekday()}</label>
             <div class="wiz-segctrl">
-              {#each ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as d, i (d)}
+              {#each WEEKDAYS as d, i (i)}
                 <button type="button" class="wiz-segctrl-btn" class:active={weekday === i} onclick={() => (weekday = i)}>{d}</button>
               {/each}
             </div>
           </div>
         {/if}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="sch-time">At time</label>
-          <span class="wiz-field-hint">Local server time. Backups run a few minutes earlier than typical traffic peak.</span>
+          <label class="wiz-field-label" for="sch-time">{m.backups_jwiz_at_time()}</label>
+          <span class="wiz-field-hint">{m.backups_jwiz_at_time_hint()}</span>
           <input
             id="sch-time"
             type="time"
@@ -555,8 +555,8 @@
 
       {#if freq === 'cron'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="sch-cron">Cron expression</label>
-          <span class="wiz-field-hint">Standard 5-field cron, e.g. 0 3 * * * for 03:00 every day.</span>
+          <label class="wiz-field-label" for="sch-cron">{m.backups_jwiz_cron_label()}</label>
+          <span class="wiz-field-hint">{m.backups_jwiz_cron_hint()}</span>
           <input id="sch-cron" class="wiz-input wiz-input-mono" bind:value={cronExpr} placeholder="0 3 * * *" />
         </div>
       {/if}
@@ -564,10 +564,10 @@
       <div class="wiz-info-box">
         <Clock size={12} strokeWidth={1.5} class="wiz-info-icon" />
         <span>
-          Will run <em class="ed-accent">{scheduleSummary}</em>.
+          {m.backups_jwiz_will_run()} <em class="ed-accent">{scheduleSummary}</em>.
           Cron: <span class="font-mono">{cronExpr}</span>.
-          Next: <span class="font-mono">{nextFires(cronExpr)}</span>.
-          {#if timezone}Times are in <span class="font-mono">{timezone}</span>.{/if}
+          {m.backups_jwiz_next()} <span class="font-mono">{nextFires(cronExpr)}</span>.
+          {#if timezone}{m.backups_jwiz_times_in()} <span class="font-mono">{timezone}</span>.{/if}
         </span>
       </div>
     </div>
@@ -579,23 +579,23 @@
   {#if step === 2}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label">Write to target</label>
-        <span class="wiz-field-hint">Pick a saved target, or set up a new one below.</span>
+        <label class="wiz-field-label">{m.backups_jwiz_write_to_target()}</label>
+        <span class="wiz-field-hint">{m.backups_jwiz_write_to_target_hint()}</span>
         <div class="wiz-target-pick">
           {#each targets as t (t.id)}
-            {@const m = targetTypeMeta(t.type)}
+            {@const tm = targetTypeMeta(t.type)}
             {@const usedPct = t.total_bytes > 0 ? (t.used_bytes / t.total_bytes) * 100 : 0}
             <button type="button" class="wiz-target-pick-row" class:active={preTargetId === t.id} onclick={() => selectPreTarget(t.id)}>
-              <span class="wiz-target-glyph">{m.glyph}</span>
+              <span class="wiz-target-glyph">{tm.glyph}</span>
               <span class="wiz-target-pick-text">
                 <span class="font-mono wiz-target-pick-name">{t.name}</span>
-                <span class="font-mono wiz-target-pick-meta">{m.label}</span>
+                <span class="font-mono wiz-target-pick-meta">{tm.label}</span>
               </span>
               {#if t.total_bytes > 0}
                 <span class="wiz-target-pick-fill">
                   <span class="wiz-target-pick-bar"><span class="wiz-target-pick-bar-fill" style="width: {usedPct}%"></span></span>
                   <span class="font-mono wiz-target-pick-free">
-                    {fmtBytes(t.free_bytes)} free
+                    {m.backups_jwiz_free({ free: fmtBytes(t.free_bytes) })}
                   </span>
                 </span>
               {/if}
@@ -604,8 +604,8 @@
           <button type="button" class="wiz-target-pick-row wiz-target-pick-inline" class:active={preTargetId === -1} onclick={() => selectPreTarget(-1)}>
             <span class="wiz-target-glyph">+</span>
             <span class="wiz-target-pick-text">
-              <span class="wiz-target-pick-name">New target</span>
-              <span class="font-mono wiz-target-pick-meta">set up below, saved under the job name</span>
+              <span class="wiz-target-pick-name">{m.backups_new_target()}</span>
+              <span class="font-mono wiz-target-pick-meta">{m.backups_jwiz_new_target_meta()}</span>
             </span>
           </button>
         </div>
@@ -613,7 +613,7 @@
 
       {#if preTargetId === -1}
         <div class="wiz-field">
-          <label class="wiz-field-label">Target type</label>
+          <label class="wiz-field-label">{m.backups_twiz_type_label()}</label>
           <div class="wiz-segctrl">
             {#each ['local', 'sftp', 'smb', 'webdav', 's3'] as t (t)}
               <button type="button" class="wiz-segctrl-btn" class:active={targetType === t} onclick={() => (targetType = t as typeof targetType)}>
@@ -625,107 +625,107 @@
 
         {#if targetType === 'local'}
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-path">Path</label>
-            <span class="wiz-field-hint">Absolute path, must be writable by dockmesh.</span>
+            <label class="wiz-field-label" for="t-path">{m.common_path()}</label>
+            <span class="wiz-field-hint">{m.backups_jwiz_local_path_hint()}</span>
             <input id="t-path" class="wiz-input wiz-input-mono" placeholder={defaultPath || '/srv/backups'} value={targetConfig.path ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, path: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         {:else if targetType === 'sftp'}
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-host">Host</label>
+              <label class="wiz-field-label" for="t-host">{m.common_host()}</label>
               <input id="t-host" class="wiz-input wiz-input-mono" value={targetConfig.host ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, host: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-port">Port</label>
+              <label class="wiz-field-label" for="t-port">{m.common_port()}</label>
               <input id="t-port" class="wiz-input wiz-input-mono" type="number" min="1" max="65535" placeholder="22" value={targetConfig.port ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, port: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-user">Username</label>
+              <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
               <input id="t-user" class="wiz-input wiz-input-mono" value={targetConfig.username ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, username: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-pass">Password</label>
+              <label class="wiz-field-label" for="t-pass">{m.backups_cfg_password()}</label>
               <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={targetConfig.password ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, password: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-key">Private key (optional)</label>
-            <span class="wiz-field-hint">PEM or OpenSSH private key, used instead of or besides the password. Stored encrypted, never shown again.{targetConfig.private_key_set && !targetConfig.private_key ? ' A key is saved; leave empty to keep it.' : ''}</span>
+            <label class="wiz-field-label" for="t-key">{m.backups_twiz_private_key_label()}</label>
+            <span class="wiz-field-hint">{m.backups_twiz_private_key_hint()}{targetConfig.private_key_set && !targetConfig.private_key ? ` ${m.backups_twiz_private_key_saved()}` : ''}</span>
             <textarea id="t-key" class="wiz-input wiz-input-mono wiz-textarea" rows="4" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={targetConfig.private_key ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, private_key: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-rpath">Remote path</label>
+            <label class="wiz-field-label" for="t-rpath">{m.backups_twiz_remote_path()}</label>
             <input id="t-rpath" class="wiz-input wiz-input-mono" placeholder="/backups" value={targetConfig.path ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, path: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         {:else if targetType === 's3'}
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-ep">Endpoint</label>
+              <label class="wiz-field-label" for="t-ep">{m.backups_cfg_endpoint()}</label>
               <input id="t-ep" class="wiz-input wiz-input-mono" placeholder="s3.amazonaws.com" value={targetConfig.endpoint ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, endpoint: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-region">Region</label>
+              <label class="wiz-field-label" for="t-region">{m.backups_cfg_region()}</label>
               <input id="t-region" class="wiz-input wiz-input-mono" placeholder="us-east-1" value={targetConfig.region ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, region: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-bucket">Bucket</label>
+            <label class="wiz-field-label" for="t-bucket">{m.backups_cfg_bucket()}</label>
             <input id="t-bucket" class="wiz-input wiz-input-mono" value={targetConfig.bucket ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, bucket: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-ak">Access key</label>
+              <label class="wiz-field-label" for="t-ak">{m.backups_cfg_access_key()}</label>
               <input id="t-ak" class="wiz-input wiz-input-mono" value={targetConfig.access_key ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, access_key: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-sk">Secret key</label>
+              <label class="wiz-field-label" for="t-sk">{m.backups_cfg_secret_key()}</label>
               <input id="t-sk" class="wiz-input wiz-input-mono" type="password" value={targetConfig.secret_key ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, secret_key: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-prefix">Prefix (optional)</label>
-            <span class="wiz-field-hint">Folder inside the bucket, nested levels allowed (backups/dockmesh).</span>
+            <label class="wiz-field-label" for="t-prefix">{m.backups_twiz_prefix_label()}</label>
+            <span class="wiz-field-hint">{m.backups_twiz_prefix_hint()}</span>
             <input id="t-prefix" class="wiz-input wiz-input-mono" placeholder="backups/dockmesh" value={targetConfig.prefix ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, prefix: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <label class="wiz-check">
             <input type="checkbox" checked={!!targetConfig.use_ssl} onchange={(e) => (targetConfig = { ...targetConfig, use_ssl: (e.currentTarget as HTMLInputElement).checked })} />
-            <span>Use TLS (https). Required by AWS, Wasabi, B2 and most hosted services.</span>
+            <span>{m.backups_twiz_use_tls()}</span>
           </label>
         {:else if targetType === 'smb'}
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-host">Server</label>
+              <label class="wiz-field-label" for="t-host">{m.backups_cfg_server()}</label>
               <input id="t-host" class="wiz-input wiz-input-mono" value={targetConfig.host ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, host: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-share">Share</label>
+              <label class="wiz-field-label" for="t-share">{m.backups_cfg_share()}</label>
               <input id="t-share" class="wiz-input wiz-input-mono" value={targetConfig.share ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, share: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-user">Username</label>
+              <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
               <input id="t-user" class="wiz-input wiz-input-mono" value={targetConfig.username ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, username: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-pass">Password</label>
+              <label class="wiz-field-label" for="t-pass">{m.backups_cfg_password()}</label>
               <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={targetConfig.password ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, password: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
         {:else if targetType === 'webdav'}
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-url">WebDAV URL</label>
+            <label class="wiz-field-label" for="t-url">{m.backups_twiz_webdav_url()}</label>
             <input id="t-url" class="wiz-input wiz-input-mono" placeholder="https://nextcloud.example.com/remote.php/dav/files/user/" value={targetConfig.url ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, url: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-grid-2">
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-user">Username</label>
+              <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
               <input id="t-user" class="wiz-input wiz-input-mono" value={targetConfig.username ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, username: (e.currentTarget as HTMLInputElement).value })} />
             </div>
             <div class="wiz-field">
-              <label class="wiz-field-label" for="t-pass">App password</label>
+              <label class="wiz-field-label" for="t-pass">{m.backups_twiz_app_password()}</label>
               <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={targetConfig.password ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, password: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
@@ -737,8 +737,8 @@
           <input type="checkbox" bind:checked={encrypt} />
           <span class="wiz-toggle-text">
             <Lock size={11} strokeWidth={1.5} class="wiz-toggle-icon" />
-            <span class="wiz-toggle-label">{encrypt ? 'Encrypt at rest with age' : 'No encryption (not recommended)'}</span>
-            <span class="wiz-toggle-hint">Uses this server's backup key. Export it under Settings → Encryption, or encrypted archives can't be restored on another install.</span>
+            <span class="wiz-toggle-label">{encrypt ? m.backups_jwiz_encrypt_on() : m.backups_jwiz_encrypt_off()}</span>
+            <span class="wiz-toggle-hint">{m.backups_jwiz_encrypt_hint()}</span>
           </span>
         </label>
       </div>
@@ -751,20 +751,20 @@
   {#if step === 3}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label" for="ret-n">Keep the newest N runs</label>
-        <span class="wiz-field-hint">After each run, archives beyond the newest N are deleted. The newest archive is never deleted.</span>
+        <label class="wiz-field-label" for="ret-n">{m.backups_jwiz_keep_n()}</label>
+        <span class="wiz-field-hint">{m.backups_jwiz_keep_n_hint()}</span>
         <div class="wiz-slider">
           <input id="ret-n" type="range" min="1" max="60" bind:value={keepN} />
-          <span class="wiz-slider-val font-mono">{keepN} runs</span>
+          <span class="wiz-slider-val font-mono">{m.backups_n_runs({ count: keepN })}</span>
         </div>
       </div>
 
       <div class="wiz-field">
-        <label class="wiz-field-label" for="ret-d">Max age (days)</label>
-        <span class="wiz-field-hint">After each run, archives older than this are deleted too, even among the newest N. 0 = no limit.</span>
+        <label class="wiz-field-label" for="ret-d">{m.backups_jwiz_max_age()}</label>
+        <span class="wiz-field-hint">{m.backups_jwiz_max_age_hint()}</span>
         <div class="wiz-slider">
           <input id="ret-d" type="range" min="0" max="365" bind:value={keepDays} />
-          <span class="wiz-slider-val font-mono">{keepDays === 0 ? 'no limit' : keepDays + 'd'}</span>
+          <span class="wiz-slider-val font-mono">{keepDays === 0 ? m.backups_jwiz_no_limit() : m.backups_jwiz_days_short({ n: keepDays })}</span>
         </div>
       </div>
 
@@ -777,31 +777,31 @@
         {@const rows = sec.kind === 'pre' ? preHooks : postHooks}
         <div class="wiz-field">
           <span class="wiz-field-label">{sec.label}</span>
-          <span class="wiz-field-hint">{sec.hint} Commands run with <code>sh -c</code> inside the container, so redirects and environment variables work.</span>
+          <span class="wiz-field-hint">{sec.hint} {m.backups_jwiz_hooks_sh_before()} <code>sh -c</code> {m.backups_jwiz_hooks_sh_after()}</span>
           {#each rows as row, i (i)}
             <div class="wiz-hook-row" data-testid="hook-row-{sec.kind}">
               <input
                 class="wiz-input wiz-input-mono wiz-hook-container"
-                placeholder="container"
-                aria-label="Container"
+                placeholder={m.backups_jwiz_hook_container_ph()}
+                aria-label={m.common_container()}
                 list="hook-containers"
                 value={row.container}
                 oninput={(e) => setHooks(sec.kind, rows.map((r, j) => (j === i ? { ...r, container: (e.currentTarget as HTMLInputElement).value } : r)))}
               />
               <input
                 class="wiz-input wiz-input-mono wiz-hook-command"
-                placeholder="command"
-                aria-label="Command"
+                placeholder={m.backups_jwiz_hook_command_ph()}
+                aria-label={m.backups_jwiz_hook_command()}
                 value={row.command}
                 oninput={(e) => setHooks(sec.kind, rows.map((r, j) => (j === i ? { ...r, command: (e.currentTarget as HTMLInputElement).value } : r)))}
               />
-              <button type="button" class="wiz-hook-btn" aria-label="Remove hook" onclick={() => setHooks(sec.kind, rows.filter((_, j) => j !== i))}>Remove</button>
+              <button type="button" class="wiz-hook-btn" aria-label={m.backups_jwiz_remove_hook()} onclick={() => setHooks(sec.kind, rows.filter((_, j) => j !== i))}>{m.common_remove()}</button>
             </div>
           {/each}
           <div class="wiz-hook-actions">
-            <button type="button" class="wiz-hook-btn" onclick={() => setHooks(sec.kind, [...rows, { container: defaultHookContainer(), command: '' }])}>Add command</button>
+            <button type="button" class="wiz-hook-btn" onclick={() => setHooks(sec.kind, [...rows, { container: defaultHookContainer(), command: '' }])}>{m.backups_jwiz_add_command()}</button>
             {#if sec.kind === 'pre'}
-              <span class="wiz-hook-presets-label">Presets:</span>
+              <span class="wiz-hook-presets-label">{m.backups_jwiz_presets()}</span>
               {#each HOOK_PRESETS as p (p.id)}
                 <button type="button" class="wiz-hook-btn" title={p.command} onclick={() => addPreset(p.id)}>{p.label}</button>
               {/each}
@@ -812,16 +812,16 @@
       {#if preHooks.some((r) => r.command.includes('dockmesh-dump'))}
         <div class="wiz-info-box">
           <HardDrive size={12} strokeWidth={1.5} class="wiz-info-icon" />
-          <span>The dump presets write into the data directory of the official database images. If your container keeps its data elsewhere, change the path to one inside a backed-up volume.</span>
+          <span>{m.backups_jwiz_dump_info()}</span>
         </div>
       {/if}
 
       <div class="wiz-info-box wiz-info-success">
         <Check size={12} strokeWidth={1.8} class="wiz-info-icon" />
         <span>
-          Job <em class="ed-accent">{name || 'unnamed'}</em> will back up
-          <em>{sourceSummary}</em> to <em class="ed-accent">{targetSummary}</em>,
-          retaining {keepN} runs / {keepDays === 0 ? 'no age limit' : `${keepDays} days`}.
+          {m.backups_jwiz_summary_job()} <em class="ed-accent">{name || m.backups_jwiz_unnamed()}</em> {m.backups_jwiz_summary_will_back_up()}
+          <em>{sourceSummary}</em> {m.backups_jwiz_summary_to()} <em class="ed-accent">{targetSummary}</em>,
+          {m.backups_jwiz_summary_retaining({ n: keepN, age: keepDays === 0 ? m.backups_no_age_limit() : m.backups_jwiz_n_days({ n: keepDays }) })}.
         </span>
       </div>
     </div>

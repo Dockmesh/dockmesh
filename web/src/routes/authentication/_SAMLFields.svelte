@@ -6,6 +6,7 @@
   import { Field } from '$lib/components/editorial';
   import { Copy } from 'lucide-svelte';
   import GroupMappingList from './_GroupMappingList.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     config: SAMLConfig;
@@ -53,7 +54,7 @@
   </div>
 {/if}
 
-<div class="saml-fieldset">Identity provider metadata</div>
+<div class="saml-fieldset">{m.authn_saml_idp_metadata()}</div>
 <div class="saml-source-toggle" role="tablist">
   <button
     type="button"
@@ -61,7 +62,7 @@
     class:saml-source-active={idpSource === 'url'}
     onclick={() => (idpSource = 'url')}
   >
-    Metadata URL
+    {m.authn_saml_metadata_url()}
   </button>
   <button
     type="button"
@@ -69,12 +70,12 @@
     class:saml-source-active={idpSource === 'xml'}
     onclick={() => (idpSource = 'xml')}
   >
-    Paste XML
+    {m.authn_saml_paste_xml()}
   </button>
 </div>
 
 {#if idpSource === 'url'}
-  <Field label="IdP metadata URL" hint="Dockmesh fetches and refreshes it periodically.">
+  <Field label={m.authn_saml_idp_url()} hint={m.authn_saml_idp_url_hint()}>
     <input
       class="dm-input acc-input-mono"
       bind:value={config.idp_metadata_url}
@@ -82,7 +83,7 @@
     />
   </Field>
 {:else}
-  <Field label="IdP metadata XML" hint="Paste the entire <EntityDescriptor> document.">
+  <Field label={m.authn_saml_idp_xml()} hint={m.authn_saml_idp_xml_hint({ tag: '<EntityDescriptor>' })}>
     <textarea
       class="dm-input acc-input-mono saml-xml"
       bind:value={config.idp_metadata_xml}
@@ -92,8 +93,8 @@
   </Field>
 {/if}
 
-<div class="saml-fieldset">Service provider</div>
-<Field label="SP entity ID" hint="How the IdP knows Dockmesh; defaults to the metadata URL.">
+<div class="saml-fieldset">{m.authn_saml_sp()}</div>
+<Field label={m.authn_saml_sp_entity()} hint={m.authn_saml_sp_entity_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.sp_entity_id}
@@ -102,26 +103,26 @@
 </Field>
 
 <div class="saml-grid-2">
-  <Field label="ACS URL (read-only)" hint="Assertion Consumer Service URL to enter at the IdP.">
+  <Field label={m.authn_saml_acs()} hint={m.authn_saml_acs_hint()}>
     {#snippet right()}
       <button
         type="button"
         class="dm-btn dm-btn-ghost dm-btn-xs"
         onclick={() => onCopy(acsUrl)}
       >
-        <Copy size={11} strokeWidth={1.5} /> copy
+        <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
       </button>
     {/snippet}
     <input class="dm-input acc-input-mono" readonly value={acsUrl} />
   </Field>
-  <Field label="SLO URL (read-only)" hint="Single Logout endpoint.">
+  <Field label={m.authn_saml_slo()} hint={m.authn_saml_slo_hint()}>
     {#snippet right()}
       <button
         type="button"
         class="dm-btn dm-btn-ghost dm-btn-xs"
         onclick={() => onCopy(sloUrl)}
       >
-        <Copy size={11} strokeWidth={1.5} /> copy
+        <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
       </button>
     {/snippet}
     <input class="dm-input acc-input-mono" readonly value={sloUrl} />
@@ -132,27 +133,26 @@
   <div class="saml-help">
     <span class="saml-help-icon">!</span>
     <span class="saml-help-text">
-      This server is reached over plain HTTP. An identity provider on another domain can only sign
-      users in over HTTPS; set the public URL to https://.
+      {m.authn_saml_http_warn()}
     </span>
   </div>
 {/if}
 
-<Field label="SP metadata URL (read-only)" hint="Hand this to the IdP for auto-config.">
+<Field label={m.authn_saml_sp_metadata()} hint={m.authn_saml_sp_metadata_hint()}>
   {#snippet right()}
     <button
       type="button"
       class="dm-btn dm-btn-ghost dm-btn-xs"
       onclick={() => onCopy(metadataUrl)}
     >
-      <Copy size={11} strokeWidth={1.5} /> copy
+      <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
     </button>
   {/snippet}
   <input class="dm-input acc-input-mono" readonly value={metadataUrl} />
 </Field>
 
-<div class="saml-fieldset">Signing &amp; encryption</div>
-<Field label="Signing certificate (PEM)" hint="Verifies SAML responses; optional when the metadata contains it.">
+<div class="saml-fieldset">{m.authn_saml_signing()}</div>
+<Field label={m.authn_saml_signing_cert()} hint={m.authn_saml_signing_cert_hint()}>
   <textarea
     class="dm-input acc-input-mono saml-cert"
     bind:value={config.signing_cert}
@@ -160,7 +160,7 @@
     placeholder={'-----BEGIN CERTIFICATE-----\nMIID…\n-----END CERTIFICATE-----'}
   ></textarea>
 </Field>
-<Field label="Encryption certificate (PEM)" hint="Needed only when the IdP encrypts assertions.">
+<Field label={m.authn_saml_enc_cert()} hint={m.authn_saml_enc_cert_hint()}>
   <textarea
     class="dm-input acc-input-mono saml-cert"
     bind:value={config.encryption_cert}
@@ -169,11 +169,11 @@
   ></textarea>
 </Field>
 
-<div class="saml-fieldset">Attribute mapping</div>
+<div class="saml-fieldset">{m.authn_attr_mapping()}</div>
 <div class="saml-grid-2">
   <Field
-    label="NameID format"
-    hint="Requested from the IdP; the NameID identifies the account. emailAddress changes when the user's email does."
+    label={m.authn_saml_nameid()}
+    hint={m.authn_saml_nameid_hint()}
   >
     <select class="dm-input acc-input-mono" bind:value={config.nameid_format}>
       <option value="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">persistent</option>
@@ -182,8 +182,8 @@
     </select>
   </Field>
   <Field
-    label="Subject attribute (optional)"
-    hint="Use a stable ID such as the Entra object ID; changing it later disconnects accounts."
+    label={m.authn_saml_subject()}
+    hint={m.authn_saml_subject_hint()}
   >
     <input
       class="dm-input acc-input-mono"
@@ -194,13 +194,13 @@
 </div>
 
 <div class="saml-grid-3">
-  <Field label="Username attribute">
+  <Field label={m.authn_username_attr()}>
     <input class="dm-input acc-input-mono" bind:value={config.username_attribute} placeholder="NameID" />
   </Field>
-  <Field label="Email attribute">
+  <Field label={m.authn_email_attr()}>
     <input class="dm-input acc-input-mono" bind:value={config.email_attribute} placeholder="email" />
   </Field>
-  <Field label="Groups attribute">
+  <Field label={m.authn_groups_attr()}>
     <input class="dm-input acc-input-mono" bind:value={config.groups_attribute} placeholder="groups" />
   </Field>
 </div>
@@ -210,8 +210,8 @@
   bind:defaultRole={config.default_role}
   {roles}
   groupClaim={config.groups_attribute}
-  title="SAML attribute → role mappings"
-  hint="Values of the groups attribute; with several matches the last one listed wins."
+  title={m.authn_saml_gml_title()}
+  hint={m.authn_saml_gml_hint()}
 />
 
 <style>

@@ -6,6 +6,7 @@
   import { auth, consumeSignOutReason } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   // Matches the lifetime of the server's pending-MFA token.
   const MFA_WINDOW_MS = 5 * 60_000;
@@ -54,12 +55,12 @@
 
     const reason = consumeSignOutReason();
     if (reason === 'session_outdated') {
-      notice = 'You were signed out after a security update. Sign in again to continue.';
+      notice = m.login_notice_outdated();
     } else if (expired || reason === 'expired') {
-      notice = 'Your session expired. Sign in again to continue.';
+      notice = m.login_notice_expired();
     }
     if (ssoError !== null) {
-      setError('Single sign-on failed. Try again or sign in with your password.', ssoError);
+      setError(m.login_sso_failed(), ssoError);
     }
     if (ssoCode) void exchangeSSOCode(ssoCode);
     void loadProviders();
@@ -78,36 +79,36 @@
     try {
       const res = await api.auth.ssoExchange(code);
       auth.setSession(res.user as any, res.access_token, res.refresh_token);
-      toast.success('Signed in via SSO', res.user.username);
+      toast.success(m.login_sso_signed_in(), res.user.username);
       goto('/');
     } catch {
       auth.clear();
       screen = 'signin';
-      setError('Single sign-on did not finish. Try again.');
+      setError(m.login_sso_unfinished());
     }
   }
 
   // 423 and 429 messages end in "try again in <n> minutes".
   function waitHint(message: string): string {
-    const m = /try again in (.+)$/i.exec(message);
-    return m ? `Try again in ${m[1]}.` : 'Try again later.';
+    const wait = /try again in (.+)$/i.exec(message);
+    return wait ? m.login_try_again_in({ time: wait[1] }) : m.login_try_again_later();
   }
 
   function describe(err: unknown, wrong: string): string {
     if (!(err instanceof ApiError) || err.status === 0) {
-      return 'Cannot reach the server. Check your connection and try again.';
+      return m.login_unreachable();
     }
     if (err.status === 401) return wrong;
-    if (err.status === 423) return `This account is locked. ${waitHint(err.message)}`;
-    if (err.status === 429) return `Too many attempts. ${waitHint(err.message)}`;
-    return 'Sign-in failed. Try again.';
+    if (err.status === 423) return `${m.login_locked()} ${waitHint(err.message)}`;
+    if (err.status === 429) return `${m.login_too_many()} ${waitHint(err.message)}`;
+    return m.login_failed();
   }
 
   async function submit(e: Event) {
     e.preventDefault();
     if (loading) return;
     if (!username.trim() || !password) {
-      setError('Enter your username and password.');
+      setError(m.login_enter_credentials());
       return;
     }
     setError('');
@@ -128,7 +129,7 @@
         goto('/');
       }
     } catch (err) {
-      setError(describe(err, 'Wrong username or password.'));
+      setError(describe(err, m.login_wrong_credentials()));
     } finally {
       loading = false;
     }
@@ -147,7 +148,7 @@
     if (loading || !mfaToken) return;
     const code = normalizedCode();
     if (!code) {
-      setError(useRecovery ? 'Enter a recovery code.' : 'Enter the 6-digit code.');
+      setError(useRecovery ? m.login_enter_recovery() : m.login_enter_code());
       return;
     }
     setError('');
@@ -159,10 +160,10 @@
     } catch (err) {
       const timedOut = Date.now() - mfaStartedAt > MFA_WINDOW_MS;
       const wrong = timedOut
-        ? 'This sign-in timed out. Go back and sign in again.'
+        ? m.login_mfa_timed_out()
         : useRecovery
-          ? 'That recovery code is not valid or was already used.'
-          : 'That code is not correct. Check your app and try again.';
+          ? m.login_recovery_invalid()
+          : m.login_code_invalid();
       setError(describe(err, wrong));
     } finally {
       loading = false;
@@ -192,7 +193,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign in · Dockmesh</title>
+  <title>{m.login_page_title()}</title>
 </svelte:head>
 
 {#snippet errorBox()}
@@ -207,19 +208,19 @@
 <AuthShell>
   {#if screen === 'sso'}
     <div class="auth-form" aria-busy="true">
-      <h1 class="auth-title">Signing you in…</h1>
-      <p class="auth-sub">Finishing single sign-on.</p>
+      <h1 class="auth-title">{m.login_sso_signing_in()}</h1>
+      <p class="auth-sub">{m.login_sso_finishing()}</p>
     </div>
   {:else if screen === 'signin'}
     <form class="auth-form" onsubmit={submit} novalidate>
-      <h1 class="auth-title">Sign in</h1>
+      <h1 class="auth-title">{m.login_sign_in()}</h1>
 
       {#if notice}
         <p class="auth-notice" role="status">{notice}</p>
       {/if}
 
       <div class="dm-field">
-        <label for="login-username">Username</label>
+        <label for="login-username">{m.login_username()}</label>
         <input
           id="login-username"
           class="dm-input"
@@ -234,14 +235,14 @@
 
       <div class="dm-field">
         <div class="auth-label-row">
-          <label for="login-password">Password</label>
+          <label for="login-password">{m.login_password()}</label>
           <button
             type="button"
             class="auth-link"
             aria-expanded={forgotOpen}
             aria-controls="login-forgot"
             onclick={() => (forgotOpen = !forgotOpen)}
-          >Forgot password?</button>
+          >{m.login_forgot()}</button>
         </div>
         <input
           id="login-password"
@@ -253,7 +254,7 @@
         />
         {#if forgotOpen}
           <p id="login-forgot" class="auth-hint">
-            An admin can set a new one on the server:
+            {m.login_forgot_hint()}
             <code class="auth-cmd">{resetCmd}</code>
           </p>
         {/if}
@@ -262,36 +263,36 @@
       {@render errorBox()}
 
       <button type="submit" class="dm-btn dm-btn-primary auth-block" disabled={loading}>
-        {loading ? 'Signing in…' : 'Sign in'}
+        {loading ? m.login_signing_in() : m.login_sign_in()}
       </button>
 
       {#if providers.length > 0}
-        <div class="auth-or">or</div>
+        <div class="auth-or">{m.login_or()}</div>
         {#each providers as p (p.slug)}
           <button
             type="button"
             class="dm-btn dm-btn-secondary auth-block"
             disabled={loading}
             onclick={() => ssoLogin(p.slug)}
-          >Continue with {p.display_name}</button>
+          >{m.login_continue_with({ provider: p.display_name })}</button>
         {/each}
       {/if}
     </form>
   {:else}
     <form class="auth-form" onsubmit={submitMFA} novalidate>
       <button type="button" class="auth-link back" onclick={backToSignIn}>
-        <ArrowLeft size={13} strokeWidth={2} /> Back
+        <ArrowLeft size={13} strokeWidth={2} /> {m.common_back()}
       </button>
 
-      <h1 class="auth-title">Two-factor authentication</h1>
+      <h1 class="auth-title">{m.login_mfa_title()}</h1>
       <p class="auth-sub">
-        {useRecovery ? 'Enter one of the recovery codes you saved.' : 'Enter the 6-digit code from your authenticator app.'}
+        {useRecovery ? m.login_mfa_sub_recovery() : m.login_mfa_sub_code()}
       </p>
 
       {#key useRecovery}
         <div class="dm-field">
           {#if useRecovery}
-            <label for="login-recovery">Recovery code</label>
+            <label for="login-recovery">{m.login_recovery_code()}</label>
             <input
               id="login-recovery"
               class="dm-input dm-mono"
@@ -305,7 +306,7 @@
               use:focusOnMount
             />
           {:else}
-            <label for="login-code">Authentication code</label>
+            <label for="login-code">{m.login_auth_code()}</label>
             <input
               id="login-code"
               class="dm-input dm-mono code"
@@ -323,11 +324,11 @@
       {@render errorBox()}
 
       <button type="submit" class="dm-btn dm-btn-primary auth-block" disabled={loading}>
-        {loading ? 'Verifying…' : 'Verify'}
+        {loading ? m.login_verifying() : m.login_verify()}
       </button>
 
       <button type="button" class="auth-link alt" onclick={toggleRecovery}>
-        {useRecovery ? 'Use your authenticator app' : 'Use a recovery code'}
+        {useRecovery ? m.login_use_app() : m.login_use_recovery()}
       </button>
     </form>
   {/if}

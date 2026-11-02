@@ -2,6 +2,7 @@
 // duration_seconds and container_filter for their own parameters.
 import type { AlertRule, AlertRuleInput } from '$lib/api';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 export type RuleKind =
   | 'metric'
@@ -15,19 +16,20 @@ export type RuleKind =
   | 'backup_missed'
   | 'cert_expiry';
 
-const CONTAINER_HINT = '* matches all, or exact container name.';
+const CONTAINER_HINT = m.alerts_hint_container();
+const CONTAINER_FILTER = m.alerts_filter_container();
 
 export const KINDS: { id: RuleKind; label: string; target: string; targetHint: string }[] = [
-  { id: 'metric', label: 'Container CPU / memory', target: 'Container filter', targetHint: CONTAINER_HINT },
-  { id: 'restart_loop', label: 'Container restart loop', target: 'Container filter', targetHint: CONTAINER_HINT },
-  { id: 'container_stopped', label: 'Container stopped unexpectedly', target: 'Container filter', targetHint: CONTAINER_HINT },
-  { id: 'unhealthy', label: 'Container unhealthy', target: 'Container filter', targetHint: CONTAINER_HINT },
-  { id: 'oom', label: 'Container killed by OOM', target: 'Container filter', targetHint: CONTAINER_HINT },
-  { id: 'host_offline', label: 'Host offline', target: 'Agent filter', targetHint: '* matches every agent, or an exact agent name.' },
-  { id: 'disk_usage', label: 'Disk usage', target: 'Mount filter', targetHint: '* matches mounts holding Docker, containerd, stacks or Dockmesh data; or an exact mount point.' },
-  { id: 'backup_failed', label: 'Backup run failed', target: 'Backup job filter', targetHint: '* matches all jobs, or an exact job name.' },
-  { id: 'backup_missed', label: 'Backup overdue', target: 'Backup job filter', targetHint: '* matches all jobs, or an exact job name.' },
-  { id: 'cert_expiry', label: 'TLS certificate expiring', target: 'Domain filter', targetHint: '* matches every proxy route, or an exact domain.' },
+  { id: 'metric', label: m.alerts_kind_metric(), target: CONTAINER_FILTER, targetHint: CONTAINER_HINT },
+  { id: 'restart_loop', label: m.alerts_kind_restart_loop(), target: CONTAINER_FILTER, targetHint: CONTAINER_HINT },
+  { id: 'container_stopped', label: m.alerts_kind_container_stopped(), target: CONTAINER_FILTER, targetHint: CONTAINER_HINT },
+  { id: 'unhealthy', label: m.alerts_kind_unhealthy(), target: CONTAINER_FILTER, targetHint: CONTAINER_HINT },
+  { id: 'oom', label: m.alerts_kind_oom(), target: CONTAINER_FILTER, targetHint: CONTAINER_HINT },
+  { id: 'host_offline', label: m.alerts_kind_host_offline(), target: m.alerts_filter_agent(), targetHint: m.alerts_hint_agent() },
+  { id: 'disk_usage', label: m.alerts_kind_disk_usage(), target: m.alerts_filter_mount(), targetHint: m.alerts_hint_mount() },
+  { id: 'backup_failed', label: m.alerts_kind_backup_failed(), target: m.alerts_filter_backup_job(), targetHint: m.alerts_hint_backup_job() },
+  { id: 'backup_missed', label: m.alerts_kind_backup_missed(), target: m.alerts_filter_backup_job(), targetHint: m.alerts_hint_backup_job() },
+  { id: 'cert_expiry', label: m.alerts_kind_cert_expiry(), target: m.alerts_filter_domain(), targetHint: m.alerts_hint_domain() },
 ];
 
 export function kindOf(r: { kind?: string }): RuleKind {
@@ -53,23 +55,23 @@ export function fmtDuration(secs: number): string {
 export function describeRule(r: AlertRule): string {
   switch (kindOf(r)) {
     case 'restart_loop':
-      return `a container restarts ${r.threshold} times within ${fmtDuration(r.duration_seconds)}`;
+      return m.alerts_desc_restart_loop({ n: r.threshold, d: fmtDuration(r.duration_seconds) });
     case 'container_stopped':
-      return 'a container exits with an error without being stopped';
+      return m.alerts_desc_container_stopped();
     case 'unhealthy':
-      return 'a container health check reports unhealthy';
+      return m.alerts_desc_unhealthy();
     case 'oom':
-      return 'a container is killed for running out of memory';
+      return m.alerts_desc_oom();
     case 'host_offline':
-      return `an agent is offline for ${fmtDuration(r.duration_seconds)}`;
+      return m.alerts_desc_host_offline({ d: fmtDuration(r.duration_seconds) });
     case 'disk_usage':
-      return `a disk is at least ${r.threshold}% full`;
+      return m.alerts_desc_disk_usage({ n: r.threshold });
     case 'backup_failed':
-      return 'a backup run fails';
+      return m.alerts_desc_backup_failed();
     case 'backup_missed':
-      return 'a backup job has no successful run within its schedule';
+      return m.alerts_desc_backup_missed();
     case 'cert_expiry':
-      return `a proxy certificate expires within ${r.threshold} days`;
+      return m.alerts_desc_cert_expiry({ n: r.threshold });
     default:
       return '';
   }
@@ -101,10 +103,10 @@ type RuleShape = Pick<AlertRuleInput, 'kind' | 'container_filter' | 'scope_host'
 
 // Groups for the "Watch" picker, in the order the dialog lists them.
 export const KIND_GROUPS: { group: string; kinds: RuleKind[] }[] = [
-  { group: 'Containers', kinds: ['metric', 'restart_loop', 'container_stopped', 'unhealthy', 'oom'] },
-  { group: 'Hosts', kinds: ['host_offline', 'disk_usage'] },
-  { group: 'Backups', kinds: ['backup_failed', 'backup_missed'] },
-  { group: 'Reverse proxy', kinds: ['cert_expiry'] }
+  { group: m.common_containers(), kinds: ['metric', 'restart_loop', 'container_stopped', 'unhealthy', 'oom'] },
+  { group: m.common_hosts(), kinds: ['host_offline', 'disk_usage'] },
+  { group: m.alerts_group_backups(), kinds: ['backup_failed', 'backup_missed'] },
+  { group: m.alerts_group_proxy(), kinds: ['cert_expiry'] }
 ];
 
 function filtered(f: string | undefined, any: string, one: (v: string) => string): string {
@@ -112,28 +114,31 @@ function filtered(f: string | undefined, any: string, one: (v: string) => string
 }
 
 // Where a rule looks, as a phrase: "a container of stack web on nas-01".
-export function subjectOf(r: RuleShape, hostName: (id: string) => string = (id) => id): string {
+// dat picks the form German needs after "von"; English has only one.
+export function subjectOf(r: RuleShape, hostName: (id: string) => string = (id) => id, dat = false): string {
   const k = kindOf(r);
-  const where = r.scope_host ? ` on ${hostName(r.scope_host)}` : r.scope_tag ? ` on hosts tagged ${r.scope_tag}` : '';
+  const where = r.scope_host
+    ? ` ${m.alerts_subj_on_host({ host: hostName(r.scope_host) })}`
+    : r.scope_tag ? ` ${m.alerts_subj_on_tag({ tag: r.scope_tag })}` : '';
   switch (k) {
     case 'metric':
     case 'restart_loop':
     case 'container_stopped':
     case 'unhealthy':
     case 'oom': {
-      const base = filtered(r.container_filter, 'a container', (v) => `container ${v}`);
-      const stack = r.scope_stack ? ` of stack ${r.scope_stack}` : '';
+      const base = filtered(r.container_filter, dat ? m.alerts_subj_any_container_dat() : m.alerts_subj_any_container(), (v) => m.alerts_subj_container({ name: v }));
+      const stack = r.scope_stack ? ` ${m.alerts_subj_of_stack({ stack: r.scope_stack })}` : '';
       return base + stack + where;
     }
     case 'host_offline':
-      return r.scope_host ? hostName(r.scope_host) : filtered(r.container_filter, 'an agent', (v) => `agent ${v}`) + where;
+      return r.scope_host ? hostName(r.scope_host) : filtered(r.container_filter, m.alerts_subj_any_agent(), (v) => m.alerts_subj_agent({ name: v })) + where;
     case 'disk_usage':
-      return filtered(r.container_filter, 'a data disk', (v) => `the disk at ${v}`) + where;
+      return filtered(r.container_filter, m.alerts_subj_any_disk(), (v) => m.alerts_subj_disk({ mount: v })) + where;
     case 'backup_failed':
     case 'backup_missed':
-      return filtered(r.container_filter, 'any backup job', (v) => `backup job ${v}`);
+      return filtered(r.container_filter, dat ? m.alerts_subj_any_job_dat() : m.alerts_subj_any_job(), (v) => m.alerts_subj_job({ name: v }));
     case 'cert_expiry':
-      return filtered(r.container_filter, 'any proxy site', (v) => `the site ${v}`);
+      return filtered(r.container_filter, dat ? m.alerts_subj_any_site_dat() : m.alerts_subj_any_site(), (v) => (dat ? m.alerts_subj_site_dat({ name: v }) : m.alerts_subj_site({ name: v })));
   }
 }
 
@@ -141,31 +146,33 @@ export function subjectOf(r: RuleShape, hostName: (id: string) => string = (id) 
 // preview: "CPU of a container of stack web is above 80 % for 1m".
 export function ruleSentence(r: RuleShape, hostName?: (id: string) => string): string {
   const s = subjectOf(r, hostName);
+  const sd = subjectOf(r, hostName, true);
   const d = fmtDuration(r.duration_seconds || 0);
   switch (kindOf(r)) {
     case 'metric': {
-      const m = r.metric === 'mem_percent' ? 'memory' : 'CPU';
-      const op = r.operator === 'lt' ? 'below' : 'above';
-      return `${m} of ${s} is ${op} ${r.threshold} %${cpuUnitSuffix(r)}${r.duration_seconds > 0 ? ` for ${d}` : ''}`;
+      const metric = r.metric === 'mem_percent' ? m.alerts_metric_memory() : 'CPU';
+      const op = r.operator === 'lt' ? m.alerts_op_below() : m.alerts_op_above();
+      const dur = r.duration_seconds > 0 ? ` ${m.alerts_for_duration({ d })}` : '';
+      return m.alerts_sentence_metric({ metric, subject: sd, op, n: r.threshold }) + cpuUnitSuffix(r) + dur;
     }
     case 'restart_loop':
-      return `${s} restarts ${r.threshold} times within ${d}`;
+      return m.alerts_sentence_restart_loop({ subject: s, n: r.threshold, d });
     case 'container_stopped':
-      return `${s} exits with an error without being stopped`;
+      return m.alerts_sentence_container_stopped({ subject: s });
     case 'unhealthy':
-      return `the health check of ${s} reports unhealthy`;
+      return m.alerts_sentence_unhealthy({ subject: sd });
     case 'oom':
-      return `${s} is killed for running out of memory`;
+      return m.alerts_sentence_oom({ subject: s });
     case 'host_offline':
-      return `${s} is offline for ${d}`;
+      return m.alerts_sentence_host_offline({ subject: s, d });
     case 'disk_usage':
-      return `${s} is at least ${r.threshold} % full`;
+      return m.alerts_sentence_disk_usage({ subject: s, n: r.threshold });
     case 'backup_failed':
-      return `a run of ${s} fails`;
+      return m.alerts_sentence_backup_failed({ subject: sd });
     case 'backup_missed':
-      return `${s} has no successful run within its schedule`;
+      return m.alerts_sentence_backup_missed({ subject: s });
     case 'cert_expiry':
-      return `the certificate of ${s} expires within ${r.threshold} days`;
+      return m.alerts_sentence_cert_expiry({ subject: sd, n: r.threshold });
   }
 }
 
@@ -174,16 +181,16 @@ export function appliesTo(r: RuleShape, hostName: (id: string) => string = (id) 
   const k = kindOf(r);
   const parts: string[] = [];
   const f = r.container_filter && r.container_filter !== '*' ? r.container_filter : '';
-  if (k === 'backup_failed' || k === 'backup_missed') return f ? `job ${f}` : 'all backup jobs';
-  if (k === 'cert_expiry') return f || 'all proxy sites';
-  if (k === 'host_offline') parts.push(f ? `agent ${f}` : 'all agents');
-  else if (k === 'disk_usage') parts.push(f ? `mount ${f}` : 'data disks');
+  if (k === 'backup_failed' || k === 'backup_missed') return f ? m.alerts_applies_job({ name: f }) : m.alerts_applies_all_jobs();
+  if (k === 'cert_expiry') return f || m.alerts_applies_all_sites();
+  if (k === 'host_offline') parts.push(f ? m.alerts_subj_agent({ name: f }) : m.alerts_applies_all_agents());
+  else if (k === 'disk_usage') parts.push(f ? m.alerts_applies_mount({ mount: f }) : m.alerts_applies_data_disks());
   else {
-    if (r.scope_stack) parts.push(`stack ${r.scope_stack}`);
-    parts.push(f ? `container ${f}` : r.scope_stack ? '' : 'all containers');
+    if (r.scope_stack) parts.push(m.alerts_applies_stack({ stack: r.scope_stack }));
+    parts.push(f ? m.alerts_subj_container({ name: f }) : r.scope_stack ? '' : m.alerts_applies_all_containers());
   }
-  if (r.scope_host) parts.push(`on ${hostName(r.scope_host)}`);
-  else if (r.scope_tag) parts.push(`hosts tagged ${r.scope_tag}`);
+  if (r.scope_host) parts.push(m.alerts_subj_on_host({ host: hostName(r.scope_host) }));
+  else if (r.scope_tag) parts.push(m.alerts_applies_hosts_tagged({ tag: r.scope_tag }));
   return parts.filter(Boolean).join(' · ');
 }
 
@@ -204,5 +211,5 @@ function cpuUnitOf(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): 'host' | 'co
 
 export function cpuUnitSuffix(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): string {
   const u = cpuUnitOf(r);
-  return u === 'host' ? ' of the host' : u === 'core' ? ' of one core' : '';
+  return u === 'host' ? ` ${m.alerts_cpu_of_host()}` : u === 'core' ? ` ${m.alerts_cpu_of_core()}` : '';
 }

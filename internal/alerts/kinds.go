@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/robfig/cron/v3"
@@ -342,9 +342,9 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 	s.evMu.Unlock()
 
 	tgt := target{hostID: ev.HostID, name: targetName(ev.HostID, ev.HostName, ev.Container)}
-	where := ev.Container
-	if ev.HostName != "" {
-		where += " on " + ev.HostName
+	where := i18n.Msg("alert.container_on_host", ev.Container, ev.HostName)
+	if ev.HostName == "" {
+		where = i18n.Msg("alert.container_name", ev.Container)
 	}
 	for _, r := range s.ruleSnapshot() {
 		if !r.Enabled || !containerKind(r.Kind) || !matchTarget(r.ContainerFilter, ev.Container) ||
@@ -357,11 +357,11 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 		case KindContainerStopped:
 			switch {
 			case ev.Action == "die" && ev.ExitCode != "0" && !userStop && !firing:
-				s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s stopped unexpectedly (exit code %s)", where, ev.ExitCode), 0, ev.Time)
+				s.fireRule(ctx, &r, tgt, i18n.Msg("alert.container_stopped", where, ev.ExitCode), 0, ev.Time)
 			case ev.Action == "start" && firing:
-				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s is running again", where), 0, ev.Time)
+				s.resolveRule(ctx, &r, tgt, i18n.Msg("alert.container_running", where), 0, ev.Time)
 			case ev.Action == "destroy" && firing:
-				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s was removed", where), 0, ev.Time)
+				s.resolveRule(ctx, &r, tgt, i18n.Msg("alert.container_removed", where), 0, ev.Time)
 			}
 		case KindRestartLoop:
 			window := time.Duration(r.DurationSeconds) * time.Second
@@ -369,24 +369,24 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 			case ev.Action == "die" && !userStop:
 				n := s.recordDie(key, ev.Time, window, max(int(r.Threshold), 1))
 				if float64(n) >= r.Threshold && !firing {
-					s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s restarted %d times in %s", where, n, window), float64(n), ev.Time)
+					s.fireRule(ctx, &r, tgt, i18n.Msg("alert.container_restarts", where, n, window.String()), float64(n), ev.Time)
 				}
 			case ev.Action == "destroy":
 				s.forgetDies(key)
 				if firing {
-					s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s was removed", where), 0, ev.Time)
+					s.resolveRule(ctx, &r, tgt, i18n.Msg("alert.container_removed", where), 0, ev.Time)
 				}
 			}
 		case KindUnhealthy:
 			switch {
 			case ev.Action == "health_status: unhealthy" && !firing:
-				s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s is unhealthy", where), 0, ev.Time)
+				s.fireRule(ctx, &r, tgt, i18n.Msg("alert.container_unhealthy", where), 0, ev.Time)
 			case (ev.Action == "health_status: healthy" || ev.Action == "destroy") && firing:
-				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s is healthy again", where), 0, ev.Time)
+				s.resolveRule(ctx, &r, tgt, i18n.Msg("alert.container_healthy", where), 0, ev.Time)
 			}
 		case KindOOM:
 			if ev.Action == "oom" {
-				s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s was killed for running out of memory", where), 0, ev.Time)
+				s.fireRule(ctx, &r, tgt, i18n.Msg("alert.container_oom", where), 0, ev.Time)
 			}
 		}
 	}
@@ -450,7 +450,7 @@ func (s *Service) expireRestartLoops(ctx context.Context, r *Rule, now time.Time
 		s.evMu.Unlock()
 		if !recent {
 			s.resolveRule(ctx, r, target{hostID: key.host, name: key.target},
-				fmt.Sprintf("Container %s has not restarted in %s", key.target, window), 0, now)
+				i18n.Msg("alert.container_no_restart", key.target, window.String()), 0, now)
 		}
 	}
 }
@@ -611,10 +611,10 @@ func (s *Service) evalHostOffline(ctx context.Context, r *Rule, now time.Time) e
 		offline := a.status == "offline" && a.seen.Valid && now.Sub(a.seen.Time) >= grace
 		switch {
 		case offline && !firing:
-			s.fireRule(ctx, r, at, fmt.Sprintf("Agent %s has been offline since %s",
+			s.fireRule(ctx, r, at, i18n.Msg("alert.agent_offline",
 				a.name, a.seen.Time.Local().Format("2006-01-02 15:04")), 0, now)
 		case !offline && firing && a.status != "offline":
-			s.resolveRule(ctx, r, at, fmt.Sprintf("Agent %s is %s", a.name, a.status), 0, now)
+			s.resolveRule(ctx, r, at, i18n.Msg("alert.agent_status", a.name, a.status), 0, now)
 		}
 	}
 	return nil
@@ -643,10 +643,10 @@ func (s *Service) evalDisk(ctx context.Context, r *Rule, hosts []HostMounts, now
 			firing := s.isFiring(key)
 			switch {
 			case m.Percent >= r.Threshold && !firing:
-				s.fireRule(ctx, r, target{hostID: hm.HostID, name: tgt}, fmt.Sprintf("Disk %s on %s is %.0f%% full (%s)",
+				s.fireRule(ctx, r, target{hostID: hm.HostID, name: tgt}, i18n.Msg("alert.disk_full",
 					m.MountPoint, hm.HostName, m.Percent, strings.Join(m.Roles, ", ")), m.Percent, now)
 			case firing && m.Percent < r.Threshold-diskHysteresis:
-				s.resolveRule(ctx, r, target{hostID: hm.HostID, name: tgt}, fmt.Sprintf("Disk %s on %s is back to %.0f%%",
+				s.resolveRule(ctx, r, target{hostID: hm.HostID, name: tgt}, i18n.Msg("alert.disk_back",
 					m.MountPoint, hm.HostName, m.Percent), m.Percent, now)
 			}
 		}
@@ -667,7 +667,7 @@ func (s *Service) resolveGoneMounts(ctx context.Context, r *Rule, hm HostMounts,
 	s.stateMu.Unlock()
 	hostPrefix := targetName(hm.HostID, hm.HostName, "")
 	for _, tgt := range gone {
-		s.resolveRule(ctx, r, target{hostID: hm.HostID, name: tgt}, fmt.Sprintf("Disk %s on %s is no longer mounted",
+		s.resolveRule(ctx, r, target{hostID: hm.HostID, name: tgt}, i18n.Msg("alert.disk_gone",
 			strings.TrimPrefix(tgt, hostPrefix), hm.HostName), 0, now)
 	}
 }
@@ -717,9 +717,9 @@ func (s *Service) evalBackupFailed(ctx context.Context, r *Rule, runs []failedRu
 		if !matchTarget(r.ContainerFilter, f.jobName) {
 			continue
 		}
-		msg := fmt.Sprintf("Backup job %s failed", f.jobName)
+		msg := i18n.Msg("alert.backup_failed", f.jobName)
 		if f.errMsg != "" {
-			msg += ": " + f.errMsg
+			msg = i18n.Msg("alert.backup_failed_detail", f.jobName, f.errMsg)
 		}
 		s.fireRule(ctx, r, target{name: f.jobName}, msg, 0, now)
 	}
@@ -795,10 +795,10 @@ func (s *Service) evalBackupMissed(ctx context.Context, r *Rule, now time.Time) 
 		}
 		switch {
 		case overdue && !firing:
-			s.fireRule(ctx, r, target{name: j.name}, fmt.Sprintf("Backup job %s has had no successful run since %s (scheduled every %s)",
-				j.name, since.Local().Format("2006-01-02 15:04"), interval), 0, now)
+			s.fireRule(ctx, r, target{name: j.name}, i18n.Msg("alert.backup_missed",
+				j.name, since.Local().Format("2006-01-02 15:04"), interval.String()), 0, now)
 		case !overdue && firing:
-			s.resolveRule(ctx, r, target{name: j.name}, fmt.Sprintf("Backup job %s is back on schedule", j.name), 0, now)
+			s.resolveRule(ctx, r, target{name: j.name}, i18n.Msg("alert.backup_on_schedule", j.name), 0, now)
 		}
 	}
 	return nil
@@ -849,10 +849,10 @@ func (s *Service) evalCerts(ctx context.Context, r *Rule, now time.Time) {
 		days := c.NotAfter.Sub(now).Hours() / 24
 		switch {
 		case days < r.Threshold && !firing:
-			s.fireRule(ctx, r, target{name: c.Domain}, fmt.Sprintf("TLS certificate for %s expires %s (%.0f days)",
+			s.fireRule(ctx, r, target{name: c.Domain}, i18n.Msg("alert.cert_expires",
 				c.Domain, c.NotAfter.Local().Format("2006-01-02"), days), days, now)
 		case days >= r.Threshold && firing:
-			s.resolveRule(ctx, r, target{name: c.Domain}, fmt.Sprintf("TLS certificate for %s renewed, valid until %s",
+			s.resolveRule(ctx, r, target{name: c.Domain}, i18n.Msg("alert.cert_renewed",
 				c.Domain, c.NotAfter.Local().Format("2006-01-02")), days, now)
 		}
 	}

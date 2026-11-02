@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { page } from '$app/state';
   import { SETTINGS_NAV, matches } from './nav';
 
@@ -12,7 +13,7 @@
   }
 </script>
 
-<nav class="snav" aria-label="Settings">
+<nav class="snav" aria-label={m.common_settings()}>
   {#each groups as g (g)}
     <div class="g">{g}</div>
     {#each links.filter((l) => l.group === g) as l (l.href)}

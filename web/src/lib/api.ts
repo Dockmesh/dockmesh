@@ -1,3 +1,6 @@
+import { m } from '$lib/paraglide/messages.js';
+import { apiErrorText } from './apiErrors';
+import { rbacText } from './rbacText';
 import { auth } from './stores/auth.svelte';
 
 const BASE = '/api/v1';
@@ -510,6 +513,25 @@ export interface RoleCatalog {
   extras: RoleExtra[];
 }
 
+// Built-in roles and the catalog come in English; custom roles keep the
+// text their author typed, since it is sent back unchanged on save.
+function localRole(r: CustomRole): CustomRole {
+  if (!r?.builtin) return r;
+  return { ...r, display: rbacText(r.display), description: rbacText(r.description) };
+}
+
+function localCatalog(c: RoleCatalog): RoleCatalog {
+  return {
+    ...c,
+    areas: c.areas.map((a) => ({
+      ...a,
+      label: rbacText(a.label),
+      levels: a.levels.map((l) => ({ ...l, label: rbacText(l.label), items: l.items.map(rbacText) }))
+    })),
+    extras: c.extras.map((e) => ({ ...e, label: rbacText(e.label), warning: rbacText(e.warning) }))
+  };
+}
+
 export interface RoleInput {
   name?: string;
   display: string;
@@ -1012,8 +1034,8 @@ export interface BackupTarget {
 
 // targetUsage tells whoever edits a shared target what the change affects.
 export function targetUsage(jobCount: number): string {
-  if (jobCount === 0) return 'Not used by any job yet.';
-  return `Used by ${jobCount} job${jobCount === 1 ? '' : 's'}; changes apply to all of them.`;
+  if (jobCount === 0) return m.lead_target_usage_none();
+  return m.lead_target_usage({ count: jobCount });
 }
 
 export interface BackupSource {
@@ -1133,7 +1155,7 @@ export async function uploadSystemBackup(
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { method: 'POST', headers, body: form });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok && !(res.status === 422 && data?.sanity)) throw new ApiError(data?.error ?? res.statusText, res.status);
+  if (!res.ok && !(res.status === 422 && data?.sanity)) throw new ApiError(apiErrorText(data?.code, res.status, data?.error ?? res.statusText), res.status);
   return data;
 }
 
@@ -1580,7 +1602,9 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
   const send = (token: string | null) => {
     const headers = new Headers(init.headers);
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers }).catch(() => {
+      throw new ApiError(m.apierr_network(), 0);
+    });
   };
   const used = auth.accessToken;
   const userId = auth.user?.id;
@@ -1588,7 +1612,7 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
   if (res.status !== 401 || !auth.refreshToken) return res;
   // Another caller may already have renewed the token while this one was in flight.
   if (auth.accessToken === used && !(await auth.refresh())) {
-    if (auth.isAuthenticated) throw new ApiError('Cannot reach the server to renew the session', 0);
+    if (auth.isAuthenticated) throw new ApiError(m.apierr_session_renew(), 0);
     return res;
   }
   // Never replay a request under a different account.
@@ -1602,8 +1626,9 @@ async function saveDownload(path: string, filename: string): Promise<void> {
   const res = await authFetch(`${BASE}${path}`);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
-    try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
-    throw new ApiError(msg, res.status);
+    let code: unknown;
+    try { const body = await res.json(); if (body.error) msg = body.error; code = body.code; } catch { /* ignore */ }
+    throw new ApiError(apiErrorText(code, res.status, msg), res.status);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -1629,7 +1654,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       body = await res.json();
       if (body.error) msg = body.error;
     } catch { /* ignore */ }
-    throw new ApiError(msg, res.status, body);
+    throw new ApiError(apiErrorText(body?.code, res.status, msg), res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -1904,9 +1929,13 @@ export const api = {
   },
 
   roles: {
-    list: () => request<CustomRole[]>('/roles'),
-    get: (name: string) => request<{ role: CustomRole; assignments: Assignment[] }>(`/roles/${encodeURIComponent(name)}`),
-    catalog: () => request<RoleCatalog>('/roles/catalog'),
+    list: () => request<CustomRole[]>('/roles').then((rs) => rs.map(localRole)),
+    get: (name: string) =>
+      request<{ role: CustomRole; assignments: Assignment[] }>(`/roles/${encodeURIComponent(name)}`).then((r) => ({
+        ...r,
+        role: localRole(r.role)
+      })),
+    catalog: () => request<RoleCatalog>('/roles/catalog').then(localCatalog),
     create: (role: RoleInput & { name: string }) =>
       request<CustomRole>('/roles', { method: 'POST', body: JSON.stringify(role) }),
     update: (name: string, role: RoleInput) =>
@@ -2147,8 +2176,9 @@ export const api = {
         const res = await authFetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`);
         if (!res.ok) {
           let msg = `${res.status} ${res.statusText}`;
-          try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* ignore */ }
-          throw new ApiError(msg, res.status);
+          let code: unknown;
+          try { const j = await res.json(); if (j.error) msg = j.error; code = j.code; } catch { /* ignore */ }
+          throw new ApiError(apiErrorText(code, res.status, msg), res.status);
         }
         return res.blob();
       },
@@ -2323,7 +2353,7 @@ export const api = {
       form.append('file', file);
       const res = await authFetch(`${BASE}/restore/verify`, { method: 'POST', body: form });
       const data = await res.json();
-      if (!res.ok && res.status !== 422) throw new ApiError(data?.error ?? res.statusText, res.status);
+      if (!res.ok && res.status !== 422) throw new ApiError(apiErrorText(data?.code, res.status, data?.error ?? res.statusText), res.status);
       return data as BackupVerifyResult;
     },
     verifyRun: (runId: number) =>
@@ -2341,7 +2371,9 @@ export const api = {
   },
 
   users: {
-    me: () => request<UserRow & { permissions: string[]; unscoped: boolean }>('/me'),
+    me: () => request<UserRow & { permissions: string[]; unscoped: boolean; language?: string }>('/me'),
+    setLanguage: (language: string) =>
+      request<void>('/me/language', { method: 'PUT', body: JSON.stringify({ language }) }),
     list: () => request<UserRow[]>('/users'),
     get: (id: string) => request<UserRow>(`/users/${encodeURIComponent(id)}`),
     sessions: (id: string) => request<Session[]>(`/users/${encodeURIComponent(id)}/sessions`),

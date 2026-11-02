@@ -12,6 +12,8 @@
     Variable, Plus, Trash2, Search, RefreshCw, ChevronDown, Edit2,
     Upload, ShieldAlert, ChevronRight,
   } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   interface EnvVar {
     id: number;
@@ -54,42 +56,42 @@
   // Template presets — Dockmesh-eigene 1-Click-Add UX.
   // Groups + keys carry their own metadata so the operator doesn't have
   // to remember TZ format / PUID purpose.
-  const TEMPLATES: Array<{ group: string; icon: string; vars: Array<{ key: string; value: string; hint: string }> }> = [
+  const TEMPLATES: Array<{ group: string; label: string; icon: string; vars: Array<{ key: string; value: string; hint: string }> }> = [
     {
-      group: 'System', icon: '⚙️',
+      group: 'System', label: m.env_tpl_system(), icon: '⚙️',
       vars: [
-        { key: 'TZ',    value: 'Europe/Vienna', hint: 'Container timezone' },
-        { key: 'PUID',  value: '1000',          hint: 'Process user ID for file permissions' },
-        { key: 'PGID',  value: '1000',          hint: 'Process group ID for file permissions' },
-        { key: 'UMASK', value: '022',           hint: 'File creation mask' },
+        { key: 'TZ',    value: 'Europe/Vienna', hint: m.env_hint_tz() },
+        { key: 'PUID',  value: '1000',          hint: m.env_hint_puid() },
+        { key: 'PGID',  value: '1000',          hint: m.env_hint_pgid() },
+        { key: 'UMASK', value: '022',           hint: m.env_hint_umask() },
       ],
     },
     {
-      group: 'Database', icon: '🗄️',
+      group: 'Database', label: m.env_tpl_database(), icon: '🗄️',
       vars: [
-        { key: 'DB_HOST',     value: '',     hint: 'Database hostname' },
-        { key: 'DB_PORT',     value: '5432', hint: 'Database port' },
-        { key: 'DB_USER',     value: '',     hint: 'Database username' },
-        { key: 'DB_PASSWORD', value: '',     hint: 'Database password' },
-        { key: 'DB_NAME',     value: '',     hint: 'Database name' },
+        { key: 'DB_HOST',     value: '',     hint: m.env_hint_db_host() },
+        { key: 'DB_PORT',     value: '5432', hint: m.env_hint_db_port() },
+        { key: 'DB_USER',     value: '',     hint: m.env_hint_db_user() },
+        { key: 'DB_PASSWORD', value: '',     hint: m.env_hint_db_password() },
+        { key: 'DB_NAME',     value: '',     hint: m.env_hint_db_name() },
       ],
     },
     {
-      group: 'SMTP', icon: '📧',
+      group: 'SMTP', label: m.env_tpl_smtp(), icon: '📧',
       vars: [
-        { key: 'SMTP_HOST',     value: '',    hint: 'Mail server hostname' },
-        { key: 'SMTP_PORT',     value: '587', hint: 'Mail server port (587 for TLS)' },
-        { key: 'SMTP_USER',     value: '',    hint: 'Mail server username' },
-        { key: 'SMTP_PASSWORD', value: '',    hint: 'Mail server password' },
-        { key: 'SMTP_FROM',     value: '',    hint: 'Sender email address' },
+        { key: 'SMTP_HOST',     value: '',    hint: m.env_hint_smtp_host() },
+        { key: 'SMTP_PORT',     value: '587', hint: m.env_hint_smtp_port() },
+        { key: 'SMTP_USER',     value: '',    hint: m.env_hint_smtp_user() },
+        { key: 'SMTP_PASSWORD', value: '',    hint: m.env_hint_smtp_password() },
+        { key: 'SMTP_FROM',     value: '',    hint: m.env_hint_smtp_from() },
       ],
     },
     {
-      group: 'Proxy', icon: '🌐',
+      group: 'Proxy', label: m.env_tpl_proxy(), icon: '🌐',
       vars: [
-        { key: 'HTTP_PROXY',  value: '',                  hint: 'HTTP proxy URL' },
-        { key: 'HTTPS_PROXY', value: '',                  hint: 'HTTPS proxy URL' },
-        { key: 'NO_PROXY',    value: 'localhost,127.0.0.1', hint: 'Comma-separated bypass list' },
+        { key: 'HTTP_PROXY',  value: '',                  hint: m.env_hint_http_proxy() },
+        { key: 'HTTPS_PROXY', value: '',                  hint: m.env_hint_https_proxy() },
+        { key: 'NO_PROXY',    value: 'localhost,127.0.0.1', hint: m.env_hint_no_proxy() },
       ],
     },
   ];
@@ -99,7 +101,7 @@
     try {
       vars = await api.globalEnv.list();
     } catch (err) {
-      toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.env_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -108,7 +110,7 @@
   $effect(() => { load(); });
 
   // ── Derived ──────────────────────────────────────────────────────────
-  const groups = $derived([...new Set(vars.map((v) => v.group_name || '(no group)'))].sort());
+  const groups = $derived([...new Set(vars.map((v) => v.group_name || m.env_no_group()))].sort());
 
   const visible = $derived(
     vars.filter((v) => {
@@ -124,15 +126,15 @@
 
   // Group → rows map (filtered)
   const grouped = $derived.by(() => {
-    const m = new Map<string, EnvVar[]>();
+    const byGroup = new Map<string, EnvVar[]>();
     for (const v of visible) {
-      const g = v.group_name || '(no group)';
-      if (!m.has(g)) m.set(g, []);
-      m.get(g)!.push(v);
+      const g = v.group_name || m.env_no_group();
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g)!.push(v);
     }
     // Sort rows within each group
-    for (const arr of m.values()) arr.sort((a, b) => a.key.localeCompare(b.key));
-    return m;
+    for (const arr of byGroup.values()) arr.sort((a, b) => a.key.localeCompare(b.key));
+    return byGroup;
   });
 
   const visibleGroups = $derived([...grouped.keys()].sort());
@@ -173,15 +175,15 @@
       const payload = { key: formKey.trim(), value: formValue, group_name: formGroup.trim(), encrypted: formSecret };
       if (editing) {
         await api.globalEnv.update(editing.id, payload);
-        toast.success('Updated', formKey);
+        toast.success(m.env_updated_toast(), formKey);
       } else {
         await api.globalEnv.create(payload);
-        toast.success('Created', formKey);
+        toast.success(m.env_created_toast(), formKey);
       }
       showModal = false;
       await load();
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.env_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       saving = false;
     }
@@ -189,17 +191,17 @@
 
   async function deleteVar(v: EnvVar) {
     if (!(await confirm.ask({
-      title: 'Delete environment variable',
-      message: `Delete "${v.key}"?`,
-      body: 'Stacks that reference this variable via ${…} will fail to deploy until it’s restored or the reference is removed.',
-      confirmLabel: 'Delete', danger: true,
+      title: m.env_delete_title(),
+      message: m.env_delete_message({ key: v.key }),
+      body: m.env_delete_body(),
+      confirmLabel: m.common_delete(), danger: true,
     }))) return;
     try {
       await api.globalEnv.delete(v.id);
-      toast.success('Deleted', v.key);
+      toast.success(m.env_deleted_toast(), v.key);
       await load();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.env_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -208,19 +210,19 @@
     group: string,
   ) {
     if (vars.some((v) => v.key === tpl.key)) {
-      toast.info('Already exists', `${tpl.key} is already defined`);
+      toast.info(m.env_already_exists(), m.env_already_defined({ key: tpl.key }));
       return;
     }
     try {
       await api.globalEnv.create({ key: tpl.key, value: tpl.value, group_name: group.toLowerCase() });
-      toast.success('Added', tpl.key);
+      toast.success(m.env_added(), tpl.key);
       await load();
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.env_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
-  async function addAllFromGroup(group: { group: string; vars: Array<{ key: string; value: string; hint: string }> }) {
+  async function addAllFromGroup(group: { group: string; label: string; vars: Array<{ key: string; value: string; hint: string }> }) {
     let added = 0;
     for (const tpl of group.vars) {
       if (vars.some((v) => v.key === tpl.key)) continue;
@@ -230,10 +232,10 @@
       } catch { /* skip duplicates */ }
     }
     if (added > 0) {
-      toast.success(`Added ${added} variable${added === 1 ? '' : 's'}`, group.group);
+      toast.success(m.env_added_n({ count: added }), group.label);
       await load();
     } else {
-      toast.info('All variables already exist');
+      toast.info(m.env_all_exist());
     }
     showTemplates = false;
   }
@@ -288,9 +290,9 @@
     showImport = false;
     importText = '';
     importSecret = {};
-    let msg = `${added} added`;
-    if (skipped > 0) msg += `, ${skipped} skipped`;
-    if (failed > 0) msg += `, ${failed} failed`;
+    let msg: string = m.env_import_added({ n: added });
+    if (skipped > 0) msg += `, ${m.env_import_skipped({ n: skipped })}`;
+    if (failed > 0) msg += `, ${m.env_import_failed({ n: failed })}`;
     toast[failed === 0 ? 'success' : 'info'](msg);
     await load();
   }
@@ -298,7 +300,7 @@
   // ── Helpers ──────────────────────────────────────────────────────────
   function fmtDate(iso?: string): string {
     if (!iso) return '—';
-    return new Date(iso).toLocaleDateString(undefined, {
+    return fmtDateTime(iso, {
       year: 'numeric', month: 'short', day: '2-digit',
     });
   }
@@ -313,12 +315,12 @@
     <!-- ───────────────────────── Header ───────────────────────── -->
     <header class="env-header">
       <div class="env-header-text">
-        <h1 class="ed-title env-title">Environment</h1>
+        <h1 class="ed-title env-title">{m.env_title()}</h1>
         <p class="ed-subtitle env-subtitle">
           {#if vars.length === 0}
-            No global variables yet
+            {m.env_no_vars_yet()}
           {:else}
-            {vars.length} variable{vars.length === 1 ? '' : 's'}{groups.length > 0 ? ` · ${groups.length} group${groups.length === 1 ? '' : 's'}` : ''}{secretsCount > 0 ? ` · ${secretsCount} secret${secretsCount === 1 ? '' : 's'}` : ''}
+            {m.env_n_variables({ count: vars.length })}{groups.length > 0 ? ` · ${m.env_n_groups({ count: groups.length })}` : ''}{secretsCount > 0 ? ` · ${m.env_n_secrets({ count: secretsCount })}` : ''}
           {/if}
         </p>
       </div>
@@ -330,7 +332,7 @@
         <Search size={12} strokeWidth={1.5} class="env-search-icon" />
         <input
           type="search"
-          placeholder="search key · value · group…"
+          placeholder={m.env_search_placeholder()}
           bind:value={search}
           class="ed-underline-input env-search-input"
         />
@@ -344,13 +346,13 @@
           class="dm-btn dm-btn-ghost dm-btn-sm"
           onclick={() => (showTemplates = !showTemplates)}
         >
-          <Variable size={12} strokeWidth={1.5} /> Templates
+          <Variable size={12} strokeWidth={1.5} /> {m.env_templates()}
           <ChevronDown size={11} strokeWidth={1.5} />
         </button>
         {#if showTemplates}
           <button
             class="env-templates-scrim"
-            aria-label="Close templates"
+            aria-label={m.env_close_templates()}
             onclick={() => (showTemplates = false)}
           ></button>
           <div class="env-templates-menu" role="menu">
@@ -359,14 +361,14 @@
                 <div class="env-templates-group-head">
                   <span class="env-templates-group-label">
                     <span class="env-templates-group-icon">{tplGroup.icon}</span>
-                    {tplGroup.group}
+                    {tplGroup.label}
                   </span>
                   <button
                     type="button"
                     class="env-templates-add-all"
                     onclick={() => addAllFromGroup(tplGroup)}
                   >
-                    Add all
+                    {m.env_add_all()}
                   </button>
                 </div>
                 {#each tplGroup.vars as tpl (tpl.key)}
@@ -385,7 +387,7 @@
                       <span class="env-templates-item-hint">{tpl.hint}</span>
                     </div>
                     {#if exists}
-                      <span class="env-templates-item-exists">Added</span>
+                      <span class="env-templates-item-exists">{m.env_added()}</span>
                     {/if}
                   </button>
                 {/each}
@@ -400,7 +402,7 @@
         class="dm-btn dm-btn-ghost dm-btn-sm"
         onclick={() => (showImport = true)}
       >
-        <Upload size={12} strokeWidth={1.5} /> Bulk import
+        <Upload size={12} strokeWidth={1.5} /> {m.env_bulk_import()}
       </button>
 
       <button
@@ -408,7 +410,7 @@
         class="dm-btn dm-btn-primary dm-btn-sm"
         onclick={openNew}
       >
-        <Plus size={12} strokeWidth={1.5} /> Add variable
+        <Plus size={12} strokeWidth={1.5} /> {m.env_add_variable()}
       </button>
 
       <button
@@ -416,7 +418,7 @@
         class="dm-btn dm-btn-ghost dm-btn-sm"
         onclick={load}
         disabled={loading}
-        title="Refresh"
+        title={m.common_refresh()}
       >
         <RefreshCw size={12} strokeWidth={1.5} class={loading ? 'env-spin' : ''} />
       </button>
@@ -430,26 +432,25 @@
     {:else if vars.length === 0}
       <div class="env-empty">
         <Variable size={20} strokeWidth={1.4} />
-        <p class="env-empty-title">No global variables</p>
+        <p class="env-empty-title">{m.env_empty_title()}</p>
         <p class="ed-subtitle env-empty-blurb">
-          Add variables like <code class="env-inline-code">TZ</code>,
-          <code class="env-inline-code">PUID</code>, database credentials —
-          they'll be referenced by your compose files via
+          {m.env_empty_blurb_before()} <code class="env-inline-code">TZ</code>,
+          <code class="env-inline-code">PUID</code>, {m.env_empty_blurb_middle()}
           <code class="env-inline-code">{`\${KEY}`}</code>.
         </p>
         <div class="env-empty-actions">
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openNew}>
-            <Plus size={12} strokeWidth={1.5} /> Add first variable
+            <Plus size={12} strokeWidth={1.5} /> {m.env_add_first()}
           </button>
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showImport = true)}>
-            <Upload size={12} strokeWidth={1.5} /> Bulk import
+            <Upload size={12} strokeWidth={1.5} /> {m.env_bulk_import()}
           </button>
         </div>
       </div>
     {:else if visible.length === 0}
       <div class="env-empty">
-        <Eyebrow>No match</Eyebrow>
-        <p class="env-empty-title">No variables match „{search}".</p>
+        <Eyebrow>{m.env_no_match()}</Eyebrow>
+        <p class="env-empty-title">{m.env_no_match_title({ search })}</p>
       </div>
     {:else}
       <div class="env-groups">
@@ -467,12 +468,12 @@
                 <ChevronRight size={12} strokeWidth={1.5} />
               </span>
               <span class="env-group-name">{g}</span>
-              <span class="env-group-count">· {rows.length} var{rows.length === 1 ? '' : 's'}</span>
+              <span class="env-group-count">· {m.env_n_vars_short({ count: rows.length })}</span>
               {#if rows.some((r) => r.encrypted)}
                 {@const secrets = rows.filter((r) => r.encrypted).length}
                 <span class="env-group-secret-count">
                   <ShieldAlert size={10} strokeWidth={1.5} />
-                  {secrets} secret{secrets === 1 ? '' : 's'}
+                  {m.env_n_secrets({ count: secrets })}
                 </span>
               {/if}
             </button>
@@ -480,9 +481,9 @@
             {#if !isCollapsed}
               <div class="env-group-body">
                 <div class="env-row env-row-head">
-                  <span>Key</span>
-                  <span>Value</span>
-                  <span>Updated</span>
+                  <span>{m.env_col_key()}</span>
+                  <span>{m.env_col_value()}</span>
+                  <span>{m.env_col_updated()}</span>
                   <span class="env-col-right">·</span>
                 </div>
                 {#each rows as v (v.id)}
@@ -498,9 +499,9 @@
                         <span class="env-value-secret">
                           <span class="env-value-mask">•••••••••••••••</span>
                           {#if v.unreadable}
-                            <span class="env-value-encrypted-pill env-value-unreadable" title="The stored value can't be decrypted with this server's secrets key. Deploys fail until you set it again.">Can't decrypt</span>
+                            <span class="env-value-encrypted-pill env-value-unreadable" title={m.env_unreadable_title()}>{m.env_cant_decrypt()}</span>
                           {:else}
-                            <span class="env-value-encrypted-pill">Hidden</span>
+                            <span class="env-value-encrypted-pill">{m.env_hidden()}</span>
                           {/if}
                         </span>
                       {:else}
@@ -512,8 +513,8 @@
                       <button
                         type="button"
                         class="env-icon-btn"
-                        title="Edit"
-                        aria-label="Edit"
+                        title={m.common_edit()}
+                        aria-label={m.common_edit()}
                         onclick={() => openEdit(v)}
                       >
                         <Edit2 size={11} strokeWidth={1.5} />
@@ -521,8 +522,8 @@
                       <button
                         type="button"
                         class="env-icon-btn env-icon-danger"
-                        title="Delete"
-                        aria-label="Delete"
+                        title={m.common_delete()}
+                        aria-label={m.common_delete()}
                         onclick={() => deleteVar(v)}
                       >
                         <Trash2 size={11} strokeWidth={1.5} />
@@ -540,11 +541,10 @@
     <!-- ───────────────── Footer hint ───────────────── -->
     {#if vars.length > 0}
       <div class="env-hint">
-        <div class="env-hint-title">How to reference these</div>
+        <div class="env-hint-title">{m.env_hint_title()}</div>
         <p class="env-hint-blurb">
-          In any stack's <code class="env-inline-code">compose.yaml</code>, reference a key as
-          <code class="env-inline-code">{`\${KEY}`}</code>. Dockmesh interpolates global vars at
-          deploy time. Stack-level <code class="env-inline-code">.env</code> files override globals.
+          {m.env_hint_1()} <code class="env-inline-code">compose.yaml</code>{m.env_hint_2()}
+          <code class="env-inline-code">{`\${KEY}`}</code>{m.env_hint_3()} <code class="env-inline-code">.env</code>{m.env_hint_4()}
         </p>
       </div>
     {/if}
@@ -554,20 +554,20 @@
 <!-- ───────────────────────── Add / Edit Modal ───────────────────────── -->
 <EditorialModal
   bind:open={showModal}
-  eyebrow={editing ? 'Edit variable' : 'New variable'}
+  eyebrow={editing ? m.env_eyebrow_edit() : m.env_eyebrow_new()}
   width={560}
 >
   {#snippet title()}
     {#if editing}
-      Edit <em class="ed-accent">{editing.key}</em>
+      {m.env_title_edit_before()} <em class="ed-accent">{editing.key}</em> {m.env_title_edit_after()}
     {:else}
-      Add a <em>global</em> variable
+      {m.env_title_add_before()} <em>{m.env_title_add_global()}</em> {m.env_title_add_after()}
     {/if}
   {/snippet}
 
   <form id="env-form" class="env-form" onsubmit={save}>
     <div class="env-grid-2">
-      <Field label="Key" hint="UPPER_SNAKE_CASE convention.">
+      <Field label={m.common_key()} hint={m.env_key_hint()}>
         <input
           class="dm-input acc-input-mono"
           value={formKey}
@@ -576,7 +576,7 @@
           placeholder="BASE_DOMAIN"
         />
       </Field>
-      <Field label="Group" hint="Free text that groups the list.">
+      <Field label={m.env_group()} hint={m.env_group_hint()}>
         <input
           class="dm-input acc-input-mono"
           bind:value={formGroup}
@@ -592,18 +592,18 @@
     </div>
 
     <Field
-      label="Value"
+      label={m.env_value()}
       hint={editing?.unreadable
-        ? "The stored value can't be decrypted. Enter it again."
+        ? m.env_value_hint_unreadable()
         : editing?.encrypted
-        ? 'Secret value is never shown. Leave empty to keep the stored value.'
-        : 'Plain string. Multi-line is fine.'}
+        ? m.env_value_hint_secret()
+        : m.env_value_hint_plain()}
     >
       <textarea
         class="dm-input acc-input-mono env-textarea"
         bind:value={formValue}
         disabled={saving}
-        placeholder={editing?.encrypted ? '•••••••• (unchanged)' : 'value or multi-line content'}
+        placeholder={editing?.encrypted ? m.env_value_placeholder_unchanged() : m.env_value_placeholder()}
         rows="4"
       ></textarea>
     </Field>
@@ -611,11 +611,11 @@
     <label class="env-secret-check">
       <input type="checkbox" bind:checked={formSecret} disabled={saving || editing?.encrypted} />
       <span>
-        Secret
+        {m.env_secret()}
         <span class="env-secret-check-hint">
           {editing?.encrypted
-            ? 'Never shown. To make it plain, delete and re-create the variable.'
-            : 'Never shown again after saving; stored encrypted unless secrets encryption is turned off on the server.'}
+            ? m.env_secret_hint_existing()
+            : m.env_secret_hint_new()}
         </span>
       </span>
     </label>
@@ -625,7 +625,7 @@
     <span></span>
     <div class="env-modal-actions">
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showModal = false)}>
-        Cancel
+        {m.common_cancel()}
       </button>
       <button
         type="submit"
@@ -633,7 +633,7 @@
         class="dm-btn dm-btn-primary dm-btn-sm"
         disabled={saving || !formKey.trim()}
       >
-        {saving ? 'Saving…' : editing ? 'Save' : 'Create'}
+        {saving ? m.common_saving() : editing ? m.common_save() : m.common_create()}
       </button>
     </div>
   {/snippet}
@@ -642,15 +642,15 @@
 <!-- ───────────────────────── Bulk Import Modal ───────────────────────── -->
 <EditorialModal
   bind:open={showImport}
-  eyebrow="Bulk import"
+  eyebrow={m.env_bulk_import()}
   width={620}
 >
   {#snippet title()}
-    Paste a <em class="ed-accent">.env</em> file
+    {m.env_import_title_before()} <em class="ed-accent">.env</em>{m.env_import_title_after()}
   {/snippet}
 
   <div class="env-form">
-    <Field label="Default group" hint="Imported entries go into this group.">
+    <Field label={m.env_default_group()} hint={m.env_default_group_hint()}>
       <input
         class="dm-input acc-input-mono"
         bind:value={importGroup}
@@ -660,21 +660,21 @@
     </Field>
 
     <Field
-      label=".env content"
-      hint="One KEY=value per line; comments and blank lines are skipped. Ticked entries are stored as encrypted secrets."
+      label={m.env_content()}
+      hint={m.env_content_hint()}
     >
       <textarea
         class="dm-input acc-input-mono env-import-textarea"
         bind:value={importText}
         rows="9"
-        placeholder={'# Paste a .env file here\nBASE_DOMAIN=haus.lan\nTZ=Europe/Berlin'}
+        placeholder={m.env_content_placeholder()}
       ></textarea>
     </Field>
 
     {#if parsedImport.length > 0}
       <div class="env-import-preview">
         <div class="env-import-preview-head">
-          <Eyebrow>Preview · {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'}</Eyebrow>
+          <Eyebrow>{m.env_preview({ entries: m.env_n_entries({ count: parsedImport.length }) })}</Eyebrow>
         </div>
         <div class="env-import-preview-body">
           {#each parsedImport as p (p.key)}
@@ -685,8 +685,8 @@
                 type="checkbox"
                 checked={secret}
                 disabled={exists}
-                title="Secret: stored encrypted, value never shown"
-                aria-label="Store {p.key} as secret"
+                title={m.env_secret_checkbox_title()}
+                aria-label={m.env_store_as_secret({ key: p.key })}
                 onchange={(e) => (importSecret = { ...importSecret, [p.key]: (e.target as HTMLInputElement).checked })}
               />
               {#if secret}
@@ -698,7 +698,7 @@
                 {secret ? '•••' : p.value || ' '}
               </span>
               {#if exists}
-                <span class="env-import-preview-skip-label">Already exists</span>
+                <span class="env-import-preview-skip-label">{m.env_already_exists()}</span>
               {/if}
             </div>
           {/each}
@@ -709,11 +709,11 @@
 
   {#snippet footer()}
     <span class="env-modal-foothint">
-      {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'} detected
+      {m.env_n_entries_detected({ count: parsedImport.length })}
     </span>
     <div class="env-modal-actions">
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showImport = false)}>
-        Cancel
+        {m.common_cancel()}
       </button>
       <button
         type="button"
@@ -721,7 +721,7 @@
         onclick={runImport}
         disabled={importBusy || parsedImport.length === 0}
       >
-        {importBusy ? 'Importing…' : `Import ${parsedImport.length}`}
+        {importBusy ? m.env_importing() : m.env_import_n({ n: parsedImport.length })}
       </button>
     </div>
   {/snippet}

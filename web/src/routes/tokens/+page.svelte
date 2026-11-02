@@ -23,6 +23,8 @@
   import {
     Plus, Trash2, KeyRound, Copy, Search, AlertCircle,
   } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   let apiTokens = $state<ApiToken[]>([]);
   let apiTokensLoading = $state(true);
@@ -73,7 +75,7 @@
     try {
       apiTokens = await api.apiTokens.list();
     } catch (err) {
-      toast.error('Failed to load API tokens', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.tokens_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       apiTokensLoading = false;
     }
@@ -161,7 +163,7 @@
       newExpiresKey = '90d';
       await loadApiTokens();
     } catch (err) {
-      toast.error('Failed to create token', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.tokens_create_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       creating = false;
     }
@@ -169,17 +171,17 @@
 
   async function revokeApiToken(id: number, name: string) {
     if (!(await confirm.ask({
-      title: 'Revoke API token',
-      message: `Revoke token "${name}"?`,
-      body: 'Cannot be undone. Any scripts, CI jobs, or dmctl sessions using this token lose access on the next request.',
-      confirmLabel: 'Revoke', danger: true,
+      title: m.tokens_revoke_title(),
+      message: m.tokens_revoke_message({ name }),
+      body: m.tokens_revoke_body(),
+      confirmLabel: m.tokens_revoke(), danger: true,
     }))) return;
     try {
       await api.apiTokens.revoke(id);
-      toast.success('Token revoked');
+      toast.success(m.tokens_revoked_toast());
       await loadApiTokens();
     } catch (err) {
-      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.tokens_revoke_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -190,7 +192,7 @@
       freshCopied = true;
       setTimeout(() => (freshCopied = false), 1800);
     } else {
-      toast.error('Copy failed', 'Select and copy the token manually');
+      toast.error(m.tokens_copy_failed(), m.tokens_copy_failed_hint());
     }
   }
 
@@ -204,22 +206,22 @@
   function fmtAgo(iso?: string): string {
     if (!iso) return '—';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return 'now';
-    if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-    if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-    if (d < 2 * 86400) return 'yesterday';
-    return `${Math.floor(d / 86400)}d ago`;
+    if (d < 60) return m.account_ago_now();
+    if (d < 3600) return m.account_ago_min({ n: Math.floor(d / 60) });
+    if (d < 86400) return m.account_ago_h({ n: Math.floor(d / 3600) });
+    if (d < 2 * 86400) return m.account_ago_yesterday();
+    return m.account_ago_d({ n: Math.floor(d / 86400) });
   }
 
   function fmtDate(iso?: string): string {
     if (!iso) return '—';
-    return new Date(iso).toLocaleDateString(undefined, {
+    return fmtDateTime(iso, {
       year: 'numeric', month: 'short', day: '2-digit',
     });
   }
 
   function expiresLabel(t: ApiToken): string {
-    if (!t.expires_at) return 'never';
+    if (!t.expires_at) return m.tokens_never();
     return fmtDate(t.expires_at);
   }
 
@@ -235,21 +237,21 @@
   }
 
   function restrictionLabel(t: ApiToken): string {
-    if (!t.role) return 'owner’s access';
+    if (!t.role) return m.tokens_owners_access();
     const r = roles.find((x) => x.name === t.role);
-    return `${r?.display ?? t.role} on ${scopeLabel(t.scope)}`;
+    return m.tokens_role_on_scope({ role: r?.display ?? t.role, scope: scopeLabel(t.scope) });
   }
 
   function statusPill(t: ApiToken): { cls: string; label: string } | null {
-    if (t.revoked_at) return { cls: 'dm-pill dm-pill-neutral', label: 'revoked' };
+    if (t.revoked_at) return { cls: 'dm-pill dm-pill-neutral', label: m.tokens_status_revoked() };
     if (t.expires_at && new Date(t.expires_at).getTime() < Date.now()) {
-      return { cls: 'dm-pill dm-pill-neutral', label: 'expired' };
+      return { cls: 'dm-pill dm-pill-neutral', label: m.tokens_status_expired() };
     }
     return null;
   }
 
   const pickableRoles = $derived<Array<Pick<CustomRole, 'name' | 'display'> & { blurb: string }>>([
-    { name: '', display: 'No restriction', blurb: 'Acts with your current access, including later changes.' },
+    { name: '', display: m.tokens_no_restriction(), blurb: m.tokens_no_restriction_blurb() },
     ...roles.map((r) => ({ name: r.name, display: r.display, blurb: roleOneLine(catalog, r) || r.description || '' }))
   ]);
 
@@ -268,12 +270,12 @@
     <!-- ───────────────────────── Header ───────────────────────── -->
     <header class="tok-header">
       <div class="tok-header-text">
-        <h1 class="ed-title tok-title">API tokens</h1>
+        <h1 class="ed-title tok-title">{m.tokens_title()}</h1>
         <p class="ed-subtitle tok-subtitle">
           {#if counts.total === 0}
-            No tokens yet
+            {m.tokens_none_yet()}
           {:else}
-            {counts.active} active{counts.expiring > 0 ? ` · ${counts.expiring} expiring within 30 days` : ''}{counts.stale > 0 ? ` · ${counts.stale} unused for 90+ days` : ''}
+            {m.tokens_n_active({ n: counts.active })}{counts.expiring > 0 ? ` · ${m.tokens_n_expiring({ n: counts.expiring })}` : ''}{counts.stale > 0 ? ` · ${m.tokens_n_stale({ n: counts.stale })}` : ''}
           {/if}
         </p>
       </div>
@@ -283,9 +285,9 @@
       <div class="dm-card tok-permission-block">
         <KeyRound size={18} strokeWidth={1.5} />
         <div>
-          <div class="tok-perm-title">Admin-only</div>
+          <div class="tok-perm-title">{m.tokens_admin_only()}</div>
           <p class="ed-subtitle tok-perm-blurb">
-            API token management requires the <em>tokens.manage_others</em> permission.
+            {m.tokens_perm_before()} <em>tokens.manage_others</em>{m.tokens_perm_after()}
           </p>
         </div>
       </div>
@@ -295,13 +297,13 @@
         <div class="tok-fresh">
           <div class="tok-fresh-head">
             <div class="tok-fresh-text">
-              <Eyebrow>Token created</Eyebrow>
+              <Eyebrow>{m.tokens_created_eyebrow()}</Eyebrow>
               <h3 class="ed-title tok-fresh-title">
-                Copy <em class="ed-accent">{freshToken.name}</em> now — it won't be shown again.
+                {m.tokens_fresh_before()} <em class="ed-accent">{freshToken.name}</em>{m.tokens_fresh_after()}
               </h3>
               <p class="ed-subtitle tok-fresh-blurb">
-                We never store the cleartext value.
-                {#if freshRevealed}Auto-masking in {freshSeconds}s.{:else}Masked.{/if}
+                {m.tokens_never_stored()}
+                {#if freshRevealed}{m.tokens_auto_masking({ n: freshSeconds })}{:else}{m.tokens_masked()}{/if}
               </p>
             </div>
             <button
@@ -309,7 +311,7 @@
               class="dm-btn dm-btn-ghost dm-btn-sm"
               onclick={dismissFresh}
             >
-              Dismiss
+              {m.tokens_dismiss()}
             </button>
           </div>
 
@@ -323,7 +325,7 @@
               onclick={copyFreshToken}
               disabled={!freshRevealed}
             >
-              <Copy size={11} strokeWidth={1.5} /> {freshCopied ? 'copied' : 'copy'}
+              <Copy size={11} strokeWidth={1.5} /> {freshCopied ? m.tokens_copied() : m.tokens_copy()}
             </button>
           </div>
         </div>
@@ -336,7 +338,7 @@
           <input
             type="text"
             class="ed-underline-input tok-search-input"
-            placeholder="filter by name or prefix…"
+            placeholder={m.tokens_filter_placeholder()}
             bind:value={search}
           />
         </div>
@@ -348,7 +350,7 @@
           class="dm-btn dm-btn-primary dm-btn-sm"
           onclick={() => (showCreate = true)}
         >
-          <Plus size={12} strokeWidth={1.5} /> New token
+          <Plus size={12} strokeWidth={1.5} /> {m.tokens_new_token()}
         </button>
       </div>
 
@@ -360,24 +362,24 @@
       {:else if filtered.length === 0}
         <div class="tok-empty">
           {#if search}
-            <Eyebrow>No match</Eyebrow>
-            <p class="tok-empty-title">No tokens match „{search}".</p>
+            <Eyebrow>{m.tokens_no_match()}</Eyebrow>
+            <p class="tok-empty-title">{m.tokens_no_match_title({ search })}</p>
           {:else}
-            <Eyebrow>Empty</Eyebrow>
-            <p class="tok-empty-title">No API tokens yet.</p>
+            <Eyebrow>{m.tokens_empty()}</Eyebrow>
+            <p class="tok-empty-title">{m.tokens_empty_title()}</p>
             <p class="ed-subtitle tok-empty-blurb">
-              Create a token to authenticate CI pipelines, scripts, or dmctl against the API.
+              {m.tokens_empty_blurb()}
             </p>
           {/if}
         </div>
       {:else}
         <div class="tok-table">
           <div class="tok-row tok-row-head">
-            <span>Name · prefix</span>
-            <span>Scope</span>
-            <span>Last used</span>
-            <span>Created</span>
-            <span>Expires</span>
+            <span>{m.tokens_col_name_prefix()}</span>
+            <span>{m.tokens_col_scope()}</span>
+            <span>{m.tokens_col_last_used()}</span>
+            <span>{m.tokens_col_created()}</span>
+            <span>{m.tokens_col_expires()}</span>
             <span class="tok-col-action">·</span>
           </div>
           {#each filtered as t (t.id)}
@@ -392,26 +394,26 @@
                     </span>
                   {:else if isStale(t)}
                     <span class="dm-pill dm-pill-neutral tok-mini-pill">
-                      <span class="dm-pill-dot"></span>stale
+                      <span class="dm-pill-dot"></span>{m.tokens_pill_stale()}
                     </span>
                   {:else if isExpiringSoon(t)}
                     <span class="dm-pill dm-pill-warning tok-mini-pill">
-                      <span class="dm-pill-dot"></span>expiring
+                      <span class="dm-pill-dot"></span>{m.tokens_pill_expiring()}
                     </span>
                   {/if}
                   {#if !t.revoked_at && t.legacy}
                     <span
                       class="dm-pill dm-pill-warning tok-mini-pill"
-                      title="Created before tokens had owners, so no user limits it. Recreate it and revoke this one."
+                      title={m.tokens_legacy_title()}
                     >
-                      <span class="dm-pill-dot"></span>legacy
+                      <span class="dm-pill-dot"></span>{m.tokens_pill_legacy()}
                     </span>
                   {:else if !t.revoked_at && t.owner_missing}
                     <span
                       class="dm-pill dm-pill-danger tok-mini-pill"
-                      title="The user who owned this token was deleted, so it no longer works."
+                      title={m.tokens_owner_missing_title()}
                     >
-                      <span class="dm-pill-dot"></span>owner deleted
+                      <span class="dm-pill-dot"></span>{m.tokens_pill_owner_deleted()}
                     </span>
                   {/if}
                 </div>
@@ -419,7 +421,7 @@
               </div>
 
               <div class="tok-cell-scope">
-                <span class={scopePillClass(t.role) + ' tok-scope-pill'} title={t.role ? 'Restricted: never more than your own access' : 'Acts with your current access'}>
+                <span class={scopePillClass(t.role) + ' tok-scope-pill'} title={t.role ? m.tokens_restricted_title() : m.tokens_unrestricted_title()}>
                   <span class="dm-pill-dot"></span>{restrictionLabel(t)}
                 </span>
               </div>
@@ -442,7 +444,7 @@
                     class="dm-btn dm-btn-ghost dm-btn-xs tok-revoke-btn"
                     onclick={() => revokeApiToken(t.id, t.name)}
                   >
-                    Revoke
+                    {m.tokens_revoke()}
                   </button>
                 {:else}
                   <span class="tok-dash">—</span>
@@ -455,12 +457,10 @@
 
       <!-- Footer hint -->
       <div class="tok-hint">
-        <div class="tok-hint-title">Using a token</div>
+        <div class="tok-hint-title">{m.tokens_hint_title()}</div>
         <p class="tok-hint-blurb">
-          Send it as <code class="tok-hint-code">Authorization: Bearer dmt_…</code>
-          on any API request. A token belongs to you: it never gets more than your current access,
-          narrowed further by its restriction if it has one, and it stops working if your account is
-          deleted. Restrict it to a narrow role and scope to limit the damage if it leaks.
+          {m.tokens_hint_before()} <code class="tok-hint-code">Authorization: Bearer dmt_…</code>
+          {m.tokens_hint_after()}
         </p>
       </div>
     {/if}
@@ -470,15 +470,15 @@
 <!-- ───────────────────────── Create Modal ───────────────────────── -->
 <EditorialModal
   bind:open={showCreate}
-  eyebrow="New token"
+  eyebrow={m.tokens_new_token()}
   width={560}
 >
   {#snippet title()}
-    New API token
+    {m.tokens_new_api_token()}
   {/snippet}
 
   <form id="tok-create-form" class="tok-create" onsubmit={createApiToken}>
-    <Field label="Label" hint="What is this token for? Shown in audit logs.">
+    <Field label={m.tokens_label()} hint={m.tokens_label_hint()}>
       <input
         class="dm-input"
         bind:value={newName}
@@ -486,7 +486,7 @@
       />
     </Field>
 
-    <Field label="Restriction" hint="On top of your own access; a token never gets more than you have.">
+    <Field label={m.tokens_restriction()} hint={m.tokens_restriction_hint()}>
       <div class="tok-scope-grid">
         {#each pickableRoles as r (r.name)}
           <button
@@ -502,12 +502,12 @@
       </div>
     </Field>
     {#if newRole}
-      <ScopePicker bind:value={newScope} label="Restricted to" />
+      <ScopePicker bind:value={newScope} label={m.tokens_restricted_to()} />
     {/if}
 
-    <Field label="Expires" hint="Shorter is safer; CI tokens often use 90 days.">
+    <Field label={m.tokens_expires()} hint={m.tokens_expires_hint()}>
       <div class="tok-expires-row">
-        {#each [['30d', '30 days'], ['90d', '90 days'], ['180d', '6 months'], ['365d', '1 year'], ['never', 'never']] as [key, label]}
+        {#each [['30d', m.tokens_exp_30d()], ['90d', m.tokens_exp_90d()], ['180d', m.tokens_exp_180d()], ['365d', m.tokens_exp_365d()], ['never', m.tokens_never()]] as [key, label]}
           <button
             type="button"
             class="tok-expires-pill"
@@ -523,11 +523,11 @@
 
   {#snippet footer()}
     <span class="tok-modal-foothint">
-      Value will be shown <em class="ed-accent">once</em>.
+      {m.tokens_footer_before()} <em class="ed-accent">{m.tokens_footer_once()}</em>{m.tokens_footer_after()}
     </span>
     <div class="tok-modal-actions">
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showCreate = false)}>
-        Cancel
+        {m.common_cancel()}
       </button>
       <button
         type="submit"
@@ -535,7 +535,7 @@
         class="dm-btn dm-btn-primary dm-btn-sm"
         disabled={!newName.trim() || creating}
       >
-        {creating ? 'Generating…' : 'Generate token'}
+        {creating ? m.tokens_generating() : m.tokens_generate()}
       </button>
     </div>
   {/snippet}

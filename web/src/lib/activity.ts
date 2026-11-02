@@ -2,19 +2,20 @@ import type { Notice, NotificationItem, Operation } from '$lib/api';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
 import { kindLabel } from '$lib/operationsProgress';
 import { inAppLink } from '$lib/links';
+import { m } from '$lib/paraglide/messages.js';
 
 export type FeedCategory = 'alerts' | 'operations' | 'deploys' | 'backups' | 'updates' | 'hosts' | 'migrations' | 'notices' | 'other';
 
 export const CATEGORY_LABEL: Record<FeedCategory, string> = {
-  alerts: 'Alerts',
-  operations: 'Operations',
-  deploys: 'Deploys',
-  backups: 'Backups',
-  updates: 'Updates',
-  hosts: 'Hosts',
-  migrations: 'Migrations',
-  notices: 'Notices',
-  other: 'Other'
+  alerts: m.activity_cat_alerts(),
+  operations: m.activity_cat_operations(),
+  deploys: m.activity_cat_deploys(),
+  backups: m.activity_cat_backups(),
+  updates: m.activity_cat_updates(),
+  hosts: m.common_hosts(),
+  migrations: m.activity_cat_migrations(),
+  notices: m.activity_cat_notices(),
+  other: m.activity_cat_other()
 };
 
 /** Groups a notification kind ("alert.fire", "backup_failed") for the filter. */
@@ -45,17 +46,17 @@ export interface FeedEntry {
 }
 
 const NOTIF_TONE: Record<string, [Tone, string]> = {
-  success: ['ok', 'Succeeded'],
-  warning: ['warn', 'Warning'],
-  error: ['bad', 'Failed'],
-  critical: ['bad', 'Critical'],
-  info: ['off', 'Info']
+  success: ['ok', m.activity_word_succeeded()],
+  warning: ['warn', m.common_warning()],
+  error: ['bad', m.common_failed()],
+  critical: ['bad', m.activity_word_critical()],
+  info: ['off', m.activity_word_info()]
 };
 
 const OP_TONE: Record<string, [Tone, string]> = {
-  succeeded: ['ok', 'Succeeded'],
-  failed: ['bad', 'Failed'],
-  cancelled: ['off', 'Cancelled']
+  succeeded: ['ok', m.activity_word_succeeded()],
+  failed: ['bad', m.common_failed()],
+  cancelled: ['off', m.activity_word_cancelled()]
 };
 
 /** One history list from notifications, finished operations and open
@@ -97,7 +98,7 @@ export function buildFeed(items: NotificationItem[], ops: Operation[], open: Not
       key: `x:${n.id}`,
       category: 'notices',
       tone: n.severity === 'critical' ? 'bad' : n.severity === 'warning' ? 'warn' : 'off',
-      word: n.severity === 'critical' ? 'Critical' : n.severity === 'warning' ? 'Action required' : 'Info',
+      word: n.severity === 'critical' ? m.activity_word_critical() : n.severity === 'warning' ? m.activity_word_action_required() : m.activity_word_info(),
       title: n.title,
       link: inAppLink(n.link),
       ts: n.created_at,

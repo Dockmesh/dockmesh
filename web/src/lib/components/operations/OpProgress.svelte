@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import type { Operation } from '$lib/api';
   import { operations, currentStep, overallProgress, isActive, hasWarning } from '$lib/stores/operations.svelte';
   import StatusChip from '$lib/components/ui/StatusChip.svelte';
@@ -11,21 +12,21 @@
   const pct = $derived(overallProgress(op));
 </script>
 
-<button type="button" class="opp" class:compact title="Show steps and log" onclick={(e) => { e.stopPropagation(); operations.open(op.id); }}>
+<button type="button" class="opp" class:compact title={m.ops_show_steps_log()} onclick={(e) => { e.stopPropagation(); operations.open(op.id); }}>
   {#if isActive(op)}
     <span class="txt">
-      {op.status === 'queued' ? 'Queued' : op.cancel_requested ? 'Cancelling…' : (step?.label ?? 'Running')}{#if step?.progress != null}<span class="dm-num"> · {Math.round(step.progress * 100)} %</span>{/if}
+      {op.status === 'queued' ? m.ops_queued() : op.cancel_requested ? m.ops_cancelling() : (step?.label ?? m.common_running())}{#if step?.progress != null}<span class="dm-num"> · {Math.round(step.progress * 100)} %</span>{/if}
     </span>
     <span class="bar" class:indet={pct == null}><i style={pct != null ? `width:${Math.max(4, Math.round(pct * 100))}%` : ''}></i></span>
   {:else if op.status === 'failed'}
-    <StatusChip tone="bad" label="failed" title={op.error} />
+    <StatusChip tone="bad" label={m.ops_st_failed()} title={op.error} />
     {#if !compact}<span class="txt err" title={op.error}>{step?.label ?? op.error}</span>{/if}
   {:else if op.status === 'cancelled'}
-    <StatusChip tone="off" label="cancelled" title={op.error} />
+    <StatusChip tone="off" label={m.ops_st_cancelled()} title={op.error} />
   {:else if hasWarning(op)}
-    <StatusChip tone="warn" label="warning" title={op.steps.find((s) => s.status === 'warning')?.detail} />
+    <StatusChip tone="warn" label={m.ops_st_warning()} title={op.steps.find((s) => s.status === 'warning')?.detail} />
   {:else}
-    <StatusChip tone="ok" label="done" />
+    <StatusChip tone="ok" label={m.ops_st_done()} />
   {/if}
 </button>
 

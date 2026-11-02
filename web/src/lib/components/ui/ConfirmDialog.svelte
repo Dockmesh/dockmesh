@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/paraglide/messages.js';
 	// Globally-mounted dialog for `confirm.ask(opts)`. One dialog at a time.
 	import Modal from './Modal.svelte';
 	import { confirm } from '$lib/stores/confirm.svelte';
@@ -43,7 +44,7 @@
 			{/if}
 			{#if req.typeToConfirm}
 				<div class="dm-field">
-					<label for="cf-word">Type <b class="dm-mono">{req.typeToConfirm}</b> to confirm</label>
+					<label for="cf-word">{m.ui_confirm_type_before()}<b class="dm-mono">{req.typeToConfirm}</b>{m.ui_confirm_type_after()}</label>
 					<input id="cf-word" class="dm-input dm-mono" autocomplete="off" spellcheck="false" bind:value={typed} data-autofocus />
 				</div>
 			{/if}
@@ -54,14 +55,14 @@
 {#snippet footer()}
 	{#if confirm.current}
 		{@const req = confirm.current}
-		<button type="button" class="dm-btn" onclick={() => confirm.reject()}>{req.cancelLabel ?? 'Cancel'}</button>
+		<button type="button" class="dm-btn" onclick={() => confirm.reject()}>{req.cancelLabel ?? m.common_cancel()}</button>
 		<button
 			type="button"
 			class="dm-btn {req.danger ? 'dm-btn-danger' : 'dm-btn-primary'}"
 			disabled={locked}
 			onclick={accept}
 		>
-			{req.confirmLabel ?? 'Confirm'}
+			{req.confirmLabel ?? m.common_confirm()}
 		</button>
 	{/if}
 {/snippet}

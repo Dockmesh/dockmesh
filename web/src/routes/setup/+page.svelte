@@ -10,47 +10,48 @@
   import { fmtVersion } from '$lib/version';
   import Button from '$lib/components/ui/Button.svelte';
   import StatusChip from '$lib/components/ui/StatusChip.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
   const STEPS: Array<{ n: Step; short: string }> = [
-    { n: 1, short: 'Welcome' },
-    { n: 2, short: 'Data' },
-    { n: 3, short: 'Service user' },
-    { n: 4, short: 'Admin' },
-    { n: 5, short: 'URL' },
-    { n: 6, short: 'Review' },
-    { n: 7, short: 'Done' }
+    { n: 1, short: m.setup_step_welcome() },
+    { n: 2, short: m.setup_step_data() },
+    { n: 3, short: m.setup_step_service_user() },
+    { n: 4, short: m.setup_step_admin() },
+    { n: 5, short: m.setup_step_url() },
+    { n: 6, short: m.setup_step_review() },
+    { n: 7, short: m.setup_step_done() }
   ];
 
   const HEADERS: Record<Step, { title: string; sub: string }> = {
     1: {
-      title: 'Set up Dockmesh',
-      sub: 'Seven short steps, about a minute. Nothing is written until you confirm on the review step.'
+      title: m.setup_h1_title(),
+      sub: m.setup_h1_sub()
     },
     2: {
-      title: 'Where should Dockmesh keep its data?',
-      sub: 'The database, secrets, CA certificates and stack files live in this directory. Pick a volume you can grow.'
+      title: m.setup_h2_title(),
+      sub: m.setup_h2_sub()
     },
     3: {
-      title: 'Which user should Dockmesh run as?',
-      sub: 'The system account of the Dockmesh service. It needs access to the Docker socket.'
+      title: m.setup_h3_title(),
+      sub: m.setup_h3_sub()
     },
     4: {
-      title: 'Create the first admin',
-      sub: 'The login for the dashboard. You can add single sign-on and more users later.'
+      title: m.setup_h4_title(),
+      sub: m.setup_h4_sub()
     },
     5: {
-      title: 'Under which address is this server reachable?',
-      sub: 'Agents on other hosts connect back to this URL. Sign-in redirects and notification links use it too.'
+      title: m.setup_h5_title(),
+      sub: m.setup_h5_sub()
     },
     6: {
-      title: 'Review and install',
-      sub: 'Nothing has been written yet. Install creates the user if needed, writes the env file, seeds the database and starts the service.'
+      title: m.setup_h6_title(),
+      sub: m.setup_h6_sub()
     },
     7: {
-      title: 'Installing Dockmesh',
-      sub: 'Keep this tab open until the credentials appear and copy them somewhere safe.'
+      title: m.setup_h7_title(),
+      sub: m.setup_h7_sub()
     }
   };
 
@@ -72,7 +73,7 @@
     try {
       const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey, null, { 'X-Dockmesh-Setup': '1' });
       if (!res.restarting) {
-        restoreError = res.error ?? res.sanity?.summary ?? 'the backup failed the restore checks';
+        restoreError = res.error ?? res.sanity?.summary ?? m.setup_restore_checks_failed();
         restoreChecks = res.sanity?.checks ?? [];
         restorePhase = 'idle';
         return;
@@ -93,8 +94,8 @@
   let step = $state<Step>(1);
   const head = $derived.by(() => {
     if (step !== 7) return HEADERS[step];
-    if (installFailed) return { title: 'The install stopped', sub: 'The log shows the step that failed. Fix the cause and run the installer again.' };
-    if (credsRevealed) return { title: 'Dockmesh is installed', sub: 'Copy the sign-in below somewhere safe, then open Dockmesh.' };
+    if (installFailed) return { title: m.setup_failed_title(), sub: m.setup_failed_sub() };
+    if (credsRevealed) return { title: m.setup_installed_title(), sub: m.setup_installed_sub() };
     return HEADERS[7];
   });
   let completed = $state<Set<Step>>(new Set());
@@ -168,7 +169,7 @@
   // ----- Step 2: data dir, validated 250 ms after typing stops -------------
   let dataDirStatus = $state<{ kind: 'ok' | 'warn' | 'fail'; text: string }>({
     kind: 'fail',
-    text: 'path required'
+    text: m.setup_path_required()
   });
   let dataDirDebounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -180,7 +181,7 @@
         body: JSON.stringify({ path })
       });
       if (!r.ok) {
-        dataDirStatus = { kind: 'fail', text: 'validation failed (HTTP ' + r.status + ')' };
+        dataDirStatus = { kind: 'fail', text: m.setup_validation_failed_http({ status: r.status }) };
         return;
       }
       const d = await r.json();
@@ -188,7 +189,7 @@
     } catch (e) {
       dataDirStatus = {
         kind: 'fail',
-        text: 'validation failed: ' + (e instanceof Error ? e.message : String(e))
+        text: m.setup_validation_failed({ error: e instanceof Error ? e.message : String(e) })
       };
     }
   }
@@ -197,7 +198,7 @@
     const path = dataDir;
     if (dataDirDebounce) clearTimeout(dataDirDebounce);
     if (!path || path.trim() === '') {
-      dataDirStatus = { kind: 'fail', text: 'path required' };
+      dataDirStatus = { kind: 'fail', text: m.setup_path_required() };
       return;
     }
     dataDirDebounce = setTimeout(() => validateDataDirRemote(path), 250);
@@ -218,13 +219,13 @@
         body: JSON.stringify({ mode: mode === 'new' ? 'create' : 'existing', username })
       });
       if (!r.ok) {
-        svcCheck = { kind: 'fail', text: 'validation failed (HTTP ' + r.status + ')' };
+        svcCheck = { kind: 'fail', text: m.setup_validation_failed_http({ status: r.status }) };
         return;
       }
       const d = await r.json();
       svcCheck = { kind: d.status, text: d.message };
     } catch (e) {
-      svcCheck = { kind: 'fail', text: 'validation failed: ' + (e instanceof Error ? e.message : String(e)) };
+      svcCheck = { kind: 'fail', text: m.setup_validation_failed({ error: e instanceof Error ? e.message : String(e) }) };
     }
   }
 
@@ -265,7 +266,7 @@
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw)) s++;
     if (/[^A-Za-z0-9]/.test(pw) && pw.length >= 12) s++;
     s = Math.min(4, s);
-    return { score: s, label: ['—', 'weak', 'ok', 'good', 'strong'][s] };
+    return { score: s, label: ['—', m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][s] };
   }
   const strength = $derived(scorePassword(adminPassword));
   const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < 8);
@@ -299,7 +300,7 @@
       }
       const d = await r.json();
       if (d.status === 'ok') urlTest = { state: 'ok', ms: d.latency_ms ?? 0 };
-      else urlTest = { state: 'fail', reason: d.message ?? 'unreachable' };
+      else urlTest = { state: 'fail', reason: d.message ?? m.setup_unreachable() };
     } catch (e) {
       urlTest = { state: 'fail', reason: e instanceof Error ? e.message : String(e) };
     }
@@ -337,7 +338,7 @@
 
   async function runInstall() {
     installing = true;
-    installMsg = 'Submitting…';
+    installMsg = m.setup_submitting();
     streamLines = [];
     installFailed = null;
     try {
@@ -408,7 +409,7 @@
       installing = false;
       installMsg = '';
       if (!installFailed && streamLines.length === 0) {
-        installFailed = 'connection to install stream lost';
+        installFailed = m.setup_stream_lost();
       }
     };
   }
@@ -426,9 +427,9 @@
 
   const svcSummary = $derived(
     svcMode === 'recommended'
-      ? `${RECOMMENDED_USER} (recommended)`
+      ? m.setup_svc_recommended({ user: RECOMMENDED_USER })
       : svcMode === 'new'
-        ? `${svcNewUser} (new${svcAddToDocker ? ', in docker group' : ''})`
+        ? (svcAddToDocker ? m.setup_svc_new_docker({ user: svcNewUser }) : m.setup_svc_new({ user: svcNewUser }))
         : svcExistingUser || '—'
   );
 
@@ -468,7 +469,7 @@
 </script>
 
 <svelte:head>
-  <title>Set up Dockmesh</title>
+  <title>{m.setup_h1_title()}</title>
 </svelte:head>
 
 {#snippet mark(kind: string)}
@@ -486,7 +487,7 @@
 {/snippet}
 
 {#snippet serverMeta()}
-  <span class="meta dm-num" aria-label="This server">
+  <span class="meta dm-num" aria-label={m.setup_aria_this_server()}>
     <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
     <span class="sep">·</span>
     <span>{serverInfo?.ip ?? '—'}</span>
@@ -497,7 +498,7 @@
 
 <AuthShell width={760} footer={serverMeta}>
   <div class="col">
-    <nav aria-label="Setup steps">
+    <nav aria-label={m.setup_aria_steps()}>
       <ol class="stepper">
         {#each STEPS as s (s.n)}
           {@const done = completed.has(s.n) && step !== s.n}
@@ -520,13 +521,13 @@
 
     <section class="panel">
       {#if step === 1}
-        <h2 class="dm-h2">This server</h2>
+        <h2 class="dm-h2">{m.setup_this_server()}</h2>
         {#if preflightLoading}
-          <div class="dm-empty">Checking this server…</div>
+          <div class="dm-empty">{m.setup_checking_server()}</div>
         {:else if preflightError}
           <div class="callout bad">
-            <span>The server check failed: {preflightError}</span>
-            <Button size="sm" variant="secondary" onclick={loadPreflight}><RotateCcw size={13} /> Check again</Button>
+            <span>{m.setup_check_failed({ error: preflightError })}</span>
+            <Button size="sm" variant="secondary" onclick={loadPreflight}><RotateCcw size={13} /> {m.setup_check_again()}</Button>
           </div>
         {:else}
           <div class="dm-tbl">
@@ -548,38 +549,37 @@
             {/if}
           {/each}
           {#if preflightHasFail}
-            <p class="note bad-t">Fix the failed checks on this server, then check again.</p>
+            <p class="note bad-t">{m.setup_fix_failed()}</p>
           {/if}
         {/if}
 
         <div class="foot">
           <Button variant="ghost" size="sm" onclick={() => (restoreOpen = !restoreOpen)} aria-expanded={restoreOpen}>
-            Restore from a backup instead
+            {m.setup_restore_instead()}
           </Button>
           <span class="dm-sp"></span>
           {#if !preflightLoading && !preflightError}
-            <Button variant="ghost" size="sm" onclick={loadPreflight}><RotateCcw size={13} /> Check again</Button>
+            <Button variant="ghost" size="sm" onclick={loadPreflight}><RotateCcw size={13} /> {m.setup_check_again()}</Button>
           {/if}
           <Button variant="primary" onclick={goNext} disabled={preflightHasFail || preflightLoading}>
-            Begin setup <ArrowRight size={14} />
+            {m.setup_begin()} <ArrowRight size={14} />
           </Button>
         </div>
 
         {#if restoreOpen}
           <div class="restore">
-            <h2 class="dm-h2">Restore from a backup</h2>
+            <h2 class="dm-h2">{m.setup_restore_title()}</h2>
             <p class="hint">
-              Brings back a Dockmesh system backup: users, settings, keys and stacks. Volumes are restored
-              afterwards, from the Backups page.
+              {m.setup_restore_hint()}
             </p>
             <div class="dm-field">
-              <label for="rs-file">System backup (.tar.gz or .tar.gz.age)</label>
+              <label for="rs-file">{m.setup_restore_file()}</label>
               <input id="rs-file" class="file" type="file" accept=".gz,.age,.tar" onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
             </div>
             <div class="dm-field">
-              <label for="rs-key">Backup key file, if the backup is encrypted</label>
+              <label for="rs-key">{m.setup_restore_key()}</label>
               <input id="rs-key" class="file" type="file" accept=".txt,.key" onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-              <span class="hint">On the old server: Settings → Encryption key → Export key.</span>
+              <span class="hint">{m.setup_restore_key_hint()}</span>
             </div>
             {#if restoreError}
               <div class="callout bad" role="alert">
@@ -592,13 +592,13 @@
               </div>
             {/if}
             {#if restorePhase === 'restarting'}
-              <p class="note">Restoring and restarting Dockmesh… You'll be sent to the login page; sign in with an account of the restored install.</p>
+              <p class="note">{m.setup_restoring()}</p>
             {:else if restorePhase === 'stuck'}
-              <div class="callout bad" role="alert">Dockmesh hasn't come back yet. If it isn't run by systemd or Docker, start it again by hand; the restore finishes on the next start.</div>
+              <div class="callout bad" role="alert">{m.setup_restore_stuck()}</div>
             {:else}
               <div>
                 <Button variant="primary" size="sm" onclick={restoreFromBackup} disabled={!restoreFile} loading={restorePhase === 'uploading'}>
-                  {restorePhase === 'uploading' ? 'Checking the backup…' : 'Restore'}
+                  {restorePhase === 'uploading' ? m.setup_checking_backup() : m.setup_restore()}
                 </Button>
               </div>
             {/if}
@@ -607,35 +607,35 @@
 
       {:else if step === 2}
         <div class="dm-field">
-          <label for="data-dir">Data directory</label>
+          <label for="data-dir">{m.setup_data_dir()}</label>
           <input id="data-dir" class="dm-input dm-mono" bind:value={dataDir} spellcheck="false" autocomplete="off" aria-invalid={dataDirStatus.kind === 'fail'} />
           {@render checkLine(dataDirStatus.kind, dataDirStatus.text)}
-          <span class="hint">About 50 MB on a fresh install; grows with deploy history and the number of stacks.</span>
+          <span class="hint">{m.setup_data_dir_hint()}</span>
         </div>
         <div class="dm-field">
-          <span class="lbl">Common locations</span>
+          <span class="lbl">{m.setup_common_locations()}</span>
           <div class="presets">
             <button type="button" class="preset" class:on={dataDir === '/var/lib/dockmesh'} onclick={() => (dataDir = '/var/lib/dockmesh')}>
-              <span class="dm-mono">/var/lib/dockmesh</span><small>Linux, where services keep state</small>
+              <span class="dm-mono">/var/lib/dockmesh</span><small>{m.setup_loc_linux()}</small>
             </button>
             <button type="button" class="preset" class:on={dataDir === '/usr/local/var/dockmesh'} onclick={() => (dataDir = '/usr/local/var/dockmesh')}>
-              <span class="dm-mono">/usr/local/var/dockmesh</span><small>macOS, Homebrew layout</small>
+              <span class="dm-mono">/usr/local/var/dockmesh</span><small>{m.setup_loc_macos()}</small>
             </button>
           </div>
         </div>
         <div class="foot">
-          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
           <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={dataDirStatus.kind === 'fail'}>Continue</Button>
+          <Button variant="primary" onclick={goNext} disabled={dataDirStatus.kind === 'fail'}>{m.setup_continue()}</Button>
         </div>
 
       {:else if step === 3}
-        <div class="choices" role="radiogroup" aria-label="Service user">
+        <div class="choices" role="radiogroup" aria-label={m.setup_aria_service_user()}>
           <label class="radio-card" class:on={svcMode === 'recommended'}>
             <input type="radio" name="svc-mode" checked={svcMode === 'recommended'} onchange={() => (svcMode = 'recommended')} />
             <div class="rc-b">
-              <div class="rc-t">Use the <span class="dm-mono">dockmesh</span> service user <StatusChip tone="acc" label="recommended" /></div>
-              <div class="hint">Created by the install script, already in the <span class="dm-mono">docker</span> group, no shell login.</div>
+              <div class="rc-t">{m.setup_rec_before()} <span class="dm-mono">dockmesh</span> {m.setup_rec_after()} <StatusChip tone="acc" label={m.setup_recommended()} /></div>
+              <div class="hint">{m.setup_rec_hint_before()} <span class="dm-mono">docker</span>{m.setup_rec_hint_after()}</div>
               {#if svcMode === 'recommended' && svcCheck.kind !== 'idle' && svcCheck.text}
                 {@render checkLine(svcCheck.kind, svcCheck.text)}
               {/if}
@@ -645,16 +645,16 @@
           <label class="radio-card" class:on={svcMode === 'existing'}>
             <input type="radio" name="svc-mode" checked={svcMode === 'existing'} onchange={() => (svcMode = 'existing')} />
             <div class="rc-b">
-              <div class="rc-t">Use another existing user</div>
-              <div class="hint">For a service account you already have, such as <span class="dm-mono">ops</span> or <span class="dm-mono">deploy</span>.</div>
+              <div class="rc-t">{m.setup_existing_title()}</div>
+              <div class="hint">{m.setup_existing_hint_before()} <span class="dm-mono">ops</span> {m.setup_existing_hint_or()} <span class="dm-mono">deploy</span>.</div>
               {#if svcMode === 'existing'}
                 <div class="dm-field sub">
-                  <label for="existing-user">Username</label>
+                  <label for="existing-user">{m.setup_username()}</label>
                   <input id="existing-user" class="dm-input dm-mono" placeholder="ops" bind:value={svcExistingUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
                   {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
                   <span class="hint">
-                    Setup does not change the groups of an existing account. If it is not in the
-                    <span class="dm-mono">docker</span> group yet, run
+                    {m.setup_existing_groups_before()}
+                    <span class="dm-mono">docker</span>{m.setup_existing_groups_after()}
                     <span class="dm-mono">sudo usermod -aG docker {svcExistingUser.trim() || '<user>'}</span>.
                   </span>
                 </div>
@@ -665,43 +665,43 @@
           <label class="radio-card" class:on={svcMode === 'new'}>
             <input type="radio" name="svc-mode" checked={svcMode === 'new'} onchange={() => (svcMode = 'new')} />
             <div class="rc-b">
-              <div class="rc-t">Create a new user</div>
-              <div class="hint">Under a name you choose, created when you install. The <span class="dm-mono">dockmesh</span> user stays as it is.</div>
+              <div class="rc-t">{m.setup_new_title()}</div>
+              <div class="hint">{m.setup_new_hint_before()} <span class="dm-mono">dockmesh</span>{m.setup_new_hint_after()}</div>
               {#if svcMode === 'new'}
                 <div class="dm-field sub">
-                  <label for="new-user">Username</label>
+                  <label for="new-user">{m.setup_username()}</label>
                   <input id="new-user" class="dm-input dm-mono" placeholder="dockermaster" bind:value={svcNewUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
                   {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
-                  <span class="hint">Gets the next free uid and no login shell.</span>
+                  <span class="hint">{m.setup_new_uid_hint()}</span>
                 </div>
                 <label class="cb">
                   <input type="checkbox" bind:checked={svcAddToDocker} />
-                  <span>Add to the <span class="dm-mono">docker</span> group <span class="hint">needed to talk to the Docker daemon</span></span>
+                  <span>{m.setup_add_docker_before()} <span class="dm-mono">docker</span>{m.setup_add_docker_after()} <span class="hint">{m.setup_add_docker_hint()}</span></span>
                 </label>
               {/if}
             </div>
           </label>
         </div>
         <div class="foot">
-          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
           <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={svcBlockNext}>Continue</Button>
+          <Button variant="primary" onclick={goNext} disabled={svcBlockNext}>{m.setup_continue()}</Button>
         </div>
 
       {:else if step === 4}
         <div class="dm-field">
-          <label for="admin-user">Username</label>
+          <label for="admin-user">{m.setup_username()}</label>
           <input id="admin-user" class="dm-input dm-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
-          <span class="hint">A local admin with full rights, which you can disable once single sign-on works.</span>
+          <span class="hint">{m.setup_admin_hint()}</span>
         </div>
         <div class="dm-field">
           <div class="lbl-row">
-            <label for="admin-pw">Password</label>
-            <button type="button" class="link" onclick={generatePassword}>Generate a strong password</button>
+            <label for="admin-pw">{m.setup_password()}</label>
+            <button type="button" class="link" onclick={generatePassword}>{m.setup_generate_password()}</button>
           </div>
           <div class="pw">
             <input id="admin-pw" type={adminShowPassword ? 'text' : 'password'} class="dm-input dm-mono" bind:value={adminPassword} autocomplete="new-password" aria-describedby="pw-strength" />
-            <button type="button" class="eye" onclick={() => (adminShowPassword = !adminShowPassword)} aria-label={adminShowPassword ? 'Hide password' : 'Show password'}>
+            <button type="button" class="eye" onclick={() => (adminShowPassword = !adminShowPassword)} aria-label={adminShowPassword ? m.setup_hide_password() : m.setup_show_password()}>
               {#if adminShowPassword}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
             </button>
           </div>
@@ -711,131 +711,130 @@
             {/each}
             <span class="dm-num dm-dim">{strength.label}</span>
           </div>
-          <span class="hint">At least 8 characters.</span>
+          <span class="hint">{m.setup_min_8()}</span>
         </div>
         <div class="dm-field">
-          <label for="admin-email">Email <span class="dm-dim">(optional)</span></label>
+          <label for="admin-email">{m.setup_email()} <span class="dm-dim">({m.common_optional()})</span></label>
           <input id="admin-email" type="email" class="dm-input" placeholder="admin@example.com" bind:value={adminEmail} spellcheck="false" autocomplete="off" />
         </div>
         <div class="foot">
-          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
           <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={adminBlockNext}>Continue</Button>
+          <Button variant="primary" onclick={goNext} disabled={adminBlockNext}>{m.setup_continue()}</Button>
         </div>
 
       {:else if step === 5}
         <div class="dm-field">
-          <label for="pub-url">Public URL</label>
+          <label for="pub-url">{m.setup_public_url()}</label>
           <div class="row">
             <input id="pub-url" class="dm-input dm-mono" bind:value={publicUrl} spellcheck="false" autocomplete="off" aria-invalid={urlBlockNext} />
             <Button variant="secondary" onclick={runUrlTest} loading={urlTest.state === 'loading'} disabled={urlBlockNext}>
-              {urlTest.state === 'loading' ? 'Testing…' : 'Test connection'}
+              {urlTest.state === 'loading' ? m.setup_testing() : m.setup_test_connection()}
             </Button>
           </div>
           {#if urlTest.state === 'ok'}
-            {@render checkLine('ok', `Reached this server in ${urlTest.ms} ms`)}
+            {@render checkLine('ok', m.setup_reached({ ms: urlTest.ms ?? 0 }))}
           {:else if urlTest.state === 'fail'}
-            {@render checkLine('fail', `Could not reach it (${urlTest.reason})`)}
+            {@render checkLine('fail', m.setup_not_reached({ reason: urlTest.reason ?? '' }))}
           {:else if urlBlockNext}
-            {@render checkLine('fail', 'Not a valid URL')}
+            {@render checkLine('fail', m.setup_invalid_url())}
           {/if}
           <span class="hint">
-            Saved as the base URL setting; remote agents connect to the same host on the agent listener port (8443 by default). The LAN address is fine
-            for now; once you have a domain, change both under Settings → General without restarting the server.
+            {m.setup_url_hint()}
           </span>
         </div>
         <div class="foot">
-          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
           <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={urlBlockNext}>Continue</Button>
+          <Button variant="primary" onclick={goNext} disabled={urlBlockNext}>{m.setup_continue()}</Button>
         </div>
 
       {:else if step === 6}
         <div class="dm-tbl">
           {#each [
-            { label: 'Data directory', value: dataDir, to: 2 as Step, dim: false },
-            { label: 'Service user', value: svcSummary, to: 3 as Step, dim: false },
-            { label: 'Admin user', value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, to: 4 as Step, dim: false },
-            { label: 'Admin email', value: adminEmail || '—', to: 4 as Step, dim: !adminEmail },
-            { label: 'Public URL', value: publicUrl, to: 5 as Step, dim: false }
+            { label: m.setup_rv_data_dir(), value: dataDir, to: 2 as Step, dim: false },
+            { label: m.setup_rv_service_user(), value: svcSummary, to: 3 as Step, dim: false },
+            { label: m.setup_rv_admin_user(), value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, to: 4 as Step, dim: false },
+            { label: m.setup_rv_admin_email(), value: adminEmail || '—', to: 4 as Step, dim: !adminEmail },
+            { label: m.setup_rv_public_url(), value: publicUrl, to: 5 as Step, dim: false }
           ] as r (r.label)}
             <div class="dm-tr rv">
               <span class="dm-dim">{r.label}</span>
               <span class="dm-mono" class:dm-dim={r.dim} title={r.value}>{r.value}</span>
-              <span class="dm-tr-menu"><Button variant="ghost" size="xs" onclick={() => jumpTo(r.to)} disabled={installing}>Edit</Button></span>
+              <span class="dm-tr-menu"><Button variant="ghost" size="xs" onclick={() => jumpTo(r.to)} disabled={installing}>{m.common_edit()}</Button></span>
             </div>
           {/each}
         </div>
         {#if installFailed}
-          <div class="callout bad" role="alert">Install failed: {installFailed}</div>
+          <div class="callout bad" role="alert">{m.setup_install_failed({ error: installFailed })}</div>
         {/if}
         <div class="foot">
-          <Button variant="ghost" onclick={goBack} disabled={installing}>Back</Button>
+          <Button variant="ghost" onclick={goBack} disabled={installing}>{m.common_back()}</Button>
           <span class="dm-sp"></span>
           {#if installing}<span class="dm-sub">{installMsg}</span>{/if}
           <Button variant="primary" onclick={runInstall} loading={installing}>
-            {installing ? 'Installing…' : 'Install'}
+            {installing ? m.setup_installing() : m.setup_install()}
           </Button>
         </div>
 
       {:else if step === 7}
         <div class="status">
           {#if installFailed}
-            <StatusChip tone="bad" label="failed" /><span>The install stopped. The log shows the step that failed.</span>
+            <StatusChip tone="bad" label={m.setup_chip_failed()} /><span>{m.setup_status_failed()}</span>
           {:else if credsRevealed}
-            <StatusChip tone="ok" label="installed" /><span>Dockmesh is running.</span>
+            <StatusChip tone="ok" label={m.setup_chip_installed()} /><span>{m.setup_running()}</span>
           {:else}
-            <StatusChip tone="acc" label="installing" /><span>{installMsg || 'Working through the install steps…'}</span>
+            <StatusChip tone="acc" label={m.setup_chip_installing()} /><span>{installMsg || m.setup_working()}</span>
           {/if}
         </div>
-        <h2 class="dm-h2">Log</h2>
+        <h2 class="dm-h2">{m.setup_log()}</h2>
         <div class="log dm-mono" role="log" aria-live="polite">
           {#each streamLines as l (l.ts + l.step)}
             <div class="ln {l.status}">{@render mark(l.status)}<span>{l.message}</span></div>
           {:else}
-            <div class="dm-dim">Waiting for output…</div>
+            <div class="dm-dim">{m.setup_waiting()}</div>
           {/each}
           {#if installFailed}
-            <div class="ln fail">{@render mark('fail')}<span>install failed: {installFailed}</span></div>
+            <div class="ln fail">{@render mark('fail')}<span>{m.setup_log_install_failed({ error: installFailed })}</span></div>
           {/if}
         </div>
 
         {#if credsRevealed}
-          <h2 class="dm-h2 creds-h">Your sign-in</h2>
+          <h2 class="dm-h2 creds-h">{m.setup_your_signin()}</h2>
           <dl class="dm-kv creds">
-            <dt>Login URL</dt>
+            <dt>{m.setup_login_url()}</dt>
             <dd>
               <span class="dm-mono">{publicUrl}</span>
-              <button type="button" class="copy" onclick={() => copyToClipboard('url', publicUrl)} aria-label="Copy login URL">
-                {#if copiedKey === 'url'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+              <button type="button" class="copy" onclick={() => copyToClipboard('url', publicUrl)} aria-label={m.setup_copy_login_url()}>
+                {#if copiedKey === 'url'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
               </button>
             </dd>
-            <dt>Username</dt>
+            <dt>{m.setup_username()}</dt>
             <dd>
               <span class="dm-mono">{adminUsername}</span>
-              <button type="button" class="copy" onclick={() => copyToClipboard('user', adminUsername)} aria-label="Copy username">
-                {#if copiedKey === 'user'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+              <button type="button" class="copy" onclick={() => copyToClipboard('user', adminUsername)} aria-label={m.setup_copy_username()}>
+                {#if copiedKey === 'user'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
               </button>
             </dd>
-            <dt>Password</dt>
+            <dt>{m.setup_password()}</dt>
             <dd>
               {#if adminPassword}
                 <span class="dm-mono">{credShowPw ? adminPassword : '•'.repeat(Math.max(10, adminPassword.length))}</span>
-                <button type="button" class="copy" onclick={() => (credShowPw = !credShowPw)} aria-label={credShowPw ? 'Hide password' : 'Show password'}>
-                  {#if credShowPw}<EyeOff size={13} /> hide{:else}<Eye size={13} /> show{/if}
+                <button type="button" class="copy" onclick={() => (credShowPw = !credShowPw)} aria-label={credShowPw ? m.setup_hide_password() : m.setup_show_password()}>
+                  {#if credShowPw}<EyeOff size={13} /> {m.setup_hide()}{:else}<Eye size={13} /> {m.setup_show()}{/if}
                 </button>
-                <button type="button" class="copy" onclick={() => copyToClipboard('pw', adminPassword)} aria-label="Copy password">
-                  {#if copiedKey === 'pw'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+                <button type="button" class="copy" onclick={() => copyToClipboard('pw', adminPassword)} aria-label={m.setup_copy_password()}>
+                  {#if copiedKey === 'pw'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
                 </button>
               {:else}
-                <span class="dm-dim">The password you entered</span>
+                <span class="dm-dim">{m.setup_password_entered()}</span>
               {/if}
             </dd>
           </dl>
           <div class="foot">
-            <span class="dm-sub">Forgot the password? Run <span class="dm-mono">sudo dockmesh admin reset-password --user {adminUsername}</span> on the server.</span>
+            <span class="dm-sub">{m.setup_forgot_before()} <span class="dm-mono">sudo dockmesh admin reset-password --user {adminUsername}</span>{m.setup_forgot_after()}</span>
             <span class="dm-sp"></span>
-            <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary">Open Dockmesh <ArrowRight size={14} /></a>
+            <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary">{m.setup_open()} <ArrowRight size={14} /></a>
           </div>
         {/if}
       {/if}

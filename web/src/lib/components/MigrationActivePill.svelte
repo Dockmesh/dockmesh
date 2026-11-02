@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Top-bar pill for running stack migrations and failures of the last
   // 24 h; hidden when there is neither. Opens the migrations dialog.
   import { api, type Migration } from '$lib/api';
@@ -22,9 +23,9 @@
       ]);
       active = a;
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-      failedRecent = recent.filter((m) => {
-        if (m.status !== 'failed') return false;
-        const when = m.completed_at ?? m.started_at ?? m.created_at;
+      failedRecent = recent.filter((x) => {
+        if (x.status !== 'failed') return false;
+        const when = x.completed_at ?? x.started_at ?? x.created_at;
         return when ? new Date(when).getTime() >= cutoff : false;
       }).length;
     } catch {
@@ -49,20 +50,20 @@
       type="button"
       class="mig-pill mig-pill-active"
       onclick={onOpen}
-      title="Migrations in progress — click for details"
+      title={m.ops_mig_pill_active_title()}
     >
       <ArrowRightLeft size={11} strokeWidth={1.8} />
-      <span class="font-mono">{active.length} migration{active.length === 1 ? '' : 's'} running</span>
+      <span class="font-mono">{m.ops_mig_n_running({ count: active.length })}</span>
     </button>
   {:else if failedRecent > 0}
     <button
       type="button"
       class="mig-pill mig-pill-fail"
       onclick={onOpen}
-      title="Recent failures need attention"
+      title={m.ops_mig_pill_fail_title()}
     >
       <AlertTriangle size={11} strokeWidth={1.8} />
-      <span class="font-mono">{failedRecent} migration{failedRecent === 1 ? '' : 's'} failed</span>
+      <span class="font-mono">{m.ops_mig_n_failed({ count: failedRecent })}</span>
     </button>
   {/if}
 {/if}

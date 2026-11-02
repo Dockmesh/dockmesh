@@ -5,6 +5,9 @@
   // it currently 501s (agent protocol gap) and we fall back to data
   // already on hand from the list payload + a banner.
   import { fmtBytes } from '$lib/format';
+  import { fmtDate } from '$lib/i18n';
+  import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel, vulnSeverityLabel } from '$lib/labels';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
@@ -40,7 +43,7 @@
       if (err instanceof ApiError && err.status === 501) {
         notSupported = true;
       } else {
-        inspectError = err instanceof ApiError ? err.message : 'failed to load';
+        inspectError = err instanceof ApiError ? err.message : m.images_load_failed_inline();
       }
     } finally {
       inspectLoading = false;
@@ -77,7 +80,7 @@
       }
       using = out;
     } catch (err) {
-      toast.error('Failed to load containers', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.images_containers_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       usingLoading = false;
     }
@@ -112,9 +115,9 @@
     scanBusy = true;
     try {
       scanReport = normalizeReport(await api.images.scan(imageRef()))!;
-      toast.success('Scan complete', `${scanReport.vulnerabilities.length} findings`);
+      toast.success(m.images_scan_complete(), m.images_scan_findings({ count: scanReport.vulnerabilities.length }));
     } catch (err) {
-      toast.error('Scan failed', err instanceof ApiError ? err.message : 'Scanner unavailable');
+      toast.error(m.images_scan_failed(), err instanceof ApiError ? err.message : m.images_scanner_unavailable());
     } finally {
       scanBusy = false;
     }
@@ -135,17 +138,17 @@
     if (tab === 'containers' && inspect) loadUsing();
   });
 
-  function fmtDate(iso?: string | number): string {
+  function fmtDay(iso?: string | number): string {
     if (!iso) return '—';
     const d = typeof iso === 'number' ? new Date(iso * 1000) : new Date(iso);
     if (isNaN(d.getTime())) return String(iso);
-    return d.toISOString().slice(0, 10);
+    return fmtDate(d);
   }
   function shortSha(s: string): string {
     return s.replace(/^sha256:/, '').slice(0, 12);
   }
   function copy(s: string) {
-    void copyWithToast(s, 'Copied');
+    void copyWithToast(s, m.common_copied());
   }
   function sevColor(s: Severity): 'danger' | 'warning' | 'info' | 'default' {
     if (s === 'critical' || s === 'high') return 'danger';
@@ -178,30 +181,30 @@
 
   async function deleteImage() {
     if (!(await confirm.ask({
-      title: 'Remove image',
-      message: 'Remove this image?',
-      body: 'Docker refuses if any container is still using it — stop those containers first.',
-      confirmLabel: 'Remove', danger: true
+      title: m.images_remove_title(),
+      message: m.images_remove_message(),
+      body: m.images_remove_body(),
+      confirmLabel: m.common_remove(), danger: true
     }))) return;
     try {
       await api.images.remove(id, true);
-      toast.success('Removed');
+      toast.success(m.images_removed());
       goto('/resources?tab=images');
     } catch (err) {
-      toast.error('Remove failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.images_remove_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function pullLatest() {
     if (!repoTag) {
-      toast.error('Cannot pull', 'image has no repo:tag');
+      toast.error(m.images_cannot_pull(), m.images_no_repo_tag());
       return;
     }
     try {
       await api.images.pull(`${repoTag.repo}:${repoTag.tag}`);
-      toast.success('Pull queued', `${repoTag.repo}:${repoTag.tag}`);
+      toast.success(m.images_pull_queued(), `${repoTag.repo}:${repoTag.tag}`);
       await loadInspect();
     } catch (err) {
-      toast.error('Pull failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.images_pull_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
@@ -209,8 +212,8 @@
 <section class="img-detail">
   <header class="img-detail-header">
     <div class="img-detail-back-row">
-      <a href="/resources?tab=images" class="img-detail-back" aria-label="Back to resources">
-        <ChevronLeft size={14} strokeWidth={1.5} /> resources / images
+      <a href="/resources?tab=images" class="img-detail-back" aria-label={m.images_back_aria()}>
+        <ChevronLeft size={14} strokeWidth={1.5} /> {m.images_back_crumb()}
       </a>
     </div>
     <div class="img-detail-title-row">
@@ -220,27 +223,27 @@
             {repoTag.repo}:{repoTag.tag}
           {:else if inspect}
             &lt;none&gt;:&lt;none&gt;
-            <span class="dm-pill dm-pill-warning img-detail-pill">Dangling</span>
+            <span class="dm-pill dm-pill-warning img-detail-pill">{m.images_dangling()}</span>
           {:else}
             {shortSha(id)}
           {/if}
         </h1>
         <p class="ed-subtitle img-detail-subtitle">
-          sha256:{inspect?.Id ? shortSha(inspect.Id) : shortSha(id)} · {fmtBytes(inspect?.Size ?? 0)} · host {hostId}
+          sha256:{inspect?.Id ? shortSha(inspect.Id) : shortSha(id)} · {fmtBytes(inspect?.Size ?? 0)} · {m.images_host({ host: hostId })}
         </p>
       </div>
       <div class="ed-actions">
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={loadInspect}>
-          <RefreshCw size={12} strokeWidth={1.5} class={inspectLoading ? 'ed-spin' : ''} /> Refresh
+          <RefreshCw size={12} strokeWidth={1.5} class={inspectLoading ? 'ed-spin' : ''} /> {m.common_refresh()}
         </button>
         {#if canPull && repoTag}
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={pullLatest}>
-            <Download size={12} strokeWidth={1.5} /> Re-pull
+            <Download size={12} strokeWidth={1.5} /> {m.images_repull()}
           </button>
         {/if}
         {#if canDelete}
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm img-detail-danger" onclick={deleteImage}>
-            <Trash2 size={12} strokeWidth={1.5} /> Remove image
+            <Trash2 size={12} strokeWidth={1.5} /> {m.images_remove_button()}
           </button>
         {/if}
       </div>
@@ -251,9 +254,8 @@
     <div class="img-detail-banner">
       <AlertTriangle size={14} strokeWidth={1.5} />
       <div>
-        <strong>Inspect not supported on this host.</strong>
-        Remote agents don't carry the image-inspect frame yet.
-        Layers, history, and config require running the inspect on the local docker socket.
+        <strong>{m.images_inspect_unsupported()}</strong>
+        {m.images_inspect_unsupported_body()}
       </div>
     </div>
   {/if}
@@ -267,22 +269,22 @@
   <!-- ─── Summary tiles ─── -->
   <div class="img-detail-summary">
     <div class="ed-metric">
-      <span class="ed-metric-label">Size</span>
+      <span class="ed-metric-label">{m.common_size()}</span>
       <div class="ed-metric-value">{fmtBytes(inspect?.Size ?? 0)}</div>
-      <span class="ed-metric-meta">{layers.length || '—'} layer{layers.length === 1 ? '' : 's'}</span>
+      <span class="ed-metric-meta">{layers.length ? m.images_layer_count({ count: layers.length }) : m.images_layer_count_none()}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">In use</span>
+      <span class="ed-metric-label">{m.images_in_use()}</span>
       <div class="ed-metric-value">{using.length || (usingLoading ? '…' : '—')}</div>
-      <span class="ed-metric-meta">container{using.length === 1 ? '' : 's'}</span>
+      <span class="ed-metric-meta">{m.images_containers_word({ count: using.length })}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Created</span>
-      <div class="ed-metric-value img-detail-tile-text">{fmtDate(inspect?.Created)}</div>
+      <span class="ed-metric-label">{m.common_created()}</span>
+      <div class="ed-metric-value img-detail-tile-text">{fmtDay(inspect?.Created)}</div>
       <span class="ed-metric-meta">{inspect?.Architecture ?? '—'}/{inspect?.Os ?? '—'}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Vulnerabilities</span>
+      <span class="ed-metric-label">{m.images_vulnerabilities()}</span>
       {#if scanReport}
         {@const sum = scanReport.summary}
         {@const total = sum.critical + sum.high + sum.medium + sum.low}
@@ -290,7 +292,7 @@
           {total === 0 ? '0' : total}
         </div>
         <span class="ed-metric-meta">
-          {#if total === 0}clean{:else}
+          {#if total === 0}{m.images_clean()}{:else}
             {#if sum.critical > 0}C {sum.critical} {/if}
             {#if sum.high > 0}H {sum.high} {/if}
             {#if sum.medium > 0}M {sum.medium} {/if}
@@ -299,7 +301,7 @@
         </span>
       {:else}
         <div class="ed-metric-value muted">—</div>
-        <span class="ed-metric-meta">Not scanned</span>
+        <span class="ed-metric-meta">{m.images_not_scanned()}</span>
       {/if}
     </div>
   </div>
@@ -307,22 +309,22 @@
   <!-- ─── Tabs ─── -->
   <div class="ed-tabs img-detail-tabs">
     <button type="button" class="ed-tab" class:active={tab === 'overview'} onclick={() => (tab = 'overview')}>
-      Overview
+      {m.common_overview()}
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'cve'} onclick={() => (tab = 'cve')}>
-      Vulnerabilities
+      {m.images_vulnerabilities()}
       {#if scanReport}
         <span class="count">{scanReport.vulnerabilities.length}</span>
       {/if}
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'layers'} onclick={() => (tab = 'layers')}>
-      Layers <span class="count">{layers.length}</span>
+      {m.images_tab_layers()} <span class="count">{layers.length}</span>
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'history'} onclick={() => (tab = 'history')}>
-      History <span class="count">{history.length}</span>
+      {m.images_tab_history()} <span class="count">{history.length}</span>
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'containers'} onclick={() => (tab = 'containers')}>
-      Containers <span class="count">{using.length}</span>
+      {m.common_containers()} <span class="count">{using.length}</span>
     </button>
   </div>
 
@@ -335,15 +337,15 @@
     {:else if inspect}
       <div class="dm-card img-detail-overview">
         <dl class="img-detail-dl">
-          <dt>ID</dt>
+          <dt>{m.images_id()}</dt>
           <dd class="img-detail-id-line">
             <span class="font-mono muted">{inspect.Id}</span>
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => copy(inspect.Id)} title="Copy">
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => copy(inspect.Id)} title={m.common_copy()}>
               <Copy size={11} strokeWidth={1.5} />
             </button>
           </dd>
           {#if inspect.RepoTags && inspect.RepoTags.length > 0}
-            <dt>Tags</dt>
+            <dt>{m.images_tags()}</dt>
             <dd>
               <div class="img-detail-chips">
                 {#each inspect.RepoTags as t (t)}
@@ -353,7 +355,7 @@
             </dd>
           {/if}
           {#if inspect.RepoDigests && inspect.RepoDigests.length > 0}
-            <dt>Digests</dt>
+            <dt>{m.images_digests()}</dt>
             <dd>
               <div class="img-detail-chips">
                 {#each inspect.RepoDigests as d (d)}
@@ -362,14 +364,14 @@
               </div>
             </dd>
           {/if}
-          <dt>Architecture</dt>
+          <dt>{m.images_architecture()}</dt>
           <dd class="font-mono">{inspect.Architecture}/{inspect.Os}{inspect.Variant ? `/${inspect.Variant}` : ''}</dd>
-          <dt>Created</dt>
+          <dt>{m.common_created()}</dt>
           <dd class="font-mono">{inspect.Created}</dd>
-          <dt>Author</dt>
+          <dt>{m.images_author()}</dt>
           <dd class="font-mono">{inspect.Author || '—'}</dd>
-          <dt>Size</dt>
-          <dd class="font-mono">{fmtBytes(inspect.Size)} ({fmtBytes(inspect.VirtualSize ?? inspect.Size)} on disk virtual)</dd>
+          <dt>{m.common_size()}</dt>
+          <dd class="font-mono">{fmtBytes(inspect.Size)} {m.images_size_virtual({ size: fmtBytes(inspect.VirtualSize ?? inspect.Size) })}</dd>
           {#if inspect.Config?.Cmd}
             <dt>Cmd</dt>
             <dd class="font-mono img-detail-cmd">{(inspect.Config.Cmd ?? []).join(' ')}</dd>
@@ -383,11 +385,11 @@
             <dd class="font-mono">{inspect.Config.WorkingDir}</dd>
           {/if}
           {#if inspect.Config?.User}
-            <dt>User</dt>
+            <dt>{m.common_user()}</dt>
             <dd class="font-mono">{inspect.Config.User}</dd>
           {/if}
           {#if inspect.Config?.ExposedPorts && Object.keys(inspect.Config.ExposedPorts).length > 0}
-            <dt>Exposed ports</dt>
+            <dt>{m.images_exposed_ports()}</dt>
             <dd>
               <div class="img-detail-chips">
                 {#each Object.keys(inspect.Config.ExposedPorts) as p (p)}
@@ -403,7 +405,7 @@
             </dd>
           {/if}
           {#if labelEntries.length > 0}
-            <dt>Labels</dt>
+            <dt>{m.images_labels()}</dt>
             <dd>
               <div class="img-detail-chips">
                 {#each labelEntries as [k, v] (k)}
@@ -425,25 +427,25 @@
   {#if tab === 'cve'}
     <div class="dm-card img-detail-card-pad">
       <div class="img-detail-cve-head">
-        <Eyebrow>Vulnerability scan</Eyebrow>
+        <Eyebrow>{m.images_scan_eyebrow()}</Eyebrow>
         <div class="ed-actions">
           {#if canScan}
             <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={scanBusy} onclick={runScan}>
-              <Shield size={12} strokeWidth={1.5} /> {scanBusy ? 'Scanning…' : (scanReport ? 'Re-scan' : 'Scan now')}
+              <Shield size={12} strokeWidth={1.5} /> {scanBusy ? m.images_scanning() : (scanReport ? m.images_rescan() : m.images_scan_now())}
             </button>
           {/if}
         </div>
       </div>
 
       {#if scanBusy && !scanReport}
-        <p class="img-detail-cve-empty font-mono">Scanning… grype CLI typically takes 5-30 seconds.</p>
+        <p class="img-detail-cve-empty font-mono">{m.images_scanning_hint()}</p>
       {:else if !scanReport}
         <div class="img-detail-cve-cta">
           <Shield size={28} strokeWidth={1.5} />
-          <p>Image has not been scanned. Run a scan with grype to see CVE findings, severity breakdown, and fix versions.</p>
+          <p>{m.images_not_scanned_cta()}</p>
           {#if canScan}
             <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={runScan}>
-              <Shield size={12} strokeWidth={1.5} /> Run scan
+              <Shield size={12} strokeWidth={1.5} /> {m.images_run_scan()}
             </button>
           {/if}
         </div>
@@ -458,29 +460,29 @@
               onclick={() => (scanFilter = scanFilter === sev ? 'all' : sev as Severity)}
             >
               <div class="img-detail-cve-tile-num">{count}</div>
-              <div class="img-detail-cve-tile-label">{sev}</div>
+              <div class="img-detail-cve-tile-label">{vulnSeverityLabel(String(sev))}</div>
             </button>
           {/each}
         </div>
         {#if scanReport.vulnerabilities.length === 0}
           <div class="img-detail-cve-clean">
             <Check size={20} strokeWidth={2} />
-            <span>Clean — no vulnerabilities found by grype.</span>
+            <span>{m.images_scan_clean()}</span>
           </div>
         {:else if scanFiltered.length === 0}
-          <p class="img-detail-cve-empty font-mono">No matches for this severity filter.</p>
+          <p class="img-detail-cve-empty font-mono">{m.images_scan_no_match()}</p>
         {:else}
           <div class="img-detail-cve-table">
             <div class="img-detail-cve-row img-detail-cve-row--head">
-              <span>Severity</span>
-              <span>Package</span>
-              <span>Version</span>
-              <span>Fixed in</span>
-              <span>CVE</span>
+              <span>{m.images_col_severity()}</span>
+              <span>{m.images_col_package()}</span>
+              <span>{m.images_col_version()}</span>
+              <span>{m.images_col_fixed_in()}</span>
+              <span>{m.images_col_cve()}</span>
             </div>
             {#each scanFiltered as v (v.id + v.package)}
               <div class="img-detail-cve-row">
-                <span><Badge variant={sevColor(v.severity)}>{v.severity}</Badge></span>
+                <span><Badge variant={sevColor(v.severity)}>{vulnSeverityLabel(v.severity)}</Badge></span>
                 <span class="font-mono">{v.package}</span>
                 <span class="font-mono">{v.version}</span>
                 <span class="font-mono">{v.fixed_in || '—'}</span>
@@ -491,7 +493,7 @@
             {/each}
           </div>
           <p class="img-detail-cve-foot font-mono">
-            Scanned {scanReport.scanned_at} · grype {scanReport.scanner_version || ''}
+            {m.images_scanned_foot({ at: scanReport.scanned_at, version: scanReport.scanner_version || '' })}
           </p>
         {/if}
       {/if}
@@ -506,13 +508,13 @@
       <div class="dm-card img-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
     {:else if layers.length === 0}
       <div class="dm-card img-detail-card-pad">
-        <EmptyState icon={ImageIcon} title="No layers" description="Image has no rootfs layers — probably a scratch base." />
+        <EmptyState icon={ImageIcon} title={m.images_no_layers()} description={m.images_no_layers_desc()} />
       </div>
     {:else}
       <div class="img-detail-layer-table">
         <div class="img-detail-layer-row img-detail-layer-row--head">
           <span>#</span>
-          <span>Digest</span>
+          <span>{m.images_col_digest()}</span>
         </div>
         {#each layers as digest, i (digest + i)}
           <div class="img-detail-layer-row">
@@ -532,7 +534,7 @@
       <div class="dm-card img-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
     {:else if history.length === 0}
       <div class="dm-card img-detail-card-pad">
-        <EmptyState icon={ImageIcon} title="No history" description="Docker did not record build history for this image." />
+        <EmptyState icon={ImageIcon} title={m.images_no_history()} description={m.images_no_history_desc()} />
       </div>
     {:else}
       <div class="img-detail-history">
@@ -540,7 +542,7 @@
           <div class="img-detail-history-row">
             <div class="img-detail-history-meta">
               <span class="font-mono img-detail-history-idx">{history.length - i}</span>
-              <span class="font-mono img-detail-history-when">{fmtDate(h.created)}</span>
+              <span class="font-mono img-detail-history-when">{fmtDay(h.created)}</span>
               <span class="font-mono img-detail-history-size">{fmtBytes(h.size ?? 0)}</span>
             </div>
             <div class="img-detail-history-cmd font-mono">
@@ -563,26 +565,26 @@
       <div class="dm-card img-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
     {:else if using.length === 0}
       <div class="dm-card img-detail-card-pad">
-        <EmptyState icon={Box} title="Not in use" description="No running container is based on this image right now." />
+        <EmptyState icon={Box} title={m.images_not_in_use()} description={m.images_not_in_use_desc()} />
       </div>
     {:else}
       <div class="img-detail-using-table">
         <div class="img-detail-using-row img-detail-using-row--head">
-          <span>Name</span>
-          <span>State</span>
-          <span>Started</span>
+          <span>{m.common_name()}</span>
+          <span>{m.common_state()}</span>
+          <span>{m.images_col_started()}</span>
         </div>
         {#each using as c (c.id)}
           <a href={`/containers/${c.id}`} class="img-detail-using-row img-detail-using-row--data">
             <span class="font-mono img-detail-using-name">{c.name}</span>
             <span>
               {#if c.state === 'running'}
-                <span class="dm-pill dm-pill-success img-detail-pill"><span class="dm-pill-dot"></span> running</span>
+                <span class="dm-pill dm-pill-success img-detail-pill"><span class="dm-pill-dot"></span> {m.containers_status_running()}</span>
               {:else}
-                <span class="dm-pill dm-pill-neutral img-detail-pill">{c.state}</span>
+                <span class="dm-pill dm-pill-neutral img-detail-pill">{containerStateLabel(c.state)}</span>
               {/if}
             </span>
-            <span class="font-mono">{fmtDate(c.started)}</span>
+            <span class="font-mono">{fmtDay(c.started)}</span>
           </a>
         {/each}
       </div>

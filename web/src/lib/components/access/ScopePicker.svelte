@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { onMount } from 'svelte';
   import { api, type HostInfo, type Scope, type ScopeType, type StackListEntry } from '$lib/api';
   import { Segmented } from '$lib/components/ui';
 
   let {
     value = $bindable({ type: 'global' }),
-    label = 'Scope',
+    label = m.access_scope_label(),
     onchange
   }: { value: Scope; label?: string; onchange?: (s: Scope) => void } = $props();
 
@@ -30,10 +31,10 @@
   });
 
   const OPTIONS = [
-    { key: 'global', label: 'Everything' },
-    { key: 'host', label: 'Host' },
-    { key: 'host_tag', label: 'Host tag' },
-    { key: 'stack', label: 'Stack' }
+    { key: 'global', label: m.access_scope_everything() },
+    { key: 'host', label: m.common_host() },
+    { key: 'host_tag', label: m.access_scope_host_tag() },
+    { key: 'stack', label: m.common_stack() }
   ];
 
   function setType(t: string) {
@@ -58,25 +59,25 @@
   <span class="lbl">{label}</span>
   <Segmented options={OPTIONS} value={value.type} onchange={setType} label={label} size="sm" />
   {#if value.type === 'host'}
-    <select class="dm-input" aria-label="Host" value={value.host} onchange={(e) => set({ type: 'host', host: e.currentTarget.value })}>
+    <select class="dm-input" aria-label={m.common_host()} value={value.host} onchange={(e) => set({ type: 'host', host: e.currentTarget.value })}>
       {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
     </select>
   {:else if value.type === 'host_tag'}
-    <input class="dm-input" aria-label="Host tag" list="scope-tags" placeholder="tag" value={value.value ?? ''}
+    <input class="dm-input" aria-label={m.access_scope_host_tag()} list="scope-tags" placeholder={m.access_scope_tag_placeholder()} value={value.value ?? ''}
       oninput={(e) => set({ type: 'host_tag', value: e.currentTarget.value.trim().toLowerCase() })} />
     <datalist id="scope-tags">{#each tags as t (t)}<option value={t}></option>{/each}</datalist>
   {:else if value.type === 'stack'}
     <div class="row">
-      <select class="dm-input" aria-label="Stack" value={value.value} onchange={(e) => pickStack(e.currentTarget.value)}>
+      <select class="dm-input" aria-label={m.common_stack()} value={value.value} onchange={(e) => pickStack(e.currentTarget.value)}>
         {#each stacks as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
       </select>
-      <select class="dm-input" aria-label="Host of the stack" value={value.host}
+      <select class="dm-input" aria-label={m.access_scope_stack_host()} value={value.host}
         onchange={(e) => set({ ...value, host: e.currentTarget.value })}>
-        <option value="">Any host</option>
+        <option value="">{m.access_scope_any_host()}</option>
         {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
       </select>
     </div>
-    <span class="dm-sub">{value.host ? 'Covers the stack while it runs on this host.' : 'Covers the stack on any host, also before it is deployed.'}</span>
+    <span class="dm-sub">{value.host ? m.access_scope_stack_on_host() : m.access_scope_stack_any_host()}</span>
   {/if}
 </div>
 

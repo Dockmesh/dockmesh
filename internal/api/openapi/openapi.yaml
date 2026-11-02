@@ -7707,6 +7707,29 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/User"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+  /me/language:
+    put:
+      operationId: users.me_language
+      tags: [users]
+      summary: Set the caller's language
+      description: |
+        Language of the web UI and of mail notifications sent to the user's
+        address. An empty value clears the choice so the browser language
+        decides. Requires a user session; API tokens get 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [language]
+              properties:
+                language: {type: string, enum: ["", en, de]}
+      responses:
+        "204": {description: Saved.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /invites:
     get:
       operationId: invites.list
@@ -8398,7 +8421,7 @@ components:
         config:
           type: object
           description: >-
-            Channel-type-specific. Secret fields (`password`, `token`, `integration_key`, `app_token`, `user_key`, and `url` for slack, discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling `<field>_set: true` when stored; an empty or omitted secret on update keeps the stored value.
+            Channel-type-specific. Secret fields (`password`, `token`, `integration_key`, `app_token`, `user_key`, and `url` for slack, discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling `<field>_set: true` when stored; an empty or omitted secret on update keeps the stored value. Every type also takes `language` (`en`, `de`; default `en`) for the messages it sends; email recipients with a Dockmesh account get their own language instead.
         enabled: {type: boolean}
         mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
         last_sent_at: {type: string, format: date-time, description: Last successful delivery.}
@@ -8826,6 +8849,14 @@ components:
         error:
           type: string
           example: invalid credentials
+        code:
+          type: string
+          example: invalid_body
+          description: |
+            Stable identifier of the message, for clients that show errors in
+            another language. Fixed messages have their own code; messages with
+            runtime detail carry a generic `http_*` one per status (`http_bad_request`,
+            `http_not_found`, `http_unavailable`, `http_internal`, …).
     Operation:
       type: object
       required: [id, kind, target, status, steps, created_at]
@@ -8933,6 +8964,10 @@ components:
           type: boolean
           description: In /me only. True when every permission is held on everything.
         mfa_enabled: {type: boolean}
+        language:
+          type: string
+          enum: ["", en, de]
+          description: In /me only. The language the user picked; empty when the browser language decides.
         locked_until:
           type: string
           format: date-time

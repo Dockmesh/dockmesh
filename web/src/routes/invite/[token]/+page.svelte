@@ -11,6 +11,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow, Field } from '$lib/components/editorial';
   import { ArrowRight, Sun, Moon, ShieldAlert } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const token = $derived(page.params.token);
 
@@ -46,11 +47,11 @@
       preview = await api.users.previewInvite(token);
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.status === 410) loadError = 'This invitation has expired or has already been used.';
-        else if (err.status === 404) loadError = 'This invitation link is not valid.';
+        if (err.status === 410) loadError = m.invite_expired_or_used();
+        else if (err.status === 404) loadError = m.invite_not_valid();
         else loadError = err.message;
       } else {
-        loadError = 'Could not load invitation.';
+        loadError = m.invite_load_failed();
       }
     } finally {
       loading = false;
@@ -66,15 +67,15 @@
     try {
       const res = await api.users.acceptInvite(token, { username, email: email || undefined, password });
       auth.setSession(res.user as any, res.access_token, res.refresh_token);
-      toast.success('Welcome to dockmesh', res.user.username);
+      toast.success(m.invite_welcome(), res.user.username);
       goto('/');
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.status === 409) formError = 'That username or email is already taken.';
-        else if (err.status === 410) formError = 'This invitation has just expired or been used.';
+        if (err.status === 409) formError = m.invite_taken();
+        else if (err.status === 410) formError = m.invite_just_expired();
         else formError = err.message;
       } else {
-        formError = 'Sign-up failed.';
+        formError = m.invite_signup_failed();
       }
     } finally {
       submitting = false;
@@ -89,8 +90,8 @@
     type="button"
     class="theme-toggle login-chrome-tr"
     onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}
-    aria-label="Toggle theme"
-    title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+    aria-label={m.invite_toggle_theme()}
+    title={theme === 'dark' ? m.invite_switch_light() : m.invite_switch_dark()}
   >
     {#if theme === 'dark'}
       <Sun size={13} strokeWidth={1.5} />
@@ -106,36 +107,36 @@
     </div>
 
     <div class="login-card">
-      <Eyebrow>Accept invitation</Eyebrow>
+      <Eyebrow>{m.invite_accept()}</Eyebrow>
 
       {#if loading}
-        <p class="invite-blurb">Loading invitation…</p>
+        <p class="invite-blurb">{m.invite_loading()}</p>
       {:else if loadError}
         <div class="invite-error">
           <ShieldAlert size={16} strokeWidth={1.5} />
           <span>{loadError}</span>
         </div>
         <p class="invite-blurb">
-          Ask the admin who sent you the link to generate a new one.
+          {m.invite_ask_admin()}
         </p>
       {:else if preview}
         <p class="invite-blurb">
           {#if preview.email_hint}
-            This link was prepared for <strong>{preview.email_hint}</strong>.
-            Make sure you're the right person before continuing.
+            {m.invite_prepared_before()} <strong>{preview.email_hint}</strong>{m.invite_prepared_after()}
+            {m.invite_make_sure()}
           {:else}
-            You've been invited to dockmesh.
+            {m.invite_invited()}
           {/if}
         </p>
         <div class="invite-meta">
-          <span class="invite-meta-label">Role</span>
+          <span class="invite-meta-label">{m.invite_role()}</span>
           <span class="invite-meta-value">{preview.role}</span>
-          <span class="invite-meta-label">On</span>
-          <span class="invite-meta-value">{(preview.scopes ?? []).map((s) => scopeLabel(s)).join(', ') || 'everything'}</span>
+          <span class="invite-meta-label">{m.invite_on()}</span>
+          <span class="invite-meta-value">{(preview.scopes ?? []).map((s) => scopeLabel(s)).join(', ') || m.invite_everything()}</span>
         </div>
 
         <form class="login-fields" onsubmit={submit}>
-          <Field label="Username">
+          <Field label={m.invite_username()}>
             <input
               class="ed-input ed-input-mono"
               bind:value={username}
@@ -146,7 +147,7 @@
             />
           </Field>
 
-          <Field label="Email (optional)">
+          <Field label={m.invite_email_optional()}>
             <input
               class="ed-input ed-input-mono"
               type="email"
@@ -157,7 +158,7 @@
             />
           </Field>
 
-          <Field label="Password" hint="At least 8 characters; you can change it later.">
+          <Field label={m.invite_password()} hint={m.invite_password_hint()}>
             <input
               class="ed-input ed-input-mono"
               type="password"
@@ -176,7 +177,7 @@
             class="dm-btn dm-btn-primary login-submit"
             disabled={!canSubmit}
           >
-            {submitting ? 'Creating account…' : 'Accept invitation'}
+            {submitting ? m.invite_creating_account() : m.invite_accept()}
             <ArrowRight size={14} strokeWidth={1.5} />
           </button>
         </form>
@@ -184,7 +185,7 @@
     </div>
 
     <p class="login-footer">
-      Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
+      {m.invite_footer({ year: new Date().getFullYear() })}
     </p>
   </div>
 </div>

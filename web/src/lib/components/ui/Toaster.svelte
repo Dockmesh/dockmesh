@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { toast } from '$lib/stores/toast.svelte';
   import { dialogs } from '$lib/stores/dialogs.svelte';
   import { X } from 'lucide-svelte';
@@ -19,7 +20,7 @@
           <div class="d">{t.description}</div>
         {/if}
       </div>
-      <button type="button" class="x" onclick={() => toast.dismiss(t.id)} aria-label="Dismiss">
+      <button type="button" class="x" onclick={() => toast.dismiss(t.id)} aria-label={m.ui_toast_dismiss()}>
         <X size={13} strokeWidth={1.8} />
       </button>
     </div>

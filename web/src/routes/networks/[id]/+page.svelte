@@ -12,6 +12,8 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { allowed } from '$lib/rbac.svelte';
+  import { fmtDate } from '$lib/i18n';
+  import { m } from '$lib/paraglide/messages.js';
   import {
     ChevronLeft, Network as NetworkIcon, Trash2, Copy, Box, RefreshCw
   } from 'lucide-svelte';
@@ -31,7 +33,7 @@
     try {
       inspect = await api.networks.inspect(id, hostId);
     } catch (err) {
-      toast.error('Failed to load network', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.networks_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       inspectLoading = false;
     }
@@ -45,7 +47,7 @@
   });
 
   function copy(s: string) {
-    void copyWithToast(s, 'Copied');
+    void copyWithToast(s, m.common_copied());
   }
 
   // Connected containers come back from inspect.Containers as a
@@ -81,11 +83,11 @@
   const isSystem = $derived(inspect && SYSTEM_NETWORKS.has(inspect.Name));
   const canWrite = $derived(allowed('networks.delete'));
 
-  function fmtDate(iso?: string): string {
+  function fmtDay(iso?: string): string {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toISOString().slice(0, 10);
+    return fmtDate(d);
   }
   function driverPill(d: string): 'success' | 'warning' | 'neutral' {
     if (d === 'overlay') return 'success';
@@ -96,21 +98,21 @@
   async function deleteNetwork() {
     if (!inspect) return;
     if (isSystem) {
-      toast.error('Cannot delete', 'system network');
+      toast.error(m.networks_cannot_delete(), m.networks_system_network());
       return;
     }
     if (!(await confirm.ask({
-      title: 'Delete network',
-      message: `Delete network "${inspect.Name}"?`,
-      body: 'Docker refuses if any container is still attached.',
-      confirmLabel: 'Delete', danger: true
+      title: m.networks_delete_title(),
+      message: m.networks_delete_message({ name: inspect.Name }),
+      body: m.networks_delete_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.networks.remove(id);
-      toast.success('Deleted', inspect.Name);
+      toast.success(m.networks_deleted(), inspect.Name);
       goto('/resources?tab=networks');
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.networks_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
@@ -118,24 +120,24 @@
 <section class="net-detail">
   <header class="net-detail-header">
     <div class="net-detail-back-row">
-      <a href="/resources?tab=networks" class="net-detail-back" aria-label="Back to resources">
-        <ChevronLeft size={14} strokeWidth={1.5} /> resources / networks
+      <a href="/resources?tab=networks" class="net-detail-back" aria-label={m.networks_back_aria()}>
+        <ChevronLeft size={14} strokeWidth={1.5} /> {m.networks_back_crumb()}
       </a>
     </div>
     <div class="net-detail-title-row">
       <div class="net-detail-title-text">
         <h1 class="ed-title net-detail-title">{inspect?.Name ?? id}</h1>
         <p class="ed-subtitle net-detail-subtitle">
-          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · host {hostId}{owner ? ` · stack ${owner}` : ''}{isSystem ? ' · system' : ''}
+          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.networks_sub_host({ host: hostId })}{owner ? ` · ${m.networks_sub_stack({ stack: owner })}` : ''}{isSystem ? ` · ${m.networks_sub_system()}` : ''}
         </p>
       </div>
       <div class="ed-actions">
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={loadInspect}>
-          <RefreshCw size={12} strokeWidth={1.5} class={inspectLoading ? 'ed-spin' : ''} /> Refresh
+          <RefreshCw size={12} strokeWidth={1.5} class={inspectLoading ? 'ed-spin' : ''} /> {m.common_refresh()}
         </button>
         {#if canWrite && !isSystem}
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm net-detail-danger" onclick={deleteNetwork}>
-            <Trash2 size={12} strokeWidth={1.5} /> Delete network
+            <Trash2 size={12} strokeWidth={1.5} /> {m.networks_delete_button()}
           </button>
         {/if}
       </div>
@@ -145,42 +147,42 @@
   <!-- ─── Summary tiles ─── -->
   <div class="net-detail-summary">
     <div class="ed-metric">
-      <span class="ed-metric-label">Driver</span>
+      <span class="ed-metric-label">{m.networks_driver()}</span>
       <div class="ed-metric-value net-detail-tile-text">{inspect?.Driver ?? '—'}</div>
       <span class="ed-metric-meta">{inspect?.Scope ?? ''}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Containers</span>
+      <span class="ed-metric-label">{m.common_containers()}</span>
       <div class="ed-metric-value">{attached.length || (inspectLoading ? '…' : '0')}</div>
-      <span class="ed-metric-meta">Attached</span>
+      <span class="ed-metric-meta">{m.networks_attached()}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Subnet</span>
+      <span class="ed-metric-label">{m.networks_subnet()}</span>
       <div class="ed-metric-value net-detail-tile-text">{ipamConfig[0]?.Subnet ?? '—'}</div>
-      <span class="ed-metric-meta">{ipamConfig[0]?.Gateway ? `gw ${ipamConfig[0].Gateway}` : 'no gateway'}</span>
+      <span class="ed-metric-meta">{ipamConfig[0]?.Gateway ? m.networks_gw({ gateway: ipamConfig[0].Gateway }) : m.networks_no_gateway()}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Flags</span>
+      <span class="ed-metric-label">{m.networks_flags()}</span>
       <div class="net-detail-flags-tile">
-        {#if inspect?.Internal}<span class="dm-pill dm-pill-warning net-detail-pill">internal</span>{/if}
-        {#if inspect?.Attachable}<span class="dm-pill dm-pill-neutral net-detail-pill">attachable</span>{/if}
+        {#if inspect?.Internal}<span class="dm-pill dm-pill-warning net-detail-pill">{m.networks_flag_internal()}</span>{/if}
+        {#if inspect?.Attachable}<span class="dm-pill dm-pill-neutral net-detail-pill">{m.networks_flag_attachable()}</span>{/if}
         {#if inspect?.IPv6Enabled}<span class="dm-pill dm-pill-neutral net-detail-pill">ipv6</span>{/if}
-        {#if !inspect?.Internal && !inspect?.Attachable && !inspect?.IPv6Enabled}<span class="font-mono muted">none</span>{/if}
+        {#if !inspect?.Internal && !inspect?.Attachable && !inspect?.IPv6Enabled}<span class="font-mono muted">{m.networks_flag_none()}</span>{/if}
       </div>
-      <span class="ed-metric-meta">Scope flags</span>
+      <span class="ed-metric-meta">{m.networks_scope_flags()}</span>
     </div>
   </div>
 
   <!-- ─── Tabs ─── -->
   <div class="ed-tabs net-detail-tabs">
     <button type="button" class="ed-tab" class:active={tab === 'overview'} onclick={() => (tab = 'overview')}>
-      Overview
+      {m.common_overview()}
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'containers'} onclick={() => (tab = 'containers')}>
-      Containers <span class="count">{attached.length}</span>
+      {m.common_containers()} <span class="count">{attached.length}</span>
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'ipam'} onclick={() => (tab = 'ipam')}>
-      IPAM <span class="count">{ipamConfig.length}</span>
+      {m.networks_tab_ipam()} <span class="count">{ipamConfig.length}</span>
     </button>
   </div>
 
@@ -193,31 +195,31 @@
     {:else if inspect}
       <div class="dm-card net-detail-overview">
         <dl class="net-detail-dl">
-          <dt>Name</dt>
+          <dt>{m.common_name()}</dt>
           <dd class="font-mono">{inspect.Name}</dd>
-          <dt>ID</dt>
+          <dt>{m.networks_id()}</dt>
           <dd class="net-detail-mountpoint">
             <span class="font-mono muted">{inspect.Id}</span>
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => copy(inspect.Id)} title="Copy">
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => copy(inspect.Id)} title={m.common_copy()}>
               <Copy size={11} strokeWidth={1.5} />
             </button>
           </dd>
-          <dt>Driver</dt>
+          <dt>{m.networks_driver()}</dt>
           <dd>
             <span class="dm-pill dm-pill-{driverPill(inspect.Driver)} net-detail-pill">{inspect.Driver}</span>
           </dd>
-          <dt>Scope</dt>
+          <dt>{m.networks_scope()}</dt>
           <dd class="font-mono">{inspect.Scope}</dd>
-          <dt>Created</dt>
-          <dd class="font-mono">{fmtDate(inspect.Created)}</dd>
-          <dt>Internal</dt>
-          <dd class="font-mono">{inspect.Internal ? 'yes — no external egress' : 'no'}</dd>
-          <dt>Attachable</dt>
-          <dd class="font-mono">{inspect.Attachable ? 'yes' : 'no'}</dd>
-          <dt>IPv6</dt>
-          <dd class="font-mono">{inspect.IPv6Enabled ? 'enabled' : 'disabled'}</dd>
+          <dt>{m.common_created()}</dt>
+          <dd class="font-mono">{fmtDay(inspect.Created)}</dd>
+          <dt>{m.networks_internal()}</dt>
+          <dd class="font-mono">{inspect.Internal ? m.networks_internal_yes() : m.networks_no()}</dd>
+          <dt>{m.networks_attachable()}</dt>
+          <dd class="font-mono">{inspect.Attachable ? m.networks_yes() : m.networks_no()}</dd>
+          <dt>{m.networks_ipv6()}</dt>
+          <dd class="font-mono">{inspect.IPv6Enabled ? m.networks_enabled() : m.networks_disabled()}</dd>
           {#if labelEntries.length > 0}
-            <dt>Labels</dt>
+            <dt>{m.networks_labels()}</dt>
             <dd>
               <div class="net-detail-labels">
                 {#each labelEntries as [k, v] (k)}
@@ -229,7 +231,7 @@
             </dd>
           {/if}
           {#if optionsEntries.length > 0}
-            <dt>Options</dt>
+            <dt>{m.networks_options()}</dt>
             <dd>
               <pre class="net-detail-opts font-mono">{JSON.stringify(inspect.Options, null, 2)}</pre>
             </dd>
@@ -247,12 +249,12 @@
       <div class="dm-card net-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
     {:else if attached.length === 0}
       <div class="dm-card net-detail-card-pad">
-        <EmptyState icon={Box} title="No containers attached" description="This network is currently empty. Containers attached to it will appear here with their per-network IP and MAC." />
+        <EmptyState icon={Box} title={m.networks_no_containers()} description={m.networks_no_containers_desc()} />
       </div>
     {:else}
       <div class="net-detail-container-table">
         <div class="net-detail-container-row net-detail-container-row--head">
-          <span>Name</span>
+          <span>{m.common_name()}</span>
           <span>IPv4</span>
           <span>IPv6</span>
           <span>MAC</span>
@@ -275,18 +277,18 @@
   {#if tab === 'ipam'}
     <div class="dm-card net-detail-card-pad">
       <div class="net-detail-ipam-head">
-        <Eyebrow>IPAM</Eyebrow>
-        <span class="font-mono net-detail-ipam-driver">driver: {inspect?.IPAM?.Driver ?? '—'}</span>
+        <Eyebrow>{m.networks_tab_ipam()}</Eyebrow>
+        <span class="font-mono net-detail-ipam-driver">{m.networks_ipam_driver({ driver: inspect?.IPAM?.Driver ?? '—' })}</span>
       </div>
       {#if ipamConfig.length === 0}
-        <p class="net-detail-foot font-mono">No IPAM configuration declared. Docker chose a default subnet automatically.</p>
+        <p class="net-detail-foot font-mono">{m.networks_ipam_none()}</p>
       {:else}
         <div class="net-detail-ipam-table">
           <div class="net-detail-ipam-row net-detail-ipam-row--head">
-            <span>Subnet</span>
-            <span>Gateway</span>
-            <span>IP range</span>
-            <span>Aux addresses</span>
+            <span>{m.networks_subnet()}</span>
+            <span>{m.networks_gateway()}</span>
+            <span>{m.networks_ip_range()}</span>
+            <span>{m.networks_aux_addresses()}</span>
           </div>
           {#each ipamConfig as cfg, i (i)}
             <div class="net-detail-ipam-row">
@@ -295,7 +297,7 @@
               <span class="font-mono">{cfg.IPRange ?? '—'}</span>
               <span class="font-mono">
                 {#if cfg.AuxiliaryAddresses && Object.keys(cfg.AuxiliaryAddresses).length > 0}
-                  {Object.keys(cfg.AuxiliaryAddresses).length} entries
+                  {m.networks_entries({ count: Object.keys(cfg.AuxiliaryAddresses).length })}
                 {:else}—{/if}
               </span>
             </div>
@@ -303,7 +305,7 @@
         </div>
       {/if}
       {#if inspect?.IPAM?.Options && Object.keys(inspect.IPAM.Options).length > 0}
-        <p class="net-detail-foot font-mono" style="margin-top: 14px;">IPAM options:</p>
+        <p class="net-detail-foot font-mono" style="margin-top: 14px;">{m.networks_ipam_options()}</p>
         <pre class="net-detail-opts font-mono">{JSON.stringify(inspect.IPAM.Options, null, 2)}</pre>
       {/if}
     </div>

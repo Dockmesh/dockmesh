@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { goto } from '$app/navigation';
   import { api, isFanOut } from '$lib/api';
   import { hosts } from '$lib/stores/host.svelte';
@@ -20,6 +21,15 @@
     icon: any;
   }
 
+  const GROUP: Record<string, () => string> = {
+    Pages: m.shell_pal_pages,
+    Settings: m.common_settings,
+    Actions: m.shell_pal_actions,
+    Stacks: m.common_stacks,
+    Containers: m.common_containers,
+    Hosts: m.common_hosts
+  };
+
   let q = $state('');
   let idx = $state(0);
   let objects = $state<Entry[]>([]);
@@ -38,7 +48,7 @@
       const name = (c.Names?.[0] ?? id).replace(/^\//, '');
       const stack = c.Labels?.['com.docker.compose.project'];
       const qs = c.host_id && c.host_id !== 'local' ? `?host=${encodeURIComponent(c.host_id)}` : '';
-      out.push({ group: 'Containers', label: name, sub: `${stack ? `stack ${stack}` : 'standalone'} · ${c.State ?? ''}`, href: `/containers/${id}${qs}`, icon: Box });
+      out.push({ group: 'Containers', label: name, sub: `${stack ? m.shell_pal_stack({ name: stack }) : m.ui_standalone()} · ${c.State ?? ''}`, href: `/containers/${id}${qs}`, icon: Box });
     }
     for (const h of hosts.available) out.push({ group: 'Hosts', label: h.name, sub: `${h.kind} · ${h.status}`, href: `/hosts/${encodeURIComponent(h.id)}`, icon: Server });
     objects = out;
@@ -57,10 +67,10 @@
     );
     const settings: Entry[] = SETTINGS_NAV.filter((s) => s.show()).map((s) => ({ group: 'Settings', label: s.label, sub: s.hint, href: s.href, icon: Settings }));
     const actions: Entry[] = [
-      ...(allowed('stacks.create') ? [{ group: 'Actions', label: 'New stack', sub: 'Stacks', href: '/stacks?new=1', icon: Plus }] : []),
-      { group: 'Actions', label: 'My account', sub: 'Profile, password, two-factor', href: '/account', icon: CircleUser },
-      { group: 'Actions', label: 'API tokens', sub: 'Personal access tokens', href: '/tokens', icon: KeyRound },
-      { group: 'Actions', label: 'Toggle dark / light mode', act: ontheme, icon: Sun }
+      ...(allowed('stacks.create') ? [{ group: 'Actions', label: m.shell_pal_new_stack(), sub: m.common_stacks(), href: '/stacks?new=1', icon: Plus }] : []),
+      { group: 'Actions', label: m.shell_my_account(), sub: m.shell_pal_account_sub(), href: '/account', icon: CircleUser },
+      { group: 'Actions', label: m.shell_api_tokens(), sub: m.shell_pal_tokens_sub(), href: '/tokens', icon: KeyRound },
+      { group: 'Actions', label: m.shell_pal_toggle_theme(), act: ontheme, icon: Sun }
     ];
     return [...pages, ...settings, ...actions];
   });
@@ -107,10 +117,10 @@
 
 {#if open}
   <div class="ov" use:portal role="presentation" onmousedown={(e) => e.target === e.currentTarget && (open = false)}>
-    <div class="pal" role="dialog" aria-modal="true" aria-label="Search" use:trapFocus>
+    <div class="pal" role="dialog" aria-modal="true" aria-label={m.common_search()} use:trapFocus>
       <input
         bind:value={q}
-        placeholder="Search stacks, containers, hosts, settings, actions…"
+        placeholder={m.shell_pal_placeholder()}
         autocomplete="off"
         spellcheck="false"
         role="combobox"
@@ -123,7 +133,7 @@
       <div class="list" id="pal-list" role="listbox" bind:this={list}>
         {#each results as e, i (e.group + e.label + (e.href ?? '') + i)}
           {#if i === 0 || results[i - 1].group !== e.group}
-            <div class="g" role="presentation">{e.group}</div>
+            <div class="g" role="presentation">{GROUP[e.group]?.() ?? e.group}</div>
           {/if}
           {@const Icon = e.icon}
           <div
@@ -141,7 +151,7 @@
             {#if e.sub}<small>{e.sub}</small>{/if}
           </div>
         {:else}
-          <div class="none">Nothing found</div>
+          <div class="none">{m.shell_pal_nothing()}</div>
         {/each}
       </div>
     </div>

@@ -136,6 +136,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
+			r.Put("/me/language", h.SetMyLanguage)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
 			r.Get("/users/{id}/avatar", h.GetAvatar)            // any authed user
 			r.Post("/users/{id}/avatar", h.UploadAvatar)        // self or admin (enforced inside)

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { TriangleAlert, Plus, X } from 'lucide-svelte';
   import type { TLSMode } from './_site';
   import { GROUPS, warnings, isDefault, groupOfField, type OptionsForm, type GroupKey, type HeaderRow } from './_options';
@@ -25,7 +26,7 @@
   const errGroups = $derived(new Set(Object.keys(errors).map(groupOfField).filter(Boolean) as GroupKey[]));
   const wwwPossible = $derived(!/^(www\.|\*\.)/i.test(host) && !/^[\d.:[\]]+$/.test(host));
 
-  const SECRET_HINT = 'set — leave empty to keep';
+  const SECRET_HINT = m.proxy_oe_secret_hint();
   // Keeps password managers from storing these as a Dockmesh login.
   const NO_MANAGER = { 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-bwignore': '' };
 
@@ -51,24 +52,24 @@
     <span class="lbl">{label}</span>
     {#each list as h, i (i)}
       <div class="hrow" class:nosecret={!secrets}>
-        <input class="dm-input dm-mono" bind:value={h.name} placeholder="Header-Name" aria-label="{label} name" disabled={readonly} autocomplete="off" />
+        <input class="dm-input dm-mono" bind:value={h.name} placeholder={m.proxy_oe_header_name_ph()} aria-label={m.proxy_oe_row_name({ label })} disabled={readonly} autocomplete="off" />
         {#if h.secret}
-          <input class="dm-input dm-mono" type="password" bind:value={h.value} aria-label="{label} value"
-            placeholder={h.valueSet ? SECRET_HINT : 'value'} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
+          <input class="dm-input dm-mono" type="password" bind:value={h.value} aria-label={m.proxy_oe_row_value({ label })}
+            placeholder={h.valueSet ? SECRET_HINT : m.proxy_oe_value_ph()} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
         {:else}
-          <input class="dm-input dm-mono" bind:value={h.value} placeholder="value" aria-label="{label} value" disabled={readonly} autocomplete="off" />
+          <input class="dm-input dm-mono" bind:value={h.value} placeholder={m.proxy_oe_value_ph()} aria-label={m.proxy_oe_row_value({ label })} disabled={readonly} autocomplete="off" />
         {/if}
-        {#if secrets}<label class="chk sm" title={h.secret && h.valueSet && !h.value ? 'Enter the value again to make it visible' : 'Write-only: the value is never shown again, also not in the config preview'}>
-          <input type="checkbox" bind:checked={h.secret} disabled={readonly || (h.secret && h.valueSet && !h.value)} /> Secret
+        {#if secrets}<label class="chk sm" title={h.secret && h.valueSet && !h.value ? m.proxy_oe_secret_reenter() : m.proxy_oe_secret_writeonly()}>
+          <input type="checkbox" bind:checked={h.secret} disabled={readonly || (h.secret && h.valueSet && !h.value)} /> {m.proxy_oe_secret()}
         </label>{/if}
         {#if !readonly}
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label="Remove header" onclick={() => list.splice(i, 1)}><X size={13} /></button>
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label={m.proxy_oe_remove_header()} onclick={() => list.splice(i, 1)}><X size={13} /></button>
         {/if}
       </div>
     {/each}
     {#if !readonly}
-      <button type="button" class="dm-btn dm-btn-sm" onclick={() => addHeader(list)}><Plus size={13} /> Add header</button>
-    {:else if !list.length}<span class="dm-dim">None</span>{/if}
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => addHeader(list)}><Plus size={13} /> {m.proxy_oe_add_header()}</button>
+    {:else if !list.length}<span class="dm-dim">{m.common_none()}</span>{/if}
     {@render err(field)}
   </div>
 {/snippet}
@@ -76,41 +77,41 @@
 {#snippet body(key: GroupKey)}
   {#if key === 'routing'}
     <div class="dm-field wide">
-      <label for="o-up">More upstreams</label>
-      <textarea id="o-up" class="dm-input dm-mono ta" rows="2" bind:value={form.routing.extraUpstreams} disabled={readonly} placeholder="app2:8080 (one host:port per line)"></textarea>
-      <span class="hint">Requests are shared between the site's destination and these.</span>
+      <label for="o-up">{m.proxy_oe_more_upstreams()}</label>
+      <textarea id="o-up" class="dm-input dm-mono ta" rows="2" bind:value={form.routing.extraUpstreams} disabled={readonly} placeholder={m.proxy_oe_more_upstreams_ph()}></textarea>
+      <span class="hint">{m.proxy_oe_more_upstreams_hint()}</span>
       {@render err('routing.extra_upstreams')}
     </div>
     <div class="dm-field">
-      <label for="o-lb">Load balancing</label>
+      <label for="o-lb">{m.proxy_oe_lb()}</label>
       <select id="o-lb" class="dm-input" bind:value={form.routing.lbPolicy} disabled={readonly}>
-        <option value="">Random (Caddy default)</option>
-        <option value="round_robin">Round robin</option>
-        <option value="least_conn">Fewest connections</option>
-        <option value="first">First available</option>
-        <option value="client_ip_hash">Same client, same upstream</option>
+        <option value="">{m.proxy_oe_lb_random()}</option>
+        <option value="round_robin">{m.proxy_oe_lb_round_robin()}</option>
+        <option value="least_conn">{m.proxy_oe_lb_least_conn()}</option>
+        <option value="first">{m.proxy_oe_lb_first()}</option>
+        <option value="client_ip_hash">{m.proxy_oe_lb_ip_hash()}</option>
       </select>
-      <span class="hint">How Caddy picks an upstream when there is more than one.</span>
+      <span class="hint">{m.proxy_oe_lb_hint()}</span>
       {@render err('routing.lb_policy')}
     </div>
     <div class="dm-field">
-      <label for="o-hp">Health check path</label>
+      <label for="o-hp">{m.proxy_oe_health_path()}</label>
       <input id="o-hp" class="dm-input dm-mono" bind:value={form.routing.healthPath} disabled={readonly} placeholder="/health" autocomplete="off" />
-      {@render risk('routing.health_path', 'Upstreams that fail the check get no traffic.')}
+      {@render risk('routing.health_path', m.proxy_oe_health_risk())}
       {@render err('routing.health_path')}
     </div>
     <div class="ck">
       <input id="o-www" type="checkbox" bind:checked={form.routing.wwwRedirect} disabled={readonly || (!wwwPossible && !form.routing.wwwRedirect)} />
-      {@render check('o-www', `Redirect www.${host}`, wwwPossible ? `Also answer www.${host} and send visitors on to ${host}.` : 'Not available for wildcard, IP or www. names.')}
+      {@render check('o-www', m.proxy_oe_www({ host }), wwwPossible ? m.proxy_oe_www_hint({ host }) : m.proxy_oe_www_na())}
     </div>
     {@render err('routing.www_redirect')}
   {:else if key === 'https'}
     <div class="ck">
       <input id="o-ah" type="checkbox" bind:checked={form.https.allowHTTP} disabled={readonly || tls === 'none'} />
       <span class="ck-l">
-        <label for="o-ah">Also serve plain HTTP</label>
-        <span class="hint">{tls === 'none' ? 'The site is HTTP only already.' : 'Answer on http:// too instead of redirecting to https://.'}</span>
-        {#if tls !== 'none'}{@render risk('https.allow_http', 'Traffic over http:// is not encrypted.')}{/if}
+        <label for="o-ah">{m.proxy_oe_allow_http()}</label>
+        <span class="hint">{tls === 'none' ? m.proxy_oe_allow_http_already() : m.proxy_oe_allow_http_hint()}</span>
+        {#if tls !== 'none'}{@render risk('https.allow_http', m.proxy_oe_allow_http_risk())}{/if}
       </span>
     </div>
     {@render err('https.allow_http')}
@@ -118,26 +119,26 @@
       <input id="o-hsts" type="checkbox" bind:checked={form.https.hsts} disabled={readonly || (tls === 'none' && !form.https.hsts)} />
       <span class="ck-l">
         <label for="o-hsts">HSTS</label>
-        <span class="hint">{tls === 'none' ? 'Needs HTTPS.' : 'Tell browsers to use HTTPS only for this name (one year).'}</span>
-        {@render risk('https.hsts', 'Hard to undo: browsers keep it for a year.')}
+        <span class="hint">{tls === 'none' ? m.proxy_oe_hsts_needs() : m.proxy_oe_hsts_hint()}</span>
+        {@render risk('https.hsts', m.proxy_oe_hsts_risk())}
       </span>
     </div>
     {@render err('https.hsts')}
   {:else if key === 'performance'}
     <div class="ck">
       <input id="o-fl" type="checkbox" bind:checked={form.performance.flushImmediately} disabled={readonly} />
-      {@render check('o-fl', 'Stream responses', 'Pass every chunk on at once. For server-sent events, live logs and streaming downloads.')}
+      {@render check('o-fl', m.proxy_oe_stream(), m.proxy_oe_stream_hint())}
     </div>
     <div class="ck">
       <input id="o-br" type="checkbox" bind:checked={form.performance.bufferRequests} disabled={readonly} />
       <span class="ck-l">
-        <label for="o-br">Buffer uploads</label>
-        <span class="hint">Read up to 4 MiB of a request before sending it on. Off streams uploads straight through.</span>
-        {@render risk('performance.buffer_requests', 'Uses memory for every request.')}
+        <label for="o-br">{m.proxy_oe_buffer()}</label>
+        <span class="hint">{m.proxy_oe_buffer_hint()}</span>
+        {@render risk('performance.buffer_requests', m.proxy_oe_buffer_risk())}
       </span>
     </div>
     <div class="grid3">
-      {#each [['o-dt', 'Connect timeout', 'dialTimeout', 'performance.dial_timeout', '10s'], ['o-rt', 'Read timeout', 'readTimeout', 'performance.read_timeout', 'no limit'], ['o-wt', 'Write timeout', 'writeTimeout', 'performance.write_timeout', 'no limit']] as [id, label, k, field, ph] (id)}
+      {#each [['o-dt', m.proxy_oe_dial_timeout(), 'dialTimeout', 'performance.dial_timeout', '10s'], ['o-rt', m.proxy_oe_read_timeout(), 'readTimeout', 'performance.read_timeout', m.proxy_oe_no_limit()], ['o-wt', m.proxy_oe_write_timeout(), 'writeTimeout', 'performance.write_timeout', m.proxy_oe_no_limit()]] as [id, label, k, field, ph] (id)}
         <div class="dm-field">
           <label for={id}>{label}</label>
           <input {id} class="dm-input dm-mono" bind:value={form.performance[k as 'dialTimeout']} disabled={readonly} placeholder={ph} autocomplete="off" />
@@ -145,88 +146,88 @@
         </div>
       {/each}
     </div>
-    <span class="hint">Durations like 30s, 5m or 1h (up to 168h). Empty keeps Caddy's default; long-running requests need a longer read timeout.</span>
+    <span class="hint">{m.proxy_oe_timeouts_hint()}</span>
     <div class="grid3">
       <div class="dm-field">
-        <label for="o-mb">Largest upload</label>
+        <label for="o-mb">{m.proxy_oe_max_body()}</label>
         <div class="size">
-          <input id="o-mb" class="dm-input dm-num" inputmode="decimal" bind:value={form.performance.maxBody} disabled={readonly} placeholder="no limit" autocomplete="off" />
-          <select class="dm-input" bind:value={form.performance.maxBodyUnit} disabled={readonly} aria-label="Unit">
-            <option value="B">bytes</option><option value="MB">MB</option><option value="GB">GB</option>
+          <input id="o-mb" class="dm-input dm-num" inputmode="decimal" bind:value={form.performance.maxBody} disabled={readonly} placeholder={m.proxy_oe_no_limit()} autocomplete="off" />
+          <select class="dm-input" bind:value={form.performance.maxBodyUnit} disabled={readonly} aria-label={m.proxy_oe_unit()}>
+            <option value="B">{m.proxy_oe_bytes()}</option><option value="MB">MB</option><option value="GB">GB</option>
           </select>
         </div>
-        <span class="hint">Bigger requests get 413. Empty or 0: no limit.</span>
+        <span class="hint">{m.proxy_oe_max_body_hint()}</span>
         {@render err('performance.max_body_bytes')}
       </div>
       <div class="dm-field">
-        <label for="o-sc">Keep streams on reload</label>
-        <input id="o-sc" class="dm-input dm-mono" bind:value={form.performance.streamCloseDelay} disabled={readonly} placeholder="close at once" autocomplete="off" />
-        <span class="hint">WebSockets stay open this long after a config change, e.g. 5m.</span>
+        <label for="o-sc">{m.proxy_oe_stream_close()}</label>
+        <input id="o-sc" class="dm-input dm-mono" bind:value={form.performance.streamCloseDelay} disabled={readonly} placeholder={m.proxy_oe_stream_close_ph()} autocomplete="off" />
+        <span class="hint">{m.proxy_oe_stream_close_hint()}</span>
         {@render err('performance.stream_close_delay')}
       </div>
     </div>
     <div class="ck">
       <input id="o-cz" type="checkbox" bind:checked={form.performance.compression} disabled={readonly} />
-      {@render check('o-cz', 'Compress responses', 'zstd or gzip, when the browser supports it.')}
+      {@render check('o-cz', m.proxy_oe_compress(), m.proxy_oe_compress_hint())}
     </div>
   {:else if key === 'access'}
     <div class="dm-field wide">
-      <span class="lbl">Password protection</span>
+      <span class="lbl">{m.proxy_oe_password()}</span>
       {#each form.access.users as u, i (i)}
         <div class="hrow">
-          <input class="dm-input" bind:value={u.username} placeholder="user name" aria-label="User name" disabled={readonly} autocomplete="off" />
-          <input class="dm-input" type="password" bind:value={u.password} aria-label="Password for {u.username || 'new user'}"
-            placeholder={u.stored ? SECRET_HINT : 'password, 8 characters or more'} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
+          <input class="dm-input" bind:value={u.username} placeholder={m.proxy_oe_username_ph()} aria-label={m.proxy_oe_username()} disabled={readonly} autocomplete="off" />
+          <input class="dm-input" type="password" bind:value={u.password} aria-label={m.proxy_oe_password_for({ user: u.username || m.proxy_oe_new_user() })}
+            placeholder={u.stored ? SECRET_HINT : m.proxy_oe_password_ph()} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
           {#if !readonly}
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label="Remove user" onclick={() => form.access.users.splice(i, 1)}><X size={13} /></button>
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label={m.proxy_oe_remove_user()} onclick={() => form.access.users.splice(i, 1)}><X size={13} /></button>
           {/if}
         </div>
       {/each}
       {#if !readonly}
-        <button type="button" class="dm-btn dm-btn-sm" onclick={() => form.access.users.push({ username: '', password: '', stored: false })}><Plus size={13} /> Add user</button>
-      {:else if !form.access.users.length}<span class="dm-dim">Off</span>{/if}
-      <span class="hint">Browsers ask for one of these logins. Passwords are stored as hashes and never shown.</span>
+        <button type="button" class="dm-btn dm-btn-sm" onclick={() => form.access.users.push({ username: '', password: '', stored: false })}><Plus size={13} /> {m.proxy_oe_add_user()}</button>
+      {:else if !form.access.users.length}<span class="dm-dim">{m.common_off()}</span>{/if}
+      <span class="hint">{m.proxy_oe_password_hint()}</span>
       {#if warn['access.basic_auth']}{@render risk('access.basic_auth', '')}{/if}
       {@render err('access.basic_auth')}
     </div>
     <div class="dm-field">
-      <label for="o-ipm">IP addresses</label>
+      <label for="o-ipm">{m.proxy_oe_ip()}</label>
       <select id="o-ipm" class="dm-input" bind:value={form.access.ipMode} disabled={readonly}>
-        <option value="">Everyone</option>
-        <option value="allow">Only the addresses below</option>
-        <option value="deny">Everyone except the addresses below</option>
+        <option value="">{m.proxy_oe_ip_everyone()}</option>
+        <option value="allow">{m.proxy_oe_ip_allow()}</option>
+        <option value="deny">{m.proxy_oe_ip_deny()}</option>
       </select>
       {#if form.access.ipMode === 'allow'}{@render risk('access.ip_mode', '')}{/if}
       {@render err('access.ip_mode')}
     </div>
     {#if form.access.ipMode}
       <div class="dm-field wide">
-        <label for="o-ipr">Addresses</label>
-        <textarea id="o-ipr" class="dm-input dm-mono ta" rows="3" bind:value={form.access.ipRanges} disabled={readonly} placeholder="192.168.10.0/24 (one address or range per line)"></textarea>
-        <span class="hint">Others get 403. Behind a CDN, set it under Trusted proxies so the real client address is used.</span>
+        <label for="o-ipr">{m.proxy_oe_addresses()}</label>
+        <textarea id="o-ipr" class="dm-input dm-mono ta" rows="3" bind:value={form.access.ipRanges} disabled={readonly} placeholder={m.proxy_oe_addresses_ph()}></textarea>
+        <span class="hint">{m.proxy_oe_addresses_hint()}</span>
         {@render err('access.ip_ranges')}
       </div>
     {/if}
     <div class="ck">
       <input id="o-fa" type="checkbox" bind:checked={form.access.forwardAuth} disabled={readonly} />
       <span class="ck-l">
-        <label for="o-fa">Ask an auth service first</label>
-        <span class="hint">Forward auth, e.g. Authelia or Authentik: a 2xx answer lets the request through.</span>
-        {@render risk('access.forward_auth', 'The site depends on the auth service.')}
+        <label for="o-fa">{m.proxy_oe_fa()}</label>
+        <span class="hint">{m.proxy_oe_fa_hint()}</span>
+        {@render risk('access.forward_auth', m.proxy_oe_fa_risk())}
       </span>
     </div>
     {#if form.access.forwardAuth}
       <div class="dm-field wide">
-        <label for="o-fau">Auth service URL</label>
+        <label for="o-fau">{m.proxy_oe_fa_url()}</label>
         <input id="o-fau" class="dm-input dm-mono" bind:value={form.access.forwardAuthURL} disabled={readonly} placeholder="http://authelia:9091/api/verify" autocomplete="off" />
         {#if form.access.querySet}
-          <span class="hint">{form.access.clearQuery ? 'The stored query is removed on save.' : 'A query is set and kept; it is never shown. Type a URL with a new query to replace it.'}</span>
-          {#if !readonly}<label class="chk sm"><input type="checkbox" bind:checked={form.access.clearQuery} /> Remove the stored query</label>{/if}
+          <span class="hint">{form.access.clearQuery ? m.proxy_oe_fa_query_removed() : m.proxy_oe_fa_query_kept()}</span>
+          {#if !readonly}<label class="chk sm"><input type="checkbox" bind:checked={form.access.clearQuery} /> {m.proxy_oe_fa_query_remove()}</label>{/if}
         {/if}
         {@render err('access.forward_auth.url')}
       </div>
       <div class="dm-field wide">
-        <label for="o-fah">Copy headers from the answer</label>
+        <label for="o-fah">{m.proxy_oe_fa_copy()}</label>
         <input id="o-fah" class="dm-input dm-mono" bind:value={form.access.copyHeaders} disabled={readonly} placeholder="Remote-User, Remote-Groups" autocomplete="off" />
         {@render err('access.forward_auth.copy_headers')}
       </div>
@@ -234,25 +235,25 @@
   {:else if key === 'headers'}
     <div class="ck">
       <input id="o-sh" type="checkbox" bind:checked={form.headers.security} disabled={readonly} />
-      {@render check('o-sh', 'Security headers', 'nosniff, SAMEORIGIN frames and a strict referrer policy.')}
+      {@render check('o-sh', m.proxy_oe_security(), m.proxy_oe_security_hint())}
     </div>
-    {@render headerRows(form.headers.requestSet, 'headers.request_set', 'Set on requests to the upstream', true)}
+    {@render headerRows(form.headers.requestSet, 'headers.request_set', m.proxy_oe_req_set(), true)}
     <div class="dm-field wide">
-      <label for="o-rqr">Remove from requests</label>
+      <label for="o-rqr">{m.proxy_oe_req_remove()}</label>
       <input id="o-rqr" class="dm-input dm-mono" bind:value={form.headers.requestRemove} disabled={readonly} placeholder="X-Debug, Cookie" autocomplete="off" />
       {@render err('headers.request_remove')}
     </div>
-    {@render headerRows(form.headers.responseSet, 'headers.response_set', 'Set on responses to visitors', false)}
+    {@render headerRows(form.headers.responseSet, 'headers.response_set', m.proxy_oe_resp_set(), false)}
     <div class="dm-field wide">
-      <label for="o-rsr">Remove from responses</label>
+      <label for="o-rsr">{m.proxy_oe_resp_remove()}</label>
       <input id="o-rsr" class="dm-input dm-mono" bind:value={form.headers.responseRemove} disabled={readonly} placeholder="Server, X-Powered-By" autocomplete="off" />
       {@render err('headers.response_remove')}
     </div>
-    <span class="hint">Mark request header values like API keys as secret: they are stored but never shown again, and have to be entered again when the site gets another upstream.</span>
+    <span class="hint">{m.proxy_oe_secret_note()}</span>
   {:else if key === 'logs'}
     <div class="ck">
       <input id="o-al" type="checkbox" bind:checked={form.logs.accessLog} disabled={readonly} />
-      {@render check('o-al', 'Access log', "One line per request in the proxy container's log.")}
+      {@render check('o-al', m.proxy_oe_access_log(), m.proxy_oe_access_log_hint())}
     </div>
   {/if}
 {/snippet}
@@ -262,15 +263,15 @@
     {@const def = isDefault(form, g.key)}
     {#if collapsible}
       <details class="grp" open={!def || errGroups.has(g.key)}>
-        <summary><b>{g.label}</b> <span class="dm-dim">{def ? 'Caddy defaults' : 'changed'}</span>{#if errGroups.has(g.key)}<span class="ferr"> · check this group</span>{/if}</summary>
+        <summary><b>{g.label}</b> <span class="dm-dim">{def ? m.proxy_oe_defaults() : m.proxy_oe_changed()}</span>{#if errGroups.has(g.key)}<span class="ferr"> · {m.proxy_oe_check_group()}</span>{/if}</summary>
         <div class="fields">{@render body(g.key)}</div>
       </details>
     {:else}
       <div class="dm-form-sec" id="opt-{g.key}">
         <div>
-          <h4>{g.label}{#if errGroups.has(g.key)} <span class="ferr">· check this group</span>{/if}</h4>
+          <h4>{g.label}{#if errGroups.has(g.key)} <span class="ferr">· {m.proxy_oe_check_group()}</span>{/if}</h4>
           <p>{g.hint}</p>
-          {#if def}<p class="dm-dim">Caddy defaults</p>{/if}
+          {#if def}<p class="dm-dim">{m.proxy_oe_defaults()}</p>{/if}
         </div>
         <div class="fields">{@render body(g.key)}</div>
       </div>

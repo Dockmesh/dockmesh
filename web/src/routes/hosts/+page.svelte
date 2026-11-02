@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
+  import { hostStatusLabel } from '$lib/labels';
   import { onMount, onDestroy } from 'svelte';
   import { tagProblem } from './_host';
   import { fmtAgo, fmtMem, pctTone } from '$lib/format';
-  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, m.common_never());
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
@@ -99,21 +101,21 @@
     const offline = rows.filter((r) => r.status === 'offline');
     let cores = 0;
     let mem = 0;
-    for (const m of Object.values(metricsByHost)) {
-      if (!m) continue;
-      cores += m.cores;
-      mem += m.memTotal;
+    for (const mt of Object.values(metricsByHost)) {
+      if (!mt) continue;
+      cores += mt.cores;
+      mem += mt.memTotal;
     }
     const containers = Object.values(containerCounts).reduce((a, n) => a + n, 0);
     return [
       {
-        label: 'Online',
-        value: `${counts.online} of ${counts.all}`,
-        note: offline.length ? offline.map((r) => r.name).join(', ') + ' offline' : counts.pending ? `${counts.pending} pending` : '',
+        label: m.common_online(),
+        value: m.hosts_n_of_m({ n: counts.online, total: counts.all }),
+        note: offline.length ? m.hosts_names_offline({ names: offline.map((r) => r.name).join(', ') }) : counts.pending ? m.hosts_n_pending({ n: counts.pending }) : '',
         tone: offline.length ? ('bad' as const) : ('' as const)
       },
-      { label: 'Containers', value: containers },
-      { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${fmtMem(mem)}` : '—' }
+      { label: m.common_containers(), value: containers },
+      { label: m.hosts_total_capacity(), value: cores ? `${m.hosts_cores({ n: Math.round(cores) })} · ${fmtMem(mem)}` : '—' }
     ];
   });
 
@@ -135,9 +137,9 @@
           api.hosts.listTags(id).then((t) => (hostTags[id] = t)).catch(() => (hostTags[id] = [])),
           api.system
             .metrics(id)
-            .then((m) => {
-              if (!isFanOut(m)) {
-                metricsByHost[id] = { cpu: m.cpu_percent, cores: m.cpu_cores, memUsed: m.mem_used, memTotal: m.mem_total, disk: m.disk_percent ?? 0 };
+            .then((mt) => {
+              if (!isFanOut(mt)) {
+                metricsByHost[id] = { cpu: mt.cpu_percent, cores: mt.cpu_cores, memUsed: mt.mem_used, memTotal: mt.mem_total, disk: mt.disk_percent ?? 0 };
               }
             })
             .catch(() => (metricsByHost[id] = null)),
@@ -146,7 +148,7 @@
       );
       lastLoaded = Date.now();
     } catch (err) {
-      toast.error('Failed to load hosts', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
       refreshing = false;
@@ -177,10 +179,10 @@
     upgradingId = id;
     try {
       const res = await api.agents.upgrade(id);
-      toast.success('Upgrade dispatched', `${name} → ${fmtVersion(res.version)}`);
+      toast.success(m.hosts_upgrade_dispatched(), `${name} → ${fmtVersion(res.version)}`);
       await loadAll();
     } catch (err) {
-      toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_upgrade_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       upgradingId = null;
     }
@@ -189,33 +191,33 @@
   async function revokeHost(r: Row) {
     if (r.kind === 'local') return;
     if (!(await confirm.ask({
-      title: `Revoke ${r.name}`,
-      message: `Revoke host "${r.name}"?`,
-      body: 'The host’s agent certificate is invalidated. Containers running there are forgotten by Dockmesh — they keep running on the host until you stop them manually. You can re-enroll later by running the install script again.',
-      confirmLabel: 'Revoke', danger: true, typeToConfirm: r.name
+      title: m.hosts_revoke_title({ name: r.name }),
+      message: m.hosts_revoke_message({ name: r.name }),
+      body: m.hosts_revoke_body(),
+      confirmLabel: m.hosts_revoke(), danger: true, typeToConfirm: r.name
     }))) return;
     try {
       await api.agents.delete(r.id);
-      toast.success('Revoked', r.name);
+      toast.success(m.hosts_revoked(), r.name);
       await loadAll();
     } catch (err) {
-      toast.error('Revoke failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_revoke_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function copyEnrollURL() {
     // The install URL is not stored after creation; a fresh token comes
     // from the host's Maintenance tab.
-    await copyWithToast(`${window.location.origin}/api/v1/agents/enroll`, 'Enrollment URL copied');
+    await copyWithToast(`${window.location.origin}/api/v1/agents/enroll`, m.hosts_enroll_url_copied());
   }
 
   async function runPolicy() {
     try {
       upgradePolicy = await api.agents.runUpgradePolicy();
-      toast.success('Evaluation triggered');
+      toast.success(m.hosts_evaluation_triggered());
       await loadAll();
     } catch (e) {
-      toast.error('Failed', e instanceof ApiError ? e.message : undefined);
+      toast.error(m.common_failed(), e instanceof ApiError ? e.message : undefined);
     }
   }
 
@@ -230,13 +232,13 @@
     }
     bulkBusy = false;
     selected = new Set();
-    toast[fail === 0 ? 'success' : 'info'](`${ok} upgraded`, fail > 0 ? `${fail} failed` : undefined);
+    toast[fail === 0 ? 'success' : 'info'](m.hosts_n_upgraded({ n: ok }), fail > 0 ? m.hosts_n_failed({ n: fail }) : undefined);
     await loadAll();
   }
   async function bulkRevoke() {
     if (!(await confirm.ask({
-      title: 'Revoke selected hosts', message: `Revoke ${selected.size} host${selected.size === 1 ? '' : 's'}?`,
-      body: 'Each host’s agent certificate is invalidated. Their containers keep running but are no longer managed.', confirmLabel: 'Revoke', danger: true
+      title: m.hosts_revoke_selected_title(), message: m.hosts_revoke_selected_message({ count: selected.size }),
+      body: m.hosts_revoke_selected_body(), confirmLabel: m.hosts_revoke(), danger: true
     }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
@@ -246,7 +248,7 @@
     }
     bulkBusy = false;
     selected = new Set();
-    toast[fail === 0 ? 'success' : 'info'](`${ok} revoked`, fail > 0 ? `${fail} failed` : undefined);
+    toast[fail === 0 ? 'success' : 'info'](m.hosts_n_revoked({ n: ok }), fail > 0 ? m.hosts_n_failed({ n: fail }) : undefined);
     await loadAll();
   }
 
@@ -270,19 +272,19 @@
     tagsBusy = true;
     try {
       hostTags[tagsHostId] = await api.hosts.setTags(tagsHostId, tagsDraft);
-      toast.success('Tags saved');
+      toast.success(m.hosts_tags_saved());
       tagsOpen = false;
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally { tagsBusy = false; }
   }
 
   function fmtUptime(iso?: string): string {
     if (!iso) return '';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 3600) return `up ${Math.max(1, Math.round(d / 60))} min`;
-    if (d < 86400) return `up ${Math.round(d / 3600)} h`;
-    return `up ${Math.round(d / 86400)} d`;
+    if (d < 3600) return m.hosts_up_min({ n: Math.max(1, Math.round(d / 60)) });
+    if (d < 86400) return m.hosts_up_h({ n: Math.round(d / 3600) });
+    return m.hosts_up_d({ n: Math.round(d / 86400) });
   }
   function dotTone(s: string): string {
     if (s === 'online') return 'ok';
@@ -293,16 +295,16 @@
 
   function rowMenu(r: Row): MenuItem[] {
     const items: MenuItem[] = [
-      { label: 'Open', kbd: '↵', href: `/hosts/${r.id}` },
+      { label: m.common_open(), kbd: '↵', href: `/hosts/${r.id}` },
       { separator: true },
-      { label: 'Edit tags', onclick: () => openTagsModal(r.id) }
+      { label: m.hosts_edit_tags(), onclick: () => openTagsModal(r.id) }
     ];
     if (r.kind === 'agent') {
       if (needsUpgrade(r)) {
-        items.push({ label: upgradingId === r.id ? 'Upgrading…' : 'Upgrade agent', disabled: upgradingId === r.id, onclick: () => upgradeHost(r.id, r.name) });
+        items.push({ label: upgradingId === r.id ? m.hosts_upgrading() : m.hosts_upgrade_agent(), disabled: upgradingId === r.id, onclick: () => upgradeHost(r.id, r.name) });
       }
-      items.push({ label: 'Copy enrollment URL', onclick: copyEnrollURL });
-      items.push({ separator: true }, { label: 'Revoke…', danger: true, onclick: () => revokeHost(r) });
+      items.push({ label: m.hosts_copy_enroll_url(), onclick: copyEnrollURL });
+      items.push({ separator: true }, { label: m.hosts_revoke_ellipsis(), danger: true, onclick: () => revokeHost(r) });
     }
     return items;
   }
@@ -312,19 +314,19 @@
 
 <section class="dm-page">
   {#if !allowed('hosts.update') && !allowed('hosts.view')}
-    <EmptyState icon={Server} title="No access" description="Host management needs the hosts.view permission." />
+    <EmptyState icon={Server} title={m.hosts_no_access()} description={m.hosts_no_access_hint()} />
   {:else}
     <div class="dm-ph">
-      <h1>Hosts</h1>
+      <h1>{m.common_hosts()}</h1>
       <span class="dm-sub dm-num">{counts.all}</span>
       {#if tagFilter}
-        <span class="tagf">tag: {tagFilter}<button type="button" onclick={() => (tagFilter = null)} aria-label="Clear tag filter"><X size={11} /></button></span>
+        <span class="tagf">{m.hosts_tag_filter({ tag: tagFilter })}<button type="button" onclick={() => (tagFilter = null)} aria-label={m.hosts_clear_tag_filter()}><X size={11} /></button></span>
       {/if}
       <span class="dm-sp"></span>
       <LiveIndicator updatedAt={lastLoaded} onrefresh={loadAll} busy={refreshing} />
       {#if allowed('hosts.create')}
         <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}>
-          <Plus size={14} strokeWidth={2} /> Add host
+          <Plus size={14} strokeWidth={2} /> {m.hosts_add()}
         </button>
       {/if}
     </div>
@@ -337,14 +339,14 @@
       <div class="policy" role="status">
         <RefreshCw size={14} strokeWidth={1.8} />
         <span class="dm-trunc">
-          <b>{upgradePolicy.connected_pending} {upgradePolicy.connected_pending === 1 ? 'agent is' : 'agents are'} behind the server ({fmtVersion(upgradePolicy.server_version)}).</b>
+          <b>{m.hosts_policy_behind({ count: upgradePolicy.connected_pending, version: fmtVersion(upgradePolicy.server_version) })}</b>
           <span class="dm-dim">
-            {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up to date · policy {upgradePolicy.mode}{upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent ? ` ${upgradePolicy.stage_percent} %` : ''}{upgradePolicy.last_run_at ? ` · last run ${fmtAgoNever(upgradePolicy.last_run_at)}` : ''}
+            {m.hosts_policy_up_to_date({ n: upgradePolicy.connected_up_to_date, total: upgradePolicy.connected_total })} · {m.hosts_policy_mode({ mode: upgradePolicy.mode })}{upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent ? ` ${upgradePolicy.stage_percent} %` : ''}{upgradePolicy.last_run_at ? ` · ${m.hosts_policy_last_run({ ago: fmtAgoNever(upgradePolicy.last_run_at) })}` : ''}
           </span>
         </span>
         <span class="dm-sp"></span>
         {#if upgradePolicy.mode !== 'manual'}
-          <button type="button" class="dm-btn dm-btn-sm" onclick={runPolicy}>Run policy now</button>
+          <button type="button" class="dm-btn dm-btn-sm" onclick={runPolicy}>{m.hosts_run_policy()}</button>
         {/if}
       </div>
     {/if}
@@ -352,26 +354,26 @@
     {#if !loading && rows.length > 0}
       <div class="dm-toolbar">
         <Segmented
-          label="Filter hosts"
+          label={m.hosts_filter()}
           bind:value={filter}
           options={[
-            { key: 'all', label: 'All', count: counts.all },
-            { key: 'online', label: 'Online', count: counts.online },
-            { key: 'offline', label: 'Offline', count: counts.offline },
-            { key: 'pending', label: 'Pending', count: counts.pending },
-            { key: 'agents', label: 'Agents', count: counts.agents }
+            { key: 'all', label: m.common_all(), count: counts.all },
+            { key: 'online', label: m.common_online(), count: counts.online },
+            { key: 'offline', label: m.common_offline(), count: counts.offline },
+            { key: 'pending', label: m.hosts_pending_label(), count: counts.pending },
+            { key: 'agents', label: m.common_agents(), count: counts.agents }
           ]}
         />
         {#if selected.size > 0}
           <span class="bulk">
-            <span class="dm-num">{selected.size} selected</span>
-            <button type="button" class="dm-btn dm-btn-sm" disabled={bulkBusy} onclick={bulkUpgrade}>Upgrade</button>
-            <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" disabled={bulkBusy} onclick={bulkRevoke}>Revoke…</button>
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (selected = new Set())}>Clear</button>
+            <span class="dm-num">{m.hosts_selected({ n: selected.size })}</span>
+            <button type="button" class="dm-btn dm-btn-sm" disabled={bulkBusy} onclick={bulkUpgrade}>{m.hosts_upgrade()}</button>
+            <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" disabled={bulkBusy} onclick={bulkRevoke}>{m.hosts_revoke_ellipsis()}</button>
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (selected = new Set())}>{m.hosts_clear()}</button>
           </span>
         {/if}
         <span class="dm-sp"></span>
-        <input type="search" class="dm-filter" placeholder="Filter by name, hostname or tag…" aria-label="Filter hosts" bind:value={search} style="width: 260px" />
+        <input type="search" class="dm-filter" placeholder={m.hosts_filter_ph()} aria-label={m.hosts_filter()} bind:value={search} style="width: 260px" />
       </div>
     {/if}
 
@@ -382,32 +384,32 @@
         {/each}
       </div>
     {:else if filteredRows.length === 0}
-      <EmptyState icon={Server} title="No hosts match" description={search || filter !== 'all' || tagFilter ? 'Change the filter or search.' : 'Add a remote host to spread workload.'}>
+      <EmptyState icon={Server} title={m.hosts_no_match()} description={search || filter !== 'all' || tagFilter ? m.hosts_no_match_hint() : m.hosts_empty_hint()}>
         {#snippet action()}
           {#if allowed('hosts.create')}
-            <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}><Plus size={14} strokeWidth={2} /> Add host</button>
+            <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}><Plus size={14} strokeWidth={2} /> {m.hosts_add()}</button>
           {/if}
         {/snippet}
       </EmptyState>
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Hosts">
+      <div class="dm-tbl" role="table" aria-label={m.common_hosts()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
-          <span role="columnheader"><input type="checkbox" aria-label="Select all" checked={selected.size > 0 && selected.size === selectable.length} onchange={toggleAll} /></span>
+          <span role="columnheader"><input type="checkbox" aria-label={m.hosts_select_all()} checked={selected.size > 0 && selected.size === selectable.length} onchange={toggleAll} /></span>
           <span role="columnheader"></span>
-          <span role="columnheader">Host</span>
-          <span role="columnheader">Kind</span>
+          <span role="columnheader">{m.common_host()}</span>
+          <span role="columnheader">{m.hosts_col_kind()}</span>
           <span role="columnheader">CPU</span>
-          <span role="columnheader">Memory</span>
-          <span role="columnheader">Disk</span>
-          <span role="columnheader">Agent</span>
-          <span role="columnheader">Tags</span>
+          <span role="columnheader">{m.hosts_col_memory()}</span>
+          <span role="columnheader">{m.hosts_col_disk()}</span>
+          <span role="columnheader">{m.common_agent()}</span>
+          <span role="columnheader">{m.hosts_col_tags()}</span>
           <span role="columnheader"></span>
         </div>
         {#each filteredRows as r (r.id)}
-          {@const m = metricsByHost[r.id]}
-          {@const memPct = m && m.memTotal > 0 ? Math.round((m.memUsed / m.memTotal) * 100) : null}
-          {@const cpuPct = m ? Math.round(m.cpu) : null}
-          {@const diskPct = m ? Math.round(m.disk) : null}
+          {@const hm = metricsByHost[r.id]}
+          {@const memPct = hm && hm.memTotal > 0 ? Math.round((hm.memUsed / hm.memTotal) * 100) : null}
+          {@const cpuPct = hm ? Math.round(hm.cpu) : null}
+          {@const diskPct = hm ? Math.round(hm.disk) : null}
           {@const tags = hostTags[r.id] ?? []}
           {@const online = r.status === 'online'}
           <div
@@ -420,26 +422,26 @@
             onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/hosts/${r.id}`); }}
           >
             <span role="cell">
-              <input type="checkbox" aria-label="Select {r.name}" disabled={r.kind === 'local'} checked={selected.has(r.id)}
+              <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
                 onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={r.status}></span></span>
+            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
               <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
               <small>
                 {#if r.status === 'offline'}
-                  <span class="off">offline · last seen {fmtAgoNever(r.last_seen_at)}</span>
+                  <span class="off">{m.hosts_offline_last_seen({ ago: fmtAgoNever(r.last_seen_at) })}</span>
                 {:else if r.status === 'pending'}
-                  waiting for the agent to connect
+                  {m.hosts_waiting_for_agent()}
                 {:else}
-                  {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {containerCounts[r.id] ?? '—'} containers{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
+                  {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
                 {/if}
               </small>
             </span>
-            <span role="cell" class="dm-dim">{r.kind}</span>
-            {#if online && m}
+            <span role="cell" class="dm-dim">{r.kind === 'local' ? m.hosts_kind_local() : m.hosts_kind_agent()}</span>
+            {#if online && hm}
               <span role="cell" class="mbar"><i><b class={pctTone(cpuPct ?? 0)} style="width:{Math.min(100, cpuPct ?? 0)}%"></b></i><span class="dm-num">{cpuPct}%</span></span>
-              <span role="cell" class="mbar" title={memPct != null ? `${fmtMem(m.memUsed)} of ${fmtMem(m.memTotal)}` : 'unavailable'}>
+              <span role="cell" class="mbar" title={memPct != null ? m.hosts_mem_of({ used: fmtMem(hm.memUsed), total: fmtMem(hm.memTotal) }) : m.hosts_unavailable()}>
                 {#if memPct != null}<i><b class={pctTone(memPct, 80)} style="width:{Math.min(100, memPct)}%"></b></i><span class="dm-num">{memPct}%</span>{:else}<span class="dm-num dm-dim">—</span>{/if}
               </span>
               <span role="cell" class="mbar"><i><b class={pctTone(diskPct ?? 0, 80)} style="width:{Math.min(100, diskPct ?? 0)}%"></b></i><span class="dm-num">{diskPct}%</span></span>
@@ -448,7 +450,7 @@
               <span role="cell" class="dm-num dm-dim">—</span>
               <span role="cell" class="dm-num dm-dim">—</span>
             {/if}
-            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'Older protocol: some features need an upgrade' : ''].filter(Boolean).join(' · ')}>
+            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? m.hosts_server_is_on({ version: fmtVersion(upgradePolicy?.server_version) }) : r.update_recommended ? m.hosts_older_protocol() : ''].filter(Boolean).join(' · ')}>
               {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
             </span>
             <span role="cell" class="tagcell">
@@ -462,7 +464,7 @@
             </span>
             <span role="cell" class="dm-tr-menu">
               <span role="presentation" onclick={(e) => e.stopPropagation()}>
-                <Menu label="Actions for {r.name}" items={rowMenu(r)} />
+                <Menu label={m.hosts_actions_for({ name: r.name })} items={rowMenu(r)} />
               </span>
             </span>
           </div>
@@ -482,34 +484,34 @@
   {/await}
 {/if}
 
-<Modal bind:open={tagsOpen} title="Tags · {rows.find((r) => r.id === tagsHostId)?.name ?? ''}" maxWidth="max-w-lg">
+<Modal bind:open={tagsOpen} title={m.hosts_tags_title({ name: rows.find((r) => r.id === tagsHostId)?.name ?? '' })} maxWidth="max-w-lg">
   <div class="tagsdlg">
-    <p class="dm-sub">Tags group hosts and can limit which hosts a user sees. <InfoTip text="Used for filtering and for host scopes of users and roles. Lowercase letters, digits and hyphens, at most 20 tags." /></p>
+    <p class="dm-sub">{m.hosts_tags_intro()} <InfoTip text={m.hosts_tags_tip()} /></p>
     <div class="tagedit">
       {#each tagsDraft as t (t)}
-        <span class="tagx"><TagPill label={t} /><button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button></span>
+        <span class="tagx"><TagPill label={t} /><button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label={m.hosts_remove_tag({ tag: t })}><X size={11} /></button></span>
       {/each}
       <input
         type="text"
         class="dm-filter"
-        placeholder={tagsDraft.length === 0 ? 'edge, production…' : 'add tag'}
-        aria-label="Add tag"
+        placeholder={tagsDraft.length === 0 ? m.hosts_tags_ph() : m.hosts_add_tag_ph()}
+        aria-label={m.hosts_add_tag()}
         bind:value={tagInput}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
       />
     </div>
     {#if tagSuggestions.filter((s) => !tagsDraft.includes(s)).length > 0}
       <div class="suggest">
-        <span class="dm-dim">In use:</span>
+        <span class="dm-dim">{m.hosts_in_use()}</span>
         {#each tagSuggestions.filter((s) => !tagsDraft.includes(s)) as s (s)}
-          <TagPill label={s} onclick={addTagDraft} title="Add {s}" />
+          <TagPill label={s} onclick={addTagDraft} title={m.hosts_add_tag_named({ tag: s })} />
         {/each}
       </div>
     {/if}
   </div>
   {#snippet footer()}
-    <button type="button" class="dm-btn" onclick={() => (tagsOpen = false)}>Cancel</button>
-    <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy} onclick={saveTags}>{tagsBusy ? 'Saving…' : 'Save tags'}</button>
+    <button type="button" class="dm-btn" onclick={() => (tagsOpen = false)}>{m.common_cancel()}</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy} onclick={saveTags}>{tagsBusy ? m.common_saving() : m.hosts_save_tags()}</button>
   {/snippet}
 </Modal>
 

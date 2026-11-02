@@ -8,6 +8,8 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
   import { Waypoints, Minus, Plus } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
 
   type Route = { id: number; host: string; upstream: string; enabled: boolean };
 
@@ -39,8 +41,8 @@
   // A container is "behind the proxy" when an enabled route points at one
   // of its published host ports (Caddy runs with host networking).
   function upstreamPort(u: string): number | null {
-    const m = u.match(/:(\d+)(?:\/.*)?$/);
-    return m ? Number(m[1]) : null;
+    const mt = u.match(/:(\d+)(?:\/.*)?$/);
+    return mt ? Number(mt[1]) : null;
   }
   const proxiedPorts = $derived(
     new Map(routes.filter((r) => r.enabled).map((r) => [upstreamPort(r.upstream), r.host] as const).filter(([p]) => p != null))
@@ -61,8 +63,8 @@
       if (!byKey.has(key)) byKey.set(key, { label, nets: [], cts: [] });
       return byKey.get(key)!;
     };
-    for (const n of nets) ensure(n.stack ? `s:${n.stack}` : n.system ? 'system' : 'shared', n.stack ?? (n.system ? 'System networks' : 'Shared networks')).nets.push(n);
-    for (const c of cts) ensure(c.stack ? `s:${c.stack}` : 'standalone', c.stack ?? 'Standalone').cts.push(c);
+    for (const n of nets) ensure(n.stack ? `s:${n.stack}` : n.system ? 'system' : 'shared', n.stack ?? (n.system ? m.topology_group_system() : m.topology_group_shared())).nets.push(n);
+    for (const c of cts) ensure(c.stack ? `s:${c.stack}` : 'standalone', c.stack ?? m.topology_group_standalone()).cts.push(c);
 
     const order = [...byKey.entries()].sort(([a, ga], [b, gb]) => {
       const rank = (k: string) => (k.startsWith('s:') ? 0 : k === 'standalone' ? 1 : k === 'shared' ? 2 : 3);
@@ -89,7 +91,7 @@
       const group: Group = {
         key,
         label: g.label,
-        sub: `${g.cts.length} container${g.cts.length === 1 ? '' : 's'}`,
+        sub: m.stacks_n_containers({ count: g.cts.length }),
         x, y, w, h, color, nets: [], cts: []
       };
       const netStep = w / (g.nets.length + 1);
@@ -179,7 +181,7 @@
       routes = r;
       lastLoaded = Date.now();
     } catch (err) {
-      toast.error('Failed to load topology', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.topology_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -215,28 +217,28 @@
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Topology</h1>
-    <span class="dm-sub">How containers, networks and the reverse proxy connect</span>
+    <h1>{m.topology_title()}</h1>
+    <span class="dm-sub">{m.topology_sub()}</span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} paused={connStatus === 'closed'} />
   </div>
 
   <div class="dm-toolbar">
-    <input type="search" class="dm-filter" style="width: 260px" placeholder="Search container, image, stack…" aria-label="Search topology" bind:value={search} />
-    <Switch bind:checked={showProxy} label="Show reverse proxy" />
-    <Switch bind:checked={showSystem} label="Show system networks" />
+    <input type="search" class="dm-filter" style="width: 260px" placeholder={m.topology_search_placeholder()} aria-label={m.topology_search_label()} bind:value={search} />
+    <Switch bind:checked={showProxy} label={m.topology_show_proxy()} />
+    <Switch bind:checked={showSystem} label={m.topology_show_system()} />
     <span class="dm-sp"></span>
-    <div class="zoom" role="group" aria-label="Zoom">
-      <button type="button" onclick={() => setZoom(zoom - 0.1)} aria-label="Zoom out"><Minus size={13} /></button>
-      <button type="button" onclick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)} %</button>
-      <button type="button" onclick={() => setZoom(zoom + 0.1)} aria-label="Zoom in"><Plus size={13} /></button>
+    <div class="zoom" role="group" aria-label={m.topology_zoom()}>
+      <button type="button" onclick={() => setZoom(zoom - 0.1)} aria-label={m.topology_zoom_out()}><Minus size={13} /></button>
+      <button type="button" onclick={() => setZoom(1)} title={m.topology_zoom_reset()}>{Math.round(zoom * 100)} %</button>
+      <button type="button" onclick={() => setZoom(zoom + 0.1)} aria-label={m.topology_zoom_in()}><Plus size={13} /></button>
     </div>
   </div>
 
   {#if loading && !topo}
     <Skeleton width="100%" height="520px" />
   {:else if !topo || scene.groups.length === 0}
-    <EmptyState icon={Waypoints} title="Nothing to show" description="No containers or user networks on this host yet." />
+    <EmptyState icon={Waypoints} title={m.topology_empty_title()} description={m.topology_empty_desc()} />
   {:else}
     <div class="topo">
       <div class="canvas">
@@ -244,7 +246,7 @@
           viewBox="0 0 {scene.width} {scene.height}"
           style="width: {zoom * 100}%; min-width: {scene.width * zoom * 0.6}px"
           role="group"
-          aria-label="Topology graph"
+          aria-label={m.topology_graph_label()}
         >
           {#each edges as e (e.n.id + e.c.id)}
             {@const dim = !(ctMatches(e.c.ct) || netMatches(e.n.net))}
@@ -262,7 +264,7 @@
                   class:sel={selected === n.id}
                   role="button"
                   tabindex="0"
-                  aria-label="Network {n.net.name}"
+                  aria-label={m.topology_network_aria({ name: n.net.name })}
                   aria-pressed={selected === n.id}
                   opacity={netMatches(n.net) ? 1 : 0.3}
                   onclick={() => (selected = selected === n.id ? null : n.id)}
@@ -283,7 +285,7 @@
                   class:sel={selected === c.id}
                   role="button"
                   tabindex="0"
-                  aria-label="Container {c.ct.name}, {c.ct.state}"
+                  aria-label={m.topology_container_aria({ name: c.ct.name, state: containerStateLabel(c.ct.state) })}
                   aria-pressed={selected === c.id}
                   opacity={ctMatches(c.ct) ? 1 : 0.3}
                   onclick={() => (selected = selected === c.id ? null : c.id)}
@@ -308,57 +310,57 @@
         </svg>
       </div>
 
-      <aside class="side" aria-label="Selection">
+      <aside class="side" aria-label={m.topology_selection()}>
         {#if !sel}
-          <p class="dm-sub">Select a node to see its details.</p>
+          <p class="dm-sub">{m.topology_select_hint()}</p>
           <dl class="dm-kv">
-            <dt>Stacks</dt><dd>{totals.groups}</dd>
-            <dt>Containers</dt><dd>{totals.containers}</dd>
-            <dt>Networks</dt><dd>{totals.networks}</dd>
-            <dt>Behind the proxy</dt><dd>{totals.proxied} container{totals.proxied === 1 ? '' : 's'}</dd>
+            <dt>{m.common_stacks()}</dt><dd>{totals.groups}</dd>
+            <dt>{m.common_containers()}</dt><dd>{totals.containers}</dd>
+            <dt>{m.common_networks()}</dt><dd>{totals.networks}</dd>
+            <dt>{m.topology_behind_proxy()}</dt><dd>{m.stacks_n_containers({ count: totals.proxied })}</dd>
           </dl>
         {:else if sel.kind === 'network'}
           <h2 class="dm-h2 dm-mono">{sel.net.name}</h2>
           <dl class="dm-kv">
-            <dt>Driver</dt><dd>{sel.net.driver}</dd>
-            <dt>Scope</dt><dd>{sel.net.scope}{sel.net.internal ? ' · internal' : ''}</dd>
-            {#if sel.net.stack}<dt>Stack</dt><dd><a href="/stacks/{encodeURIComponent(sel.net.stack)}">{sel.net.stack}</a></dd>{/if}
-            <dt>Containers</dt>
+            <dt>{m.topology_driver()}</dt><dd>{sel.net.driver}</dd>
+            <dt>{m.topology_scope()}</dt><dd>{sel.net.scope}{sel.net.internal ? ` · ${m.topology_internal()}` : ''}</dd>
+            {#if sel.net.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.net.stack)}">{sel.net.stack}</a></dd>{/if}
+            <dt>{m.common_containers()}</dt>
             <dd>
-              {#each sel.members as m (m.l.container_id)}
-                <div class="dm-trunc"><span>{m.c?.name ?? m.l.container_id.slice(0, 12)}</span>{#if m.l.ipv4}<span class="dm-mono dm-dim"> {m.l.ipv4}</span>{/if}</div>
+              {#each sel.members as mb (mb.l.container_id)}
+                <div class="dm-trunc"><span>{mb.c?.name ?? mb.l.container_id.slice(0, 12)}</span>{#if mb.l.ipv4}<span class="dm-mono dm-dim"> {mb.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}">Open network</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}">{m.topology_open_network()}</a>
         {:else}
           {@const domains = routesFor(sel.ct)}
           <h2 class="dm-h2 dm-mono">{sel.ct.name}</h2>
           <dl class="dm-kv">
-            <dt>Status</dt><dd><StatusChip tone={ctTone(sel.ct)} label={sel.ct.state} /></dd>
-            <dt>Image</dt><dd class="dm-mono">{sel.ct.image}</dd>
-            <dt>Ports</dt>
+            <dt>{m.common_status()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={containerStateLabel(sel.ct.state)} /></dd>
+            <dt>{m.common_image()}</dt><dd class="dm-mono">{sel.ct.image}</dd>
+            <dt>{m.common_ports()}</dt>
             <dd class="dm-mono">{(sel.ct.ports ?? []).map((p) => (p.host_port ? `${p.host_port}:${p.container_port}` : `${p.container_port}`) + `/${p.protocol}`).join(', ') || '—'}</dd>
-            <dt>Networks</dt>
+            <dt>{m.common_networks()}</dt>
             <dd>
-              {#each sel.memberships as m (m.l.network_id)}
-                <div class="dm-trunc">{m.n?.name ?? m.l.network_id.slice(0, 12)}{#if m.l.ipv4}<span class="dm-mono dm-dim"> {m.l.ipv4}</span>{/if}</div>
+              {#each sel.memberships as mb (mb.l.network_id)}
+                <div class="dm-trunc">{mb.n?.name ?? mb.l.network_id.slice(0, 12)}{#if mb.l.ipv4}<span class="dm-mono dm-dim"> {mb.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
-            <dt>Domain</dt><dd>{domains.join(', ') || '—'}</dd>
-            {#if sel.ct.stack}<dt>Stack</dt><dd><a href="/stacks/{encodeURIComponent(sel.ct.stack)}">{sel.ct.stack}</a></dd>{/if}
+            <dt>{m.topology_domain()}</dt><dd>{domains.join(', ') || '—'}</dd>
+            {#if sel.ct.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.ct.stack)}">{sel.ct.stack}</a></dd>{/if}
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{sel.ct.id}">Open container</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{sel.ct.id}">{m.topology_open_container()}</a>
         {/if}
       </aside>
     </div>
 
     <div class="legend">
-      <span><span class="dm-dot ok"></span> running</span>
-      <span><span class="dm-dot warn"></span> restarting or paused</span>
-      <span><span class="dm-dot bad"></span> dead</span>
-      <span><span class="dm-dot"></span> stopped</span>
-      <span class="acc">⇄ published through the reverse proxy</span>
+      <span><span class="dm-dot ok"></span> {m.topology_legend_running()}</span>
+      <span><span class="dm-dot warn"></span> {m.topology_legend_restarting()}</span>
+      <span><span class="dm-dot bad"></span> {m.topology_legend_dead()}</span>
+      <span><span class="dm-dot"></span> {m.topology_legend_stopped()}</span>
+      <span class="acc">⇄ {m.topology_legend_proxy()}</span>
     </div>
   {/if}
 </section>

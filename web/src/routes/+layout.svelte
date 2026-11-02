@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import '$lib/styles/ds.css';
+  import { applyLanguagePref } from '$lib/i18n';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
@@ -25,6 +26,7 @@
   import SettingsNav from '$lib/components/shell/SettingsNav.svelte';
   import { activeItem, SETTINGS_PATHS, matches, routeAllowed } from '$lib/components/shell/nav';
   import { Sun, Moon, Menu as MenuIcon } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   let { children } = $props();
 
@@ -57,6 +59,19 @@
   $effect(() => {
     if (auth.isAuthenticated) operations.start();
     else operations.stop();
+  });
+
+  // A language saved on the account wins over the browser's; checked once
+  // per sign-in so a choice made in another browser follows the user.
+  let languageCheckedFor: string | null = null;
+  $effect(() => {
+    const uid = auth.user?.id ?? null;
+    if (!auth.isAuthenticated || !uid || languageCheckedFor === uid) return;
+    languageCheckedFor = uid;
+    api.users
+      .me()
+      .then((me) => applyLanguagePref(me.language))
+      .catch(() => {});
   });
 
   let mobileOpen = $state(false);
@@ -158,9 +173,9 @@
 
   function fmtUptimeShort(seconds: number): string {
     if (!seconds || seconds < 60) return `${Math.round(seconds)}s`;
-    const m = Math.floor(seconds / 60);
-    if (m < 60) return `${m}m`;
-    const h = Math.floor(m / 60);
+    const mins = Math.floor(seconds / 60);
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60);
     if (h < 24) return `${h}h`;
     return `${Math.floor(h / 24)}d`;
   }
@@ -171,9 +186,9 @@
     return fmtUptimeShort((Date.now() - t) / 1000);
   }
   function metaFor(h: { id: string; kind: string; status: string }): string {
-    if (h.kind === 'all') return 'fleet-wide';
+    if (h.kind === 'all') return m.layout_fleet_wide();
     if (h.id === 'local') {
-      if (!serverInfo) return 'local';
+      if (!serverInfo) return m.layout_local();
       return `${fmtVersion(serverInfo.version)} · ${fmtUptimeShort(serverInfo.uptime_seconds)}`;
     }
     const a = agentsByID[h.id];
@@ -223,24 +238,26 @@
     } catch {
       /* the session is dropped locally either way */
     }
-    toast.info('Signed out');
+    toast.info(m.layout_signed_out());
     goto('/login');
   }
 
-  const SPECIAL: Record<string, { section: string | null; leaf: string; href: string }> = {
-    '/account': { section: null, leaf: 'My account', href: '/account' },
-    '/tokens': { section: null, leaf: 'API tokens', href: '/tokens' },
-    '/settings/updates': { section: 'Settings', leaf: 'Updates', href: '/settings/updates' },
-    '/settings/encryption': { section: 'Settings', leaf: 'Encryption key', href: '/settings/encryption' },
-    '/settings': { section: 'Settings', leaf: 'General', href: '/settings' },
-    '/authentication': { section: 'Settings', leaf: 'Authentication', href: '/authentication' },
-    '/registries': { section: 'Settings', leaf: 'Registries', href: '/registries' },
-    '/environment': { section: 'Settings', leaf: 'Global environment', href: '/environment' },
-    '/images': { section: 'Resources', leaf: 'Images', href: '/resources?tab=images' },
-    '/volumes': { section: 'Resources', leaf: 'Volumes', href: '/resources?tab=volumes' },
-    '/networks': { section: 'Resources', leaf: 'Networks', href: '/resources?tab=networks' },
-    '/agents': { section: 'Hosts', leaf: 'Agents', href: '/agents' },
-    '/migrations': { section: 'Backups', leaf: 'Migrations', href: '/migrations' }
+  const SETTINGS = { label: m.common_settings(), href: '/settings' };
+  const RESOURCES = { label: m.layout_crumb_resources() };
+  const SPECIAL: Record<string, { section: Crumb | null; leaf: string; href: string }> = {
+    '/account': { section: null, leaf: m.layout_crumb_account(), href: '/account' },
+    '/tokens': { section: null, leaf: m.layout_crumb_tokens(), href: '/tokens' },
+    '/settings/updates': { section: SETTINGS, leaf: m.layout_crumb_updates(), href: '/settings/updates' },
+    '/settings/encryption': { section: SETTINGS, leaf: m.layout_crumb_encryption(), href: '/settings/encryption' },
+    '/settings': { section: SETTINGS, leaf: m.layout_crumb_general(), href: '/settings' },
+    '/authentication': { section: SETTINGS, leaf: m.layout_crumb_authentication(), href: '/authentication' },
+    '/registries': { section: SETTINGS, leaf: m.layout_crumb_registries(), href: '/registries' },
+    '/environment': { section: SETTINGS, leaf: m.layout_crumb_environment(), href: '/environment' },
+    '/images': { section: RESOURCES, leaf: m.common_images(), href: '/resources?tab=images' },
+    '/volumes': { section: RESOURCES, leaf: m.common_volumes(), href: '/resources?tab=volumes' },
+    '/networks': { section: RESOURCES, leaf: m.common_networks(), href: '/resources?tab=networks' },
+    '/agents': { section: { label: m.common_hosts() }, leaf: m.common_agents(), href: '/agents' },
+    '/migrations': { section: { label: m.layout_crumb_backups() }, leaf: m.layout_crumb_migrations(), href: '/migrations' }
   };
 
   interface Crumb {
@@ -252,7 +269,7 @@
     const out: Crumb[] = [];
     const special = Object.entries(SPECIAL).find(([k]) => matches(p, k))?.[1];
     if (special) {
-      if (special.section) out.push({ label: special.section, href: special.section === 'Settings' ? '/settings' : undefined });
+      if (special.section) out.push(special.section);
       out.push({ label: special.leaf, href: special.href });
     } else {
       const a = activeItem(p);
@@ -261,7 +278,7 @@
         out.push({ label: a.item.label, href: a.item.href });
       } else {
         const seg = p.split('/').filter(Boolean)[0] ?? '';
-        out.push({ label: seg ? seg.replace(/-/g, ' ') : 'Overview', href: `/${seg}` });
+        out.push({ label: seg ? seg.replace(/-/g, ' ') : m.common_overview(), href: `/${seg}` });
       }
     }
     if (pageContext.entityName) {
@@ -291,7 +308,7 @@
 {:else if page.url.pathname === '/login' || page.url.pathname.startsWith('/invite/')}
   {@render children()}
 {:else if auth.isAuthenticated}
-  <a class="skip" href="#main">Skip to content</a>
+  <a class="skip" href="#main">{m.layout_skip()}</a>
   <div class="app" class:mobile-open={mobileOpen}>
     <Sidebar
       bind:collapsed={sidebarCollapsed}
@@ -303,15 +320,15 @@
       onnavigate={() => (mobileOpen = false)}
     />
     {#if mobileOpen}
-      <button type="button" class="scrim" aria-label="Close navigation" onclick={() => (mobileOpen = false)}></button>
+      <button type="button" class="scrim" aria-label={m.layout_close_nav()} onclick={() => (mobileOpen = false)}></button>
     {/if}
 
     <main class="main" id="main">
       <header class="topbar">
-        <button type="button" class="tb-btn tb-icon mob" onclick={() => (mobileOpen = !mobileOpen)} aria-label="Toggle navigation">
+        <button type="button" class="tb-btn tb-icon mob" onclick={() => (mobileOpen = !mobileOpen)} aria-label={m.layout_toggle_nav()}>
           <MenuIcon size={16} />
         </button>
-        <nav class="crumbs" aria-label="Breadcrumb">
+        <nav class="crumbs" aria-label={m.layout_breadcrumb()}>
           {#each crumbs as c, i (i)}
             {#if i === crumbs.length - 1}
               <b aria-current="page">{c.label}</b>
@@ -335,8 +352,8 @@
           type="button"
           class="tb-btn tb-icon"
           onclick={toggleTheme}
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          aria-label="Toggle theme"
+          title={theme === 'dark' ? m.layout_theme_light() : m.layout_theme_dark()}
+          aria-label={m.layout_theme_toggle()}
         >
           {#if theme === 'dark'}<Sun size={15} />{:else}<Moon size={15} />{/if}
         </button>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { onMount } from 'svelte';
   import { api, ApiError, type AgentReachability } from '$lib/api';
   import { Check, X, TriangleAlert, Minus, RefreshCw } from 'lucide-svelte';
@@ -20,7 +21,7 @@
     try {
       result = await api.agents.reachability();
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Check failed';
+      error = err instanceof ApiError ? err.message : m.ui_agentcheck_failed();
     } finally {
       loading = false;
     }
@@ -33,21 +34,21 @@
   const problems = $derived((result?.checks ?? []).filter((c) => c.status === 'fail' || c.status === 'warn'));
   const where = $derived(
     result?.agent_source === 'env'
-      ? 'DOCKMESH_AGENT_PUBLIC_URL in dockmesh.env sets it (restart after changing).'
+      ? m.ui_agentcheck_env_source()
       : null
   );
 </script>
 
 <div class="ar">
   <div class="ar-head">
-    <span class="ar-title">Agent connection</span>
+    <span class="ar-title">{m.ui_agentcheck_title()}</span>
     {#if result}
       <code class="dm-mono ar-url">{result.agent_url}</code>
     {/if}
     <span class="dm-sp"></span>
     <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={run} disabled={loading}>
       <RefreshCw size={11} strokeWidth={1.5} />
-      {loading ? 'Checking…' : result ? 'Check again' : 'Check connection'}
+      {loading ? m.ui_agentcheck_checking() : result ? m.ui_agentcheck_again() : m.ui_agentcheck_run()}
     </button>
   </div>
 
@@ -57,7 +58,7 @@
     {#if result.ok && problems.length === 0}
       <p class="ar-line ok">
         <Check size={12} strokeWidth={1.75} />
-        Reachable from this server: name, port and the agent listener certificate check out.
+        {m.ui_agentcheck_ok()}
       </p>
     {/if}
     {#each problems as c (c.id)}
@@ -67,7 +68,7 @@
       </p>
     {/each}
     <details class="ar-details">
-      <summary>All checks</summary>
+      <summary>{m.ui_agentcheck_all()}</summary>
       <ul>
         {#each result.checks ?? [] as c (c.id)}
           <li class={c.status}>
@@ -76,15 +77,14 @@
           </li>
         {/each}
         {#if result.cert_sans?.length}
-          <li class="skip"><Minus size={11} strokeWidth={1.75} /><span>Certificate names: <span class="dm-mono">{result.cert_sans.join(', ')}</span></span></li>
+          <li class="skip"><Minus size={11} strokeWidth={1.75} /><span>{m.ui_agentcheck_cert_names()} <span class="dm-mono">{result.cert_sans.join(', ')}</span></span></li>
         {/if}
       </ul>
     </details>
     {#if !result.ok || problems.length > 0}
       <p class="ar-hint">
-        Checked from this server. Remote hosts must reach the same address on the same port, without a proxy that
-        terminates TLS in between.
-        {#if where}{where}{:else if showSettingsLink}Change the address under <a href="/settings">Settings → General</a>.{/if}
+        {m.ui_agentcheck_hint()}
+        {#if where}{where}{:else if showSettingsLink}{m.ui_agentcheck_change_before()}<a href="/settings">{m.ui_agentcheck_change_link()}</a>{m.ui_agentcheck_change_after()}{/if}
       </p>
     {/if}
   {/if}

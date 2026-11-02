@@ -16,6 +16,7 @@ import {
   Settings
 } from 'lucide-svelte';
 import { allowed } from '$lib/rbac.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 export interface NavItem {
   key: string;
@@ -39,51 +40,51 @@ export const NAV: NavGroup[] = [
   {
     title: null,
     items: [
-      { key: 'overview', href: '/', label: 'Overview', icon: LayoutDashboard, show: () => true },
-      { key: 'activity', href: '/activity', label: 'Activity', icon: Inbox, show: () => true }
+      { key: 'overview', href: '/', label: m.common_overview(), icon: LayoutDashboard, show: () => true },
+      { key: 'activity', href: '/activity', label: m.shell_nav_activity(), icon: Inbox, show: () => true }
     ]
   },
   {
-    title: 'Workloads',
+    title: m.shell_nav_workloads(),
     items: [
-      { key: 'stacks', href: '/stacks', label: 'Stacks', icon: Layers, show: () => allowed('stacks.view') },
-      { key: 'containers', href: '/containers', label: 'Containers', icon: Box, show: () => allowed('containers.view') },
-      { key: 'templates', href: '/templates', label: 'Templates', icon: LayoutTemplate, show: () => allowed('templates.view') }
+      { key: 'stacks', href: '/stacks', label: m.common_stacks(), icon: Layers, show: () => allowed('stacks.view') },
+      { key: 'containers', href: '/containers', label: m.common_containers(), icon: Box, show: () => allowed('containers.view') },
+      { key: 'templates', href: '/templates', label: m.shell_nav_templates(), icon: LayoutTemplate, show: () => allowed('templates.view') }
     ]
   },
   {
-    title: 'Infrastructure',
+    title: m.shell_nav_infrastructure(),
     items: [
-      { key: 'hosts', href: '/hosts', label: 'Hosts', icon: Server, show: () => allowed('hosts.view'), also: ['/agents'] },
+      { key: 'hosts', href: '/hosts', label: m.common_hosts(), icon: Server, show: () => allowed('hosts.view'), also: ['/agents'] },
       {
         key: 'resources',
         href: '/resources',
-        label: 'Resources',
+        label: m.shell_nav_resources(),
         icon: Boxes,
         show: () => allowed('images.view') || allowed('volumes.view') || allowed('networks.view'),
         also: ['/images', '/volumes', '/networks']
       },
-      { key: 'topology', href: '/topology', label: 'Topology', icon: Waypoints, show: () => allowed('networks.view') }
+      { key: 'topology', href: '/topology', label: m.shell_nav_topology(), icon: Waypoints, show: () => allowed('networks.view') }
     ]
   },
   {
-    title: 'Operations',
+    title: m.shell_nav_operations(),
     items: [
-      { key: 'updates', href: '/updates', label: 'Updates', icon: RefreshCw, show: () => allowed('containers.view') },
-      { key: 'backups', href: '/backups', label: 'Backups', icon: Archive, show: () => allowed('backups.view'), also: ['/migrations'] },
-      { key: 'proxy', href: '/proxy', label: 'Reverse proxy', icon: Globe, show: () => allowed('proxy.view') },
-      { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') || allowed('alerts.history') }
+      { key: 'updates', href: '/updates', label: m.shell_nav_updates(), icon: RefreshCw, show: () => allowed('containers.view') },
+      { key: 'backups', href: '/backups', label: m.shell_nav_backups(), icon: Archive, show: () => allowed('backups.view'), also: ['/migrations'] },
+      { key: 'proxy', href: '/proxy', label: m.shell_nav_proxy(), icon: Globe, show: () => allowed('proxy.view') },
+      { key: 'alerts', href: '/alerts', label: m.shell_nav_alerts(), icon: Bell, show: () => allowed('alerts.view') || allowed('alerts.history') }
     ]
   },
   {
-    title: 'Admin',
+    title: m.shell_nav_admin(),
     items: [
-      { key: 'users', href: '/users', label: 'Users & roles', icon: Users, show: () => allowed('users.view') },
-      { key: 'audit', href: '/audit', label: 'Audit log', icon: Activity, show: () => allowed('audit.view') },
+      { key: 'users', href: '/users', label: m.shell_nav_users(), icon: Users, show: () => allowed('users.view') },
+      { key: 'audit', href: '/audit', label: m.shell_nav_audit(), icon: Activity, show: () => allowed('audit.view') },
       {
         key: 'settings',
         href: '/settings',
-        label: 'Settings',
+        label: m.common_settings(),
         icon: Settings,
         show: () => allowed('system.update') || allowed('registries.view'),
         also: SETTINGS_PATHS
@@ -115,12 +116,12 @@ export interface SettingsLink {
 }
 
 export const SETTINGS_NAV: SettingsLink[] = [
-  { href: '/settings', label: 'General', group: 'Instance', hint: 'Base URL, agent URL, trusted proxies, image scanner', show: () => allowed('system.update') },
-  { href: '/settings/updates', label: 'Updates', group: 'Instance', hint: 'Dockmesh version and update checks', show: () => allowed('system.update') },
-  { href: '/settings/encryption', label: 'Encryption key', group: 'Instance', hint: 'Key backup and rotation', show: () => allowed('system.update') },
-  { href: '/authentication', label: 'Authentication', group: 'Access', hint: 'Identity providers: OIDC, SAML, LDAP, OAuth2', show: () => allowed('system.update') },
-  { href: '/registries', label: 'Registries', group: 'Integrations', hint: 'Private registries and credentials', show: () => allowed('registries.view') },
-  { href: '/environment', label: 'Global environment', group: 'Integrations', hint: 'Variables shared by stacks', show: () => allowed('system.update') }
+  { href: '/settings', label: m.shell_settings_general(), group: m.shell_settings_group_instance(), hint: m.shell_settings_general_hint(), show: () => allowed('system.update') },
+  { href: '/settings/updates', label: m.shell_nav_updates(), group: m.shell_settings_group_instance(), hint: m.shell_settings_updates_hint(), show: () => allowed('system.update') },
+  { href: '/settings/encryption', label: m.shell_settings_encryption(), group: m.shell_settings_group_instance(), hint: m.shell_settings_encryption_hint(), show: () => allowed('system.update') },
+  { href: '/authentication', label: m.shell_settings_auth(), group: m.shell_settings_group_access(), hint: m.shell_settings_auth_hint(), show: () => allowed('system.update') },
+  { href: '/registries', label: m.shell_settings_registries(), group: m.shell_settings_group_integrations(), hint: m.shell_settings_registries_hint(), show: () => allowed('registries.view') },
+  { href: '/environment', label: m.shell_settings_env(), group: m.shell_settings_group_integrations(), hint: m.shell_settings_env_hint(), show: () => allowed('system.update') }
 ];
 
 // Pages under a nav entry that need a narrower permission than the entry.

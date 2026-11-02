@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Per-filesystem disk usage of one host, fullest first (server order).
   import { fmtBytes } from '$lib/format';
   import type { DiskMount } from '$lib/api';
@@ -13,9 +14,9 @@
   const ROLE_LABEL: Record<string, string> = {
     docker_root: 'Docker',
     containerd_root: 'containerd',
-    stacks: 'stacks',
-    data: 'Dockmesh data',
-    backup_target: 'backups',
+    stacks: m.metrics_mount_role_stacks(),
+    data: m.metrics_mount_role_data(),
+    backup_target: m.metrics_mount_role_backups(),
   };
 
   function level(pct: number): 'ok' | 'warn' | 'crit' {
@@ -26,36 +27,36 @@
 </script>
 
 {#if unsupported}
-  <p class="mt-hint">Update the agent on this host to see disk usage per mount.</p>
+  <p class="mt-hint">{m.metrics_mount_unsupported()}</p>
 {:else if mounts.length === 0}
-  <p class="mt-hint">No mounts reported.</p>
+  <p class="mt-hint">{m.metrics_mount_none()}</p>
 {:else}
   <table class="mt">
     <thead>
       <tr>
-        <th>Mount</th>
-        <th>Used</th>
-        <th class="mt-num">Size</th>
-        <th>Holds</th>
+        <th>{m.metrics_mount_col_mount()}</th>
+        <th>{m.metrics_mount_col_used()}</th>
+        <th class="mt-num">{m.common_size()}</th>
+        <th>{m.metrics_mount_col_holds()}</th>
       </tr>
     </thead>
     <tbody>
-      {#each mounts as m, i (`${m.mount_point}|${m.fs_type}|${i}`)}
+      {#each mounts as mt, i (`${mt.mount_point}|${mt.fs_type}|${i}`)}
         <tr>
-          <td class="mt-path font-mono" title={m.fs_type}>{m.mount_point}</td>
+          <td class="mt-path font-mono" title={mt.fs_type}>{mt.mount_point}</td>
           <td>
-            {#if m.error}
-              <span class="mt-err">{m.error}</span>
+            {#if mt.error}
+              <span class="mt-err">{mt.error}</span>
             {:else}
               <div class="mt-used">
-                <span class="mt-bar"><span class="mt-fill mt-{level(m.percent)}" style="width: {Math.min(100, m.percent)}%"></span></span>
-                <span class="font-mono">{m.percent.toFixed(0)}%</span>
+                <span class="mt-bar"><span class="mt-fill mt-{level(mt.percent)}" style="width: {Math.min(100, mt.percent)}%"></span></span>
+                <span class="font-mono">{mt.percent.toFixed(0)}%</span>
               </div>
             {/if}
           </td>
-          <td class="mt-num font-mono">{m.error ? '—' : `${fmtBytes(m.used)} / ${fmtBytes(m.total)}`}</td>
+          <td class="mt-num font-mono">{mt.error ? '—' : `${fmtBytes(mt.used)} / ${fmtBytes(mt.total)}`}</td>
           <td>
-            {#each m.roles ?? [] as r (r)}
+            {#each mt.roles ?? [] as r (r)}
               <span class="mt-role">{ROLE_LABEL[r] ?? r}</span>
             {/each}
           </td>

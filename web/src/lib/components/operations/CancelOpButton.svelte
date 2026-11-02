@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { api, type Operation } from '$lib/api';
   import { operations, kindLabel } from '$lib/stores/operations.svelte';
   import { canCancel, cancelConsequence, cancelPerm } from '$lib/operationsProgress';
@@ -18,10 +19,10 @@
     e.stopPropagation();
     e.preventDefault();
     const ok = await confirm.ask({
-      title: `Cancel ${kindLabel(op.kind).toLowerCase()} of ${op.target}?`,
+      title: m.ops_cancel_title({ kind: kindLabel(op.kind), kindLower: kindLabel(op.kind).toLowerCase(), target: op.target }),
       message: cancelConsequence(op),
-      confirmLabel: 'Cancel it',
-      cancelLabel: 'Keep running',
+      confirmLabel: m.ops_cancel_confirm(),
+      cancelLabel: m.ops_cancel_keep(),
       danger: true
     });
     if (!ok) return;
@@ -29,7 +30,7 @@
     try {
       operations.track(await api.operations.cancel(op.id));
     } catch (err) {
-      toast.error('Could not cancel', (err as Error).message);
+      toast.error(m.ops_cancel_failed(), (err as Error).message);
     } finally {
       busy = false;
     }
@@ -43,5 +44,5 @@
     disabled={busy || !!op.cancel_requested}
     title={op.cancel_requested ? undefined : cancelConsequence(op)}
     onclick={cancel}
-  >{op.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
+  >{op.cancel_requested ? m.ops_cancelling() : m.common_cancel()}</button>
 {/if}

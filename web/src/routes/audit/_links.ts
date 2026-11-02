@@ -1,10 +1,12 @@
+import { m } from '$lib/paraglide/messages.js';
+
 export type AuditCategory = 'changes' | 'access' | 'auth' | 'system';
 
 export const CATEGORY_LABEL: Record<AuditCategory, string> = {
-  changes: 'Changes',
-  access: 'Access',
-  auth: 'Sign-in & security',
-  system: 'System'
+  changes: m.audit_cat_changes(),
+  access: m.audit_cat_access(),
+  auth: m.audit_cat_auth(),
+  system: m.audit_cat_system()
 };
 
 const PAGES: Record<string, (t: string) => string> = {

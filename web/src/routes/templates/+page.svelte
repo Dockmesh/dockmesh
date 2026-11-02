@@ -11,6 +11,7 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { Package, Plus, Trash2, KeyRound } from 'lucide-svelte';
   import DeployDialog from './_DeployDialog.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const canDeploy = $derived(allowed('stacks.deploy'));
   const canCreate = $derived(allowed('templates.create'));
@@ -48,7 +49,7 @@
     try {
       templates = await api.templates.list();
     } catch (err) {
-      toast.error('Failed to load templates', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.templates_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -86,9 +87,9 @@
     if (!compose) return [];
     const out = new Set<string>();
     const re = /^\s*image:\s*([^\s#].*)$/gim;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(compose)) !== null) {
-      let img = m[1].trim();
+    let mt: RegExpExecArray | null;
+    while ((mt = re.exec(compose)) !== null) {
+      let img = mt[1].trim();
       const hashIdx = img.indexOf('#');
       if (hashIdx > 0) img = img.slice(0, hashIdx).trim();
       if ((img.startsWith('"') && img.endsWith('"')) || (img.startsWith("'") && img.endsWith("'"))) {
@@ -143,8 +144,8 @@
   }
   function parsePlaceholders(compose: string): Placeholder[] {
     const byName = new Map<string, Placeholder>();
-    for (const m of compose.matchAll(/\{\{\s*(.+?)\s*\}\}/g)) {
-      const parts = m[1].split('|');
+    for (const mt of compose.matchAll(/\{\{\s*(.+?)\s*\}\}/g)) {
+      const parts = mt[1].split('|');
       const name = parts[0].trim();
       if (!name) continue;
       const ph = byName.get(name) ?? { name, def: '', secret: false };
@@ -216,15 +217,15 @@
     try {
       if (editingId == null) {
         await api.templates.create(editForm);
-        toast.success('Template created', editForm.name);
+        toast.success(m.templates_created(), editForm.name);
       } else {
         await api.templates.update(editingId, editForm);
-        toast.success('Template updated', editForm.name);
+        toast.success(m.templates_updated(), editForm.name);
       }
       editOpen = false;
       await load();
     } catch (err) {
-      editErr = err instanceof ApiError ? err.message : 'save failed';
+      editErr = err instanceof ApiError ? err.message : m.templates_save_failed();
     } finally {
       editBusy = false;
     }
@@ -232,32 +233,32 @@
 
   async function deleteTemplate(t: StackTemplate) {
     if (!(await confirm.ask({
-      title: `Delete template "${t.name}"?`,
-      message: 'This removes the template from the library.',
-      body: 'Already-deployed stacks are unaffected.',
-      confirmLabel: 'Delete', danger: true,
+      title: m.templates_delete_title({ name: t.name }),
+      message: m.templates_delete_message(),
+      body: m.templates_delete_body(),
+      confirmLabel: m.common_delete(), danger: true,
     }))) return;
     try {
       await api.templates.delete(t.id);
-      toast.success('Template deleted', t.name);
+      toast.success(m.templates_deleted(), t.name);
       await load();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.templates_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Templates</h1>
+    <h1>{m.templates_title()}</h1>
     <span class="dm-sub">
-      {counts.total} template{counts.total === 1 ? '' : 's'} · {counts.builtin} built-in{counts.custom > 0 ? ` · ${counts.custom} custom` : ''}
+      {m.templates_count({ count: counts.total })} · {m.templates_builtin_count({ count: counts.builtin })}{counts.custom > 0 ? ` · ${m.templates_custom_count({ count: counts.custom })}` : ''}
     </span>
     <span class="dm-sp"></span>
-    <input type="search" class="dm-filter tp-search" placeholder="Filter templates…" aria-label="Filter templates" bind:value={search} />
+    <input type="search" class="dm-filter tp-search" placeholder={m.templates_filter_placeholder()} aria-label={m.templates_filter_label()} bind:value={search} />
     {#if canCreate}
       <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTemplate}>
-        <Plus size={14} strokeWidth={2} /> New template
+        <Plus size={14} strokeWidth={2} /> {m.templates_new()}
       </button>
     {/if}
   </div>
@@ -269,22 +270,22 @@
       {/each}
     </div>
   {:else if templates.length === 0}
-    <EmptyState icon={Package} title="No templates yet" description="Built-in templates are added on first start. Add your own from a compose file.">
+    <EmptyState icon={Package} title={m.templates_empty_title()} description={m.templates_empty_desc()}>
       {#snippet action()}
         {#if canCreate}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTemplate}><Plus size={14} strokeWidth={2} /> New template</button>
+          <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTemplate}><Plus size={14} strokeWidth={2} /> {m.templates_new()}</button>
         {/if}
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="dm-tbl" role="table" aria-label="Templates">
+    <div class="dm-tbl" role="table" aria-label={m.templates_title()}>
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
         <span role="columnheader"></span>
-        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'name')}>Name{sortKey === 'name' ? ' ↓' : ''}</button></span>
-        <span role="columnheader">Description</span>
-        <span role="columnheader">Images</span>
-        <span role="columnheader">Parameters</span>
-        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'source')}>Source{sortKey === 'source' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'name')}>{m.common_name()}{sortKey === 'name' ? ' ↓' : ''}</button></span>
+        <span role="columnheader">{m.common_description()}</span>
+        <span role="columnheader">{m.templates_col_images()}</span>
+        <span role="columnheader">{m.templates_col_parameters()}</span>
+        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'source')}>{m.common_source()}{sortKey === 'source' ? ' ↓' : ''}</button></span>
         <span role="columnheader"></span>
       </div>
       {#each filtered as t (t.id)}
@@ -300,24 +301,24 @@
           </span>
           <span role="cell" class="dm-dim" title={t.description ?? ''}>{t.description || '—'}</span>
           <span role="cell"><ChipList items={images} /></span>
-          <span role="cell" class="dm-num dm-dim">{nParams} param{nParams === 1 ? '' : 's'}</span>
-          <span role="cell"><TagPill label={t.builtin ? 'built-in' : 'custom'} /></span>
+          <span role="cell" class="dm-num dm-dim">{m.templates_n_params({ count: nParams })}</span>
+          <span role="cell"><TagPill label={t.builtin ? m.templates_builtin() : m.templates_custom()} /></span>
           <span role="cell" class="dm-tr-menu tp-actions">
             {#if canDeploy}
-              <button type="button" class="dm-btn dm-btn-sm" onclick={() => openDeploy(t)}>Deploy</button>
+              <button type="button" class="dm-btn dm-btn-sm" onclick={() => openDeploy(t)}>{m.common_deploy()}</button>
             {/if}
             <Menu
-              label="Actions for {t.name}"
+              label={m.templates_actions_for({ name: t.name })}
               items={[
-                { label: 'Download YAML', href: api.templates.exportURL(t.id) },
-                ...(canUpdate && !t.builtin ? [{ label: 'Edit…', onclick: () => openEditTemplate(t) }] : []),
-                ...(canDelete && !t.builtin ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteTemplate(t) }] : [])
+                { label: m.templates_download_yaml(), href: api.templates.exportURL(t.id) },
+                ...(canUpdate && !t.builtin ? [{ label: m.templates_edit_ellipsis(), onclick: () => openEditTemplate(t) }] : []),
+                ...(canDelete && !t.builtin ? [{ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteTemplate(t) }] : [])
               ]}
             />
           </span>
         </div>
       {:else}
-        <div class="dm-empty">No templates match “{search}”.</div>
+        <div class="dm-empty">{m.templates_no_match({ search })}</div>
       {/each}
     </div>
   {/if}
@@ -325,61 +326,61 @@
 
 <DeployDialog bind:open={deployOpen} template={deployTarget} />
 
-<Modal bind:open={editOpen} title={editingId == null ? 'New template' : `Edit ${editForm.name}`} maxWidth="max-w-3xl" footer={editFooter}>
+<Modal bind:open={editOpen} title={editingId == null ? m.templates_new() : m.templates_edit_title({ name: editForm.name })} maxWidth="max-w-3xl" footer={editFooter}>
   <form id="tpl-edit-form" class="tp-form" onsubmit={(e) => { e.preventDefault(); saveTemplate(); }}>
     <div class="tp-grid3">
       <div class="dm-field">
-        <label for="tp-name">Name</label>
-        <input id="tp-name" class="dm-input" bind:value={editForm.name} oninput={autoSlug} placeholder="My app" required />
+        <label for="tp-name">{m.common_name()}</label>
+        <input id="tp-name" class="dm-input" bind:value={editForm.name} oninput={autoSlug} placeholder={m.templates_name_placeholder()} required />
       </div>
       <div class="dm-field">
-        <label for="tp-slug">Slug</label>
+        <label for="tp-slug">{m.templates_slug()}</label>
         <input id="tp-slug" class="dm-input dm-mono" bind:value={editForm.slug} oninput={() => (slugTouched = true)} pattern="^[a-z0-9][a-z0-9_-]*$" placeholder="my-app" required />
       </div>
       <div class="dm-field">
-        <label for="tp-desc">Description</label>
-        <input id="tp-desc" class="dm-input" bind:value={editForm.description} placeholder="One sentence shown in the list" />
+        <label for="tp-desc">{m.common_description()}</label>
+        <input id="tp-desc" class="dm-input" bind:value={editForm.description} placeholder={m.templates_desc_placeholder()} />
       </div>
     </div>
 
     <Segmented
-      label="Template editor"
+      label={m.templates_editor_label()}
       bind:value={editTab}
       options={[
         { key: 'compose', label: 'compose.yaml' },
-        { key: 'parameters', label: 'Parameters', count: paramRows.length }
+        { key: 'parameters', label: m.templates_col_parameters(), count: paramRows.length }
       ]}
     />
 
     {#if editTab === 'compose'}
       <textarea class="dm-editor" aria-label="compose.yaml" bind:value={editForm.compose} spellcheck="false" required></textarea>
       <span class="dm-sub">
-        Placeholders <span class="dm-mono">{'{{name}}'}</span>, <span class="dm-mono">{'{{name|default:value}}'}</span> and
-        <span class="dm-mono">{'{{name|secret}}'}</span> become fields in the deploy dialog. Secrets are generated when left empty.
+        {m.templates_placeholders_before()} <span class="dm-mono">{'{{name}}'}</span>, <span class="dm-mono">{'{{name|default:value}}'}</span> {m.templates_placeholders_and()}
+        <span class="dm-mono">{'{{name|secret}}'}</span> {m.templates_placeholders_after()}
       </span>
     {:else}
       {#if paramRows.length === 0}
-        <EmptyState title="No placeholders yet" description={'Add {{name}} to the compose file to ask for a value at deploy time.'} />
+        <EmptyState title={m.templates_no_placeholders_title()} description={m.templates_no_placeholders_desc({ code: '{{name}}' })} />
       {:else}
         <div class="dm-tbl">
           <div class="dm-tr dm-th" style="grid-template-columns: {PCOLS}">
-            <span>Placeholder</span><span>Label in the deploy dialog</span><span>Default</span><span>Secret</span><span></span>
+            <span>{m.templates_col_placeholder()}</span><span>{m.templates_col_label()}</span><span>{m.common_default()}</span><span>{m.templates_col_secret()}</span><span></span>
           </div>
           {#each paramRows as r (r.name)}
             <div class="dm-tr" style="grid-template-columns: {PCOLS}">
-              <span class="dm-mono" title={r.inCompose ? '' : 'Not used in compose.yaml'}>{r.name}{#if !r.inCompose}<span class="dm-dim"> · unused</span>{/if}</span>
-              <input class="dm-input tp-cell" aria-label="Label for {r.name}" value={r.label} placeholder={humanize(r.name)} oninput={(e) => setParam(r.name, 'description', e.currentTarget.value)} />
-              <input class="dm-input dm-mono tp-cell" aria-label="Default for {r.name}" value={r.def} placeholder={r.composeDefault || (r.secret ? 'generated' : '')} oninput={(e) => setParam(r.name, 'default', e.currentTarget.value)} />
-              <span>{#if r.secret}<span class="tp-secret"><KeyRound size={12} /> yes</span>{:else}<span class="dm-dim">no</span>{/if}</span>
+              <span class="dm-mono" title={r.inCompose ? '' : m.templates_not_used()}>{r.name}{#if !r.inCompose}<span class="dm-dim"> · {m.templates_unused()}</span>{/if}</span>
+              <input class="dm-input tp-cell" aria-label={m.templates_label_for({ name: r.name })} value={r.label} placeholder={humanize(r.name)} oninput={(e) => setParam(r.name, 'description', e.currentTarget.value)} />
+              <input class="dm-input dm-mono tp-cell" aria-label={m.templates_default_for({ name: r.name })} value={r.def} placeholder={r.composeDefault || (r.secret ? m.templates_generated() : '')} oninput={(e) => setParam(r.name, 'default', e.currentTarget.value)} />
+              <span>{#if r.secret}<span class="tp-secret"><KeyRound size={12} /> {m.templates_yes()}</span>{:else}<span class="dm-dim">{m.templates_no()}</span>{/if}</span>
               <span class="dm-tr-menu">
                 {#if !r.inCompose}
-                  <button type="button" class="dm-menu-btn" aria-label="Remove {r.name}" title="Remove" onclick={() => removeParam(r.name)}><Trash2 size={13} /></button>
+                  <button type="button" class="dm-menu-btn" aria-label={m.templates_remove_named({ name: r.name })} title={m.common_remove()} onclick={() => removeParam(r.name)}><Trash2 size={13} /></button>
                 {/if}
               </span>
             </div>
           {/each}
         </div>
-        <span class="dm-sub">Found in the compose file; labels and defaults set here win.</span>
+        <span class="dm-sub">{m.templates_found_hint()}</span>
       {/if}
     {/if}
 
@@ -390,14 +391,14 @@
 </Modal>
 
 {#snippet editFooter()}
-  <button type="button" class="dm-btn" onclick={() => (editOpen = false)}>Cancel</button>
+  <button type="button" class="dm-btn" onclick={() => (editOpen = false)}>{m.common_cancel()}</button>
   <button
     type="submit"
     form="tpl-edit-form"
     class="dm-btn dm-btn-primary"
     disabled={editBusy || !editForm.slug.trim() || !editForm.name.trim() || !editForm.compose.trim()}
   >
-    {editBusy ? 'Saving…' : editingId == null ? 'Create template' : 'Save'}
+    {editBusy ? m.common_saving() : editingId == null ? m.templates_create() : m.common_save()}
   </button>
 {/snippet}
 

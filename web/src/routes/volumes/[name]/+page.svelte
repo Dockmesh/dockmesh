@@ -20,6 +20,9 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import { fmtDateTime } from '$lib/i18n';
+  import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
   import {
     ChevronLeft, Folder, File as FileIcon, FileText, Link2, Download,
     RefreshCw, HardDrive, AlertTriangle, Trash2, Copy, Box
@@ -51,8 +54,8 @@
       inspectError = null;
     } catch (err) {
       if (!current()) return;
-      inspectError = err instanceof ApiError ? err.message : 'Failed to load volume';
-      toast.error('Failed to load volume', inspectError);
+      inspectError = err instanceof ApiError ? err.message : m.volumes_load_failed();
+      toast.error(m.volumes_load_failed(), inspectError);
     } finally {
       if (current()) inspectLoading = false;
     }
@@ -76,15 +79,15 @@
       const list: any[] = isFanOut(r) ? r.items : (r as any[]);
       const out: AttachedContainer[] = [];
       for (const c of list) {
-        for (const m of (c.Mounts ?? [])) {
-          if (m.Type === 'volume' && m.Name === name) {
+        for (const mt of (c.Mounts ?? [])) {
+          if (mt.Type === 'volume' && mt.Name === name) {
             out.push({
               id: c.Id,
               name: (c.Names?.[0] ?? c.Id).replace(/^\//, ''),
               state: c.State,
               image: c.Image,
-              mountTarget: m.Destination ?? '?',
-              rw: m.RW ?? true
+              mountTarget: mt.Destination ?? '?',
+              rw: mt.RW ?? true
             });
             break;
           }
@@ -92,7 +95,7 @@
       }
       attached = out;
     } catch (err) {
-      toast.error('Failed to load containers', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.volumes_containers_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       attachedLoading = false;
     }
@@ -119,7 +122,7 @@
       entries = await api.volumes.browse(name, apiPath, hostId);
       currentPath = path;
     } catch (err) {
-      browseError = err instanceof ApiError ? err.message : 'failed to browse';
+      browseError = err instanceof ApiError ? err.message : m.volumes_browse_failed();
       entries = [];
     } finally {
       entriesLoading = false;
@@ -147,7 +150,7 @@
     try {
       fileResult = await api.volumes.readFile(name, path, hostId);
     } catch (err) {
-      fileError = err instanceof ApiError ? err.message : 'failed to read';
+      fileError = err instanceof ApiError ? err.message : m.volumes_read_failed();
     } finally {
       fileLoading = false;
     }
@@ -164,13 +167,13 @@
   function fmtMtime(iso: string): string {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toISOString().slice(0, 19).replace('T', ' ');
+    return fmtDateTime(d, { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
-  function fmtDate(iso?: string): string {
+  function fmtDay(iso?: string): string {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toISOString().slice(0, 10);
+    return fmtDateTime(d, { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
   }
   function entryIcon(e: VolumeEntry) {
     if (e.type === 'dir') return Folder;
@@ -197,22 +200,22 @@
 
   function copyMountpoint() {
     if (!inspect?.Mountpoint) return;
-    void copyWithToast(inspect.Mountpoint, 'Copied', 'mountpoint to clipboard');
+    void copyWithToast(inspect.Mountpoint, m.common_copied(), m.volumes_mountpoint_copied());
   }
 
   async function deleteVolume() {
     if (!(await confirm.ask({
-      title: 'Delete volume',
-      message: `Delete volume "${name}"?`,
-      body: 'Docker refuses if any container still mounts it. Data is unrecoverable once deleted.',
-      confirmLabel: 'Delete', danger: true
+      title: m.volumes_delete_title(),
+      message: m.volumes_delete_message({ name }),
+      body: m.volumes_delete_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.volumes.remove(name, true);
-      toast.success('Deleted', name);
+      toast.success(m.volumes_deleted(), name);
       goto('/resources?tab=volumes');
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.volumes_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -242,21 +245,21 @@
 <section class="vol-detail">
   <header class="vol-detail-header">
     <div class="vol-detail-back-row">
-      <a href="/resources?tab=volumes" class="vol-detail-back" aria-label="Back to resources">
-        <ChevronLeft size={14} strokeWidth={1.5} /> resources / volumes
+      <a href="/resources?tab=volumes" class="vol-detail-back" aria-label={m.volumes_back_aria()}>
+        <ChevronLeft size={14} strokeWidth={1.5} /> {m.volumes_back_crumb()}
       </a>
     </div>
     <div class="vol-detail-title-row">
       <div class="vol-detail-title-text">
         <h1 class="ed-title vol-detail-title">{name}</h1>
         <p class="ed-subtitle vol-detail-subtitle">
-          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · host {hostId}{owner ? ` · stack ${owner}` : ''}
+          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.volumes_sub_host({ host: hostId })}{owner ? ` · ${m.volumes_sub_stack({ stack: owner })}` : ''}
         </p>
       </div>
       <div class="ed-actions">
         {#if canWrite}
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm vol-detail-danger" onclick={deleteVolume}>
-            <Trash2 size={12} strokeWidth={1.5} /> Delete volume
+            <Trash2 size={12} strokeWidth={1.5} /> {m.volumes_delete_button()}
           </button>
         {/if}
       </div>
@@ -266,38 +269,38 @@
   <!-- ─── Summary tiles ─── -->
   <div class="vol-detail-summary">
     <div class="ed-metric">
-      <span class="ed-metric-label">Driver</span>
+      <span class="ed-metric-label">{m.volumes_driver()}</span>
       <div class="ed-metric-value vol-detail-tile-text">{inspect?.Driver ?? '—'}</div>
       <span class="ed-metric-meta">{inspect?.Scope ?? ''}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">In use</span>
+      <span class="ed-metric-label">{m.volumes_in_use()}</span>
       <div class="ed-metric-value">{attached.length || (attachedLoading ? '…' : '—')}</div>
-      <span class="ed-metric-meta">container{attached.length === 1 ? '' : 's'} attached</span>
+      <span class="ed-metric-meta">{m.volumes_containers_attached({ count: attached.length })}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Created</span>
-      <div class="ed-metric-value vol-detail-tile-text">{fmtDate(inspect?.CreatedAt)}</div>
-      <span class="ed-metric-meta">UTC</span>
+      <span class="ed-metric-label">{m.common_created()}</span>
+      <div class="ed-metric-value vol-detail-tile-text">{fmtDay(inspect?.CreatedAt)}</div>
+      <span class="ed-metric-meta">{m.volumes_utc()}</span>
     </div>
     <div class="ed-metric">
-      <span class="ed-metric-label">Labels</span>
+      <span class="ed-metric-label">{m.volumes_labels()}</span>
       <div class="ed-metric-value">{labelEntries.length}</div>
-      <span class="ed-metric-meta">key/value pair{labelEntries.length === 1 ? '' : 's'}</span>
+      <span class="ed-metric-meta">{m.volumes_kv_pairs({ count: labelEntries.length })}</span>
     </div>
   </div>
 
   <!-- ─── Tabs ─── -->
   <div class="ed-tabs vol-detail-tabs">
     <button type="button" class="ed-tab" class:active={tab === 'overview'} onclick={() => (tab = 'overview')}>
-      Overview
+      {m.common_overview()}
     </button>
     <button type="button" class="ed-tab" class:active={tab === 'containers'} onclick={() => (tab = 'containers')}>
-      Containers <span class="count">{attached.length}</span>
+      {m.common_containers()} <span class="count">{attached.length}</span>
     </button>
     {#if canBrowse}
       <button type="button" class="ed-tab" class:active={tab === 'files'} onclick={() => (tab = 'files')}>
-        Files
+        {m.volumes_tab_files()}
       </button>
     {/if}
   </div>
@@ -310,32 +313,32 @@
       <div class="dm-card vol-detail-card-pad"><Skeleton width="80%" height="6rem" /></div>
     {:else if inspectError && !inspect}
       <div class="dm-card vol-detail-card-pad">
-        <EmptyState icon={AlertTriangle} title="Volume not available" description={inspectError} />
+        <EmptyState icon={AlertTriangle} title={m.volumes_not_available()} description={inspectError} />
       </div>
     {:else if inspect}
       <div class="dm-card vol-detail-overview">
         <dl class="vol-detail-dl">
-          <dt>Name</dt>
+          <dt>{m.common_name()}</dt>
           <dd class="font-mono">{inspect.Name}</dd>
-          <dt>Driver</dt>
+          <dt>{m.volumes_driver()}</dt>
           <dd class="font-mono">{inspect.Driver}</dd>
-          <dt>Scope</dt>
+          <dt>{m.volumes_scope()}</dt>
           <dd>
             <span class="dm-pill {inspect.Scope === 'global' ? 'dm-pill-success' : 'dm-pill-neutral'} vol-detail-pill">{inspect.Scope}</span>
           </dd>
-          <dt>Mountpoint</dt>
+          <dt>{m.volumes_mountpoint()}</dt>
           <dd class="vol-detail-mountpoint">
             <span class="font-mono">{inspect.Mountpoint || '—'}</span>
             {#if inspect.Mountpoint}
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={copyMountpoint} title="Copy">
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={copyMountpoint} title={m.common_copy()}>
                 <Copy size={11} strokeWidth={1.5} />
               </button>
             {/if}
           </dd>
-          <dt>Created at</dt>
+          <dt>{m.volumes_created_at()}</dt>
           <dd class="font-mono">{inspect.CreatedAt || '—'}</dd>
           {#if labelEntries.length > 0}
-            <dt>Labels</dt>
+            <dt>{m.volumes_labels()}</dt>
             <dd>
               <div class="vol-detail-labels">
                 {#each labelEntries as [k, v] (k)}
@@ -347,7 +350,7 @@
             </dd>
           {/if}
           {#if optionsEntries.length > 0}
-            <dt>Options</dt>
+            <dt>{m.volumes_options()}</dt>
             <dd>
               <pre class="vol-detail-opts font-mono">{JSON.stringify(inspect.Options, null, 2)}</pre>
             </dd>
@@ -356,8 +359,8 @@
       </div>
     {/if}
     <p class="vol-detail-foot font-mono">
-      Volume size is not exposed by Docker without a per-volume <code>du -s</code>.
-      Open the <strong>Files</strong> tab to browse contents — every browse is logged in the audit trail.
+      {m.volumes_size_note_before()} <code>du -s</code>{m.volumes_size_note_du_after()}
+      {m.volumes_size_note_mid()} <strong>{m.volumes_size_note_files()}</strong> {m.volumes_size_note_after()}
     </p>
   {/if}
 
@@ -369,25 +372,25 @@
       <div class="dm-card vol-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
     {:else if attached.length === 0}
       <div class="dm-card vol-detail-card-pad">
-        <EmptyState icon={Box} title="Not mounted" description="No running container references this volume right now. Volumes can outlive their containers — that's by design." />
+        <EmptyState icon={Box} title={m.volumes_not_mounted()} description={m.volumes_not_mounted_desc()} />
       </div>
     {:else}
       <div class="vol-detail-container-table">
         <div class="vol-detail-container-row vol-detail-container-row--head">
-          <span>Name</span>
-          <span>State</span>
-          <span>Image</span>
-          <span>Mounted at</span>
-          <span>Mode</span>
+          <span>{m.common_name()}</span>
+          <span>{m.common_state()}</span>
+          <span>{m.common_image()}</span>
+          <span>{m.volumes_col_mounted_at()}</span>
+          <span>{m.volumes_col_mode()}</span>
         </div>
         {#each attached as c (c.id)}
           <a href={`/containers/${c.id}`} class="vol-detail-container-row vol-detail-container-row--data">
             <span class="font-mono vol-detail-container-name">{c.name}</span>
             <span>
               {#if c.state === 'running'}
-                <span class="dm-pill dm-pill-success vol-detail-pill"><span class="dm-pill-dot"></span> running</span>
+                <span class="dm-pill dm-pill-success vol-detail-pill"><span class="dm-pill-dot"></span> {m.containers_status_running()}</span>
               {:else}
-                <span class="dm-pill dm-pill-neutral vol-detail-pill">{c.state}</span>
+                <span class="dm-pill dm-pill-neutral vol-detail-pill">{containerStateLabel(c.state)}</span>
               {/if}
             </span>
             <span class="font-mono vol-detail-container-image">{c.image}</span>
@@ -411,7 +414,7 @@
             <span class="vol-detail-files-crumb-sep">/</span>
             <button class="vol-detail-files-crumb-seg font-mono" onclick={() => goToBreadcrumb(i)}>{seg}</button>
           {/each}
-          <button class="vol-detail-files-refresh" onclick={() => loadDir(currentPath)} title="Refresh" aria-label="Refresh">
+          <button class="vol-detail-files-refresh" onclick={() => loadDir(currentPath)} title={m.common_refresh()} aria-label={m.common_refresh()}>
             <RefreshCw size={11} strokeWidth={1.5} />
           </button>
         </div>
@@ -423,7 +426,7 @@
             <AlertTriangle size={12} strokeWidth={1.5} /> {browseError}
           </div>
         {:else if entries.length === 0 && currentPath === '/'}
-          <EmptyState icon={Folder} title="Volume is empty" description="No files or directories at the volume root." />
+          <EmptyState icon={Folder} title={m.volumes_empty()} description={m.volumes_empty_desc()} />
         {:else}
           <ul class="vol-detail-files-list">
             {#if currentPath !== '/'}
@@ -460,7 +463,7 @@
 
       <div class="dm-card vol-detail-card-pad">
         {#if !selectedFile}
-          <EmptyState icon={FileText} title="Select a file" description="Click a file to preview its content. Text files up to 1 MiB display inline; larger or binary files are offered as a download." />
+          <EmptyState icon={FileText} title={m.volumes_select_file()} description={m.volumes_select_file_desc()} />
         {:else if fileLoading}
           <Skeleton width="100%" height="8rem" />
         {:else if fileError}
@@ -472,19 +475,19 @@
             <div class="vol-detail-file-info">
               <p class="font-mono vol-detail-file-path" title={selectedFile}>{selectedFile}</p>
               <p class="vol-detail-file-meta font-mono">
-                {fmtBytes(fileResult.size)}{fileResult.truncated ? ' · truncated preview' : ''}{fileResult.binary ? ' · binary' : ''}
+                {fmtBytes(fileResult.size)}{fileResult.truncated ? ` · ${m.volumes_truncated_preview()}` : ''}{fileResult.binary ? ` · ${m.volumes_binary()}` : ''}
               </p>
             </div>
             <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={downloadBlob}>
-              <Download size={12} strokeWidth={1.5} /> Download
+              <Download size={12} strokeWidth={1.5} /> {m.common_download()}
             </button>
           </div>
           {#if fileResult.binary}
-            <div class="vol-detail-binary">Binary file — preview hidden. Use the Download button to inspect offline.</div>
+            <div class="vol-detail-binary">{m.volumes_binary_notice()}</div>
           {:else}
             <pre class="vol-detail-preview font-mono">{previewText}</pre>
             {#if fileResult.truncated}
-              <p class="vol-detail-truncated font-mono">Only the first 1 MiB is shown. Download for the full file.</p>
+              <p class="vol-detail-truncated font-mono">{m.volumes_truncated_notice()}</p>
             {/if}
           {/if}
         {/if}
@@ -492,9 +495,8 @@
     </div>
 
     <p class="vol-detail-foot font-mono">
-      <strong>Read-only.</strong>
-      Browsing volumes is audited — every directory listing and file read is recorded in the audit log.
-      Intentionally no write, rename, or delete operations here; use a deployed container shell for those.
+      <strong>{m.volumes_readonly()}</strong>
+      {m.volumes_readonly_note()}
     </p>
   {/if}
 </section>

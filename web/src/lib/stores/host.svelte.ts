@@ -10,6 +10,7 @@
 // a confusing extra entry in the picker.
 
 import type { HostInfo } from '$lib/api';
+import { m } from '$lib/paraglide/messages.js';
 
 const STORAGE_KEY = 'dockmesh_selected_host';
 
@@ -18,7 +19,7 @@ const STORAGE_KEY = 'dockmesh_selected_host';
 // hosts so the layout can render a distinct pill / icon.
 const ALL_HOSTS: HostInfo = {
   id: 'all',
-  name: 'All hosts',
+  name: m.common_all_hosts(),
   kind: 'all',
   status: 'online'
 };

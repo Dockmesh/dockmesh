@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { api, ApiError, type ProxyImportResult } from '$lib/api';
   import { Modal, StatusChip } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
@@ -31,57 +32,57 @@
         return;
       }
       const created = res.sites.filter((s) => s.route_id).length;
-      toast.success(`${created} site${created === 1 ? '' : 's'} imported`, 'They are disabled until you turn them on.');
+      toast.success(m.proxy_import_done({ count: created }), m.proxy_import_done_hint());
       open = false;
       onimported?.();
     } catch (e) {
-      error = e instanceof ApiError ? e.message : 'Import failed';
+      error = e instanceof ApiError ? e.message : m.proxy_import_failed();
     } finally {
       busy = false;
     }
   }
 </script>
 
-<Modal bind:open title="Import Caddyfile" maxWidth="max-w-2xl">
+<Modal bind:open title={m.proxy_import_title()} maxWidth="max-w-2xl">
   {#if !result}
     <div class="dm-field">
-      <label for="imp-text">Paste your Caddyfile</label>
+      <label for="imp-text">{m.proxy_import_paste()}</label>
       <textarea id="imp-text" class="dm-input dm-mono imp-text" bind:value={text} spellcheck="false"
         placeholder={'jellyfin.example.org {\n\treverse_proxy 192.168.10.40:8096\n}'}></textarea>
-      <span class="hint">Nothing changes until you import; file imports and environment placeholders are refused.</span>
+      <span class="hint">{m.proxy_import_paste_hint()}</span>
     </div>
   {:else}
-    <p class="dm-sub">{result.sites.length} site{result.sites.length === 1 ? '' : 's'} found · {importable} can be imported</p>
-    <div class="dm-tbl imp-list" role="table" aria-label="Sites in the Caddyfile">
+    <p class="dm-sub">{m.proxy_import_found({ count: result.sites.length })} · {m.proxy_import_importable({ n: importable })}</p>
+    <div class="dm-tbl imp-list" role="table" aria-label={m.proxy_import_table()}>
       {#each result.sites as s (s.host)}
         <div class="dm-tr" role="row" style="grid-template-columns: 90px minmax(160px, 1fr) minmax(0, 1.4fr)">
-          <span role="cell"><StatusChip tone={s.status === 'ready' ? 'ok' : s.status === 'partial' ? 'warn' : 'bad'} label={s.status === 'skipped' ? 'skipped' : s.status} /></span>
+          <span role="cell"><StatusChip tone={s.status === 'ready' ? 'ok' : s.status === 'partial' ? 'warn' : 'bad'} label={s.status === 'skipped' ? m.proxy_import_st_skipped() : s.status === 'partial' ? m.proxy_import_st_partial() : s.status === 'ready' ? m.proxy_import_st_ready() : s.status} /></span>
           <span role="cell" class="dm-mono" title={s.host}>{s.host}</span>
-          <span role="cell" class="dm-dim" title={s.error ?? (s.unsupported?.length ? `Not imported: ${s.unsupported.join(', ')}` : s.upstream)}>
+          <span role="cell" class="dm-dim" title={s.error ?? (s.unsupported?.length ? m.proxy_import_not_imported_title({ list: s.unsupported.join(', ') }) : s.upstream)}>
             {#if s.error}<span class="bad">{s.error}</span>
-            {:else if s.unsupported?.length}→ {s.upstream} · not imported: {s.unsupported.join(', ')}
+            {:else if s.unsupported?.length}→ {s.upstream} · {m.proxy_import_not_imported({ list: s.unsupported.join(', ') })}
             {:else}→ {s.upstream}{/if}
           </span>
         </div>
       {/each}
     </div>
     {#if result.global_unsupported?.length}
-      <p class="dm-sub">Global options not imported: {result.global_unsupported.join(', ')}</p>
+      <p class="dm-sub">{m.proxy_import_global_not_imported({ list: result.global_unsupported.join(', ') })}</p>
     {/if}
     {#each result.warnings ?? [] as w}<p class="dm-sub">{w}</p>{/each}
-    <p class="dm-sub">Imported sites start disabled so you can check them before they go live.</p>
+    <p class="dm-sub">{m.proxy_import_disabled_note()}</p>
   {/if}
   {#if error}<p class="err" role="alert">{error}</p>{/if}
 
   {#snippet footer()}
     {#if result}
-      <button type="button" class="dm-btn" onclick={() => (result = null)}>Back</button>
+      <button type="button" class="dm-btn" onclick={() => (result = null)}>{m.common_back()}</button>
       <button type="button" class="dm-btn dm-btn-primary" disabled={busy || importable === 0} onclick={() => run(false)}>
-        Import {importable} site{importable === 1 ? '' : 's'}
+        {m.proxy_import_button({ count: importable })}
       </button>
     {:else}
-      <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
-      <button type="button" class="dm-btn dm-btn-primary" disabled={busy || !text.trim()} onclick={() => run(true)}>Analyze</button>
+      <button type="button" class="dm-btn" onclick={() => (open = false)}>{m.common_cancel()}</button>
+      <button type="button" class="dm-btn dm-btn-primary" disabled={busy || !text.trim()} onclick={() => run(true)}>{m.proxy_import_analyze()}</button>
     {/if}
   {/snippet}
 </Modal>

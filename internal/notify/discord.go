@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 type discordCfg struct {
@@ -37,14 +39,14 @@ func (c *discordChannel) Send(ctx context.Context, n Notification) error {
 	}
 	fields := []map[string]any{}
 	if n.Container != "" {
-		fields = append(fields, map[string]any{"name": "Container", "value": n.Container, "inline": true})
+		fields = append(fields, map[string]any{"name": i18n.T(n.Lang, "notify.container"), "value": n.Container, "inline": true})
 	}
 	if n.Metric != "" {
-		fields = append(fields, map[string]any{"name": "Metric", "value": n.Metric, "inline": true})
+		fields = append(fields, map[string]any{"name": i18n.T(n.Lang, "notify.metric"), "value": n.Metric, "inline": true})
 	}
 	if n.Threshold != 0 {
 		fields = append(fields, map[string]any{
-			"name":   "Value / Threshold",
+			"name":   i18n.T(n.Lang, "notify.value_threshold"),
 			"value":  formatValue(n.Value) + " / " + formatValue(n.Threshold),
 			"inline": true,
 		})

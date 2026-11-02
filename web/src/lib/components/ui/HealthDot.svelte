@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { onMount, onDestroy } from 'svelte';
   import { api, type HealthResponse } from '$lib/api';
   import { goto } from '$app/navigation';
@@ -85,10 +86,10 @@
     off:  ''
   };
   const statusLabel: Record<string, string> = {
-    ok: 'All systems healthy',
-    warn: 'Something degraded',
-    fail: 'Action required',
-    off: 'Some features disabled'
+    ok: m.ui_sys_ok(),
+    warn: m.ui_sys_warn(),
+    fail: m.ui_sys_fail(),
+    off: m.ui_sys_off()
   };
   const statusText: Record<string, string> = {
     ok:   'text-emerald-400',
@@ -103,8 +104,8 @@
     bind:this={trigger}
     type="button"
     class="relative w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--surface)] transition-colors"
-    title={health ? statusLabel[health.overall] : 'System health'}
-    aria-label="System health"
+    title={health ? statusLabel[health.overall] : m.ui_sys_health()}
+    aria-label={m.ui_sys_health()}
     onclick={toggle}
   >
     <span class="relative flex items-center justify-center">
@@ -129,10 +130,10 @@
     >
       <div class="px-3 py-1.5 border-b border-[var(--border)]">
         <div class="font-medium {health ? statusText[health.overall] : ''}">
-          {health ? statusLabel[health.overall] : 'Loading…'}
+          {health ? statusLabel[health.overall] : m.common_loading()}
         </div>
         {#if error}
-          <div class="text-xs text-[var(--color-danger-400)] mt-0.5">Health query failed: {error}</div>
+          <div class="text-xs text-[var(--color-danger-400)] mt-0.5">{m.ui_sys_query_failed({ error })}</div>
         {/if}
       </div>
       {#if health}

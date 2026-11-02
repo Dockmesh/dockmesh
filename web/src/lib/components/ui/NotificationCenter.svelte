@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { goto } from '$app/navigation';
   import { api, type NotificationItem } from '$lib/api';
   import { fmtAgo } from '$lib/format';
+  import { fmtDateTime } from '$lib/i18n';
   import { badgeText } from '$lib/activity';
   import { inAppLink } from '$lib/links';
   import { Bell } from 'lucide-svelte';
@@ -118,8 +120,8 @@
     onclick={toggle}
     aria-haspopup="dialog"
     aria-expanded={open}
-    aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'}
-    title="Notifications"
+    aria-label={unread ? m.ui_notif_unread_aria({ count: unread }) : m.ui_notif_title()}
+    title={m.ui_notif_title()}
   >
     <Bell size={15} />
     {#if badge}<span class="count" aria-hidden="true">{badge}</span>{/if}
@@ -129,19 +131,19 @@
     <div
       class="pop"
       role="dialog"
-      aria-label="Latest notifications"
+      aria-label={m.ui_notif_latest()}
       tabindex="-1"
       bind:this={pop}
     >
       <div class="h">
-        <b>Notifications</b>
+        <b>{m.ui_notif_title()}</b>
         <span class="dm-sp"></span>
-        {#if unread > 0}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={markAllRead}>Mark all read</button>{/if}
+        {#if unread > 0}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={markAllRead}>{m.ui_notif_mark_all()}</button>{/if}
       </div>
       {#if loading && items.length === 0}
-        <div class="empty">Loading…</div>
+        <div class="empty">{m.common_loading()}</div>
       {:else if items.length === 0}
-        <div class="empty">No notifications yet.</div>
+        <div class="empty">{m.ui_notif_empty()}</div>
       {:else}
         <ul>
           {#each items as n (n.id)}
@@ -149,13 +151,13 @@
               <button type="button" class="it" class:unread={!n.read_at} onclick={() => openItem(n)} title={n.body ?? n.title}>
                 <span class="dm-dot {TONE[n.severity] ?? ''}"></span>
                 <span class="t">{n.title}</span>
-                <span class="k dm-num" title={new Date(n.created_at).toLocaleString()}>{fmtAgo(n.created_at)}</span>
+                <span class="k dm-num" title={fmtDateTime(n.created_at)}>{fmtAgo(n.created_at)}</span>
               </button>
             </li>
           {/each}
         </ul>
       {/if}
-      <a class="all" href="/activity?tab=notifications" onclick={() => close()}>View all in Activity</a>
+      <a class="all" href="/activity?tab=notifications" onclick={() => close()}>{m.ui_notif_view_all()}</a>
     </div>
   {/if}
 </div>

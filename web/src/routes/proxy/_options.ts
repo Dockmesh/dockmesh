@@ -1,3 +1,4 @@
+import { m } from '$lib/paraglide/messages.js';
 import type { SiteHeader, SiteOptions, TLSMode } from './_site';
 
 // Editable form of a site's options. Lists that are plain names or
@@ -172,8 +173,8 @@ export interface FieldError { field: string; message: string }
 // parseFieldError reads the field out of a server validation message
 // ("options.performance.read_timeout: must be …").
 export function parseFieldError(msg: string): FieldError | null {
-  const m = /options\.([a-z_]+(?:\.[a-z_]+)*): (.+)$/s.exec(msg);
-  if (m) return { field: m[1], message: m[2] };
+  const mt = /options\.([a-z_]+(?:\.[a-z_]+)*): (.+)$/s.exec(msg);
+  if (mt) return { field: mt[1], message: mt[2] };
   if (/www\. name/.test(msg)) return { field: 'routing.www_redirect', message: msg };
   return null;
 }
@@ -186,12 +187,12 @@ export function groupOfField(field: string): GroupKey | null {
 export interface GroupInfo { key: GroupKey; label: string; hint: string }
 
 export const GROUPS: GroupInfo[] = [
-  { key: 'routing', label: 'Routing', hint: 'More upstreams, load balancing, health checks and the www name.' },
-  { key: 'https', label: 'HTTPS', hint: 'How plain HTTP is handled for this site.' },
-  { key: 'performance', label: 'Performance', hint: 'Streaming, uploads, timeouts and compression.' },
-  { key: 'access', label: 'Access', hint: 'Who may open the site: passwords, IP lists, an auth service.' },
-  { key: 'headers', label: 'Headers', hint: 'Headers added to or removed from requests and responses.' },
-  { key: 'logs', label: 'Logs', hint: 'Per-request logging in the proxy container.' }
+  { key: 'routing', label: m.proxy_grp_routing(), hint: m.proxy_grp_routing_hint() },
+  { key: 'https', label: 'HTTPS', hint: m.proxy_grp_https_hint() },
+  { key: 'performance', label: m.proxy_grp_performance(), hint: m.proxy_grp_performance_hint() },
+  { key: 'access', label: m.proxy_grp_access(), hint: m.proxy_grp_access_hint() },
+  { key: 'headers', label: m.proxy_grp_headers(), hint: m.proxy_grp_headers_hint() },
+  { key: 'logs', label: m.common_logs(), hint: m.proxy_grp_logs_hint() }
 ];
 
 export interface Warning { field: string; text: string }
@@ -201,18 +202,18 @@ export interface Warning { field: string; text: string }
 export function warnings(f: OptionsForm, tls: TLSMode): Warning[] {
   const out: Warning[] = [];
   if (f.https.allowHTTP && tls !== 'none')
-    out.push({ field: 'https.allow_http', text: 'Visitors can open the site unencrypted; passwords and cookies sent that way can be read on the network.' });
+    out.push({ field: 'https.allow_http', text: m.proxy_warn_allow_http() });
   if (f.https.hsts)
-    out.push({ field: 'https.hsts', text: 'Browsers remember this for a year and refuse plain HTTP for the name, even after you turn it off again.' });
+    out.push({ field: 'https.hsts', text: m.proxy_warn_hsts() });
   if (f.routing.healthPath.trim())
-    out.push({ field: 'routing.health_path', text: 'Upstreams that fail the check get no traffic; when all fail, visitors get 503.' });
+    out.push({ field: 'routing.health_path', text: m.proxy_warn_health() });
   if (f.performance.bufferRequests)
-    out.push({ field: 'performance.buffer_requests', text: 'Caddy holds up to 4 MiB of every request in memory before the upstream sees it; large uploads start later.' });
+    out.push({ field: 'performance.buffer_requests', text: m.proxy_warn_buffer() });
   if (f.access.ipMode === 'allow')
-    out.push({ field: 'access.ip_mode', text: 'Every address not on the list gets 403. Include your own, or you lock yourself out of the site.' });
+    out.push({ field: 'access.ip_mode', text: m.proxy_warn_ip_allow() });
   if (f.access.forwardAuth)
-    out.push({ field: 'access.forward_auth', text: 'Every request waits for the auth service; while it is down, visitors get its error instead of the site.' });
+    out.push({ field: 'access.forward_auth', text: m.proxy_warn_forward_auth() });
   if (f.access.users.some((u) => u.username.trim()) && (tls === 'none' || f.https.allowHTTP))
-    out.push({ field: 'access.basic_auth', text: 'Passwords go over plain HTTP on this site and can be read on the network.' });
+    out.push({ field: 'access.basic_auth', text: m.proxy_warn_basic_auth_http() });
   return out;
 }

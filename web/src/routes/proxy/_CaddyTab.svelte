@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { api, ApiError, type ProxyVersionInfo, type ProxySettings } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -31,10 +32,10 @@
 
   async function switchTo(version: string, rollback = false) {
     const ok = await confirm.ask({
-      title: rollback ? 'Go back to the previous Caddy version' : `Switch Caddy to ${version}`,
-      message: `Caddy is restarted with ${version}.`,
-      body: 'Sites are briefly unavailable while the container is replaced. If the new version does not take the configuration, Dockmesh switches back on its own.',
-      confirmLabel: rollback ? 'Go back' : 'Switch'
+      title: rollback ? m.proxy_caddy_rollback_title() : m.proxy_caddy_switch_title({ version }),
+      message: m.proxy_caddy_switch_message({ version }),
+      body: m.proxy_caddy_switch_body(),
+      confirmLabel: rollback ? m.proxy_caddy_go_back() : m.proxy_caddy_switch()
     });
     if (!ok) return;
     switching = true;
@@ -42,10 +43,10 @@
       info = rollback
         ? await api.proxy.rollbackVersion()
         : await api.proxy.setVersion(version);
-      toast.success(`Caddy runs ${info.current}`);
+      toast.success(m.proxy_caddy_runs({ version: info.current }));
       onchanged?.();
     } catch (e) {
-      toast.error('Version switch failed', e instanceof ApiError ? e.message : undefined);
+      toast.error(m.proxy_caddy_switch_failed(), e instanceof ApiError ? e.message : undefined);
       await load();
     } finally {
       switching = false;
@@ -57,9 +58,9 @@
     try {
       settings = await api.proxy.updateSettings(form);
       form = { ...settings };
-      toast.success('Proxy settings saved');
+      toast.success(m.proxy_settings_saved());
     } catch (e) {
-      toast.error('Saving failed', e instanceof ApiError ? e.message : undefined);
+      toast.error(m.proxy_saving_failed(), e instanceof ApiError ? e.message : undefined);
     } finally {
       saving = false;
     }
@@ -69,26 +70,26 @@
 
 <div class="cad">
   <div class="dm-form-sec">
-    <div><h4>Caddy version</h4><p>Dockmesh ships the versions it was tested with. Switching restarts Caddy and goes back if the new one fails.</p></div>
+    <div><h4>{m.proxy_caddy_version()}</h4><p>{m.proxy_caddy_version_hint()}</p></div>
     <div>
       {#if !info}
-        <span class="dm-dim">Not available</span>
+        <span class="dm-dim">{m.proxy_not_available()}</span>
       {:else if !info.managed}
-        <span class="dm-mono">{info.image || 'custom image'}</span>
-        <span class="dm-sub">{info.read_only_reason ?? 'A custom image is set, so the version is managed outside Dockmesh.'}</span>
+        <span class="dm-mono">{info.image || m.proxy_custom_image()}</span>
+        <span class="dm-sub">{info.read_only_reason ?? m.proxy_custom_image_hint()}</span>
       {:else}
-        <span>Running <b class="dm-mono">{info.current || '—'}</b>{#if info.default && info.current !== info.default} · recommended <b class="dm-mono">{info.default}</b>{/if}</span>
+        <span>{m.proxy_caddy_running()} <b class="dm-mono">{info.current || '—'}</b>{#if info.default && info.current !== info.default} · {m.proxy_caddy_recommended()} <b class="dm-mono">{info.default}</b>{/if}</span>
         {#if canEdit}
           <div class="row">
-            <select class="dm-input" bind:value={pick} disabled={switching || !running} aria-label="Caddy version">
-              {#each info.available as v (v.version)}<option value={v.version}>{v.version}{v.version === info.default ? ' (recommended)' : ''}</option>{/each}
+            <select class="dm-input" bind:value={pick} disabled={switching || !running} aria-label={m.proxy_caddy_version()}>
+              {#each info.available as v (v.version)}<option value={v.version}>{v.version}{v.version === info.default ? ` (${m.proxy_caddy_recommended()})` : ''}</option>{/each}
             </select>
-            <button type="button" class="dm-btn" disabled={switching || !running || pick === info.current} onclick={() => switchTo(pick)}>Switch</button>
+            <button type="button" class="dm-btn" disabled={switching || !running || pick === info.current} onclick={() => switchTo(pick)}>{m.proxy_caddy_switch()}</button>
             {#if info.previous}
-              <button type="button" class="dm-btn dm-btn-ghost" disabled={switching || !running} onclick={() => switchTo(info!.previous!, true)}>Back to {info.previous}</button>
+              <button type="button" class="dm-btn dm-btn-ghost" disabled={switching || !running} onclick={() => switchTo(info!.previous!, true)}>{m.proxy_caddy_back_to({ version: info.previous })}</button>
             {/if}
           </div>
-          {#if !running}<span class="dm-sub">Start the proxy to switch versions.</span>{/if}
+          {#if !running}<span class="dm-sub">{m.proxy_caddy_start_to_switch()}</span>{/if}
         {/if}
       {/if}
     </div>
@@ -96,30 +97,30 @@
 
   {#if settings}
     <div class="dm-form-sec">
-      <div><h4>Certificate contact</h4><p>Email the certificate authority uses for expiry warnings. Optional.</p></div>
+      <div><h4>{m.proxy_cert_contact()}</h4><p>{m.proxy_cert_contact_hint()}</p></div>
       <div><input class="dm-input" type="email" bind:value={form.acme_email} disabled={!canEdit} placeholder="admin@example.org" /></div>
     </div>
     <div class="dm-form-sec">
-      <div><h4>Certificate authority</h4><p>Where Let's Encrypt sites get their certificates. Staging certificates are not trusted by browsers.</p></div>
+      <div><h4>{m.proxy_cert_authority()}</h4><p>{m.proxy_cert_authority_hint()}</p></div>
       <div>
         <select class="dm-input" bind:value={form.acme_ca} disabled={!canEdit}>
           <option value="">Let's Encrypt</option>
           <option value="zerossl">ZeroSSL</option>
-          <option value="letsencrypt_staging">Let's Encrypt staging (testing)</option>
+          <option value="letsencrypt_staging">{m.proxy_le_staging()}</option>
         </select>
       </div>
     </div>
     <div class="dm-form-sec">
-      <div><h4>Trusted proxies</h4><p>Trust the client address that a CDN in front of Caddy forwards. Only enable it when all traffic comes through that CDN.</p></div>
+      <div><h4>{m.proxy_trusted_proxies()}</h4><p>{m.proxy_trusted_proxies_hint()}</p></div>
       <div>
         <select class="dm-input" bind:value={form.trusted_proxies} disabled={!canEdit}>
-          <option value="">None</option>
+          <option value="">{m.common_none()}</option>
           <option value="cloudflare">Cloudflare</option>
         </select>
       </div>
     </div>
     {#if canEdit}
-      <div class="save"><button type="button" class="dm-btn dm-btn-primary" disabled={!dirty || saving} onclick={saveSettings}>Save settings</button></div>
+      <div class="save"><button type="button" class="dm-btn dm-btn-primary" disabled={!dirty || saving} onclick={saveSettings}>{m.proxy_save_settings()}</button></div>
     {/if}
   {/if}
 </div>

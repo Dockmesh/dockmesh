@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { Modal, Button, StatusChip } from '$lib/components/ui';
@@ -10,6 +11,7 @@
   import { errorHint, shortMessage } from '$lib/operationsProgress';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { fmtDateTime, fmtTime } from '$lib/i18n';
 
   // Steps and live log of one operation. Mounted once in the layout and
   // opened from anywhere through the operations store; closing it leaves
@@ -33,6 +35,13 @@
     follow = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24;
   }
 
+  const STATUS: Record<string, () => string> = {
+    queued: m.ops_st_queued,
+    running: m.ops_st_running,
+    succeeded: m.ops_st_succeeded,
+    failed: m.ops_st_failed,
+    cancelled: m.ops_st_cancelled
+  };
   const statusTone: Record<string, Tone> = { queued: 'off', running: 'acc', succeeded: 'ok', failed: 'bad', cancelled: 'off' };
   const failed = $derived(op ? failedStep(op) : undefined);
   const stoppedAt = $derived(op?.status === 'cancelled' ? op.steps.find((s) => s.status === 'cancelled') : undefined);
@@ -40,7 +49,7 @@
   const hint = $derived(op?.status === 'failed' ? errorHint(op.error ?? failed?.detail) : '');
 
   function when(iso?: string) {
-    return iso ? new Date(iso).toLocaleString() : '—';
+    return iso ? fmtDateTime(iso) : '—';
   }
 
   const refId = (o: Operation, prefix: string) => (o.ref?.startsWith(prefix) ? o.ref.slice(prefix.length) : '');
@@ -71,7 +80,7 @@
       if (op.kind === 'image.update') {
         const id = refId(op, 'container:');
         const found = operations.find(opRef.container(id), 'image.update', since);
-        void api.containers.doUpdate(id).catch((e) => toast.error('Update failed', (e as Error).message));
+        void api.containers.doUpdate(id).catch((e) => toast.error(m.ops_update_failed(), (e as Error).message));
         const next = await found;
         if (next) await operations.open(next.id);
       } else if (op.kind === 'backup.run') {
@@ -80,7 +89,7 @@
         if (next) await operations.open(next.id);
       }
     } catch (e) {
-      toast.error('Could not start it again', (e as Error).message);
+      toast.error(m.ops_retry_failed(), (e as Error).message);
     } finally {
       busy = false;
     }
@@ -90,57 +99,57 @@
   }
 </script>
 
-<Modal bind:open title={op ? `${kindLabel(op.kind)} · ${op.target}` : 'Operation'} maxWidth="max-w-2xl" onclose={close}>
+<Modal bind:open title={op ? `${kindLabel(op.kind)} · ${op.target}` : m.ops_dialog_title()} maxWidth="max-w-2xl" onclose={close}>
   {#if op}
     <div class="head">
-      <StatusChip tone={statusTone[op.status] ?? 'off'} label={op.status} />
+      <StatusChip tone={statusTone[op.status] ?? 'off'} label={STATUS[op.status]?.() ?? op.status} />
       <span class="dm-sub">
-        {op.actor_name ? `by ${op.actor_name}` : op.actor?.startsWith('api-token:') ? 'by an API token' : op.actor ? '' : 'scheduled'}
-        {op.started_at ? ` · started ${when(op.started_at)}` : ` · queued ${when(op.created_at)}`}
+        {op.actor_name ? m.ops_by({ name: op.actor_name }) : op.actor?.startsWith('api-token:') ? m.ops_by_token() : op.actor ? '' : m.ops_scheduled()}
+        {op.started_at ? ` · ${m.ops_started_at({ when: when(op.started_at) })}` : ` · ${m.ops_queued_at({ when: when(op.created_at) })}`}
         {elapsed(op.started_at, op.finished_at) ? ` · ${elapsed(op.started_at, op.finished_at)}` : ''}
       </span>
     </div>
 
     {#if op.status === 'failed'}
       <div class="fail" role="alert">
-        <b>{failed ? `Failed at “${failed.label}”` : 'Failed'}</b>
+        <b>{failed ? m.ops_failed_at({ step: failed.label }) : m.common_failed()}</b>
         {#if reason}<p title={op.error ?? ''}>{reason}</p>{/if}
         {#if hint}<p class="hint">{hint}</p>{/if}
       </div>
     {:else if op.status === 'cancelled'}
       <div class="stopped">
-        <b>{stoppedAt ? `Cancelled during “${stoppedAt.label}”` : 'Cancelled before it started'}</b>
+        <b>{stoppedAt ? m.ops_cancelled_during({ step: stoppedAt.label }) : m.ops_cancelled_before()}</b>
       </div>
     {:else if op.cancel_requested}
-      <div class="stopped" role="status"><b>Cancelling…</b> the current step is stopping.</div>
+      <div class="stopped" role="status"><b>{m.ops_cancelling()}</b> {m.ops_cancelling_detail()}</div>
     {/if}
 
     <section>
-      <h3 class="dm-h2">Steps</h3>
+      <h3 class="dm-h2">{m.ops_steps()}</h3>
       <OperationSteps {op} />
     </section>
 
     <section class="logsec">
-      <h3 class="dm-h2">Log <span class="dm-sub">{log.length ? `${log.length} lines` : ''}{isActive(op) ? ' · closing this keeps it running' : ''}</span></h3>
+      <h3 class="dm-h2">{m.ops_log()} <span class="dm-sub">{log.length ? m.ops_log_lines({ count: log.length }) : ''}{isActive(op) ? ` · ${m.ops_close_keeps_running()}` : ''}</span></h3>
       <div class="log dm-mono" bind:this={logEl} onscroll={onScroll} aria-live="off">
         {#each log as l, i (i)}
-          <div class="ln {l.level}"><span class="t">{new Date(l.ts).toLocaleTimeString()}</span><span class="x">{l.text}</span></div>
+          <div class="ln {l.level}"><span class="t">{fmtTime(l.ts)}</span><span class="x">{l.text}</span></div>
         {:else}
-          <div class="dm-dim">{isActive(op) ? 'Waiting for output…' : 'No log lines.'}</div>
+          <div class="dm-dim">{isActive(op) ? m.ops_waiting_output() : m.ops_no_log()}</div>
         {/each}
       </div>
     </section>
   {:else}
-    <div class="dm-empty">Loading…</div>
+    <div class="dm-empty">{m.common_loading()}</div>
   {/if}
 
   {#snippet footer()}
     {#if op}
-      {#if objectHref}<Button variant="ghost" onclick={() => { const h = objectHref; close(); goto(h); }}>Open {op.kind === 'proxy.site' ? 'reverse proxy' : op.kind === 'image.update' ? 'container' : 'run'}</Button>{/if}
+      {#if objectHref}<Button variant="ghost" onclick={() => { const h = objectHref; close(); goto(h); }}>{op.kind === 'proxy.site' ? m.ops_open_proxy() : op.kind === 'image.update' ? m.ops_open_container() : m.ops_open_run()}</Button>{/if}
       <span class="dm-sp"></span>
       <CancelOpButton {op} size="md" />
-      {#if canRetry}<Button variant="primary" loading={busy} onclick={retry}>Retry</Button>{/if}
-      <Button variant="secondary" onclick={close}>Close</Button>
+      {#if canRetry}<Button variant="primary" loading={busy} onclick={retry}>{m.common_retry()}</Button>{/if}
+      <Button variant="secondary" onclick={close}>{m.common_close()}</Button>
     {/if}
   {/snippet}
 </Modal>

@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/smtp"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 type emailCfg struct {
@@ -20,7 +24,12 @@ type emailCfg struct {
 }
 
 type emailChannel struct {
-	cfg emailCfg
+	cfg    emailCfg
+	lang   string
+	langOf func(ctx context.Context, addr string) (string, error)
+	// sent remembers the language groups already delivered, so a retry
+	// after one group failed doesn't mail the others again.
+	sent map[string]bool
 }
 
 func parseEmail(raw json.RawMessage) (*emailChannel, error) {
@@ -37,33 +46,71 @@ func parseEmail(raw json.RawMessage) (*emailChannel, error) {
 	return &emailChannel{cfg: cfg}, nil
 }
 
+// Send mails each recipient in their own language: the language of the
+// Dockmesh user with that address, else the channel's. Each language group
+// gets its own mail, so its To header lists only that group.
 func (c *emailChannel) Send(ctx context.Context, n Notification) error {
 	addr := c.cfg.Host + ":" + strconv.Itoa(c.cfg.Port)
-	msg := c.message(n)
-
 	var auth smtp.Auth
 	if c.cfg.Username != "" {
 		auth = smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, c.cfg.Host)
 	}
-	return smtp.SendMail(addr, auth, c.cfg.From, c.cfg.To, msg)
+	groups := c.recipientsByLanguage(ctx)
+	langs := make([]string, 0, len(groups))
+	for l := range groups {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+	if c.sent == nil {
+		c.sent = map[string]bool{}
+	}
+	for _, l := range langs {
+		if c.sent[l] {
+			continue
+		}
+		to := groups[l]
+		if err := smtp.SendMail(addr, auth, c.cfg.From, to, c.message(n.in(l), to)); err != nil {
+			return err
+		}
+		c.sent[l] = true
+	}
+	return nil
 }
 
-func (c *emailChannel) message(n Notification) []byte {
+func (c *emailChannel) recipientsByLanguage(ctx context.Context) map[string][]string {
+	out := map[string][]string{}
+	for _, a := range c.cfg.To {
+		lang := c.lang
+		if c.langOf != nil {
+			if l, err := c.langOf(ctx, a); err != nil {
+				slog.Debug("notify: recipient language", "err", err)
+			} else if l != "" {
+				lang = l
+			}
+		}
+		lang = i18n.Normalize(lang)
+		out[lang] = append(out[lang], a)
+	}
+	return out
+}
+
+func (c *emailChannel) message(n Notification, recipients []string) []byte {
+	lang := n.Lang
 	subject := n.Title
 	if subject == "" {
-		subject = "Dockmesh alert"
+		subject = i18n.T(lang, "notify.default_subject")
 	}
 	body := n.Body
 	if n.Container != "" {
-		body += fmt.Sprintf("\n\nContainer: %s", n.Container)
+		body += fmt.Sprintf("\n\n%s: %s", i18n.T(lang, "notify.container"), n.Container)
 	}
 	if n.Metric != "" {
-		body += fmt.Sprintf("\n%s: %s (threshold %s)", n.Metric, formatValue(n.Value), formatValue(n.Threshold))
+		body += fmt.Sprintf("\n%s: %s (%s %s)", n.Metric, formatValue(n.Value), i18n.T(lang, "notify.threshold"), formatValue(n.Threshold))
 	}
-	body += fmt.Sprintf("\n\nTime: %s", n.Time.UTC().Format("2006-01-02 15:04:05 UTC"))
+	body += fmt.Sprintf("\n\n%s: %s", i18n.T(lang, "notify.time"), n.Time.UTC().Format("2006-01-02 15:04:05 UTC"))
 
-	to := make([]string, len(c.cfg.To))
-	for i, a := range c.cfg.To {
+	to := make([]string, len(recipients))
+	for i, a := range recipients {
 		to[i] = headerValue(a)
 	}
 	msg := strings.Builder{}

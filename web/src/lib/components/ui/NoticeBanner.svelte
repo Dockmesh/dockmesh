@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { notices } from '$lib/stores/notices.svelte';
@@ -32,7 +33,7 @@
     try {
       await notices.dismiss(n);
     } catch (err) {
-      toast.error('Dismiss failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.ui_notice_dismiss_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -65,7 +66,7 @@
           onclick={() => (panelOpen = !panelOpen)}
           aria-expanded={panelOpen}
           aria-controls="notice-panel"
-          title="Show the full text"
+          title={m.ui_notice_show_full()}
         >
           <span class="font-medium text-[var(--fg)]">{top.title}</span>
           {#if top.body}
@@ -75,7 +76,7 @@
         <div class="flex items-center gap-1.5 ml-auto">
           {#if more > 0}
             <button type="button" class={quietBtn} onclick={() => (panelOpen = !panelOpen)} aria-expanded={panelOpen} aria-controls="notice-panel">
-              +{more} more {more === 1 ? 'notice' : 'notices'}
+              {m.ui_notice_more({ count: more })}
               <ChevronDown class="w-3 h-3 transition-transform {panelOpen ? 'rotate-180' : ''}" />
             </button>
           {/if}
@@ -90,8 +91,8 @@
               type="button"
               onclick={() => dismiss(top)}
               class="p-1.5 rounded-md text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)] transition-colors"
-              aria-label="Hide this notice for 24 hours"
-              title="Hide for 24 hours; it stays in Needs attention and comes back while the problem lasts"
+              aria-label={m.ui_notice_hide_aria()}
+              title={m.ui_notice_hide_title()}
             >
               <X class="w-4 h-4" />
             </button>
@@ -101,11 +102,11 @@
     </div>
 
     {#if panelOpen}
-      <section id="notice-panel" aria-label="Notices" class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)]">
+      <section id="notice-panel" aria-label={m.ui_notice_panel_label()} class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)]">
         <div class="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
-          <span class="text-xs font-medium text-[var(--fg-muted)]">Needs action now · {all.length}</span>
-          <button type="button" class={quietBtn} onclick={() => (panelOpen = false)} aria-label="Close notices">
-            <X class="w-3.5 h-3.5" /> Close
+          <span class="text-xs font-medium text-[var(--fg-muted)]">{m.ui_notice_needs_action()} · {all.length}</span>
+          <button type="button" class={quietBtn} onclick={() => (panelOpen = false)} aria-label={m.ui_notice_close()}>
+            <X class="w-3.5 h-3.5" /> {m.common_close()}
           </button>
         </div>
         <ul class="divide-y divide-[var(--border)]">
@@ -116,7 +117,7 @@
                 <span class="font-medium text-[var(--fg)] flex-1 min-w-[12rem]">{n.title}</span>
                 <div class="flex items-center gap-1.5 ml-auto">
                   {#if n.dismissible}
-                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title="It stays in Needs attention and comes back in 24 hours while the problem lasts">Hide for 24 h</button>
+                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title={m.ui_notice_hide24_title()}>{m.ui_notice_hide24()}</button>
                   {/if}
                   {#if n.link}
                     <button type="button" class={actionBtn} onclick={() => open(n)}>

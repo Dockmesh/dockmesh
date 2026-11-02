@@ -17,6 +17,8 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { Plus, Terminal, AlertTriangle, ArrowRight, FileCode2 } from 'lucide-svelte';
   import DeleteStackDialog from './_DeleteStackDialog.svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   const canWrite = $derived(allowed('stacks.create'));
   const canDeploy = $derived(allowed('stacks.deploy'));
@@ -137,7 +139,7 @@
         const seenHost = new Map<string, string>();
         for (const c of cs) {
           const id = c.host_id ?? 'local';
-          const name = c.host_name ?? 'Local';
+          const name = c.host_name ?? m.common_local();
           if (!seenHost.has(id)) seenHost.set(id, name);
         }
 
@@ -159,7 +161,7 @@
       });
       lastLoaded = Date.now();
     } catch (err) {
-      if (current()) toast.error('Failed to load stacks', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error(m.stacks_list_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       if (current()) {
         loading = false;
@@ -203,22 +205,22 @@
           (res.sync?.env_drift?.new_from_repo?.length ?? 0) +
           (res.sync?.env_drift?.new_from_compose?.length ?? 0);
         toast.success(
-          'Stack imported',
+          m.stacks_list_imported(),
           driftCount > 0
-            ? `${stackName} · ${driftCount} env var${driftCount === 1 ? '' : 's'} need values`
-            : `${stackName} · synced ${res.sync?.new_sha?.slice(0, 7) ?? ''}`,
+            ? m.stacks_list_imported_drift({ name: stackName, count: driftCount })
+            : m.stacks_list_imported_synced({ name: stackName, sha: res.sync?.new_sha?.slice(0, 7) ?? '' }),
         );
         lastGitDrift = res.sync?.env_drift ?? null;
       } else {
         await api.stacks.create(stackName, newCompose, newEnv || undefined, targetHost);
-        toast.success('Stack created', stackName);
+        toast.success(m.stacks_list_created(), stackName);
       }
       if (deploy) {
         try {
           await api.stacks.deploy(stackName, targetHost);
-          toast.success('Deploy started', `${stackName} → ${targetHost === 'local' ? 'local' : targetHost}`);
+          toast.success(m.stacks_deploy_started(), `${stackName} → ${targetHost}`);
         } catch (err) {
-          toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+          toast.error(m.stacks_deploy_failed(), err instanceof ApiError ? err.message : undefined);
         }
       }
       showCreate = false;
@@ -226,7 +228,7 @@
       resetGitForm();
       await load();
     } catch (err) {
-      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_list_create_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       creating = false;
     }
@@ -275,7 +277,7 @@
 
   function openAdopt(ds: DiscoveredStack) {
     adoptTarget = ds;
-    adoptCompose = `# Paste the compose.yaml that describes this running project.\n# The service names below must match what's running.\n#\nservices:\n${ds.services.map((s) => `  ${s.name}:\n    image: ${s.image ?? ''}`).join('\n')}\n`;
+    adoptCompose = `${m.stacks_adopt_compose_comment()}\n#\nservices:\n${ds.services.map((s) => `  ${s.name}:\n    image: ${s.image ?? ''}`).join('\n')}\n`;
     showAdopt = true;
   }
 
@@ -291,15 +293,15 @@
         accepted_warnings: ['metadata-only-adoption'],
       });
       toast.success(
-        'Adopted',
-        `${res.name} (${res.bound_containers} container${res.bound_containers === 1 ? '' : 's'})`
+        m.stacks_adopted(),
+        m.stacks_adopted_detail({ name: res.name, count: res.bound_containers })
       );
       showAdopt = false;
       adoptTarget = null;
       adoptCompose = '';
       await load();
     } catch (err) {
-      toast.error('Adopt failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_adopt_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       adopting = false;
     }
@@ -314,12 +316,12 @@
       convertWarnings = res.warnings ?? [];
       showImport = false;
       if (convertWarnings.length > 0) {
-        toast.warning('Converted with warnings', `${convertWarnings.length} unsupported flag(s)`);
+        toast.warning(m.stacks_converted_warnings(), m.stacks_converted_unsupported({ count: convertWarnings.length }));
       } else {
-        toast.success('Converted', 'compose.yaml populated');
+        toast.success(m.stacks_converted(), m.stacks_converted_detail());
       }
     } catch (err) {
-      toast.error('Convert failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_convert_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       converting = false;
     }
@@ -378,10 +380,10 @@
   function fmtRelTime(ts?: string): string {
     if (!ts) return '';
     const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-    if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-    return `${Math.floor(secs / 86400)}d ago`;
+    if (secs < 60) return m.time_just_now();
+    if (secs < 3600) return m.stacks_ago_min({ n: Math.floor(secs / 60) });
+    if (secs < 86400) return m.stacks_ago_h({ n: Math.floor(secs / 3600) });
+    return m.stacks_ago_d({ n: Math.floor(secs / 86400) });
   }
 
   const COLS = 'minmax(240px, 2.4fr) 210px minmax(100px, 1fr) 110px 40px';
@@ -399,12 +401,12 @@
 
   async function confirmExternalChanges(err: unknown, name: string): Promise<boolean> {
     if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
-    const files: string = (err.body.files as string[] | undefined)?.join(', ') || 'compose.yaml or .env';
+    const files: string = (err.body.files as string[] | undefined)?.join(', ') || m.stacks_ext_files_fallback();
     return confirm.ask({
-      title: 'Stack files changed outside Dockmesh',
-      message: `${files} of "${name}" changed since Dockmesh last wrote them.`,
-      body: 'Something other than Dockmesh changed these files. Review them in the editor before you deploy them as they are.',
-      confirmLabel: 'Deploy anyway',
+      title: m.stacks_ext_title(),
+      message: m.stacks_ext_message({ files, name }),
+      body: m.stacks_ext_body(),
+      confirmLabel: m.stacks_ext_confirm(),
       danger: true,
     });
   }
@@ -419,46 +421,46 @@
           return api.stacks.deploy(name, host, undefined, true);
         }
       });
-      toast.success('Deployed', `${name} · ${res.services.length} service(s)`);
+      toast.success(m.stacks_deployed(), m.stacks_deployed_services({ name, count: res.services.length }));
       await load();
     } catch (err) {
-      toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_deploy_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function stopStack(name: string, host: string) {
     const ok = await confirm.ask({
-      title: `Stop ${name}?`,
-      message: 'All containers of this stack are stopped. Volumes and the compose file are kept.',
-      confirmLabel: 'Stop',
+      title: m.stacks_stop_title({ name }),
+      message: m.stacks_stop_message(),
+      confirmLabel: m.common_stop(),
     });
     if (!ok) return;
     try {
       await stackOps.run(host, name, () => api.stacks.stop(name, host));
-      toast.info('Stopped', name);
+      toast.info(m.stacks_stopped_toast(), name);
       await load();
     } catch (err) {
-      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_stop_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   const subtitleLine = $derived.by(() => {
     const totalHosts = hosts.available.filter((h) => h.kind !== 'all').length;
-    const base = `${counts.all} stack${counts.all === 1 ? '' : 's'}`;
+    const base = m.stacks_n_stacks({ count: counts.all });
     if (totalHosts <= 1) return base;
-    return hosts.isAll ? `${base} on ${totalHosts} hosts` : `${base} on ${hosts.selected?.name ?? 'this host'}`;
+    return hosts.isAll ? m.stacks_list_on_n_hosts({ base, count: totalHosts }) : m.stacks_list_on_host({ base, host: hosts.selected?.name ?? m.stacks_this_host() });
   });
 </script>
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Stacks</h1>
+    <h1>{m.common_stacks()}</h1>
     <span class="dm-sub">{subtitleLine}</span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
     {#if canAdopt}
       <button type="button" class="dm-btn" onclick={() => (showAdoptPicker = true)}>
-        Adopt existing…{#if discoveredStacks.length}<span class="dm-num dm-dim">{discoveredStacks.length}</span>{/if}
+        {m.stacks_adopt_existing()}{#if discoveredStacks.length}<span class="dm-num dm-dim">{discoveredStacks.length}</span>{/if}
       </button>
     {/if}
     {#if canWrite}
@@ -467,7 +469,7 @@
         class="dm-btn dm-btn-primary"
         onclick={openCreate}
       >
-        <Plus size={14} strokeWidth={2} /> New stack
+        <Plus size={14} strokeWidth={2} /> {m.stacks_new()}
       </button>
     {/if}
   </div>
@@ -476,20 +478,20 @@
     <div class="st-attn" role="status">
       <div class="st-attn-h">
         <AlertTriangle size={14} strokeWidth={1.8} />
-        <b>{needsRecovery.length} stack{needsRecovery.length === 1 ? '' : 's'} need{needsRecovery.length === 1 ? 's' : ''} recovery</b>
-        <span class="dm-dim">· compose file missing on disk, containers or a deploy record still exist</span>
+        <b>{m.stacks_list_need_recovery({ count: needsRecovery.length })}</b>
+        <span class="dm-dim">{m.stacks_list_recovery_hint()}</span>
       </div>
       {#each needsRecovery as s (s.name)}
         <a class="st-attn-row" href="/stacks/{encodeURIComponent(s.name)}">
           <span class="dm-mono">{s.name}</span>
           <span class="dm-dim dm-trunc">
             {#if s.deployment}
-              last deployed {fmtRelTime(s.deployment.deployed_at)} on {s.deployment.host_name || s.deployment.host_id}
+              {m.stacks_list_last_deployed_on({ ago: fmtRelTime(s.deployment.deployed_at), host: s.deployment.host_name || s.deployment.host_id })}
             {:else}
-              containers found via project label
+              {m.stacks_list_found_via_label()}
             {/if}
           </span>
-          <span class="st-attn-cta">Open recovery <ArrowRight size={12} /></span>
+          <span class="st-attn-cta">{m.stacks_list_open_recovery()} <ArrowRight size={12} /></span>
         </a>
       {/each}
     </div>
@@ -498,18 +500,18 @@
   {#if !loading && stackCards.length > 0}
     <div class="dm-toolbar">
       <Segmented
-        label="Filter stacks"
+        label={m.stacks_list_filter_label()}
         bind:value={filter}
         options={[
-          { key: 'all', label: 'All', count: counts.all },
-          { key: 'running', label: 'Running', count: counts.running },
-          { key: 'unhealthy', label: 'Attention', count: counts.unhealthy },
-          { key: 'stopped', label: 'Stopped', count: counts.stopped },
-          ...(counts.undeployed ? [{ key: 'undeployed', label: 'Not deployed', count: counts.undeployed }] : [])
+          { key: 'all', label: m.common_all(), count: counts.all },
+          { key: 'running', label: m.common_running(), count: counts.running },
+          { key: 'unhealthy', label: m.stacks_list_filter_attention(), count: counts.unhealthy },
+          { key: 'stopped', label: m.common_stopped(), count: counts.stopped },
+          ...(counts.undeployed ? [{ key: 'undeployed', label: m.stacks_not_deployed(), count: counts.undeployed }] : [])
         ]}
       />
       <span class="dm-sp"></span>
-      <input type="search" class="dm-filter" placeholder="Filter stacks or services…" aria-label="Filter stacks" bind:value={search} style="width: 240px" />
+      <input type="search" class="dm-filter" placeholder={m.stacks_list_filter_placeholder()} aria-label={m.stacks_list_filter_label()} bind:value={search} style="width: 240px" />
     </div>
 
   {/if}
@@ -521,22 +523,22 @@
       {/each}
     </div>
   {:else if stackCards.length === 0}
-    <EmptyState title="No stacks yet" description="Create a stack from a compose.yaml, a git repository or a docker run command.">
+    <EmptyState title={m.stacks_list_empty_title()} description={m.stacks_list_empty_desc()}>
       {#snippet action()}
         {#if canWrite}
           <button type="button" class="dm-btn dm-btn-primary" onclick={openCreate}>
-            <Plus size={14} strokeWidth={2} /> New stack
+            <Plus size={14} strokeWidth={2} /> {m.stacks_new()}
           </button>
         {/if}
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="dm-tbl" role="table" aria-label="Stacks">
+    <div class="dm-tbl" role="table" aria-label={m.common_stacks()}>
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
-        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'name')}>Name · services{sortMode === 'name' ? ' ↓' : ''}</button></span>
-        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'state')}>Status{sortMode === 'state' ? ' ↓' : ''}</button></span>
-        <span role="columnheader">Host</span>
-        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'deployed')}>Last deploy{sortMode === 'deployed' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'name')}>{m.stacks_list_col_name()}{sortMode === 'name' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'state')}>{m.common_status()}{sortMode === 'state' ? ' ↓' : ''}</button></span>
+        <span role="columnheader">{m.common_host()}</span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'deployed')}>{m.stacks_list_col_last_deploy()}{sortMode === 'deployed' ? ' ↓' : ''}</button></span>
         <span role="columnheader"></span>
       </div>
       {#each visible as s (s.name)}
@@ -553,7 +555,7 @@
           <span role="cell" class="dm-nm">
             <a href="/stacks/{encodeURIComponent(s.name)}" onclick={(e) => e.stopPropagation()}>{s.name}</a>
             <small title={s.services.map((x) => `${x.name}: ${x.status || x.state}`).join('\n')}>
-              {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else if s.state === 'undeployed'}Deploy to start its services{:else}No containers{/if}
+              {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else if s.state === 'undeployed'}{m.stacks_list_deploy_to_start()}{:else}{m.stacks_list_no_containers()}{/if}
             </small>
           </span>
           <span role="cell">
@@ -566,25 +568,25 @@
             />
           </span>
           <span role="cell" class="dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
-          <span role="cell" class="dm-num dm-dim" title={s.deployment?.deployed_at ? new Date(s.deployment.deployed_at).toLocaleString() : ''}>
+          <span role="cell" class="dm-num dm-dim" title={s.deployment?.deployed_at ? fmtDateTime(s.deployment.deployed_at) : ''}>
             {s.deployment?.deployed_at ? fmtRelTime(s.deployment.deployed_at) : '—'}
           </span>
           <span role="cell" class="dm-tr-menu">
             <Menu
-              label="Actions for {s.name}"
+              label={m.stacks_actions_for({ name: s.name })}
               items={[
-                { label: 'Open', kbd: '↵', href: `/stacks/${encodeURIComponent(s.name)}` },
+                { label: m.common_open(), kbd: '↵', href: `/stacks/${encodeURIComponent(s.name)}` },
                 ...(canDeploy
                   ? [
                       { separator: true },
-                      { label: s.state === 'undeployed' ? 'Deploy' : s.state === 'stopped' ? 'Start' : 'Redeploy', disabled: stackOps.isBusy(host, s.name), onclick: () => deployStack(s.name, host) },
-                      ...(running > 0 ? [{ label: 'Stop', disabled: stackOps.isBusy(host, s.name), onclick: () => stopStack(s.name, host) }] : [])
+                      { label: s.state === 'undeployed' ? m.common_deploy() : s.state === 'stopped' ? m.common_start() : m.stacks_redeploy(), disabled: stackOps.isBusy(host, s.name), onclick: () => deployStack(s.name, host) },
+                      ...(running > 0 ? [{ label: m.common_stop(), disabled: stackOps.isBusy(host, s.name), onclick: () => stopStack(s.name, host) }] : [])
                     ]
                   : []),
                 ...(canDelete
                   ? [
                       { separator: true },
-                      { label: 'Delete…', danger: true, disabled: stackOps.isBusy(host, s.name), onclick: () => { deleting = { name: s.name, host, containers: s.services.length }; showDelete = true; } }
+                      { label: m.common_delete_ellipsis(), danger: true, disabled: stackOps.isBusy(host, s.name), onclick: () => { deleting = { name: s.name, host, containers: s.services.length }; showDelete = true; } }
                     ]
                   : [])
               ]}
@@ -592,7 +594,7 @@
           </span>
         </div>
       {:else}
-        <div class="dm-empty">No stacks match this filter.</div>
+        <div class="dm-empty">{m.stacks_list_no_match()}</div>
       {/each}
     </div>
   {/if}
@@ -602,24 +604,23 @@
   <DeleteStackDialog bind:open={showDelete} name={deleting.name} host={deleting.host} containers={deleting.containers} ondeleted={load} />
 {/if}
 
-<Modal bind:open={showAdoptPicker} title="Adopt an existing compose project" maxWidth="max-w-xl">
+<Modal bind:open={showAdoptPicker} title={m.stacks_adopt_picker_title()} maxWidth="max-w-xl">
   <div class="st-adopt">
     <p class="dm-sub">
-      Projects started with plain <code class="dm-mono">docker compose up</code> can be taken over without
-      restarting their containers. For projects with build contexts or relative bind mounts, use
-      <code class="dm-mono">dmctl stack adopt &lt;path&gt;</code> on the host instead.
+      {m.stacks_adopt_picker_p1()} <code class="dm-mono">docker compose up</code> {m.stacks_adopt_picker_p2()}
+      <code class="dm-mono">dmctl stack adopt &lt;path&gt;</code> {m.stacks_adopt_picker_p3()}
     </p>
     {#if discoveredStacks.length === 0}
-      <EmptyState title="Nothing to adopt" description="No unmanaged compose projects were found on {hosts.isAll ? 'any host' : (hosts.selected?.name ?? 'this host')}." />
+      <EmptyState title={m.stacks_adopt_nothing_title()} description={m.stacks_adopt_nothing_desc({ where: hosts.isAll ? m.stacks_any_host() : (hosts.selected?.name ?? m.stacks_this_host()) })} />
     {:else}
       <div class="dm-tbl">
         {#each discoveredStacks as ds (ds.host_id + ds.project_name)}
           <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) auto">
             <span class="dm-nm">
               <span class="dm-t">{ds.project_name}</span>
-              <small>{ds.service_count} service{ds.service_count === 1 ? '' : 's'} on {ds.host_name}: {ds.services.map((x) => x.name).join(', ')}</small>
+              <small>{m.stacks_adopt_services_on({ count: ds.service_count, host: ds.host_name, list: ds.services.map((x) => x.name).join(', ') })}</small>
             </span>
-            <button type="button" class="dm-btn dm-btn-sm" onclick={() => { showAdoptPicker = false; openAdopt(ds); }}>Adopt…</button>
+            <button type="button" class="dm-btn dm-btn-sm" onclick={() => { showAdoptPicker = false; openAdopt(ds); }}>{m.stacks_adopt_ellipsis()}</button>
           </div>
         {/each}
       </div>
@@ -627,11 +628,11 @@
   </div>
 </Modal>
 
-<Modal bind:open={showCreate} title="Create stack" maxWidth="max-w-3xl">
+<Modal bind:open={showCreate} title={m.stacks_create_title()} maxWidth="max-w-3xl">
   <form onsubmit={create} class="space-y-4" id="create-stack-form">
     <div class="flex items-center justify-between">
       <div class="text-xs text-[var(--fg-muted)]">
-        Name must match <code class="font-mono">[a-z0-9][a-z0-9-]*[a-z0-9]</code>, 2-63 chars.
+        {m.stacks_create_name_rule_before()} <code class="font-mono">[a-z0-9][a-z0-9-]*[a-z0-9]</code>{m.stacks_create_name_rule_after()}
       </div>
       <button
         type="button"
@@ -639,24 +640,24 @@
         onclick={() => (showImport = true)}
       >
         <Terminal class="w-3.5 h-3.5" />
-        Import from docker run
+        {m.stacks_import_docker_run()}
       </button>
     </div>
 
-    <Input label="Name" placeholder="my-stack" bind:value={newName} disabled={creating} />
+    <Input label={m.common_name()} placeholder="my-stack" bind:value={newName} disabled={creating} />
 
     {#if createHosts.length > 1}
       <div>
         <label for="new-host" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
-          Host
+          {m.common_host()}
         </label>
         <select id="new-host" class="dm-input text-sm w-full" bind:value={newHostId} disabled={creating}>
           {#each createHosts as h (h.id)}
-            <option value={h.id}>{h.name}{h.id === 'local' ? ' (server)' : ''}</option>
+            <option value={h.id}>{h.name}{h.id === 'local' ? m.stacks_server_suffix() : ''}</option>
           {/each}
         </select>
         <p class="text-[10.5px] text-[var(--fg-subtle)] mt-1">
-          The stack belongs to this host until it is deployed; <em>Create &amp; deploy</em> deploys it there.
+          {m.stacks_create_host_hint_before()} <em>{m.stacks_create_and_deploy()}</em> {m.stacks_create_host_hint_after()}
         </p>
       </div>
     {/if}
@@ -671,7 +672,7 @@
         class:text-[var(--fg-muted)]={createMode !== 'editor'}
         onclick={() => (createMode = 'editor')}
       >
-        Compose editor
+        {m.stacks_create_mode_editor()}
       </button>
       <button
         type="button"
@@ -681,7 +682,7 @@
         class:text-[var(--fg-muted)]={createMode !== 'git'}
         onclick={() => (createMode = 'git')}
       >
-        From git repository
+        {m.stacks_create_mode_git()}
       </button>
     </div>
 
@@ -699,7 +700,7 @@
       </div>
 
       <div>
-        <label for="env" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">.env (optional)</label>
+        <label for="env" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.stacks_env_optional()}</label>
         <textarea
           id="env"
           class="dm-input font-mono text-xs h-20 resize-y"
@@ -711,45 +712,45 @@
     {:else}
       <!-- ───── git import form ───── -->
       <Input
-        label="Repository URL"
+        label={m.stacks_git_repo_url()}
         placeholder="https://github.com/acme/stack.git"
         bind:value={newGit.repo_url}
         disabled={creating}
       />
       <div class="grid grid-cols-2 gap-3">
         <Input
-          label="Branch"
+          label={m.stacks_git_branch()}
           placeholder="main"
           bind:value={newGit.branch as any}
           disabled={creating}
         />
         <Input
-          label="Path in repo"
+          label={m.stacks_git_path()}
           placeholder="."
           bind:value={newGit.path_in_repo as any}
           disabled={creating}
         />
       </div>
       <div>
-        <label for="git-auth" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Authentication</label>
+        <label for="git-auth" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.stacks_git_auth()}</label>
         <select id="git-auth" class="dm-input" bind:value={newGit.auth_kind as any} disabled={creating}>
-          <option value="none">None (public repo)</option>
-          <option value="http">HTTPS · username + token</option>
-          <option value="ssh">SSH key</option>
+          <option value="none">{m.stacks_git_auth_none()}</option>
+          <option value="http">{m.stacks_git_auth_http()}</option>
+          <option value="ssh">{m.stacks_git_auth_ssh()}</option>
         </select>
       </div>
       {#if newGit.auth_kind === 'http'}
         <div class="grid grid-cols-2 gap-3">
           <Input
-            label="Username"
-            placeholder="your-github-username"
+            label={m.stacks_git_username()}
+            placeholder={m.stacks_git_username_placeholder()}
             bind:value={newGit.username as any}
             disabled={creating}
           />
           <Input
-            label="Personal access token"
+            label={m.stacks_git_pat()}
             type="password"
-            placeholder="ghp_… or github_pat_…"
+            placeholder={m.stacks_git_pat_or()}
             bind:value={newGit.password as any}
             disabled={creating}
           />
@@ -757,33 +758,31 @@
         {#if newGit.repo_url && /github\.com/.test(newGit.repo_url)}
           <div class="dm-card p-3 text-xs text-[var(--fg-muted)] space-y-1">
             <p>
-              <strong class="text-[var(--fg)]">GitHub requires a Personal Access Token</strong>,
-              not your account password (deprecated since 2021-08-13).
+              <strong class="text-[var(--fg)]">{m.stacks_git_gh_requires()}</strong>{m.stacks_git_gh_not_password()}
             </p>
             <p>
-              Create one at
+              {m.stacks_git_gh_create_at()}
               <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener" class="underline">
                 github.com/settings/personal-access-tokens
               </a>
-              with <code class="font-mono">Contents: Read-only</code> permission
-              on the repo (fine-grained), or
+              {m.stacks_git_gh_with()} <code class="font-mono">Contents: Read-only</code> {m.stacks_git_gh_permission()}
               <a href="https://github.com/settings/tokens" target="_blank" rel="noopener" class="underline">
-                classic tokens
+                {m.stacks_git_gh_classic()}
               </a>
-              with the <code class="font-mono">repo</code> scope.
+              {m.stacks_git_gh_with_the()} <code class="font-mono">repo</code>{m.stacks_git_gh_scope()}
             </p>
           </div>
         {/if}
       {:else if newGit.auth_kind === 'ssh'}
         <Input
-          label="SSH user"
+          label={m.stacks_git_ssh_user()}
           placeholder="git"
           bind:value={newGit.username as any}
           disabled={creating}
         />
         <div>
           <label for="git-ssh-key" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
-            OpenSSH private key
+            {m.stacks_git_ssh_key()}
           </label>
           <textarea
             id="git-ssh-key"
@@ -797,14 +796,14 @@
 
       <div class="grid grid-cols-2 gap-3">
         <Input
-          label="Poll interval (seconds, 0 = webhook / manual only)"
+          label={m.stacks_git_poll()}
           type="number"
           min={0}
           bind:value={newGit.poll_interval_sec as any}
           disabled={creating}
         />
         <Input
-          label="Webhook secret (needed for push webhooks)"
+          label={m.stacks_git_webhook_secret()}
           type="password"
           bind:value={newGit.webhook_secret as any}
           disabled={creating}
@@ -817,17 +816,17 @@
           bind:checked={newGit.auto_deploy as any}
           disabled={creating}
         />
-        Auto-deploy on new commits
+        {m.stacks_git_auto_deploy()}
       </label>
 
       <div class="dm-card p-3 text-xs text-[var(--fg-muted)] space-y-1">
-        <p>The first sync seeds <code class="font-mono">.env</code> from the repo. Subsequent syncs preserve your filled-in values; new keys from the repo or new <code class="font-mono">${`{VAR}`}</code> references in compose are appended at the end.</p>
+        <p>{m.stacks_git_seed_before()} <code class="font-mono">.env</code> {m.stacks_git_seed_mid()} <code class="font-mono">${`{VAR}`}</code> {m.stacks_git_seed_after()}</p>
       </div>
     {/if}
 
     {#if convertWarnings.length > 0}
       <div class="dm-card p-3 text-xs border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)]">
-        <div class="font-medium text-[var(--color-warning-400)] mb-1">Converter warnings</div>
+        <div class="font-medium text-[var(--color-warning-400)] mb-1">{m.stacks_converter_warnings()}</div>
         <ul class="list-disc list-inside text-[var(--fg-muted)] space-y-0.5">
           {#each convertWarnings as w}<li>{w}</li>{/each}
         </ul>
@@ -836,7 +835,7 @@
   </form>
 
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showCreate = false)}>{m.common_cancel()}</Button>
     <Button
       variant="secondary"
       type="submit"
@@ -845,7 +844,7 @@
       disabled={creating || !newName ||
         (createMode === 'editor' ? !newCompose : !newGit.repo_url)}
     >
-      {createMode === 'git' ? 'Import & sync' : 'Create'}
+      {createMode === 'git' ? m.stacks_import_sync() : m.common_create()}
     </Button>
     <Button
       variant="primary"
@@ -854,23 +853,23 @@
         (createMode === 'editor' ? !newCompose : !newGit.repo_url)}
       onclick={createAndDeploy}
     >
-      Create & deploy
+      {m.stacks_create_and_deploy()}
     </Button>
   {/snippet}
 </Modal>
 
 {#if lastGitDrift && ((lastGitDrift.new_from_repo?.length ?? 0) + (lastGitDrift.new_from_compose?.length ?? 0) > 0)}
   <div class="fixed bottom-4 right-4 max-w-md dm-card p-4 text-xs space-y-2 border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] z-50">
-    <div class="font-medium">Env drift detected</div>
+    <div class="font-medium">{m.stacks_drift_detected()}</div>
     {#if lastGitDrift.new_from_repo?.length}
       <div>
-        <span class="text-[var(--fg-muted)]">New from repo:</span>
+        <span class="text-[var(--fg-muted)]">{m.stacks_drift_new_from_repo()}</span>
         <code class="font-mono">{lastGitDrift.new_from_repo.join(', ')}</code>
       </div>
     {/if}
     {#if lastGitDrift.new_from_compose?.length}
       <div>
-        <span class="text-[var(--fg-muted)]">Needed by compose:</span>
+        <span class="text-[var(--fg-muted)]">{m.stacks_drift_needed_by_compose()}</span>
         <code class="font-mono">{lastGitDrift.new_from_compose.join(', ')}</code>
       </div>
     {/if}
@@ -879,16 +878,14 @@
       class="dm-btn dm-btn-ghost dm-btn-xs"
       onclick={() => (lastGitDrift = null)}
     >
-      Dismiss
+      {m.stacks_dismiss()}
     </button>
   </div>
 {/if}
 
-<Modal bind:open={showImport} title="Import from docker run" maxWidth="max-w-xl">
+<Modal bind:open={showImport} title={m.stacks_import_docker_run()} maxWidth="max-w-xl">
   <p class="text-sm text-[var(--fg-muted)] mb-4">
-    Paste a complete <code class="font-mono">docker run</code> command. We convert
-    it into compose YAML. Supports ports, volumes, env, networks, restart,
-    labels, capabilities and the common flags.
+    {m.stacks_import_p_before()} <code class="font-mono">docker run</code>{m.stacks_import_p_after()}
   </p>
   <textarea
     class="dm-input font-mono text-xs h-32"
@@ -897,27 +894,26 @@
   ></textarea>
 
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showImport = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showImport = false)}>{m.common_cancel()}</Button>
     <Button
       variant="primary"
       loading={converting}
       disabled={converting || !runCommand.trim()}
       onclick={convertRun}
     >
-      Convert
+      {m.stacks_convert()}
     </Button>
   {/snippet}
 </Modal>
 
-<Modal bind:open={showAdopt} title={adoptTarget ? `Adopt '${adoptTarget.project_name}'` : 'Adopt'} maxWidth="max-w-3xl">
+<Modal bind:open={showAdopt} title={adoptTarget ? m.stacks_adopt_title({ name: adoptTarget.project_name }) : m.stacks_adopt()} maxWidth="max-w-3xl">
   {#if adoptTarget}
     <form onsubmit={submitAdopt} class="space-y-4">
       <div class="rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-xs text-[var(--fg-muted)]">
-        <div class="text-[var(--fg)] font-medium mb-1">This is a metadata-only adoption.</div>
-        Dockmesh will write the compose.yaml below into <code class="font-mono">stacks/{adoptTarget.project_name}/</code> and bind to
-        <strong>{adoptTarget.service_count}</strong> running container{adoptTarget.service_count === 1 ? '' : 's'}. No containers are
-        restarted. For stacks that reference local files (build contexts, <code class="font-mono">./config.yml</code> bind mounts, …)
-        use <code class="font-mono">dmctl stack adopt &lt;path&gt;</code> from the host shell — the CLI ships the full folder so restarts keep working.
+        <div class="text-[var(--fg)] font-medium mb-1">{m.stacks_adopt_meta_only()}</div>
+        {m.stacks_adopt_meta_1()} <code class="font-mono">stacks/{adoptTarget.project_name}/</code> {m.stacks_adopt_meta_2()}
+        <strong>{adoptTarget.service_count}</strong> {m.stacks_adopt_meta_3({ count: adoptTarget.service_count })} <code class="font-mono">./config.yml</code> {m.stacks_adopt_meta_4()}
+        <code class="font-mono">dmctl stack adopt &lt;path&gt;</code> {m.stacks_adopt_meta_5()}
       </div>
       <label class="block text-xs font-medium">compose.yaml
         <textarea
@@ -929,14 +925,14 @@
     </form>
   {/if}
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showAdopt = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showAdopt = false)}>{m.common_cancel()}</Button>
     <Button
       variant="primary"
       loading={adopting}
       disabled={adopting || !adoptCompose.trim()}
       onclick={submitAdopt}
     >
-      Adopt
+      {m.stacks_adopt()}
     </Button>
   {/snippet}
 </Modal>

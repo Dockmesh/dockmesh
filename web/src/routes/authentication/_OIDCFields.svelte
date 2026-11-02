@@ -6,6 +6,7 @@
   import { Field } from '$lib/components/editorial';
   import { Repeat, CheckCircle2, XCircle, Copy } from 'lucide-svelte';
   import GroupMappingList from './_GroupMappingList.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     config: OIDCConfig;
@@ -43,7 +44,7 @@
     const url = config.issuer_url.trim();
     if (!url) {
       testState = 'fail';
-      testMessage = 'Enter an issuer URL first.';
+      testMessage = m.authn_oidc_enter_issuer();
       return;
     }
     testState = 'testing';
@@ -53,10 +54,10 @@
       const res = await api.oidc.testDiscovery(url);
       if (res.ok) {
         testState = 'ok';
-        testMessage = `Discovery OK — issuer: ${res.issuer ?? url}`;
+        testMessage = m.authn_oidc_discovery_ok({ issuer: res.issuer ?? url });
       } else {
         testState = 'fail';
-        testMessage = res.error || 'Discovery failed.';
+        testMessage = res.error || m.authn_oidc_discovery_failed();
       }
     } catch (err) {
       testState = 'fail';
@@ -76,7 +77,7 @@
   </div>
 {/if}
 
-<Field label="Issuer URL" hint="The /.well-known/openid-configuration is fetched from this base.">
+<Field label={m.authn_issuer_url()} hint={m.authn_issuer_url_hint()}>
   {#snippet right()}
     <button
       type="button"
@@ -85,7 +86,7 @@
       disabled={testState === 'testing' || !config.issuer_url.trim()}
     >
       <Repeat size={11} strokeWidth={1.5} />
-      {testState === 'testing' ? 'Testing…' : 'Test discovery'}
+      {testState === 'testing' ? m.authn_testing() : m.authn_test_discovery()}
     </button>
   {/snippet}
   <input
@@ -107,27 +108,27 @@
 {/if}
 
 <div class="oidc-grid-2">
-  <Field label="Client ID">
+  <Field label={m.authn_client_id()}>
     <input class="dm-input acc-input-mono" bind:value={config.client_id} placeholder="dockmesh" />
   </Field>
   <Field
-    label={editing ? 'Client secret (leave blank to keep)' : 'Client secret'}
-    hint="Stored encrypted at rest."
+    label={editing ? m.authn_client_secret_keep() : m.authn_client_secret()}
+    hint={m.authn_stored_encrypted()}
   >
     <input
       class="dm-input acc-input-mono"
       type="password"
       bind:value={config.client_secret}
-      placeholder={editing ? '••••••••' : 'application client secret'}
+      placeholder={editing ? '••••••••' : m.authn_client_secret_ph()}
     />
   </Field>
 </div>
 
-<Field label="Scopes" hint="Space-separated. openid is required.">
+<Field label={m.authn_scopes()} hint={m.authn_oidc_scopes_hint()}>
   <input class="dm-input acc-input-mono" bind:value={config.scopes} />
 </Field>
 
-<Field label="Group claim" hint="JWT claim that carries the user's groups (e.g. groups, roles, hd).">
+<Field label={m.authn_group_claim()} hint={m.authn_group_claim_hint()}>
   <input class="dm-input acc-input-mono" bind:value={config.group_claim} placeholder="groups" />
 </Field>
 
@@ -136,17 +137,17 @@
   bind:defaultRole={config.default_role}
   {roles}
   groupClaim={config.group_claim}
-  hint="OIDC applies one group for admin and one for operator (the first of each is kept; admin wins); other roles are not stored."
+  hint={m.authn_oidc_mapping_hint()}
 />
 
-<Field label="Callback URL" hint="Configure this on the provider side.">
+<Field label={m.authn_callback_url()} hint={m.authn_callback_url_hint()}>
   {#snippet right()}
     <button
       type="button"
       class="dm-btn dm-btn-ghost dm-btn-xs"
       onclick={() => onCopy(callbackUrl)}
     >
-      <Copy size={11} strokeWidth={1.5} /> copy
+      <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
     </button>
   {/snippet}
   <input class="dm-input acc-input-mono" readonly value={callbackUrl} />

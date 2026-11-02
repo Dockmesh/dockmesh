@@ -1,4 +1,5 @@
 import type { BackupHook } from '$lib/api';
+import { m } from '$lib/paraglide/messages.js';
 
 // A hook as the job wizard edits it: one container and one shell command
 // line. `orig` keeps the stored argv so a hook the user didn't touch is
@@ -20,11 +21,11 @@ export interface HookPreset {
 // through `sh -c`, so redirects and the image's password variables work;
 // MYSQL_PWD keeps the password out of the dump tool's arguments.
 export const HOOK_PRESETS: HookPreset[] = [
-  { id: 'pg', label: 'PostgreSQL dump', command: 'pg_dumpall -U "${POSTGRES_USER:-postgres}" -f /var/lib/postgresql/data/dockmesh-dump.sql' },
-  { id: 'mysql', label: 'MySQL dump', command: 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -u root --all-databases > /var/lib/mysql/dockmesh-dump.sql' },
-  { id: 'maria', label: 'MariaDB dump', command: 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb-dump -u root --all-databases > /var/lib/mysql/dockmesh-dump.sql' },
-  { id: 'redis', label: 'Redis save', command: 'redis-cli SAVE' },
-  { id: 'mongo', label: 'MongoDB dump', command: 'mongodump --archive=/data/db/dockmesh-dump.archive' }
+  { id: 'pg', label: m.lib_hook_pg(), command: 'pg_dumpall -U "${POSTGRES_USER:-postgres}" -f /var/lib/postgresql/data/dockmesh-dump.sql' },
+  { id: 'mysql', label: m.lib_hook_mysql(), command: 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -u root --all-databases > /var/lib/mysql/dockmesh-dump.sql' },
+  { id: 'maria', label: m.lib_hook_maria(), command: 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb-dump -u root --all-databases > /var/lib/mysql/dockmesh-dump.sql' },
+  { id: 'redis', label: m.lib_hook_redis(), command: 'redis-cli SAVE' },
+  { id: 'mongo', label: m.lib_hook_mongo(), command: 'mongodump --archive=/data/db/dockmesh-dump.archive' }
 ];
 
 export function hookToRow(h: BackupHook): HookRow {

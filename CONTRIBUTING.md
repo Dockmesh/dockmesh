@@ -108,8 +108,20 @@ govulncheck ./...
 ```
 
 `make test` and `make lint` wrap the same commands. The Playwright suite
-(`make test-e2e`) needs a running Dockmesh instance and is not part of
-the required checks.
+(`make test-e2e`) builds Dockmesh, starts a throwaway instance and runs
+every flow in English and German; run `npx playwright install chromium`
+in `web/` once first. It is not part of the required checks.
+
+## Translations
+
+UI texts live in `web/messages/en.json` and `de.json` (Paraglide JS).
+Add every new text as a key to both files and use it as `m.<key>()`;
+`npm test` fails on keys missing in a language, placeholders that differ,
+and keys no code uses. Server error messages get a stable code in
+`internal/api/handlers/errcodes.go` and an `apierr_<code>` key. German
+follows a short glossary: product terms such as Stack, Host, Agent,
+Container, Volume and Image stay English, and texts address nobody
+directly (no "Sie", no gendering).
 
 ## Before you open a PR
 

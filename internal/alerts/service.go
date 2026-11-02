@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
@@ -663,7 +664,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	}
 	type seriesOf struct {
 		target  target
-		where   string
+		where   i18n.Text
 		samples []metricSample
 	}
 	series := map[tkey]*seriesOf{}
@@ -688,9 +689,9 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 		k := keyOf(r.ID, t)
 		cur := series[k]
 		if cur == nil {
-			where := name
+			where := i18n.Msg("alert.container_name", name)
 			if hostName != "" {
-				where += " on " + hostName
+				where = i18n.Msg("alert.container_on_host", name, hostName)
 			}
 			cur = &seriesOf{target: t, where: where}
 			series[k] = cur
@@ -711,10 +712,10 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 		last := smp[len(smp)-1].Value
 		switch {
 		case firing && !wasFiring:
-			s.fireRule(ctx, r, cur.target, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
+			s.fireRule(ctx, r, cur.target, i18n.Msg("alert.metric_fired",
 				r.Name, cur.where, r.metricLabel(), last, r.Operator, r.Threshold), last, now)
 		case !firing && wasFiring:
-			s.resolveRule(ctx, r, cur.target, fmt.Sprintf("%s on %s resolved: %s = %.1f",
+			s.resolveRule(ctx, r, cur.target, i18n.Msg("alert.metric_resolved",
 				r.Name, cur.where, r.metricLabel(), last), last, now)
 		}
 	}
@@ -725,7 +726,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	for _, k := range active {
 		if series[k] == nil {
 			s.resolveRule(ctx, r, target{hostID: k.host, name: k.target},
-				fmt.Sprintf("%s on %s resolved: no samples", r.Name, k.target), 0, now)
+				i18n.Msg("alert.metric_no_samples", r.Name, k.target), 0, now)
 		}
 	}
 	return nil
@@ -769,7 +770,8 @@ func (s *Service) inCooldown(r *Rule, k tkey, t time.Time) bool {
 // resolve, so they never enter the firing set. A suppressed fire inside
 // the repeat window is counted on the previous entry instead of adding
 // rows, so neither repeats nor a flapping target grow the history.
-func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, value float64, ts time.Time) {
+func (s *Service) fireRule(ctx context.Context, r *Rule, t target, text i18n.Text, value float64, ts time.Time) {
+	msg := text.In(i18n.Default)
 	k := keyOf(r.ID, t)
 	one := oneShot(r.Kind)
 	muted := r.mutedAt(ts)
@@ -812,7 +814,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, v
 	slog.Info("alert fired", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value,
 		"muted", muted, "cooldown", cooling)
 	if notified {
-		s.announce(ctx, r, announcement{target: t, msg: msg, value: value, ts: ts}, false)
+		s.announce(ctx, r, announcement{target: t, text: text, value: value, ts: ts}, false)
 	}
 }
 
@@ -880,7 +882,8 @@ func (s *Service) admit(k tkey, one, notified bool) bool {
 // resolveRule records the resolve and announces it only when the matching
 // fire was announced and the rule isn't muted now — a "resolved" for an
 // alert nobody was told about is noise.
-func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, msg string, value float64, ts time.Time) {
+func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, text i18n.Text, value float64, ts time.Time) {
+	msg := text.In(i18n.Default)
 	k := keyOf(r.ID, t)
 	s.stateMu.Lock()
 	fireNotified, _ := s.firing.get(k)
@@ -911,7 +914,7 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, msg string
 	}
 	slog.Info("alert resolved", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value, "notified", notified)
 	if notified {
-		s.announce(ctx, r, announcement{target: t, msg: msg, value: value, ts: ts}, true)
+		s.announce(ctx, r, announcement{target: t, text: text, value: value, ts: ts}, true)
 	}
 }
 

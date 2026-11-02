@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import Logo from '$lib/components/shell/Logo.svelte';
   import { page } from '$app/state';
   import { auth } from '$lib/stores/auth.svelte';
@@ -41,9 +42,9 @@
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 </script>
 
-<nav class="app-side" class:collapsed aria-label="Main navigation">
+<nav class="app-side" class:collapsed aria-label={m.shell_main_nav()}>
   <div class="brand">
-    <a href="/" class="logo" aria-label="Dockmesh overview" onclick={onnavigate}>
+    <a href="/" class="logo" aria-label={m.shell_logo_label()} onclick={onnavigate}>
       <span class="mark"><Logo width={collapsed ? 44 : 66} height={collapsed ? 18 : 27} /></span>
       {#if !collapsed}<b>dock<span>mesh</span></b>{/if}
     </a>
@@ -51,17 +52,17 @@
       type="button"
       class="collapse-btn"
       onclick={() => (collapsed = !collapsed)}
-      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      title={collapsed ? m.shell_sidebar_expand() : m.shell_sidebar_collapse()}
+      aria-label={collapsed ? m.shell_sidebar_expand() : m.shell_sidebar_collapse()}
       aria-expanded={!collapsed}
     >
       {#if collapsed}<ChevronRight size={14} />{:else}<ChevronLeft size={14} />{/if}
     </button>
   </div>
 
-  <button type="button" class="search" onclick={onpalette} title="Search ({isMac ? '⌘' : 'Ctrl'}+K)" aria-label="Search everything">
+  <button type="button" class="search" onclick={onpalette} title={m.shell_search_title({ key: isMac ? '⌘' : m.shell_kbd_ctrl() })} aria-label={m.shell_search_everything()}>
     <Search size={14} />
-    {#if !collapsed}<span>Search everything…</span><kbd>{isMac ? '⌘K' : 'Ctrl K'}</kbd>{/if}
+    {#if !collapsed}<span>{m.shell_search_everything_ellipsis()}</span><kbd>{isMac ? '⌘K' : `${m.shell_kbd_ctrl()} K`}</kbd>{/if}
   </button>
 
   <div class="scroll">
@@ -94,18 +95,18 @@
 
   <div class="user">
     <Menu
-      label="User menu"
+      label={m.shell_user_menu()}
       align="start"
       placement="above"
       width={220}
       triggerClass="user-btn"
       items={[
         { heading: auth.user?.username ?? '' },
-        { label: 'My account', href: '/account', icon: CircleUser },
-        { label: 'API tokens', href: '/tokens', icon: KeyRound },
-        { label: theme === 'dark' ? 'Light mode' : 'Dark mode', icon: theme === 'dark' ? Sun : Moon, onclick: ontheme },
+        { label: m.shell_my_account(), href: '/account', icon: CircleUser },
+        { label: m.shell_api_tokens(), href: '/tokens', icon: KeyRound },
+        { label: theme === 'dark' ? m.shell_light_mode() : m.shell_dark_mode(), icon: theme === 'dark' ? Sun : Moon, onclick: ontheme },
         { separator: true },
-        { label: 'Sign out', icon: LogOut, onclick: onsignout }
+        { label: m.shell_sign_out(), icon: LogOut, onclick: onsignout }
       ]}
     >
       {#snippet trigger()}
@@ -113,7 +114,7 @@
         {#if !collapsed}
           <span class="who">
             <span class="n">{auth.user?.username ?? '—'}</span>
-            <span class="r">{isAdmin() ? 'Admin' : ''}</span>
+            <span class="r">{isAdmin() ? m.shell_nav_admin() : ''}</span>
           </span>
         {/if}
       {/snippet}

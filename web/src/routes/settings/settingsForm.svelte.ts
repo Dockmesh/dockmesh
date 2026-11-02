@@ -1,5 +1,6 @@
 import { api, ApiError } from '$lib/api';
 import { toast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 // Key/value instance settings shared by the settings sub-pages. Saving
 // writes every loaded key back, like the API expects.
@@ -14,7 +15,7 @@ export function createSettingsForm() {
       values = new Map(list.map((e) => [e.key, e.value]));
       saved = new Map(values);
     } catch (err) {
-      toast.error('Failed to load settings', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.settings_load_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -23,9 +24,9 @@ export function createSettingsForm() {
     try {
       await api.system.updateSettings([...values.entries()].map(([key, value]) => ({ key, value })));
       saved = new Map(values);
-      toast.success('Settings saved');
+      toast.success(m.settings_saved_toast());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.settings_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }

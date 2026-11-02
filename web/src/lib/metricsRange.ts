@@ -1,9 +1,10 @@
 import type { HistoryReason } from '$lib/api';
+import { m } from '$lib/paraglide/messages.js';
 
 // Why a host shows no stored history, for the chart hints.
 export function historyHint(reason: HistoryReason | null | undefined, hostName: string): string {
-  if (reason === 'agent_outdated') return `Update the agent on ${hostName} to record history; until then it shows live values.`;
-  if (reason === 'agent_offline') return `${hostName} is offline and has no stored history.`;
+  if (reason === 'agent_outdated') return m.lib_history_agent_outdated({ host: hostName });
+  if (reason === 'agent_offline') return m.lib_history_agent_offline({ host: hostName });
   return '';
 }
 

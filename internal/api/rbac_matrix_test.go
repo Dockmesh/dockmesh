@@ -73,6 +73,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/users/{id}/avatar", gateSignedIn},
 	{"DELETE", "/api/v1/users/{id}/avatar", gateSignedIn},
 	{"POST", "/api/v1/ws/ticket", gateSignedIn},
+	{"PUT", "/api/v1/me/language", gateSignedIn},
 	{"GET", "/api/v1/sessions", gateSignedIn},
 	{"DELETE", "/api/v1/sessions/{family_id}", gateSignedIn},
 	{"POST", "/api/v1/sessions/revoke-all", gateSignedIn},

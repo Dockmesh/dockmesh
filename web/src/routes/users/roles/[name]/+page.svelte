@@ -12,6 +12,7 @@
   import { areaSummaries, roleOneLine, scopeLabel, type HostNames } from '$lib/access';
   import AssignmentDialog from '$lib/components/access/AssignmentDialog.svelte';
   import { Copy, Plus, Trash2 } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const param = $derived(page.params.name ?? '');
   const isNew = $derived(param === 'new');
@@ -56,7 +57,7 @@
         const base = from ? rs.find((r) => r.name === from) : undefined;
         role = null;
         assignments = [];
-        dDisplay = base ? `${base.display} (copy)` : '';
+        dDisplay = base ? m.users_role_copy({ name: base.display }) : '';
         dName = base ? slug(dDisplay) : '';
         dDesc = base?.description ?? '';
         dLevels = base ? { ...base.levels } : Object.fromEntries(c.areas.map((a) => [a.key, 'none']));
@@ -71,7 +72,7 @@
         dExtras = [...res.role.extras];
       }
     } catch (err) {
-      loadError = err instanceof ApiError ? err.message : 'Could not load the role';
+      loadError = err instanceof ApiError ? err.message : m.users_role_load_failed();
     } finally {
       loading = false;
     }
@@ -82,7 +83,7 @@
     untrack(() => { loading = true; loadAll(); });
   });
   $effect(() => {
-    pageContext.set(isNew ? 'New role' : role?.display ?? param);
+    pageContext.set(isNew ? m.users_new_role() : role?.display ?? param);
     return () => pageContext.clear();
   });
 
@@ -102,15 +103,15 @@
       if (isNew) {
         const name = dName || slug(dDisplay);
         await api.roles.create({ name, display: dDisplay.trim(), description: dDesc.trim(), levels: dLevels, extras: dExtras });
-        toast.success('Role created', dDisplay);
+        toast.success(m.users_role_created(), dDisplay);
         goto(`/users/roles/${encodeURIComponent(name)}`);
       } else if (role) {
         await api.roles.update(role.name, { display: dDisplay.trim(), description: dDesc.trim(), levels: dLevels, extras: dExtras });
-        toast.success('Role saved', dDisplay);
+        toast.success(m.users_role_saved(), dDisplay);
         await loadAll();
       }
     } catch (err) {
-      toast.error('Could not save the role', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.users_role_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -118,24 +119,24 @@
 
   async function remove() {
     if (!role) return;
-    if (!(await confirm.ask({ title: `Delete role ${role.display}?`, message: 'Only roles without assignments or group mappings can be deleted.', confirmLabel: 'Delete', danger: true }))) return;
+    if (!(await confirm.ask({ title: m.users_role_delete_title({ name: role.display }), message: m.users_role_delete_message(), confirmLabel: m.common_delete(), danger: true }))) return;
     try {
       await api.roles.delete(role.name);
-      toast.success('Role deleted', role.display);
+      toast.success(m.users_role_deleted(), role.display);
       goto('/users?tab=roles');
     } catch (err) {
-      toast.error('Could not delete the role', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.users_role_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function removeAssignment(a: Assignment) {
-    if (!(await confirm.ask({ title: 'Remove assignment?', message: `${a.username ?? a.user_id} loses ${role?.display} on ${scopeLabel(a.scope, hostNames)}.`, confirmLabel: 'Remove', danger: true }))) return;
+    if (!(await confirm.ask({ title: m.users_remove_assignment_title(), message: m.users_remove_assignment_message({ user: a.username ?? a.user_id, role: role?.display ?? '', scope: scopeLabel(a.scope, hostNames) }), confirmLabel: m.common_remove(), danger: true }))) return;
     try {
       await api.assignments.delete(a.id);
-      toast.success('Assignment removed');
+      toast.success(m.users_assignment_removed());
       await loadAll();
     } catch (err) {
-      toast.error('Could not remove it', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.users_remove_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -150,22 +151,22 @@
     <Skeleton width="40%" height="1.6rem" />
     <Skeleton width="100%" height="4rem" />
   {:else if loadError || !catalog}
-    <EmptyState tone="error" title="Could not load this role" description={loadError ?? ''}>
-      {#snippet action()}<a class="dm-btn" href="/users?tab=roles">Back to roles</a>{/snippet}
+    <EmptyState tone="error" title={m.users_role_load_failed_title()} description={loadError ?? ''}>
+      {#snippet action()}<a class="dm-btn" href="/users?tab=roles">{m.users_back_to_roles()}</a>{/snippet}
     </EmptyState>
   {:else}
     <div class="dm-ph">
-      <h1>{isNew ? 'New role' : role?.display}</h1>
-      {#if role}<span class="dm-sub">{role.builtin ? 'Built-in, read-only' : 'Custom role'} · {assignments.length} assignment{assignments.length === 1 ? '' : 's'}</span>{/if}
+      <h1>{isNew ? m.users_new_role() : role?.display}</h1>
+      {#if role}<span class="dm-sub">{role.builtin ? m.users_builtin_readonly() : m.users_custom_role()} · {m.users_assignment_count({ count: assignments.length })}</span>{/if}
       <span class="dm-sp"></span>
       {#if role && allowed('roles.create')}
-        <a class="dm-btn" href="/users/roles/new?from={encodeURIComponent(role.name)}"><Copy size={13} strokeWidth={1.8} /> Duplicate</a>
+        <a class="dm-btn" href="/users/roles/new?from={encodeURIComponent(role.name)}"><Copy size={13} strokeWidth={1.8} /> {m.users_duplicate()}</a>
       {/if}
       {#if role && !role.builtin && allowed('roles.delete')}
-        <button type="button" class="dm-btn dm-btn-danger" onclick={remove}><Trash2 size={13} strokeWidth={1.8} /> Delete…</button>
+        <button type="button" class="dm-btn dm-btn-danger" onclick={remove}><Trash2 size={13} strokeWidth={1.8} /> {m.common_delete_ellipsis()}</button>
       {/if}
       {#if editable}
-        <button type="button" class="dm-btn dm-btn-primary" disabled={busy || !dirty || !dDisplay.trim()} onclick={save}>{busy ? 'Saving…' : isNew ? 'Create role' : 'Save'}</button>
+        <button type="button" class="dm-btn dm-btn-primary" disabled={busy || !dirty || !dDisplay.trim()} onclick={save}>{busy ? m.common_saving() : isNew ? m.users_create_role() : m.common_save()}</button>
       {/if}
     </div>
 
@@ -173,28 +174,28 @@
 
     {#if editable}
       <div class="meta">
-        <div class="dm-field"><label for="rd-display">Name</label>
-          <input id="rd-display" class="dm-input" bind:value={dDisplay} oninput={() => { if (isNew) dName = slug(dDisplay); }} placeholder="Backup operator" /></div>
-        {#if isNew}<div class="dm-field"><label for="rd-name">ID</label><input id="rd-name" class="dm-input dm-mono" bind:value={dName} /></div>{/if}
-        <div class="dm-field wide"><label for="rd-desc">Description</label><input id="rd-desc" class="dm-input" bind:value={dDesc} placeholder="What the role is for, in one line" /></div>
+        <div class="dm-field"><label for="rd-display">{m.common_name()}</label>
+          <input id="rd-display" class="dm-input" bind:value={dDisplay} oninput={() => { if (isNew) dName = slug(dDisplay); }} placeholder={m.users_role_name_ph()} /></div>
+        {#if isNew}<div class="dm-field"><label for="rd-name">{m.users_id()}</label><input id="rd-name" class="dm-input dm-mono" bind:value={dName} /></div>{/if}
+        <div class="dm-field wide"><label for="rd-desc">{m.common_description()}</label><input id="rd-desc" class="dm-input" bind:value={dDesc} placeholder={m.users_role_desc_ph()} /></div>
       </div>
     {:else if role?.description}
       <p class="dm-sub desc">{role.description}</p>
     {/if}
 
     <div>
-      <h2 class="dm-h2">Level per area</h2>
-      <div class="dm-tbl" role="table" aria-label="Levels per area">
+      <h2 class="dm-h2">{m.users_level_per_area()}</h2>
+      <div class="dm-tbl" role="table" aria-label={m.users_levels_per_area()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {M_COLS}">
-          <span role="columnheader">Area</span><span role="columnheader">Level</span><span role="columnheader">Can · cannot</span>
+          <span role="columnheader">{m.users_col_area()}</span><span role="columnheader">{m.users_col_level()}</span><span role="columnheader">{m.users_col_can_cannot()}</span>
         </div>
         {#each summaries as s (s.key)}
           {@const area = catalog.areas.find((a) => a.key === s.key)}
           <div class="dm-tr tall" role="row" style="grid-template-columns: {M_COLS}">
-            <span>{s.label}{#if !s.scoped}<span class="dm-dim" title="Only an assignment on everything grants this area"> · everything only</span>{/if}</span>
+            <span>{s.label}{#if !s.scoped}<span class="dm-dim" title={m.users_everything_only_title()}> · {m.users_everything_only()}</span>{/if}</span>
             <span>
               {#if editable && area}
-                <select class="dm-input lvl" aria-label="Level for {s.label}" value={s.level} onchange={(e) => (dLevels = { ...dLevels, [s.key]: e.currentTarget.value })}>
+                <select class="dm-input lvl" aria-label={m.users_level_for({ area: s.label })} value={s.level} onchange={(e) => (dLevels = { ...dLevels, [s.key]: e.currentTarget.value })}>
                   {#each area.levels as l (l.key)}<option value={l.key}>{l.label}</option>{/each}
                 </select>
               {:else}
@@ -211,9 +212,9 @@
     </div>
 
     <div>
-      <h2 class="dm-h2">Risky extras</h2>
-      <p class="dm-sub sub">No level includes these; turn them on only where needed.</p>
-      <div class="dm-tbl" role="table" aria-label="Extras">
+      <h2 class="dm-h2">{m.users_risky_extras()}</h2>
+      <p class="dm-sub sub">{m.users_risky_extras_sub()}</p>
+      <div class="dm-tbl" role="table" aria-label={m.users_extras()}>
         {#each catalog.extras as e (e.key)}
           <div class="dm-tr" role="row" style="grid-template-columns: 56px minmax(220px, 1fr) minmax(260px, 2fr)">
             <Switch checked={dExtras.includes(e.key)} label={e.label} hideLabel disabled={!editable} onchange={(v) => toggleExtra(e.key, v)} />
@@ -227,26 +228,26 @@
     {#if role}
       <div>
         <div class="hrow">
-          <h2 class="dm-h2">Assignments</h2>
+          <h2 class="dm-h2">{m.users_col_assignments()}</h2>
           <span class="dm-sp"></span>
           {#if allowed('users.update')}
-            <button type="button" class="dm-btn dm-btn-sm" onclick={() => (assignOpen = true)}><Plus size={13} strokeWidth={2} /> Assign</button>
+            <button type="button" class="dm-btn dm-btn-sm" onclick={() => (assignOpen = true)}><Plus size={13} strokeWidth={2} /> {m.users_assign()}</button>
           {/if}
         </div>
         {#if assignments.length === 0}
-          <div class="dm-tbl"><div class="dm-empty">Nobody holds this role yet.</div></div>
+          <div class="dm-tbl"><div class="dm-empty">{m.users_nobody_holds()}</div></div>
         {:else}
-          <div class="dm-tbl" role="table" aria-label="Assignments of {role.display}">
+          <div class="dm-tbl" role="table" aria-label={m.users_assignments_of({ role: role.display })}>
             <div class="dm-tr dm-th" role="row" style="grid-template-columns: {A_COLS}">
-              <span role="columnheader">User</span><span role="columnheader">On</span><span role="columnheader">Source</span><span role="columnheader">Added</span><span></span>
+              <span role="columnheader">{m.common_user()}</span><span role="columnheader">{m.users_col_on()}</span><span role="columnheader">{m.common_source()}</span><span role="columnheader">{m.users_col_added()}</span><span></span>
             </div>
             {#each assignments as a (a.id)}
               <div class="dm-tr" role="row" style="grid-template-columns: {A_COLS}">
                 <a class="lnk dm-trunc" href="/users/{a.user_id}">{a.username || a.user_id}</a>
                 <span class="dm-trunc">{scopeLabel(a.scope, hostNames)}</span>
-                <span class="dm-dim dm-trunc">{a.source === 'idp' ? `via ${a.via || 'identity provider'}` : 'manual'}</span>
+                <span class="dm-dim dm-trunc">{a.source === 'idp' ? m.users_via({ via: a.via || m.users_identity_provider_lc() }) : m.users_manual()}</span>
                 <span class="dm-num dm-dim">{fmtAgo(a.created_at)}</span>
-                <span>{#if allowed('users.update')}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" aria-label="Remove assignment" onclick={() => removeAssignment(a)}><Trash2 size={13} /></button>{/if}</span>
+                <span>{#if allowed('users.update')}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" aria-label={m.users_remove_assignment()} onclick={() => removeAssignment(a)}><Trash2 size={13} /></button>{/if}</span>
               </div>
             {/each}
           </div>

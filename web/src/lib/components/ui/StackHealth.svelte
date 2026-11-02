@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import { m } from '$lib/paraglide/messages.js';
+
   export interface Member {
     name: string;
     state: string;
@@ -18,10 +20,10 @@
   }
 
   export function groupLabel(running: number, total: number, unhealthy: number): string {
-    if (total === 0) return 'No containers';
-    if (running === 0) return 'Stopped';
-    const base = `${running}/${total} running`;
-    return unhealthy ? `${base} · ${unhealthy} unhealthy` : base;
+    if (total === 0) return m.ui_health_no_containers();
+    if (running === 0) return m.common_stopped();
+    const base = m.ui_health_running({ running, total });
+    return unhealthy ? `${base} · ${m.ui_health_n_unhealthy({ count: unhealthy })}` : base;
   }
 </script>
 
@@ -38,12 +40,12 @@
   }: { running: number; total: number; unhealthy?: number; members?: Member[]; unknown?: boolean; notDeployed?: boolean } = $props();
 
   const tone = $derived(unknown || notDeployed ? 'off' : groupTone(running, total, unhealthy));
-  const label = $derived(notDeployed ? 'Not deployed' : unknown ? 'No status' : groupLabel(running, total, unhealthy));
+  const label = $derived(notDeployed ? m.ui_health_not_deployed() : unknown ? m.ui_health_no_status() : groupLabel(running, total, unhealthy));
   const tip = $derived.by(() => {
-    const bad = members.filter((m) => m.unhealthy || m.state !== 'running');
+    const bad = members.filter((x) => x.unhealthy || x.state !== 'running');
     if (!bad.length) return label;
-    const lines = bad.slice(0, 8).map((m) => `${m.name}: ${m.unhealthy ? 'unhealthy' : m.state}`);
-    if (bad.length > 8) lines.push(`and ${bad.length - 8} more`);
+    const lines = bad.slice(0, 8).map((x) => `${x.name}: ${x.unhealthy ? m.ui_health_unhealthy() : x.state}`);
+    if (bad.length > 8) lines.push(m.ui_health_and_more({ count: bad.length - 8 }));
     return lines.join('\n');
   });
 </script>

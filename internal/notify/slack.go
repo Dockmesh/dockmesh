@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 type slackCfg struct {
@@ -33,11 +35,11 @@ func (c *slackChannel) Send(ctx context.Context, n Notification) error {
 	header := fmt.Sprintf("%s %s", emoji, n.Title)
 	mrkdwn := n.Body
 	if n.Container != "" {
-		mrkdwn += fmt.Sprintf("\n*Container:* `%s`", n.Container)
+		mrkdwn += fmt.Sprintf("\n*%s:* `%s`", i18n.T(n.Lang, "notify.container"), n.Container)
 	}
 	if n.Metric != "" {
-		mrkdwn += fmt.Sprintf("\n*%s:* `%s` (threshold `%s`)",
-			n.Metric, formatValue(n.Value), formatValue(n.Threshold))
+		mrkdwn += fmt.Sprintf("\n*%s:* `%s` (%s `%s`)",
+			n.Metric, formatValue(n.Value), i18n.T(n.Lang, "notify.threshold"), formatValue(n.Threshold))
 	}
 	body, err := json.Marshal(map[string]any{
 		"text": header,

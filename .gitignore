@@ -45,3 +45,4 @@ coverage.txt
 # Local backup of the pre-rework README screenshots — kept on disk so
 # we can A/B-compare while the new ones bed in, not for repo history.
 /.github/shots-old/
+/web/src/lib/paraglide/

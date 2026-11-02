@@ -1,9 +1,10 @@
 import type { Notice, NoticeSeverity } from '$lib/api';
+import { m } from '$lib/paraglide/messages.js';
 
 export const noticeLabel: Record<NoticeSeverity, string> = {
-  critical: 'Critical',
-  warning: 'Action required',
-  info: 'Info',
+  critical: m.activity_word_critical(),
+  warning: m.activity_word_action_required(),
+  info: m.activity_word_info(),
 };
 
 const rank: Record<NoticeSeverity, number> = { critical: 0, warning: 1, info: 2 };
@@ -34,7 +35,7 @@ export function withoutBanner<T extends { kind: string; object?: { id: string } 
 /** Info notices only explain a change, so their link shows details; the
  * others link to the place where the problem is fixed. */
 export function noticeAction(n: Notice): string {
-  return n.severity === 'info' ? 'Details' : 'Fix it';
+  return n.severity === 'info' ? m.common_details() : m.lib_notice_fix();
 }
 
 export type NoticeBlock = { kind: 'text'; text: string } | { kind: 'list'; items: string[] };

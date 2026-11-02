@@ -6,6 +6,8 @@
   import Menu from '$lib/components/ui/Menu.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { Bell, Plus, Send } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   const COLS = '14px minmax(170px, 1.1fr) minmax(220px, 1.6fr) 90px minmax(160px, 1fr) 84px 44px 36px';
 
@@ -33,8 +35,8 @@
     const cfg: any = c.config ?? {};
     if (cfg.url) return cfg.url;
     if (cfg.host) return `${cfg.host}:${cfg.port ?? 587}`;
-    if (cfg.integration_key) return 'PagerDuty integration';
-    if (cfg.user_key) return `Pushover user: ${String(cfg.user_key).slice(0, 8)}…`;
+    if (cfg.integration_key) return m.alerts_pagerduty_integration();
+    if (cfg.user_key) return m.alerts_pushover_user({ key: String(cfg.user_key).slice(0, 8) });
     return c.type;
   }
 
@@ -54,7 +56,7 @@
       });
       await onReload();
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -63,10 +65,10 @@
     try {
       await api.alerts.testChannel(c.id);
       testing = { ...testing, [c.id]: 'ok' };
-      toast.success('Test sent', c.name);
+      toast.success(m.alerts_test_sent(), c.name);
     } catch (err) {
       testing = { ...testing, [c.id]: 'fail' };
-      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.alerts_test_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       setTimeout(() => {
         testing = { ...testing, [c.id]: undefined as any };
@@ -77,26 +79,26 @@
   async function deleteChannel(c: NotificationChannel) {
     const inUse = rulesUsing(c.id);
     if (!(await confirm.ask({
-      title: 'Delete notification channel',
-      message: `Delete channel "${c.name}"?`,
+      title: m.alerts_delete_channel_title(),
+      message: m.alerts_delete_channel_message({ name: c.name }),
       body: inUse > 0
-        ? `${inUse} rule${inUse === 1 ? '' : 's'} route${inUse === 1 ? 's' : ''} to this channel and will stop firing until reassigned.`
-        : 'Cannot be undone.',
-      confirmLabel: 'Delete', danger: true,
+        ? m.alerts_delete_channel_in_use({ count: inUse })
+        : m.alerts_cannot_be_undone(),
+      confirmLabel: m.common_delete(), danger: true,
     }))) return;
     try {
       await api.alerts.deleteChannel(c.id);
-      toast.success('Deleted', c.name);
+      toast.success(m.alerts_deleted(), c.name);
       await onReload();
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   function lastDelivery(c: NotificationChannel): string {
-    if (deliveryFailing(c)) return `failed ${new Date(c.last_error_at!).toLocaleString()}`;
-    if (c.last_sent_at) return `sent ${new Date(c.last_sent_at).toLocaleString()}`;
-    return 'nothing sent yet';
+    if (deliveryFailing(c)) return m.alerts_delivery_failed_at({ at: fmtDateTime(c.last_error_at!) });
+    if (c.last_sent_at) return m.alerts_delivery_sent_at({ at: fmtDateTime(c.last_sent_at) });
+    return m.alerts_nothing_sent();
   }
 </script>
 
@@ -109,23 +111,23 @@
 {:else if channels.length === 0}
   <EmptyState
     icon={Bell}
-    title="No notification channels"
-    description="Add a webhook, ntfy, Discord, Slack, Teams, Gotify, email, PagerDuty or Pushover destination."
+    title={m.alerts_channels_empty_title()}
+    description={m.alerts_channels_empty_desc()}
   >
     {#snippet action()}
-      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New channel</button>{/if}
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> {m.alerts_new_channel()}</button>{/if}
     {/snippet}
   </EmptyState>
 {:else}
-  <div class="dm-tbl" role="table" aria-label="Notification channels">
+  <div class="dm-tbl" role="table" aria-label={m.alerts_channels_table_label()}>
     <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
       <span role="columnheader"></span>
-      <span role="columnheader">Channel</span>
-      <span role="columnheader">Sends to</span>
-      <span role="columnheader">Used by</span>
-      <span role="columnheader">Last delivery</span>
+      <span role="columnheader">{m.alerts_col_channel()}</span>
+      <span role="columnheader">{m.alerts_col_sends_to()}</span>
+      <span role="columnheader">{m.alerts_col_used_by()}</span>
+      <span role="columnheader">{m.alerts_col_last_delivery()}</span>
       <span role="columnheader"></span>
-      <span role="columnheader">On</span>
+      <span role="columnheader">{m.alerts_col_on()}</span>
       <span role="columnheader"></span>
     </div>
     {#each channels as c (c.id)}
@@ -136,10 +138,10 @@
         <span role="cell"><span class="dm-dot {!c.enabled ? '' : failing ? 'bad' : 'ok'}"></span></span>
         <span role="cell" class="dm-nm">
           {#if canUpdate}<button type="button" class="ct-name dm-t" title={c.name} onclick={() => onEdit(c)}>{c.name}</button>{:else}<span class="dm-t" title={c.name}>{c.name}</span>{/if}
-          <small>{c.type}{c.enabled ? '' : ' · disabled'}</small>
+          <small>{c.type}{c.enabled ? '' : ` · ${m.alerts_disabled_lc()}`}</small>
         </span>
         <span role="cell" class="dm-mono dm-dim ct-dest" title={configSummary(c)}>{configSummary(c)}</span>
-        <span role="cell" class="dm-num" class:dm-dim={using === 0}>{using > 0 ? `${using} rule${using === 1 ? '' : 's'}` : 'unused'}</span>
+        <span role="cell" class="dm-num" class:dm-dim={using === 0}>{using > 0 ? m.alerts_n_rules({ count: using }) : m.alerts_unused()}</span>
         <span role="cell" class="dm-num" class:bad={failing} class:dm-dim={!failing} title={failing ? c.last_error : undefined}>{lastDelivery(c)}</span>
         <span role="cell" class="dm-tr-menu">
           <button
@@ -147,22 +149,22 @@
             class="dm-btn dm-btn-sm dm-btn-ghost"
             onclick={() => testFire(c)}
             disabled={!canUpdate || !c.enabled || tState === 'running'}
-            title="Send a test notification"
+            title={m.alerts_send_test_title()}
           >
-            {#if tState === 'running'}Sending…{:else if tState === 'ok'}Sent{:else if tState === 'fail'}Failed{:else}<Send size={12} strokeWidth={1.8} /> Test{/if}
+            {#if tState === 'running'}{m.alerts_sending()}{:else if tState === 'ok'}{m.alerts_sent()}{:else if tState === 'fail'}{m.common_failed()}{:else}<Send size={12} strokeWidth={1.8} /> {m.common_test()}{/if}
           </button>
         </span>
         <span role="cell" class="dm-tr-menu">
-          <Switch checked={c.enabled} disabled={!canUpdate} label={c.enabled ? `Disable ${c.name}` : `Enable ${c.name}`} hideLabel onchange={() => toggleEnabled(c)} />
+          <Switch checked={c.enabled} disabled={!canUpdate} label={c.enabled ? m.alerts_disable_channel({ name: c.name }) : m.alerts_enable_channel({ name: c.name })} hideLabel onchange={() => toggleEnabled(c)} />
         </span>
         <span role="cell" class="dm-tr-menu">
           {#if canUpdate || canDelete}
             <Menu
-              label="Actions for {c.name}"
+              label={m.alerts_actions_for({ name: c.name })}
               items={[
-                ...(canUpdate ? [{ label: 'Edit…', onclick: () => onEdit(c) }] : []),
+                ...(canUpdate ? [{ label: m.alerts_edit_ellipsis(), onclick: () => onEdit(c) }] : []),
                 ...(canUpdate && canDelete ? [{ separator: true }] : []),
-                ...(canDelete ? [{ label: 'Delete…', danger: true, onclick: () => deleteChannel(c) }] : [])
+                ...(canDelete ? [{ label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteChannel(c) }] : [])
               ]}
             />
           {/if}
@@ -171,7 +173,7 @@
     {/each}
   </div>
   {#each channels.filter(deliveryFailing) as c (c.id)}
-    <p class="ct-err" role="status"><b>{c.name}</b>: last delivery failed — {c.last_error}</p>
+    <p class="ct-err" role="status"><b>{c.name}</b>: {m.alerts_last_delivery_failed({ error: c.last_error ?? '' })}</p>
   {/each}
 {/if}
 

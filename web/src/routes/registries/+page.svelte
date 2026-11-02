@@ -32,6 +32,7 @@
     Plus, Trash2, Search, X, Edit2, Repeat, Package,
     CheckCircle2, XCircle, AlertTriangle,
   } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   // ── Provider catalogue ──────────────────────────────────────────────
   // Each entry seeds the modal when picked from the rail. Help-text gives
@@ -50,13 +51,13 @@
   }
   const PROVIDERS: ProviderMeta[] = [
     { id: 'dockerhub', label: 'Docker Hub',       icon: '🐳', url: 'docker.io',
-      help: 'Personal access token (Docker Hub Account → Security) recommended over password.' },
+      help: m.registries_help_dockerhub() },
     { id: 'ghcr',      label: 'GitHub Container', icon: '🐙', url: 'ghcr.io',
-      help: 'Username = your GitHub handle. Token needs read:packages scope.' },
+      help: m.registries_help_ghcr() },
     { id: 'harbor',    label: 'Harbor',           icon: '⚓', url: 'harbor.example',
-      help: 'Self-hosted. Robot accounts work for non-interactive use.' },
-    { id: 'generic',   label: 'Generic OCI',      icon: '📡', url: 'registry.example',
-      help: 'Any registry that speaks the OCI distribution-spec — GitLab, Quay, Nexus, Artifactory, ECR (use `aws ecr get-login-password`), …' },
+      help: m.registries_help_harbor() },
+    { id: 'generic',   label: m.registries_generic_oci(), icon: '📡', url: 'registry.example',
+      help: m.registries_help_generic() },
   ];
 
   function detectProvider(url: string): ProviderId {
@@ -95,7 +96,7 @@
     try {
       registries = await api.registries.list();
     } catch (err) {
-      toast.error('Failed to load registries', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.registries_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       registriesLoading = false;
     }
@@ -138,11 +139,11 @@
   function fmtAgo(iso?: string): string {
     if (!iso) return '—';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return 'now';
-    if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-    if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-    if (d < 2 * 86400) return 'yesterday';
-    return `${Math.floor(d / 86400)}d ago`;
+    if (d < 60) return m.account_ago_now();
+    if (d < 3600) return m.account_ago_min({ n: Math.floor(d / 60) });
+    if (d < 86400) return m.account_ago_h({ n: Math.floor(d / 3600) });
+    if (d < 2 * 86400) return m.account_ago_yesterday();
+    return m.account_ago_d({ n: Math.floor(d / 86400) });
   }
 
   function providerOf(r: Registry): ProviderMeta {
@@ -200,7 +201,7 @@
     const t = formScopeInput.trim().toLowerCase();
     if (!t) return;
     if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(t)) {
-      toast.error('Invalid tag', 'lowercase letters, digits, hyphens, 1–32 chars');
+      toast.error(m.registries_invalid_tag(), m.registries_invalid_tag_hint());
       return;
     }
     if (formScopeTags.includes(t)) { formScopeInput = ''; return; }
@@ -227,15 +228,15 @@
       };
       if (editing) {
         await api.registries.update(editing.id, payload);
-        toast.success('Registry updated', formName);
+        toast.success(m.registries_updated_toast(), formName);
       } else {
         await api.registries.create(payload);
-        toast.success('Registry added', formName);
+        toast.success(m.registries_added_toast(), formName);
       }
       showModal = false;
       await loadRegistries();
     } catch (err) {
-      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.registries_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -243,17 +244,17 @@
 
   async function deleteRegistry(r: Registry) {
     if (!(await confirm.ask({
-      title: 'Delete registry',
-      message: `Delete registry "${r.name}"?`,
-      body: 'Existing pulls fall back to anonymous access. Private images will fail to pull until the registry is re-added.',
-      confirmLabel: 'Delete', danger: true,
+      title: m.registries_delete_title(),
+      message: m.registries_delete_message({ name: r.name }),
+      body: m.registries_delete_body(),
+      confirmLabel: m.common_delete(), danger: true,
     }))) return;
     try {
       await api.registries.delete(r.id);
-      toast.success('Registry deleted', r.name);
+      toast.success(m.registries_deleted_toast(), r.name);
       await loadRegistries();
     } catch (err) {
-      toast.error('Failed to delete', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.registries_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -261,11 +262,11 @@
     testingRegistryId = r.id;
     try {
       const res = await api.registries.test(r.id);
-      if (res.ok) toast.success('Login successful', r.name);
-      else        toast.error('Login failed', res.error || 'unknown error');
+      if (res.ok) toast.success(m.registries_login_ok(), r.name);
+      else        toast.error(m.registries_login_failed(), res.error || m.registries_unknown_error());
       await loadRegistries();
     } catch (err) {
-      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.registries_test_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       testingRegistryId = null;
     }
@@ -281,7 +282,7 @@
     try {
       modalTestResult = await api.registries.test(editing.id);
     } catch (err) {
-      modalTestResult = { ok: false, error: err instanceof ApiError ? err.message : 'request failed' };
+      modalTestResult = { ok: false, error: err instanceof ApiError ? err.message : m.registries_request_failed() };
     } finally {
       modalTestRunning = false;
     }
@@ -300,9 +301,9 @@
     <!-- ───────────────────────── Header ───────────────────────── -->
     <header class="reg-header">
       <div class="reg-header-text">
-        <h1 class="ed-title reg-title">Registries</h1>
+        <h1 class="ed-title reg-title">{m.registries_title()}</h1>
         <p class="ed-subtitle reg-subtitle">
-          {counts.total} configured{counts.failing > 0 ? ` · ${counts.failing} failing` : ''}{counts.stale > 0 ? ` · ${counts.stale} stale` : ''}
+          {m.registries_n_configured({ n: counts.total })}{counts.failing > 0 ? ` · ${m.registries_n_failing({ n: counts.failing })}` : ''}{counts.stale > 0 ? ` · ${m.registries_n_stale({ n: counts.stale })}` : ''}
         </p>
       </div>
     </header>
@@ -311,9 +312,9 @@
       <div class="dm-card reg-permission-block">
         <Package size={18} strokeWidth={1.5} />
         <div>
-          <div class="reg-perm-title">Admin-only</div>
+          <div class="reg-perm-title">{m.registries_admin_only()}</div>
           <p class="ed-subtitle reg-perm-blurb">
-            Registry configuration requires the <em>registries.update</em> permission.
+            {m.registries_perm_before()} <em>registries.update</em>{m.registries_perm_after()}
           </p>
         </div>
       </div>
@@ -321,27 +322,27 @@
       <!-- ───────────────────── Summary strip ───────────────────── -->
       <div class="reg-summary">
         <div class="reg-metric">
-          <span class="reg-metric-label">Configured</span>
+          <span class="reg-metric-label">{m.registries_metric_configured()}</span>
           <span class="reg-metric-value">{counts.total}</span>
-          <span class="reg-metric-meta">{counts.total - counts.failing} healthy</span>
+          <span class="reg-metric-meta">{m.registries_n_healthy({ n: counts.total - counts.failing })}</span>
         </div>
         <div class="reg-metric" data-tone={counts.failing > 0 ? 'warn' : 'ok'}>
-          <span class="reg-metric-label">Failing tests</span>
+          <span class="reg-metric-label">{m.registries_metric_failing()}</span>
           <span class="reg-metric-value">{counts.failing}</span>
           <span class="reg-metric-meta">
-            {counts.failing > 0 ? 'needs attention' : 'all clear'}
+            {counts.failing > 0 ? m.registries_needs_attention() : m.registries_all_clear()}
           </span>
         </div>
         <div class="reg-metric" data-tone={counts.stale > 0 ? 'warn' : 'ok'}>
-          <span class="reg-metric-label">Stale credentials</span>
+          <span class="reg-metric-label">{m.registries_metric_stale()}</span>
           <span class="reg-metric-value">{counts.stale}</span>
-          <span class="reg-metric-meta">&gt; 90 days since rotation</span>
+          <span class="reg-metric-meta">{m.registries_stale_meta()}</span>
         </div>
       </div>
 
       <!-- ───────────────────── Provider rail ───────────────────── -->
       <div class="reg-rail">
-        <div class="reg-rail-label">Add a known provider</div>
+        <div class="reg-rail-label">{m.registries_rail_label()}</div>
         <div class="reg-rail-grid">
           {#each PROVIDERS as p (p.id)}
             <button
@@ -367,7 +368,7 @@
           <input
             type="text"
             class="ed-underline-input reg-search-input"
-            placeholder="search label · url · username…"
+            placeholder={m.registries_search_placeholder()}
             bind:value={search}
           />
         </div>
@@ -377,7 +378,7 @@
           class="dm-btn dm-btn-primary dm-btn-sm"
           onclick={() => openNew()}
         >
-          <Plus size={12} strokeWidth={1.5} /> Add registry
+          <Plus size={12} strokeWidth={1.5} /> {m.registries_add_registry()}
         </button>
       </div>
 
@@ -389,24 +390,24 @@
       {:else if filtered.length === 0}
         <div class="reg-empty">
           {#if search}
-            <Eyebrow>No match</Eyebrow>
-            <p class="reg-empty-title">No registries match „{search}".</p>
+            <Eyebrow>{m.registries_no_match()}</Eyebrow>
+            <p class="reg-empty-title">{m.registries_no_match_title({ search })}</p>
           {:else}
-            <Eyebrow>Empty</Eyebrow>
-            <p class="reg-empty-title">No registries configured.</p>
+            <Eyebrow>{m.registries_empty()}</Eyebrow>
+            <p class="reg-empty-title">{m.registries_empty_title()}</p>
             <p class="ed-subtitle reg-empty-blurb">
-              Pick a provider above or use „Add registry" for anything OCI-compatible.
+              {m.registries_empty_blurb()}
             </p>
           {/if}
         </div>
       {:else}
         <div class="reg-table">
           <div class="reg-row reg-row-head">
-            <span>Label</span>
-            <span>URL · user</span>
-            <span>Rotation</span>
-            <span>Last test</span>
-            <span>Scope</span>
+            <span>{m.registries_col_label()}</span>
+            <span>{m.registries_col_url_user()}</span>
+            <span>{m.registries_col_rotation()}</span>
+            <span>{m.registries_col_last_test()}</span>
+            <span>{m.registries_col_scope()}</span>
             <span class="reg-col-action">·</span>
           </div>
           {#each filtered as r (r.id)}
@@ -433,15 +434,15 @@
 
               <div class="reg-cell-rotation" data-tone={rTone}>
                 {#if r.has_password}
-                  <span class="reg-rotation-text">rotated {days}d ago</span>
+                  <span class="reg-rotation-text">{m.registries_rotated_ago({ n: days })}</span>
                   {#if rTone !== 'ok'}
                     <span class="reg-rotation-note">
-                      {rTone === 'danger' ? '> 90d — rotate' : '> 60d — consider rotation'}
+                      {rTone === 'danger' ? m.registries_rotate_danger() : m.registries_rotate_warn()}
                     </span>
                   {/if}
                 {:else}
-                  <span class="reg-rotation-text reg-muted">No token</span>
-                  <span class="reg-rotation-note">Edit to add</span>
+                  <span class="reg-rotation-text reg-muted">{m.registries_no_token()}</span>
+                  <span class="reg-rotation-note">{m.registries_edit_to_add()}</span>
                 {/if}
               </div>
 
@@ -459,7 +460,7 @@
                     <span class="reg-test-err" title={r.last_test_error}>{r.last_test_error}</span>
                   {/if}
                 {:else}
-                  <span class="reg-muted reg-test-time">Never</span>
+                  <span class="reg-muted reg-test-time">{m.registries_never()}</span>
                 {/if}
               </div>
 
@@ -471,7 +472,7 @@
                     {/each}
                   </div>
                 {:else}
-                  <span class="reg-muted">All hosts</span>
+                  <span class="reg-muted">{m.common_all_hosts()}</span>
                 {/if}
               </div>
 
@@ -481,16 +482,16 @@
                   class="dm-btn dm-btn-ghost dm-btn-xs"
                   onclick={() => testRow(r)}
                   disabled={!r.has_password || testingRegistryId === r.id}
-                  title={r.has_password ? 'Test login' : 'No password stored — edit first'}
+                  title={r.has_password ? m.registries_test_login() : m.registries_no_password_title()}
                 >
                   <Repeat size={11} strokeWidth={1.5} />
-                  {testingRegistryId === r.id ? '…' : 'Test'}
+                  {testingRegistryId === r.id ? '…' : m.common_test()}
                 </button>
                 <button
                   type="button"
                   class="dm-btn dm-btn-ghost dm-btn-xs"
                   onclick={() => openEdit(r)}
-                  title="Edit"
+                  title={m.common_edit()}
                 >
                   <Edit2 size={11} strokeWidth={1.5} />
                 </button>
@@ -498,7 +499,7 @@
                   type="button"
                   class="dm-btn dm-btn-ghost dm-btn-xs reg-revoke-btn"
                   onclick={() => deleteRegistry(r)}
-                  title="Delete"
+                  title={m.common_delete()}
                 >
                   <Trash2 size={11} strokeWidth={1.5} />
                 </button>
@@ -509,12 +510,10 @@
       {/if}
 
       <div class="reg-hint">
-        <div class="reg-hint-title">How it works</div>
+        <div class="reg-hint-title">{m.registries_how_title()}</div>
         <p class="reg-hint-blurb">
-          When Dockmesh pulls
-          <code class="reg-hint-code">ghcr.io/org/app:tag</code>,
-          it looks up the matching registry (<code class="reg-hint-code">ghcr.io</code>)
-          and applies the stored credentials. Only pulls on the Dockmesh server use them; agents pull without credentials.
+          {m.registries_how_1()}
+          <code class="reg-hint-code">ghcr.io/org/app:tag</code>{m.registries_how_2()}<code class="reg-hint-code">ghcr.io</code>{m.registries_how_3()}
         </p>
       </div>
     {/if}
@@ -524,20 +523,20 @@
 <!-- ───────────────────────── Add / Edit Modal ───────────────────────── -->
 <EditorialModal
   bind:open={showModal}
-  eyebrow={editing ? 'Edit registry' : 'Add registry'}
+  eyebrow={editing ? m.registries_eyebrow_edit() : m.registries_add_registry()}
   width={580}
 >
   {#snippet title()}
     {#if editing}
-      Edit <em>{editing.name}</em>
+      {m.registries_title_edit_before()} <em>{editing.name}</em> {m.registries_title_edit_after()}
     {:else}
-      Connect a <em class="ed-accent">{currentProvider.label}</em>
+      {m.registries_title_connect_before()} <em class="ed-accent">{currentProvider.label}</em> {m.registries_title_connect_after()}
     {/if}
   {/snippet}
 
   <form id="reg-form" class="reg-form" onsubmit={save}>
     {#if !editing}
-      <Field label="Provider">
+      <Field label={m.registries_provider()}>
         <div class="reg-provider-grid">
           {#each PROVIDERS as p (p.id)}
             <button
@@ -560,14 +559,14 @@
     </div>
 
     <div class="reg-grid-2">
-      <Field label="Display label" hint="Free-form, shown in the registry list.">
+      <Field label={m.registries_display_label()} hint={m.registries_display_label_hint()}>
         <input
           class="dm-input"
           bind:value={formName}
           placeholder="GitHub — acme"
         />
       </Field>
-      <Field label="Registry URL" hint="Host only — scheme and trailing slash are ignored.">
+      <Field label={m.registries_url()} hint={m.registries_url_hint()}>
         <input
           class="dm-input acc-input-mono"
           bind:value={formUrl}
@@ -577,7 +576,7 @@
     </div>
 
     <div class="reg-grid-2">
-      <Field label="Username">
+      <Field label={m.registries_username()}>
         <input
           class="dm-input acc-input-mono"
           bind:value={formUser}
@@ -585,19 +584,19 @@
         />
       </Field>
       <Field
-        label={editing?.has_password ? 'New token (leave blank to keep)' : 'Password / token'}
-        hint="Stored encrypted and never shown again."
+        label={editing?.has_password ? m.registries_new_token_label() : m.registries_password_token()}
+        hint={m.registries_password_hint()}
       >
         <input
           class="dm-input acc-input-mono"
           type="password"
           bind:value={formPassword}
-          placeholder={editing?.has_password ? '••••••••' : 'PAT or password'}
+          placeholder={editing?.has_password ? '••••••••' : m.registries_password_placeholder()}
         />
       </Field>
     </div>
 
-    <Field label="Scope (host tags)" hint="Leave empty for all hosts, or limit to hosts with these tags.">
+    <Field label={m.registries_scope_label()} hint={m.registries_scope_hint()}>
       <div class="reg-scope-row">
         <input
           type="text"
@@ -611,7 +610,7 @@
           class="dm-btn dm-btn-secondary dm-btn-sm"
           onclick={addScopeTag}
         >
-          Add
+          {m.common_add()}
         </button>
       </div>
       {#if formScopeTags.length > 0}
@@ -619,7 +618,7 @@
           {#each formScopeTags as t}
             <span class="reg-scope-pill">
               {t}
-              <button type="button" onclick={() => removeScopeTag(t)} aria-label="Remove" class="reg-scope-pill-x">
+              <button type="button" onclick={() => removeScopeTag(t)} aria-label={m.common_remove()} class="reg-scope-pill-x">
                 <X size={10} strokeWidth={1.5} />
               </button>
             </span>
@@ -637,10 +636,10 @@
           disabled={!editing.has_password || modalTestRunning}
         >
           <Repeat size={12} strokeWidth={1.5} />
-          {modalTestRunning ? 'Testing…' : 'Test connection'}
+          {modalTestRunning ? m.registries_testing() : m.registries_test_connection()}
         </button>
         {#if !editing.has_password}
-          <span class="reg-test-hint">Save a password first to test.</span>
+          <span class="reg-test-hint">{m.registries_save_password_first()}</span>
         {/if}
       </div>
 
@@ -651,10 +650,10 @@
         >
           {#if modalTestResult.ok}
             <CheckCircle2 size={14} strokeWidth={1.6} />
-            <span>Connection OK{modalTestResult.identity ? ' — credentials accepted' : ''}.</span>
+            <span>{modalTestResult.identity ? m.registries_connection_ok_identity() : m.registries_connection_ok()}</span>
           {:else}
             <XCircle size={14} strokeWidth={1.6} />
-            <span>{modalTestResult.error || 'Connection failed.'}</span>
+            <span>{modalTestResult.error || m.registries_connection_failed()}</span>
           {/if}
         </div>
       {/if}
@@ -665,7 +664,7 @@
     <span></span>
     <div class="reg-modal-actions">
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showModal = false)}>
-        Cancel
+        {m.common_cancel()}
       </button>
       <button
         type="submit"
@@ -673,7 +672,7 @@
         class="dm-btn dm-btn-primary dm-btn-sm"
         disabled={!formName.trim() || !formUrl.trim() || busy}
       >
-        {busy ? 'Saving…' : editing ? 'Save' : 'Add registry'}
+        {busy ? m.common_saving() : editing ? m.common_save() : m.registries_add_registry()}
       </button>
     </div>
   {/snippet}

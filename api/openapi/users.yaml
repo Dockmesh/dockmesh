@@ -91,6 +91,29 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/User"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+  /me/language:
+    put:
+      operationId: users.me_language
+      tags: [users]
+      summary: Set the caller's language
+      description: |
+        Language of the web UI and of mail notifications sent to the user's
+        address. An empty value clears the choice so the browser language
+        decides. Requires a user session; API tokens get 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [language]
+              properties:
+                language: {type: string, enum: ["", en, de]}
+      responses:
+        "204": {description: Saved.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /invites:
     get:
       operationId: invites.list
