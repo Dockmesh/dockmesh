@@ -1082,6 +1082,7 @@ export interface BackupRun {
   id: number;
   job_id: number;
   job_name: string;
+  host_id?: string;
   status: string;
   started_at: string;
   finished_at?: string;
@@ -1101,6 +1102,13 @@ export interface StagedRestore {
   bytes: number;
   prev_dir?: string;
   prev_stacks?: string;
+}
+
+// A copy of the files a system restore replaced, kept on the server.
+export interface RestoreLeftover {
+  path: string;
+  restored_at: string;
+  bytes: number;
 }
 
 export interface StageSystemRestoreResult {
@@ -1584,6 +1592,27 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
   // Never replay a request under a different account.
   if (auth.user?.id !== userId) return res;
   return send(auth.accessToken);
+}
+
+// saveDownload fetches path with the session's bearer token and hands the
+// body to the browser as a file; a plain link would carry no token.
+async function saveDownload(path: string, filename: string): Promise<void> {
+  const res = await authFetch(`${BASE}${path}`);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
+    throw new ApiError(msg, res.status);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke after a tick so Safari has a chance to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -2272,24 +2301,8 @@ export const api = {
     // backend transparently decrypts age-encrypted archives so the
     // user always gets plaintext bytes. We auth via bearer token then
     // hand the user a Blob URL — same pattern as audit-log export.
-    downloadArchive: async (runId: number): Promise<void> => {
-      const res = await authFetch(`${BASE}/backups/runs/${runId}/archive`);
-      if (!res.ok) {
-        let msg = `${res.status} ${res.statusText}`;
-        try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
-        throw new ApiError(msg, res.status);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-run-${runId}.tar.gz`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      // Revoke after a tick so Safari has a chance to start the download.
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    },
+    downloadArchive: (runId: number): Promise<void> =>
+      saveDownload(`/backups/runs/${runId}/archive`, `backup-run-${runId}.tar.gz`),
     // Empty fields mean: the backed-up volume/stack, on the host it was
     // backed up on, merged. The server verifies the archive first.
     restore: (runId: number, opts: BackupRestoreOptions) =>
@@ -2316,13 +2329,14 @@ export const api = {
       request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' }),
     // System restore: stage (from a run or an upload), then apply, which
     // restarts the server. Nothing live changes before apply.
-    stagedSystemRestore: () => request<{ staged: StagedRestore | null }>('/restore/system'),
+    stagedSystemRestore: () => request<{ staged: StagedRestore | null; leftovers?: RestoreLeftover[] }>('/restore/system'),
     stageSystemRestoreFromRun: (runId: number) =>
       request<StageSystemRestoreResult>('/restore/system', { method: 'POST', body: JSON.stringify({ run_id: runId }) }),
     stageSystemRestoreUpload: (file: File, key?: File | null) =>
       uploadSystemBackup(`${BASE}/restore/system`, file, key, auth.accessToken),
     applySystemRestore: () => request<{ restarting: boolean }>('/restore/system/apply', { method: 'POST' }),
-    discardSystemRestore: () => request<void>('/restore/system', { method: 'DELETE' })
+    discardSystemRestore: () => request<void>('/restore/system', { method: 'DELETE' }),
+    deleteRestoreLeftovers: () => request<void>('/restore/system/leftovers', { method: 'DELETE' })
   },
 
   users: {
@@ -2588,6 +2602,7 @@ export const api = {
   },
 
   secrets: {
+    exportKey: (): Promise<void> => saveDownload('/system/backup-key/export', 'dockmesh-backup-key.txt'),
     rotate: () =>
       request<{ reencrypted: number; old_recipient: string; new_recipient: string }>(
         '/system/secrets/rotate',
