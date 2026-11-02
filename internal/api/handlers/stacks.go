@@ -700,6 +700,12 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.forgetStackTarget(r, name)
+	// A git source left behind would re-create the stack on its next commit.
+	if h.GitSource != nil {
+		if err := h.GitSource.Delete(r.Context(), name); err != nil && !errors.Is(err, gitsource.ErrNotFound) {
+			slog.Warn("delete stack git source", "stack", name, "err", err)
+		}
+	}
 	// Remove every dependency edge this stack participates in (P.12.7)
 	// so the graph doesn't drag around references to a stack that no
 	// longer exists. Other stacks that depended on this one will now
