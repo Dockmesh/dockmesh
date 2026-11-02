@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages.js';
 import { apiErrorText } from './apiErrors';
+import { rbacText } from './rbacText';
 import { auth } from './stores/auth.svelte';
 
 const BASE = '/api/v1';
@@ -510,6 +511,25 @@ export interface RoleExtra {
 export interface RoleCatalog {
   areas: RoleArea[];
   extras: RoleExtra[];
+}
+
+// Built-in roles and the catalog come in English; custom roles keep the
+// text their author typed, since it is sent back unchanged on save.
+function localRole(r: CustomRole): CustomRole {
+  if (!r?.builtin) return r;
+  return { ...r, display: rbacText(r.display), description: rbacText(r.description) };
+}
+
+function localCatalog(c: RoleCatalog): RoleCatalog {
+  return {
+    ...c,
+    areas: c.areas.map((a) => ({
+      ...a,
+      label: rbacText(a.label),
+      levels: a.levels.map((l) => ({ ...l, label: rbacText(l.label), items: l.items.map(rbacText) }))
+    })),
+    extras: c.extras.map((e) => ({ ...e, label: rbacText(e.label), warning: rbacText(e.warning) }))
+  };
 }
 
 export interface RoleInput {
@@ -1909,9 +1929,13 @@ export const api = {
   },
 
   roles: {
-    list: () => request<CustomRole[]>('/roles'),
-    get: (name: string) => request<{ role: CustomRole; assignments: Assignment[] }>(`/roles/${encodeURIComponent(name)}`),
-    catalog: () => request<RoleCatalog>('/roles/catalog'),
+    list: () => request<CustomRole[]>('/roles').then((rs) => rs.map(localRole)),
+    get: (name: string) =>
+      request<{ role: CustomRole; assignments: Assignment[] }>(`/roles/${encodeURIComponent(name)}`).then((r) => ({
+        ...r,
+        role: localRole(r.role)
+      })),
+    catalog: () => request<RoleCatalog>('/roles/catalog').then(localCatalog),
     create: (role: RoleInput & { name: string }) =>
       request<CustomRole>('/roles', { method: 'POST', body: JSON.stringify(role) }),
     update: (name: string, role: RoleInput) =>

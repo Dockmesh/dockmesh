@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getLocale } from '$lib/paraglide/runtime.js';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -153,7 +154,7 @@
   // Access check
   const actions = $derived.by(() => {
     const out: Array<{ key: string; label: string; area?: string; level?: string; extra?: string }> = [];
-    for (const a of catalog?.areas ?? []) for (const l of a.levels.slice(1)) out.push({ key: `${a.key}:${l.key}`, label: `${a.label}: ${l.items[0]?.toLowerCase() ?? l.label}`, area: a.key, level: l.key });
+    for (const a of catalog?.areas ?? []) for (const l of a.levels.slice(1)) out.push({ key: `${a.key}:${l.key}`, label: `${a.label}: ${(getLocale() === "en" ? l.items[0]?.toLowerCase() : l.items[0]) ?? l.label}`, area: a.key, level: l.key });
     for (const e of catalog?.extras ?? []) out.push({ key: `extra:${e.key}`, label: e.label, extra: e.key });
     return out;
   });
