@@ -168,7 +168,7 @@ func (h *Handlers) wsWatchRefresh(r *http.Request, conn *websocket.Conn, perm rb
 				idCtx := middleware.WithIdentity(ctx, id)
 				if (res == nil && middleware.Allowed(idCtx, perm)) || (res != nil && middleware.AllowedOn(idCtx, perm, *res)) {
 					if refresh != nil {
-						refresh(r.WithContext(middleware.WithIdentity(r.Context(), id)))
+						refresh(r.WithContext(idCtx))
 					}
 					continue
 				}

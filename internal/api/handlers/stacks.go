@@ -398,7 +398,7 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
-		if derr := h.Stacks.Delete(req.Name); derr != nil {
+		if derr := h.Stacks.Delete(req.Name); derr != nil { //nolint:contextcheck // removes files only
 			slog.Warn("create stack: roll back", "stack", req.Name, "err", derr)
 		}
 		return

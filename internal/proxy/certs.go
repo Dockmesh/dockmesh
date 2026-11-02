@@ -126,7 +126,7 @@ func (s *Service) RouteCerts(ctx context.Context) ([]Route, error) {
 	if done == nil {
 		done = make(chan struct{})
 		s.certRefresh = done
-		go s.refreshCerts(done)
+		go s.refreshCerts(done) //nolint:gosec // outlives the caller on purpose; bounded by certRefreshTimeout
 	}
 	stale := s.certRoutes
 	s.certMu.Unlock()

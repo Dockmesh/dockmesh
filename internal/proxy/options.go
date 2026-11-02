@@ -572,7 +572,7 @@ func (o *SiteOptions) applySecrets(prev *SiteOptions, newUpstream bool) error {
 	u, uerr := url.Parse(f.URL)
 	old, oerr := url.Parse(pf.URL)
 	if uerr != nil || oerr != nil {
-		return nil
+		return nil //nolint:nilerr // validate rejects the URL
 	}
 	// Viewers see only scheme://host:port, since a token can sit in the
 	// path as well; a URL sent back in that form keeps the stored path.

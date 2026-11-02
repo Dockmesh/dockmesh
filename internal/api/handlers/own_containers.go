@@ -102,7 +102,7 @@ func ownContainerGuarded(perm rbac.Perm) bool {
 func (h *Handlers) inspectOwn(ctx context.Context, hostID, containerID string) (bool, error) {
 	target, err := h.hostByID(hostID)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // see above
 	}
 	info, err := target.InspectContainer(ctx, containerID)
 	if errors.Is(err, host.ErrNoDocker) {
