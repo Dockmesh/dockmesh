@@ -1,5 +1,5 @@
 // Package gitsource keeps a stack's compose.yaml + .env in sync with a
-// git repository (P.11.11).
+// git repository.
 //
 // The service clones into ./data/git-cache/<stack>/, pulls on demand
 // or via a background poller, and copies the files into the stack's
@@ -102,8 +102,7 @@ type SyncResult struct {
 }
 
 // DeployFunc is the callback the service invokes when auto_deploy is on
-// and the sync pulled a new SHA. The host id is always "local" for now
-// — remote-agent git sources are a follow-up.
+// and the sync pulled a new SHA.
 type DeployFunc func(ctx context.Context, stackName string) (any, error)
 
 type Service struct {
@@ -686,9 +685,8 @@ func skipSibling(rel string) bool {
 	return strings.HasPrefix(rel, ".dockmesh") || compose.IsEnvironmentFile(rel)
 }
 
-// copyTreeSiblings mirrors all non-dotfile entries under srcRel (relative
-// to the clone) into dst, recursively, EXCEPT the compose / .env files the
-// main copy already handled. Tops out at 64 MiB per file to keep
+// copyTreeSiblings mirrors the entries under srcRel (relative to the
+// clone) into dst, recursively, except what skipSibling excludes. Tops out at 64 MiB per file to keep
 // build-contexts sane. Symlinks are copied as the file they point to and
 // skipped when that lies outside the clone. dst is written through an
 // os.Root as well: containers bind-mount parts of the stack directory and

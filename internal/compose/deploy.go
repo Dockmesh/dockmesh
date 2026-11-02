@@ -135,13 +135,13 @@ func WithRegistryAuth(ctx context.Context, auth map[string]string) context.Conte
 }
 
 // resolveImageAuth returns the base64 X-Registry-Auth blob for an image,
-// or empty string when no matching registry credential exists (= fall
-// back to anonymous pull, current behaviour). Logs the resolution
+// or empty string when no matching registry credential exists (anonymous
+// pull). Logs the resolution
 // outcome so a 401 on the actual pull can be triaged against whether
 // we even sent credentials.
 func (s *Service) resolveImageAuth(ctx context.Context, image string) string {
 	if auth, ok := ctx.Value(registryAuthCtxKey{}).(map[string]string); ok && auth[image] != "" {
-		slog.Info("image pull: using registry credential", "image", image, "auth_bytes", len(auth[image]))
+		slog.Info("image pull: using registry credential", "image", image, "source", "request", "auth_bytes", len(auth[image]))
 		return auth[image]
 	}
 	if s.auth == nil {

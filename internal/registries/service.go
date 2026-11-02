@@ -296,7 +296,7 @@ func (s *Service) RecordTest(ctx context.Context, id int64, ok bool, errMsg stri
 }
 
 // -----------------------------------------------------------------------------
-// Auth resolution (used by the image-pull handler)
+// Auth resolution
 // -----------------------------------------------------------------------------
 
 // ResolveAuth looks up credentials for an image reference that will be

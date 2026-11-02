@@ -763,6 +763,7 @@ func main() {
 	// image. Without this, compose deploys + the "update image" button
 	// + git-source auto-deploys all hit the daemon API anonymously and
 	// private registries (GHCR, ECR, Quay, …) reply 401.
+	// In-memory cache; the service reloads it after every mutation.
 	hostTagsSvc := hosttags.New(database)
 	if err := hostTagsSvc.Load(ctx); err != nil {
 		slog.Warn("host tags load", "err", err)
@@ -783,9 +784,8 @@ func main() {
 	composeSvc.SetProgressTracker(deployTracker)
 	hostRegistry.Local().SetProgressTracker(deployTracker)
 
-	// Deployment history store. Created BEFORE gitDeploy so the
-	// auto-deploy closure below can write an entry per git-triggered
-	// deploy — without that, /deployments only ever shows manual ones.
+	// Created before the git deployer, which records an entry per
+	// git-triggered deploy.
 	deployHistoryStore := stacks.NewHistoryStore(database)
 	updaterSvc.SetStacks(stacksMgr, deployHistoryStore)
 
@@ -856,8 +856,6 @@ func main() {
 	agentUpgrade.Start(ctx)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
-	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
-	// fresh after every mutation via Load() inside the service.
 	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})
 
 	depStore := stacks.NewDependencyStore(database)

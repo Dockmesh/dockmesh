@@ -68,8 +68,8 @@ var UpdateSteps = []operations.StepSpec{
 // a successful update.
 const DefaultRollbackKeep = 3
 
-// authResolver mirrors compose.authResolver — kept as an interface
-// here so registries.Service can be wired in without an import cycle.
+// authResolver mirrors compose.authResolver so a registries.HostAuth can
+// be wired in without an import cycle.
 type authResolver interface {
 	ResolveAuthForImage(ctx context.Context, image string) (string, error)
 }

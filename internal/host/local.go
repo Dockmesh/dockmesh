@@ -17,7 +17,7 @@ import (
 )
 
 // authResolver matches the interface compose.Service expects so the
-// configured registries service can be passed through to every fresh
+// host's registry resolver can be passed through to every fresh
 // compose.Service this host constructs.
 type authResolver interface {
 	ResolveAuthForImage(ctx context.Context, image string) (string, error)
