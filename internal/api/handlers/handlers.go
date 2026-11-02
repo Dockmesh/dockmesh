@@ -280,7 +280,43 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	writeJSON(w, status, map[string]string{"error": msg, "code": errorCode(status, msg)})
+}
+
+// errorCode is the message's stable code, or a generic one per status for
+// messages that carry runtime detail; the UI shows those as sent.
+func errorCode(status int, msg string) string {
+	if c, ok := errorCodes[msg]; ok {
+		return c
+	}
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "too_large"
+	case http.StatusUnprocessableEntity:
+		return "unprocessable"
+	case http.StatusTooManyRequests:
+		return "too_many_requests"
+	case http.StatusBadGateway:
+		return "bad_gateway"
+	case http.StatusServiceUnavailable:
+		return "unavailable"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	}
+	if status >= 500 {
+		return "internal"
+	}
+	return "error"
 }
 
 func decodeJSON(r *http.Request, dst any) error {

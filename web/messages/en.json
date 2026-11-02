@@ -1,5 +1,113 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "authn_abs_lifetime": "Absolute lifetime (h)",
+  "authn_abs_lifetime_hint": "Hard cap on a single session before re-auth.",
+  "authn_add_provider": "Add provider",
+  "authn_admin_only": "Admin-only",
+  "authn_auto_create": "Auto-create accounts on first SSO sign-in",
+  "authn_auto_create_hint": "Lands new users in the per-provider default role.",
+  "authn_callback_blurb_after": "with the provider's slug.",
+  "authn_callback_blurb_before": "OAuth2 / SAML / LDAP get their own callback shapes once their backend ships. Replace",
+  "authn_callback_urls": "Callback URLs",
+  "authn_chip_digit": "digit",
+  "authn_chip_min": "min {n} chars",
+  "authn_chip_symbol": "symbol",
+  "authn_chip_upper_lower": "upper + lower",
+  "authn_copy_lc": "copy",
+  "authn_default_role": "Default role",
+  "authn_delete_failed": "Delete failed",
+  "authn_delete_provider_body": "Users who signed in via this provider must fall back to password login until it's re-added.",
+  "authn_delete_provider_message": "Delete provider \"{name}\"?",
+  "authn_delete_provider_title": "Delete provider",
+  "authn_discard": "Discard",
+  "authn_empty_blurb": "Click „Add provider\" to pick a kind (OIDC / OAuth2 / SAML / LDAP) and a template.",
+  "authn_empty_eyebrow": "Empty",
+  "authn_empty_title": "No providers configured.",
+  "authn_idle_timeout": "Idle timeout (min)",
+  "authn_idle_timeout_hint": "Revoke after N minutes without a refresh. 0 = no idle expiry.",
+  "authn_idp_eyebrow": "Identity providers",
+  "authn_later_release": "Password rotation and reuse rules, remember-me, requiring 2FA for admins, turning off local passwords and self-registration come in a later release.",
+  "authn_load_providers_failed": "Failed to load providers",
+  "authn_lockout_attempts": "Lockout · max attempts",
+  "authn_lockout_attempts_hint": "Failed sign-ins before lock.",
+  "authn_lockout_duration": "Lockout · duration (min)",
+  "authn_lockout_duration_hint": "Auto-unlock after.",
+  "authn_max_sessions": "Max sessions per user",
+  "authn_max_sessions_hint": "0 means no limit; the least recently used session ends first.",
+  "authn_min_length": "Minimum length",
+  "authn_perm_blurb_after": " permission.",
+  "authn_perm_blurb_before": "Authentication configuration requires the",
+  "authn_pill_disabled": "disabled",
+  "authn_policy_case_after": "case",
+  "authn_policy_case_before": ", contain",
+  "authn_policy_case_em": "upper + lower",
+  "authn_policy_digit_before": ", include a",
+  "authn_policy_digit_em": "digit",
+  "authn_policy_eyebrow": "Local password policy",
+  "authn_policy_min_after": "characters",
+  "authn_policy_min_before": "Password must be at least",
+  "authn_policy_saved": "Password policy saved",
+  "authn_policy_symbol_before": ", include a",
+  "authn_policy_symbol_em": "symbol",
+  "authn_provider_deleted": "Provider deleted",
+  "authn_providers_meta": "{configured} configured · {active} active",
+  "authn_save_failed": "Save failed",
+  "authn_save_policy": "Save policy",
+  "authn_save_settings": "Save settings",
+  "authn_sess_evict": " — the oldest get evicted on new sign-in",
+  "authn_sess_expire_before": "Sessions expire after",
+  "authn_sess_idle_after": "of inactivity, whichever comes first.",
+  "authn_sess_idle_before": "or",
+  "authn_sess_max_after": "concurrent sessions",
+  "authn_sess_max_before": "Each user may hold at most",
+  "authn_sess_no_idle": "regardless of activity.",
+  "authn_sess_purge": "Revoked + expired rows are hard-deleted after 30 days.",
+  "authn_sess_unlimited": "unlimited",
+  "authn_session_settings_saved": "Session settings saved",
+  "authn_sessions_eyebrow": "Sessions & sign-in flow",
+  "authn_slug_label": "slug: {slug}",
+  "authn_subtitle_active": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} active provider · local password fallback",
+        "countPlural=*": "{count} active providers · local password fallback"
+      }
+    }
+  ],
+  "authn_subtitle_none": "No SSO providers configured · local password only",
+  "authn_title": "Authentication",
+  "authn_toggle_failed": "Toggle failed",
+  "backups_cron_daily_0300": "Daily at 03:00",
+  "backups_cron_daily_midnight": "Daily at midnight",
+  "backups_cron_every_12h": "Every 12 hours",
+  "backups_cron_every_6h": "Every 6 hours",
+  "backups_cron_monthly_1st_0300": "Monthly, 1st at 03:00",
+  "backups_cron_weekly_sun_0200": "Weekly, Sunday 02:00",
+  "backups_dockmesh_server": "Dockmesh server",
+  "backups_duration_h_min": "{h} h {min} min",
+  "backups_duration_min_s": "{min} min {s} s",
+  "backups_duration_running": "running",
+  "backups_duration_s": "{s} s",
+  "backups_no_source": "no source",
+  "backups_run_failed": "failed",
+  "backups_run_running": "running",
+  "backups_run_succeeded": "succeeded",
+  "backups_run_warnings": "warnings",
+  "backups_system_source_kind": "database, stacks, settings",
+  "backups_until_d": "in {d} d",
+  "backups_until_d_h": "in {d} d {h} h",
+  "backups_until_h": "in {h} h",
+  "backups_until_h_min": "in {h} h {min} min",
+  "backups_until_lt_min": "in <1 min",
+  "backups_until_min": "in {n} min",
+  "backups_until_overdue": "overdue",
   "common_actions": "Actions",
   "common_add": "Add",
   "common_agent": "Agent",
@@ -107,8 +215,488 @@
   "common_volumes": "Volumes",
   "common_warning": "Warning",
   "common_yes": "Yes",
+  "containers_bulk_aria": "Bulk actions",
+  "containers_bulk_clear": "Clear",
+  "containers_bulk_remove_body": "Volumes are kept. Running containers are force-stopped and removed.",
+  "containers_bulk_remove_message": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Remove {count} container?",
+        "countPlural=*": "Remove {count} containers?"
+      }
+    }
+  ],
+  "containers_bulk_remove_title": "Remove containers",
+  "containers_bulk_result": "{op}: {ok} succeeded",
+  "containers_bulk_result_failed": ", {fail} failed",
+  "containers_bulk_selected": "{count} selected",
+  "containers_id_copied": "ID copied",
+  "containers_list_actions_for": "Actions for {name}",
+  "containers_list_adopt": "Adopt…",
+  "containers_list_all_hosts": "all hosts",
+  "containers_list_col_uptime": "Uptime",
+  "containers_list_empty_desc": "Deploy a stack or start a template to get started.",
+  "containers_list_empty_title": "No containers",
+  "containers_list_filter_attention": "Attention",
+  "containers_list_filter_label": "Filter containers",
+  "containers_list_filter_standalone": "Standalone",
+  "containers_list_group_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} container",
+        "countPlural=*": "{count} containers"
+      }
+    }
+  ],
+  "containers_list_group_running": "{count} running",
+  "containers_list_host_local": "local",
+  "containers_list_layout": "Layout",
+  "containers_list_layout_host": "By host",
+  "containers_list_layout_list": "List",
+  "containers_list_layout_stack": "By stack",
+  "containers_list_load_failed": "Failed to load",
+  "containers_list_managed_by_dockmesh": "Managed by Dockmesh",
+  "containers_list_needs_attention": "Needs attention",
+  "containers_list_newer_image": "A newer image is available",
+  "containers_list_no_match": "No containers match.",
+  "containers_list_ports_internal": "internal",
+  "containers_list_reset_sort_title": "Back to urgency order",
+  "containers_list_restarts_title": "Restarted {count} times since it was created",
+  "containers_list_running_of": "{running} of {all}",
+  "containers_list_search_placeholder": "Filter name, stack, image, id…",
+  "containers_list_select_all": "Select all visible containers",
+  "containers_list_select_one": "Select {name}",
+  "containers_list_stack_prefix": "stack {stack}",
+  "containers_list_standalone_group": "Standalone",
+  "containers_list_standalone_sub": "not managed by Dockmesh",
+  "containers_list_standalone_tag": "standalone",
+  "containers_list_system": "system",
+  "containers_list_unreachable_count": "{count} unreachable",
+  "containers_list_unreachable_hint": "Their containers are missing from the list.",
+  "containers_list_unreachable_hosts": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} host unreachable",
+        "countPlural=*": "{count} hosts unreachable"
+      }
+    }
+  ],
+  "containers_list_update_tag": "update",
+  "containers_menu_copy_id": "Copy ID",
+  "containers_menu_inspect": "Inspect",
+  "containers_menu_open_proxy": "Open reverse proxy",
+  "containers_menu_open_stack": "Open stack {stack}",
+  "containers_menu_remove": "Remove…",
+  "containers_menu_terminal": "Terminal",
+  "containers_op_done_remove": "remove",
+  "containers_op_done_restart": "restart",
+  "containers_op_done_start": "start",
+  "containers_op_done_stop": "stop",
+  "containers_op_failed": "{op} failed",
+  "containers_op_remove": "remove",
+  "containers_op_restart": "restart",
+  "containers_op_start": "start",
+  "containers_op_stop": "stop",
+  "containers_remove_body": "Container volumes are kept. Image stays available for redeploy.",
+  "containers_remove_message": "Remove container \"{name}\"?",
+  "containers_remove_title": "Remove container",
+  "containers_status_created": "created",
+  "containers_status_dead": "dead",
+  "containers_status_exited": "exited",
+  "containers_status_exited_code": "exited {code}",
+  "containers_status_paused": "paused",
+  "containers_status_removing": "removing",
+  "containers_status_restarting": "restarting",
+  "containers_status_running": "running",
+  "containers_status_starting": "starting",
+  "containers_status_unhealthy": "unhealthy",
+  "containers_status_unknown": "unknown",
+  "hosts_tag_invalid": "Invalid tag",
+  "hosts_tag_invalid_detail": "lowercase letters, digits, hyphens, 1-32 chars",
+  "hosts_tag_max": "Max {n} tags",
   "lang_auto": "Browser language",
   "lang_label": "Language",
+  "proxy_caddy_back_to": "Back to {version}",
+  "proxy_caddy_go_back": "Go back",
+  "proxy_caddy_recommended": "recommended",
+  "proxy_caddy_rollback_title": "Go back to the previous Caddy version",
+  "proxy_caddy_running": "Running",
+  "proxy_caddy_runs": "Caddy runs {version}",
+  "proxy_caddy_start_to_switch": "Start the proxy to switch versions.",
+  "proxy_caddy_switch": "Switch",
+  "proxy_caddy_switch_body": "Sites are briefly unavailable while the container is replaced. If the new version does not take the configuration, Dockmesh switches back on its own.",
+  "proxy_caddy_switch_failed": "Version switch failed",
+  "proxy_caddy_switch_message": "Caddy is restarted with {version}.",
+  "proxy_caddy_switch_title": "Switch Caddy to {version}",
+  "proxy_caddy_version": "Caddy version",
+  "proxy_caddy_version_hint": "Dockmesh ships the versions it was tested with. Switching restarts Caddy and goes back if the new one fails.",
+  "proxy_cert_authority": "Certificate authority",
+  "proxy_cert_authority_hint": "Where Let's Encrypt sites get their certificates. Staging certificates are not trusted by browsers.",
+  "proxy_cert_contact": "Certificate contact",
+  "proxy_cert_contact_hint": "Email the certificate authority uses for expiry warnings. Optional.",
+  "proxy_custom_image": "custom image",
+  "proxy_custom_image_hint": "A custom image is set, so the version is managed outside Dockmesh.",
+  "proxy_grp_access": "Access",
+  "proxy_grp_access_hint": "Who may open the site: passwords, IP lists, an auth service.",
+  "proxy_grp_headers": "Headers",
+  "proxy_grp_headers_hint": "Headers added to or removed from requests and responses.",
+  "proxy_grp_https_hint": "How plain HTTP is handled for this site.",
+  "proxy_grp_logs_hint": "Per-request logging in the proxy container.",
+  "proxy_grp_performance": "Performance",
+  "proxy_grp_performance_hint": "Streaming, uploads, timeouts and compression.",
+  "proxy_grp_routing": "Routing",
+  "proxy_grp_routing_hint": "More upstreams, load balancing, health checks and the www name.",
+  "proxy_import_analyze": "Analyze",
+  "proxy_import_button": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Import {count} site",
+        "countPlural=*": "Import {count} sites"
+      }
+    }
+  ],
+  "proxy_import_disabled_note": "Imported sites start disabled so you can check them before they go live.",
+  "proxy_import_done": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} site imported",
+        "countPlural=*": "{count} sites imported"
+      }
+    }
+  ],
+  "proxy_import_done_hint": "They are disabled until you turn them on.",
+  "proxy_import_failed": "Import failed",
+  "proxy_import_found": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} site found",
+        "countPlural=*": "{count} sites found"
+      }
+    }
+  ],
+  "proxy_import_global_not_imported": "Global options not imported: {list}",
+  "proxy_import_importable": "{n} can be imported",
+  "proxy_import_not_imported": "not imported: {list}",
+  "proxy_import_not_imported_title": "Not imported: {list}",
+  "proxy_import_paste": "Paste your Caddyfile",
+  "proxy_import_paste_hint": "Nothing changes until you import; file imports and environment placeholders are refused.",
+  "proxy_import_st_partial": "partial",
+  "proxy_import_st_ready": "ready",
+  "proxy_import_st_skipped": "skipped",
+  "proxy_import_table": "Sites in the Caddyfile",
+  "proxy_import_title": "Import Caddyfile",
+  "proxy_le_staging": "Let's Encrypt staging (testing)",
+  "proxy_not_available": "Not available",
+  "proxy_opt_access_log": "access log",
+  "proxy_opt_allow_http": "also plain HTTP",
+  "proxy_opt_buffered": "buffered uploads",
+  "proxy_opt_compression": "compression",
+  "proxy_opt_forward_auth": "forward auth",
+  "proxy_opt_header_rules": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} header rule",
+        "countPlural=*": "{count} header rules"
+      }
+    }
+  ],
+  "proxy_opt_health_check": "health check {path}",
+  "proxy_opt_ip_allow": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "only {count} IP range",
+        "countPlural=*": "only {count} IP ranges"
+      }
+    }
+  ],
+  "proxy_opt_ip_deny": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "blocks {count} IP range",
+        "countPlural=*": "blocks {count} IP ranges"
+      }
+    }
+  ],
+  "proxy_opt_load_balanced": "load balanced over {n}",
+  "proxy_opt_max_body": "max body {size}",
+  "proxy_opt_password": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "password ({count} user)",
+        "countPlural=*": "password ({count} users)"
+      }
+    }
+  ],
+  "proxy_opt_security_headers": "security headers",
+  "proxy_opt_stream_close": "stream close delay {delay}",
+  "proxy_opt_streaming": "streaming",
+  "proxy_opt_timeouts": "timeouts",
+  "proxy_opt_www_redirect": "www redirect",
+  "proxy_save_settings": "Save settings",
+  "proxy_saving_failed": "Saving failed",
+  "proxy_settings_saved": "Proxy settings saved",
+  "proxy_tls_internal": "Internal CA",
+  "proxy_tls_none": "HTTP only",
+  "proxy_trusted_proxies": "Trusted proxies",
+  "proxy_trusted_proxies_hint": "Trust the client address that a CDN in front of Caddy forwards. Only enable it when all traffic comes through that CDN.",
+  "proxy_warn_allow_http": "Visitors can open the site unencrypted; passwords and cookies sent that way can be read on the network.",
+  "proxy_warn_basic_auth_http": "Passwords go over plain HTTP on this site and can be read on the network.",
+  "proxy_warn_buffer": "Caddy holds up to 4 MiB of every request in memory before the upstream sees it; large uploads start later.",
+  "proxy_warn_forward_auth": "Every request waits for the auth service; while it is down, visitors get its error instead of the site.",
+  "proxy_warn_health": "Upstreams that fail the check get no traffic; when all fail, visitors get 503.",
+  "proxy_warn_hsts": "Browsers remember this for a year and refuse plain HTTP for the name, even after you turn it off again.",
+  "proxy_warn_ip_allow": "Every address not on the list gets 403. Include your own, or you lock yourself out of the site.",
+  "stacks_del_cleanup_partial": "Cleanup partial",
+  "stacks_del_cleanup_unavailable": "Resource cleanup unavailable for this host",
+  "stacks_del_containers_keep": "{containers}; unchecked, they keep running and can be adopted again.",
+  "stacks_del_deleted": "Deleted",
+  "stacks_del_failed": "Delete failed",
+  "stacks_del_intro_after": ". Choose what else goes with it:",
+  "stacks_del_intro_before": "Removes the stack's",
+  "stacks_del_kept_images": "Kept, still used elsewhere: {images}",
+  "stacks_del_no_containers": "No containers are running for this stack.",
+  "stacks_del_no_images": "No images to remove, or all are used by other projects.",
+  "stacks_del_no_networks": "No project networks to remove.",
+  "stacks_del_no_volumes": "No project volumes to remove.",
+  "stacks_del_only_compose": "Only the compose.yaml is removed; clean up the rest on the host.",
+  "stacks_del_remove_images": "Remove images",
+  "stacks_del_remove_networks": "Remove project networks",
+  "stacks_del_remove_volumes": "Remove volumes",
+  "stacks_del_removed": "Removed: {list}",
+  "stacks_del_removes": "Removes {what}:",
+  "stacks_del_stop_containers": "Stop and remove containers",
+  "stacks_del_title": "Delete stack {name}",
+  "stacks_del_type_after": "to confirm",
+  "stacks_del_type_before": "Type",
+  "stacks_del_unrecoverable": "Unrecoverable",
+  "stacks_del_volumes_hint": "Deletes the data in these volumes for good. External volumes are never touched.",
+  "stacks_del_volumes_warn": "The data in {volumes} is deleted for good. Take a backup first if it matters.",
+  "stacks_n_containers": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} container",
+        "countPlural=*": "{count} containers"
+      }
+    }
+  ],
+  "stacks_n_images": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} image",
+        "countPlural=*": "{count} images"
+      }
+    }
+  ],
+  "stacks_n_networks": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} network",
+        "countPlural=*": "{count} networks"
+      }
+    }
+  ],
+  "stacks_n_volumes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} volume",
+        "countPlural=*": "{count} volumes"
+      }
+    }
+  ],
+  "templates_actions_for": "Actions for {name}",
+  "templates_builtin": "built-in",
+  "templates_builtin_count": "{count} built-in",
+  "templates_col_images": "Images",
+  "templates_col_label": "Label in the deploy dialog",
+  "templates_col_parameters": "Parameters",
+  "templates_col_placeholder": "Placeholder",
+  "templates_col_secret": "Secret",
+  "templates_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} template",
+        "countPlural=*": "{count} templates"
+      }
+    }
+  ],
+  "templates_create": "Create template",
+  "templates_created": "Template created",
+  "templates_custom": "custom",
+  "templates_custom_count": "{count} custom",
+  "templates_dd_creates": "Creates",
+  "templates_dd_deployed": "Stack deployed",
+  "templates_dd_deploying": "Deploying…",
+  "templates_dd_failed": "deploy failed",
+  "templates_dd_generated_empty": "Generated when left empty.",
+  "templates_dd_hide_compose": "Hide compose.yaml",
+  "templates_dd_no_params": "This template has no parameters.",
+  "templates_dd_on": "on",
+  "templates_dd_port_bound": "Port {port} is already bound on this host.",
+  "templates_dd_port_collide": "Will collide with an existing container's port.",
+  "templates_dd_preview_compose": "Preview compose.yaml",
+  "templates_dd_required": "Required",
+  "templates_dd_stack_name": "Stack name",
+  "templates_dd_stack_name_hint": "Lowercase letters and dashes, unique on the host.",
+  "templates_dd_target_host": "Target host",
+  "templates_dd_target_host_hint": "Where the stack will run.",
+  "templates_dd_title": "Deploy {name}",
+  "templates_dd_title_generic": "Deploy template",
+  "templates_default_for": "Default for {name}",
+  "templates_delete_body": "Already-deployed stacks are unaffected.",
+  "templates_delete_failed": "Delete failed",
+  "templates_delete_message": "This removes the template from the library.",
+  "templates_delete_title": "Delete template \"{name}\"?",
+  "templates_deleted": "Template deleted",
+  "templates_desc_placeholder": "One sentence shown in the list",
+  "templates_download_yaml": "Download YAML",
+  "templates_edit_ellipsis": "Edit…",
+  "templates_edit_title": "Edit {name}",
+  "templates_editor_label": "Template editor",
+  "templates_empty_desc": "Built-in templates are added on first start. Add your own from a compose file.",
+  "templates_empty_title": "No templates yet",
+  "templates_filter_label": "Filter templates",
+  "templates_filter_placeholder": "Filter templates…",
+  "templates_found_hint": "Found in the compose file; labels and defaults set here win.",
+  "templates_generated": "generated",
+  "templates_label_for": "Label for {name}",
+  "templates_load_failed": "Failed to load templates",
+  "templates_n_params": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} param",
+        "countPlural=*": "{count} params"
+      }
+    }
+  ],
+  "templates_name_placeholder": "My app",
+  "templates_new": "New template",
+  "templates_no": "no",
+  "templates_no_match": "No templates match “{search}”.",
+  "templates_no_placeholders_desc": "Add {code} to the compose file to ask for a value at deploy time.",
+  "templates_no_placeholders_title": "No placeholders yet",
+  "templates_not_used": "Not used in compose.yaml",
+  "templates_placeholders_after": "become fields in the deploy dialog. Secrets are generated when left empty.",
+  "templates_placeholders_and": "and",
+  "templates_placeholders_before": "Placeholders",
+  "templates_remove_named": "Remove {name}",
+  "templates_save_failed": "save failed",
+  "templates_slug": "Slug",
+  "templates_title": "Templates",
+  "templates_unused": "unused",
+  "templates_updated": "Template updated",
+  "templates_yes": "yes",
   "time_d_ago": "{n} d ago",
   "time_h_ago": "{n} h ago",
   "time_just_now": "just now",

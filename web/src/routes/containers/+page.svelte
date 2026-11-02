@@ -14,6 +14,7 @@
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { Box, AlertTriangle } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const canControlAll = $derived(allowed('containers.update'));
   const canExecAll = $derived(allowed('containers.exec'));
@@ -96,26 +97,39 @@
   }
   function exitCodeFromStatus(s: string | undefined): number | null {
     if (!s) return null;
-    const m = s.match(/Exited\s*\((\d+)\)/);
-    return m ? parseInt(m[1], 10) : null;
+    const mt = s.match(/Exited\s*\((\d+)\)/);
+    return mt ? parseInt(mt[1], 10) : null;
   }
   function imageNameAndTag(image: string): { name: string; tag: string | null } {
     const idx = image.lastIndexOf(':');
     if (idx < 0 || idx < image.lastIndexOf('/')) return { name: image, tag: null };
     return { name: image.slice(0, idx), tag: image.slice(idx + 1) };
   }
+  function stateLabel(s: string): string {
+    switch (s) {
+      case 'running': return m.containers_status_running();
+      case 'restarting': return m.containers_status_restarting();
+      case 'paused': return m.containers_status_paused();
+      case 'dead': return m.containers_status_dead();
+      case 'exited': return m.containers_status_exited();
+      case 'created': return m.containers_status_created();
+      case 'removing': return m.containers_status_removing();
+      case '': return m.containers_status_unknown();
+      default: return s;
+    }
+  }
   function statusOf(c: Container): { tone: Tone; label: string } {
     const health = parseHealth(c.Status);
     if (c.State === 'running') {
-      if (health === 'unhealthy') return { tone: 'warn', label: 'unhealthy' };
-      if (health === 'starting') return { tone: 'warn', label: 'starting' };
-      return { tone: 'ok', label: 'running' };
+      if (health === 'unhealthy') return { tone: 'warn', label: m.containers_status_unhealthy() };
+      if (health === 'starting') return { tone: 'warn', label: m.containers_status_starting() };
+      return { tone: 'ok', label: m.containers_status_running() };
     }
-    if (c.State === 'restarting' || c.State === 'paused') return { tone: 'warn', label: c.State };
-    if (c.State === 'dead') return { tone: 'bad', label: 'dead' };
+    if (c.State === 'restarting' || c.State === 'paused') return { tone: 'warn', label: stateLabel(c.State) };
+    if (c.State === 'dead') return { tone: 'bad', label: m.containers_status_dead() };
     const exit = exitCodeFromStatus(c.Status);
-    if (c.State === 'exited' && exit !== null && exit !== 0) return { tone: 'bad', label: `exited ${exit}` };
-    return { tone: 'off', label: c.State || 'unknown' };
+    if (c.State === 'exited' && exit !== null && exit !== 0) return { tone: 'bad', label: m.containers_status_exited_code({ code: exit }) };
+    return { tone: 'off', label: stateLabel(c.State || '') };
   }
   function needsAttention(c: Container): boolean {
     const t = statusOf(c).tone;
@@ -128,7 +142,7 @@
   }
   function portsLabel(c: Container): string {
     const pub = (c.Ports ?? []).filter((p) => p.PublicPort);
-    if (pub.length === 0) return (c.Ports ?? []).length ? 'internal' : '—';
+    if (pub.length === 0) return (c.Ports ?? []).length ? m.containers_list_ports_internal() : '—';
     const first = `:${pub[0].PublicPort}`;
     return pub.length > 1 ? `${first} +${pub.length - 1}` : first;
   }
@@ -212,13 +226,13 @@
       let g: Omit<Group, 'items' | 'tone'>;
       if (view === 'host') {
         key = c.host_id ?? hosts.id;
-        g = { key, label: c.host_name || (hosts.selected?.name ?? 'local'), sub: '' };
+        g = { key, label: c.host_name || (hosts.selected?.name ?? m.containers_list_host_local()), sub: '' };
       } else {
         const st = stackOf(c);
         key = st ?? '__standalone';
         g = st
           ? { key, label: st, sub: '', href: `/stacks/${encodeURIComponent(st)}` }
-          : { key, label: 'Standalone', sub: 'not managed by Dockmesh' };
+          : { key, label: m.containers_list_standalone_group(), sub: m.containers_list_standalone_sub() };
       }
       if (!map.has(key)) map.set(key, { ...g, tone: '', items: [] });
       map.get(key)!.items.push(c);
@@ -227,7 +241,7 @@
     for (const g of out) {
       const worst = Math.min(...g.items.map((c) => TONE_ORDER[statusOf(c).tone]));
       g.tone = worst === 0 ? 'bad' : worst === 1 ? 'warn' : worst === 2 ? 'ok' : '';
-      g.sub = [g.sub, `${g.items.length} container${g.items.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+      g.sub = [g.sub, m.containers_list_group_count({ count: g.items.length })].filter(Boolean).join(' · ');
     }
     return out.sort((a, b) => (a.key === '__standalone' ? 1 : b.key === '__standalone' ? -1 : a.label.localeCompare(b.label)));
   });
@@ -241,23 +255,23 @@
     const canControl = canControlAll && !isSystem(c);
     const canExec = canExecAll && !isSystem(c);
     const items: MenuItem[] = [
-      { label: 'Open', kbd: '↵', href: detailHref(c) },
-      { label: 'Logs', href: detailHref(c, 'logs') },
+      { label: m.common_open(), kbd: '↵', href: detailHref(c) },
+      { label: m.common_logs(), href: detailHref(c, 'logs') },
     ];
-    if (canExec) items.push({ label: 'Terminal', href: detailHref(c, 'exec'), disabled: !running });
-    items.push({ label: 'Inspect', href: detailHref(c, 'inspect') });
+    if (canExec) items.push({ label: m.containers_menu_terminal(), href: detailHref(c, 'exec'), disabled: !running });
+    items.push({ label: m.containers_menu_inspect(), href: detailHref(c, 'inspect') });
     if (canControl) {
       items.push({ separator: true });
       if (running) {
-        items.push({ label: 'Restart', onclick: () => action(c, 'restart') }, { label: 'Stop', onclick: () => action(c, 'stop') });
+        items.push({ label: m.common_restart(), onclick: () => action(c, 'restart') }, { label: m.common_stop(), onclick: () => action(c, 'stop') });
       } else {
-        items.push({ label: 'Start', onclick: () => action(c, 'start') });
+        items.push({ label: m.common_start(), onclick: () => action(c, 'start') });
       }
     }
-    items.push({ separator: true }, { label: 'Copy ID', onclick: () => copyId(c.Id) });
-    if (stack) items.push({ label: `Open stack ${stack}`, href: `/stacks/${encodeURIComponent(stack)}` });
-    if (c.Labels?.['dockmesh.component'] === 'proxy') items.push({ label: 'Open reverse proxy', href: '/proxy' });
-    if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: () => action(c, 'remove') });
+    items.push({ separator: true }, { label: m.containers_menu_copy_id(), onclick: () => copyId(c.Id) });
+    if (stack) items.push({ label: m.containers_menu_open_stack({ stack }), href: `/stacks/${encodeURIComponent(stack)}` });
+    if (c.Labels?.['dockmesh.component'] === 'proxy') items.push({ label: m.containers_menu_open_proxy(), href: '/proxy' });
+    if (canControl) items.push({ separator: true }, { label: m.containers_menu_remove(), danger: true, onclick: () => action(c, 'remove') });
     return items;
   }
 
@@ -294,7 +308,7 @@
       }
       lastLoaded = Date.now();
     } catch (err) {
-      if (current()) toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error(m.containers_list_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       if (current()) loading = false;
     }
@@ -314,6 +328,13 @@
   });
 
   // ── Actions ─────────────────────────────────────────────────────────
+  type Op = 'start' | 'stop' | 'restart' | 'remove';
+  function opName(op: Op): string {
+    return { start: m.containers_op_start, stop: m.containers_op_stop, restart: m.containers_op_restart, remove: m.containers_op_remove }[op]();
+  }
+  function opDone(op: Op): string {
+    return { start: m.containers_op_done_start, stop: m.containers_op_done_stop, restart: m.containers_op_done_restart, remove: m.containers_op_done_remove }[op]();
+  }
   async function action(c: Container, op: 'start' | 'stop' | 'restart' | 'remove') {
     const targetHost = c.host_id ?? hosts.id;
     try {
@@ -322,27 +343,27 @@
       else if (op === 'restart') await api.containers.restart(c.Id, targetHost);
       else {
         if (!(await confirm.ask({
-          title: 'Remove container',
-          message: `Remove container "${nameOf(c)}"?`,
-          body: 'Container volumes are kept. Image stays available for redeploy.',
-          confirmLabel: 'Remove', danger: true,
+          title: m.containers_remove_title(),
+          message: m.containers_remove_message({ name: nameOf(c) }),
+          body: m.containers_remove_body(),
+          confirmLabel: m.common_remove(), danger: true,
         }))) return;
         await api.containers.remove(c.Id, true, targetHost);
       }
-      toast.success(op, nameOf(c));
+      toast.success(opDone(op), nameOf(c));
       await load();
     } catch (err) {
-      toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_op_failed({ op: opName(op) }), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function bulkAction(op: 'start' | 'stop' | 'restart' | 'remove') {
     if (selected.size === 0) return;
     if (op === 'remove' && !(await confirm.ask({
-      title: 'Remove containers',
-      message: `Remove ${selected.size} container${selected.size === 1 ? '' : 's'}?`,
-      body: 'Volumes are kept. Running containers are force-stopped and removed.',
-      confirmLabel: 'Remove', danger: true,
+      title: m.containers_bulk_remove_title(),
+      message: m.containers_bulk_remove_message({ count: selected.size }),
+      body: m.containers_bulk_remove_body(),
+      confirmLabel: m.common_remove(), danger: true,
     }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
@@ -356,20 +377,20 @@
         ok++;
       } catch { fail++; }
     }
-    toast.success(`${op}: ${ok} succeeded${fail ? `, ${fail} failed` : ''}`);
+    toast.success(m.containers_bulk_result({ op: opName(op), ok }) + (fail ? m.containers_bulk_result_failed({ fail }) : ''));
     selected = new Set();
     bulkBusy = false;
     await load();
   }
 
   function copyId(id: string) {
-    void copyWithToast(id, 'ID copied');
+    void copyWithToast(id, m.containers_id_copied());
   }
 </script>
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Containers</h1>
+    <h1>{m.common_containers()}</h1>
     <span class="dm-sub">{counts.all}</span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={loading} paused={connStatus === 'closed'} />
@@ -377,43 +398,43 @@
 
   <div class="dm-toolbar">
     <Segmented
-      label="Filter containers"
+      label={m.containers_list_filter_label()}
       bind:value={stateFilter}
       options={[
-        { key: 'all', label: 'All', count: counts.all },
-        { key: 'running', label: 'Running', count: counts.running },
-        { key: 'attention', label: 'Attention', count: counts.attention },
-        { key: 'stopped', label: 'Stopped', count: counts.stopped },
-        { key: 'standalone', label: 'Standalone', count: counts.standalone }
+        { key: 'all', label: m.common_all(), count: counts.all },
+        { key: 'running', label: m.common_running(), count: counts.running },
+        { key: 'attention', label: m.containers_list_filter_attention(), count: counts.attention },
+        { key: 'stopped', label: m.common_stopped(), count: counts.stopped },
+        { key: 'standalone', label: m.containers_list_filter_standalone(), count: counts.standalone }
       ]}
     />
     <span class="dm-sp"></span>
-    <input type="search" class="dm-filter" placeholder="Filter name, stack, image, id…" aria-label="Filter containers" bind:value={search} style="width: 240px" />
+    <input type="search" class="dm-filter" placeholder={m.containers_list_search_placeholder()} aria-label={m.containers_list_filter_label()} bind:value={search} style="width: 240px" />
     <Segmented
-      label="Layout"
+      label={m.containers_list_layout()}
       bind:value={view}
       options={[
-        { key: 'list', label: 'List' },
-        { key: 'host', label: 'By host' },
-        { key: 'stack', label: 'By stack' }
+        { key: 'list', label: m.containers_list_layout_list() },
+        { key: 'host', label: m.containers_list_layout_host() },
+        { key: 'stack', label: m.containers_list_layout_stack() }
       ]}
     />
   </div>
 
   <StatBar
     items={[
-      { label: 'Running', value: `${counts.running} of ${counts.all}` },
+      { label: m.common_running(), value: m.containers_list_running_of({ running: counts.running, all: counts.all }) },
       {
-        label: 'Needs attention',
+        label: m.containers_list_needs_attention(),
         value: counts.attention,
         note: containers.filter(needsAttention).slice(0, 3).map((c) => `${nameOf(c)} ${statusOf(c).label}`).join(' · '),
         tone: counts.attention ? 'warn' : ''
       },
-      { label: 'Stopped', value: counts.stopped },
+      { label: m.common_stopped(), value: counts.stopped },
       {
-        label: 'Hosts',
+        label: m.common_hosts(),
         value: isAll ? hosts.available.length : 1,
-        note: unreachable.length ? `${unreachable.length} unreachable` : isAll ? 'all hosts' : (hosts.selected?.name ?? ''),
+        note: unreachable.length ? m.containers_list_unreachable_count({ count: unreachable.length }) : isAll ? m.containers_list_all_hosts() : (hosts.selected?.name ?? ''),
         tone: unreachable.length ? 'bad' : ''
       }
     ]}
@@ -422,19 +443,19 @@
   {#if unreachable.length > 0}
     <div class="ct-warn" role="alert">
       <AlertTriangle size={14} strokeWidth={1.8} />
-      <span><b>{unreachable.length} host{unreachable.length === 1 ? '' : 's'} unreachable</b> · {unreachable.map((u) => u.host_name).join(', ')}. Their containers are missing from the list.</span>
+      <span><b>{m.containers_list_unreachable_hosts({ count: unreachable.length })}</b> · {unreachable.map((u) => u.host_name).join(', ')}. {m.containers_list_unreachable_hint()}</span>
     </div>
   {/if}
 
   {#if selected.size > 0 && canControlAll}
-    <div class="ct-bulk" role="region" aria-label="Bulk actions">
-      <b>{selected.size} selected</b>
+    <div class="ct-bulk" role="region" aria-label={m.containers_bulk_aria()}>
+      <b>{m.containers_bulk_selected({ count: selected.size })}</b>
       <span class="dm-sp"></span>
-      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('start')} disabled={bulkBusy}>Start</button>
-      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('stop')} disabled={bulkBusy}>Stop</button>
-      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('restart')} disabled={bulkBusy}>Restart</button>
-      <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={() => bulkAction('remove')} disabled={bulkBusy}>Remove…</button>
-      <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>Clear</button>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('start')} disabled={bulkBusy}>{m.common_start()}</button>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('stop')} disabled={bulkBusy}>{m.common_stop()}</button>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('restart')} disabled={bulkBusy}>{m.common_restart()}</button>
+      <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={() => bulkAction('remove')} disabled={bulkBusy}>{m.containers_menu_remove()}</button>
+      <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>{m.containers_bulk_clear()}</button>
     </div>
   {/if}
 
@@ -445,21 +466,21 @@
       {/each}
     </div>
   {:else if containers.length === 0}
-    <EmptyState icon={Box} title="No containers" description="Deploy a stack or start a template to get started." />
+    <EmptyState icon={Box} title={m.containers_list_empty_title()} description={m.containers_list_empty_desc()} />
   {:else}
-    <div class="dm-tbl" role="table" aria-label="Containers">
+    <div class="dm-tbl" role="table" aria-label={m.common_containers()}>
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {cols}">
         <span role="columnheader">
-          {#if canControlAll}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="Select all visible containers" />{/if}
+          {#if canControlAll}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label={m.containers_list_select_all()} />{/if}
         </span>
-        <span role="columnheader"><button type="button" onclick={() => toggleSort('name')}>Name{sortArrow('name')}</button></span>
-        <span role="columnheader"><button type="button" onclick={() => toggleSort('state')}>Status{sortArrow('state')}</button></span>
-        {#if view !== 'host'}<span role="columnheader">Host</span>{/if}
-        <span role="columnheader"><button type="button" onclick={() => toggleSort('image')}>Image{sortArrow('image')}</button></span>
-        <span role="columnheader">Ports</span>
-        <span role="columnheader"><button type="button" onclick={() => toggleSort('uptime')}>Uptime{sortArrow('uptime')}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('name')}>{m.common_name()}{sortArrow('name')}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('state')}>{m.common_status()}{sortArrow('state')}</button></span>
+        {#if view !== 'host'}<span role="columnheader">{m.common_host()}</span>{/if}
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('image')}>{m.common_image()}{sortArrow('image')}</button></span>
+        <span role="columnheader">{m.common_ports()}</span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('uptime')}>{m.containers_list_col_uptime()}{sortArrow('uptime')}</button></span>
         <span role="columnheader" class="dm-tr-menu">
-          {#if sortKey !== 'urgency'}<button type="button" onclick={() => { sortKey = 'urgency'; sortAsc = true; }} title="Back to urgency order">Reset</button>{/if}
+          {#if sortKey !== 'urgency'}<button type="button" onclick={() => { sortKey = 'urgency'; sortAsc = true; }} title={m.containers_list_reset_sort_title()}>{m.common_reset()}</button>{/if}
         </span>
       </div>
 
@@ -467,7 +488,7 @@
         {#each visible as c (c.Id + (c.host_id ?? ''))}
           {@render row(c)}
         {:else}
-          <div class="dm-empty">No containers match.</div>
+          <div class="dm-empty">{m.containers_list_no_match()}</div>
         {/each}
       {:else}
         {#each groups as g (g.key)}
@@ -477,9 +498,9 @@
               {#if g.href}<a class="ct-glink" href={g.href}>{g.label}</a>{:else}<b>{g.label}</b>{/if}
               <span class="dm-dim"> {g.sub}</span>
             </span>
-            <span class="dm-num dm-dim">{g.items.filter((c) => c.State === 'running').length} running</span>
+            <span class="dm-num dm-dim">{m.containers_list_group_running({ count: g.items.filter((c) => c.State === 'running').length })}</span>
             {#if g.key === '__standalone' && allowed('stacks.adopt')}
-              <a class="dm-btn dm-btn-sm" href="/stacks">Adopt…</a>
+              <a class="dm-btn dm-btn-sm" href="/stacks">{m.containers_list_adopt()}</a>
             {:else}
               <span></span>
             {/if}
@@ -488,7 +509,7 @@
             {@render row(c)}
           {/each}
         {:else}
-          <div class="dm-empty">No containers match.</div>
+          <div class="dm-empty">{m.containers_list_no_match()}</div>
         {/each}
       {/if}
     </div>
@@ -516,26 +537,26 @@
           checked={selected.has(c.Id)}
           onclick={(e) => e.stopPropagation()}
           onchange={() => toggleOne(c.Id)}
-          aria-label="Select {nameOf(c)}"
+          aria-label={m.containers_list_select_one({ name: nameOf(c) })}
         />
       {/if}
     </span>
     <span role="cell" class="dm-nm">
       <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>
       <small>
-        {#if isSystem(c)}<span title="Managed by Dockmesh">system · </span>{:else if stack}{#if view !== 'stack'}{`stack ${stack} · `}{/if}{:else}<span class="ct-standalone">standalone</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title="Restarted {c.restart_count} times since it was created"> · ↻{c.restart_count}</span>{/if}
+        {#if isSystem(c)}<span title={m.containers_list_managed_by_dockmesh()}>{m.containers_list_system()} · </span>{:else if stack}{#if view !== 'stack'}{`${m.containers_list_stack_prefix({ stack })} · `}{/if}{:else}<span class="ct-standalone">{m.containers_list_standalone_tag()}</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title={m.containers_list_restarts_title({ count: c.restart_count })}> · ↻{c.restart_count}</span>{/if}
       </small>
     </span>
     <span role="cell"><StatusChip tone={st.tone} label={st.label} title={c.Status} /></span>
-    {#if view !== 'host'}<span role="cell" class="dm-dim">{c.host_name || (isAll ? 'Local' : (hosts.selected?.name ?? 'Local'))}</span>{/if}
+    {#if view !== 'host'}<span role="cell" class="dm-dim">{c.host_name || (isAll ? m.common_local() : (hosts.selected?.name ?? m.common_local()))}</span>{/if}
     <span role="cell" class="dm-mono" title={c.Image}>
       <span class="dm-dim">{shortImage(img.name)}</span>{#if img.tag}:{img.tag}{/if}
-      {#if c.image_update_available}<span class="ct-upd" title="A newer image is available"> · update</span>{/if}
+      {#if c.image_update_available}<span class="ct-upd" title={m.containers_list_newer_image()}> · {m.containers_list_update_tag()}</span>{/if}
     </span>
     <span role="cell" class="dm-mono dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
     <span role="cell" class="dm-num dm-dim">{running ? uptime(c) : '—'}</span>
     <span role="cell" class="dm-tr-menu">
-      <Menu label="Actions for {nameOf(c)}" items={rowMenu(c)} />
+      <Menu label={m.containers_list_actions_for({ name: nameOf(c) })} items={rowMenu(c)} />
     </span>
   </div>
 {/snippet}

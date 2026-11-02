@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -293,11 +295,45 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	withPermissions(u, access)
+	var lang string
+	if h.UserPrefs != nil {
+		if lang, err = h.UserPrefs.Get(r.Context(), uid, userprefs.KeyLanguage); err != nil {
+			slog.Warn("read language preference", "user", uid, "err", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": u.ID, "username": u.Username, "display_name": u.DisplayName, "email": u.Email,
+		"language": lang,
+		"id":       u.ID, "username": u.Username, "display_name": u.DisplayName, "email": u.Email,
 		"source": u.Source, "mfa_enabled": u.MFAEnabled, "last_login_at": u.LastLoginAt,
 		"password_changed_at": u.PasswordChangedAt, "has_avatar": u.HasAvatar,
 		"permissions": u.Permissions, "unscoped": access.Unscoped(),
 		"assignments": h.viewUser(*u).Assignments,
 	})
+}
+
+// SetMyLanguage stores the caller's UI and notification language.
+//
+//	PUT /api/v1/me/language
+func (h *Handlers) SetMyLanguage(w http.ResponseWriter, r *http.Request) {
+	uid := middleware.UserID(r.Context())
+	if uid == "" || h.UserPrefs == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Language string `json:"language"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !userprefs.ValidLanguage(req.Language) {
+		writeError(w, http.StatusBadRequest, "unsupported language")
+		return
+	}
+	if err := h.UserPrefs.Set(r.Context(), uid, userprefs.KeyLanguage, req.Language); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

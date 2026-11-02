@@ -11,6 +11,14 @@ components:
         error:
           type: string
           example: invalid credentials
+        code:
+          type: string
+          example: invalid_body
+          description: |
+            Stable identifier of the message, for clients that show errors in
+            another language. Fixed messages have their own code; messages with
+            runtime detail carry a generic one per status (`bad_request`,
+            `not_found`, `conflict`, `unavailable`, `internal`, …).
     Operation:
       type: object
       required: [id, kind, target, status, steps, created_at]
@@ -118,6 +126,10 @@ components:
           type: boolean
           description: In /me only. True when every permission is held on everything.
         mfa_enabled: {type: boolean}
+        language:
+          type: string
+          enum: ["", en, de]
+          description: In /me only. The language the user picked; empty when the browser language decides.
         locked_until:
           type: string
           format: date-time

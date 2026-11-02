@@ -3,6 +3,7 @@ import { hosts } from '$lib/stores/host.svelte';
 import { allowed, isAdmin, type Perm } from '$lib/rbac.svelte';
 import { fmtAgo as baseAgo, fmtBytes as baseBytes } from '$lib/format';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 export const fmtAgo = (ts?: string) => baseAgo(ts);
 export const fmtBytes = (n: number) => baseBytes(n, '—');
@@ -12,38 +13,38 @@ export function fmtUntil(ts?: string): string {
   const t = Date.parse(ts);
   if (!t || isNaN(t)) return '—';
   const secs = Math.floor((t - Date.now()) / 1000);
-  if (secs < 0) return 'overdue';
-  if (secs < 60) return 'in <1 min';
-  if (secs < 3600) return `in ${Math.floor(secs / 60)} min`;
+  if (secs < 0) return m.backups_until_overdue();
+  if (secs < 60) return m.backups_until_lt_min();
+  if (secs < 3600) return m.backups_until_min({ n: Math.floor(secs / 60) });
   if (secs < 86400) {
     const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    return m > 0 ? `in ${h} h ${m} min` : `in ${h} h`;
+    const min = Math.floor((secs % 3600) / 60);
+    return min > 0 ? m.backups_until_h_min({ h, min }) : m.backups_until_h({ h });
   }
   const d = Math.floor(secs / 86400);
   const h = Math.floor((secs % 86400) / 3600);
-  return h > 0 ? `in ${d} d ${h} h` : `in ${d} d`;
+  return h > 0 ? m.backups_until_d_h({ d, h }) : m.backups_until_d({ d });
 }
 
 export function fmtDuration(start: string, end?: string): string {
-  if (!end) return 'running';
+  if (!end) return m.backups_duration_running();
   const secs = Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000);
-  if (secs < 60) return `${secs} s`;
-  if (secs < 3600) return `${Math.floor(secs / 60)} min ${secs % 60} s`;
-  return `${Math.floor(secs / 3600)} h ${Math.floor((secs % 3600) / 60)} min`;
+  if (secs < 60) return m.backups_duration_s({ s: secs });
+  if (secs < 3600) return m.backups_duration_min_s({ min: Math.floor(secs / 60), s: secs % 60 });
+  return m.backups_duration_h_min({ h: Math.floor(secs / 3600), min: Math.floor((secs % 3600) / 60) });
 }
 
-const CRON_LABELS: Record<string, string> = {
-  '0 3 * * *': 'Daily at 03:00',
-  '0 0 * * *': 'Daily at midnight',
-  '0 */6 * * *': 'Every 6 hours',
-  '0 */12 * * *': 'Every 12 hours',
-  '0 2 * * 0': 'Weekly, Sunday 02:00',
-  '0 3 1 * *': 'Monthly, 1st at 03:00'
+const CRON_LABELS: Record<string, () => string> = {
+  '0 3 * * *': m.backups_cron_daily_0300,
+  '0 0 * * *': m.backups_cron_daily_midnight,
+  '0 */6 * * *': m.backups_cron_every_6h,
+  '0 */12 * * *': m.backups_cron_every_12h,
+  '0 2 * * 0': m.backups_cron_weekly_sun_0200,
+  '0 3 1 * *': m.backups_cron_monthly_1st_0300
 };
 
 export function cronHuman(cron: string): string {
-  return CRON_LABELS[cron] ?? cron;
+  return CRON_LABELS[cron]?.() ?? cron;
 }
 
 export function targetTypeLabel(type: string): string {
@@ -51,19 +52,19 @@ export function targetTypeLabel(type: string): string {
   if (type === 'sftp') return 'SFTP';
   if (type === 'smb') return 'SMB';
   if (type === 'webdav') return 'WebDAV';
-  return 'Local';
+  return m.common_local();
 }
 
 export function jobSourceName(j: Pick<BackupJob, 'sources'>): string {
   const s = j.sources[0];
-  if (!s) return 'no source';
-  return s.type === 'system' ? 'Dockmesh server' : s.name;
+  if (!s) return m.backups_no_source();
+  return s.type === 'system' ? m.backups_dockmesh_server() : s.name;
 }
 
 export function jobSourceKind(j: Pick<BackupJob, 'sources'>): string {
   const s = j.sources[0];
   if (!s) return '';
-  if (s.type === 'system') return 'database, stacks, settings';
+  if (s.type === 'system') return m.backups_system_source_kind();
   return s.type;
 }
 
@@ -76,8 +77,10 @@ export function runTone(status: string): Tone {
 }
 
 export function runLabel(status: string): string {
-  if (status === 'success') return 'succeeded';
-  if (status === 'success_with_warnings') return 'warnings';
+  if (status === 'success') return m.backups_run_succeeded();
+  if (status === 'success_with_warnings') return m.backups_run_warnings();
+  if (status === 'failed') return m.backups_run_failed();
+  if (status === 'running') return m.backups_run_running();
   return status;
 }
 

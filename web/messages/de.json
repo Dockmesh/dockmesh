@@ -1,5 +1,113 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "authn_abs_lifetime": "Max. Lebensdauer (h)",
+  "authn_abs_lifetime_hint": "Feste Obergrenze einer Sitzung bis zur erneuten Anmeldung.",
+  "authn_add_provider": "Anbieter hinzufügen",
+  "authn_admin_only": "Nur für Admins",
+  "authn_auto_create": "Konten bei erster SSO-Anmeldung automatisch anlegen",
+  "authn_auto_create_hint": "Neue Benutzer erhalten die Standardrolle des Anbieters.",
+  "authn_callback_blurb_after": "durch den Slug des Anbieters ersetzen.",
+  "authn_callback_blurb_before": "OAuth2 / SAML / LDAP erhalten eigene Callback-Formen, sobald ihr Backend verfügbar ist.",
+  "authn_callback_urls": "Callback-URLs",
+  "authn_chip_digit": "Ziffer",
+  "authn_chip_min": "min. {n} Zeichen",
+  "authn_chip_symbol": "Sonderzeichen",
+  "authn_chip_upper_lower": "groß + klein",
+  "authn_copy_lc": "kopieren",
+  "authn_default_role": "Standardrolle",
+  "authn_delete_failed": "Löschen fehlgeschlagen",
+  "authn_delete_provider_body": "Benutzer, die sich über diesen Anbieter angemeldet haben, müssen sich per Passwort anmelden, bis er wieder hinzugefügt ist.",
+  "authn_delete_provider_message": "Anbieter \"{name}\" löschen?",
+  "authn_delete_provider_title": "Anbieter löschen",
+  "authn_discard": "Verwerfen",
+  "authn_empty_blurb": "„Anbieter hinzufügen\" anklicken, um einen Typ (OIDC / OAuth2 / SAML / LDAP) und eine Vorlage zu wählen.",
+  "authn_empty_eyebrow": "Leer",
+  "authn_empty_title": "Keine Anbieter konfiguriert.",
+  "authn_idle_timeout": "Leerlauf-Timeout (min)",
+  "authn_idle_timeout_hint": "Nach N Minuten ohne Refresh widerrufen. 0 = kein Ablauf bei Leerlauf.",
+  "authn_idp_eyebrow": "Identitätsanbieter",
+  "authn_later_release": "Regeln für Passwortwechsel und -wiederverwendung, „Angemeldet bleiben\", 2FA-Pflicht für Admins, Abschalten lokaler Passwörter und Selbstregistrierung folgen in einem späteren Release.",
+  "authn_load_providers_failed": "Anbieter konnten nicht geladen werden",
+  "authn_lockout_attempts": "Sperre · max. Versuche",
+  "authn_lockout_attempts_hint": "Fehlgeschlagene Anmeldungen bis zur Sperre.",
+  "authn_lockout_duration": "Sperre · Dauer (min)",
+  "authn_lockout_duration_hint": "Danach automatisch entsperrt.",
+  "authn_max_sessions": "Max. Sitzungen pro Benutzer",
+  "authn_max_sessions_hint": "0 bedeutet kein Limit; die am längsten ungenutzte Sitzung endet zuerst.",
+  "authn_min_length": "Mindestlänge",
+  "authn_perm_blurb_after": ".",
+  "authn_perm_blurb_before": "Die Authentifizierungskonfiguration erfordert die Berechtigung",
+  "authn_pill_disabled": "deaktiviert",
+  "authn_policy_case_after": "",
+  "authn_policy_case_before": ",",
+  "authn_policy_case_em": "Groß- + Kleinbuchstaben",
+  "authn_policy_digit_before": ", eine",
+  "authn_policy_digit_em": "Ziffer",
+  "authn_policy_eyebrow": "Lokale Passwortrichtlinie",
+  "authn_policy_min_after": "Zeichen",
+  "authn_policy_min_before": "Das Passwort braucht mindestens",
+  "authn_policy_saved": "Passwortrichtlinie gespeichert",
+  "authn_policy_symbol_before": ", ein",
+  "authn_policy_symbol_em": "Sonderzeichen",
+  "authn_provider_deleted": "Anbieter gelöscht",
+  "authn_providers_meta": "{configured} konfiguriert · {active} aktiv",
+  "authn_save_failed": "Speichern fehlgeschlagen",
+  "authn_save_policy": "Richtlinie speichern",
+  "authn_save_settings": "Einstellungen speichern",
+  "authn_sess_evict": " — bei neuer Anmeldung wird die älteste beendet",
+  "authn_sess_expire_before": "Sitzungen laufen ab nach",
+  "authn_sess_idle_after": "Inaktivität, je nachdem, was zuerst eintritt.",
+  "authn_sess_idle_before": "oder nach",
+  "authn_sess_max_after": "gleichzeitige Sitzungen haben",
+  "authn_sess_max_before": "Jeder Benutzer darf höchstens",
+  "authn_sess_no_idle": "unabhängig von Aktivität.",
+  "authn_sess_purge": "Widerrufene und abgelaufene Einträge werden nach 30 Tagen endgültig gelöscht.",
+  "authn_sess_unlimited": "unbegrenzt",
+  "authn_session_settings_saved": "Sitzungseinstellungen gespeichert",
+  "authn_sessions_eyebrow": "Sitzungen & Anmeldeablauf",
+  "authn_slug_label": "Slug: {slug}",
+  "authn_subtitle_active": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} aktiver Anbieter · lokales Passwort als Fallback",
+        "countPlural=*": "{count} aktive Anbieter · lokales Passwort als Fallback"
+      }
+    }
+  ],
+  "authn_subtitle_none": "Keine SSO-Anbieter konfiguriert · nur lokales Passwort",
+  "authn_title": "Authentifizierung",
+  "authn_toggle_failed": "Umschalten fehlgeschlagen",
+  "backups_cron_daily_0300": "Täglich um 03:00",
+  "backups_cron_daily_midnight": "Täglich um Mitternacht",
+  "backups_cron_every_12h": "Alle 12 Stunden",
+  "backups_cron_every_6h": "Alle 6 Stunden",
+  "backups_cron_monthly_1st_0300": "Monatlich, am 1. um 03:00",
+  "backups_cron_weekly_sun_0200": "Wöchentlich, Sonntag 02:00",
+  "backups_dockmesh_server": "Dockmesh-Server",
+  "backups_duration_h_min": "{h} Std. {min} Min.",
+  "backups_duration_min_s": "{min} Min. {s} s",
+  "backups_duration_running": "läuft",
+  "backups_duration_s": "{s} s",
+  "backups_no_source": "keine Quelle",
+  "backups_run_failed": "fehlgeschlagen",
+  "backups_run_running": "läuft",
+  "backups_run_succeeded": "erfolgreich",
+  "backups_run_warnings": "Warnungen",
+  "backups_system_source_kind": "Datenbank, Stacks, Einstellungen",
+  "backups_until_d": "in {d} T.",
+  "backups_until_d_h": "in {d} T. {h} Std.",
+  "backups_until_h": "in {h} Std.",
+  "backups_until_h_min": "in {h} Std. {min} Min.",
+  "backups_until_lt_min": "in <1 Min.",
+  "backups_until_min": "in {n} Min.",
+  "backups_until_overdue": "überfällig",
   "common_actions": "Aktionen",
   "common_add": "Hinzufügen",
   "common_agent": "Agent",
@@ -107,8 +215,488 @@
   "common_volumes": "Volumes",
   "common_warning": "Warnung",
   "common_yes": "Ja",
+  "containers_bulk_aria": "Sammelaktionen",
+  "containers_bulk_clear": "Aufheben",
+  "containers_bulk_remove_body": "Volumes bleiben erhalten. Laufende Container werden zwangsweise gestoppt und entfernt.",
+  "containers_bulk_remove_message": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Container entfernen?",
+        "countPlural=*": "{count} Container entfernen?"
+      }
+    }
+  ],
+  "containers_bulk_remove_title": "Container entfernen",
+  "containers_bulk_result": "{op}: {ok} erfolgreich",
+  "containers_bulk_result_failed": ", {fail} fehlgeschlagen",
+  "containers_bulk_selected": "{count} ausgewählt",
+  "containers_id_copied": "ID kopiert",
+  "containers_list_actions_for": "Aktionen für {name}",
+  "containers_list_adopt": "Übernehmen…",
+  "containers_list_all_hosts": "alle Hosts",
+  "containers_list_col_uptime": "Laufzeit",
+  "containers_list_empty_desc": "Stack deployen oder eine Vorlage starten, um loszulegen.",
+  "containers_list_empty_title": "Keine Container",
+  "containers_list_filter_attention": "Auffällig",
+  "containers_list_filter_label": "Container filtern",
+  "containers_list_filter_standalone": "Eigenständig",
+  "containers_list_group_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Container",
+        "countPlural=*": "{count} Container"
+      }
+    }
+  ],
+  "containers_list_group_running": "{count} laufend",
+  "containers_list_host_local": "lokal",
+  "containers_list_layout": "Ansicht",
+  "containers_list_layout_host": "Nach Host",
+  "containers_list_layout_list": "Liste",
+  "containers_list_layout_stack": "Nach Stack",
+  "containers_list_load_failed": "Laden fehlgeschlagen",
+  "containers_list_managed_by_dockmesh": "Von Dockmesh verwaltet",
+  "containers_list_needs_attention": "Braucht Aufmerksamkeit",
+  "containers_list_newer_image": "Ein neueres Image ist verfügbar",
+  "containers_list_no_match": "Keine passenden Container.",
+  "containers_list_ports_internal": "intern",
+  "containers_list_reset_sort_title": "Zurück zur Sortierung nach Dringlichkeit",
+  "containers_list_restarts_title": "Seit der Erstellung {count}-mal neu gestartet",
+  "containers_list_running_of": "{running} von {all}",
+  "containers_list_search_placeholder": "Name, Stack, Image, ID filtern…",
+  "containers_list_select_all": "Alle sichtbaren Container auswählen",
+  "containers_list_select_one": "{name} auswählen",
+  "containers_list_stack_prefix": "Stack {stack}",
+  "containers_list_standalone_group": "Eigenständig",
+  "containers_list_standalone_sub": "nicht von Dockmesh verwaltet",
+  "containers_list_standalone_tag": "eigenständig",
+  "containers_list_system": "System",
+  "containers_list_unreachable_count": "{count} nicht erreichbar",
+  "containers_list_unreachable_hint": "Deren Container fehlen in der Liste.",
+  "containers_list_unreachable_hosts": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Host nicht erreichbar",
+        "countPlural=*": "{count} Hosts nicht erreichbar"
+      }
+    }
+  ],
+  "containers_list_update_tag": "Update",
+  "containers_menu_copy_id": "ID kopieren",
+  "containers_menu_inspect": "Inspizieren",
+  "containers_menu_open_proxy": "Reverse Proxy öffnen",
+  "containers_menu_open_stack": "Stack {stack} öffnen",
+  "containers_menu_remove": "Entfernen…",
+  "containers_menu_terminal": "Terminal",
+  "containers_op_done_remove": "Entfernt",
+  "containers_op_done_restart": "Neu gestartet",
+  "containers_op_done_start": "Gestartet",
+  "containers_op_done_stop": "Gestoppt",
+  "containers_op_failed": "{op} fehlgeschlagen",
+  "containers_op_remove": "Entfernen",
+  "containers_op_restart": "Neustart",
+  "containers_op_start": "Starten",
+  "containers_op_stop": "Stoppen",
+  "containers_remove_body": "Volumes des Containers bleiben erhalten. Das Image bleibt für erneutes Deployen verfügbar.",
+  "containers_remove_message": "Container „{name}“ entfernen?",
+  "containers_remove_title": "Container entfernen",
+  "containers_status_created": "erstellt",
+  "containers_status_dead": "tot",
+  "containers_status_exited": "beendet",
+  "containers_status_exited_code": "beendet {code}",
+  "containers_status_paused": "pausiert",
+  "containers_status_removing": "wird entfernt",
+  "containers_status_restarting": "startet neu",
+  "containers_status_running": "läuft",
+  "containers_status_starting": "startet",
+  "containers_status_unhealthy": "ungesund",
+  "containers_status_unknown": "unbekannt",
+  "hosts_tag_invalid": "Ungültiger Tag",
+  "hosts_tag_invalid_detail": "Kleinbuchstaben, Ziffern, Bindestriche, 1–32 Zeichen",
+  "hosts_tag_max": "Max. {n} Tags",
   "lang_auto": "Browsersprache",
   "lang_label": "Sprache",
+  "proxy_caddy_back_to": "Zurück zu {version}",
+  "proxy_caddy_go_back": "Zurück",
+  "proxy_caddy_recommended": "empfohlen",
+  "proxy_caddy_rollback_title": "Zur vorherigen Caddy-Version zurück",
+  "proxy_caddy_running": "Läuft",
+  "proxy_caddy_runs": "Caddy läuft mit {version}",
+  "proxy_caddy_start_to_switch": "Proxy starten, um die Version zu wechseln.",
+  "proxy_caddy_switch": "Umstellen",
+  "proxy_caddy_switch_body": "Sites sind kurz nicht erreichbar, während der Container ersetzt wird. Nimmt die neue Version die Konfiguration nicht an, stellt Dockmesh selbst zurück.",
+  "proxy_caddy_switch_failed": "Versionswechsel fehlgeschlagen",
+  "proxy_caddy_switch_message": "Caddy wird mit {version} neu gestartet.",
+  "proxy_caddy_switch_title": "Caddy auf {version} umstellen",
+  "proxy_caddy_version": "Caddy-Version",
+  "proxy_caddy_version_hint": "Dockmesh liefert die getesteten Versionen mit. Ein Wechsel startet Caddy neu und stellt zurück, wenn die neue Version fehlschlägt.",
+  "proxy_cert_authority": "Zertifizierungsstelle",
+  "proxy_cert_authority_hint": "Woher Let's-Encrypt-Sites ihre Zertifikate beziehen. Staging-Zertifikaten vertrauen Browser nicht.",
+  "proxy_cert_contact": "Zertifikatskontakt",
+  "proxy_cert_contact_hint": "E-Mail, an die die Zertifizierungsstelle Ablaufwarnungen schickt. Optional.",
+  "proxy_custom_image": "eigenes Image",
+  "proxy_custom_image_hint": "Ein eigenes Image ist gesetzt, daher wird die Version außerhalb von Dockmesh verwaltet.",
+  "proxy_grp_access": "Zugriff",
+  "proxy_grp_access_hint": "Wer die Site öffnen darf: Passwörter, IP-Listen, ein Auth-Dienst.",
+  "proxy_grp_headers": "Header",
+  "proxy_grp_headers_hint": "Header, die Anfragen und Antworten hinzugefügt oder entfernt werden.",
+  "proxy_grp_https_hint": "Wie diese Site mit unverschlüsseltem HTTP umgeht.",
+  "proxy_grp_logs_hint": "Logging pro Anfrage im Proxy-Container.",
+  "proxy_grp_performance": "Leistung",
+  "proxy_grp_performance_hint": "Streaming, Uploads, Timeouts und Komprimierung.",
+  "proxy_grp_routing": "Routing",
+  "proxy_grp_routing_hint": "Weitere Upstreams, Lastverteilung, Healthchecks und der www-Name.",
+  "proxy_import_analyze": "Analysieren",
+  "proxy_import_button": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Site importieren",
+        "countPlural=*": "{count} Sites importieren"
+      }
+    }
+  ],
+  "proxy_import_disabled_note": "Importierte Sites starten deaktiviert, damit sie vor dem Livegang geprüft werden können.",
+  "proxy_import_done": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Site importiert",
+        "countPlural=*": "{count} Sites importiert"
+      }
+    }
+  ],
+  "proxy_import_done_hint": "Sie bleiben deaktiviert, bis sie eingeschaltet werden.",
+  "proxy_import_failed": "Import fehlgeschlagen",
+  "proxy_import_found": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Site gefunden",
+        "countPlural=*": "{count} Sites gefunden"
+      }
+    }
+  ],
+  "proxy_import_global_not_imported": "Nicht importierte globale Optionen: {list}",
+  "proxy_import_importable": "{n} importierbar",
+  "proxy_import_not_imported": "nicht importiert: {list}",
+  "proxy_import_not_imported_title": "Nicht importiert: {list}",
+  "proxy_import_paste": "Caddyfile einfügen",
+  "proxy_import_paste_hint": "Bis zum Import ändert sich nichts; Datei-Importe und Umgebungs-Platzhalter werden abgelehnt.",
+  "proxy_import_st_partial": "teilweise",
+  "proxy_import_st_ready": "bereit",
+  "proxy_import_st_skipped": "übersprungen",
+  "proxy_import_table": "Sites im Caddyfile",
+  "proxy_import_title": "Caddyfile importieren",
+  "proxy_le_staging": "Let's Encrypt Staging (Test)",
+  "proxy_not_available": "Nicht verfügbar",
+  "proxy_opt_access_log": "Access-Log",
+  "proxy_opt_allow_http": "auch unverschlüsseltes HTTP",
+  "proxy_opt_buffered": "gepufferte Uploads",
+  "proxy_opt_compression": "Komprimierung",
+  "proxy_opt_forward_auth": "Forward-Auth",
+  "proxy_opt_header_rules": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Header-Regel",
+        "countPlural=*": "{count} Header-Regeln"
+      }
+    }
+  ],
+  "proxy_opt_health_check": "Healthcheck {path}",
+  "proxy_opt_ip_allow": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "nur {count} IP-Bereich",
+        "countPlural=*": "nur {count} IP-Bereiche"
+      }
+    }
+  ],
+  "proxy_opt_ip_deny": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "blockiert {count} IP-Bereich",
+        "countPlural=*": "blockiert {count} IP-Bereiche"
+      }
+    }
+  ],
+  "proxy_opt_load_balanced": "Lastverteilung über {n}",
+  "proxy_opt_max_body": "max. Body {size}",
+  "proxy_opt_password": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Passwort ({count} Benutzer)",
+        "countPlural=*": "Passwort ({count} Benutzer)"
+      }
+    }
+  ],
+  "proxy_opt_security_headers": "Security-Header",
+  "proxy_opt_stream_close": "Stream-Schließverzögerung {delay}",
+  "proxy_opt_streaming": "Streaming",
+  "proxy_opt_timeouts": "Timeouts",
+  "proxy_opt_www_redirect": "www-Weiterleitung",
+  "proxy_save_settings": "Einstellungen speichern",
+  "proxy_saving_failed": "Speichern fehlgeschlagen",
+  "proxy_settings_saved": "Proxy-Einstellungen gespeichert",
+  "proxy_tls_internal": "Interne CA",
+  "proxy_tls_none": "Nur HTTP",
+  "proxy_trusted_proxies": "Vertrauenswürdige Proxys",
+  "proxy_trusted_proxies_hint": "Der Client-Adresse vertrauen, die ein CDN vor Caddy weiterreicht. Nur einschalten, wenn der gesamte Traffic über dieses CDN kommt.",
+  "proxy_warn_allow_http": "Besucher können die Site unverschlüsselt öffnen; so gesendete Passwörter und Cookies sind im Netzwerk lesbar.",
+  "proxy_warn_basic_auth_http": "Passwörter gehen bei dieser Site über unverschlüsseltes HTTP und sind im Netzwerk lesbar.",
+  "proxy_warn_buffer": "Caddy hält bis zu 4 MiB jeder Anfrage im Speicher, bevor der Upstream sie sieht; große Uploads starten später.",
+  "proxy_warn_forward_auth": "Jede Anfrage wartet auf den Auth-Dienst; ist er nicht erreichbar, sehen Besucher dessen Fehler statt der Site.",
+  "proxy_warn_health": "Upstreams, die den Check nicht bestehen, bekommen keinen Traffic; fallen alle durch, erhalten Besucher 503.",
+  "proxy_warn_hsts": "Browser merken sich das ein Jahr lang und verweigern unverschlüsseltes HTTP für den Namen, auch wenn es wieder ausgeschaltet wird.",
+  "proxy_warn_ip_allow": "Jede Adresse, die nicht auf der Liste steht, erhält 403. Die eigene Adresse aufnehmen, sonst ist die Site für dich gesperrt.",
+  "stacks_del_cleanup_partial": "Bereinigung unvollständig",
+  "stacks_del_cleanup_unavailable": "Bereinigung der Ressourcen auf diesem Host nicht verfügbar",
+  "stacks_del_containers_keep": "{containers}; ohne Haken laufen sie weiter und können erneut übernommen werden.",
+  "stacks_del_deleted": "Gelöscht",
+  "stacks_del_failed": "Löschen fehlgeschlagen",
+  "stacks_del_intro_after": " des Stacks. Auswählen, was zusätzlich entfernt wird:",
+  "stacks_del_intro_before": "Entfernt die",
+  "stacks_del_kept_images": "Behalten, noch anderweitig genutzt: {images}",
+  "stacks_del_no_containers": "Für diesen Stack laufen keine Container.",
+  "stacks_del_no_images": "Keine Images zu entfernen oder alle werden von anderen Projekten genutzt.",
+  "stacks_del_no_networks": "Keine Projekt-Netzwerke zu entfernen.",
+  "stacks_del_no_volumes": "Keine Projekt-Volumes zu entfernen.",
+  "stacks_del_only_compose": "Nur die compose.yaml wird entfernt; den Rest auf dem Host bereinigen.",
+  "stacks_del_remove_images": "Images entfernen",
+  "stacks_del_remove_networks": "Projekt-Netzwerke entfernen",
+  "stacks_del_remove_volumes": "Volumes entfernen",
+  "stacks_del_removed": "Entfernt: {list}",
+  "stacks_del_removes": "Entfernt {what}:",
+  "stacks_del_stop_containers": "Container stoppen und entfernen",
+  "stacks_del_title": "Stack {name} löschen",
+  "stacks_del_type_after": "eingeben",
+  "stacks_del_type_before": "Zum Bestätigen",
+  "stacks_del_unrecoverable": "Unwiderruflich",
+  "stacks_del_volumes_hint": "Löscht die Daten in diesen Volumes endgültig. Externe Volumes bleiben unberührt.",
+  "stacks_del_volumes_warn": "Die Daten in {volumes} werden endgültig gelöscht. Vorher ein Backup anlegen, falls sie wichtig sind.",
+  "stacks_n_containers": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Container",
+        "countPlural=*": "{count} Container"
+      }
+    }
+  ],
+  "stacks_n_images": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Image",
+        "countPlural=*": "{count} Images"
+      }
+    }
+  ],
+  "stacks_n_networks": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Netzwerk",
+        "countPlural=*": "{count} Netzwerke"
+      }
+    }
+  ],
+  "stacks_n_volumes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Volume",
+        "countPlural=*": "{count} Volumes"
+      }
+    }
+  ],
+  "templates_actions_for": "Aktionen für {name}",
+  "templates_builtin": "integriert",
+  "templates_builtin_count": "{count} integriert",
+  "templates_col_images": "Images",
+  "templates_col_label": "Label im Deploy-Dialog",
+  "templates_col_parameters": "Parameter",
+  "templates_col_placeholder": "Platzhalter",
+  "templates_col_secret": "Secret",
+  "templates_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Vorlage",
+        "countPlural=*": "{count} Vorlagen"
+      }
+    }
+  ],
+  "templates_create": "Vorlage erstellen",
+  "templates_created": "Vorlage erstellt",
+  "templates_custom": "eigene",
+  "templates_custom_count": "{count} eigene",
+  "templates_dd_creates": "Erstellt",
+  "templates_dd_deployed": "Stack deployt",
+  "templates_dd_deploying": "Wird deployt…",
+  "templates_dd_failed": "Deployen fehlgeschlagen",
+  "templates_dd_generated_empty": "Wird generiert, wenn leer.",
+  "templates_dd_hide_compose": "compose.yaml ausblenden",
+  "templates_dd_no_params": "Diese Vorlage hat keine Parameter.",
+  "templates_dd_on": "auf",
+  "templates_dd_port_bound": "Port {port} ist auf diesem Host bereits belegt.",
+  "templates_dd_port_collide": "Kollidiert mit dem Port eines bestehenden Containers.",
+  "templates_dd_preview_compose": "Vorschau compose.yaml",
+  "templates_dd_required": "Pflicht",
+  "templates_dd_stack_name": "Stack-Name",
+  "templates_dd_stack_name_hint": "Kleinbuchstaben und Bindestriche, eindeutig auf dem Host.",
+  "templates_dd_target_host": "Ziel-Host",
+  "templates_dd_target_host_hint": "Wo der Stack laufen wird.",
+  "templates_dd_title": "{name} deployen",
+  "templates_dd_title_generic": "Vorlage deployen",
+  "templates_default_for": "Standard für {name}",
+  "templates_delete_body": "Bereits deployte Stacks bleiben unverändert.",
+  "templates_delete_failed": "Löschen fehlgeschlagen",
+  "templates_delete_message": "Entfernt die Vorlage aus der Bibliothek.",
+  "templates_delete_title": "Vorlage „{name}“ löschen?",
+  "templates_deleted": "Vorlage gelöscht",
+  "templates_desc_placeholder": "Ein Satz, der in der Liste erscheint",
+  "templates_download_yaml": "YAML herunterladen",
+  "templates_edit_ellipsis": "Bearbeiten…",
+  "templates_edit_title": "{name} bearbeiten",
+  "templates_editor_label": "Vorlagen-Editor",
+  "templates_empty_desc": "Integrierte Vorlagen werden beim ersten Start angelegt. Eigene aus einer Compose-Datei hinzufügen.",
+  "templates_empty_title": "Noch keine Vorlagen",
+  "templates_filter_label": "Vorlagen filtern",
+  "templates_filter_placeholder": "Vorlagen filtern…",
+  "templates_found_hint": "Aus der Compose-Datei gelesen; hier gesetzte Labels und Standardwerte haben Vorrang.",
+  "templates_generated": "generiert",
+  "templates_label_for": "Label für {name}",
+  "templates_load_failed": "Vorlagen konnten nicht geladen werden",
+  "templates_n_params": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Param.",
+        "countPlural=*": "{count} Param."
+      }
+    }
+  ],
+  "templates_name_placeholder": "Meine App",
+  "templates_new": "Neue Vorlage",
+  "templates_no": "nein",
+  "templates_no_match": "Keine Vorlagen passen zu „{search}“.",
+  "templates_no_placeholders_desc": "{code} in die Compose-Datei einfügen, um beim Deployen einen Wert abzufragen.",
+  "templates_no_placeholders_title": "Noch keine Platzhalter",
+  "templates_not_used": "Nicht in compose.yaml verwendet",
+  "templates_placeholders_after": "werden zu Feldern im Deploy-Dialog. Leere Secrets werden generiert.",
+  "templates_placeholders_and": "und",
+  "templates_placeholders_before": "Die Platzhalter",
+  "templates_remove_named": "{name} entfernen",
+  "templates_save_failed": "Speichern fehlgeschlagen",
+  "templates_slug": "Slug",
+  "templates_title": "Vorlagen",
+  "templates_unused": "ungenutzt",
+  "templates_updated": "Vorlage aktualisiert",
+  "templates_yes": "ja",
   "time_d_ago": "vor {n} T.",
   "time_h_ago": "vor {n} Std.",
   "time_just_now": "gerade eben",

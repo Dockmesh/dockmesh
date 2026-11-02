@@ -1,4 +1,5 @@
 import { fmtBytes } from '$lib/format';
+import { m } from '$lib/paraglide/messages.js';
 export type TLSMode = 'auto' | 'internal' | 'none';
 
 export interface SiteHeader { name: string; value?: string; secret?: boolean; value_set?: boolean }
@@ -66,8 +67,8 @@ export interface ACMEEvent {
 
 export const TLS_LABEL: Record<TLSMode, string> = {
   auto: "Let's Encrypt",
-  internal: 'Internal CA',
-  none: 'HTTP only'
+  internal: m.proxy_tls_internal(),
+  none: m.proxy_tls_none()
 };
 
 // Certificates renew about 30 days before expiry; below 14 days a
@@ -88,30 +89,30 @@ export function optionSummary(o?: SiteOptions): string[] {
   if (!o) return [];
   const out: string[] = [];
   const r = o.routing ?? {};
-  if (r.extra_upstreams?.length) out.push(`load balanced over ${r.extra_upstreams.length + 1}${r.lb_policy ? ` (${r.lb_policy})` : ''}`);
-  if (r.health_path) out.push(`health check ${r.health_path}`);
-  if (r.www_redirect) out.push('www redirect');
+  if (r.extra_upstreams?.length) out.push(`${m.proxy_opt_load_balanced({ n: r.extra_upstreams.length + 1 })}${r.lb_policy ? ` (${r.lb_policy})` : ''}`);
+  if (r.health_path) out.push(m.proxy_opt_health_check({ path: r.health_path }));
+  if (r.www_redirect) out.push(m.proxy_opt_www_redirect());
   const h = o.https ?? {};
-  if (h.allow_http) out.push('also plain HTTP');
+  if (h.allow_http) out.push(m.proxy_opt_allow_http());
   if (h.hsts) out.push('HSTS');
   const p = o.performance ?? {};
-  if (p.flush_immediately) out.push('streaming');
-  if (p.buffer_requests) out.push('buffered uploads');
-  if (p.compression) out.push('compression');
-  if (p.dial_timeout || p.read_timeout || p.write_timeout) out.push('timeouts');
-  if (p.max_body_bytes) out.push(`max body ${fmtBytes(p.max_body_bytes)}`);
-  if (p.stream_close_delay) out.push(`stream close delay ${p.stream_close_delay}`);
+  if (p.flush_immediately) out.push(m.proxy_opt_streaming());
+  if (p.buffer_requests) out.push(m.proxy_opt_buffered());
+  if (p.compression) out.push(m.proxy_opt_compression());
+  if (p.dial_timeout || p.read_timeout || p.write_timeout) out.push(m.proxy_opt_timeouts());
+  if (p.max_body_bytes) out.push(m.proxy_opt_max_body({ size: fmtBytes(p.max_body_bytes) }));
+  if (p.stream_close_delay) out.push(m.proxy_opt_stream_close({ delay: p.stream_close_delay }));
   const a = o.access ?? {};
-  if (a.basic_auth?.length) out.push(`password (${a.basic_auth.length} user${a.basic_auth.length === 1 ? '' : 's'})`);
-  if (a.ip_mode === 'allow') out.push(`only ${a.ip_ranges?.length ?? 0} IP range${a.ip_ranges?.length === 1 ? '' : 's'}`);
-  if (a.ip_mode === 'deny') out.push(`blocks ${a.ip_ranges?.length ?? 0} IP range${a.ip_ranges?.length === 1 ? '' : 's'}`);
-  if (a.forward_auth?.url) out.push('forward auth');
+  if (a.basic_auth?.length) out.push(m.proxy_opt_password({ count: a.basic_auth.length }));
+  if (a.ip_mode === 'allow') out.push(m.proxy_opt_ip_allow({ count: a.ip_ranges?.length ?? 0 }));
+  if (a.ip_mode === 'deny') out.push(m.proxy_opt_ip_deny({ count: a.ip_ranges?.length ?? 0 }));
+  if (a.forward_auth?.url) out.push(m.proxy_opt_forward_auth());
   const hd = o.headers ?? {};
-  if (hd.security) out.push('security headers');
+  if (hd.security) out.push(m.proxy_opt_security_headers());
   const set = (hd.request_set?.length ?? 0) + (hd.response_set?.length ?? 0);
   const rm = (hd.request_remove?.length ?? 0) + (hd.response_remove?.length ?? 0);
-  if (set || rm) out.push(`${set + rm} header rule${set + rm === 1 ? '' : 's'}`);
-  if (o.logs?.access_log) out.push('access log');
+  if (set || rm) out.push(m.proxy_opt_header_rules({ count: set + rm }));
+  if (o.logs?.access_log) out.push(m.proxy_opt_access_log());
   return out;
 }
 

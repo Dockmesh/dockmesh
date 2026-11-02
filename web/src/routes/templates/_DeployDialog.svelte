@@ -6,6 +6,7 @@
   import { Field } from '$lib/components/editorial';
   import { Modal } from '$lib/components/ui';
   import { Rocket, AlertCircle, ChevronRight } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -86,11 +87,11 @@
         host_id: targetHost || undefined,
         values,
       });
-      toast.success('Stack deployed', res.stack);
+      toast.success(m.templates_dd_deployed(), res.stack);
       open = false;
       goto(`/stacks/${encodeURIComponent(res.stack)}${targetHost && targetHost !== 'local' ? `?host=${encodeURIComponent(targetHost)}` : ''}`);
     } catch (e) {
-      err = e instanceof ApiError ? e.message : 'deploy failed';
+      err = e instanceof ApiError ? e.message : m.templates_dd_failed();
     } finally {
       busy = false;
     }
@@ -118,27 +119,33 @@
   const preview = $derived(template ? previewCompose(template, values) : '');
 
   const hostOptions = $derived(hosts.available.filter((h) => h.kind !== 'all'));
+
+  function hostStatusLabel(status: string): string {
+    if (status === 'online') return m.common_online();
+    if (status === 'offline') return m.common_offline();
+    return status;
+  }
 </script>
 
-<Modal bind:open title={template ? `Deploy ${template.name}` : 'Deploy template'} maxWidth="max-w-2xl" onclose={close}>
+<Modal bind:open title={template ? m.templates_dd_title({ name: template.name }) : m.templates_dd_title_generic()} maxWidth="max-w-2xl" onclose={close}>
   {#if template}
     {#if template.description}<p class="dd-blurb">{template.description}</p>{/if}
     <form id="dd-form" class="dd-body" onsubmit={(e) => { e.preventDefault(); doDeploy(); }}>
       <div class="dd-grid-2">
-        <Field label="Stack name" hint="Lowercase letters and dashes, unique on the host.">
+        <Field label={m.templates_dd_stack_name()} hint={m.templates_dd_stack_name_hint()}>
           <input
             class="dm-input dd-input"
             bind:value={stackName}
             placeholder="my-app"
           />
         </Field>
-        <Field label="Target host" hint="Where the stack will run.">
+        <Field label={m.templates_dd_target_host()} hint={m.templates_dd_target_host_hint()}>
           <select class="dm-input dd-input" bind:value={targetHost}>
-            <option value="local">Local</option>
+            <option value="local">{m.common_local()}</option>
             {#each hostOptions as h (h.id)}
               {#if h.id !== 'local'}
                 <option value={h.id} disabled={h.status !== 'online'}>
-                  {h.name}{h.status !== 'online' ? ` (${h.status})` : ''}
+                  {h.name}{h.status !== 'online' ? ` (${hostStatusLabel(h.status)})` : ''}
                 </option>
               {/if}
             {/each}
@@ -147,19 +154,19 @@
       </div>
 
       {#if template.parameters && template.parameters.length > 0}
-        <div class="dd-section-head">Parameters</div>
+        <div class="dd-section-head">{m.templates_col_parameters()}</div>
         <div class="dd-params">
           {#each template.parameters as p (p.name)}
             {@const portConflict = isPortParam(p) && usedPorts.has(Number(values[p.name]))}
             <Field
               label={p.name}
               hint={portConflict
-                ? `Port ${values[p.name]} is already bound on this host.`
-                : (p.description || (p.secret ? 'Generated when left empty.' : ''))}
+                ? m.templates_dd_port_bound({ port: values[p.name] })
+                : (p.description || (p.secret ? m.templates_dd_generated_empty() : ''))}
             >
               {#snippet right()}
                 {#if p.required}
-                  <span class="dd-required">Required</span>
+                  <span class="dd-required">{m.templates_dd_required()}</span>
                 {/if}
               {/snippet}
               {#if p.enum && p.enum.length > 0}
@@ -180,14 +187,14 @@
               {#if portConflict}
                 <div class="dd-port-warn">
                   <AlertCircle size={11} strokeWidth={1.5} />
-                  <span>Will collide with an existing container's port.</span>
+                  <span>{m.templates_dd_port_collide()}</span>
                 </div>
               {/if}
             </Field>
           {/each}
         </div>
       {:else}
-        <div class="dd-no-params">This template has no parameters.</div>
+        <div class="dd-no-params">{m.templates_dd_no_params()}</div>
       {/if}
 
       <button
@@ -197,7 +204,7 @@
         aria-expanded={showPreview}
       >
         <ChevronRight size={11} strokeWidth={1.5} class="dd-preview-chev" data-open={showPreview} />
-        {showPreview ? 'Hide' : 'Preview'} compose.yaml
+        {showPreview ? m.templates_dd_hide_compose() : m.templates_dd_preview_compose()}
       </button>
       {#if showPreview}
         <pre class="dd-preview">{preview}</pre>
@@ -212,12 +219,12 @@
     </form>
   {/if}
   {#snippet footer()}
-    <span class="dd-foot-meta">Creates <b>{stackName || '—'}</b> on <b>{hostOptions.find((h) => h.id === targetHost)?.name ?? targetHost}</b></span>
+    <span class="dd-foot-meta">{m.templates_dd_creates()} <b>{stackName || '—'}</b> {m.templates_dd_on()} <b>{hostOptions.find((h) => h.id === targetHost)?.name ?? targetHost}</b></span>
     <span class="dm-sp"></span>
-    <button type="button" class="dm-btn dm-btn-ghost" onclick={close} disabled={busy}>Cancel</button>
+    <button type="button" class="dm-btn dm-btn-ghost" onclick={close} disabled={busy}>{m.common_cancel()}</button>
     <button type="submit" form="dd-form" class="dm-btn dm-btn-primary" disabled={busy || !stackName.trim()}>
       <Rocket size={13} strokeWidth={1.6} />
-      {busy ? 'Deploying…' : 'Deploy'}
+      {busy ? m.templates_dd_deploying() : m.common_deploy()}
     </button>
   {/snippet}
 </Modal>

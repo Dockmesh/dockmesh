@@ -44,3 +44,40 @@ func (s *Store) Set(ctx context.Context, userID, key, value string) error {
 	}
 	return nil
 }
+
+// KeyLanguage is the UI and notification language the user picked; empty
+// means the browser decides.
+const KeyLanguage = "language"
+
+// Languages are the UI languages a user can pick.
+var Languages = []string{"en", "de"}
+
+// ValidLanguage reports whether lang may be stored; "" clears the choice.
+func ValidLanguage(lang string) bool {
+	if lang == "" {
+		return true
+	}
+	for _, l := range Languages {
+		if l == lang {
+			return true
+		}
+	}
+	return false
+}
+
+// LanguageForEmail returns the language of the user with this email
+// address, or "" when no user has the address or none was picked.
+func (s *Store) LanguageForEmail(ctx context.Context, email string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.value FROM user_preferences p JOIN users u ON u.id = p.user_id
+		 WHERE p.key = ? AND lower(u.email) = lower(?) AND u.email != ''
+		 ORDER BY u.username LIMIT 1`, KeyLanguage, email).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("language for email: %w", err)
+	}
+	return v, nil
+}
