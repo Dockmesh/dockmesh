@@ -3,12 +3,15 @@ name: ci
 # ci-ok is the only required check. On pull requests the jobs of areas the
 # PR doesn't touch are skipped; pushes to main and merge-queue runs test
 # everything. Label changes re-run the workflow so no-changelog takes effect.
+# The native macOS smoke runs only on main and on demand: macOS runners queue
+# for a long time and must not hold up PRs or the merge queue.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
   merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -307,7 +310,7 @@ jobs:
         include:
           - {goos: linux,  goarch: amd64, runner: ubuntu-latest,    smoke: true}
           - {goos: linux,  goarch: arm64, runner: ubuntu-24.04-arm, smoke: true}
-          - {goos: darwin, goarch: arm64, runner: macos-latest,     smoke: true}
+          - {goos: darwin, goarch: arm64, runner: ubuntu-latest,    smoke: false}
           - {goos: darwin, goarch: amd64, runner: ubuntu-latest,    smoke: false}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -352,6 +355,31 @@ jobs:
           go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl          ./cmd/dmctl
       - name: smoke test
         if: matrix.smoke
+        run: |
+          ./dist/dockmesh version
+          ./dist/dockmesh-agent --version
+          ./dist/dmctl --version
+
+  smoke-macos:
+    name: smoke darwin/arm64
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build binaries
+        env:
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/dockmesh       ./cmd/dockmesh
+          go build -trimpath -o dist/dockmesh-agent ./cmd/dockmesh-agent
+          go build -trimpath -o dist/dmctl          ./cmd/dmctl
+      - name: smoke test
         run: |
           ./dist/dockmesh version
           ./dist/dockmesh-agent --version
