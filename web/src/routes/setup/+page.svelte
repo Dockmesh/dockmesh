@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Logo from '$lib/components/shell/Logo.svelte';
+  import AuthShell from '$lib/components/auth/AuthShell.svelte';
   // Install wizard: one question per step, a review of every answer before
   // anything is written, then the live install log and the credentials.
   import { onMount, onDestroy } from 'svelte';
@@ -485,23 +485,18 @@
   <div class="check {kind}" role="status">{@render mark(kind)}<span>{text}</span></div>
 {/snippet}
 
-<div class="sw">
-  <header class="top">
-    <div class="brand">
-      <span class="mark"><Logo width={54} height={22} /></span>
-      <b>Dockmesh</b>
-      <span class="dim">/ setup</span>
-    </div>
-    <div class="meta dm-num" aria-label="This server">
-      <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
-      <span class="sep">·</span>
-      <span>{serverInfo?.ip ?? '—'}</span>
-      <span class="sep">·</span>
-      <span>docker {serverInfo?.docker_version ?? '—'}</span>
-    </div>
-  </header>
+{#snippet serverMeta()}
+  <span class="meta dm-num" aria-label="This server">
+    <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
+    <span class="sep">·</span>
+    <span>{serverInfo?.ip ?? '—'}</span>
+    <span class="sep">·</span>
+    <span>docker {serverInfo?.docker_version ?? '—'}</span>
+  </span>
+{/snippet}
 
-  <main class="col">
+<AuthShell width={760} footer={serverMeta}>
+  <div class="col">
     <nav aria-label="Setup steps">
       <ol class="stepper">
         {#each STEPS as s (s.n)}
@@ -838,33 +833,21 @@
             </dd>
           </dl>
           <div class="foot">
-            <span class="dm-sub">Forgot the password? Run <span class="dm-mono">sudo dockmesh admin reset-password</span> on the server.</span>
+            <span class="dm-sub">Forgot the password? Run <span class="dm-mono">sudo dockmesh admin reset-password --user {adminUsername}</span> on the server.</span>
             <span class="dm-sp"></span>
             <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary">Open Dockmesh <ArrowRight size={14} /></a>
           </div>
         {/if}
       {/if}
     </section>
-  </main>
-</div>
+  </div>
+</AuthShell>
 
 <style>
-  :global(body) { background: var(--bg); color: var(--fg); }
+  .meta { display: inline-flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .meta .sep { color: var(--border-strong); }
 
-  .sw { min-height: 100vh; display: flex; flex-direction: column; }
-  .top {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 14px 28px;
-    border-bottom: 1px solid var(--border);
-  }
-  .brand { display: flex; align-items: center; gap: 8px; font-size: var(--fs-md); }
-  .brand .dim { color: var(--subtle); }
-  .meta { margin-left: auto; color: var(--subtle); display: flex; gap: 6px; flex-wrap: wrap; }
-  .meta .sep { color: var(--border); }
-
-  .col { width: min(720px, 100% - 32px); margin: 0 auto; padding: 28px 0 56px; display: flex; flex-direction: column; gap: 22px; }
+  .col { display: flex; flex-direction: column; gap: 22px; }
 
   .stepper { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; }
   .stepper li { display: flex; align-items: center; }
@@ -880,7 +863,6 @@
     border-radius: var(--r-sm);
     padding: 2px 4px;
   }
-  .brand .mark { color: var(--accent); display: inline-flex; }
   .stepper button:not(:disabled) { cursor: pointer; }
   .stepper button:not(:disabled):hover .l { color: var(--fg); text-decoration: underline; }
   .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -902,10 +884,8 @@
   .head p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
 
   .panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 22px 24px;
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
     display: flex;
     flex-direction: column;
     gap: 18px;
@@ -1062,8 +1042,6 @@
   .copy:focus-visible { outline: 2px solid var(--accent); }
 
   @media (max-width: 640px) {
-    .top { padding: 12px 16px; }
-    .panel { padding: 18px 16px; }
     .presets { grid-template-columns: 1fr; }
     .rv { grid-template-columns: 7rem minmax(0, 1fr) auto; }
   }
