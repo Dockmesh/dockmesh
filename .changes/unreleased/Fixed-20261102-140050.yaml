@@ -1,0 +1,3 @@
+kind: Fixed
+body: Syncing or removing a stack's copy on an agent host no longer fails when the request that triggered it finishes first.
+time: 2026-11-02T14:00:50.3386781+01:00

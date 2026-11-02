@@ -1,0 +1,3 @@
+kind: Security
+body: Deploy history of stacks deployed with an environment override no longer contains the stack's .env values. History keeps the base compose file and the override name; a rollback applies the override again.
+time: 2026-11-02T14:00:49.2211351+01:00
