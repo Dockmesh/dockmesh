@@ -65,13 +65,13 @@ Each SSO account is linked to one provider and one subject: the OIDC `sub`, the 
 Links are bound to the identity provider they came from, because the same subject at another provider is another person:
 
 - **Deleting a provider** unlinks its accounts. They stay as local accounts without a usable password, so a new provider with the same slug can't sign into them.
-- **Pointing a provider at another identity provider** unlinks its accounts when you save: a different OIDC issuer, SAML metadata of another IdP entity, a different OAuth2 userinfo host or subject field, or a different LDAP host or subject attribute. The provider dialog warns before you save. To re-attach the users, enable linking by verified e-mail or remove the old accounts and let them be created again.
+- **Pointing a provider at another identity provider** unlinks its accounts when you save: a different OIDC issuer, SAML metadata of another IdP entity, a different OAuth2 userinfo URL or subject field, or a different LDAP host, port or subject attribute. The provider dialog warns before you save. To re-attach the users, enable linking by verified e-mail or remove the old accounts and let them be created again.
 
 ### Re-keying after the upgrade to v0.5.0
 
-Before v0.5.0, OAuth2 accounts were keyed by the username field (for example the GitHub `login`) and LDAP accounts by their DN. Both can be renamed and reused, so the upgrade moves these accounts to the immutable id. An account moves at its next sign-in that presents its old key, within 30 days of the upgrade. When the old key came from a field other than the new subject (a login name, a DN), the e-mail at the provider also has to match the account, so someone who took over a renamed login doesn't get the old account.
+Before v0.5.0, OAuth2 accounts were keyed by the username field (for example the GitHub `login`) and LDAP accounts by their DN. Both can be renamed and reused, so the upgrade moves these accounts to the immutable id. An account moves at its next sign-in that presents its old key, within 30 days of the upgrade. When the old key came from a field other than the new subject (a login name, a DN), the e-mail at the provider also has to match the account, so someone who took over a renamed login doesn't get the old account. On that path, accounts with two-factor authentication or a role that manages users or settings are never moved, and neither is a sign-in whose provider marks the e-mail as unverified.
 
-Until then the **Authentication** page and a notice list the accounts that haven't moved yet. **End re-keying** stops waiting for them. Accounts that didn't move in time, or whose user was renamed or moved before signing in again, can no longer sign in through their provider; remove them and let them be created again. SAML accounts got the same one-time re-key with v0.4.2.
+Until then the **Authentication** page and a notice list the accounts that haven't moved yet. **End re-keying** stops waiting for them. Accounts that didn't move in time, accounts excluded above, and accounts whose user was renamed or moved before signing in again can no longer sign in through their provider; remove them and let them be created again. SAML accounts got the same one-time re-key with v0.4.2.
 
 ## Security notes
 

@@ -53,6 +53,45 @@ func TestRekeyLegacy(t *testing.T) {
 			login: LegacyLogin{Subject: "2002", Legacy: "alice", Email: "mallory@example.com"},
 		},
 		{
+			name: "email the IdP marks unverified",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days")
+			},
+			login: LegacyLogin{Subject: "2002", Legacy: "alice", Email: "alice@example.com", EmailUnverified: true},
+		},
+		{
+			name: "account with two-factor authentication",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days")
+				if _, err := d.Exec(`UPDATE users SET totp_verified = 1 WHERE id = 'u1'`); err != nil {
+					t.Fatal(err)
+				}
+			},
+			login: LegacyLogin{Subject: "1001", Legacy: "alice", Email: "alice@example.com"},
+		},
+		{
+			name: "admin account",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days")
+				if _, err := d.Exec(`INSERT INTO role_assignments (user_id, role_name, scope_type, source) VALUES ('u1', 'admin', 'global', 'manual')`); err != nil {
+					t.Fatal(err)
+				}
+			},
+			login: LegacyLogin{Subject: "1001", Legacy: "alice", Email: "alice@example.com"},
+		},
+		{
+			name: "admin account keyed by the same field",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "1001", "+30 days")
+				if _, err := d.Exec(`INSERT INTO role_assignments (user_id, role_name, scope_type, source) VALUES ('u1', 'admin', 'global', 'manual')`); err != nil {
+					t.Fatal(err)
+				}
+			},
+			login:   LegacyLogin{Subject: "1001", Legacy: "1001", SameSource: true, Email: "other@example.com"},
+			want:    "u1",
+			subject: "1001",
+		},
+		{
 			name: "window ended",
 			setup: func(t *testing.T, d *sql.DB) {
 				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "-1 days")

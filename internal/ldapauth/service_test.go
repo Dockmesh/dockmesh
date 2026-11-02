@@ -34,7 +34,7 @@ func TestSubject(t *testing.T) {
 		{name: "objectGUID", entry: ad, want: "c1a59f46-1234-5678-9abc-def012345678", wantField: "objectGUID"},
 		{name: "entryUUID", entry: openldap, want: "5a1b6c2e-0000-1000-8000-00aabbccddee", wantField: "entryUUID"},
 		{name: "DN fallback", entry: bare, want: "uid=ann,ou=people,dc=corp", wantField: subjectDN},
-		{name: "configured attribute", attr: "UID", entry: openldap, want: "ann", wantField: "UID"},
+		{name: "configured attribute keeps case", attr: "UID", entry: openldap, want: "Ann", wantField: "UID"},
 		{name: "configured attribute missing", attr: "employeeNumber", entry: openldap, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -53,6 +53,9 @@ func TestSubject(t *testing.T) {
 func TestFormatIDBinary(t *testing.T) {
 	if got := formatID("msDS-ConsistencyGuid", []byte{0xff, 0x00, 0x10}); got != "ff0010" {
 		t.Errorf("binary id = %q, want hex", got)
+	}
+	if got := formatID("objectSid", []byte("AbC")); got != "416243" {
+		t.Errorf("objectSid = %q, want hex", got)
 	}
 }
 
@@ -89,6 +92,7 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 	}{
 		{name: "search base", wantLinked: true, change: func(in ProviderInput) ProviderInput { in.UserSearchBase = "ou=staff,dc=corp"; return in }},
 		{name: "host case", wantLinked: true, change: func(in ProviderInput) ProviderInput { in.Host = "DC1.corp.example"; return in }},
+		{name: "other port", change: func(in ProviderInput) ProviderInput { in.Port = 3269; return in }},
 		{name: "other host", change: func(in ProviderInput) ProviderInput { in.Host = "ldap.other.example"; return in }},
 		{name: "subject attribute", change: func(in ProviderInput) ProviderInput { in.SubjectAttribute = "uid"; return in }},
 	}

@@ -306,7 +306,7 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.GetProvider(ctx, id)
 }
 
-// UpdateProvider saves the provider. When the userinfo host or the subject
+// UpdateProvider saves the provider. When the userinfo URL or the subject
 // field changes, the stored subjects mean other users, so the provider's
 // accounts are unlinked; the count is returned.
 func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
@@ -406,13 +406,16 @@ func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
 }
 
 // IdentityKey is what the provider's subjects are unique within: the
-// userinfo endpoint's origin and the field they are read from.
+// userinfo endpoint and the field they are read from. Two instances can
+// share a host, so the path counts too.
 func IdentityKey(userinfoURL, subjectField string) string {
-	origin := strings.TrimRight(strings.TrimSpace(userinfoURL), "/")
-	if u, err := url.Parse(origin); err == nil && u.Host != "" {
-		origin = strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	endpoint := strings.TrimRight(strings.TrimSpace(userinfoURL), "/")
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		u.Scheme = strings.ToLower(u.Scheme)
+		u.Host = strings.ToLower(u.Host)
+		endpoint = u.String()
 	}
-	return origin + "\n" + strings.TrimSpace(subjectField)
+	return endpoint + "\n" + strings.TrimSpace(subjectField)
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
@@ -552,6 +555,7 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 	rekeyed, err := s.auth.RekeyLegacy(ctx, auth.LegacyLogin{
 		Kind: "oauth2", Provider: p.Slug, Subject: subject,
 		Legacy: legacy, SameSource: legacyField == subjectField, Email: email,
+		EmailUnverified: claimFalse(claims, "email_verified"),
 	})
 	if err != nil {
 		return nil, err
@@ -605,6 +609,8 @@ func idClaim(m map[string]any, key string) string {
 	switch x := m[key].(type) {
 	case string:
 		return x
+	case json.Number:
+		return x.String()
 	case float64:
 		if x == math.Trunc(x) && math.Abs(x) < 1<<53 {
 			return strconv.FormatInt(int64(x), 10)
@@ -644,7 +650,10 @@ func (s *Service) fetchUserinfo(ctx context.Context, p *Provider, tok *oauth2.To
 		return nil, fmt.Errorf("userinfo: status %d", resp.StatusCode)
 	}
 	var out map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	dec := json.NewDecoder(resp.Body)
+	// Large numeric ids would lose digits as float64.
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode userinfo: %w", err)
 	}
 	return out, nil
@@ -742,6 +751,13 @@ func stringClaim(m map[string]any, key string) string {
 	switch x := v.(type) {
 	case string:
 		return x
+	case json.Number:
+		// Formatted as the float64 it used to be decoded into.
+		f, err := x.Float64()
+		if err != nil {
+			return x.String()
+		}
+		return fmt.Sprintf("%v", f)
 	case float64:
 		return fmt.Sprintf("%v", x)
 	case int64:
@@ -823,4 +839,16 @@ func scanRow(r scannerIface) (*Provider, error) {
 	}
 	p.GroupMappings = []GroupMapping{}
 	return &p, nil
+}
+
+// claimFalse reports whether the IdP explicitly set a boolean claim to
+// false; a missing claim says nothing.
+func claimFalse(claims map[string]any, key string) bool {
+	switch v := claims[key].(type) {
+	case bool:
+		return !v
+	case string:
+		return v == "false"
+	}
+	return false
 }

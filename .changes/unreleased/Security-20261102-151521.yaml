@@ -1,3 +1,3 @@
 kind: Security
-body: Deleting an SSO provider unlinks its accounts, and pointing a provider at another identity provider (a different OIDC issuer, SAML IdP entity, OAuth2 userinfo host or subject field, or LDAP host or subject attribute) unlinks them on save, so a provider that reuses the slug or the new IdP can't sign into accounts of the old one. The provider dialog warns before saving such a change.
+body: Deleting an SSO provider unlinks its accounts, and pointing a provider at another identity provider (a different OIDC issuer, SAML IdP entity, OAuth2 userinfo URL or subject field, or LDAP server or subject attribute) unlinks them on save, so a provider that reuses the slug or the new IdP can't sign into accounts of the old one. The provider dialog warns before saving such a change.
 time: 2026-11-02T15:15:21.1620963+01:00

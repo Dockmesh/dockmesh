@@ -292,7 +292,7 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.GetProvider(ctx, id)
 }
 
-// UpdateProvider saves the provider. When the directory host or the
+// UpdateProvider saves the provider. When the directory server or the
 // subject attribute changes, the stored subjects mean other entries, so the
 // provider's accounts are unlinked; the count is returned.
 func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
@@ -303,8 +303,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	var slug, oldHost, oldSubjectAttr string
-	if err := tx.QueryRowContext(ctx, `SELECT slug, host, subject_attribute FROM ldap_providers WHERE id = ?`, id).
-		Scan(&slug, &oldHost, &oldSubjectAttr); err != nil {
+	var oldPort int
+	if err := tx.QueryRowContext(ctx, `SELECT slug, host, port, subject_attribute FROM ldap_providers WHERE id = ?`, id).
+		Scan(&slug, &oldHost, &oldPort, &oldSubjectAttr); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, 0, ErrProviderNotFound
 		}
@@ -351,7 +352,7 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		return nil, 0, err
 	}
 	var unlinked int64
-	if IdentityKey(oldHost, oldSubjectAttr) != IdentityKey(in.Host, in.SubjectAttribute) {
+	if IdentityKey(oldHost, oldPort, oldSubjectAttr) != IdentityKey(in.Host, in.Port, in.SubjectAttribute) {
 		if unlinked, err = auth.UnlinkProvider(ctx, tx, "ldap", slug); err != nil {
 			return nil, 0, err
 		}
@@ -398,9 +399,9 @@ func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
 }
 
 // IdentityKey is what the provider's subjects are unique within: the
-// directory host and the attribute they are read from.
-func IdentityKey(host, subjectAttr string) string {
-	return strings.ToLower(strings.TrimSpace(host)) + "\n" + strings.ToLower(strings.TrimSpace(subjectAttr))
+// directory server and the attribute they are read from.
+func IdentityKey(host string, port int, subjectAttr string) string {
+	return fmt.Sprintf("%s:%d\n%s", strings.ToLower(strings.TrimSpace(host)), port, strings.ToLower(strings.TrimSpace(subjectAttr)))
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
@@ -637,20 +638,23 @@ func Subject(attr string, e *ldap.Entry) (string, string, error) {
 }
 
 // formatID writes an id attribute as text. objectGUID is binary, with the
-// first three groups little-endian; other binary values are hex.
+// first three groups little-endian; objectSid and other binary values are
+// hex. Only entryUUID is case-folded: elsewhere case may be significant.
 func formatID(attr string, raw []byte) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	if strings.EqualFold(attr, "objectGUID") && len(raw) == 16 {
+	switch {
+	case strings.EqualFold(attr, "objectGUID") && len(raw) == 16:
 		b := raw
 		return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 			b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
+	case strings.EqualFold(attr, "objectGUID"), strings.EqualFold(attr, "objectSid"), !utf8.Valid(raw):
+		return hex.EncodeToString(raw)
+	case strings.EqualFold(attr, "entryUUID"):
+		return strings.ToLower(string(raw))
 	}
-	if utf8.Valid(raw) {
-		return strings.ToLower(strings.TrimSpace(string(raw)))
-	}
-	return hex.EncodeToString(raw)
+	return string(raw)
 }
 
 func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email string, assignments []rbac.Assignment) (*auth.User, error) {

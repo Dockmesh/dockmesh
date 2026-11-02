@@ -3,6 +3,7 @@ package oauth2auth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func TestSubject(t *testing.T) {
-	github := map[string]any{"id": float64(12345678), "login": "alice", "email": "a@example.com"}
+	github := map[string]any{"id": json.Number("12345678"), "login": "alice", "email": "a@example.com"}
 	gitea := map[string]any{"sub": "7", "id": float64(7), "preferred_username": "alice"}
 	tests := []struct {
 		name      string
@@ -25,6 +26,7 @@ func TestSubject(t *testing.T) {
 		{name: "sub before id", claims: gitea, want: "7", wantField: "sub"},
 		{name: "configured field", field: "login", claims: github, want: "alice", wantField: "login"},
 		{name: "configured field missing", field: "uuid", claims: github, wantErr: true},
+		{name: "id above 2^53 keeps its digits", claims: map[string]any{"id": json.Number("9007199254740993")}, want: "9007199254740993", wantField: "id"},
 		{name: "no id at all", claims: map[string]any{"login": "alice"}, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -41,7 +43,7 @@ func TestSubject(t *testing.T) {
 }
 
 func TestLegacySubject(t *testing.T) {
-	claims := map[string]any{"id": float64(12345678), "login": "alice", "sub": "s-1"}
+	claims := map[string]any{"id": json.Number("12345678"), "login": "alice", "sub": "s-1"}
 	tests := []struct {
 		usernameField, want, wantField string
 	}{
@@ -64,7 +66,7 @@ func TestIdentityKey(t *testing.T) {
 		same       bool
 	}{
 		{"https://API.github.com/user/", "", true},
-		{"https://api.github.com/v3/user", "", true},
+		{"https://api.github.com/v3/user", "", false},
 		{"https://git.example.com/api/v1/user", "", false},
 		{"https://api.github.com/user", "login", false},
 	}

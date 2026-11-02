@@ -4639,7 +4639,7 @@ paths:
       summary: Admin — update LDAP provider
       description: |
         `subject_attribute` names the attribute that identifies a user (empty:
-        `objectGUID`, else `entryUUID`, else the DN). A different host or
+        `objectGUID`, else `entryUUID`, else the DN). A different host, port or
         subject attribute unlinks every account of the provider.
       parameters:
         - in: path
@@ -4735,7 +4735,7 @@ paths:
       summary: Admin — update OAuth2 provider
       description: |
         `subject_field` names the userinfo field that identifies a user (empty:
-        `sub`, else `id`). A different userinfo host or subject field unlinks
+        `sub`, else `id`). A different userinfo URL or subject field unlinks
         every account of the provider.
       parameters:
         - in: path

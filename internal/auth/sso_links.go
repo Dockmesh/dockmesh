@@ -54,7 +54,9 @@ var ssoRekeyKinds = map[string]ssoRekeyQueries{
 		candidates: `SELECT id FROM users WHERE oauth2_provider = ? AND oauth2_legacy_subject = ?
 		               AND oauth2_rekey_until > CURRENT_TIMESTAMP`,
 		candidatesByEmail: `SELECT id FROM users WHERE oauth2_provider = ? AND oauth2_legacy_subject = ?
-		                      AND oauth2_rekey_until > CURRENT_TIMESTAMP AND email = ? COLLATE NOCASE`,
+		                      AND oauth2_rekey_until > CURRENT_TIMESTAMP AND email = ? COLLATE NOCASE
+		                      AND totp_verified = 0 AND NOT EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name
+		                        WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')`,
 		rekey: `UPDATE users SET oauth2_subject = ?, oauth2_legacy_subject = NULL, oauth2_rekey_until = NULL,
 		                         updated_at = CURRENT_TIMESTAMP
 		         WHERE id = ? AND oauth2_legacy_subject IS NOT NULL`,
@@ -64,7 +66,9 @@ var ssoRekeyKinds = map[string]ssoRekeyQueries{
 		candidates: `SELECT id FROM users WHERE ldap_provider = ? AND ldap_legacy_subject = ?
 		               AND ldap_rekey_until > CURRENT_TIMESTAMP`,
 		candidatesByEmail: `SELECT id FROM users WHERE ldap_provider = ? AND ldap_legacy_subject = ?
-		                      AND ldap_rekey_until > CURRENT_TIMESTAMP AND email = ? COLLATE NOCASE`,
+		                      AND ldap_rekey_until > CURRENT_TIMESTAMP AND email = ? COLLATE NOCASE
+		                      AND totp_verified = 0 AND NOT EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name
+		                        WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')`,
 		rekey: `UPDATE users SET ldap_subject = ?, ldap_legacy_subject = NULL, ldap_rekey_until = NULL,
 		                         updated_at = CURRENT_TIMESTAMP
 		         WHERE id = ? AND ldap_legacy_subject IS NOT NULL`,
@@ -83,13 +87,18 @@ type LegacyLogin struct {
 	// field, so the legacy key already was the immutable id.
 	SameSource bool
 	Email      string
+	// EmailUnverified is true when the IdP says the email is not verified.
+	EmailUnverified bool
 }
 
 // RekeyLegacy moves an account still waiting for its re-key to the
 // immutable subject when this sign-in presents its legacy key. A legacy
 // key read from a renameable field (a login name, a DN) may since belong
-// to someone else, so then the account's email has to match as well. It
-// returns the re-keyed account's id, or "" when nothing changed.
+// to someone else, so then the account's email has to match as well; like
+// email linking, that path never takes an account with two-factor
+// authentication or one that manages users or settings, and refuses an
+// email the IdP marks as unverified. It returns the re-keyed account's id,
+// or "" when nothing changed.
 func (s *Service) RekeyLegacy(ctx context.Context, l LegacyLogin) (string, error) {
 	q, ok := ssoRekeyKinds[l.Kind]
 	if !ok {
@@ -110,7 +119,7 @@ func (s *Service) RekeyLegacy(ctx context.Context, l LegacyLogin) (string, error
 	if l.SameSource {
 		rows, err = s.db.QueryContext(ctx, q.candidates, l.Provider, l.Legacy)
 	} else {
-		if l.Email == "" {
+		if l.Email == "" || l.EmailUnverified {
 			return "", nil
 		}
 		rows, err = s.db.QueryContext(ctx, q.candidatesByEmail, l.Provider, l.Legacy, l.Email)
@@ -239,7 +248,7 @@ func (s *Service) SyncSSORekeyNotice(ctx context.Context, n *notices.Service) er
 			"It moves to its provider's immutable user id at its next sign-in, until %s:", until)
 	}
 	body := intro + notices.Bullets(names) +
-		"A sign-in whose login name or directory entry changed since needs the same email as the account. " +
+		"A sign-in whose old key is a login name or DN also needs the account's email, and then never moves an account with two-factor authentication or one that manages users or settings. " +
 		"After that date, or when you end re-keying, these accounts can no longer sign in through their provider; " +
 		"an admin then has to remove and recreate them."
 	// An open notice keeps its text on Raise, so reopen it when the list changed.

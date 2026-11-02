@@ -105,11 +105,11 @@
 
   // Mirrors the server: subjects are unique only within one identity
   // provider, so saving another one unlinks the provider's accounts.
-  function urlKey(u: string, originOnly: boolean): string {
+  function urlKey(u: string): string {
     const s = u.trim().replace(/\/+$/, '');
     try {
       const p = new URL(s);
-      return originOnly ? `${p.protocol}//${p.host}` : `${p.protocol}//${p.host}${p.pathname}${p.search}`;
+      return `${p.protocol}//${p.host}${p.pathname}${p.search}`;
     } catch {
       return s;
     }
@@ -122,18 +122,18 @@
     if (!editing || editing.kind !== kind) return '';
     switch (editing.kind) {
       case 'oidc':
-        return urlKey(editing.issuer_url, false) !== urlKey(oidc.issuer_url, false)
+        return urlKey(editing.issuer_url) !== urlKey(oidc.issuer_url)
           ? `A different issuer is another identity provider. ${unlinkNote}`
           : '';
       case 'oauth2':
-        return urlKey(editing.userinfo_url, true) !== urlKey(oauth2.userinfo_url, true) ||
+        return urlKey(editing.userinfo_url) !== urlKey(oauth2.userinfo_url) ||
           (editing.subject_field ?? '').trim() !== oauth2.subject_field.trim()
-          ? `A different userinfo host or subject field identifies users differently. ${unlinkNote}`
+          ? `A different userinfo URL or subject field identifies users differently. ${unlinkNote}`
           : '';
       case 'ldap':
-        return editing.host.trim().toLowerCase() !== ldap.host.trim().toLowerCase() ||
+        return editing.host.trim().toLowerCase() !== ldap.host.trim().toLowerCase() || editing.port !== ldap.port ||
           (editing.subject_attribute ?? '').trim().toLowerCase() !== ldap.subject_attribute.trim().toLowerCase()
-          ? `A different directory host or subject attribute identifies users differently. ${unlinkNote}`
+          ? `A different directory server or subject attribute identifies users differently. ${unlinkNote}`
           : '';
       case 'saml':
         return saml.idp_metadata_xml.trim() !== '' &&
