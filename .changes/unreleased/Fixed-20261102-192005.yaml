@@ -1,0 +1,3 @@
+kind: Fixed
+body: "The job wizard sends the SFTP port as a number and offers the SFTP private key and the S3 prefix and TLS switch for inline targets."
+time: 2026-11-02T19:20:05Z
