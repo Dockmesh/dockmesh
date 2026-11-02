@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -152,4 +154,40 @@ func (h *Handlers) requireVolumeNotOwn(w http.ResponseWriter, r *http.Request, n
 	}
 	writeError(w, http.StatusForbidden, "only an admin can access Dockmesh's own volumes")
 	return false
+}
+
+// errOwnVolume refuses a non-admin restore into one of Dockmesh's own
+// volumes.
+var errOwnVolume = errors.New("only an admin can restore into Dockmesh's own volumes")
+
+// checkRestoreVolume refuses the known own volumes and any volume that a
+// Dockmesh container on hostID mounts, such as the server's data volume,
+// whatever it is named. A host whose containers can't be listed refuses,
+// so an unreachable agent doesn't let the restore through unchecked.
+func (h *Handlers) checkRestoreVolume(ctx context.Context, hostID, name string) error {
+	if ownVolumes[name] {
+		return errOwnVolume
+	}
+	target, err := h.hostByID(hostID)
+	if err != nil {
+		return err
+	}
+	cs, err := target.ListContainers(ctx, true)
+	if errors.Is(err, host.ErrNoDocker) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check volume %s: %w", name, err)
+	}
+	for _, c := range cs {
+		if !isOwnSummary(hostID, c) {
+			continue
+		}
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeVolume && m.Name == name {
+				return errOwnVolume
+			}
+		}
+	}
+	return nil
 }

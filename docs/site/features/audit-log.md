@@ -16,10 +16,11 @@ Each entry has a timestamp, the user, an action, a target and a JSON details fie
 | Stacks | `stack.create`, `stack.update`, `stack.delete`, `stack.deploy`, `stack.stop`, `stack.adopt` |
 | Containers | `container.start`, `container.stop`, `container.restart`, `container.remove`, `container.update`, `container.rollback`, `container.exec_start`, `container.exec_end`, `container.browse`, `container.read_file`, `container.write_file` |
 | Images, volumes, networks | `image.pull`, `image.remove`, `image.prune`, `image.scan`, `volume.create`, `volume.remove`, `volume.prune`, `volume.browse`, `volume.read_file`, `network.create`, `network.remove` |
+| Backups | `backup.run`, `backup.restore`, `backup.download`, `backup.key_export`, `backup.verify_run` |
 | Access control | `auth.scope_denied` (a request blocked by a role or user scope) |
 | Log itself | `audit.genesis`, `audit.chain_bridge` |
 
-Other handlers write their own action names, for example `proxy.enable` and `proxy.disable`. Some operations are logged under a broader action: a host drain appears as `stack.deploy` with `"action": "drain"` in its details, and backup actions use stack and container action names.
+Other handlers write their own action names, for example `proxy.enable` and `proxy.disable`. Some operations are logged under a broader action: a host drain appears as `stack.deploy` with `"action": "drain"` in its details, and creating, changing or deleting a backup job appears as `stack.create`, `stack.update` or `stack.delete` with a `backup:` target.
 
 ## Hash chain
 

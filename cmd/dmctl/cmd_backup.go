@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -29,7 +31,7 @@ type backupRun struct {
 	JobID     int64  `json:"job_id"`
 	Status    string `json:"status"`
 	StartedAt string `json:"started_at"`
-	EndedAt   string `json:"ended_at,omitempty"`
+	EndedAt   string `json:"finished_at,omitempty"`
 	SizeBytes int64  `json:"size_bytes"`
 	Error     string `json:"error,omitempty"`
 }
@@ -65,18 +67,16 @@ func backupJobsListCmd() *cobra.Command {
 }
 
 func backupRunCmd() *cobra.Command {
-	return &cobra.Command{
+	var noWait bool
+	cmd := &cobra.Command{
 		Use:   "run <job-name-or-id>",
-		Short: "Trigger a backup job immediately",
+		Short: "Run a backup job now and wait until it finishes",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newClient()
 			if err != nil {
 				return err
 			}
-			// Resolve name → id if the user passed a name. Small number of
-			// jobs makes the extra round-trip cheap and the UX "just works"
-			// without forcing operators to remember numeric IDs.
 			id := args[0]
 			if !isNumeric(id) {
 				var jobs []backupJob
@@ -96,15 +96,62 @@ func backupRunCmd() *cobra.Command {
 				id = found
 			}
 			var run backupRun
-			if err := c.longRunning().request("POST", "/api/v1/backups/jobs/"+url.PathEscape(id)+"/run", nil, nil, &run); err != nil {
+			if err := c.request("POST", "/api/v1/backups/jobs/"+url.PathEscape(id)+"/run", nil, nil, &run); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Backup run %d: %s, %d bytes\n", run.ID, run.Status, run.SizeBytes)
-			if run.Error != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Error: %s\n", run.Error)
+			out := cmd.OutOrStdout()
+			if noWait {
+				fmt.Fprintf(out, "Backup run %d started\n", run.ID)
+				return nil
+			}
+			fmt.Fprintf(out, "Backup run %d started, waiting for it to finish\n", run.ID)
+			done, err := waitBackupRun(cmd.Context(), c, run.ID, 2*time.Second)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "Backup run %d: %s, %d bytes\n", done.ID, done.Status, done.SizeBytes)
+			if done.Error != "" {
+				fmt.Fprintf(out, "Error: %s\n", done.Error)
+			}
+			if done.Status == "failed" {
+				return fmt.Errorf("backup run %d failed", done.ID)
 			}
 			return nil
 		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return once the run has started")
+	return cmd
+}
+
+// waitBackupRun polls a run until it is no longer running. Polling
+// survives a few failed requests in a row, such as a server restart
+// during a long backup.
+func waitBackupRun(ctx context.Context, c *Client, runID int64, every time.Duration) (*backupRun, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	const maxFailures = 5
+	failures := 0
+	path := fmt.Sprintf("/api/v1/backups/runs/%d", runID)
+	for {
+		var run backupRun
+		err := c.request("GET", path, nil, nil, &run)
+		switch {
+		case err != nil:
+			failures++
+			if failures >= maxFailures {
+				return nil, fmt.Errorf("waiting for backup run %d: %w", runID, err)
+			}
+		case run.Status != "running":
+			return &run, nil
+		default:
+			failures = 0
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(every):
+		}
 	}
 }
 

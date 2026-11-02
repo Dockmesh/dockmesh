@@ -60,8 +60,12 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 // requireTargetAccess guards writes to a saved target (its settings, its
 // accepted host key): they change where every job using it writes, so the
 // caller needs requireJobAccess for each of those jobs, deleted ones
-// included. A target with a system job is admin-only.
+// included. A target with a system job or the audit archive is admin-only.
 func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	if h.AuditRetention != nil && h.AuditRetention.Config().TargetID == targetID && !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can change the target the audit log is archived to")
+		return false
+	}
 	if h.Backups == nil {
 		return true
 	}
@@ -79,8 +83,9 @@ func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, t
 }
 
 // requireRunAccess guards everything that reads or restores a run's
-// archive or log: system runs need an admin, all others the job's host in
-// the caller's scope. A run whose job is gone is admin-only.
+// archive or log: system runs need an admin, all others the host the run
+// was taken on in the caller's scope. A run whose job is gone is
+// admin-only.
 func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run *backup.Run, perm rbac.Perm) bool {
 	if backup.HasSystemSource(run.Sources) {
 		if h.callerIsAdmin(r) {
@@ -101,10 +106,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return false
 	}
-	hostID := job.HostID
-	if hostID == "" {
-		hostID = "local"
-	}
+	hostID := runHost(run, job)
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
@@ -116,9 +118,9 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 	return true
 }
 
-// backupRunVisible applies backupJobVisible to the job a run belongs to.
-// System runs and runs of a deleted job are admin-only, like their
-// archives. jobs holds the current jobs by id.
+// backupRunVisible applies backupJobVisible to the host and sources the
+// run was taken with. System runs and runs of a deleted job are
+// admin-only, like their archives. jobs holds the current jobs by id.
 func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[int64]backup.Job) bool {
 	if backup.HasSystemSource(run.Sources) {
 		return h.callerIsAdmin(r)
@@ -127,7 +129,21 @@ func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[i
 	if !ok {
 		return h.callerIsAdmin(r)
 	}
+	job.HostID = runHost(run, &job)
+	job.Sources = run.Sources
 	return h.backupJobVisible(r, job)
+}
+
+// runHost is the host run was taken on; runs recorded before hosts were
+// stored on the run fall back to the job's host.
+func runHost(run *backup.Run, job *backup.Job) string {
+	if run.HostID != "" {
+		return run.HostID
+	}
+	if job.HostID != "" {
+		return job.HostID
+	}
+	return "local"
 }
 
 func (h *Handlers) backupJobsByID(r *http.Request) (map[int64]backup.Job, error) {

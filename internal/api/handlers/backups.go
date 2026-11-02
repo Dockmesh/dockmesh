@@ -249,7 +249,9 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(job.ID, 10), nil)
+	h.audit(r, audit.ActionBackupRun, "backup-job:"+strconv.FormatInt(job.ID, 10), map[string]any{
+		"job": job.Name, "run_id": run.ID,
+	})
 	writeJSON(w, http.StatusAccepted, run)
 }
 
@@ -442,6 +444,9 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		return
 	}
 	opts := backup.RestoreOptions{Target: req.DestVolume, HostID: req.HostID, Replace: req.Mode == "replace"}
+	if !h.callerIsAdmin(r) {
+		opts.CheckVolume = h.checkRestoreVolume
+	}
 	if kind == "stack" {
 		opts.Target = req.TargetStack
 		if opts.Target == "" {
@@ -495,6 +500,9 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	op.Finish(err)
 	var inUse *backup.VolumeInUseError
 	switch {
+	case errors.Is(err, errOwnVolume):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	case errors.Is(err, docker.ErrInvalidVolumeName):
 		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
 		return
@@ -510,7 +518,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{
+	h.audit(r, audit.ActionBackupRestore, operations.BackupRunRef(id), map[string]string{
 		"kind": report.Kind, "target": opts.Target, "host": report.HostID, "mode": report.Mode,
 	})
 	writeJSON(w, http.StatusOK, report)

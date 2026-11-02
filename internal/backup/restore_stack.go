@@ -56,6 +56,9 @@ type RestoreOptions struct {
 	// Replace empties each volume before extracting. Otherwise the
 	// archive is merged: its files overwrite, other files stay.
 	Replace bool
+	// CheckVolume, when set, may refuse a destination volume before
+	// anything is written to it.
+	CheckVolume func(ctx context.Context, hostID, volume string) error
 }
 
 // RestoreReport says what a restore did.
@@ -141,7 +144,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 		return nil, err
 	}
 	if opts.HostID == "" {
-		opts.HostID = defaultStr(job.HostID, "local")
+		opts.HostID = runHostOf(run, job)
 	}
 	host, err := s.exec.resolveHost(opts.HostID)
 	if err != nil {
@@ -184,6 +187,13 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 				continue
 			}
 			plan[v] = dest
+		}
+	}
+	if opts.CheckVolume != nil {
+		for _, dest := range plan {
+			if err := opts.CheckVolume(ctx, opts.HostID, dest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	keys := []string{"stack:" + opts.Target}
@@ -514,5 +524,13 @@ func (s *Service) RunHost(ctx context.Context, runID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return defaultStr(job.HostID, "local"), nil
+	return runHostOf(run, job), nil
+}
+
+// runHostOf falls back to the job's host for a run that has none stored.
+func runHostOf(run *Run, job *Job) string {
+	if run.HostID != "" {
+		return run.HostID
+	}
+	return defaultStr(job.HostID, "local")
 }
