@@ -10,6 +10,7 @@ import { api, type BackupRun, type Operation, type OperationLogLine } from '$lib
 import { EventStream, type ConnStatus } from '$lib/events';
 import { auth } from './auth.svelte';
 import { toast } from './toast.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 const LOG_CAP = 500;
 const POLL_LIVE_MS = 30_000;
@@ -48,13 +49,13 @@ function createOperationsStore() {
     const what = `${kindLabel(op.kind)} ${op.target}`;
     if (op.status === 'succeeded') {
       const warned = op.steps.find((s) => s.status === 'warning');
-      if (warned) toast.warning(`${what} finished with a warning`, shortMessage(warned.detail));
-      else toast.success(`${what} finished`);
+      if (warned) toast.warning(m.lib_op_finished_warning({ what }), shortMessage(warned.detail));
+      else toast.success(m.lib_op_finished({ what }));
     } else if (op.status === 'failed') {
       const failed = failedStep(op);
-      toast.error(`${what} failed${failed ? ` at “${failed.label}”` : ''}`, shortMessage(op.error));
+      toast.error(failed ? m.lib_op_failed_at({ what, step: failed.label }) : m.lib_op_failed({ what }), shortMessage(op.error));
     } else if (op.status === 'cancelled') {
-      toast.info(`${what} cancelled`);
+      toast.info(m.lib_op_cancelled({ what }));
     }
   }
 

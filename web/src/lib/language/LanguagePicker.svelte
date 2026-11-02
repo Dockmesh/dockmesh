@@ -27,13 +27,9 @@
   }
 </script>
 
-<label class="dm-field">
-  <span class="dm-label">{m.lang_label()}</span>
-  <select class="dm-input" value={current} disabled={busy} onchange={change} data-testid="language-select">
-    <option value="">{m.lang_auto()}</option>
-    {#each LANGUAGES as l (l.id)}
-      <option value={l.id}>{l.label}</option>
-    {/each}
-  </select>
-  <span class="dm-sub">{m.lead_language_hint()}</span>
-</label>
+<select class="dm-input" value={current} disabled={busy} onchange={change} data-testid="language-select">
+  <option value="">{m.lang_auto()}</option>
+  {#each LANGUAGES as l (l.id)}
+    <option value={l.id}>{l.label}</option>
+  {/each}
+</select>

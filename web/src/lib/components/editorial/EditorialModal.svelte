@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import type { Snippet } from 'svelte';
   import { X } from 'lucide-svelte';
   import Eyebrow from './Eyebrow.svelte';
@@ -67,7 +68,7 @@
         type="button"
         class="ed-modal-close"
         onclick={close}
-        aria-label="Close"
+        aria-label={m.common_close()}
       >
         <X size={14} strokeWidth={1.5} />
       </button>

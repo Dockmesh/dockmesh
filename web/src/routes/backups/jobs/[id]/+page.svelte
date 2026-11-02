@@ -19,6 +19,8 @@
     hostLabel, mayOnJob
   } from '../../_format';
   import { Play, Pencil, Trash2, Lock, Box } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   const id = $derived(parseInt(page.params.id ?? '', 10));
 
@@ -42,7 +44,7 @@
       notFound = false;
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) notFound = true;
-      else toast.error('Failed to load job', err instanceof ApiError ? err.message : undefined);
+      else toast.error(m.backups_job_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -74,7 +76,7 @@
       startedRunId = run.id;
       void load();
     } catch (err) {
-      toast.error('Could not start the job', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_job_start_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -82,17 +84,17 @@
   async function deleteJob() {
     if (!job) return;
     if (!(await confirm.ask({
-      title: 'Delete backup job',
-      message: `Delete backup job "${job.name}"?`,
-      body: 'Existing backup runs are kept. The schedule is removed and no new runs will be triggered.',
-      confirmLabel: 'Delete', danger: true
+      title: m.backups_delete_job_title(),
+      message: m.backups_delete_job_message({ name: job.name }),
+      body: m.backups_delete_job_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.backups.deleteJob(job.id);
-      toast.success('Deleted', job.name);
+      toast.success(m.backups_deleted(), job.name);
       goto('/backups?tab=jobs');
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -103,8 +105,8 @@
   <section class="dm-page"><div class="dm-tbl"><div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="50%" height="0.9rem" /></div></div></section>
 {:else if notFound || !job}
   <section class="dm-page">
-    <EmptyState icon={Box} title="Job not found" description="It was deleted, or you do not have access to it.">
-      {#snippet action()}<a class="dm-btn" href="/backups?tab=jobs">All jobs</a>{/snippet}
+    <EmptyState icon={Box} title={m.backups_job_not_found()} description={m.backups_not_found_desc()}>
+      {#snippet action()}<a class="dm-btn" href="/backups?tab=jobs">{m.backups_all_jobs()}</a>{/snippet}
     </EmptyState>
   </section>
 {:else}
@@ -112,16 +114,16 @@
     <div class="dm-ph">
       <div class="title">
         <h1>{job.name}</h1>
-        <div class="dm-sub">{jobSourceName(job)} on {hostName} → {target?.name ?? targetTypeLabel(job.target_type)}{job.enabled ? '' : ' · disabled'}</div>
+        <div class="dm-sub">{m.backups_job_sub({ source: jobSourceName(job), host: hostName, target: target?.name ?? targetTypeLabel(job.target_type) })}{job.enabled ? '' : ` · ${m.backups_job_disabled()}`}</div>
       </div>
       <span class="dm-sp"></span>
       {#if mayOnJob('backups.delete', job)}
-        <button type="button" class="dm-btn dm-btn-danger" onclick={deleteJob}><Trash2 size={13} /> Delete</button>
+        <button type="button" class="dm-btn dm-btn-danger" onclick={deleteJob}><Trash2 size={13} /> {m.common_delete()}</button>
       {/if}
       {#if mayOnJob('backups.update', job)}
-        <a href="/backups?tab=jobs&edit={job.id}" class="dm-btn"><Pencil size={13} /> Edit</a>
+        <a href="/backups?tab=jobs&edit={job.id}" class="dm-btn"><Pencil size={13} /> {m.common_edit()}</a>
         <button type="button" class="dm-btn dm-btn-primary" disabled={!job.enabled || busy || !!(liveOp && isActive(liveOp))} onclick={runNow}>
-          <Play size={13} /> Run now
+          <Play size={13} /> {m.backups_run_now()}
         </button>
       {/if}
     </div>
@@ -129,43 +131,43 @@
     <StatBar
       items={[
         {
-          label: 'Last run',
-          value: lastRun ? (lastRun.status === 'failed' ? 'Failed' : lastRun.status === 'running' ? 'Running' : 'Succeeded') : '—',
-          note: lastRun ? fmtAgo(lastRun.started_at) : 'no runs yet',
+          label: m.backups_col_last_run(),
+          value: lastRun ? (lastRun.status === 'failed' ? m.common_failed() : lastRun.status === 'running' ? m.common_running() : m.backups_filter_succeeded()) : '—',
+          note: lastRun ? fmtAgo(lastRun.started_at) : m.backups_no_runs_yet_note(),
           tone: lastRun?.status === 'failed' ? 'bad' : lastRun?.status === 'success_with_warnings' ? 'warn' : ''
         },
-        { label: 'Schedule', value: cronHuman(job.schedule), note: job.enabled && job.next_run_at ? `next ${fmtUntil(job.next_run_at)}` : job.enabled ? '' : 'disabled' },
-        { label: 'Average size', value: fmtBytes(avgSize), note: `${jobRuns.length} runs` },
-        { label: 'Keeps', value: `${job.retention_count} newest`, note: job.retention_days > 0 ? `at most ${job.retention_days} days` : 'no age limit' }
+        { label: m.backups_col_schedule(), value: cronHuman(job.schedule), note: job.enabled && job.next_run_at ? m.backups_next_until({ until: fmtUntil(job.next_run_at) }) : job.enabled ? '' : m.backups_job_disabled() },
+        { label: m.backups_average_size(), value: fmtBytes(avgSize), note: m.backups_n_runs({ count: jobRuns.length }) },
+        { label: m.backups_keeps(), value: m.backups_n_newest({ n: job.retention_count }), note: job.retention_days > 0 ? m.backups_at_most_days({ n: job.retention_days }) : m.backups_no_age_limit() }
       ]}
     />
 
     {#if liveOp}
       <div class="live">
-        <a class="dm-sub" href="/backups/runs/{liveRunId}">Run #{liveRunId}</a>
+        <a class="dm-sub" href="/backups/runs/{liveRunId}">{m.backups_run_n({ id: liveRunId ?? '' })}</a>
         <div class="live-op"><OpProgress op={liveOp} /></div>
-        <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => operations.open(liveOp.id)}>Steps and log</button>
+        <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => operations.open(liveOp.id)}>{m.backups_steps_and_log()}</button>
         <CancelOpButton op={liveOp} />
       </div>
     {:else if lastRun?.status === 'failed'}
       <div class="fail" role="alert">
-        <StatusChip tone="bad" label="last run failed" />
+        <StatusChip tone="bad" label={m.backups_last_run_failed()} />
         <span class="dm-mono dm-trunc" title={lastRun.error}>{lastRun.error ?? ''}</span>
-        <a class="dm-btn dm-btn-sm" href="/backups/runs/{lastRun.id}">Open log</a>
+        <a class="dm-btn dm-btn-sm" href="/backups/runs/{lastRun.id}">{m.backups_open_log()}</a>
       </div>
     {/if}
 
     <div class="grid">
       <section>
-        <h2 class="dm-h2">Runs</h2>
+        <h2 class="dm-h2">{m.backups_tab_runs()}</h2>
         {#if jobRuns.length === 0}
-          <div class="dm-tbl"><div class="dm-empty">No runs yet.</div></div>
+          <div class="dm-tbl"><div class="dm-empty">{m.backups_no_runs_yet()}</div></div>
         {:else}
-          <div class="dm-tbl" role="table" aria-label="Runs of {job.name}">
+          <div class="dm-tbl" role="table" aria-label={m.backups_runs_of({ name: job.name })}>
             {#each jobRuns.slice(0, 20) as r (r.id)}
               {@const op = operations.backupRun(r.id)}
               <a class="dm-tr dm-click row" role="row" style="grid-template-columns: {RUN_COLS}" href="/backups/runs/{r.id}">
-                <span class="dm-num dm-dim" title={new Date(r.started_at).toLocaleString()}>{fmtAgo(r.started_at)}</span>
+                <span class="dm-num dm-dim" title={fmtDateTime(r.started_at)}>{fmtAgo(r.started_at)}</span>
                 <span>
                   {#if op && isActive(op)}<OpProgress {op} compact />{:else}<StatusChip tone={runTone(r.status)} label={runLabel(r.status)} title={r.error} />{/if}
                 </span>
@@ -178,23 +180,23 @@
         {/if}
       </section>
       <section>
-        <h2 class="dm-h2">Details</h2>
+        <h2 class="dm-h2">{m.common_details()}</h2>
         <dl class="dm-kv">
-          <dt>What</dt><dd>{jobSourceName(job)} <span class="dm-dim">({jobSourceKind(job)})</span></dd>
-          <dt>Runs on</dt><dd>{#if job.host_id && job.host_id !== 'local'}<a href="/hosts/{job.host_id}">{hostName}</a>{:else}{hostName}{/if}</dd>
-          <dt>Target</dt>
+          <dt>{m.backups_col_what()}</dt><dd>{jobSourceName(job)} <span class="dm-dim">({jobSourceKind(job)})</span></dd>
+          <dt>{m.backups_runs_on()}</dt><dd>{#if job.host_id && job.host_id !== 'local'}<a href="/hosts/{job.host_id}">{hostName}</a>{:else}{hostName}{/if}</dd>
+          <dt>{m.common_target()}</dt>
           <dd>
             {#if target}<a href="/backups/targets/{target.id}">{target.name}</a> <span class="dm-dim">({targetTypeLabel(target.type)})</span>
             {:else}{targetTypeLabel(job.target_type)}{/if}
           </dd>
-          <dt>Encryption</dt><dd>{#if job.encrypt}<Lock size={11} /> age, key in Settings › Encryption key{:else}off{/if}</dd>
-          <dt>Retention</dt><dd>keep the {job.retention_count} newest runs{job.retention_days > 0 ? `, none older than ${job.retention_days} days` : ''}</dd>
-          <dt>Schedule</dt><dd>{cronHuman(job.schedule)} <span class="dm-mono dm-dim">{job.schedule}</span></dd>
-          <dt>Hooks</dt>
+          <dt>{m.backups_encryption()}</dt><dd>{#if job.encrypt}<Lock size={11} /> {m.backups_encryption_age_key()}{:else}{m.backups_off()}{/if}</dd>
+          <dt>{m.backups_retention()}</dt><dd>{m.backups_retention_keep_newest({ n: job.retention_count })}{job.retention_days > 0 ? m.backups_retention_none_older({ n: job.retention_days }) : ''}</dd>
+          <dt>{m.backups_col_schedule()}</dt><dd>{cronHuman(job.schedule)} <span class="dm-mono dm-dim">{job.schedule}</span></dd>
+          <dt>{m.backups_hooks()}</dt>
           <dd>
-            {#if hookCount === 0}<span class="dm-dim">none</span>{:else}
-              {#each job.pre_hooks ?? [] as h, i (`pre-${i}`)}<div class="hook"><span class="dm-dim">before</span> <span class="dm-mono">{h.container}: {h.cmd.join(' ')}</span></div>{/each}
-              {#each job.post_hooks ?? [] as h, i (`post-${i}`)}<div class="hook"><span class="dm-dim">after</span> <span class="dm-mono">{h.container}: {h.cmd.join(' ')}</span></div>{/each}
+            {#if hookCount === 0}<span class="dm-dim">{m.backups_none_lc()}</span>{:else}
+              {#each job.pre_hooks ?? [] as h, i (`pre-${i}`)}<div class="hook"><span class="dm-dim">{m.backups_hook_before()}</span> <span class="dm-mono">{h.container}: {h.cmd.join(' ')}</span></div>{/each}
+              {#each job.post_hooks ?? [] as h, i (`post-${i}`)}<div class="hook"><span class="dm-dim">{m.backups_hook_after()}</span> <span class="dm-mono">{h.container}: {h.cmd.join(' ')}</span></div>{/each}
             {/if}
           </dd>
         </dl>

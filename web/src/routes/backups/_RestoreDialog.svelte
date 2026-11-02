@@ -8,6 +8,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { operations, opRef } from '$lib/stores/operations.svelte';
   import { Undo2, ShieldCheck } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     run: BackupRun | null;
@@ -48,7 +49,7 @@
 
   function reportLine(report: BackupRestoreReport): string {
     return isStack
-      ? `${report.files_restored.length} file(s), ${report.volumes_restored.length} volume(s) into ${report.stack_name}`
+      ? m.backups_restore_report_stack({ files: report.files_restored.length, volumes: report.volumes_restored.length, stack: report.stack_name })
       : target.trim();
   }
 
@@ -79,69 +80,69 @@
       void operations.open(op.id);
       await req;
       if (report) {
-        for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
+        for (const w of report.warnings ?? []) toast.warning(m.backups_restore_warning(), w);
       }
       return;
     }
     await req;
     busy = false;
     if (report) {
-      toast.success('Restored', reportLine(report));
-      for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
+      toast.success(m.backups_restored(), reportLine(report));
+      for (const w of report.warnings ?? []) toast.warning(m.backups_restore_warning(), w);
       onclose();
     } else {
-      toast.error('Restore failed', error instanceof ApiError ? error.message : undefined);
+      toast.error(m.backups_restore_failed(), error instanceof ApiError ? error.message : undefined);
     }
   }
 </script>
 
-<Modal open={!!run} title={run ? `Restore run #${run.id}` : 'Restore'} maxWidth="max-w-lg" onclose={onclose}>
+<Modal open={!!run} title={run ? m.backups_restore_run_title({ id: run.id }) : m.backups_restore()} maxWidth="max-w-lg" onclose={onclose}>
   {#if run}
     <div class="rs">
       <div class="dm-field">
-        <label for="rs-target">{isStack ? 'Stack name' : 'Volume name'}</label>
+        <label for="rs-target">{isStack ? m.backups_restore_stack_name() : m.backups_restore_volume_name()}</label>
         <input id="rs-target" class="dm-filter dm-mono" bind:value={target} autocomplete="off" />
         <small class="dm-sub">
-          {isStack ? 'Files go to this stack; its volumes are restored on the host below.' : "Created if it doesn't exist."}
+          {isStack ? m.backups_restore_stack_hint() : m.backups_restore_volume_hint()}
         </small>
       </div>
       <div class="dm-field">
-        <label for="rs-host">Host</label>
+        <label for="rs-host">{m.common_host()}</label>
         <select id="rs-host" class="dm-filter" bind:value={hostId}>
           {#if !hosts.some((h) => h.id === 'local')}<option value="local">local</option>{/if}
-          {#if originHost && !hosts.some((h) => h.id === originHost)}<option value={originHost}>{originHost} (offline)</option>{/if}
+          {#if originHost && !hosts.some((h) => h.id === originHost)}<option value={originHost}>{m.backups_restore_host_offline({ host: originHost })}</option>{/if}
           {#each hosts as h (h.id)}
-            <option value={h.id}>{h.name}{h.id === (originHost || 'local') ? ' (backed up here)' : ''}</option>
+            <option value={h.id}>{h.name}{h.id === (originHost || 'local') ? ` ${m.backups_restore_backed_up_here()}` : ''}</option>
           {/each}
         </select>
       </div>
       <fieldset class="dm-field">
-        <legend>Existing data</legend>
+        <legend>{m.backups_restore_existing_data()}</legend>
         <label class="opt" class:on={mode === 'replace'}>
           <input type="radio" bind:group={mode} value="replace" />
-          <span><b>Replace</b> <span class="dm-dim">swaps the contents for the backup's once it extracted completely, so the result matches the backup; needs free space for both while it runs. Containers using {isStack ? 'them' : 'it'} must be stopped.</span></span>
+          <span><b>{m.backups_restore_mode_replace()}</b> <span class="dm-dim">{isStack ? m.backups_restore_mode_replace_desc_stack() : m.backups_restore_mode_replace_desc_volume()}</span></span>
         </label>
         <label class="opt" class:on={mode === 'merge'}>
           <input type="radio" bind:group={mode} value="merge" />
-          <span><b>Merge</b> <span class="dm-dim">overwrites the files in the backup, keeps everything else.</span></span>
+          <span><b>{m.backups_restore_mode_merge()}</b> <span class="dm-dim">{m.backups_restore_mode_merge_desc()}</span></span>
         </label>
       </fieldset>
       {#if inPlace}
         <p class="warn" role="note">
-          This restores over the original {isStack ? 'stack' : 'volume'}. If the archive is damaged or the restore fails, nothing is changed.
+          {isStack ? m.backups_restore_in_place_stack() : m.backups_restore_in_place_volume()}
         </p>
       {/if}
       <div class="dm-field">
-        <label for="rs-confirm">Type <span class="dm-mono">{target.trim()}</span> to confirm</label>
+        <label for="rs-confirm">{m.backups_restore_type_before()} <span class="dm-mono">{target.trim()}</span> {m.backups_restore_type_after()}</label>
         <input id="rs-confirm" type="text" class="dm-filter dm-mono" bind:value={confirmText} placeholder={target.trim()} autocomplete="off" />
       </div>
-      <p class="ok"><ShieldCheck size={14} /> The archive is checked against its checksum before anything is extracted.</p>
+      <p class="ok"><ShieldCheck size={14} /> {m.backups_restore_checksum_note()}</p>
     </div>
   {/if}
   {#snippet footer()}
-    <Button variant="secondary" onclick={onclose}>Cancel</Button>
+    <Button variant="secondary" onclick={onclose}>{m.common_cancel()}</Button>
     <Button variant="danger" onclick={submit} disabled={!canSubmit} loading={busy}>
-      <Undo2 size={14} /> {inPlace && mode === 'replace' ? 'Replace and restore' : 'Restore'}
+      <Undo2 size={14} /> {inPlace && mode === 'replace' ? m.backups_restore_replace_and_restore() : m.backups_restore()}
     </Button>
   {/snippet}
 </Modal>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { dialogs } from '$lib/stores/dialogs.svelte';
   // Add-Host Modal — 3-step inline flow per `Dockmesh Wizard (6)/
   // add-host-modal.jsx`. Section 01 collects identity (hostname + tags),
@@ -10,6 +11,7 @@
   import { trapFocus } from '$lib/a11y';
   import { api, ApiError, type AgentCreateResult } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
+  import { fmtDateTime } from '$lib/i18n';
   import { copyToClipboard } from '$lib/clipboard';
   import { Plus, X, Check, Copy, ArrowRight } from 'lucide-svelte';
   import AgentReachability from '$lib/components/AgentReachability.svelte';
@@ -34,11 +36,11 @@
     const v = t.trim().toLowerCase().replace(/,$/, '');
     if (!v || tags.includes(v)) { tagInput = ''; return; }
     if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) {
-      toast.error('Invalid tag', 'lowercase letters, digits, hyphens; 1-32 chars');
+      toast.error(m.hosts_tag_invalid(), m.hosts_add_tag_invalid_detail());
       return;
     }
     if (tags.length >= 20) {
-      toast.error('Max 20 tags');
+      toast.error(m.hosts_tag_max({ n: 20 }));
       return;
     }
     tags = [...tags, v];
@@ -54,7 +56,7 @@
 
   async function generateToken() {
     if (!hostname.trim()) {
-      toast.error('Hostname required');
+      toast.error(m.hosts_add_hostname_required());
       return;
     }
     creating = true;
@@ -69,7 +71,7 @@
         savingTags = false;
       }
     } catch (err) {
-      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_add_create_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       creating = false;
     }
@@ -82,7 +84,7 @@
       copied = true;
       setTimeout(() => (copied = false), 1500);
     } else {
-      toast.error('Copy failed', 'Select the text manually and use Ctrl+C');
+      toast.error(m.hosts_add_copy_failed(), m.hosts_add_copy_failed_hint());
     }
   }
 
@@ -122,10 +124,10 @@
   <div class="ed-modal ed-add-host-modal" role="dialog" aria-modal="true" aria-labelledby="add-host-title" use:trapFocus>
     <header class="ed-modal-head">
       <div class="ed-add-host-head-text">
-        <h2 class="ed-add-host-title" id="add-host-title">Add a host</h2>
-        <p class="ed-add-host-blurb">Run one command on the new host. It appears here as soon as it connects.</p>
+        <h2 class="ed-add-host-title" id="add-host-title">{m.hosts_add_title()}</h2>
+        <p class="ed-add-host-blurb">{m.hosts_add_blurb()}</p>
       </div>
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label="Close" disabled={connected}>
+      <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label={m.common_close()} disabled={connected}>
         <X size={13} strokeWidth={1.5} />
       </button>
     </header>
@@ -135,30 +137,30 @@
       <section class="ed-add-host-section" class:active={!createResult}>
         <span class="ed-add-host-step" class:active={!createResult}>01</span>
         <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">Identify the host</h3>
+          <h3 class="ed-add-host-section-title">{m.hosts_add_identify()}</h3>
           <div class="ed-add-host-fields">
             <div class="ed-field">
-              <label class="ed-field-label" for="add-host-hostname">Hostname</label>
+              <label class="ed-field-label" for="add-host-hostname">{m.hosts_hostname()}</label>
               <input
                 id="add-host-hostname"
                 type="text"
                 class="ed-soft-input font-mono"
-                placeholder="e.g. edge-fra-2"
+                placeholder={m.hosts_add_hostname_ph()}
                 bind:value={hostname}
                 disabled={!!createResult}
               />
             </div>
             <div class="ed-field">
               <label class="ed-field-label">
-                Tags
-                <span class="ed-field-hint">Enter or comma adds a tag.</span>
+                {m.hosts_col_tags()}
+                <span class="ed-field-hint">{m.hosts_add_tags_hint()}</span>
               </label>
               <div class="ed-host-tags-edit">
                 {#each tags as t (t)}
                   <span class="ed-hosts-tag-chip">
                     {t}
                     {#if !createResult}
-                      <button type="button" class="ed-host-tags-remove" onclick={() => removeTag(t)} aria-label="Remove">
+                      <button type="button" class="ed-host-tags-remove" onclick={() => removeTag(t)} aria-label={m.common_remove()}>
                         <X size={10} strokeWidth={1.5} />
                       </button>
                     {/if}
@@ -168,7 +170,7 @@
                   <input
                     type="text"
                     class="ed-host-tags-input font-mono"
-                    placeholder={tags.length === 0 ? 'edge, production, gpu…' : '+ add tag'}
+                    placeholder={tags.length === 0 ? m.hosts_add_tags_ph() : m.hosts_add_tag_plus_ph()}
                     bind:value={tagInput}
                     onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(tagInput); } }}
                   />
@@ -176,7 +178,7 @@
               </div>
               {#if !createResult && suggestionPool.filter((s) => !tags.includes(s)).length > 0}
                 <div class="ed-host-tags-suggest">
-                  <span class="ed-host-tags-suggest-label">Suggestions</span>
+                  <span class="ed-host-tags-suggest-label">{m.hosts_add_suggestions()}</span>
                   {#each suggestionPool.filter((s) => !tags.includes(s)).slice(0, 8) as s (s)}
                     <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTag(s)}>+ {s}</button>
                   {/each}
@@ -187,13 +189,13 @@
           {#if !createResult}
             <div class="ed-add-host-reach"><AgentReachability /></div>
             <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={generateToken} disabled={creating || !hostname.trim()}>
-              {creating ? 'Generating…' : 'Generate install command'}
+              {creating ? m.hosts_add_generating() : m.hosts_add_generate()}
               <ArrowRight size={11} strokeWidth={1.5} />
             </button>
           {:else}
             <p class="ed-add-host-confirm">
               <Check size={11} strokeWidth={1.5} class="ed-add-host-check" />
-              Install command ready for <b>{createResult.agent.name}</b>
+              {m.hosts_add_ready()} <b>{createResult.agent.name}</b>
             </p>
           {/if}
         </div>
@@ -203,21 +205,21 @@
       <section class="ed-add-host-section" class:active={!!createResult && !connected} class:muted={!createResult}>
         <span class="ed-add-host-step" class:active={!!createResult}>02</span>
         <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">Run the install on the new host</h3>
+          <h3 class="ed-add-host-section-title">{m.hosts_add_run_title()}</h3>
           {#if !createResult}
-            <p class="ed-add-host-blurb">Name the host first.</p>
+            <p class="ed-add-host-blurb">{m.hosts_add_name_first()}</p>
           {:else}
             <p class="ed-add-host-blurb">
-              Paste this in a shell on <b>{createResult.agent.name}</b>. The token is shown only once and expires {new Date(createResult.token_expires_at).toLocaleString()}.
+              {m.hosts_add_paste_before()} <b>{createResult.agent.name}</b>{m.hosts_add_paste_after({ date: fmtDateTime(createResult.token_expires_at) })}
             </p>
             <div class="ed-add-host-cmd-wrap">
               <pre class="ed-add-host-cmd">{createResult.install_hint}</pre>
               <button type="button" class="dm-btn dm-btn-secondary dm-btn-xs ed-add-host-copy" onclick={copyCmd}>
-                {#if copied}<Check size={10} strokeWidth={1.5} /> Copied{:else}<Copy size={10} strokeWidth={1.5} /> Copy{/if}
+                {#if copied}<Check size={10} strokeWidth={1.5} /> {m.common_copied()}{:else}<Copy size={10} strokeWidth={1.5} /> {m.common_copy()}{/if}
               </button>
             </div>
             <div class="ed-add-host-tokenbox">
-              <span class="ed-add-host-tokenbox-label">Enrollment token</span>
+              <span class="ed-add-host-tokenbox-label">{m.hosts_add_token()}</span>
               <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
             </div>
           {/if}
@@ -228,30 +230,30 @@
       <section class="ed-add-host-section" class:active={!!createResult} class:muted={!createResult}>
         <span class="ed-add-host-step" class:active={!!createResult}>03</span>
         <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">Wait for the host to connect</h3>
+          <h3 class="ed-add-host-section-title">{m.hosts_add_wait_title()}</h3>
           {#if !createResult}
-            <p class="ed-add-host-blurb">Starts after you run the install command.</p>
+            <p class="ed-add-host-blurb">{m.hosts_add_wait_blurb()}</p>
           {:else if !connected}
             <div class="ed-add-host-waiting">
               <span class="ed-add-host-pulse" aria-hidden="true"></span>
               <div>
                 <div class="ed-add-host-waiting-text">
-                  Waiting for <b>{createResult.agent.name}</b> to connect…
+                  {m.hosts_add_waiting_before()} <b>{createResult.agent.name}</b> {m.hosts_add_waiting_after()}
                 </div>
-                <div class="ed-add-host-waiting-meta">Usually 10–30 seconds after the install</div>
+                <div class="ed-add-host-waiting-meta">{m.hosts_add_waiting_meta()}</div>
               </div>
             </div>
             <p class="ed-add-host-troubleshoot">
-              Not connected after 2 minutes? Check that {createResult.agent.name} can reach <code class="dm-mono">{createResult.agent_url}</code>.
+              {m.hosts_add_troubleshoot({ name: createResult.agent.name })} <code class="dm-mono">{createResult.agent_url}</code>.
             </p>
           {:else}
             <div class="ed-add-host-success">
               <span class="ed-add-host-success-mark"><Check size={13} strokeWidth={1.5} /></span>
               <div>
                 <div class="ed-add-host-success-text">
-                  <b>{createResult.agent.name}</b> is online.
+                  <b>{createResult.agent.name}</b> {m.hosts_add_is_online()}
                 </div>
-                <div class="ed-add-host-success-meta">Closing…</div>
+                <div class="ed-add-host-success-meta">{m.hosts_add_closing()}</div>
               </div>
             </div>
           {/if}
@@ -263,7 +265,7 @@
       <span class="dm-sp"></span>
       <div class="ed-actions">
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={onclose}>
-          {connected ? 'Done' : 'Cancel'}
+          {connected ? m.common_done() : m.common_cancel()}
         </button>
       </div>
     </footer>

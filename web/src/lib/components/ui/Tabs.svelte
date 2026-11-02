@@ -9,13 +9,14 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Underlined tabs for 2-6 fixed views of one object. With `href` the tabs
   // are links (deep-linkable); otherwise buttons that call onchange.
   let {
     tabs,
     active,
     onchange,
-    label = 'Sections'
+    label = m.ui_tabs_label()
   }: { tabs: TabItem[]; active: string; onchange?: (key: string) => void; label?: string } = $props();
 
   let root: HTMLElement;
@@ -42,7 +43,7 @@
         data-sveltekit-noscroll
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
             class="dot"
-            title="Needs attention"
+            title={m.ui_tabs_needs_attention()}
           ></span>{/if}</a
       >
     {:else}
@@ -55,7 +56,7 @@
         onclick={() => onchange?.(t.key)}
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
             class="dot"
-            title="Needs attention"
+            title={m.ui_tabs_needs_attention()}
           ></span>{/if}</button
       >
     {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { api, type UpdateStatus } from '$lib/api';
   import { auth } from '$lib/stores/auth.svelte';
   import { notices } from '$lib/stores/notices.svelte';
@@ -63,10 +64,10 @@
       </div>
       <div class="flex-1 min-w-[12rem]">
         <span class="font-medium text-[var(--fg)]">
-          Update available: {status.latest_version}
+          {m.ui_update_available({ version: status.latest_version })}
         </span>
         <span class="text-[var(--fg-muted)] ml-1">
-          · running {status.current_version}
+          · {m.ui_update_running({ version: status.current_version })}
         </span>
       </div>
       {#if status.release_url}
@@ -76,7 +77,7 @@
           rel="noopener"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors"
         >
-          Release notes
+          {m.ui_update_release_notes()}
           <ExternalLink class="w-3 h-3" />
         </a>
       {/if}
@@ -84,7 +85,7 @@
         type="button"
         onclick={dismiss}
         class="p-1.5 rounded-md text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)] transition-colors"
-        aria-label="Dismiss update notice"
+        aria-label={m.ui_update_dismiss()}
       >
         <X class="w-4 h-4" />
       </button>

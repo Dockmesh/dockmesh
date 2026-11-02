@@ -1,9 +1,11 @@
 <script lang="ts">
   // Notification-channel create/edit. Renders type-specific structured
   // fields based on the selected channel type (9 supported types).
+  import { LANGUAGES, isLocale } from '$lib/i18n';
   import { api, ApiError, type NotificationChannel } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Modal, Switch } from '$lib/components/ui';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -20,45 +22,45 @@
   interface FieldDef { key: string; label: string; placeholder?: string; secret?: boolean; }
 
   const CHANNEL_TYPES: Array<{ id: string; label: string; fields: FieldDef[] }> = [
-    { id: 'webhook',  label: 'Generic Webhook',
-      fields: [{ key: 'url', label: 'Webhook URL', placeholder: 'https://example.com/hook' }] },
+    { id: 'webhook',  label: m.alerts_ch_generic_webhook(),
+      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://example.com/hook' }] },
     { id: 'ntfy',     label: 'ntfy.sh',
       fields: [
-        { key: 'url', label: 'Topic URL', placeholder: 'https://ntfy.sh/my-topic' },
-        { key: 'priority', label: 'Priority (1-5)', placeholder: '3' },
+        { key: 'url', label: m.alerts_ch_topic_url(), placeholder: 'https://ntfy.sh/my-topic' },
+        { key: 'priority', label: m.alerts_ch_priority(), placeholder: '3' },
       ] },
     { id: 'discord',  label: 'Discord',
-      fields: [{ key: 'url', label: 'Webhook URL', placeholder: 'https://discord.com/api/webhooks/...' }] },
+      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://discord.com/api/webhooks/...' }] },
     { id: 'slack',    label: 'Slack',
-      fields: [{ key: 'url', label: 'Webhook URL', placeholder: 'https://hooks.slack.com/services/...' }] },
+      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://hooks.slack.com/services/...' }] },
     { id: 'teams',    label: 'Microsoft Teams',
-      fields: [{ key: 'url', label: 'Webhook URL', placeholder: 'https://outlook.office.com/webhook/...' }] },
+      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://outlook.office.com/webhook/...' }] },
     { id: 'gotify',   label: 'Gotify',
       fields: [
-        { key: 'url', label: 'Server URL', placeholder: 'https://gotify.example.com' },
-        { key: 'token', label: 'App Token', placeholder: 'APP_TOKEN', secret: true },
+        { key: 'url', label: m.alerts_ch_server_url(), placeholder: 'https://gotify.example.com' },
+        { key: 'token', label: m.alerts_ch_app_token_gotify(), placeholder: 'APP_TOKEN', secret: true },
       ] },
-    { id: 'email',    label: 'Email (SMTP)',
+    { id: 'email',    label: m.alerts_ch_email(),
       fields: [
-        { key: 'host', label: 'SMTP Host', placeholder: 'smtp.example.com' },
-        { key: 'port', label: 'Port', placeholder: '587' },
-        { key: 'username', label: 'Username' },
-        { key: 'password', label: 'Password', secret: true },
-        { key: 'from', label: 'From', placeholder: 'alerts@example.com' },
-        { key: 'to', label: 'To (comma-separated)', placeholder: 'admin@example.com' },
+        { key: 'host', label: m.alerts_ch_smtp_host(), placeholder: 'smtp.example.com' },
+        { key: 'port', label: m.common_port(), placeholder: '587' },
+        { key: 'username', label: m.alerts_ch_username() },
+        { key: 'password', label: m.alerts_ch_password(), secret: true },
+        { key: 'from', label: m.alerts_ch_from(), placeholder: 'alerts@example.com' },
+        { key: 'to', label: m.alerts_ch_to(), placeholder: 'admin@example.com' },
       ] },
     { id: 'pagerduty', label: 'PagerDuty',
       fields: [
-        { key: 'integration_key', label: 'Integration Key (Events v2 routing key)', placeholder: 'R01A2B3C4D5...' },
-        { key: 'client', label: 'Client name (optional)', placeholder: 'Dockmesh' },
-        { key: 'client_url', label: 'Client URL (optional)', placeholder: 'https://dockmesh.example.com' },
+        { key: 'integration_key', label: m.alerts_ch_integration_key(), placeholder: 'R01A2B3C4D5...' },
+        { key: 'client', label: m.alerts_ch_client_name(), placeholder: 'Dockmesh' },
+        { key: 'client_url', label: m.alerts_ch_client_url(), placeholder: 'https://dockmesh.example.com' },
       ] },
     { id: 'pushover', label: 'Pushover',
       fields: [
-        { key: 'app_token', label: 'App token', placeholder: 'azGDORePK8gMaC0QOYAMyEEuzJnyUi', secret: true },
-        { key: 'user_key',  label: 'User key',  placeholder: 'uQiRzpo4DXghDmr9QzzfQu27cmVRsG', secret: true },
-        { key: 'device',    label: 'Device (optional)', placeholder: 'iphone' },
-        { key: 'sound',     label: 'Sound (optional)', placeholder: 'siren' },
+        { key: 'app_token', label: m.alerts_ch_app_token(), placeholder: 'azGDORePK8gMaC0QOYAMyEEuzJnyUi', secret: true },
+        { key: 'user_key',  label: m.alerts_ch_user_key(),  placeholder: 'uQiRzpo4DXghDmr9QzzfQu27cmVRsG', secret: true },
+        { key: 'device',    label: m.alerts_ch_device(), placeholder: 'iphone' },
+        { key: 'sound',     label: m.alerts_ch_sound(), placeholder: 'siren' },
       ] },
   ];
 
@@ -66,6 +68,7 @@
   let formName = $state('');
   let formEnabled = $state(true);
   let formFields = $state<Record<string, string>>({});
+  let formLanguage = $state('en');
   let saving = $state(false);
   let err = $state<string | null>(null);
 
@@ -85,12 +88,15 @@
         for (const [k, v] of Object.entries(cfg)) {
           fields[k] = Array.isArray(v) ? v.join(', ') : String(v ?? '');
         }
+        delete fields.language;
         formFields = fields;
+        formLanguage = isLocale(cfg.language) ? cfg.language : 'en';
       } else {
         formType = 'ntfy';
         formName = '';
         formEnabled = true;
         formFields = {};
+        formLanguage = 'en';
       }
       err = null;
       lastEditingId = editing?.id ?? null;
@@ -118,29 +124,30 @@
         }
         config[f.key] = val;
       }
+      config.language = formLanguage;
       const input = { type: formType, name: formName.trim(), config, enabled: formEnabled };
       if (editing) {
         await api.alerts.updateChannel(editing.id, input);
-        toast.success('Updated', formName);
+        toast.success(m.common_updated(), formName);
       } else {
         await api.alerts.createChannel(input);
-        toast.success('Created', formName);
+        toast.success(m.common_created(), formName);
       }
       open = false;
       onSaved();
     } catch (e2) {
-      err = e2 instanceof ApiError ? e2.message : 'save failed';
+      err = e2 instanceof ApiError ? e2.message : m.alerts_save_failed_lc();
     } finally {
       saving = false;
     }
   }
 </script>
 
-<Modal bind:open title={editing ? `Edit ${editing.name}` : 'New notification channel'} maxWidth="max-w-xl" {footer}>
+<Modal bind:open title={editing ? m.alerts_edit_name({ name: editing.name }) : m.alerts_ch_new_title()} maxWidth="max-w-xl" {footer}>
   <form id="ch-form" class="cm" onsubmit={save}>
     <div class="cm-2">
       <div class="dm-field">
-        <label for="cm-type">Type</label>
+        <label for="cm-type">{m.common_type()}</label>
         <select
           id="cm-type"
           class="dm-input"
@@ -154,8 +161,8 @@
         </select>
       </div>
       <div class="dm-field">
-        <label for="cm-name">Name</label>
-        <input id="cm-name" class="dm-input" bind:value={formName} placeholder="Ops on-call" maxlength="200" />
+        <label for="cm-name">{m.common_name()}</label>
+        <input id="cm-name" class="dm-input" bind:value={formName} placeholder={m.alerts_ch_name_ph()} maxlength="200" />
       </div>
     </div>
 
@@ -175,16 +182,26 @@
       </div>
     {/each}
 
-    <Switch bind:checked={formEnabled} label="Enabled — send notifications to this channel" />
+    <div class="dm-field">
+      <label for="cm-language">{m.lang_label()}</label>
+      <select id="cm-language" class="dm-input" bind:value={formLanguage}>
+        {#each LANGUAGES as l (l.id)}
+          <option value={l.id}>{l.label}</option>
+        {/each}
+      </select>
+      <span class="dm-sub">{formType === 'email' ? m.lead_channel_language_hint_email() : m.lead_channel_language_hint()}</span>
+    </div>
+
+    <Switch bind:checked={formEnabled} label={m.alerts_ch_enabled_label()} />
 
     {#if err}<div class="cm-err" role="alert">{err}</div>{/if}
   </form>
 </Modal>
 
 {#snippet footer()}
-  <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
+  <button type="button" class="dm-btn" onclick={() => (open = false)}>{m.common_cancel()}</button>
   <button type="submit" form="ch-form" class="dm-btn dm-btn-primary" disabled={saving || !formName.trim()}>
-    {saving ? 'Saving…' : editing ? 'Save channel' : 'Create channel'}
+    {saving ? m.common_saving() : editing ? m.alerts_ch_save() : m.alerts_ch_create()}
   </button>
 {/snippet}
 

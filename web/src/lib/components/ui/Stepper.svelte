@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Step header for multi-decision dialogs: one question per step.
   let { steps, current }: { steps: string[]; current: number } = $props();
 </script>
 
-<ol class="st" aria-label="Steps">
+<ol class="st" aria-label={m.ui_stepper_label()}>
   {#each steps as s, i (s)}
     <li class:done={i < current} class:on={i === current} aria-current={i === current ? 'step' : undefined}>
       <span class="n">{i + 1}</span><span>{s}</span>

@@ -8,6 +8,8 @@
   import Menu from '$lib/components/ui/Menu.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { BellRing, Plus } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   interface Props {
     rules: AlertRule[];
@@ -57,12 +59,12 @@
     return (r.channel_ids ?? []).map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`).join(', ');
   }
   function fmtRel(ts?: string): string {
-    if (!ts) return 'never';
+    if (!ts) return m.common_never();
     const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-    if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)} h ago`;
-    return `${Math.floor(secs / 86400)} d ago`;
+    if (secs < 60) return m.time_just_now();
+    if (secs < 3600) return m.time_min_ago({ n: Math.floor(secs / 60) });
+    if (secs < 86400) return m.time_h_ago({ n: Math.floor(secs / 3600) });
+    return m.time_d_ago({ n: Math.floor(secs / 86400) });
   }
   function capital(s: string): string {
     return s ? s[0].toUpperCase() + s.slice(1) : s;
@@ -74,38 +76,38 @@
       if (ok) toast.success(ok, r.name);
       await onReload();
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function duplicate(r: AlertRule) {
     try {
-      const input = { ...ruleToInput(r), name: r.name + ' (copy)', enabled: false };
+      const input = { ...ruleToInput(r), name: `${r.name} ${m.alerts_copy_suffix()}`, enabled: false };
       await api.alerts.createRule(input);
-      toast.success('Duplicated', input.name);
+      toast.success(m.alerts_duplicated(), input.name);
       await onReload();
     } catch (err) {
-      toast.error('Duplicate failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.alerts_duplicate_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function deleteRule(r: AlertRule) {
     if (
       !(await confirm.ask({
-        title: 'Delete alert rule',
-        message: `Delete rule "${r.name}"?`,
-        body: 'Cannot be undone. Alerts it already raised stay in the history.',
-        confirmLabel: 'Delete',
+        title: m.alerts_delete_rule_title(),
+        message: m.alerts_delete_rule_message({ name: r.name }),
+        body: m.alerts_delete_rule_body(),
+        confirmLabel: m.common_delete(),
         danger: true
       }))
     )
       return;
     try {
       await api.alerts.deleteRule(r.id);
-      toast.success('Deleted', r.name);
+      toast.success(m.alerts_deleted(), r.name);
       await onReload();
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
@@ -119,27 +121,27 @@
 {:else if rules.length === 0}
   <EmptyState
     icon={BellRing}
-    title="No alert rules yet"
-    description="A rule watches container metrics and events, hosts, disks, backups or certificates and notifies a channel."
+    title={m.alerts_sub_no_rules()}
+    description={m.alerts_rules_empty_desc()}
   >
     {#snippet action()}
-      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New rule</button>{/if}
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> {m.alerts_new_rule()}</button>{/if}
     {/snippet}
   </EmptyState>
 {:else}
   <div class="dm-toolbar">
-    <input type="search" class="dm-filter rt-search" placeholder="Filter rules…" aria-label="Filter rules" bind:value={filter} />
+    <input type="search" class="dm-filter rt-search" placeholder={m.alerts_filter_rules_ph()} aria-label={m.alerts_filter_rules()} bind:value={filter} />
   </div>
-  <div class="dm-tbl" role="table" aria-label="Alert rules">
+  <div class="dm-tbl" role="table" aria-label={m.alerts_rules_table_label()}>
     <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
       <span role="columnheader"></span>
-      <span role="columnheader">Severity</span>
-      <span role="columnheader">Rule</span>
-      <span role="columnheader">Fires when</span>
-      <span role="columnheader">Applies to</span>
-      <span role="columnheader">Channels</span>
-      <span role="columnheader">Last fired</span>
-      <span role="columnheader">On</span>
+      <span role="columnheader">{m.alerts_col_severity()}</span>
+      <span role="columnheader">{m.alerts_col_rule()}</span>
+      <span role="columnheader">{m.alerts_col_fires_when()}</span>
+      <span role="columnheader">{m.alerts_col_applies_to()}</span>
+      <span role="columnheader">{m.alerts_tab_channels()}</span>
+      <span role="columnheader">{m.alerts_col_last_fired()}</span>
+      <span role="columnheader">{m.alerts_col_on()}</span>
       <span role="columnheader"></span>
     </div>
     {#each sortedRules as r (r.id)}
@@ -148,46 +150,46 @@
       {@const scope = appliesTo(r, hostName)}
       {@const chs = channelNames(r)}
       <div class="dm-tr" class:rt-off={!r.enabled} role="row" style="grid-template-columns: {COLS}">
-        <span role="cell"><span class="dm-dot {dotTone(r)}" title={r.firing_since ? `Firing since ${new Date(r.firing_since).toLocaleString()}` : r.enabled ? 'Quiet' : 'Paused'}></span></span>
+        <span role="cell"><span class="dm-dot {dotTone(r)}" title={r.firing_since ? m.alerts_firing_since({ at: fmtDateTime(r.firing_since) }) : r.enabled ? m.alerts_quiet() : m.alerts_paused()}></span></span>
         <span role="cell" class="dm-dim">{statusWord(r.severity || 'warning')}</span>
         <span role="cell" class="dm-nm">
           {#if canUpdate}<button type="button" class="rt-name dm-t" title={r.name} onclick={() => onEdit(r)}>{r.name}</button>{:else}<span class="dm-t" title={r.name}>{r.name}</span>{/if}
           <small>
-            {r.builtin ? 'built-in' : 'custom'} · {kindLabel(kindOf(r))}{#if r.firing_since}<span class="rt-fire"> · firing</span>{/if}{#if muted} · muted until {new Date(r.muted_until!).toLocaleString()}{/if}
+            {r.builtin ? m.alerts_builtin() : m.alerts_custom()} · {kindLabel(kindOf(r))}{#if r.firing_since}<span class="rt-fire"> · {m.alerts_firing()}</span>{/if}{#if muted} · {m.alerts_muted_until({ at: fmtDateTime(r.muted_until!) })}{/if}
           </small>
         </span>
         <span role="cell" class="dm-dim" title={sentence}>{sentence}</span>
         <span role="cell" class="dm-dim" title={scope}>{scope}</span>
-        <span role="cell" class="dm-num" class:dm-dim={!chs} title={chs || 'No channel: fires are only recorded in the history'}>
-          {(r.channel_ids ?? []).length ? `${(r.channel_ids ?? []).length} · ${chs}` : 'none'}
+        <span role="cell" class="dm-num" class:dm-dim={!chs} title={chs || m.alerts_no_channel_title()}>
+          {(r.channel_ids ?? []).length ? `${(r.channel_ids ?? []).length} · ${chs}` : m.alerts_none_lc()}
         </span>
-        <span role="cell" class="dm-num dm-dim" title={r.last_triggered_at ? new Date(r.last_triggered_at).toLocaleString() : ''}>{fmtRel(r.last_triggered_at)}</span>
+        <span role="cell" class="dm-num dm-dim" title={r.last_triggered_at ? fmtDateTime(r.last_triggered_at) : ''}>{fmtRel(r.last_triggered_at)}</span>
         <span role="cell" class="dm-tr-menu">
-          <Switch checked={r.enabled} disabled={!canUpdate} label={r.enabled ? `Pause ${r.name}` : `Resume ${r.name}`} hideLabel onchange={(v) => update(r, { enabled: v })} />
+          <Switch checked={r.enabled} disabled={!canUpdate} label={r.enabled ? m.alerts_pause_rule({ name: r.name }) : m.alerts_resume_rule({ name: r.name })} hideLabel onchange={(v) => update(r, { enabled: v })} />
         </span>
         <span role="cell" class="dm-tr-menu">
           {#if canUpdate || canCreate || (canDelete && !r.builtin)}
             <Menu
-              label="Actions for {r.name}"
+              label={m.alerts_actions_for({ name: r.name })}
               items={[
-                ...(canUpdate ? [{ label: 'Edit…', onclick: () => onEdit(r) }] : []),
-                ...(canCreate ? [{ label: 'Duplicate', onclick: () => duplicate(r) }] : []),
+                ...(canUpdate ? [{ label: m.alerts_edit_ellipsis(), onclick: () => onEdit(r) }] : []),
+                ...(canCreate ? [{ label: m.alerts_duplicate(), onclick: () => duplicate(r) }] : []),
                 ...(!canUpdate
                   ? []
                   : muted
-                    ? [{ label: 'Unmute', onclick: () => update(r, { muted_until: '' }, 'Unmuted') }]
-                    : [{ label: 'Mute for 1 hour', onclick: () => update(r, { muted_until: new Date(Date.now() + 3600000).toISOString() }, 'Muted for 1 h') }]),
-                ...(r.builtin || !canDelete ? [] : [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteRule(r) }])
+                    ? [{ label: m.alerts_unmute(), onclick: () => update(r, { muted_until: '' }, m.alerts_unmuted()) }]
+                    : [{ label: m.alerts_mute_1h(), onclick: () => update(r, { muted_until: new Date(Date.now() + 3600000).toISOString() }, m.alerts_muted_1h()) }]),
+                ...(r.builtin || !canDelete ? [] : [{ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteRule(r) }])
               ]}
             />
           {/if}
         </span>
       </div>
     {:else}
-      <div class="dm-empty">No rules match “{filter}”.</div>
+      <div class="dm-empty">{m.alerts_rules_no_match({ filter })}</div>
     {/each}
   </div>
-  <p class="dm-sub">Rules send to the channels set up under Channels. <InfoTip text="A paused rule is not evaluated. A muted rule is evaluated and recorded but notifies nobody." /></p>
+  <p class="dm-sub">{m.alerts_rules_footer()} <InfoTip text={m.alerts_rules_footer_tip()} /></p>
 {/if}
 
 <style>

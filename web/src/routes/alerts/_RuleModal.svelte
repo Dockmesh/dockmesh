@@ -7,6 +7,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { Modal, Segmented, Switch } from '$lib/components/ui';
   import { BellRing } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -123,16 +124,16 @@
       const cur = form.container_filter;
       if (cur && cur !== '*' && !names.includes(cur)) out.push({ value: 'f:' + cur, label: `${noun} ${cur}` });
     };
-    if (kind === 'backup_failed' || kind === 'backup_missed') filterList('All backup jobs', jobs, 'Job');
-    else if (kind === 'cert_expiry') filterList('All proxy sites', sites, 'Site');
+    if (kind === 'backup_failed' || kind === 'backup_missed') filterList(m.alerts_scope_all_jobs(), jobs, m.alerts_scope_job());
+    else if (kind === 'cert_expiry') filterList(m.alerts_scope_all_sites(), sites, m.alerts_scope_site());
     else {
-      if (scopeValue === 'current') out.push({ value: 'current', label: `Current: ${appliesTo(form, hostName)}` });
-      out.push({ value: 'all', label: watchesContainers ? 'All containers' : kind === 'host_offline' ? 'All agents' : 'All hosts' });
-      if (isContainerKind(kind)) for (const s of stacks) out.push({ value: 's:' + s, label: `Stack ${s}` });
-      for (const h of hosts.filter((h) => h.kind !== 'all')) out.push({ value: 'h:' + h.id, label: watchesContainers ? `Containers on ${h.name}` : h.name });
-      for (const t of tags) out.push({ value: 't:' + t, label: `Hosts with tag ${t}` });
+      if (scopeValue === 'current') out.push({ value: 'current', label: m.alerts_scope_current({ scope: appliesTo(form, hostName) }) });
+      out.push({ value: 'all', label: watchesContainers ? m.alerts_scope_all_containers() : kind === 'host_offline' ? m.alerts_scope_all_agents() : m.common_all_hosts() });
+      if (isContainerKind(kind)) for (const s of stacks) out.push({ value: 's:' + s, label: m.alerts_scope_stack({ stack: s }) });
+      for (const h of hosts.filter((h) => h.kind !== 'all')) out.push({ value: 'h:' + h.id, label: watchesContainers ? m.alerts_scope_containers_on({ host: h.name }) : h.name });
+      for (const t of tags) out.push({ value: 't:' + t, label: m.alerts_scope_hosts_tag({ tag: t }) });
       if (isContainerKind(kind) && form.scope_stack && !stacks.includes(form.scope_stack) && scopeValue !== 'current')
-        out.push({ value: 's:' + form.scope_stack, label: `Stack ${form.scope_stack}` });
+        out.push({ value: 's:' + form.scope_stack, label: m.alerts_scope_stack({ stack: form.scope_stack }) });
     }
     return out;
   });
@@ -151,7 +152,7 @@
   const hasNameFilter = $derived(kind !== 'backup_failed' && kind !== 'backup_missed' && kind !== 'cert_expiry');
 
   const durations = [
-    { value: 0, label: 'immediately' },
+    { value: 0, label: m.alerts_immediately() },
     { value: 30, label: '30 s' },
     { value: 60, label: '1 min' },
     { value: 120, label: '2 min' },
@@ -191,26 +192,26 @@
     try {
       if (editing) {
         await api.alerts.updateRule(editing.id, input);
-        toast.success('Rule saved', input.name);
+        toast.success(m.alerts_rule_saved(), input.name);
       } else {
         await api.alerts.createRule(input);
-        toast.success('Rule created', input.name);
+        toast.success(m.alerts_rule_created(), input.name);
       }
       open = false;
       onSaved();
     } catch (e2) {
-      err = e2 instanceof ApiError ? e2.message : 'Saving failed';
+      err = e2 instanceof ApiError ? e2.message : m.alerts_saving_failed();
     } finally {
       saving = false;
     }
   }
 </script>
 
-<Modal bind:open title={editing ? `Edit ${editing.name}` : 'New alert rule'} maxWidth="max-w-2xl" {footer}>
+<Modal bind:open title={editing ? m.alerts_edit_name({ name: editing.name }) : m.alerts_rule_new_title()} maxWidth="max-w-2xl" {footer}>
   <form id="rule-form" class="rm" onsubmit={save}>
     <div class="rm-2">
       <div class="dm-field">
-        <label for="rm-kind">Watch</label>
+        <label for="rm-kind">{m.alerts_watch()}</label>
         <select id="rm-kind" class="dm-input" value={kind} disabled={!!editing} onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}>
           {#each KIND_GROUPS as g (g.group)}
             <optgroup label={g.group}>
@@ -218,10 +219,10 @@
             </optgroup>
           {/each}
         </select>
-        {#if editing}<span class="rm-hint">The type of an existing rule cannot be changed.</span>{/if}
+        {#if editing}<span class="rm-hint">{m.alerts_kind_locked()}</span>{/if}
       </div>
       <div class="dm-field">
-        <label for="rm-scope">Applies to</label>
+        <label for="rm-scope">{m.alerts_col_applies_to()}</label>
         <select id="rm-scope" class="dm-input" value={scopeValue} onchange={(e) => setScope((e.target as HTMLSelectElement).value)}>
           {#each scopeOpts as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
         </select>
@@ -229,57 +230,57 @@
     </div>
 
     <div class="dm-field">
-      <span class="rm-label">Condition</span>
+      <span class="rm-label">{m.alerts_condition()}</span>
       <div class="rm-cond">
         {#if kind === 'metric'}
-          <select class="dm-input rm-w" aria-label="Metric" bind:value={form.metric}>
+          <select class="dm-input rm-w" aria-label={m.alerts_metric()} bind:value={form.metric}>
             <option value="cpu_percent">CPU</option>
-            <option value="mem_percent">Memory</option>
+            <option value="mem_percent">{m.alerts_memory()}</option>
           </select>
-          <select class="dm-input rm-w" aria-label="Comparison" bind:value={form.operator}>
-            <option value="gt">above</option>
-            <option value="lt">below</option>
+          <select class="dm-input rm-w" aria-label={m.alerts_comparison()} bind:value={form.operator}>
+            <option value="gt">{m.alerts_op_above()}</option>
+            <option value="lt">{m.alerts_op_below()}</option>
           </select>
-          <input type="number" class="dm-input rm-n" aria-label="Threshold in percent" min="1" max={perCore ? undefined : 100} bind:value={form.threshold} />
+          <input type="number" class="dm-input rm-n" aria-label={m.alerts_threshold_pct()} min="1" max={perCore ? undefined : 100} bind:value={form.threshold} />
           {#if form.metric === 'cpu_percent'}
-            <select class="dm-input rm-w" aria-label="CPU unit" value={form.cpu_unit || 'host'} onchange={(e) => (form.cpu_unit = (e.target as HTMLSelectElement).value as 'host' | 'core')}>
-              <option value="host">% of host</option>
-              <option value="core">% of one core</option>
+            <select class="dm-input rm-w" aria-label={m.alerts_cpu_unit()} value={form.cpu_unit || 'host'} onchange={(e) => (form.cpu_unit = (e.target as HTMLSelectElement).value as 'host' | 'core')}>
+              <option value="host">{m.alerts_pct_of_host()}</option>
+              <option value="core">{m.alerts_pct_of_core()}</option>
             </select>
-            <span>for at least</span>
+            <span>{m.alerts_for_at_least()}</span>
           {:else}
-            <span>% for at least</span>
+            <span>{m.alerts_pct_for_at_least()}</span>
           {/if}
-          <select class="dm-input rm-w" aria-label="Duration" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+          <select class="dm-input rm-w" aria-label={m.alerts_duration()} value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
             {#each withCurrent(durations, form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
           </select>
         {:else if kind === 'restart_loop'}
-          <span>More than</span>
-          <input type="number" class="dm-input rm-n" aria-label="Restarts" min="2" bind:value={form.threshold} />
-          <span>restarts within</span>
-          <select class="dm-input rm-w" aria-label="Window" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+          <span>{m.alerts_more_than()}</span>
+          <input type="number" class="dm-input rm-n" aria-label={m.alerts_restarts()} min="2" bind:value={form.threshold} />
+          <span>{m.alerts_restarts_within()}</span>
+          <select class="dm-input rm-w" aria-label={m.alerts_window()} value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
             {#each withCurrent(durations.filter((d) => d.value >= 60), form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
           </select>
         {:else if kind === 'host_offline'}
-          <span>Offline for at least</span>
-          <select class="dm-input rm-w" aria-label="Duration" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+          <span>{m.alerts_offline_for_at_least()}</span>
+          <select class="dm-input rm-w" aria-label={m.alerts_duration()} value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
             {#each withCurrent(durations, form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
           </select>
         {:else if kind === 'disk_usage'}
-          <span>At least</span>
-          <input type="number" class="dm-input rm-n" aria-label="Percent full" min="1" max="100" bind:value={form.threshold} />
-          <span>% full</span>
+          <span>{m.alerts_at_least()}</span>
+          <input type="number" class="dm-input rm-n" aria-label={m.alerts_percent_full()} min="1" max="100" bind:value={form.threshold} />
+          <span>{m.alerts_pct_full()}</span>
         {:else if kind === 'cert_expiry'}
-          <span>Expires in less than</span>
-          <input type="number" class="dm-input rm-n" aria-label="Days" min="1" bind:value={form.threshold} />
-          <span>days</span>
-          <span class="rm-hint">Caddy renews 30 days ahead, so this only fires when renewal keeps failing.</span>
+          <span>{m.alerts_expires_in_less()}</span>
+          <input type="number" class="dm-input rm-n" aria-label={m.alerts_days_label()} min="1" bind:value={form.threshold} />
+          <span>{m.alerts_days()}</span>
+          <span class="rm-hint">{m.alerts_cert_hint()}</span>
         {:else if kind === 'container_stopped'}
-          <span class="rm-hint">Fires on a non-zero exit, not on stops through Dockmesh or docker stop.</span>
+          <span class="rm-hint">{m.alerts_stopped_hint()}</span>
         {:else if kind === 'backup_missed'}
-          <span class="rm-hint">Fires when a job has no successful run within its schedule.</span>
+          <span class="rm-hint">{m.alerts_missed_hint()}</span>
         {:else}
-          <span class="rm-hint">Fires on every such event; there is nothing to set.</span>
+          <span class="rm-hint">{m.alerts_event_hint()}</span>
         {/if}
       </div>
     </div>
@@ -294,56 +295,56 @@
 
     <div class="rm-result" aria-live="polite">
       <BellRing size={14} strokeWidth={1.8} />
-      <span>Fires when {sentence}.</span>
+      <span>{m.alerts_fires_when_sentence({ sentence })}</span>
     </div>
 
     <div class="rm-2">
       <div class="dm-field">
-        <span class="rm-label">Severity</span>
+        <span class="rm-label">{m.alerts_col_severity()}</span>
         <Segmented
-          label="Severity"
+          label={m.alerts_col_severity()}
           value={form.severity}
           onchange={(k) => (form.severity = k as AlertRuleInput['severity'])}
           options={[
-            { key: 'info', label: 'Info' },
-            { key: 'warning', label: 'Warning' },
-            { key: 'critical', label: 'Critical' }
+            { key: 'info', label: m.alerts_sev_info_cap() },
+            { key: 'warning', label: m.common_warning() },
+            { key: 'critical', label: m.alerts_sev_critical_cap() }
           ]}
         />
       </div>
       <div class="dm-field">
-        <label for="rm-name">Name <span class="rm-opt">optional</span></label>
+        <label for="rm-name">{m.common_name()} <span class="rm-opt">{m.common_optional()}</span></label>
         <input id="rm-name" class="dm-input" bind:value={form.name} placeholder={defaultName} maxlength="200" />
       </div>
     </div>
 
     <div class="dm-field">
-      <span class="rm-label">Notify</span>
+      <span class="rm-label">{m.alerts_notify()}</span>
       {#if channels.length === 0}
-        <span class="rm-hint">No channels yet; until you add one, fires are only recorded.</span>
+        <span class="rm-hint">{m.alerts_no_channels_hint()}</span>
       {:else}
         <div class="rm-opts">
           {#each channels as c (c.id)}
-            <label class="rm-opt-row" class:rm-dis={!c.enabled} title={!c.enabled ? 'Channel is disabled' : undefined}>
+            <label class="rm-opt-row" class:rm-dis={!c.enabled} title={!c.enabled ? m.alerts_channel_disabled() : undefined}>
               <input type="checkbox" checked={form.channel_ids.includes(c.id)} disabled={!c.enabled} onchange={() => toggleChannel(c.id)} />
               <span>{c.name}</span>
-              <span class="dm-dim">{c.type}{c.enabled ? '' : ' · disabled'}</span>
+              <span class="dm-dim">{c.type}{c.enabled ? '' : ` · ${m.alerts_disabled_lc()}`}</span>
             </label>
           {/each}
         </div>
       {/if}
       <span class="rm-hint rm-inline">
-        Repeats at most every
-        <select class="dm-input rm-sm" aria-label="Repeat interval" value={form.cooldown_seconds} onchange={(e) => (form.cooldown_seconds = num(e))}>
+        {m.alerts_repeats_before()}
+        <select class="dm-input rm-sm" aria-label={m.alerts_repeat_interval()} value={form.cooldown_seconds} onchange={(e) => (form.cooldown_seconds = num(e))}>
           {#each withCurrent(cooldowns, form.cooldown_seconds) as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
         </select>
-        while it keeps firing, and sends “resolved” when it stops.
+        {m.alerts_repeats_after()}
       </span>
     </div>
 
     {#if editing}
       <div class="dm-field">
-        <label for="rm-mute">Mute until <span class="rm-opt">optional</span></label>
+        <label for="rm-mute">{m.alerts_mute_until()} <span class="rm-opt">{m.common_optional()}</span></label>
         <input
           id="rm-mute"
           type="datetime-local"
@@ -354,20 +355,20 @@
             form.muted_until = v ? new Date(v).toISOString() : '';
           }}
         />
-        <span class="rm-hint">The rule keeps evaluating and recording; channels are not notified.</span>
+        <span class="rm-hint">{m.alerts_mute_hint()}</span>
       </div>
     {/if}
 
-    <Switch bind:checked={form.enabled} label="Enabled — evaluate this rule and notify its channels" />
+    <Switch bind:checked={form.enabled} label={m.alerts_rule_enabled_label()} />
 
     {#if err}<div class="rm-err" role="alert">{err}</div>{/if}
   </form>
 </Modal>
 
 {#snippet footer()}
-  <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
+  <button type="button" class="dm-btn" onclick={() => (open = false)}>{m.common_cancel()}</button>
   <button type="submit" form="rule-form" class="dm-btn dm-btn-primary" disabled={saving}>
-    {saving ? 'Saving…' : editing ? 'Save rule' : 'Create rule'}
+    {saving ? m.common_saving() : editing ? m.alerts_save_rule() : m.alerts_create_rule()}
   </button>
 {/snippet}
 

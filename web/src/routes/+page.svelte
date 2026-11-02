@@ -15,7 +15,9 @@
   import { sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { stackInLens } from '$lib/lens';
-  import { actionPhrase, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
+  import { auditSentence, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime, fmtNumber } from '$lib/i18n';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -42,7 +44,7 @@
   let changes = $state<Awaited<ReturnType<typeof api.audit.list>>>([]);
   let userNames = $state(new Map<string, string>());
   $effect(() => {
-    loadUserNames(allowed('audit.view') && allowed('users.view'), api.users.list).then((m) => (userNames = m));
+    loadUserNames(allowed('audit.view') && allowed('users.view'), api.users.list).then((u) => (userNames = u));
   });
   const hostNames = $derived(hostNameMap(hosts.available));
   let attention = $state<AttentionItem[] | null>(null);
@@ -101,7 +103,7 @@
       runs = runList;
       lastLoaded = Date.now();
     } catch (err: any) {
-      if (current()) error = err.message ?? 'Failed to load';
+      if (current()) error = err.message ?? m.overview_load_failed();
     } finally {
       if (current()) {
         loading = false;
@@ -117,6 +119,11 @@
   });
   $effect(() => autoRefresh(load, 10_000));
 
+  const KIND_LABEL: Record<string, () => string> = { local: m.overview_kind_local, agent: m.overview_kind_agent };
+  const kindLabel = (kind: string) => KIND_LABEL[kind]?.() ?? kind;
+  const SEV_LABEL: Record<string, () => string> = { critical: m.activity_sev_critical, warning: m.activity_sev_warning, info: m.activity_sev_info };
+  const sevLabel = (sev: string) => SEV_LABEL[sev]?.() ?? sev;
+
   const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3, unknown: 4 };
   const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? id;
 
@@ -125,19 +132,19 @@
   interface Tile { id: string; name: string; kind: string; status: string; cpu: number | null; mem: number | null; disk: number | null }
   const tiles = $derived.by<Tile[]>(() => {
     const byId = new Map<string, SystemMetrics>();
-    for (const m of perHostMetrics) byId.set(m.host_id, m);
+    for (const pm of perHostMetrics) byId.set(pm.host_id, pm);
     const list = hosts.isAll ? hostList : hostList.filter((h) => h.id === hosts.id);
     if (!hosts.isAll && sysMetrics && list[0]) byId.set(list[0].id, sysMetrics);
     return list.map((h) => {
-      const m = byId.get(h.id);
+      const hm = byId.get(h.id);
       return {
         id: h.id,
         name: h.name,
         kind: h.kind,
         status: h.status,
-        cpu: m ? Math.round(m.cpu_percent) : null,
-        mem: m && m.mem_total > 0 ? Math.round(m.mem_percent) : null,
-        disk: m && m.disk_total > 0 ? Math.round(m.disk_percent) : null
+        cpu: hm ? Math.round(hm.cpu_percent) : null,
+        mem: hm && hm.mem_total > 0 ? Math.round(hm.mem_percent) : null,
+        disk: hm && hm.disk_total > 0 ? Math.round(hm.disk_percent) : null
       };
     });
   });
@@ -159,49 +166,49 @@
   const fleetCpu = $derived.by(() => {
     if (sysMetrics) return Math.round(sysMetrics.cpu_percent);
     if (!perHostMetrics.length) return null;
-    return Math.round(perHostMetrics.reduce((a, m) => a + m.cpu_percent, 0) / perHostMetrics.length);
+    return Math.round(perHostMetrics.reduce((a, pm) => a + pm.cpu_percent, 0) / perHostMetrics.length);
   });
 
   const stats = $derived.by<Stat[]>(() => {
     const out: Stat[] = [
       {
-        label: 'Hosts',
+        label: m.common_hosts(),
         value: `${online} / ${lensHosts.length}`,
-        note: offline.length ? `${offline.length} offline` : 'all online',
+        note: offline.length ? m.overview_hosts_offline({ count: offline.length }) : m.overview_all_online(),
         tone: offline.length ? 'bad' : '',
         href: '/hosts'
       },
       {
-        label: 'Stacks',
+        label: m.common_stacks(),
         value: stackRows.length,
-        note: issues.length ? `${issues.length} need attention` : 'all healthy',
+        note: issues.length ? m.overview_stacks_attention({ count: issues.length }) : m.overview_all_healthy(),
         tone: issues.length ? 'warn' : '',
         href: '/stacks'
       },
       {
-        label: 'Containers',
+        label: m.common_containers(),
         value: summary ? `${summary.running} / ${summary.total}` : '—',
-        note: summary?.unhealthy ? `${summary.unhealthy} unhealthy` : 'running',
+        note: summary?.unhealthy ? m.overview_n_unhealthy({ count: summary.unhealthy }) : m.overview_containers_running(),
         tone: summary?.unhealthy ? 'warn' : ''
       },
       {
-        label: hosts.isAll ? 'Fleet CPU' : sysMetrics?.docker_limited ? 'CPU · Docker limit' : 'CPU',
+        label: hosts.isAll ? m.overview_fleet_cpu() : sysMetrics?.docker_limited ? m.overview_cpu_docker_limit() : 'CPU',
         value: fleetCpu != null ? `${fleetCpu} %` : '—',
-        note: hosts.isAll ? `average of ${perHostMetrics.length} host${perHostMetrics.length === 1 ? '' : 's'}` : sysMetrics ? `${sysMetrics.cpu_used_cores.toFixed(1)} of ${sysMetrics.cpu_cores.toFixed(0)} cores` : ''
+        note: hosts.isAll ? m.overview_cpu_average({ count: perHostMetrics.length }) : sysMetrics ? m.overview_cpu_cores({ used: fmtNumber(sysMetrics.cpu_used_cores, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), total: fmtNumber(sysMetrics.cpu_cores, { maximumFractionDigits: 0 }) }) : ''
       }
     ];
     if (sysMetrics && sysMetrics.mem_total > 0) {
       out.push({
-        label: 'Memory',
+        label: m.overview_memory(),
         value: `${Math.round(sysMetrics.mem_percent)} %`,
-        note: `${fmtMem(sysMetrics.mem_used)} of ${fmtMem(sysMetrics.mem_total)}`
+        note: m.overview_mem_of({ used: fmtMem(sysMetrics.mem_used), total: fmtMem(sysMetrics.mem_total) })
       });
     }
     if (runs24) {
       out.push({
-        label: 'Backups · 24 h',
+        label: m.overview_backups_24h(),
         value: runs24.length,
-        note: failed24.length ? `${failed24.length} failed` : runs24.length ? 'all succeeded' : 'none ran',
+        note: failed24.length ? m.overview_n_failed({ count: failed24.length }) : runs24.length ? m.overview_all_succeeded() : m.overview_none_ran(),
         tone: failed24.length ? 'bad' : '',
         href: '/backups'
       });
@@ -228,8 +235,8 @@
   );
 
   const subtitle = $derived.by(() => {
-    const parts = [`${online} of ${lensHosts.length} host${lensHosts.length === 1 ? '' : 's'} online`];
-    if (summary) parts.push(`${summary.running} of ${summary.total} containers running`);
+    const parts: string[] = [m.overview_sub_hosts({ online, count: lensHosts.length })];
+    if (summary) parts.push(m.overview_sub_containers({ running: summary.running, count: summary.total }));
     if (health?.version) parts.push(`dockmesh ${fmtVersion(health.version)}`);
     return parts.join(' · ');
   });
@@ -237,7 +244,7 @@
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Overview</h1>
+    <h1>{m.common_overview()}</h1>
     <span class="dm-sub">{subtitle}</span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
@@ -250,7 +257,7 @@
   {#if health && !health.docker}
     <div class="notice bad" role="alert">
       <AlertTriangle size={14} strokeWidth={1.8} />
-      <span><b>Docker is not responding.</b> Container, stack, image and volume pages show errors until it is back. Dockmesh checks again every 10 seconds; no restart is needed.</span>
+      <span><b>{m.overview_docker_down()}</b> {m.overview_docker_down_hint()}</span>
     </div>
   {/if}
 
@@ -268,22 +275,22 @@
             <span class="hc-top">
               <span class="dm-dot {st}"></span>
               <b class="dm-trunc">{t.name}</b>
-              <span class="hc-meta dm-trunc">{t.kind} · {stacksPerHost[t.id] ?? 0} stacks</span>
+              <span class="hc-meta dm-trunc">{kindLabel(t.kind)} · {m.overview_n_stacks({ count: stacksPerHost[t.id] ?? 0 })}</span>
             </span>
             {#if t.status === 'online' && t.cpu != null}
               <span class="bar"><span>CPU</span><i><b class={pctTone(t.cpu)} style="width:{Math.min(100, t.cpu)}%"></b></i><span>{t.cpu}%</span></span>
               <span class="bar"><span>RAM</span>{#if t.mem != null}<i><b class={pctTone(t.mem, 80)} style="width:{Math.min(100, t.mem)}%"></b></i><span>{t.mem}%</span>{:else}<i></i><span>—</span>{/if}</span>
               {#if tiles.length === 1}
-                <span class="bar"><span>Disk</span>{#if t.disk != null}<i><b class={pctTone(t.disk, 80)} style="width:{Math.min(100, t.disk)}%"></b></i><span>{t.disk}%</span>{:else}<i></i><span>—</span>{/if}</span>
+                <span class="bar"><span>{m.overview_disk()}</span>{#if t.disk != null}<i><b class={pctTone(t.disk, 80)} style="width:{Math.min(100, t.disk)}%"></b></i><span>{t.disk}%</span>{:else}<i></i><span>—</span>{/if}</span>
               {/if}
             {:else}
-              <span class="hc-off dm-trunc">{t.status === 'online' ? 'no metrics' : t.status}</span>
+              <span class="hc-off dm-trunc">{t.status === 'online' ? m.overview_no_metrics() : t.status}</span>
               <span class="hc-pad"></span>
             {/if}
           </a>
         {/each}
         {#if tiles.length > TILE_LIMIT}
-          <a class="hostcard more" href="/hosts">{tiles.length - TILE_LIMIT} more hosts →</a>
+          <a class="hostcard more" href="/hosts">{m.overview_more_hosts({ count: tiles.length - TILE_LIMIT })}</a>
         {/if}
       </div>
     {/if}
@@ -292,23 +299,23 @@
       <div class="box">
         {#if attnSorted.length}
           <div class="box-h">
-            <h3>Needs attention <span class="dm-dim dm-num">{attnSorted.length}</span></h3>
+            <h3>{m.overview_needs_attention()} <span class="dm-dim dm-num">{attnSorted.length}</span></h3>
           </div>
           {#each attnSorted.slice(0, ATTN_LIMIT) as a (a.id)}
             <div class="attn">
-              <StatusChip tone={sevTone(a.severity)} label={a.severity} />
+              <StatusChip tone={sevTone(a.severity)} label={sevLabel(a.severity)} />
               <div class="t dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
-              {#if a.since}<span class="dm-num dm-dim" title={new Date(a.since).toLocaleString()}>{fmtAgo(a.since)}</span>{/if}
-              {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>Open</a>{/if}
+              {#if a.since}<span class="dm-num dm-dim" title={fmtDateTime(a.since)}>{fmtAgo(a.since)}</span>{/if}
+              {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}
             </div>
           {/each}
           {#if attnSorted.length > ATTN_LIMIT}
-            <div class="attn more"><a class="dm-btn dm-btn-ghost dm-btn-sm" href="/activity">View all ({attnSorted.length})</a></div>
+            <div class="attn more"><a class="dm-btn dm-btn-ghost dm-btn-sm" href="/activity">{m.overview_view_all({ count: attnSorted.length })}</a></div>
           {/if}
         {:else}
           <div class="attn">
-            <StatusChip tone="ok" label="All good" />
-            <div class="t dm-trunc"><b>Nothing needs attention.</b> <span>Hosts online, containers healthy, last backups succeeded.</span></div>
+            <StatusChip tone="ok" label={m.overview_all_good()} />
+            <div class="t dm-trunc"><b>{m.overview_nothing_attention()}</b> <span>{m.overview_nothing_attention_hint()}</span></div>
           </div>
         {/if}
       </div>
@@ -319,24 +326,24 @@
         {#if allowed('stacks.view')}
           <div>
             <div class="sec-h">
-              <h2 class="dm-h2">Stacks <span class="dm-dim dm-num">{stackRows.length}</span></h2>
+              <h2 class="dm-h2">{m.common_stacks()} <span class="dm-dim dm-num">{stackRows.length}</span></h2>
               <Segmented
-                label="Filter stacks"
+                label={m.overview_filter_stacks()}
                 size="sm"
                 bind:value={stackFilter}
                 options={[
-                  { key: 'all', label: 'All', count: stackCounts.all },
-                  { key: 'running', label: 'Running', count: stackCounts.running },
-                  { key: 'issues', label: 'Issues', count: stackCounts.issues },
-                  { key: 'stopped', label: 'Stopped', count: stackCounts.stopped }
+                  { key: 'all', label: m.common_all(), count: stackCounts.all },
+                  { key: 'running', label: m.common_running(), count: stackCounts.running },
+                  { key: 'issues', label: m.overview_issues(), count: stackCounts.issues },
+                  { key: 'stopped', label: m.common_stopped(), count: stackCounts.stopped }
                 ]}
               />
               <span class="dm-sp"></span>
-              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/stacks">All stacks →</a>
+              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/stacks">{m.overview_all_stacks()}</a>
             </div>
             {#if stackRows.length === 0}
-              <EmptyState title="No stacks yet" description="Deploy a compose file to get started.">
-                {#snippet action()}<a class="dm-btn dm-btn-primary" href="/stacks">Go to stacks</a>{/snippet}
+              <EmptyState title={m.overview_no_stacks()} description={m.overview_no_stacks_hint()}>
+                {#snippet action()}<a class="dm-btn dm-btn-primary" href="/stacks">{m.overview_go_to_stacks()}</a>{/snippet}
               </EmptyState>
             {:else}
               <div class="dm-tbl">
@@ -349,22 +356,22 @@
                     onclick={() => goto(`/stacks/${encodeURIComponent(s.name)}`)}
                     onkeydown={(e) => { if (e.key === 'Enter') goto(`/stacks/${encodeURIComponent(s.name)}`); }}
                   >
-                    <span class="dm-trunc"><b>{s.name}</b> {#if s.deployed !== false}<span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span>{/if}</span>
+                    <span class="dm-trunc"><b>{s.name}</b> {#if s.deployed !== false}<span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? m.overview_status_unavailable() : m.overview_not_running()}</span>{/if}</span>
                     <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} notDeployed={s.deployed === false} />
                   </div>
                 {:else}
-                  <div class="dm-empty">No stacks match.</div>
+                  <div class="dm-empty">{m.overview_no_stacks_match()}</div>
                 {/each}
               </div>
               {#if filteredStacks.length > STACK_LIMIT}
-                <a class="dm-btn dm-btn-ghost dm-btn-sm more" href="/stacks">{filteredStacks.length - STACK_LIMIT} more →</a>
+                <a class="dm-btn dm-btn-ghost dm-btn-sm more" href="/stacks">{m.overview_n_more({ count: filteredStacks.length - STACK_LIMIT })}</a>
               {/if}
             {/if}
           </div>
         {/if}
         {#if sysMetrics && (sysMetrics.mounts?.length || sysMetrics.mounts_unsupported)}
           <div>
-            <h2 class="dm-h2">Disks <span class="dm-dim dm-num">{sysMetrics.mounts?.length ?? 0}</span></h2>
+            <h2 class="dm-h2">{m.overview_disks()} <span class="dm-dim dm-num">{sysMetrics.mounts?.length ?? 0}</span></h2>
             <MountTable mounts={sysMetrics.mounts} unsupported={sysMetrics.mounts_unsupported} />
           </div>
         {/if}
@@ -374,18 +381,18 @@
         <div class="col">
           <div>
             <div class="sec-h">
-              <h2 class="dm-h2">Recent changes</h2>
+              <h2 class="dm-h2">{m.overview_recent_changes()}</h2>
               <span class="dm-sp"></span>
-              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/audit">Audit log →</a>
+              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/audit">{m.overview_audit_log()}</a>
             </div>
             <div class="dm-tbl">
               {#each changes as e (e.id)}
-                <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
+                <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={fmtDateTime(e.ts)}>
                   <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
-                  <span class="dm-trunc" title={e.action}><b>{e.username || 'System'}</b> {actionPhrase(e.action)} <b>{targetLabel(e.action, e.target, { users: userNames, hosts: hostNames })}</b></span>
+                  <span class="dm-trunc" title={e.action}>{#each auditSentence(e.action, e.username || m.audit_actor_system(), targetLabel(e.action, e.target, { users: userNames, hosts: hostNames })) as p, i (i)}{#if p.strong}<b>{p.text}</b>{:else}{p.text}{/if}{/each}</span>
                 </div>
               {:else}
-                <div class="dm-empty">No changes recorded yet.</div>
+                <div class="dm-empty">{m.overview_no_changes()}</div>
               {/each}
             </div>
           </div>

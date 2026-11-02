@@ -1,7 +1,7 @@
 {
   "extends": "$app/tsconfig",
   "include": ["src", "*"],
-  "exclude": ["src/service-worker", "src/lib/paraglide/server.js"],
+  "exclude": ["src/service-worker", "src/lib/paraglide/server.js", "e2e.config.ts"],
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

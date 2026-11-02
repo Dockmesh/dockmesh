@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Filled pill for tags and labels. Never styled like a status chip.
   let {
     label,
@@ -13,7 +14,7 @@
     type="button"
     class="tp click"
     class:on={active}
-    title={title ?? `Filter by ${label}`}
+    title={title ?? m.ui_tag_filter_by({ label })}
     onclick={(e) => {
       e.stopPropagation();
       onclick(label);

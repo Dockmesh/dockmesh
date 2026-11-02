@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { untrack } from 'svelte';
   import { tagProblem } from '../_host';
   import { urlTab } from '$lib/urlTab.svelte';
   import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
-  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
+  import { fmtDate as fmtLocaleDate, fmtDateTime, fmtNumber } from '$lib/i18n';
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, m.common_never());
   import { latest } from '$lib/latest';
   import { fmtVersion } from '$lib/version';
   import { page } from '$app/state';
@@ -67,7 +69,7 @@
     loadError = null;
     try {
       if (isLocal) {
-        const [m, ctrRes, stk, hostList, polRes] = await Promise.all([
+        const [met, ctrRes, stk, hostList, polRes] = await Promise.all([
           api.system.metrics('local').catch(() => null),
           api.containers.list(false, 'local').catch(() => []),
           api.stacks.list().catch(() => []),
@@ -77,13 +79,13 @@
         if (!current()) return;
         localName = hostList.find((h) => h.kind === 'local')?.name ?? 'local';
         agent = null;
-        if (m && !('hosts' in m)) metrics = m as SystemMetrics;
+        if (met && !('hosts' in met)) metrics = met as SystemMetrics;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
       } else {
-        const [a, m, ctrRes, stk, polRes] = await Promise.all([
-          api.agents.get(id).catch((e) => { if (current()) loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
+        const [a, met, ctrRes, stk, polRes] = await Promise.all([
+          api.agents.get(id).catch((e) => { if (current()) loadError = e instanceof ApiError ? e.message : m.hosts_load_failed_short(); return null; }),
           api.system.metrics(id).catch(() => null),
           api.containers.list(false, id).catch(() => []),
           api.stacks.list().catch(() => []),
@@ -91,7 +93,7 @@
         ]);
         if (!current()) return;
         agent = a;
-        if (m && !('hosts' in m)) metrics = m as SystemMetrics;
+        if (met && !('hosts' in met)) metrics = met as SystemMetrics;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
@@ -107,10 +109,10 @@
       tags = t;
       if (!dirty) tagsDraft = [...t];
       allFleetTags = allT;
-      migrations = migRes.filter((m) => m.source_host_id === id || m.target_host_id === id);
+      migrations = migRes.filter((mg) => mg.source_host_id === id || mg.target_host_id === id);
       lastLoaded = Date.now();
     } catch (err) {
-      if (current()) loadError = err instanceof ApiError ? err.message : 'Load failed';
+      if (current()) loadError = err instanceof ApiError ? err.message : m.hosts_load_failed_short();
     } finally {
       if (current()) {
         loading = false;
@@ -153,14 +155,38 @@
   function fmtDur(sec: number): string {
     if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min`;
     if (sec < 86400) return `${Math.round(sec / 3600)} h`;
-    return `${Math.floor(sec / 86400)} d ${Math.floor((sec % 86400) / 3600)} h`;
+    return m.hosts_dur_dh({ d: Math.floor(sec / 86400), h: Math.floor((sec % 86400) / 3600) });
   }
   function fmtUptime(iso?: string): string {
     if (!iso) return '—';
     return fmtDur((Date.now() - new Date(iso).getTime()) / 1000);
   }
   function fmtDate(iso?: string): string {
-    return iso ? iso.slice(0, 10) : '—';
+    return iso ? fmtLocaleDate(iso) : '—';
+  }
+  function statusLabel(s: string): string {
+    if (s === 'online') return m.hosts_st_online();
+    if (s === 'offline') return m.hosts_st_offline();
+    if (s === 'pending') return m.hosts_pending();
+    return s;
+  }
+  function migStatusLabel(s: string): string {
+    if (s === 'completed') return m.hosts_mig_completed();
+    if (s === 'failed') return m.hosts_mig_failed();
+    if (s === 'rolled_back') return m.hosts_mig_rolled_back();
+    if (s === 'pending') return m.hosts_pending();
+    return s;
+  }
+  function ctStateLabel(s: string): string {
+    switch (s) {
+      case 'running': return m.hosts_ct_running();
+      case 'exited': return m.hosts_ct_exited();
+      case 'paused': return m.hosts_ct_paused();
+      case 'created': return m.hosts_ct_created();
+      case 'restarting': return m.hosts_ct_restarting();
+      case 'dead': return m.hosts_ct_dead();
+      default: return s;
+    }
   }
   function selectTab(t: string) {
     openTab.set(t);
@@ -169,7 +195,7 @@
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));
   const statusTone = $derived<Tone>(status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
   const hostname = $derived(isLocal ? 'localhost' : (agent?.hostname ?? ''));
-  const hostKind = $derived(isLocal ? 'local' : 'agent');
+  const hostKind = $derived(isLocal ? m.hosts_kind_local() : m.hosts_kind_agent());
   const hostName = $derived(isLocal ? localName : (agent?.name ?? id));
   const hostVersion = $derived(isLocal ? upgradePolicyVersion : (agent?.version ?? ''));
 
@@ -191,34 +217,34 @@
   }
   const snapshot = $derived([
     {
-      label: metrics?.docker_limited ? 'CPU · Docker limit' : 'CPU',
+      label: metrics?.docker_limited ? m.hosts_cpu_docker_limit() : 'CPU',
       value: cpuPct != null ? `${cpuPct} %` : '—',
-      note: metrics ? `${metrics.cpu_used_cores.toFixed(2)} of ${metrics.cpu_cores.toFixed(2)} cores` : '',
+      note: metrics ? m.hosts_cores_of({ used: fmtNumber(metrics.cpu_used_cores, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), total: fmtNumber(metrics.cpu_cores, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }) : '',
       tone: tone(cpuPct)
     },
     {
-      label: metrics?.docker_limited ? 'Memory · Docker limit' : 'Memory',
+      label: metrics?.docker_limited ? m.hosts_mem_docker_limit() : m.hosts_col_memory(),
       value: memPct != null ? `${memPct} %` : '—',
-      note: metrics && metrics.mem_total > 0 ? `${fmtMem(metrics.mem_used)} of ${fmtMem(metrics.mem_total)}` : 'unavailable on this host',
+      note: metrics && metrics.mem_total > 0 ? m.hosts_mem_of({ used: fmtMem(metrics.mem_used), total: fmtMem(metrics.mem_total) }) : m.hosts_unavailable_here(),
       tone: tone(memPct, 80)
     },
     {
-      label: 'Disk',
+      label: m.hosts_col_disk(),
       value: diskPct != null ? `${diskPct} %` : '—',
-      note: metrics && metrics.disk_total > 0 ? `${fmtBytes(metrics.disk_used)} of ${fmtBytes(metrics.disk_total)}` : 'unavailable on this host',
+      note: metrics && metrics.disk_total > 0 ? m.hosts_mem_of({ used: fmtBytes(metrics.disk_used), total: fmtBytes(metrics.disk_total) }) : m.hosts_unavailable_here(),
       tone: tone(diskPct, 80)
     },
-    { label: 'Containers', value: `${running} / ${containers.length}`, note: 'running' },
-    { label: 'Stacks', value: stacksOnHost.length }
+    { label: m.common_containers(), value: `${running} / ${containers.length}`, note: m.hosts_ct_running() },
+    { label: m.common_stacks(), value: stacksOnHost.length }
   ]);
 
   const tabs = $derived([
-    { key: 'overview', label: 'Overview' },
-    { key: 'containers', label: 'Containers', count: containers.length },
-    { key: 'stacks', label: 'Stacks', count: stacksOnHost.length },
-    { key: 'migrations', label: 'Migrations', count: migrations.length },
-    { key: 'tags', label: 'Tags', count: tags.length },
-    { key: 'maintenance', label: 'Maintenance', dot: needsUpgrade }
+    { key: 'overview', label: m.common_overview() },
+    { key: 'containers', label: m.common_containers(), count: containers.length },
+    { key: 'stacks', label: m.common_stacks(), count: stacksOnHost.length },
+    { key: 'migrations', label: m.hosts_tab_migrations(), count: migrations.length },
+    { key: 'tags', label: m.hosts_col_tags(), count: tags.length },
+    { key: 'maintenance', label: m.hosts_tab_maintenance(), dot: needsUpgrade }
   ]);
 
   function addTagDraft(t: string) {
@@ -234,9 +260,9 @@
     try {
       tags = await api.hosts.setTags(id, tagsDraft);
       tagsDraft = [...tags];
-      toast.success('Tags saved');
+      toast.success(m.hosts_tags_saved());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally { tagsBusy = false; }
   }
 
@@ -245,17 +271,17 @@
     drainPlan = null;
     drainLoading = true;
     try { drainPlan = await api.drains.plan(id); }
-    catch (err) { toast.error('Plan failed', err instanceof ApiError ? err.message : undefined); }
+    catch (err) { toast.error(m.hosts_plan_failed(), err instanceof ApiError ? err.message : undefined); }
     finally { drainLoading = false; }
   }
   async function executeDrain() {
     drainBusy = true;
     try {
       const d = await api.drains.execute(id);
-      toast.success('Drain started', `${d.plan.length} stack(s) queued`);
+      toast.success(m.hosts_drain_started(), m.hosts_drain_queued({ n: d.plan.length }));
       showDrain = false;
     } catch (err) {
-      toast.error('Drain failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_drain_failed(), err instanceof ApiError ? err.message : undefined);
     } finally { drainBusy = false; }
   }
   async function upgradeAgent() {
@@ -263,10 +289,10 @@
     upgradeBusy = true;
     try {
       const r = await api.agents.upgrade(id);
-      toast.success('Upgrade dispatched', `${hostName} → ${fmtVersion(r.version)}`);
+      toast.success(m.hosts_upgrade_dispatched(), `${hostName} → ${fmtVersion(r.version)}`);
       await loadAll();
     } catch (err) {
-      toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_upgrade_failed(), err instanceof ApiError ? err.message : undefined);
     } finally { upgradeBusy = false; }
   }
 
@@ -276,33 +302,33 @@
   async function rotateToken() {
     if (isLocal) return;
     if (!(await confirm.ask({
-      title: `Re-issue token for ${hostName}`,
-      message: 'Generate a new enrollment token?',
-      body: 'Running the new install command re-enrolls this host under the same ID. The old certificate stays valid until then. Use this if the agent’s certificate is suspect or the host needs a reinstall.',
-      confirmLabel: 'Re-issue'
+      title: m.hosts_reissue_title({ name: hostName }),
+      message: m.hosts_reissue_message(),
+      body: m.hosts_reissue_body(),
+      confirmLabel: m.hosts_reissue()
     }))) return;
     try {
       const data = await api.agents.rotateToken(id);
       tokenModal = { open: true, token: data.token, install: data.install_hint, expiresAt: data.token_expires_at };
     } catch (err) {
-      toast.error('Re-issue failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_reissue_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function revokeHost() {
     if (isLocal) return;
     if (!(await confirm.ask({
-      title: `Revoke ${hostName}`,
-      message: `Revoke host "${hostName}"?`,
-      body: 'The agent’s certificate is invalidated. Containers running there are forgotten by Dockmesh — they keep running on the host until you stop them manually.',
-      confirmLabel: 'Revoke', danger: true, typeToConfirm: hostName
+      title: m.hosts_revoke_title({ name: hostName }),
+      message: m.hosts_revoke_message({ name: hostName }),
+      body: m.hosts_revoke_body_detail(),
+      confirmLabel: m.hosts_revoke(), danger: true, typeToConfirm: hostName
     }))) return;
     revokeBusy = true;
     try {
       await api.agents.delete(id);
-      toast.success('Revoked', hostName);
+      toast.success(m.hosts_revoked(), hostName);
       goto('/hosts');
     } catch (err) {
-      toast.error('Revoke failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.hosts_revoke_failed(), err instanceof ApiError ? err.message : undefined);
     } finally { revokeBusy = false; }
   }
 
@@ -317,40 +343,40 @@
     <Skeleton width="40%" height="1.6rem" />
     <Skeleton width="100%" height="4rem" />
   {:else if loadError && !isLocal}
-    <EmptyState tone="error" title="Could not load this host" description={loadError}>
-      {#snippet action()}<a class="dm-btn" href="/hosts">Back to hosts</a>{/snippet}
+    <EmptyState tone="error" title={m.hosts_load_one_failed()} description={loadError}>
+      {#snippet action()}<a class="dm-btn" href="/hosts">{m.hosts_back()}</a>{/snippet}
     </EmptyState>
   {:else}
     <div class="dm-ph">
       <h1>{hostName}</h1>
-      <StatusChip tone={statusTone} label={status} />
+      <StatusChip tone={statusTone} label={statusLabel(status)} />
       <span class="dm-sub dm-trunc">
-        {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · up ${fmtUptime(agent.online_since)}` : ''}
+        {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · ${m.hosts_up({ dur: fmtUptime(agent.online_since) })}` : ''}
       </span>
       <span class="htags">
         {#each tags as t (t)}<TagPill label={t} />{/each}
         {#if allowed('hosts.tag')}
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => selectTab('tags')}>{tags.length ? 'Edit' : '+ Tag'}</button>
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => selectTab('tags')}>{tags.length ? m.common_edit() : m.hosts_add_tag_btn()}</button>
         {/if}
       </span>
       <span class="dm-sp"></span>
       <LiveIndicator updatedAt={lastLoaded} onrefresh={loadAll} busy={refreshing} />
-      <button type="button" class="dm-btn" disabled={lensIsThis || status !== 'online'} onclick={() => hosts.set(id)} title="Filter every page by this host">
-        {lensIsThis ? 'Current lens' : 'Set as lens'}
+      <button type="button" class="dm-btn" disabled={lensIsThis || status !== 'online'} onclick={() => hosts.set(id)} title={m.hosts_lens_hint()}>
+        {lensIsThis ? m.hosts_lens_current() : m.hosts_lens_set()}
       </button>
       {#if allowed('hosts.update')}
-        <button type="button" class="dm-btn" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? 'The local server runs Dockmesh itself and cannot be drained' : ''}>
-          <ArrowDownToLine size={13} strokeWidth={1.8} /> Drain…
+        <button type="button" class="dm-btn" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? m.hosts_local_no_drain() : ''}>
+          <ArrowDownToLine size={13} strokeWidth={1.8} /> {m.hosts_drain_ellipsis()}
         </button>
         {#if needsUpgrade}
           <button type="button" class="dm-btn dm-btn-primary" disabled={upgradeBusy} onclick={upgradeAgent}>
-            <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? 'Upgrading…' : `Upgrade to ${fmtVersion(upgradePolicyVersion)}`}
+            <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? m.hosts_upgrading() : m.hosts_upgrade_to({ version: fmtVersion(upgradePolicyVersion) })}
           </button>
         {/if}
       {/if}
     </div>
 
-    <Tabs {tabs} active={tab} onchange={selectTab} label="Host sections" />
+    <Tabs {tabs} active={tab} onchange={selectTab} label={m.hosts_sections()} />
 
     {#if tab === 'overview'}
       <StatBar items={snapshot} />
@@ -360,74 +386,74 @@
           <TopConsumers host={id} {hostName} memTotal={metrics?.mem_total ?? 0} refreshAt={lastLoaded} />
           {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
             <div>
-              <h2 class="dm-h2">Disks</h2>
+              <h2 class="dm-h2">{m.hosts_disks()}</h2>
               <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
             </div>
           {/if}
           <div>
-            <h2 class="dm-h2">Stacks on this host <span class="dm-dim dm-num">{stacksOnHost.length}</span></h2>
+            <h2 class="dm-h2">{m.hosts_stacks_here()} <span class="dm-dim dm-num">{stacksOnHost.length}</span></h2>
             {#if stacksOnHost.length === 0}
-              <div class="dm-tbl"><div class="dm-empty">{status === 'pending' ? 'The host has not connected yet.' : `No stacks run on ${hostName}.`}</div></div>
+              <div class="dm-tbl"><div class="dm-empty">{status === 'pending' ? m.hosts_not_connected() : m.hosts_no_stacks_run({ name: hostName })}</div></div>
             {:else}
               <div class="dm-tbl">
                 {#each stacksOnHost.slice(0, 8) as s (s.name)}
                   <a class="dm-tr dm-click lnk" style="grid-template-columns: minmax(0, 1fr) 90px" href="/stacks/{encodeURIComponent(s.name)}">
                     <span class="dm-nm"><span class="dm-t">{s.name}</span></span>
-                    <span class="dm-num dm-dim" style="text-align: right">{s.containers ?? '—'} containers</span>
+                    <span class="dm-num dm-dim" style="text-align: right">{m.hosts_n_containers({ n: s.containers ?? '—' })}</span>
                   </a>
                 {/each}
               </div>
               {#if stacksOnHost.length > 8}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('stacks')}>All {stacksOnHost.length} stacks →</button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('stacks')}>{m.hosts_all_stacks({ n: stacksOnHost.length })}</button>
               {/if}
             {/if}
           </div>
         </div>
         <div class="col">
           <div>
-            <h2 class="dm-h2">Details</h2>
+            <h2 class="dm-h2">{m.common_details()}</h2>
             <dl class="dm-kv">
               <dt>ID</dt><dd class="dm-mono">{id}</dd>
-              <dt>Hostname</dt><dd class="dm-mono">{hostname || '—'}</dd>
+              <dt>{m.hosts_hostname()}</dt><dd class="dm-mono">{hostname || '—'}</dd>
               {#if !isLocal && agent}
-                <dt>OS</dt><dd>{agent.os ? `${agent.os}/${agent.arch}` : '—'}{metrics ? ` · ${metrics.cpu_cores} cores · ${fmtMem(metrics.mem_total)}` : ''}</dd>
+                <dt>OS</dt><dd>{agent.os ? `${agent.os}/${agent.arch}` : '—'}{metrics ? ` · ${m.hosts_cores({ n: metrics.cpu_cores })} · ${fmtMem(metrics.mem_total)}` : ''}</dd>
                 <dt>Docker</dt><dd class="dm-mono">{agent.docker_version || '—'}</dd>
-                <dt>Agent</dt>
+                <dt>{m.common_agent()}</dt>
                 <dd class="dm-mono">
                   {agent.version ? fmtVersion(agent.version) : '—'}
-                  {#if needsUpgrade}<span class="warn"> · server is on {fmtVersion(upgradePolicyVersion)}</span>
-                  {:else if agent.update_recommended}<span class="warn"> · agent update recommended</span>{/if}
+                  {#if needsUpgrade}<span class="warn"> · {m.hosts_server_is_on_lc({ version: fmtVersion(upgradePolicyVersion) })}</span>
+                  {:else if agent.update_recommended}<span class="warn"> · {m.hosts_update_recommended()}</span>{/if}
                 </dd>
-                <dt>Last seen</dt><dd>{fmtAgoNever(agent.last_seen_at)}</dd>
-                <dt>Online since</dt><dd>{agent.online_since ? `${fmtAgoNever(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
-                <dt>Certificate</dt><dd class="dm-mono" title={agent.cert_fingerprint}>expires {fmtDate(agent.cert_expires_at)}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
-                <dt>Enrolled</dt><dd>{fmtDate(agent.created_at)}</dd>
+                <dt>{m.hosts_last_seen()}</dt><dd>{fmtAgoNever(agent.last_seen_at)}</dd>
+                <dt>{m.hosts_online_since()}</dt><dd>{agent.online_since ? `${fmtAgoNever(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
+                <dt>{m.hosts_certificate()}</dt><dd class="dm-mono" title={agent.cert_fingerprint}>{m.hosts_expires({ date: fmtDate(agent.cert_expires_at) })}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
+                <dt>{m.hosts_enrolled()}</dt><dd>{fmtDate(agent.created_at)}</dd>
               {:else}
-                <dt>Server</dt><dd class="dm-mono">{hostVersion ? fmtVersion(hostVersion) : '—'}</dd>
-                {#if metrics}<dt>Capacity</dt><dd>{metrics.cpu_cores} cores · {fmtMem(metrics.mem_total)}</dd>{/if}
-                <dt>Uptime</dt><dd>{metrics?.uptime_seconds ? fmtDur(metrics.uptime_seconds) : '—'}</dd>
+                <dt>{m.hosts_server()}</dt><dd class="dm-mono">{hostVersion ? fmtVersion(hostVersion) : '—'}</dd>
+                {#if metrics}<dt>{m.hosts_capacity()}</dt><dd>{m.hosts_cores({ n: metrics.cpu_cores })} · {fmtMem(metrics.mem_total)}</dd>{/if}
+                <dt>{m.hosts_uptime()}</dt><dd>{metrics?.uptime_seconds ? fmtDur(metrics.uptime_seconds) : '—'}</dd>
               {/if}
-              <dt>Containers</dt><dd>{running} of {containers.length} running</dd>
+              <dt>{m.common_containers()}</dt><dd>{m.hosts_running_of({ n: running, total: containers.length })}</dd>
             </dl>
           </div>
           <div>
-            <h2 class="dm-h2">Recent migrations</h2>
+            <h2 class="dm-h2">{m.hosts_recent_migrations()}</h2>
             {#if migrations.length === 0}
-              <p class="dm-sub">No migrations involving {hostName} yet.</p>
+              <p class="dm-sub">{m.hosts_no_migrations_yet({ name: hostName })}</p>
             {:else}
               <div class="dm-tbl">
-                {#each migrations.slice(0, 5) as m (m.id)}
-                  {@const out = m.source_host_id === id}
+                {#each migrations.slice(0, 5) as mg (mg.id)}
+                  {@const out = mg.source_host_id === id}
                   <div class="dm-tr" style="grid-template-columns: 40px minmax(0, 1fr) 100px 90px">
-                    <span class="dm-num dm-dim">{out ? '↗ out' : '↙ in'}</span>
-                    <a class="dm-trunc" href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a>
-                    <StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} />
-                    <span class="dm-num dm-dim" style="text-align: right">{fmtAgoNever(m.completed_at ?? m.started_at)}</span>
+                    <span class="dm-num dm-dim">{out ? `↗ ${m.hosts_dir_out()}` : `↙ ${m.hosts_dir_in()}`}</span>
+                    <a class="dm-trunc" href="/stacks/{encodeURIComponent(mg.stack_name)}">{mg.stack_name}</a>
+                    <StatusChip tone={mg.status === 'completed' ? 'ok' : mg.status === 'failed' ? 'bad' : 'warn'} label={migStatusLabel(mg.status)} />
+                    <span class="dm-num dm-dim" style="text-align: right">{fmtAgoNever(mg.completed_at ?? mg.started_at)}</span>
                   </div>
                 {/each}
               </div>
               {#if migrations.length > 5}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('migrations')}>All {migrations.length} migrations →</button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('migrations')}>{m.hosts_all_migrations({ n: migrations.length })}</button>
               {/if}
             {/if}
           </div>
@@ -436,20 +462,20 @@
 
     {:else if tab === 'containers'}
       {#if containers.length === 0}
-        <EmptyState title="No containers" description={status === 'pending' ? 'The host has not connected yet.' : `No containers on ${hostName}.`} />
+        <EmptyState title={m.hosts_no_containers()} description={status === 'pending' ? m.hosts_not_connected() : m.hosts_no_containers_on({ name: hostName })} />
       {:else}
-        <div class="dm-tbl" role="table" aria-label="Containers on {hostName}">
+        <div class="dm-tbl" role="table" aria-label={m.hosts_containers_on({ name: hostName })}>
           <div class="dm-tr dm-th" role="row" style="grid-template-columns: {CT_COLS}">
-            <span role="columnheader">Container</span><span role="columnheader">Image</span><span role="columnheader">State</span><span role="columnheader">Status</span>
+            <span role="columnheader">{m.common_container()}</span><span role="columnheader">{m.common_image()}</span><span role="columnheader">{m.common_state()}</span><span role="columnheader">{m.common_status()}</span>
           </div>
           {#each containers as c (c.Id)}
             {@const name = c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)}
             {@const href = `/containers/${c.Id}${isLocal ? '' : `?host=${id}`}`}
             {@const st = c.State === 'running' ? (String(c.Status).includes('unhealthy') ? 'warn' : 'ok') : c.State === 'exited' || c.State === 'dead' ? 'bad' : 'off'}
             <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {CT_COLS}" {href}>
-              <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? 'standalone'}</small></span>
+              <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? m.hosts_standalone()}</small></span>
               <span role="cell" class="dm-mono dm-dim" title={c.Image}>{c.Image}</span>
-              <span role="cell"><StatusChip tone={st as Tone} label={st === 'warn' ? 'unhealthy' : c.State} /></span>
+              <span role="cell"><StatusChip tone={st as Tone} label={st === 'warn' ? m.hosts_ct_unhealthy() : ctStateLabel(c.State)} /></span>
               <span role="cell" class="dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
             </a>
           {/each}
@@ -458,19 +484,19 @@
 
     {:else if tab === 'stacks'}
       {#if stacksOnHost.length === 0}
-        <EmptyState title="No stacks here" description={`No stacks deployed on ${hostName}.`} />
+        <EmptyState title={m.hosts_no_stacks_here()} description={m.hosts_no_stacks_deployed({ name: hostName })} />
       {:else}
-        <div class="dm-tbl" role="table" aria-label="Stacks on {hostName}">
+        <div class="dm-tbl" role="table" aria-label={m.hosts_stacks_on({ name: hostName })}>
           <div class="dm-tr dm-th" role="row" style="grid-template-columns: {ST_COLS}">
-            <span role="columnheader">Stack</span><span role="columnheader">Containers</span><span role="columnheader">Volumes</span><span role="columnheader"></span>
+            <span role="columnheader">{m.common_stack()}</span><span role="columnheader">{m.common_containers()}</span><span role="columnheader">{m.common_volumes()}</span><span role="columnheader"></span>
           </div>
           {#each stacksOnHost as s (s.name)}
             <div class="dm-tr" role="row" style="grid-template-columns: {ST_COLS}">
               <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(s.name)}">{s.name}</a></span>
               <span role="cell" class="dm-num">{s.containers ?? '—'}</span>
-              <span role="cell" class="dm-dim">{s.has_volumes ? 'stateful' : '—'}</span>
+              <span role="cell" class="dm-dim">{s.has_volumes ? m.hosts_stateful() : '—'}</span>
               <span role="cell" style="text-align: right">
-                {#if allowed('stacks.migrate')}<a href="/stacks/{encodeURIComponent(s.name)}?action=migrate" class="dm-btn dm-btn-ghost dm-btn-sm">Migrate…</a>{/if}
+                {#if allowed('stacks.migrate')}<a href="/stacks/{encodeURIComponent(s.name)}?action=migrate" class="dm-btn dm-btn-ghost dm-btn-sm">{m.hosts_migrate()}</a>{/if}
               </span>
             </div>
           {/each}
@@ -479,20 +505,20 @@
 
     {:else if tab === 'migrations'}
       {#if migrations.length === 0}
-        <EmptyState title="No migrations" description={`No stack migrations involving ${hostName} yet.`} />
+        <EmptyState title={m.hosts_no_migrations()} description={m.hosts_no_stack_migrations({ name: hostName })} />
       {:else}
-        <div class="dm-tbl" role="table" aria-label="Migrations">
+        <div class="dm-tbl" role="table" aria-label={m.hosts_tab_migrations()}>
           <div class="dm-tr dm-th" role="row" style="grid-template-columns: {MG_COLS}">
-            <span role="columnheader">Stack</span><span role="columnheader">Direction</span><span role="columnheader">Status</span><span role="columnheader">Started</span><span role="columnheader">By</span><span role="columnheader">Completed</span>
+            <span role="columnheader">{m.common_stack()}</span><span role="columnheader">{m.hosts_col_direction()}</span><span role="columnheader">{m.common_status()}</span><span role="columnheader">{m.hosts_col_started()}</span><span role="columnheader">{m.hosts_col_by()}</span><span role="columnheader">{m.hosts_col_completed()}</span>
           </div>
-          {#each migrations as m (m.id)}
+          {#each migrations as mg (mg.id)}
             <div class="dm-tr" role="row" style="grid-template-columns: {MG_COLS}">
-              <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a></span>
-              <span role="cell" class="dm-num dm-dim">{m.source_host_id === id ? `→ ${m.target_host_id}` : `← ${m.source_host_id}`}</span>
-              <span role="cell"><StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} /></span>
-              <span role="cell" class="dm-num dm-dim">{fmtAgoNever(m.started_at)}</span>
-              <span role="cell" class="dm-dim">{m.initiated_by}</span>
-              <span role="cell" class="dm-num dm-dim">{m.completed_at ? fmtAgoNever(m.completed_at) : '—'}</span>
+              <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(mg.stack_name)}">{mg.stack_name}</a></span>
+              <span role="cell" class="dm-num dm-dim">{mg.source_host_id === id ? `→ ${mg.target_host_id}` : `← ${mg.source_host_id}`}</span>
+              <span role="cell"><StatusChip tone={mg.status === 'completed' ? 'ok' : mg.status === 'failed' ? 'bad' : 'warn'} label={migStatusLabel(mg.status)} /></span>
+              <span role="cell" class="dm-num dm-dim">{fmtAgoNever(mg.started_at)}</span>
+              <span role="cell" class="dm-dim">{mg.initiated_by}</span>
+              <span role="cell" class="dm-num dm-dim">{mg.completed_at ? fmtAgoNever(mg.completed_at) : '—'}</span>
             </div>
           {/each}
         </div>
@@ -501,20 +527,20 @@
     {:else if tab === 'tags'}
       <div class="dm-form-sec">
         <div>
-          <h4>Tags on this host</h4>
-          <p>Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).</p>
+          <h4>{m.hosts_tags_on_host()}</h4>
+          <p>{m.hosts_tags_on_host_hint()}</p>
         </div>
         <div>
           <div class="tagedit">
             {#each tagsDraft as t (t)}
-              <span class="tagx"><TagPill label={t} />{#if allowed('hosts.tag')}<button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button>{/if}</span>
+              <span class="tagx"><TagPill label={t} />{#if allowed('hosts.tag')}<button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label={m.hosts_remove_tag({ tag: t })}><X size={11} /></button>{/if}</span>
             {/each}
             {#if allowed('hosts.tag')}
               <input
                 type="text"
                 class="dm-filter"
-                placeholder={tagsDraft.length === 0 ? 'add a tag…' : 'add tag'}
-                aria-label="Add tag"
+                placeholder={tagsDraft.length === 0 ? m.hosts_add_a_tag_ph() : m.hosts_add_tag_ph()}
+                aria-label={m.hosts_add_tag()}
                 bind:value={tagInput}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
               />
@@ -522,16 +548,16 @@
           </div>
           {#if allowed('hosts.tag') && allFleetTags.filter((t) => !tagsDraft.includes(t)).length > 0}
             <div class="suggest">
-              <span class="dm-dim">In use:</span>
+              <span class="dm-dim">{m.hosts_in_use()}</span>
               {#each allFleetTags.filter((t) => !tagsDraft.includes(t)) as s (s)}
-                <TagPill label={s} onclick={addTagDraft} title="Add {s}" />
+                <TagPill label={s} onclick={addTagDraft} title={m.hosts_add_tag_named({ tag: s })} />
               {/each}
             </div>
           {/if}
           {#if allowed('hosts.tag')}
             <div class="row">
-              <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy || tagsDraft.join(',') === tags.join(',')} onclick={saveTags}>{tagsBusy ? 'Saving…' : 'Save tags'}</button>
-              <button type="button" class="dm-btn dm-btn-ghost" disabled={tagsDraft.join(',') === tags.join(',')} onclick={() => (tagsDraft = [...tags])}>Revert</button>
+              <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy || tagsDraft.join(',') === tags.join(',')} onclick={saveTags}>{tagsBusy ? m.common_saving() : m.hosts_save_tags()}</button>
+              <button type="button" class="dm-btn dm-btn-ghost" disabled={tagsDraft.join(',') === tags.join(',')} onclick={() => (tagsDraft = [...tags])}>{m.hosts_revert()}</button>
             </div>
           {/if}
         </div>
@@ -541,51 +567,51 @@
       <div>
         <div class="dm-form-sec">
           <div>
-            <h4>Drain host</h4>
-            <p>Moves every stack off {hostName} to other matching hosts. The host stays available for new deploys. Use before reboots or kernel upgrades.</p>
+            <h4>{m.hosts_drain_host()}</h4>
+            <p>{m.hosts_drain_host_hint({ name: hostName })}</p>
           </div>
           <div>
             <button type="button" class="dm-btn" disabled={isLocal || !allowed('hosts.update') || status !== 'online'} onclick={openDrain}>
-              <ArrowDownToLine size={13} strokeWidth={1.8} /> Plan drain…
+              <ArrowDownToLine size={13} strokeWidth={1.8} /> {m.hosts_plan_drain()}
             </button>
-            {#if isLocal}<span class="dm-sub">The local server runs Dockmesh itself and cannot be drained.</span>{/if}
+            {#if isLocal}<span class="dm-sub">{m.hosts_local_no_drain_dot()}</span>{/if}
           </div>
         </div>
         <div class="dm-form-sec">
           <div>
-            <h4>Upgrade agent</h4>
+            <h4>{m.hosts_upgrade_agent()}</h4>
             <p>
-              {#if isLocal}The server updates itself under Settings → Updates.
-              {:else if !needsUpgrade}{hostVersion ? `Already on ${fmtVersion(hostVersion)}.` : 'Version unknown.'}
-              {:else}On {fmtVersion(hostVersion)}, the server is on {fmtVersion(upgradePolicyVersion)}. The agent reconnects within about 10 seconds; containers keep running.{/if}
+              {#if isLocal}{m.hosts_server_self_update()}
+              {:else if !needsUpgrade}{hostVersion ? m.hosts_already_on({ version: fmtVersion(hostVersion) }) : m.hosts_version_unknown()}
+              {:else}{m.hosts_upgrade_explain({ current: fmtVersion(hostVersion), server: fmtVersion(upgradePolicyVersion) })}{/if}
             </p>
           </div>
           <div>
             <button type="button" class="dm-btn dm-btn-primary" disabled={isLocal || !needsUpgrade || upgradeBusy || !allowed('hosts.update')} onclick={upgradeAgent}>
-              <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? 'Upgrading…' : 'Upgrade now'}
+              <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? m.hosts_upgrading() : m.hosts_upgrade_now()}
             </button>
           </div>
         </div>
         {#if allowed('hosts.create')}
           <div class="dm-form-sec">
             <div>
-              <h4>Re-issue enrollment token</h4>
-              <p>For a suspect certificate or a reinstalled host. The old certificate is revoked once the agent presents the new one.</p>
+              <h4>{m.hosts_reissue_heading()}</h4>
+              <p>{m.hosts_reissue_hint()}</p>
             </div>
             <div>
-              <button type="button" class="dm-btn" disabled={isLocal} onclick={rotateToken}><RefreshCw size={13} strokeWidth={1.8} /> Re-issue…</button>
+              <button type="button" class="dm-btn" disabled={isLocal} onclick={rotateToken}><RefreshCw size={13} strokeWidth={1.8} /> {m.hosts_reissue_ellipsis()}</button>
             </div>
           </div>
         {/if}
         {#if allowed('hosts.delete')}
           <div class="dm-form-sec">
             <div>
-              <h4 class="danger">Revoke host</h4>
-              <p>Removes {hostName} from the fleet and invalidates its certificate. Containers keep running on the machine but are no longer managed.</p>
+              <h4 class="danger">{m.hosts_revoke_host()}</h4>
+              <p>{m.hosts_revoke_host_hint({ name: hostName })}</p>
             </div>
             <div>
               <button type="button" class="dm-btn dm-btn-danger" disabled={isLocal || revokeBusy} onclick={revokeHost}>
-                <Trash2 size={13} strokeWidth={1.8} /> {revokeBusy ? 'Revoking…' : 'Revoke…'}
+                <Trash2 size={13} strokeWidth={1.8} /> {revokeBusy ? m.hosts_revoking() : m.hosts_revoke_ellipsis()}
               </button>
             </div>
           </div>
@@ -595,18 +621,18 @@
   {/if}
 </section>
 
-<Modal bind:open={showDrain} title="Drain {hostName}" maxWidth="max-w-xl">
+<Modal bind:open={showDrain} title={m.hosts_drain_title({ name: hostName })} maxWidth="max-w-xl">
   {#if drainLoading}
-    <p class="dm-sub">Working out where each stack can go…</p>
+    <p class="dm-sub">{m.hosts_drain_planning()}</p>
   {:else if drainPlan}
     {#if drainPlan.entries.length === 0}
-      <p class="dm-sub">No stacks run here, so there is nothing to move.</p>
+      <p class="dm-sub">{m.hosts_drain_nothing()}</p>
     {:else}
       {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
       {#if stuck.length > 0}
         <div class="warnbox" role="alert">
           <AlertTriangle size={14} strokeWidth={1.8} />
-          <span><b>{stuck.length} stack{stuck.length === 1 ? '' : 's'} cannot be moved.</b> No other host carries a matching tag. Pin the stack here, drop the affinity, or add the tag to another host.</span>
+          <span><b>{m.hosts_drain_stuck({ count: stuck.length })}</b> {m.hosts_drain_stuck_hint()}</span>
         </div>
       {/if}
       <div class="dm-tbl">
@@ -614,30 +640,30 @@
           <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr)">
             <span class="dm-mono">{e.stack_name}</span>
             <span class="dm-dim">→</span>
-            <span class="dm-mono" class:bad={!e.feasible}>{e.feasible ? e.target_name : 'no candidate'}</span>
+            <span class="dm-mono" class:bad={!e.feasible}>{e.feasible ? e.target_name : m.hosts_no_candidate()}</span>
           </div>
         {/each}
       </div>
     {/if}
   {/if}
   {#snippet footer()}
-    <button type="button" class="dm-btn" onclick={() => (showDrain = false)}>Cancel</button>
+    <button type="button" class="dm-btn" onclick={() => (showDrain = false)}>{m.common_cancel()}</button>
     <button type="button" class="dm-btn dm-btn-primary" disabled={drainBusy || !drainPlan?.feasible} onclick={executeDrain}>
-      <ArrowDownToLine size={13} strokeWidth={1.8} /> {drainBusy ? 'Starting…' : 'Begin drain'}
+      <ArrowDownToLine size={13} strokeWidth={1.8} /> {drainBusy ? m.hosts_starting() : m.hosts_begin_drain()}
     </button>
   {/snippet}
 </Modal>
 
-<Modal bind:open={tokenModal.open} title="New enrollment token for {hostName}" maxWidth="max-w-xl">
+<Modal bind:open={tokenModal.open} title={m.hosts_token_title({ name: hostName })} maxWidth="max-w-xl">
   <div class="tok">
-    <p class="dm-sub">Run this on the agent host; the old certificate works until the new one is in use.</p>
+    <p class="dm-sub">{m.hosts_token_run()}</p>
     <pre class="cmd dm-mono">{tokenModal.install}</pre>
-    <p class="dm-sub">The token is shown only once and expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.</p>
+    <p class="dm-sub">{m.hosts_token_once({ date: tokenModal.expiresAt ? fmtDateTime(tokenModal.expiresAt) : '—' })}</p>
     <dl class="dm-kv"><dt>Token</dt><dd class="dm-mono">{tokenModal.token}</dd></dl>
   </div>
   {#snippet footer()}
-    <button type="button" class="dm-btn" onclick={() => copyWithToast(tokenModal.install, 'Install command copied')}>Copy install command</button>
-    <button type="button" class="dm-btn dm-btn-primary" onclick={() => (tokenModal.open = false)}>Done</button>
+    <button type="button" class="dm-btn" onclick={() => copyWithToast(tokenModal.install, m.hosts_install_copied())}>{m.hosts_copy_install()}</button>
+    <button type="button" class="dm-btn dm-btn-primary" onclick={() => (tokenModal.open = false)}>{m.common_done()}</button>
   {/snippet}
 </Modal>
 

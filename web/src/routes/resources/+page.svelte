@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Images, volumes and networks of the hosts in the lens, one tab each.
   import { fmtBytes } from '$lib/format';
+  import { fmtDate as fmtLocaleDate } from '$lib/i18n';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import {
@@ -90,7 +92,7 @@
       // permission errors that aren't actionable.
       if (canImageScan) void backfillScanCache();
     } catch (err) {
-      if (current()) toast.error('Failed to load images', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error(m.resources_load_images_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       if (current()) imagesLoading = false;
     }
@@ -186,46 +188,46 @@
 
   async function pruneImages() {
     if (!(await confirm.ask({
-      title: 'Prune dangling images',
-      message: `Remove all ${imageCounts.dangling} dangling image${imageCounts.dangling === 1 ? '' : 's'}?`,
-      body: 'Dangling images are layers no tagged image references. Safe to remove — Docker re-pulls what is needed.',
-      confirmLabel: 'Prune', danger: true
+      title: m.resources_prune_images_title(),
+      message: m.resources_prune_images_message({ count: imageCounts.dangling }),
+      body: m.resources_prune_images_body(),
+      confirmLabel: m.resources_prune(), danger: true
     }))) return;
     try {
       const r = await api.images.prune();
-      toast.success('Pruned', `reclaimed ${fmtBytes(r.SpaceReclaimed)}`);
+      toast.success(m.resources_pruned(), m.resources_reclaimed({ size: fmtBytes(r.SpaceReclaimed) }));
       await loadImages();
     } catch (err) {
-      toast.error('Prune failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function removeImage(id: string) {
     if (!(await confirm.ask({
-      title: 'Remove image',
-      message: 'Remove this image?',
-      body: 'Docker refuses if any container is still using it — stop those containers first.',
-      confirmLabel: 'Remove', danger: true
+      title: m.resources_remove_image_title(),
+      message: m.resources_remove_image_message(),
+      body: m.resources_remove_image_body(),
+      confirmLabel: m.common_remove(), danger: true
     }))) return;
     try {
       await api.images.remove(id, true);
-      toast.success('Removed');
+      toast.success(m.resources_removed());
       await loadImages();
     } catch (err) {
-      toast.error('Remove failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_remove_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function bulkRemoveImages() {
     if (!(await confirm.ask({
-      title: 'Remove images',
-      message: `Remove ${imageSelected.size} image${imageSelected.size === 1 ? '' : 's'}?`,
-      body: 'Images in use by containers are skipped with an error.',
-      confirmLabel: 'Remove', danger: true
+      title: m.resources_remove_images_title(),
+      message: m.resources_remove_images_message({ count: imageSelected.size }),
+      body: m.resources_remove_images_body(),
+      confirmLabel: m.common_remove(), danger: true
     }))) return;
     let ok = 0, fail = 0;
     for (const id of imageSelected) {
       try { await api.images.remove(id, true); ok++; } catch { fail++; }
     }
-    toast.success(`Removed: ${ok}${fail ? `, ${fail} failed` : ''}`);
+    toast.success(fail ? m.resources_removed_n_failed({ ok, fail }) : m.resources_removed_n({ ok }));
     imageSelected = new Set();
     await loadImages();
   }
@@ -255,13 +257,13 @@
     pullBusy = true;
     try {
       await api.images.pull(pullImageRef.trim());
-      toast.success('Pulled', pullImageRef);
+      toast.success(m.resources_pulled(), pullImageRef);
       pullOpen = false;
       pullImageRef = '';
       hubResults = [];
       await loadImages();
     } catch (err) {
-      toast.error('Pull failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_pull_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       pullBusy = false;
     }
@@ -288,9 +290,9 @@
       const next = new Map(scanCache);
       next.set(ref, rep);
       scanCache = next;
-      toast.success('Scan complete', `${rep.vulnerabilities.length} findings`);
+      toast.success(m.resources_scan_complete(), m.resources_n_findings({ n: rep.vulnerabilities.length }));
     } catch (err) {
-      toast.error('Scan failed', err instanceof ApiError ? err.message : 'Scanner unavailable');
+      toast.error(m.resources_scan_failed(), err instanceof ApiError ? err.message : m.resources_scanner_unavailable());
     } finally {
       scanBusy = false;
     }
@@ -319,8 +321,8 @@
           failed++;
         }
       }
-      const detail = scanned > 0 ? `${scanned} scanned${failed > 0 ? `, ${failed} failed` : ''}` : 'all images already cached';
-      toast.success('Scan all complete', detail);
+      const detail = scanned > 0 ? (failed > 0 ? m.resources_scanned_n_failed({ scanned, failed }) : m.resources_scanned_n({ scanned })) : m.resources_all_cached();
+      toast.success(m.resources_scan_all_complete(), detail);
     } finally {
       scanAllBusy = false;
     }
@@ -379,16 +381,16 @@
       const containers: any[] = isFanOut(ctrRes) ? ctrRes.items : (ctrRes as any[]);
       const usage = new Map<string, number>();
       for (const c of containers) {
-        for (const m of (c.Mounts ?? [])) {
-          if (m.Type === 'volume' && m.Name) {
-            const k = `${c.host_id ?? 'local'}/${m.Name}`;
+        for (const mt of (c.Mounts ?? [])) {
+          if (mt.Type === 'volume' && mt.Name) {
+            const k = `${c.host_id ?? 'local'}/${mt.Name}`;
             usage.set(k, (usage.get(k) ?? 0) + 1);
           }
         }
       }
       volumeUsage = usage;
     } catch (err) {
-      if (current()) toast.error('Failed to load volumes', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error(m.resources_load_volumes_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       if (current()) volumesLoading = false;
     }
@@ -459,62 +461,62 @@
     volCreating = true;
     try {
       await api.volumes.create(newVolName, newVolDriver, newVolHost);
-      toast.success('Volume created', newVolName);
+      toast.success(m.resources_volume_created(), newVolName);
       volCreateOpen = false;
       newVolName = '';
       newVolHost = hosts.id && !hosts.isAll ? hosts.id : 'local';
       await loadVolumes();
     } catch (err) {
-      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_create_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       volCreating = false;
     }
   }
   async function deleteVolume(v: VolumeRow) {
     if (!(await confirm.ask({
-      title: 'Delete volume',
-      message: `Delete volume "${v.Name}"?`,
-      body: 'Docker refuses if any container still mounts it. Data is unrecoverable once deleted.',
-      confirmLabel: 'Delete', danger: true
+      title: m.resources_delete_volume_title(),
+      message: m.resources_delete_volume_message({ name: v.Name }),
+      body: m.resources_delete_volume_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.volumes.remove(v.Name, true);
-      toast.success('Deleted', v.Name);
+      toast.success(m.resources_deleted(), v.Name);
       await loadVolumes();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function bulkDeleteVolumes() {
     if (!(await confirm.ask({
-      title: 'Delete volumes',
-      message: `Delete ${volumeSelected.size} volume${volumeSelected.size === 1 ? '' : 's'}?`,
-      body: 'Volumes in use by containers are skipped with an error. Data is unrecoverable.',
-      confirmLabel: 'Delete', danger: true
+      title: m.resources_delete_volumes_title(),
+      message: m.resources_delete_volumes_message({ count: volumeSelected.size }),
+      body: m.resources_delete_volumes_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     let ok = 0, fail = 0;
     for (const v of volumes) {
       if (!volumeSelected.has(vKey(v))) continue;
       try { await api.volumes.remove(v.Name, true); ok++; } catch { fail++; }
     }
-    toast.success(`Deleted: ${ok}${fail ? `, ${fail} failed` : ''}`);
+    toast.success(fail ? m.resources_deleted_n_failed({ ok, fail }) : m.resources_deleted_n({ ok }));
     volumeSelected = new Set();
     await loadVolumes();
   }
   async function pruneVolumes() {
     if (!(await confirm.ask({
-      title: 'Prune unused volumes',
-      message: 'Remove all volumes not used by any container?',
-      body: 'This cannot be undone. Volume data is deleted.',
-      confirmLabel: 'Prune', danger: true
+      title: m.resources_prune_volumes_title(),
+      message: m.resources_prune_volumes_message(),
+      body: m.resources_prune_volumes_body(),
+      confirmLabel: m.resources_prune(), danger: true
     }))) return;
     try {
       const r: any = await api.volumes.prune();
       const n = r?.VolumesDeleted?.length ?? 0;
-      toast.success('Pruned', `${n} volume(s) removed`);
+      toast.success(m.resources_pruned(), m.resources_volumes_removed({ n }));
       await loadVolumes();
     } catch (err) {
-      toast.error('Prune failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -558,7 +560,7 @@
         networksUnreachable = [];
       }
     } catch (err) {
-      if (current()) toast.error('Failed to load networks', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error(m.resources_load_networks_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       if (current()) networksLoading = false;
     }
@@ -617,44 +619,44 @@
     netCreating = true;
     try {
       await api.networks.create(newNetName, newNetDriver);
-      toast.success('Network created', newNetName);
+      toast.success(m.resources_network_created(), newNetName);
       netCreateOpen = false;
       newNetName = '';
       await loadNetworks();
     } catch (err) {
-      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_create_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       netCreating = false;
     }
   }
   async function deleteNetwork(n: NetworkRow) {
     if (!(await confirm.ask({
-      title: 'Delete network',
-      message: `Delete network "${n.Name}"?`,
-      body: 'Docker refuses if any container is still attached.',
-      confirmLabel: 'Delete', danger: true
+      title: m.resources_delete_network_title(),
+      message: m.resources_delete_network_message({ name: n.Name }),
+      body: m.resources_delete_network_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.networks.remove(n.Id);
-      toast.success('Deleted', n.Name);
+      toast.success(m.resources_deleted(), n.Name);
       await loadNetworks();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function pruneNetworks() {
     if (!(await confirm.ask({
-      title: 'Prune empty networks',
-      message: 'Remove all empty user networks?',
-      body: 'Networks attached to no containers are removed. System networks (bridge / host / none) are kept.',
-      confirmLabel: 'Prune', danger: true
+      title: m.resources_prune_networks_title(),
+      message: m.resources_prune_networks_message(),
+      body: m.resources_prune_networks_body(),
+      confirmLabel: m.resources_prune(), danger: true
     }))) return;
     try {
       await api.networks.prune();
-      toast.success('Pruned');
+      toast.success(m.resources_pruned());
       await loadNetworks();
     } catch (err) {
-      toast.error('Prune failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   function networkDriverPill(d: string): 'success' | 'warning' | 'default' {
@@ -704,28 +706,28 @@
       imagesPruned = r.ImagesDeleted?.length ?? 0;
       totalReclaimed += r.SpaceReclaimed ?? 0;
     } catch (err) {
-      failures.push(`images: ${err instanceof ApiError ? err.message : 'failed'}`);
+      failures.push(`${m.resources_cleanup_images_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
     }
     try {
       const r: any = await api.volumes.prune();
       volumesPruned = r?.VolumesDeleted?.length ?? 0;
       totalReclaimed += r?.SpaceReclaimed ?? 0;
     } catch (err) {
-      failures.push(`volumes: ${err instanceof ApiError ? err.message : 'failed'}`);
+      failures.push(`${m.resources_cleanup_volumes_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
     }
     try {
       const r: any = await api.networks.prune();
       networksPruned = r?.NetworksDeleted?.length ?? 0;
     } catch (err) {
-      failures.push(`networks: ${err instanceof ApiError ? err.message : 'failed'}`);
+      failures.push(`${m.resources_cleanup_networks_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
     }
     cleanupBusy = false;
     cleanupOpen = false;
     if (failures.length > 0) {
-      toast.error('Cleanup partial', failures.join(' · '));
+      toast.error(m.resources_cleanup_partial(), failures.join(' · '));
     } else {
-      toast.success('System cleanup done',
-        `${imagesPruned} images · ${volumesPruned} volumes · ${networksPruned} networks · reclaimed ${fmtBytes(totalReclaimed)}`);
+      toast.success(m.resources_cleanup_done(),
+        m.resources_cleanup_done_detail({ images: imagesPruned, volumes: volumesPruned, networks: networksPruned, size: fmtBytes(totalReclaimed) }));
     }
     await loadAll();
   }
@@ -734,17 +736,28 @@
   function fmtAge(unix: number): string {
     if (!unix) return '—';
     const d = (Date.now() / 1000 - unix) / 86400;
-    if (d < 1) return 'today';
-    if (d < 7) return `${Math.floor(d)}d ago`;
-    if (d < 30) return `${Math.floor(d / 7)}w ago`;
-    if (d < 365) return `${Math.floor(d / 30)}mo ago`;
-    return `${Math.floor(d / 365)}y ago`;
+    if (d < 1) return m.resources_age_today();
+    if (d < 7) return m.resources_age_d({ n: Math.floor(d) });
+    if (d < 30) return m.resources_age_w({ n: Math.floor(d / 7) });
+    if (d < 365) return m.resources_age_mo({ n: Math.floor(d / 30) });
+    return m.resources_age_y({ n: Math.floor(d / 365) });
   }
   function fmtDate(s?: string): string {
     if (!s) return '—';
     const d = new Date(s);
     if (isNaN(d.getTime())) return s;
-    return d.toISOString().slice(0, 10);
+    return fmtLocaleDate(d);
+  }
+  function sevLabel(s: string): string {
+    switch (s) {
+      case 'critical': return m.resources_sev_critical();
+      case 'high': return m.resources_sev_high();
+      case 'medium': return m.resources_sev_medium();
+      case 'low': return m.resources_sev_low();
+      case 'negligible': return m.resources_sev_negligible();
+      case 'unknown': return m.resources_sev_unknown();
+      default: return s;
+    }
   }
   function sevColor(s: Severity): 'danger' | 'warning' | 'info' | 'default' {
     if (s === 'critical' || s === 'high') return 'danger';
@@ -756,22 +769,22 @@
 
 <section class="dm-page resources-page">
   <div class="dm-ph">
-    <h1>Resources</h1>
-    <span class="dm-sub">{images.length} image{images.length === 1 ? '' : 's'} · {volumes.length} volume{volumes.length === 1 ? '' : 's'} · {networks.length} network{networks.length === 1 ? '' : 's'}</span>
+    <h1>{m.resources_title()}</h1>
+    <span class="dm-sub">{m.resources_n_images({ count: images.length })} · {m.resources_n_volumes({ count: volumes.length })} · {m.resources_n_networks({ count: networks.length })}</span>
     <span class="dm-sp"></span>
-    <button type="button" class="dm-btn" onclick={openCleanup} title="Prune images, volumes and networks in one go">
-      <Trash2 size={13} strokeWidth={1.8} /> System cleanup…
+    <button type="button" class="dm-btn" onclick={openCleanup} title={m.resources_cleanup_hint()}>
+      <Trash2 size={13} strokeWidth={1.8} /> {m.resources_cleanup_ellipsis()}
     </button>
   </div>
 
   <Tabs
-    label="Resource types"
+    label={m.resources_types()}
     active={tab}
     onchange={(k) => (tab = k as Tab)}
     tabs={[
-      { key: 'images', label: 'Images', count: imageCounts.all },
-      { key: 'volumes', label: 'Volumes', count: volumeCounts.all },
-      { key: 'networks', label: 'Networks', count: networkCounts.user }
+      { key: 'images', label: m.common_images(), count: imageCounts.all },
+      { key: 'volumes', label: m.common_volumes(), count: volumeCounts.all },
+      { key: 'networks', label: m.common_networks(), count: networkCounts.user }
     ]}
   />
 
@@ -781,25 +794,25 @@
   {#if tab === 'images'}
     <StatBar
       items={[
-        { label: 'Total', value: imageCounts.all, note: fmtBytes(imageTotalSize) },
-        { label: 'Dangling', value: imageCounts.dangling, note: fmtBytes(imageDanglingSize), tone: imageCounts.dangling > 0 ? 'warn' : '' },
-        { label: 'Reclaimable', value: fmtBytes(imageDanglingSize), note: 'via prune' },
-        { label: 'In use', value: imageCounts.used, note: 'attached to a container' }
+        { label: m.resources_stat_total(), value: imageCounts.all, note: fmtBytes(imageTotalSize) },
+        { label: m.resources_stat_dangling(), value: imageCounts.dangling, note: fmtBytes(imageDanglingSize), tone: imageCounts.dangling > 0 ? 'warn' : '' },
+        { label: m.resources_stat_reclaimable(), value: fmtBytes(imageDanglingSize), note: m.resources_stat_via_prune() },
+        { label: m.resources_stat_in_use(), value: imageCounts.used, note: m.resources_stat_attached() }
       ]}
     />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
-        <input type="text" class="ed-underline-input res-search-input" placeholder="search by repo, tag or sha…" bind:value={imageSearch} />
+        <input type="text" class="ed-underline-input res-search-input" placeholder={m.resources_images_search_ph()} bind:value={imageSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">Show</span>
+      <span class="ed-metric-meta res-segctrl-label">{m.resources_show()}</span>
       <div class="res-segctrl">
         {#each [
-          ['all','all',imageCounts.all],
-          ['used','used',imageCounts.used],
-          ['unused','unused',imageCounts.unused],
-          ['dangling','dangling',imageCounts.dangling],
+          ['all',m.resources_f_all(),imageCounts.all],
+          ['used',m.resources_f_used(),imageCounts.used],
+          ['unused',m.resources_f_unused(),imageCounts.unused],
+          ['dangling',m.resources_f_dangling(),imageCounts.dangling],
           ['vulnerable','CVE',imageCounts.vulnerable]
         ] as [id,label,count] (id)}
           <button type="button" class="res-segctrl-btn" class:active={imageFilter === id} onclick={() => (imageFilter = id as any)}>
@@ -809,25 +822,25 @@
       </div>
       <span class="res-spacer"></span>
       {#if imageSelected.size > 0 && canImageDelete}
-        <span class="res-bulk-count font-mono">{imageSelected.size} selected</span>
+        <span class="res-bulk-count font-mono">{m.resources_selected({ n: imageSelected.size })}</span>
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm res-bulk-danger" onclick={bulkRemoveImages}>
-          <Trash2 size={12} strokeWidth={1.5} /> Remove
+          <Trash2 size={12} strokeWidth={1.5} /> {m.common_remove()}
         </button>
       {/if}
       {#if canImageScan}
-        <button type="button" class="res-prune-btn" onclick={scanAll} disabled={scanAllBusy || images.length === 0} title="Scan every image with Grype">
-          <Shield size={12} strokeWidth={1.5} /> {scanAllBusy ? 'Scanning…' : 'Scan all'}
+        <button type="button" class="res-prune-btn" onclick={scanAll} disabled={scanAllBusy || images.length === 0} title={m.resources_scan_all_hint()}>
+          <Shield size={12} strokeWidth={1.5} /> {scanAllBusy ? m.resources_scanning() : m.resources_scan_all()}
         </button>
       {/if}
       {#if canImageDelete}
         <button type="button" class="res-prune-btn" onclick={pruneImages} disabled={imageCounts.dangling === 0}>
-          <Trash2 size={12} strokeWidth={1.5} /> Prune dangling
+          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_dangling()}
           {#if imageCounts.dangling > 0}<span class="dm-pill dm-pill-warning res-action-pill">{imageCounts.dangling}</span>{/if}
         </button>
       {/if}
       {#if canImageCreate}
         <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { pullOpen = true; pullImageRef = ''; hubResults = []; }}>
-          <Download size={12} strokeWidth={1.5} /> Pull image
+          <Download size={12} strokeWidth={1.5} /> {m.resources_pull_image()}
         </button>
       {/if}
     </div>
@@ -835,7 +848,7 @@
     {#if imagesUnreachable.length > 0}
       <div class="res-warn-banner">
         <AlertTriangle size={14} strokeWidth={1.5} />
-        <span>{imagesUnreachable.length} host(s) unreachable</span>
+        <span>{m.resources_unreachable({ n: imagesUnreachable.length })}</span>
         <span class="font-mono res-warn-detail">— {imagesUnreachable.map((u) => u.host_name).join(', ')}</span>
       </div>
     {/if}
@@ -844,11 +857,11 @@
       <div class="dm-card" style="padding: 22px;"><Skeleton width="80%" height="6rem" /></div>
     {:else if visibleImages.length === 0}
       <div class="dm-card" style="padding: 36px;">
-        <EmptyState icon={ImageIcon} title={images.length === 0 ? 'No images' : 'No images match'} description={images.length === 0 ? 'Pull an image or deploy a stack to get started.' : 'Adjust filter or search.'}>
+        <EmptyState icon={ImageIcon} title={images.length === 0 ? m.resources_no_images() : m.resources_no_images_match()} description={images.length === 0 ? m.resources_no_images_hint() : m.resources_adjust_filter()}>
           {#snippet action()}
             {#if canImageCreate && images.length === 0}
               <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => (pullOpen = true)}>
-                <Download size={12} strokeWidth={1.5} /> Pull image
+                <Download size={12} strokeWidth={1.5} /> {m.resources_pull_image()}
               </button>
             {/if}
           {/snippet}
@@ -859,12 +872,12 @@
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <input type="checkbox" disabled={!canImageDelete} checked={imageSelected.size === visibleImages.length && visibleImages.length > 0} onchange={toggleImageAll} />
-          <span>Repository : tag</span>
-          <span>Size</span>
-          <span>Created</span>
-          <span>Used by</span>
-          <span>Vulnerabilities</span>
-          <span>Host</span>
+          <span>{m.resources_col_repo_tag()}</span>
+          <span>{m.common_size()}</span>
+          <span>{m.common_created()}</span>
+          <span>{m.resources_col_used_by()}</span>
+          <span>{m.resources_col_vulns()}</span>
+          <span>{m.common_host()}</span>
           <span></span>
         </div>
         {#each visibleImages as img (img.Id + (img.host_id ?? ''))}
@@ -879,7 +892,7 @@
                 </a>
               {:else}
                 <a href={`/images/${encodeURIComponent(img.Id)}${img.host_id && img.host_id !== 'local' ? `?host=${encodeURIComponent(img.host_id)}` : ''}`} class="res-col-tag-dangling res-col-tag-link">
-                  <span class="dm-pill dm-pill-warning res-mini-pill">Dangling</span>
+                  <span class="dm-pill dm-pill-warning res-mini-pill">{m.resources_stat_dangling()}</span>
                   <span class="font-mono muted">&lt;none&gt;:&lt;none&gt;</span>
                 </a>
               {/if}
@@ -889,36 +902,36 @@
             <span class="res-cell-mono">{fmtAge(img.Created)}</span>
             <span>
               {#if isUsed(img)}
-                <span class="dm-pill dm-pill-success res-mini-pill"><span class="dm-pill-dot"></span> in use</span>
+                <span class="dm-pill dm-pill-success res-mini-pill"><span class="dm-pill-dot"></span> {m.resources_in_use_lc()}</span>
               {:else}
                 <span class="font-mono muted">—</span>
               {/if}
             </span>
             <div class="res-cve-cell">
               {#if !cve}
-                <span class="font-mono muted res-cve-empty">Not scanned</span>
+                <span class="font-mono muted res-cve-empty">{m.resources_not_scanned()}</span>
                 {#if canImageScan}
-                  <button type="button" class="res-cve-scan-btn" onclick={() => scanImage(img)} title="Scan with Grype">
-                    <Shield size={10} strokeWidth={1.5} /> scan
+                  <button type="button" class="res-cve-scan-btn" onclick={() => scanImage(img)} title={m.resources_scan_with_grype()}>
+                    <Shield size={10} strokeWidth={1.5} /> {m.resources_scan_lc()}
                   </button>
                 {/if}
               {:else if cve.vulnerabilities.length === 0}
-                <button type="button" class="res-cve-result" onclick={() => scanImage(img)} title="Re-scan">
-                  <span class="dm-pill dm-pill-success res-mini-pill"><Check size={10} strokeWidth={2} /> clean</span>
+                <button type="button" class="res-cve-result" onclick={() => scanImage(img)} title={m.resources_rescan()}>
+                  <span class="dm-pill dm-pill-success res-mini-pill"><Check size={10} strokeWidth={2} /> {m.resources_clean()}</span>
                 </button>
               {:else}
-                <button type="button" class="res-cve-result res-cve-badges" onclick={() => scanImage(img)} title="Open scan report">
-                  {#if cve.summary.critical > 0}<span class="cve-badge cve-c">C {cve.summary.critical}</span>{/if}
-                  {#if cve.summary.high > 0}<span class="cve-badge cve-h">H {cve.summary.high}</span>{/if}
-                  {#if cve.summary.medium > 0}<span class="cve-badge cve-m">M {cve.summary.medium}</span>{/if}
-                  {#if cve.summary.low > 0}<span class="cve-badge cve-l">L {cve.summary.low}</span>{/if}
+                <button type="button" class="res-cve-result res-cve-badges" onclick={() => scanImage(img)} title={m.resources_open_report()}>
+                  {#if cve.summary.critical > 0}<span class="cve-badge cve-c">{m.resources_cve_c({ n: cve.summary.critical })}</span>{/if}
+                  {#if cve.summary.high > 0}<span class="cve-badge cve-h">{m.resources_cve_h({ n: cve.summary.high })}</span>{/if}
+                  {#if cve.summary.medium > 0}<span class="cve-badge cve-m">{m.resources_cve_m({ n: cve.summary.medium })}</span>{/if}
+                  {#if cve.summary.low > 0}<span class="cve-badge cve-l">{m.resources_cve_l({ n: cve.summary.low })}</span>{/if}
                 </button>
               {/if}
             </div>
-            <span class="res-cell-mono">{img.host_name ?? img.host_id ?? 'local'}</span>
+            <span class="res-cell-mono">{img.host_name ?? img.host_id ?? m.resources_local_lc()}</span>
             <span>
               {#if canImageDelete}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => removeImage(img.Id)} title="Remove">
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => removeImage(img.Id)} title={m.common_remove()}>
                   <Trash2 size={11} strokeWidth={1.5} />
                 </button>
               {/if}
@@ -935,25 +948,25 @@
   {#if tab === 'volumes'}
     <StatBar
       items={[
-        { label: 'Volumes', value: volumeCounts.all, note: `${volumeCounts.compose} from stacks` },
-        { label: 'Orphaned', value: volumeCounts.orphan, note: 'no container attached', tone: volumeCounts.orphan > 0 ? 'warn' : '' },
-        { label: 'Anonymous', value: volumeCounts.anon, note: 'auto-named', tone: volumeCounts.anon > 0 ? 'warn' : '' },
-        { label: 'Drivers', value: volumeDriverCount, note: 'in use' }
+        { label: m.common_volumes(), value: volumeCounts.all, note: m.resources_from_stacks({ n: volumeCounts.compose }) },
+        { label: m.resources_stat_orphaned(), value: volumeCounts.orphan, note: m.resources_stat_no_container(), tone: volumeCounts.orphan > 0 ? 'warn' : '' },
+        { label: m.resources_stat_anonymous(), value: volumeCounts.anon, note: m.resources_stat_auto_named(), tone: volumeCounts.anon > 0 ? 'warn' : '' },
+        { label: m.resources_stat_drivers(), value: volumeDriverCount, note: m.resources_in_use_lc() }
       ]}
     />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
-        <input type="text" class="ed-underline-input res-search-input" placeholder="search volume name…" bind:value={volumeSearch} />
+        <input type="text" class="ed-underline-input res-search-input" placeholder={m.resources_volumes_search_ph()} bind:value={volumeSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">Show</span>
+      <span class="ed-metric-meta res-segctrl-label">{m.resources_show()}</span>
       <div class="res-segctrl">
         {#each [
-          ['all','all',volumeCounts.all],
-          ['used','in use',volumeCounts.used],
-          ['orphan','orphan',volumeCounts.orphan],
-          ['anon','anon',volumeCounts.anon],
+          ['all',m.resources_f_all(),volumeCounts.all],
+          ['used',m.resources_in_use_lc(),volumeCounts.used],
+          ['orphan',m.resources_f_orphan(),volumeCounts.orphan],
+          ['anon',m.resources_f_anon(),volumeCounts.anon],
           ['compose','compose',volumeCounts.compose]
         ] as [id,label,count] (id)}
           <button type="button" class="res-segctrl-btn" class:active={volumeFilter === id} onclick={() => (volumeFilter = id as any)}>
@@ -963,20 +976,20 @@
       </div>
       <span class="res-spacer"></span>
       {#if volumeSelected.size > 0 && canVolDelete}
-        <span class="res-bulk-count font-mono">{volumeSelected.size} selected</span>
+        <span class="res-bulk-count font-mono">{m.resources_selected({ n: volumeSelected.size })}</span>
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm res-bulk-danger" onclick={bulkDeleteVolumes}>
-          <Trash2 size={12} strokeWidth={1.5} /> Delete
+          <Trash2 size={12} strokeWidth={1.5} /> {m.common_delete()}
         </button>
       {/if}
       {#if canVolDelete}
         <button type="button" class="res-prune-btn" onclick={pruneVolumes} disabled={volumeCounts.orphan === 0}>
-          <Trash2 size={12} strokeWidth={1.5} /> Prune orphan
+          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_orphan()}
           {#if volumeCounts.orphan > 0}<span class="dm-pill dm-pill-warning res-action-pill">{volumeCounts.orphan}</span>{/if}
         </button>
       {/if}
       {#if canVolCreate}
         <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { volCreateOpen = true; newVolName = ''; newVolHost = hosts.id && !hosts.isAll ? hosts.id : 'local'; }}>
-          <Plus size={12} strokeWidth={1.5} /> Create volume
+          <Plus size={12} strokeWidth={1.5} /> {m.resources_create_volume()}
         </button>
       {/if}
     </div>
@@ -984,7 +997,7 @@
     {#if volumesUnreachable.length > 0}
       <div class="res-warn-banner">
         <AlertTriangle size={14} strokeWidth={1.5} />
-        <span>{volumesUnreachable.length} host(s) unreachable</span>
+        <span>{m.resources_unreachable({ n: volumesUnreachable.length })}</span>
         <span class="font-mono res-warn-detail">— {volumesUnreachable.map((u) => u.host_name).join(', ')}</span>
       </div>
     {/if}
@@ -993,7 +1006,7 @@
       <div class="dm-card" style="padding: 22px;"><Skeleton width="80%" height="6rem" /></div>
     {:else if visibleVolumes.length === 0}
       <div class="dm-card" style="padding: 36px;">
-        <EmptyState icon={HardDrive} title={volumes.length === 0 ? 'No volumes yet' : 'No volumes match'} description={volumes.length === 0 ? 'Stacks haven’t created any named volumes. Create one manually if you need shared persistence.' : 'Adjust filter or search.'} />
+        <EmptyState icon={HardDrive} title={volumes.length === 0 ? m.resources_no_volumes() : m.resources_no_volumes_match()} description={volumes.length === 0 ? m.resources_no_volumes_hint() : m.resources_adjust_filter()} />
       </div>
     {:else}
       {@const grid = isAll
@@ -1002,12 +1015,12 @@
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <input type="checkbox" disabled={!canVolDelete} checked={volumeSelected.size === visibleVolumes.length && visibleVolumes.length > 0} onchange={toggleVolumeAll} />
-          <span>Name</span>
-          <span>Driver</span>
-          <span>Mountpoint</span>
-          <span>Used by</span>
-          <span>Created</span>
-          {#if isAll}<span>Host</span>{/if}
+          <span>{m.common_name()}</span>
+          <span>{m.resources_col_driver()}</span>
+          <span>{m.resources_col_mountpoint()}</span>
+          <span>{m.resources_col_used_by()}</span>
+          <span>{m.common_created()}</span>
+          {#if isAll}<span>{m.common_host()}</span>{/if}
           <span></span>
         </div>
         {#each visibleVolumes as v (vKey(v))}
@@ -1019,10 +1032,10 @@
             <div class="res-col-tag">
               <a href={`/volumes/${encodeURIComponent(v.Name)}${v.host_id && v.host_id !== 'local' ? `?host=${encodeURIComponent(v.host_id)}` : ''}`} class="res-col-tag-line res-col-tag-link" class:muted-name={anon}>
                 <span class="res-name-text" title={v.Name}>{v.Name}</span>
-                {#if anon}<span class="dm-pill dm-pill-warning res-mini-pill">anon</span>{/if}
+                {#if anon}<span class="dm-pill dm-pill-warning res-mini-pill">{m.resources_f_anon()}</span>{/if}
               </a>
               {#if owner}
-                <div class="res-col-tag-sha font-mono">stack: <span class="accent">{owner}</span></div>
+                <div class="res-col-tag-sha font-mono">{m.resources_stack_prefix()} <span class="accent">{owner}</span></div>
               {/if}
             </div>
             <div>
@@ -1032,9 +1045,9 @@
             <span class="res-cell-mono ellipsis" title={v.Mountpoint}>{v.Mountpoint}</span>
             <span>
               {#if used > 0}
-                <span class="dm-pill dm-pill-success res-mini-pill"><span class="dm-pill-dot"></span> {used} container{used === 1 ? '' : 's'}</span>
+                <span class="dm-pill dm-pill-success res-mini-pill"><span class="dm-pill-dot"></span> {m.resources_n_containers({ count: used })}</span>
               {:else}
-                <span class="dm-pill dm-pill-warning res-mini-pill">Orphan</span>
+                <span class="dm-pill dm-pill-warning res-mini-pill">{m.resources_orphan()}</span>
               {/if}
             </span>
             <span class="res-cell-mono">{fmtDate(v.CreatedAt)}</span>
@@ -1043,7 +1056,7 @@
             {/if}
             <span>
               {#if canVolDelete}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => deleteVolume(v)} title="Delete">
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => deleteVolume(v)} title={m.common_delete()}>
                   <Trash2 size={11} strokeWidth={1.5} />
                 </button>
               {/if}
@@ -1052,8 +1065,7 @@
         {/each}
       </div>
       <p class="res-foot">
-        Volume size is not exposed by Docker without a per-volume <code>du -s</code>.
-        To browse contents, open the volume — every browse is logged in the audit trail.
+        {m.resources_vol_foot_before()} <code>du -s</code>{m.resources_vol_foot_after()}
       </p>
     {/if}
   {/if}
@@ -1064,25 +1076,25 @@
   {#if tab === 'networks'}
     <StatBar
       items={[
-        { label: 'Networks', value: networkCounts.user, note: `+ ${networkSystemCount} system ${showSystemNetworks ? 'shown' : 'hidden'}` },
-        { label: 'Internal', value: networkCounts.internal, note: 'no external egress' },
-        { label: 'Attachable', value: networkCounts.attachable, note: 'for swarm tasks' },
-        { label: 'Empty', value: networkCounts.empty, note: '0 containers attached', tone: networkCounts.empty > 0 ? 'warn' : '' }
+        { label: m.common_networks(), value: networkCounts.user, note: showSystemNetworks ? m.resources_system_shown({ n: networkSystemCount }) : m.resources_system_hidden({ n: networkSystemCount }) },
+        { label: m.resources_stat_internal(), value: networkCounts.internal, note: m.resources_stat_no_egress() },
+        { label: m.resources_stat_attachable(), value: networkCounts.attachable, note: m.resources_stat_swarm() },
+        { label: m.resources_stat_empty(), value: networkCounts.empty, note: m.resources_stat_zero_attached(), tone: networkCounts.empty > 0 ? 'warn' : '' }
       ]}
     />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
-        <input type="text" class="ed-underline-input res-search-input" placeholder="search network…" bind:value={networkSearch} />
+        <input type="text" class="ed-underline-input res-search-input" placeholder={m.resources_networks_search_ph()} bind:value={networkSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">Show</span>
+      <span class="ed-metric-meta res-segctrl-label">{m.resources_show()}</span>
       <div class="res-segctrl">
         {#each [
-          ['user','user',networkCounts.user],
-          ['internal','internal',networkCounts.internal],
-          ['attachable','attachable',networkCounts.attachable],
-          ['empty','empty',networkCounts.empty]
+          ['user',m.resources_f_user(),networkCounts.user],
+          ['internal',m.resources_f_internal(),networkCounts.internal],
+          ['attachable',m.resources_f_attachable(),networkCounts.attachable],
+          ['empty',m.resources_f_empty(),networkCounts.empty]
         ] as [id,label,count] (id)}
           <button type="button" class="res-segctrl-btn" class:active={networkFilter === id} onclick={() => (networkFilter = id as any)}>
             {label}<span class="seg-count">{count}</span>
@@ -1091,18 +1103,18 @@
       </div>
       <label class="res-toggle font-mono">
         <input type="checkbox" bind:checked={showSystemNetworks} />
-        show system networks
+        {m.resources_show_system()}
       </label>
       <span class="res-spacer"></span>
       {#if canNetDelete}
         <button type="button" class="res-prune-btn" onclick={pruneNetworks} disabled={networkCounts.empty === 0}>
-          <Trash2 size={12} strokeWidth={1.5} /> Prune empty
+          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_empty()}
           {#if networkCounts.empty > 0}<span class="dm-pill dm-pill-warning res-action-pill">{networkCounts.empty}</span>{/if}
         </button>
       {/if}
       {#if canNetCreate}
         <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { netCreateOpen = true; newNetName = ''; newNetDriver = 'bridge'; }}>
-          <Plus size={12} strokeWidth={1.5} /> Create network
+          <Plus size={12} strokeWidth={1.5} /> {m.resources_create_network()}
         </button>
       {/if}
     </div>
@@ -1110,7 +1122,7 @@
     {#if networksUnreachable.length > 0}
       <div class="res-warn-banner">
         <AlertTriangle size={14} strokeWidth={1.5} />
-        <span>{networksUnreachable.length} host(s) unreachable</span>
+        <span>{m.resources_unreachable({ n: networksUnreachable.length })}</span>
         <span class="font-mono res-warn-detail">— {networksUnreachable.map((u) => u.host_name).join(', ')}</span>
       </div>
     {/if}
@@ -1119,19 +1131,19 @@
       <div class="dm-card" style="padding: 22px;"><Skeleton width="80%" height="6rem" /></div>
     {:else if visibleNetworks.length === 0}
       <div class="dm-card" style="padding: 36px;">
-        <EmptyState icon={NetworkIcon} title={networks.length === 0 ? 'No networks' : 'No networks match'} description={networks.length === 0 ? 'Stacks usually create their own network on first deploy.' : 'Adjust filter, search, or toggle "show system networks".'} />
+        <EmptyState icon={NetworkIcon} title={networks.length === 0 ? m.resources_no_networks() : m.resources_no_networks_match()} description={networks.length === 0 ? m.resources_no_networks_hint() : m.resources_no_networks_match_hint()} />
       </div>
     {:else}
       {@const grid = '24px minmax(220px, 1.5fr) 140px 140px 180px 90px 100px 28px'}
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <span></span>
-          <span>Name</span>
-          <span>Driver / scope</span>
-          <span>Subnet</span>
-          <span>Flags</span>
-          <span>Containers</span>
-          <span>Created</span>
+          <span>{m.common_name()}</span>
+          <span>{m.resources_col_driver_scope()}</span>
+          <span>{m.resources_col_subnet()}</span>
+          <span>{m.resources_col_flags()}</span>
+          <span>{m.common_containers()}</span>
+          <span>{m.common_created()}</span>
           <span></span>
         </div>
         {#each visibleNetworks as n (n.Id)}
@@ -1143,12 +1155,12 @@
             <div class="res-col-tag">
               <a href={`/networks/${n.Id}`} class="res-col-tag-line res-col-tag-link">
                 <span class="res-name-text" title={n.Name}>{n.Name}</span>
-                {#if isSystem(n)}<span class="dm-pill dm-pill-neutral res-mini-pill">system</span>{/if}
+                {#if isSystem(n)}<span class="dm-pill dm-pill-neutral res-mini-pill">{m.resources_system()}</span>{/if}
               </a>
               {#if owner}
-                <div class="res-col-tag-sha font-mono">stack: <span class="accent">{owner}</span></div>
+                <div class="res-col-tag-sha font-mono">{m.resources_stack_prefix()} <span class="accent">{owner}</span></div>
               {:else}
-                <div class="res-col-tag-sha font-mono">id: {n.Id.slice(0, 12)}</div>
+                <div class="res-col-tag-sha font-mono">{m.resources_id_prefix()} {n.Id.slice(0, 12)}</div>
               {/if}
             </div>
             <div>
@@ -1157,8 +1169,8 @@
             </div>
             <span class="res-cell-mono">{subnet}</span>
             <div class="res-flags">
-              {#if n.Internal}<span class="dm-pill dm-pill-warning res-mini-pill">internal</span>{/if}
-              {#if n.Attachable}<span class="dm-pill dm-pill-neutral res-mini-pill">attachable</span>{/if}
+              {#if n.Internal}<span class="dm-pill dm-pill-warning res-mini-pill">{m.resources_f_internal()}</span>{/if}
+              {#if n.Attachable}<span class="dm-pill dm-pill-neutral res-mini-pill">{m.resources_f_attachable()}</span>{/if}
               {#if !n.Internal && !n.Attachable}<span class="font-mono muted">—</span>{/if}
             </div>
             <span>
@@ -1171,7 +1183,7 @@
             <span class="res-cell-mono">{fmtDate(n.Created)}</span>
             <span>
               {#if canNetDelete && !isSystem(n)}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => deleteNetwork(n)} title="Delete">
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => deleteNetwork(n)} title={m.common_delete()}>
                   <Trash2 size={11} strokeWidth={1.5} />
                 </button>
               {/if}
@@ -1182,11 +1194,11 @@
 
       <a href="/topology" class="dm-card res-topology">
         <div class="res-topology-text">
-          <Eyebrow>Topology · live</Eyebrow>
+          <Eyebrow>{m.resources_topology_eyebrow()}</Eyebrow>
           <p>
-            See how stacks, containers and networks connect — including which services share an internal network and where traffic exits.
+            {m.resources_topology_text()}
           </p>
-          <span class="res-topology-cta">Open topology view <ArrowUpRight size={12} strokeWidth={1.5} /></span>
+          <span class="res-topology-cta">{m.resources_topology_cta()} <ArrowUpRight size={12} strokeWidth={1.5} /></span>
         </div>
         <div class="res-topology-mini">
           <svg viewBox="0 0 200 100" width="100%" height="100%">
@@ -1207,15 +1219,15 @@
 </section>
 
 <!-- ─── Pull modal ─── -->
-<Modal bind:open={pullOpen} title="Pull image" maxWidth="max-w-lg">
+<Modal bind:open={pullOpen} title={m.resources_pull_image()} maxWidth="max-w-lg">
   <div class="space-y-3">
     <div>
-      <label for="resource-pull-input" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Image name</label>
+      <label for="resource-pull-input" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.resources_image_name()}</label>
       <input
         id="resource-pull-input"
         type="text"
         class="dm-input text-sm"
-        placeholder="nginx:alpine, postgres:16, ghcr.io/org/app:latest"
+        placeholder={m.resources_pull_ph()}
         bind:value={pullImageRef}
         oninput={onPullInput}
         disabled={pullBusy}
@@ -1229,7 +1241,7 @@
             <div class="min-w-0 flex-1">
               <div class="text-sm font-mono flex items-center gap-1.5">
                 {r.repo_name}
-                {#if r.is_official}<Badge variant="info">official</Badge>{/if}
+                {#if r.is_official}<Badge variant="info">{m.resources_official()}</Badge>{/if}
               </div>
               <div class="text-[10px] text-[var(--fg-muted)] truncate">{r.short_description}</div>
             </div>
@@ -1239,28 +1251,28 @@
       </div>
     {/if}
     <p class="text-xs text-[var(--fg-muted)]">
-      Type to search Docker Hub, or enter a full image reference including registry and tag.
+      {m.resources_pull_hint()}
     </p>
   </div>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (pullOpen = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (pullOpen = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" loading={pullBusy} disabled={pullBusy || !pullImageRef.trim()} onclick={doPull}>
-      <Download class="w-4 h-4" /> Pull
+      <Download class="w-4 h-4" /> {m.resources_pull()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- ─── Scan modal ─── -->
-<Modal bind:open={scanOpen} title="Vulnerability scan" maxWidth="max-w-4xl">
+<Modal bind:open={scanOpen} title={m.resources_scan_title()} maxWidth="max-w-4xl">
   <div class="space-y-4">
     <div class="flex items-center gap-3">
       <div class="font-mono text-sm">{scanRef}</div>
       {#if scanReport}
         <Badge variant={scanReport.vulnerabilities.length === 0 ? 'success' : 'danger'} dot>
-          {scanReport.vulnerabilities.length} finding{scanReport.vulnerabilities.length === 1 ? '' : 's'}
+          {m.resources_findings({ count: scanReport.vulnerabilities.length })}
         </Badge>
       {:else if scanBusy}
-        <Badge variant="warning" dot>scanning…</Badge>
+        <Badge variant="warning" dot>{m.resources_scanning_lc()}</Badge>
       {/if}
     </div>
 
@@ -1269,7 +1281,7 @@
            report block via {:else if}. Earlier impl had the report in
            an else-branch which sometimes left "Scanning…" stuck on
            Svelte 5 reactivity edge. -->
-      <div class="text-center py-8 text-sm text-[var(--fg-muted)]">Scanning…</div>
+      <div class="text-center py-8 text-sm text-[var(--fg-muted)]">{m.resources_scanning()}</div>
     {/if}
 
     {#if scanReport}
@@ -1277,7 +1289,7 @@
         {#each [['critical', scanReport.summary.critical], ['high', scanReport.summary.high], ['medium', scanReport.summary.medium], ['low', scanReport.summary.low], ['negligible', scanReport.summary.negligible], ['unknown', scanReport.summary.unknown]] as [sev, count] (sev)}
           <button type="button" class="dm-card p-2 text-center cursor-pointer hover:border-[var(--color-brand-500)]" class:scan-tile-active={scanFilter === sev} onclick={() => (scanFilter = scanFilter === sev ? 'all' : sev as Severity)}>
             <div class="text-lg font-bold tabular-nums">{count}</div>
-            <div class="text-[10px] uppercase text-[var(--fg-muted)]">{sev}</div>
+            <div class="text-[10px] uppercase text-[var(--fg-muted)]">{sevLabel(String(sev))}</div>
           </button>
         {/each}
       </div>
@@ -1286,17 +1298,17 @@
           <table class="w-full text-xs">
             <thead class="sticky top-0 bg-[var(--bg-elevated)]">
               <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] uppercase tracking-wider">
-                <th class="text-left px-3 py-2">Severity</th>
-                <th class="text-left px-3 py-2">Package</th>
-                <th class="text-left px-3 py-2">Version</th>
-                <th class="text-left px-3 py-2">Fixed in</th>
+                <th class="text-left px-3 py-2">{m.resources_col_severity()}</th>
+                <th class="text-left px-3 py-2">{m.resources_col_package()}</th>
+                <th class="text-left px-3 py-2">{m.resources_col_version()}</th>
+                <th class="text-left px-3 py-2">{m.resources_col_fixed_in()}</th>
                 <th class="text-left px-3 py-2">CVE</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-[var(--border)]">
               {#each scanFiltered as v (v.id)}
                 <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-3 py-1.5"><Badge variant={sevColor(v.severity)}>{v.severity}</Badge></td>
+                  <td class="px-3 py-1.5"><Badge variant={sevColor(v.severity)}>{sevLabel(v.severity)}</Badge></td>
                   <td class="px-3 py-1.5 font-mono">{v.package}</td>
                   <td class="px-3 py-1.5 font-mono">{v.version}</td>
                   <td class="px-3 py-1.5 font-mono">{v.fixed_in || '—'}</td>
@@ -1308,30 +1320,30 @@
         </div>
       {:else}
         <div class="text-sm text-[var(--fg-muted)] text-center py-4">
-          {scanReport.vulnerabilities.length === 0 ? 'No vulnerabilities found.' : 'No matches for this severity filter.'}
+          {scanReport.vulnerabilities.length === 0 ? m.resources_no_vulns() : m.resources_no_sev_match()}
         </div>
       {/if}
     {/if}
   </div>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (scanOpen = false)}>Close</Button>
+    <Button variant="secondary" onclick={() => (scanOpen = false)}>{m.common_close()}</Button>
   {/snippet}
 </Modal>
 
 <!-- ─── Create-volume modal ─── -->
-<Modal bind:open={volCreateOpen} title="Create volume" maxWidth="max-w-md">
+<Modal bind:open={volCreateOpen} title={m.resources_create_volume()} maxWidth="max-w-md">
   <form onsubmit={createVolume} class="space-y-3">
     <div>
-      <label for="vol-name" class="block text-xs text-[var(--fg-muted)] mb-1.5">Name</label>
+      <label for="vol-name" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_name()}</label>
       <Input id="vol-name" bind:value={newVolName} placeholder="my-data" required />
     </div>
     <div>
-      <label for="vol-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">Driver</label>
+      <label for="vol-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.resources_col_driver()}</label>
       <Input id="vol-driver" bind:value={newVolDriver} placeholder="local" />
     </div>
     {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
       <div>
-        <label for="vol-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">Host</label>
+        <label for="vol-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="vol-host" bind:value={newVolHost} class="dm-input text-sm w-full">
           {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
             <option value={h.id}>{h.name}</option>
@@ -1341,75 +1353,74 @@
     {/if}
   </form>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (volCreateOpen = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (volCreateOpen = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" loading={volCreating} disabled={volCreating || !newVolName.trim()} onclick={createVolume}>
-      <Plus class="w-4 h-4" /> Create
+      <Plus class="w-4 h-4" /> {m.common_create()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- ─── System cleanup modal ─── -->
-<Modal bind:open={cleanupOpen} title="System cleanup" maxWidth="max-w-lg">
+<Modal bind:open={cleanupOpen} title={m.resources_cleanup_title()} maxWidth="max-w-lg">
   <div class="space-y-4">
     <p class="text-sm text-[var(--fg-muted)]">
-      Run all three Docker prune commands in sequence. Operates on the currently
-      selected host{isAll ? 's' : ''}. Cannot be undone.
+      {isAll ? m.resources_cleanup_intro_all() : m.resources_cleanup_intro()}
     </p>
     <div class="cleanup-list">
       <div class="cleanup-row">
         <div class="cleanup-row-mark"><ImageIcon size={14} strokeWidth={1.5} /></div>
         <div class="cleanup-row-text">
-          <div class="cleanup-row-title">Dangling images</div>
+          <div class="cleanup-row-title">{m.resources_cleanup_dangling()}</div>
           <div class="cleanup-row-meta font-mono">
-            {imageCounts.dangling} target{imageCounts.dangling === 1 ? '' : 's'} · would reclaim {fmtBytes(imageDanglingSize)}
+            {m.resources_targets({ count: imageCounts.dangling })} · {m.resources_would_reclaim({ size: fmtBytes(imageDanglingSize) })}
           </div>
         </div>
       </div>
       <div class="cleanup-row">
         <div class="cleanup-row-mark"><HardDrive size={14} strokeWidth={1.5} /></div>
         <div class="cleanup-row-text">
-          <div class="cleanup-row-title">Orphan volumes</div>
+          <div class="cleanup-row-title">{m.resources_cleanup_orphan()}</div>
           <div class="cleanup-row-meta font-mono">
-            {volumeCounts.orphan} target{volumeCounts.orphan === 1 ? '' : 's'} · data is unrecoverable once deleted
+            {m.resources_targets({ count: volumeCounts.orphan })} · {m.resources_unrecoverable()}
           </div>
         </div>
       </div>
       <div class="cleanup-row">
         <div class="cleanup-row-mark"><NetworkIcon size={14} strokeWidth={1.5} /></div>
         <div class="cleanup-row-text">
-          <div class="cleanup-row-title">Empty networks</div>
+          <div class="cleanup-row-title">{m.resources_cleanup_empty()}</div>
           <div class="cleanup-row-meta font-mono">
-            {networkCounts.empty} target{networkCounts.empty === 1 ? '' : 's'} · system networks are kept
+            {m.resources_targets({ count: networkCounts.empty })} · {m.resources_system_kept()}
           </div>
         </div>
       </div>
     </div>
     {#if imageCounts.dangling === 0 && volumeCounts.orphan === 0 && networkCounts.empty === 0}
-      <p class="cleanup-empty font-mono">Nothing to prune — system is already clean.</p>
+      <p class="cleanup-empty font-mono">{m.resources_nothing_to_prune()}</p>
     {/if}
   </div>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (cleanupOpen = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (cleanupOpen = false)}>{m.common_cancel()}</Button>
     <Button
       variant="danger"
       loading={cleanupBusy}
       disabled={cleanupBusy || (imageCounts.dangling === 0 && volumeCounts.orphan === 0 && networkCounts.empty === 0)}
       onclick={runSystemCleanup}
     >
-      <Trash2 class="w-4 h-4" /> Run cleanup
+      <Trash2 class="w-4 h-4" /> {m.resources_run_cleanup()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- ─── Create-network modal ─── -->
-<Modal bind:open={netCreateOpen} title="Create network" maxWidth="max-w-md">
+<Modal bind:open={netCreateOpen} title={m.resources_create_network()} maxWidth="max-w-md">
   <form onsubmit={createNetwork} class="space-y-3">
     <div>
-      <label for="net-name" class="block text-xs text-[var(--fg-muted)] mb-1.5">Name</label>
+      <label for="net-name" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_name()}</label>
       <Input id="net-name" bind:value={newNetName} placeholder="my-net" required />
     </div>
     <div>
-      <label for="net-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">Driver</label>
+      <label for="net-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.resources_col_driver()}</label>
       <select id="net-driver" bind:value={newNetDriver} class="dm-input text-sm w-full">
         <option value="bridge">bridge</option>
         <option value="overlay">overlay</option>
@@ -1419,9 +1430,9 @@
     </div>
   </form>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (netCreateOpen = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (netCreateOpen = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" loading={netCreating} disabled={netCreating || !newNetName.trim()} onclick={createNetwork}>
-      <Plus class="w-4 h-4" /> Create
+      <Plus class="w-4 h-4" /> {m.common_create()}
     </Button>
   {/snippet}
 </Modal>

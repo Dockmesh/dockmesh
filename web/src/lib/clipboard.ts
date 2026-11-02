@@ -8,6 +8,7 @@
 // "execCommand is gone in modern browsers"). Callers decide how to
 // surface that — toast.success / toast.error etc.
 import { toast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 export async function copyToClipboard(text: string): Promise<boolean> {
   // Modern path — only works on https:// or localhost.
@@ -68,7 +69,7 @@ export async function copyWithToast(
   if (ok) {
     toast.success(successTitle, successDetail);
   } else {
-    toast.error('Copy failed', 'Select the text manually and use Ctrl+C');
+    toast.error(m.lib_copy_failed(), m.lib_copy_failed_hint());
   }
   return ok;
 }

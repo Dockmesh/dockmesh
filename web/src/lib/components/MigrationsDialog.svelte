@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { untrack } from 'svelte';
   // Running and recent stack migrations, opened from the top-bar pill.
   // Polls while open; closing it leaves the migrations running.
@@ -27,11 +28,11 @@
         api.hosts.list().catch(() => []),
       ]);
       active = a;
-      const activeIds = new Set(a.map((m) => m.id));
-      recent = all.filter((m) => !activeIds.has(m.id)).slice(0, 30);
-      const m = new Map<string, string>();
-      for (const h of hosts) m.set(h.id, h.name);
-      hostNames = m;
+      const activeIds = new Set(a.map((mg) => mg.id));
+      recent = all.filter((mg) => !activeIds.has(mg.id)).slice(0, 30);
+      const names = new Map<string, string>();
+      for (const h of hosts) names.set(h.id, h.name);
+      hostNames = names;
     } finally {
       loading = false;
     }
@@ -76,6 +77,25 @@
     return 0;
   }
 
+  const MIG_STATUS: Record<string, () => string> = {
+    pending: m.ops_mig_st_pending,
+    preflight: m.ops_mig_st_preflight,
+    preparing: m.ops_mig_st_preparing,
+    pre_dump: m.ops_mig_st_pre_dump,
+    stopping: m.ops_mig_st_stopping,
+    syncing: m.ops_mig_st_syncing,
+    starting: m.ops_mig_st_starting,
+    post_restore: m.ops_mig_st_post_restore,
+    health_check: m.ops_mig_st_health_check,
+    committing: m.ops_mig_st_committing,
+    completed: m.ops_mig_st_completed,
+    failed: m.ops_mig_st_failed,
+    rolled_back: m.ops_mig_st_rolled_back
+  };
+  function statusLabel(s: string): string {
+    return MIG_STATUS[s]?.() ?? s;
+  }
+
   function statusTone(s: string): Tone {
     if (s === 'completed') return 'ok';
     if (s === 'failed') return 'bad';
@@ -84,46 +104,46 @@
   }
 </script>
 
-<Modal bind:open title="Stack migrations" maxWidth="max-w-2xl" onclose={close}>
+<Modal bind:open title={m.ops_mig_title()} maxWidth="max-w-2xl" onclose={close}>
   {#if loading && active.length === 0 && recent.length === 0}
-    <div class="dm-empty">Loading…</div>
+    <div class="dm-empty">{m.common_loading()}</div>
   {:else if active.length === 0 && recent.length === 0}
-    <div class="dm-empty">No migrations yet. Move a stack from its detail page.</div>
+    <div class="dm-empty">{m.ops_mig_empty()}</div>
   {/if}
 
   {#if active.length > 0}
-    <h3 class="dm-h2">Running <span class="dm-dim dm-num">{active.length}</span></h3>
+    <h3 class="dm-h2">{m.common_running()} <span class="dm-dim dm-num">{active.length}</span></h3>
     <div class="dm-tbl run">
-      {#each active as m (m.id)}
-        {@const pct = progressPercent(m)}
-        <button type="button" class="mrow" onclick={() => openStack(m.stack_name)}>
+      {#each active as mg (mg.id)}
+        {@const pct = progressPercent(mg)}
+        <button type="button" class="mrow" onclick={() => openStack(mg.stack_name)}>
           <span class="top">
-            <b class="dm-trunc">{m.stack_name}</b>
-            <span class="dm-dim route">{hostLabel(m.source_host_id)} <ArrowRightLeft size={11} strokeWidth={1.6} /> {hostLabel(m.target_host_id)}</span>
+            <b class="dm-trunc">{mg.stack_name}</b>
+            <span class="dm-dim route">{hostLabel(mg.source_host_id)} <ArrowRightLeft size={11} strokeWidth={1.6} /> {hostLabel(mg.target_host_id)}</span>
             <span class="dm-sp"></span>
-            <StatusChip tone="acc" label={m.phase || m.status} />
+            <StatusChip tone="acc" label={statusLabel(mg.phase || mg.status)} />
           </span>
-          {#if m.progress && (m.progress.bytes_total > 0 || m.progress.volumes_total > 0)}
+          {#if mg.progress && (mg.progress.bytes_total > 0 || mg.progress.volumes_total > 0)}
             <span class="bar"><i style="width: {pct}%"></i></span>
             <span class="meta dm-num">
-              {#if m.progress.bytes_total > 0}{fmtBytes(m.progress.bytes_done)} of {fmtBytes(m.progress.bytes_total)} · {/if}volume {m.progress.volume_index} of {m.progress.volumes_total}{#if m.progress.images_total > 0} · image {m.progress.images_pulled} of {m.progress.images_total}{/if} · {pct} %
+              {#if mg.progress.bytes_total > 0}{m.ops_mig_bytes({ done: fmtBytes(mg.progress.bytes_done), total: fmtBytes(mg.progress.bytes_total) })} · {/if}{m.ops_mig_volume({ i: mg.progress.volume_index, n: mg.progress.volumes_total })}{#if mg.progress.images_total > 0} · {m.ops_mig_image({ i: mg.progress.images_pulled, n: mg.progress.images_total })}{/if} · {pct} %
             </span>
           {/if}
-          <span class="meta">Started {fmtAgo(m.started_at)} by {m.initiated_by}</span>
+          <span class="meta">{m.ops_mig_started({ ago: fmtAgo(mg.started_at), who: mg.initiated_by })}</span>
         </button>
       {/each}
     </div>
   {/if}
 
   {#if recent.length > 0}
-    <h3 class="dm-h2 sp">Recent</h3>
+    <h3 class="dm-h2 sp">{m.ops_mig_recent()}</h3>
     <div class="dm-tbl">
-      {#each recent as m (m.id)}
-        <button type="button" class="dm-tr dm-click rrow" style="grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 110px 70px" onclick={() => openStack(m.stack_name)} title={m.error_message ?? ''}>
-          <b class="dm-trunc">{m.stack_name}</b>
-          <span class="dm-dim dm-trunc">{hostLabel(m.source_host_id)} → {hostLabel(m.target_host_id)}</span>
-          <span><StatusChip tone={statusTone(m.status)} label={m.status} /></span>
-          <span class="dm-num dm-dim">{fmtDuration(m.started_at, m.completed_at)}</span>
+      {#each recent as mg (mg.id)}
+        <button type="button" class="dm-tr dm-click rrow" style="grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 110px 70px" onclick={() => openStack(mg.stack_name)} title={mg.error_message ?? ''}>
+          <b class="dm-trunc">{mg.stack_name}</b>
+          <span class="dm-dim dm-trunc">{hostLabel(mg.source_host_id)} → {hostLabel(mg.target_host_id)}</span>
+          <span><StatusChip tone={statusTone(mg.status)} label={statusLabel(mg.status)} /></span>
+          <span class="dm-num dm-dim">{fmtDuration(mg.started_at, mg.completed_at)}</span>
         </button>
       {/each}
     </div>

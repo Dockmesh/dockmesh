@@ -24,6 +24,8 @@
     hostLabel
   } from './_format';
   import { Plus, Lock, Play, AlertTriangle } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   type Tab = 'jobs' | 'runs' | 'targets';
   const TABS: Tab[] = ['jobs', 'runs', 'targets'];
@@ -37,13 +39,13 @@
   let loaded = $state(false);
 
   async function loadJobs() {
-    try { jobs = await api.backups.listJobs(); } catch (err) { toast.error('Could not load jobs', err instanceof ApiError ? err.message : undefined); }
+    try { jobs = await api.backups.listJobs(); } catch (err) { toast.error(m.backups_load_jobs_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function loadRuns() {
-    try { runs = await api.backups.listRuns(500); } catch (err) { toast.error('Could not load runs', err instanceof ApiError ? err.message : undefined); }
+    try { runs = await api.backups.listRuns(500); } catch (err) { toast.error(m.backups_load_runs_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function loadTargets() {
-    try { bTargets = await api.backups.listTargets(); } catch (err) { toast.error('Could not load targets', err instanceof ApiError ? err.message : undefined); }
+    try { bTargets = await api.backups.listTargets(); } catch (err) { toast.error(m.backups_load_targets_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function loadAll() {
     await Promise.all([loadJobs(), loadRuns(), loadTargets()]);
@@ -71,19 +73,19 @@
 
   async function deleteLeftovers() {
     const ok = await confirm.ask({
-      title: 'Delete the files kept by the system restore?',
-      message: 'The database, secret key and stacks from before the restore are deleted for good.',
+      title: m.backups_leftovers_confirm_title(),
+      message: m.backups_leftovers_confirm_message(),
       body: leftovers.map((l) => l.path).join(', '),
-      confirmLabel: 'Delete',
+      confirmLabel: m.common_delete(),
       danger: true
     });
     if (!ok) return;
     deletingLeftovers = true;
     try {
       await api.backups.deleteRestoreLeftovers();
-      toast.success('Deleted', 'The files kept by the system restore are gone.');
+      toast.success(m.backups_deleted(), m.backups_leftovers_deleted());
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_delete_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       deletingLeftovers = false;
       await loadLeftovers();
@@ -145,16 +147,16 @@
       startedRun[j.id] = run.id;
       void loadRuns();
     } catch (err) {
-      toast.error(`Could not start ${j.name}`, err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_start_failed({ name: j.name }), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function runAllEnabled() {
     if (runs.some((r) => r.status === 'running')) {
-      toast.info('A backup is already running', 'Start the others once it has finished.');
+      toast.info(m.backups_already_running(), m.backups_already_running_hint());
       return;
     }
     const list = jobs.filter((j) => j.enabled);
-    if (!(await confirm.ask({ title: 'Run all enabled jobs', message: `Start ${list.length} backup job${list.length === 1 ? '' : 's'} now?`, confirmLabel: 'Run all' }))) return;
+    if (!(await confirm.ask({ title: m.backups_run_all_title(), message: m.backups_run_all_message({ count: list.length }), confirmLabel: m.backups_run_all_confirm() }))) return;
     for (const j of list) await runJob(j);
   }
 
@@ -163,18 +165,18 @@
       const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_id: j.target_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
-    } catch (err) { toast.error('Could not change the job', err instanceof ApiError ? err.message : undefined); }
+    } catch (err) { toast.error(m.backups_job_change_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function deleteJob(j: BackupJob) {
-    if (!(await confirm.ask({ title: 'Delete backup job', message: `Delete backup job "${j.name}"?`, body: 'Existing backup runs are kept. The schedule is removed and no new runs will be triggered.', confirmLabel: 'Delete', danger: true }))) return;
-    try { await api.backups.deleteJob(j.id); toast.success('Deleted', j.name); await loadJobs(); } catch (err) { toast.error('Delete failed', err instanceof ApiError ? err.message : undefined); }
+    if (!(await confirm.ask({ title: m.backups_delete_job_title(), message: m.backups_delete_job_message({ name: j.name }), body: m.backups_delete_job_body(), confirmLabel: m.common_delete(), danger: true }))) return;
+    try { await api.backups.deleteJob(j.id); toast.success(m.backups_deleted(), j.name); await loadJobs(); } catch (err) { toast.error(m.backups_delete_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function ackReview(j: BackupJob, mode: 'keep' | 'disable') {
     try {
       await api.backups.acknowledgeReview(j.id, mode);
-      toast.success(mode === 'keep' ? 'Marked as reviewed' : 'Disabled', j.name);
+      toast.success(mode === 'keep' ? m.backups_marked_reviewed() : m.common_disabled(), j.name);
       await loadJobs();
-    } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : (err as Error).message); }
+    } catch (err) { toast.error(m.common_failed(), err instanceof ApiError ? err.message : (err as Error).message); }
   }
 
   function targetPendingHostKey(t: BackupTarget): boolean {
@@ -185,30 +187,29 @@
     if (t) return targetPendingHostKey(t);
     return j.target_type === 'sftp' && !!(j.target_config as { host_key_pending?: string } | null)?.host_key_pending;
   }
-  const HOST_KEY_BODY = 'Only do this if you know why the server key changed (server reinstalled, key rotated). Otherwise someone may be intercepting the connection.';
   async function acceptHostKey(j: BackupJob) {
-    if (!(await confirm.ask({ title: 'Accept new SFTP host key', message: `Trust the new host key for "${j.name}"?`, body: HOST_KEY_BODY, confirmLabel: 'Accept key', danger: true }))) return;
-    try { await api.backups.acceptHostKey(j.id); toast.success('Host key accepted'); await Promise.all([loadJobs(), loadTargets()]); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+    if (!(await confirm.ask({ title: m.backups_accept_host_key_title(), message: m.backups_accept_host_key_message({ name: j.name }), body: m.backups_host_key_body(), confirmLabel: m.backups_accept_key(), danger: true }))) return;
+    try { await api.backups.acceptHostKey(j.id); toast.success(m.backups_host_key_accepted()); await Promise.all([loadJobs(), loadTargets()]); } catch (err) { toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   async function acceptTargetHostKey(t: BackupTarget) {
-    if (!(await confirm.ask({ title: 'Accept new SFTP host key', message: `Trust the new host key for target "${t.name}"?`, body: HOST_KEY_BODY, confirmLabel: 'Accept key', danger: true }))) return;
-    try { await api.backups.acceptTargetHostKey(t.id); toast.success('Host key accepted'); await loadTargets(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+    if (!(await confirm.ask({ title: m.backups_accept_host_key_title(), message: m.backups_accept_target_host_key_message({ name: t.name }), body: m.backups_host_key_body(), confirmLabel: m.backups_accept_key(), danger: true }))) return;
+    try { await api.backups.acceptTargetHostKey(t.id); toast.success(m.backups_host_key_accepted()); await loadTargets(); } catch (err) { toast.error(m.common_failed(), err instanceof ApiError ? err.message : undefined); }
   }
 
   async function deleteTarget(t: BackupTarget) {
-    if (!(await confirm.ask({ title: 'Delete backup target', message: `Delete target "${t.name}"?`, body: 'Backup jobs that write to this target will fail on their next run until you reassign them.', confirmLabel: 'Delete', danger: true }))) return;
-    try { await api.backups.deleteTarget(t.id); toast.success('Deleted', t.name); await loadTargets(); } catch (err) { toast.error('Delete failed', err instanceof ApiError ? err.message : undefined); }
+    if (!(await confirm.ask({ title: m.backups_delete_target_title(), message: m.backups_delete_target_message({ name: t.name }), body: m.backups_delete_target_body(), confirmLabel: m.common_delete(), danger: true }))) return;
+    try { await api.backups.deleteTarget(t.id); toast.success(m.backups_deleted(), t.name); await loadTargets(); } catch (err) { toast.error(m.backups_delete_failed(), err instanceof ApiError ? err.message : undefined); }
   }
   let testing = $state<Record<number, boolean>>({});
   async function testTarget(t: BackupTarget) {
     testing[t.id] = true;
     try {
       const res = await api.backups.testTarget(t.id);
-      if (res.status === 'connected') toast.success(`${t.name} connected`, res.total_bytes > 0 ? `${fmtBytes(res.free_bytes)} free of ${fmtBytes(res.total_bytes)}` : undefined);
-      else toast.error(`${t.name}: connection failed`, res.error);
+      if (res.status === 'connected') toast.success(m.backups_target_connected({ name: t.name }), res.total_bytes > 0 ? m.backups_free_of({ free: fmtBytes(res.free_bytes), total: fmtBytes(res.total_bytes) }) : undefined);
+      else toast.error(m.backups_target_connection_failed({ name: t.name }), res.error);
       await loadTargets();
     } catch (err) {
-      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_test_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       testing[t.id] = false;
     }
@@ -217,9 +218,9 @@
   async function downloadRunArchive(r: BackupRun) {
     try {
       await api.backups.downloadArchive(r.id);
-      toast.success('Download started', `backup-run-${r.id}.tar.gz`);
+      toast.success(m.backups_download_started(), `backup-run-${r.id}.tar.gz`);
     } catch (err) {
-      toast.error('Download failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_download_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -236,32 +237,32 @@
     try {
       if (isEdit && originalId) {
         await api.backups.updateJob(originalId, payload);
-        toast.success('Updated', payload.name);
+        toast.success(m.common_updated(), payload.name);
       } else {
         await api.backups.createJob(payload);
-        toast.success('Created', payload.name);
+        toast.success(m.common_created(), payload.name);
       }
       wizardJobOpen = false;
       wizardJobEdit = null;
       await Promise.all([loadJobs(), loadTargets()]);
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+      toast.error(m.backups_save_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     }
   }
   async function wizardSaveTarget(payload: { name: string; type: string; config: Record<string, any> }, isEdit: boolean, originalId?: number) {
     try {
       if (isEdit && originalId) {
         await api.backups.updateTarget(originalId, payload);
-        toast.success('Updated', payload.name);
+        toast.success(m.common_updated(), payload.name);
       } else {
         await api.backups.createTarget(payload);
-        toast.success('Created', payload.name);
+        toast.success(m.common_created(), payload.name);
       }
       wizardTargetOpen = false;
       wizardTargetEdit = null;
       await loadTargets();
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+      toast.error(m.backups_save_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     }
   }
 
@@ -303,34 +304,34 @@
   function jobMenu(j: BackupJob): MenuItem[] {
     const last = lastRunOf(j);
     return [
-      { label: 'Open', kbd: '↵', href: `/backups/jobs/${j.id}` },
-      ...(mayOnJob('backups.run', j) ? [{ label: 'Run now', disabled: !j.enabled, onclick: () => runJob(j) }] : []),
-      ...(mayOnJob('backups.update', j) ? [{ label: 'Edit…', onclick: () => openEdit(j) }] : []),
-      ...(last && runRestorable(last) && mayOnJob('backups.restore', last) ? [{ label: 'Restore last run…', onclick: () => openRestore(last) }] : []),
-      ...(pendingHostKey(j) && mayOnJob('backups.update', j) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptHostKey(j) }] : []),
-      ...(mayOnJob('backups.delete', j) ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteJob(j) }] : [])
+      { label: m.common_open(), kbd: '↵', href: `/backups/jobs/${j.id}` },
+      ...(mayOnJob('backups.run', j) ? [{ label: m.backups_run_now(), disabled: !j.enabled, onclick: () => runJob(j) }] : []),
+      ...(mayOnJob('backups.update', j) ? [{ label: m.backups_edit_ellipsis(), onclick: () => openEdit(j) }] : []),
+      ...(last && runRestorable(last) && mayOnJob('backups.restore', last) ? [{ label: m.backups_restore_last_run(), onclick: () => openRestore(last) }] : []),
+      ...(pendingHostKey(j) && mayOnJob('backups.update', j) ? [{ label: m.backups_accept_new_host_key(), danger: true, onclick: () => acceptHostKey(j) }] : []),
+      ...(mayOnJob('backups.delete', j) ? [{ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteJob(j) }] : [])
     ];
   }
   function runMenu(r: BackupRun): MenuItem[] {
     const restorable = runRestorable(r);
     return [
-      { label: 'Open', kbd: '↵', href: `/backups/runs/${r.id}` },
-      ...(operations.backupRun(r.id) ? [{ label: 'Steps and log', onclick: () => operations.open(operations.backupRun(r.id)!.id) }] : []),
-      ...(restorable && mayOnJob('backups.restore', r) ? [{ label: isSystemRun(r) ? 'Restore system…' : 'Restore…', onclick: () => openRestore(r) }] : []),
-      ...(restorable && mayOnJob('backups.download', r) ? [{ label: 'Download archive', onclick: () => downloadRunArchive(r) }] : [])
+      { label: m.common_open(), kbd: '↵', href: `/backups/runs/${r.id}` },
+      ...(operations.backupRun(r.id) ? [{ label: m.backups_steps_and_log(), onclick: () => operations.open(operations.backupRun(r.id)!.id) }] : []),
+      ...(restorable && mayOnJob('backups.restore', r) ? [{ label: isSystemRun(r) ? m.backups_restore_system() : m.backups_restore_ellipsis(), onclick: () => openRestore(r) }] : []),
+      ...(restorable && mayOnJob('backups.download', r) ? [{ label: m.backups_download_archive(), onclick: () => downloadRunArchive(r) }] : [])
     ];
   }
   function targetMenu(t: BackupTarget): MenuItem[] {
     return [
-      { label: 'Open', kbd: '↵', href: `/backups/targets/${t.id}` },
+      { label: m.common_open(), kbd: '↵', href: `/backups/targets/${t.id}` },
       ...(canUpdate
         ? [
-            { label: 'Test connection', onclick: () => testTarget(t) },
-            { label: 'Edit…', onclick: () => openEditTarget(t) },
-            ...(targetPendingHostKey(t) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptTargetHostKey(t) }] : [])
+            { label: m.backups_test_connection(), onclick: () => testTarget(t) },
+            { label: m.backups_edit_ellipsis(), onclick: () => openEditTarget(t) },
+            ...(targetPendingHostKey(t) ? [{ label: m.backups_accept_new_host_key(), danger: true, onclick: () => acceptTargetHostKey(t) }] : [])
           ]
         : []),
-      ...(allowed('backups.delete') ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteTarget(t) }] : [])
+      ...(allowed('backups.delete') ? [{ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteTarget(t) }] : [])
     ];
   }
   function rowKey(e: KeyboardEvent, href: string) {
@@ -356,22 +357,22 @@
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Backups</h1>
+    <h1>{m.backups_title()}</h1>
     <span class="dm-sub">
-      {jobs.filter((j) => j.enabled).length} jobs active · last 24 h: {recentRuns.length} runs{#if recentFailed}, <span class="bad">{recentFailed} failed</span>{/if}
+      {m.backups_sub_summary({ active: jobs.filter((j) => j.enabled).length, runs: recentRuns.length })}{#if recentFailed}, <span class="bad">{m.backups_n_failed({ n: recentFailed })}</span>{/if}
     </span>
     <span class="dm-sp"></span>
     {#if tab === 'jobs'}
       {#if canRun && jobs.some((j) => j.enabled)}
-        <button type="button" class="dm-btn" onclick={runAllEnabled}><Play size={13} /> Run all enabled</button>
+        <button type="button" class="dm-btn" onclick={runAllEnabled}><Play size={13} /> {m.backups_run_all_enabled()}</button>
       {/if}
-      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>{/if}
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> {m.backups_new_job()}</button>{/if}
     {:else if tab === 'runs'}
       {#if allowed('system.upgrade')}
-        <button type="button" class="dm-btn" onclick={() => { systemRestoreRun = null; systemRestoreOpen = true; }}>Restore system from file…</button>
+        <button type="button" class="dm-btn" onclick={() => { systemRestoreRun = null; systemRestoreOpen = true; }}>{m.backups_restore_system_from_file()}</button>
       {/if}
     {:else if canCreate}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>
+      <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> {m.backups_new_target()}</button>
     {/if}
   </div>
 
@@ -379,18 +380,18 @@
     <div class="attn" role="status" data-testid="restore-leftovers">
       <div class="attn-h">
         <AlertTriangle size={14} strokeWidth={1.8} />
-        <b>Files from before the system restore are kept</b>
-        <span class="dm-dim">· they include the old database and secret key. Delete them once the restored install works.</span>
+        <b>{m.backups_leftovers_title()}</b>
+        <span class="dm-dim">· {m.backups_leftovers_hint()}</span>
         <span class="dm-sp"></span>
         <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={deleteLeftovers} disabled={deletingLeftovers}>
-          {deletingLeftovers ? 'Deleting…' : 'Delete'}
+          {deletingLeftovers ? m.backups_deleting() : m.common_delete()}
         </button>
       </div>
       {#each leftovers as l (l.path)}
         <div class="attn-row">
           <span class="dm-mono dm-trunc" title={l.path}>{l.path}</span>
           <span class="dm-sp"></span>
-          <span class="dm-dim">{fmtBytes(l.bytes)} · {new Date(l.restored_at).toLocaleString()}</span>
+          <span class="dm-dim">{fmtBytes(l.bytes)} · {fmtDateTime(l.restored_at)}</span>
         </div>
       {/each}
     </div>
@@ -398,13 +399,13 @@
 
   <Tabs
     tabs={[
-      { key: 'jobs', label: 'Jobs', count: jobs.length },
-      { key: 'runs', label: 'Runs', count: runs.length, dot: recentFailed > 0 },
-      { key: 'targets', label: 'Targets', count: bTargets.length, dot: bTargets.some((t) => t.status === 'error' || targetPendingHostKey(t)) }
+      { key: 'jobs', label: m.backups_tab_jobs(), count: jobs.length },
+      { key: 'runs', label: m.backups_tab_runs(), count: runs.length, dot: recentFailed > 0 },
+      { key: 'targets', label: m.backups_tab_targets(), count: bTargets.length, dot: bTargets.some((t) => t.status === 'error' || targetPendingHostKey(t)) }
     ]}
     active={tab}
     onchange={setTab}
-    label="Backup sections"
+    label={m.backups_sections_label()}
   />
 
   {#if tab === 'jobs'}
@@ -412,16 +413,16 @@
       <div class="attn" role="status">
         <div class="attn-h">
           <AlertTriangle size={14} strokeWidth={1.8} />
-          <b>{reviewJobs.length} auto-created job{reviewJobs.length === 1 ? '' : 's'} need{reviewJobs.length === 1 ? 's' : ''} your review</b>
-          <span class="dm-dim">· older versions created a daily local backup on their own. Keep leaves it running, Disable stops the schedule and keeps the history.</span>
+          <b>{m.backups_review_title({ count: reviewJobs.length })}</b>
+          <span class="dm-dim">· {m.backups_review_hint()}</span>
         </div>
         {#each reviewJobs as j (j.id)}
           <div class="attn-row">
             <span class="dm-mono">{j.name}</span>
             <span class="dm-dim dm-trunc" title={j.review_reason}>{j.review_reason}</span>
             <span class="dm-sp"></span>
-            <button type="button" class="dm-btn dm-btn-sm" onclick={() => ackReview(j, 'keep')}>Keep</button>
-            <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => ackReview(j, 'disable')}>Disable</button>
+            <button type="button" class="dm-btn dm-btn-sm" onclick={() => ackReview(j, 'keep')}>{m.backups_keep()}</button>
+            <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => ackReview(j, 'disable')}>{m.common_disable()}</button>
           </div>
         {/each}
       </div>
@@ -430,10 +431,10 @@
     {#if loaded && jobs.length > 0}
       <StatBar
         items={[
-          { label: 'Jobs', value: `${jobs.filter((j) => j.enabled).length} of ${jobs.length}`, note: 'enabled' },
-          { label: 'Runs · 24 h', value: recentRuns.length, note: recentFailed ? `${recentFailed} failed` : 'none failed', tone: recentFailed ? 'bad' : '' },
-          { label: 'Next run', value: nextRun ? fmtUntil(nextRun.next_run_at) : '—', note: nextRun?.name ?? '' },
-          { label: 'Targets', value: bTargets.length, note: bTargets.filter((t) => t.status === 'error').length ? `${bTargets.filter((t) => t.status === 'error').length} with errors` : '', tone: bTargets.some((t) => t.status === 'error') ? 'bad' : '' }
+          { label: m.backups_tab_jobs(), value: m.backups_n_of_total({ n: jobs.filter((j) => j.enabled).length, total: jobs.length }), note: m.backups_stat_enabled() },
+          { label: m.backups_stat_runs_24h(), value: recentRuns.length, note: recentFailed ? m.backups_n_failed({ n: recentFailed }) : m.backups_none_failed(), tone: recentFailed ? 'bad' : '' },
+          { label: m.backups_next_run(), value: nextRun ? fmtUntil(nextRun.next_run_at) : '—', note: nextRun?.name ?? '' },
+          { label: m.backups_tab_targets(), value: bTargets.length, note: bTargets.filter((t) => t.status === 'error').length ? m.backups_n_with_errors({ n: bTargets.filter((t) => t.status === 'error').length }) : '', tone: bTargets.some((t) => t.status === 'error') ? 'bad' : '' }
         ]}
       />
     {/if}
@@ -442,17 +443,17 @@
       <div class="dm-tbl">{#each Array(4) as _, i (i)}<div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>{/each}</div>
     {:else if jobs.length === 0}
       <EmptyState
-        title="Nothing is backed up yet"
-        description="Create a job for the Dockmesh server, a stack or a volume. Start with a daily backup of the server to a target on another machine (SFTP, SMB, S3)."
+        title={m.backups_jobs_empty_title()}
+        description={m.backups_jobs_empty_desc()}
       >
         {#snippet action()}
-          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>{/if}
+          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> {m.backups_new_job()}</button>{/if}
         {/snippet}
       </EmptyState>
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Backup jobs">
+      <div class="dm-tbl" role="table" aria-label={m.backups_jobs_table_label()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {JOB_COLS}">
-          <span></span><span>Job</span><span>What</span><span>Host</span><span>Target</span><span>Schedule</span><span>Last run</span><span>On</span><span></span>
+          <span></span><span>{m.backups_col_job()}</span><span>{m.backups_col_what()}</span><span>{m.common_host()}</span><span>{m.common_target()}</span><span>{m.backups_col_schedule()}</span><span>{m.backups_col_last_run()}</span><span>{m.backups_col_on()}</span><span></span>
         </div>
         {#each sortedJobs as j (j.id)}
           {@const last = lastRunOf(j)}
@@ -462,8 +463,8 @@
           <div class="dm-tr dm-click" role="row" tabindex="0" style="grid-template-columns: {JOB_COLS}" onclick={() => goto(href)} onkeydown={(e) => rowKey(e, href)}>
             <span><span class="dm-dot {jobTone(j)}"></span></span>
             <span class="dm-nm">
-              <a {href} onclick={(e) => e.stopPropagation()}>{j.name}</a>{#if j.encrypt}<span class="lock" title="Encrypted"><Lock size={11} /></span>{/if}
-              {#if pendingHostKey(j)}<small class="bad">SFTP host key changed</small>{:else if !j.enabled}<small>disabled</small>{/if}
+              <a {href} onclick={(e) => e.stopPropagation()}>{j.name}</a>{#if j.encrypt}<span class="lock" title={m.backups_encrypted()}><Lock size={11} /></span>{/if}
+              {#if pendingHostKey(j)}<small class="bad">{m.backups_host_key_changed()}</small>{:else if !j.enabled}<small>{m.backups_job_disabled()}</small>{/if}
             </span>
             <span class="dm-nm"><span class="dm-t what">{jobSourceName(j)}</span><small>{jobSourceKind(j)}</small></span>
             <span class="dm-dim dm-trunc" title={hostLabel(j.host_id)}>{hostLabel(j.host_id)}</span>
@@ -474,15 +475,15 @@
                 <span class="op-cell"><OpProgress {op} /><CancelOpButton {op} /></span>
               {:else if last}
                 <span class="dm-t lr" class:bad={last.status === 'failed'} title={last.error}>
-                  {last.status === 'failed' ? 'Failed' : last.status === 'running' ? 'Running' : fmtBytes(last.size_bytes)}{last.status === 'success_with_warnings' ? ' · warnings' : ''}
+                  {last.status === 'failed' ? m.common_failed() : last.status === 'running' ? m.common_running() : fmtBytes(last.size_bytes)}{last.status === 'success_with_warnings' ? ` · ${m.backups_run_warnings()}` : ''}
                 </span>
                 <small>{fmtAgo(last.started_at)}</small>
               {:else}
-                <span class="dm-dim">never</span>
+                <span class="dm-dim">{m.common_never()}</span>
               {/if}
             </span>
-            <span onclick={(e) => e.stopPropagation()} role="presentation"><Switch checked={j.enabled} label="Enabled" hideLabel disabled={!mayOnJob('backups.update', j)} onchange={() => toggleJob(j)} /></span>
-            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label="Actions for {j.name}" items={jobMenu(j)} /></span>
+            <span onclick={(e) => e.stopPropagation()} role="presentation"><Switch checked={j.enabled} label={m.common_enabled()} hideLabel disabled={!mayOnJob('backups.update', j)} onchange={() => toggleJob(j)} /></span>
+            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label={m.backups_actions_for({ name: j.name })} items={jobMenu(j)} /></span>
           </div>
         {/each}
       </div>
@@ -491,17 +492,17 @@
   {:else if tab === 'runs'}
     <div class="dm-toolbar">
       <Segmented
-        label="Filter runs"
+        label={m.backups_filter_runs()}
         bind:value={runStatusFilter}
         options={[
-          { key: 'all', label: 'All', count: runCounts.all },
-          { key: 'success', label: 'Succeeded', count: runCounts.success },
-          { key: 'failed', label: 'Failed', count: runCounts.failed },
-          { key: 'running', label: 'Running', count: runCounts.running }
+          { key: 'all', label: m.common_all(), count: runCounts.all },
+          { key: 'success', label: m.backups_filter_succeeded(), count: runCounts.success },
+          { key: 'failed', label: m.common_failed(), count: runCounts.failed },
+          { key: 'running', label: m.common_running(), count: runCounts.running }
         ]}
       />
-      <select class="dm-filter" bind:value={runJobFilter} aria-label="Filter by job">
-        <option value="">All jobs</option>
+      <select class="dm-filter" bind:value={runJobFilter} aria-label={m.backups_filter_by_job()}>
+        <option value="">{m.backups_all_jobs()}</option>
         {#each sortedJobs as j (j.id)}<option value={j.name}>{j.name}</option>{/each}
       </select>
     </div>
@@ -509,34 +510,34 @@
     {#if !loaded}
       <div class="dm-tbl">{#each Array(4) as _, i (i)}<div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>{/each}</div>
     {:else if runs.length === 0}
-      <EmptyState title="No runs yet" description="Run a job or wait for its schedule. Every run is recorded, the failed ones too." />
+      <EmptyState title={m.backups_runs_empty_title()} description={m.backups_runs_empty_desc()} />
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Backup runs">
+      <div class="dm-tbl" role="table" aria-label={m.backups_runs_table_label()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {RUN_COLS}">
-          <span>When</span><span>Job</span><span>Result</span><span>Size</span><span>Duration</span><span>Archive</span><span></span>
+          <span>{m.backups_col_when()}</span><span>{m.backups_col_job()}</span><span>{m.backups_col_result()}</span><span>{m.common_size()}</span><span>{m.backups_col_duration()}</span><span>{m.backups_col_archive()}</span><span></span>
         </div>
         {#each filteredRuns as r (r.id)}
           {@const op = operations.backupRun(r.id)}
           {@const href = `/backups/runs/${r.id}`}
           <div class="dm-tr dm-click" role="row" tabindex="0" style="grid-template-columns: {RUN_COLS}" onclick={() => goto(href)} onkeydown={(e) => rowKey(e, href)}>
-            <span class="dm-num dm-dim" title={new Date(r.started_at).toLocaleString()}>{fmtAgo(r.started_at)}</span>
-            <span class="dm-nm"><a {href} onclick={(e) => e.stopPropagation()}>{r.job_name}</a>{#if r.encrypted}<span class="lock" title="Encrypted"><Lock size={11} /></span>{/if}</span>
+            <span class="dm-num dm-dim" title={fmtDateTime(r.started_at)}>{fmtAgo(r.started_at)}</span>
+            <span class="dm-nm"><a {href} onclick={(e) => e.stopPropagation()}>{r.job_name}</a>{#if r.encrypted}<span class="lock" title={m.backups_encrypted()}><Lock size={11} /></span>{/if}</span>
             <span>
               {#if op && (isActive(op) || r.status === 'running')}
                 <span class="op-cell"><OpProgress {op} /><CancelOpButton {op} /></span>
               {:else if r.status === 'failed'}
-                <span class="fail-cell"><StatusChip tone="bad" label="Failed" /><span class="dm-trunc dm-dim" title={r.error}>{r.error ?? ''}</span></span>
+                <span class="fail-cell"><StatusChip tone="bad" label={m.common_failed()} /><span class="dm-trunc dm-dim" title={r.error}>{r.error ?? ''}</span></span>
               {:else}
                 <StatusChip tone={runTone(r.status)} label={runLabel(r.status)} title={r.error} />
               {/if}
             </span>
             <span class="dm-num">{r.status === 'failed' ? '—' : fmtBytes(r.size_bytes)}</span>
             <span class="dm-num dm-dim">{fmtDuration(r.started_at, r.finished_at)}</span>
-            <span class="dm-trunc muted dm-mono small" title={r.target_path}>{r.pruned_at ? 'removed by retention' : (r.target_path?.split('/').pop() ?? '—')}</span>
-            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label="Actions for run {r.id}" items={runMenu(r)} /></span>
+            <span class="dm-trunc muted dm-mono small" title={r.target_path}>{r.pruned_at ? m.backups_removed_by_retention() : (r.target_path?.split('/').pop() ?? '—')}</span>
+            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label={m.backups_actions_for_run({ id: r.id })} items={runMenu(r)} /></span>
           </div>
         {:else}
-          <div class="dm-empty">No runs match this filter.</div>
+          <div class="dm-empty">{m.backups_runs_no_match()}</div>
         {/each}
       </div>
     {/if}
@@ -546,17 +547,17 @@
       <div class="dm-tbl">{#each Array(3) as _, i (i)}<div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>{/each}</div>
     {:else if bTargets.length === 0}
       <EmptyState
-        title="No targets yet"
-        description="A target is where archives go: a local directory, an SMB share, SFTP, S3-compatible storage or WebDAV. Several jobs can share one."
+        title={m.backups_targets_empty_title()}
+        description={m.backups_targets_empty_desc()}
       >
         {#snippet action()}
-          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>{/if}
+          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> {m.backups_new_target()}</button>{/if}
         {/snippet}
       </EmptyState>
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Backup targets">
+      <div class="dm-tbl" role="table" aria-label={m.backups_targets_table_label()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {TGT_COLS}">
-          <span></span><span>Target</span><span>Type</span><span>Location</span><span>Jobs</span><span>Last test</span><span></span>
+          <span></span><span>{m.common_target()}</span><span>{m.common_type()}</span><span>{m.backups_col_location()}</span><span>{m.backups_tab_jobs()}</span><span>{m.backups_col_last_test()}</span><span></span>
         </div>
         {#each sortedTargets as t (t.id)}
           {@const tone = targetPendingHostKey(t) || t.credentials_error || t.status === 'error' ? 'bad' : t.status === 'connected' ? 'ok' : ''}
@@ -566,20 +567,20 @@
             <span><span class="dm-dot {tone}"></span></span>
             <span class="dm-nm">
               <a {href} onclick={(e) => e.stopPropagation()}>{t.name}</a>
-              {#if t.credentials_error}<small class="bad" title={t.credentials_error}>Credentials can't be decrypted, enter them again</small>{:else if targetPendingHostKey(t)}<small class="bad">SFTP host key changed</small>{:else if usedPct != null}<small class:warn={usedPct > 80}>{fmtBytes(t.free_bytes)} free · {usedPct} % used</small>{/if}
+              {#if t.credentials_error}<small class="bad" title={t.credentials_error}>{m.backups_credentials_undecryptable()}</small>{:else if targetPendingHostKey(t)}<small class="bad">{m.backups_host_key_changed()}</small>{:else if usedPct != null}<small class:warn={usedPct > 80}>{m.backups_free_used({ free: fmtBytes(t.free_bytes), pct: usedPct })}</small>{/if}
             </span>
             <span class="muted">{targetTypeLabel(t.type)}</span>
             <span class="dm-mono dm-trunc muted small" title={targetLocation(t)}>{targetLocation(t)}</span>
             <span class="dm-num">{targetJobCount(t)}</span>
             <span class="dm-nm">
               {#if testing[t.id]}
-                <span class="dm-t lr">Testing…</span>
+                <span class="dm-t lr">{m.backups_testing()}</span>
               {:else}
-                <span class="dm-t lr" class:bad={t.status === 'error'}>{t.status === 'connected' ? 'Connected' : t.status === 'error' ? 'Failed' : 'Not tested'}</span>
+                <span class="dm-t lr" class:bad={t.status === 'error'}>{t.status === 'connected' ? m.backups_connected() : t.status === 'error' ? m.common_failed() : m.backups_not_tested()}</span>
                 <small>{fmtAgo(t.last_checked_at)}</small>
               {/if}
             </span>
-            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label="Actions for {t.name}" items={targetMenu(t)} /></span>
+            <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label={m.backups_actions_for({ name: t.name })} items={targetMenu(t)} /></span>
           </div>
         {/each}
       </div>

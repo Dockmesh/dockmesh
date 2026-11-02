@@ -15,6 +15,9 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime, fmtTime } from '$lib/i18n';
+
   // Small multiples that share one time axis: one crosshair across all
   // charts, a tooltip with every series, drag to zoom, double-click to reset
   // and dashed event markers.
@@ -26,7 +29,7 @@
     events = [],
     onzoom,
     onreset,
-    empty = 'No data for this range.'
+    empty = m.metrics_no_data_range()
   }: {
     ts: number[];
     series: ChartSeries[];
@@ -80,11 +83,10 @@
   const hasData = $derived(ts.length > 0 && series.some((s) => s.values.some((v) => v != null)));
 
   function fmtT(t: number, withDate = span > 2 * 86400_000): string {
-    const d = new Date(t);
-    const p = (n: number) => String(n).padStart(2, '0');
-    const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-    if (withDate) return `${p(d.getDate())}.${p(d.getMonth() + 1)}. ${hm}`;
-    return span <= 3600_000 ? `${hm}:${p(d.getSeconds())}` : hm;
+    if (withDate) return fmtDateTime(t, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return span <= 3600_000
+      ? fmtTime(t, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : fmtTime(t, { hour: '2-digit', minute: '2-digit' });
   }
   const ticks = $derived([0, 0.25, 0.5, 0.75, 1].map((f) => fmtT(from + f * span)));
 
@@ -148,7 +150,7 @@
   ondblclick={() => onreset?.()}
 >
   {#each scaled as s (s.label)}
-    <div class="ch" role="img" aria-label="{s.label}: {s.last != null ? s.fmt(s.last) : 'no data'}">
+    <div class="ch" role="img" aria-label="{s.label}: {s.last != null ? s.fmt(s.last) : m.metrics_no_data()}">
       <div class="hd">
         <span class="t">{s.label}</span>
         <b class="dm-num">{s.last != null ? s.fmt(s.last) : '—'}</b>
@@ -199,7 +201,7 @@
 
   {#if hover != null && hasData && hoverIdx >= 0}
     <div class="tip" style="left: {tipX}px; top: {tipY}px">
-      <div class="when dm-mono">{new Date(ts[hoverIdx]).toLocaleString()}</div>
+      <div class="when dm-mono">{fmtDateTime(ts[hoverIdx])}</div>
       {#each scaled as s (s.label)}
         {@const v = s.values[hoverIdx]}
         <div class="row">

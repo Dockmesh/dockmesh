@@ -3,12 +3,13 @@
 
 import type { Operation } from '$lib/api';
 import type { Perm } from '$lib/rbac.svelte';
+import { m } from '$lib/paraglide/messages.js';
 
 export const KIND_LABEL: Record<string, string> = {
-  'image.update': 'Image update',
-  'backup.run': 'Backup',
-  'backup.restore': 'Restore',
-  'proxy.site': 'New site'
+  'image.update': m.lib_op_image_update(),
+  'backup.run': m.lib_op_backup(),
+  'backup.restore': m.lib_op_restore(),
+  'proxy.site': m.lib_op_new_site()
 };
 
 export function kindLabel(kind: string): string {
@@ -49,18 +50,18 @@ export function canCancel(op: Operation): boolean {
 
 // What cancelling does, for the confirmation.
 export function cancelConsequence(op: Operation): string {
-  if (op.status === 'queued') return 'It is taken out of the queue and does not start.';
+  if (op.status === 'queued') return m.lib_cancel_queued();
   switch (op.kind) {
     case 'backup.run':
-      return 'The run stops and is recorded as failed. A hook that is running finishes first, post-backup hooks still run, and the unfinished archive is deleted from the target.';
+      return m.lib_cancel_backup_run();
     case 'backup.restore':
-      return 'The restore stops before anything is written. The volumes and stack files keep their current contents.';
+      return m.lib_cancel_backup_restore();
     case 'image.update':
-      return 'The image pull stops. The container keeps running on its current image.';
+      return m.lib_cancel_image_update();
     case 'proxy.site':
-      return 'Dockmesh stops waiting for the certificate. The site stays, and Caddy keeps trying to get one.';
+      return m.lib_cancel_proxy_site();
   }
-  return 'The work stops.';
+  return m.lib_cancel_default();
 }
 
 // Share of finished steps plus the running step's own progress; skipped
@@ -104,22 +105,22 @@ export function elapsed(start?: string, end?: string): string {
 // first 140 characters. The progress dialog shows the full text.
 export function shortMessage(msg: string | null | undefined, max = 140): string {
   if (!msg) return '';
-  const m = msg.trim();
-  if (m.length <= max) return m;
-  const colon = m.indexOf(': ');
-  if (colon >= 20 && colon <= max) return m.slice(0, colon) + '.';
-  return m.slice(0, max - 1).trimEnd() + '…';
+  const t = msg.trim();
+  if (t.length <= max) return t;
+  const colon = t.indexOf(': ');
+  if (colon >= 20 && colon <= max) return t.slice(0, colon) + '.';
+  return t.slice(0, max - 1).trimEnd() + '…';
 }
 
 const HINTS: [RegExp, string][] = [
-  [/permission denied|operation not permitted|read-only file system|EACCES/i, "Dockmesh can't write there. Make the folder writable for the Dockmesh service, or pick another one."],
-  [/no space left on device|disk quota exceeded|ENOSPC/i, 'The disk is full. Free some space or pick another target.'],
-  [/connection refused|ECONNREFUSED/i, 'Nothing answered at that address. Check the host and port, and that the service is running.'],
-  [/no such host|server misbehaving|name resolution|ENOTFOUND/i, "The host name doesn't resolve. Check the spelling and the DNS settings of the host."],
-  [/i\/o timeout|deadline exceeded|timed out|ETIMEDOUT/i, 'The other side did not answer in time. Check the network path and any firewall in between.'],
-  [/authentication failed|unable to authenticate|unauthorized/i, 'The credentials were refused. Check the user name, password or key.'],
-  [/pull access denied|manifest unknown|repository does not exist/i, 'The image was not found or needs a login. Check the image name and the registry credentials.'],
-  [/address already in use|port is already allocated/i, 'A port is already taken on the host. Stop what uses it or change the port.']
+  [/permission denied|operation not permitted|read-only file system|EACCES/i, m.lib_hint_permission()],
+  [/no space left on device|disk quota exceeded|ENOSPC/i, m.lib_hint_disk_full()],
+  [/connection refused|ECONNREFUSED/i, m.lib_hint_refused()],
+  [/no such host|server misbehaving|name resolution|ENOTFOUND/i, m.lib_hint_dns()],
+  [/i\/o timeout|deadline exceeded|timed out|ETIMEDOUT/i, m.lib_hint_timeout()],
+  [/authentication failed|unable to authenticate|unauthorized/i, m.lib_hint_auth()],
+  [/pull access denied|manifest unknown|repository does not exist/i, m.lib_hint_pull()],
+  [/address already in use|port is already allocated/i, m.lib_hint_port()]
 ];
 
 /** A plain-language next step for a common low-level error, if one fits. */

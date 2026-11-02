@@ -7,6 +7,7 @@
 // on different hosts and we only want to lock the one being mutated.
 
 import { SvelteSet } from 'svelte/reactivity';
+import { m } from '$lib/paraglide/messages.js';
 
 const inflight = new SvelteSet<string>();
 
@@ -22,7 +23,7 @@ export const stackOps = {
   async run<T>(hostId: string, name: string, fn: () => Promise<T>): Promise<T> {
     const key = stackOpKey(hostId, name);
     if (inflight.has(key)) {
-      throw new Error('Another operation is already running for this stack');
+      throw new Error(m.lib_stack_busy());
     }
     inflight.add(key);
     try {

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { Info } from 'lucide-svelte';
 
   // Helper text longer than one sentence, behind an info icon. Shown on
   // hover and keyboard focus.
-  let { text, label = 'More information' }: { text: string; label?: string } = $props();
+  let { text, label = m.ui_infotip_label() }: { text: string; label?: string } = $props();
   const id = `tip-${Math.random().toString(36).slice(2, 8)}`;
 </script>
 

@@ -26,6 +26,7 @@
   } from 'lucide-svelte';
   import { detectOIDCTemplate, OIDC_TEMPLATES } from './_types';
   import ProviderModal from './_ProviderModal.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   type AnyProvider =
     | (OIDCProvider & { kind: 'oidc' })
@@ -66,7 +67,7 @@
         ...ldap.map((p) => ({ ...p, kind: 'ldap' as const })),
       ];
     } catch (err) {
-      toast.error('Failed to load providers', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_load_providers_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       providersLoading = false;
     }
@@ -91,9 +92,9 @@
     try {
       signin = await api.auth.setSignInConfig(signin);
       signinDirty = false;
-      toast.success('Session settings saved');
+      toast.success(m.authn_session_settings_saved());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       signinSaving = false;
     }
@@ -111,10 +112,10 @@
 
   async function deleteProvider(p: AnyProvider) {
     if (!(await confirm.ask({
-      title: 'Delete provider',
-      message: `Delete provider "${p.display_name}"?`,
-      body: "Users who signed in via this provider must fall back to password login until it's re-added.",
-      confirmLabel: 'Delete', danger: true,
+      title: m.authn_delete_provider_title(),
+      message: m.authn_delete_provider_message({ name: p.display_name }),
+      body: m.authn_delete_provider_body(),
+      confirmLabel: m.common_delete(), danger: true,
     }))) return;
     try {
       switch (p.kind) {
@@ -123,10 +124,10 @@
         case 'saml':   await api.saml.delete(p.id); break;
         case 'ldap':   await api.ldap.delete(p.id); break;
       }
-      toast.success('Provider deleted', p.slug);
+      toast.success(m.authn_provider_deleted(), p.slug);
       await loadProviders();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -213,10 +214,10 @@
           });
           break;
       }
-      toast.success(p.enabled ? 'Disabled' : 'Enabled', p.slug);
+      toast.success(p.enabled ? m.common_disabled() : m.common_enabled(), p.slug);
       await loadProviders();
     } catch (err) {
-      toast.error('Toggle failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_toggle_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -238,9 +239,9 @@
     try {
       policy = await api.auth.setPolicy(policy);
       policyDirty = false;
-      toast.success('Password policy saved');
+      toast.success(m.authn_policy_saved());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       policySaving = false;
     }
@@ -290,7 +291,7 @@
   }
 
   function copyText(s: string) {
-    copyWithToast(s, 'Copied');
+    copyWithToast(s, m.common_copied());
   }
 
   const callbackBase = $derived(typeof window !== 'undefined' ? window.location.origin : '');
@@ -313,12 +314,12 @@
     <!-- ───────────────────────── Header ───────────────────────── -->
     <header class="auth-header">
       <div class="auth-header-text">
-        <h1 class="ed-title auth-title">Authentication</h1>
+        <h1 class="ed-title auth-title">{m.authn_title()}</h1>
         <p class="ed-subtitle auth-subtitle">
           {#if providers.length === 0}
-            No SSO providers configured · local password only
+            {m.authn_subtitle_none()}
           {:else}
-            {enabledProviders.length} active provider{enabledProviders.length === 1 ? '' : 's'} · local password fallback
+            {m.authn_subtitle_active({ count: enabledProviders.length })}
           {/if}
         </p>
       </div>
@@ -333,27 +334,27 @@
       <div class="dm-card auth-permission-block">
         <Globe size={18} strokeWidth={1.5} />
         <div>
-          <div class="auth-perm-title">Admin-only</div>
+          <div class="auth-perm-title">{m.authn_admin_only()}</div>
           <p class="ed-subtitle auth-perm-blurb">
-            Authentication configuration requires the <em>system.update</em> permission.
+            {m.authn_perm_blurb_before()} <em>system.update</em>{m.authn_perm_blurb_after()}
           </p>
         </div>
       </div>
     {:else}
       <!-- ───────────────── Identity providers ─────────────── -->
       <section class="auth-section">
-        <Eyebrow>Identity providers</Eyebrow>
+        <Eyebrow>{m.authn_idp_eyebrow()}</Eyebrow>
 
         <div class="auth-providers-toolbar">
           <span class="auth-providers-meta">
-            {providers.length} configured · {enabledProviders.length} active
+            {m.authn_providers_meta({ configured: providers.length, active: enabledProviders.length })}
           </span>
           <button
             type="button"
             class="dm-btn dm-btn-primary dm-btn-sm"
             onclick={openNew}
           >
-            <Plus size={12} strokeWidth={1.5} /> Add provider
+            <Plus size={12} strokeWidth={1.5} /> {m.authn_add_provider()}
           </button>
         </div>
 
@@ -361,10 +362,10 @@
           <Skeleton width="100%" height="6rem" />
         {:else if providers.length === 0}
           <div class="auth-empty">
-            <Eyebrow>Empty</Eyebrow>
-            <p class="auth-empty-title">No providers configured.</p>
+            <Eyebrow>{m.authn_empty_eyebrow()}</Eyebrow>
+            <p class="auth-empty-title">{m.authn_empty_title()}</p>
             <p class="ed-subtitle auth-empty-blurb">
-              Click „Add provider" to pick a kind (OIDC / OAuth2 / SAML / LDAP) and a template.
+              {m.authn_empty_blurb()}
             </p>
           </div>
         {:else}
@@ -380,12 +381,12 @@
                     <span class="auth-provider-name">{p.display_name}</span>
                     {#if !p.enabled}
                       <span class="dm-pill dm-pill-neutral auth-provider-pill">
-                        <span class="dm-pill-dot"></span>disabled
+                        <span class="dm-pill-dot"></span>{m.authn_pill_disabled()}
                       </span>
                     {/if}
                   </div>
                   <div class="auth-provider-sub">
-                    <span class="auth-provider-slug">slug: {p.slug}</span>
+                    <span class="auth-provider-slug">{m.authn_slug_label({ slug: p.slug })}</span>
                     <span class="auth-provider-type">{providerTypeLabel(p)}</span>
                   </div>
                 </div>
@@ -395,7 +396,7 @@
                 </div>
 
                 <div class="auth-provider-role">
-                  <span class="auth-provider-role-label">Default role</span>
+                  <span class="auth-provider-role-label">{m.authn_default_role()}</span>
                   <span class="dm-pill dm-pill-neutral auth-provider-pill">
                     <span class="dm-pill-dot"></span>{p.default_role}
                   </span>
@@ -407,14 +408,14 @@
                     class="dm-btn dm-btn-ghost dm-btn-xs"
                     onclick={() => toggleEnabled(p)}
                   >
-                    {p.enabled ? 'Disable' : 'Enable'}
+                    {p.enabled ? m.common_disable() : m.common_enable()}
                   </button>
                   <button
                     type="button"
                     class="dm-btn dm-btn-ghost dm-btn-xs"
                     onclick={() => openEdit(p)}
-                    title="Edit"
-                    aria-label="Edit"
+                    title={m.common_edit()}
+                    aria-label={m.common_edit()}
                   >
                     <Edit2 size={11} strokeWidth={1.5} />
                   </button>
@@ -422,8 +423,8 @@
                     type="button"
                     class="dm-btn dm-btn-ghost dm-btn-xs auth-revoke-btn"
                     onclick={() => deleteProvider(p)}
-                    title="Delete"
-                    aria-label="Delete"
+                    title={m.common_delete()}
+                    aria-label={m.common_delete()}
                   >
                     <Trash2 size={11} strokeWidth={1.5} />
                   </button>
@@ -434,7 +435,7 @@
         {/if}
 
         <div class="auth-callback-hint">
-          <div class="auth-callback-title">Callback URLs</div>
+          <div class="auth-callback-title">{m.authn_callback_urls()}</div>
           <div class="auth-callback-row">
             <code class="auth-callback-code">{callbackBase}/api/v1/auth/oidc/<em>{`{slug}`}</em>/callback</code>
             <button
@@ -442,33 +443,33 @@
               class="dm-btn dm-btn-ghost dm-btn-xs"
               onclick={() => copyText(`${callbackBase}/api/v1/auth/oidc/{slug}/callback`)}
             >
-              <Copy size={11} strokeWidth={1.5} /> copy
+              <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
             </button>
           </div>
           <p class="auth-callback-blurb">
-            OAuth2 / SAML / LDAP get their own callback shapes once their backend ships. Replace
-            <code class="auth-inline-code">{`{slug}`}</code> with the provider's slug.
+            {m.authn_callback_blurb_before()}
+            <code class="auth-inline-code">{`{slug}`}</code> {m.authn_callback_blurb_after()}
           </p>
         </div>
       </section>
 
       <!-- ──────────── Local password policy ───────────────── -->
       <section class="auth-section">
-        <Eyebrow>Local password policy</Eyebrow>
+        <Eyebrow>{m.authn_policy_eyebrow()}</Eyebrow>
 
         {#if policy}
           <div class="dm-card auth-policy-card">
             <div class="auth-policy-preview-text">
-              Password must be at least
-              <em class="ed-accent">{policy.min_length}</em> characters
-              {#if policy.require_upper && policy.require_lower}, contain <em class="ed-accent">upper + lower</em> case{/if}
-              {#if policy.require_digit}, include a <em class="ed-accent">digit</em>{/if}
-              {#if policy.require_symbol}, include a <em class="ed-accent">symbol</em>{/if}.
+              {m.authn_policy_min_before()}
+              <em class="ed-accent">{policy.min_length}</em> {m.authn_policy_min_after()}
+              {#if policy.require_upper && policy.require_lower}{m.authn_policy_case_before()} <em class="ed-accent">{m.authn_policy_case_em()}</em> {m.authn_policy_case_after()}{/if}
+              {#if policy.require_digit}{m.authn_policy_digit_before()} <em class="ed-accent">{m.authn_policy_digit_em()}</em>{/if}
+              {#if policy.require_symbol}{m.authn_policy_symbol_before()} <em class="ed-accent">{m.authn_policy_symbol_em()}</em>{/if}.
             </div>
 
             <div class="auth-chips">
               <span class="auth-chip auth-chip-active">
-                ✓ min {policy.min_length} chars
+                ✓ {m.authn_chip_min({ n: policy.min_length })}
               </span>
               <button
                 type="button"
@@ -476,7 +477,7 @@
                 class:auth-chip-active={policy.require_upper && policy.require_lower}
                 onclick={toggleUpperLower}
               >
-                {policy.require_upper && policy.require_lower ? '✓' : '○'} upper + lower
+                {policy.require_upper && policy.require_lower ? '✓' : '○'} {m.authn_chip_upper_lower()}
               </button>
               <button
                 type="button"
@@ -484,7 +485,7 @@
                 class:auth-chip-active={policy.require_digit}
                 onclick={() => setPolicyField('require_digit', !policy!.require_digit)}
               >
-                {policy.require_digit ? '✓' : '○'} digit
+                {policy.require_digit ? '✓' : '○'} {m.authn_chip_digit()}
               </button>
               <button
                 type="button"
@@ -492,12 +493,12 @@
                 class:auth-chip-active={policy.require_symbol}
                 onclick={() => setPolicyField('require_symbol', !policy!.require_symbol)}
               >
-                {policy.require_symbol ? '✓' : '○'} symbol
+                {policy.require_symbol ? '✓' : '○'} {m.authn_chip_symbol()}
               </button>
             </div>
 
             <div class="auth-policy-grid">
-              <Field label="Minimum length">
+              <Field label={m.authn_min_length()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -507,7 +508,7 @@
                   oninput={(e) => setPolicyField('min_length', parseInt((e.target as HTMLInputElement).value) || 0)}
                 />
               </Field>
-              <Field label="Lockout · max attempts" hint="Failed sign-ins before lock.">
+              <Field label={m.authn_lockout_attempts()} hint={m.authn_lockout_attempts_hint()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -517,7 +518,7 @@
                   oninput={(e) => setPolicyField('lockout_max_attempts', parseInt((e.target as HTMLInputElement).value) || 0)}
                 />
               </Field>
-              <Field label="Lockout · duration (min)" hint="Auto-unlock after.">
+              <Field label={m.authn_lockout_duration()} hint={m.authn_lockout_duration_hint()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -537,7 +538,7 @@
                   onclick={loadPolicy}
                   disabled={policySaving}
                 >
-                  Discard
+                  {m.authn_discard()}
                 </button>
                 <button
                   type="button"
@@ -545,7 +546,7 @@
                   onclick={savePolicy}
                   disabled={policySaving}
                 >
-                  {policySaving ? 'Saving…' : 'Save policy'}
+                  {policySaving ? m.common_saving() : m.authn_save_policy()}
                 </button>
               </div>
             {/if}
@@ -557,26 +558,26 @@
 
       <!-- ─────── Sessions & sign-in flow ─────── -->
       <section class="auth-section">
-        <Eyebrow>Sessions &amp; sign-in flow</Eyebrow>
+        <Eyebrow>{m.authn_sessions_eyebrow()}</Eyebrow>
 
         {#if signin}
           <div class="dm-card auth-policy-card">
             <div class="auth-policy-preview-text">
-              Sessions expire after
+              {m.authn_sess_expire_before()}
               <em class="ed-accent">{signin.session_absolute_ttl_hr}h</em>
               {#if signin.session_idle_ttl_min > 0}
-                or <em class="ed-accent">{signin.session_idle_ttl_min}min</em> of inactivity, whichever comes first.
+                {m.authn_sess_idle_before()} <em class="ed-accent">{signin.session_idle_ttl_min}min</em> {m.authn_sess_idle_after()}
               {:else}
-                regardless of activity.
+                {m.authn_sess_no_idle()}
               {/if}
-              Each user may hold at most
-              <em class="ed-accent">{signin.session_max_per_user > 0 ? signin.session_max_per_user : 'unlimited'}</em>
-              concurrent sessions{#if signin.session_max_per_user > 0} — the oldest get evicted on new sign-in{/if}.
-              Revoked + expired rows are hard-deleted after 30 days.
+              {m.authn_sess_max_before()}
+              <em class="ed-accent">{signin.session_max_per_user > 0 ? signin.session_max_per_user : m.authn_sess_unlimited()}</em>
+              {m.authn_sess_max_after()}{#if signin.session_max_per_user > 0}{m.authn_sess_evict()}{/if}.
+              {m.authn_sess_purge()}
             </div>
 
             <div class="auth-policy-grid">
-              <Field label="Idle timeout (min)" hint="Revoke after N minutes without a refresh. 0 = no idle expiry.">
+              <Field label={m.authn_idle_timeout()} hint={m.authn_idle_timeout_hint()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -586,7 +587,7 @@
                   oninput={(e) => setSigninField('session_idle_ttl_min', parseInt((e.target as HTMLInputElement).value) || 0)}
                 />
               </Field>
-              <Field label="Absolute lifetime (h)" hint="Hard cap on a single session before re-auth.">
+              <Field label={m.authn_abs_lifetime()} hint={m.authn_abs_lifetime_hint()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -596,7 +597,7 @@
                   oninput={(e) => setSigninField('session_absolute_ttl_hr', parseInt((e.target as HTMLInputElement).value) || 1)}
                 />
               </Field>
-              <Field label="Max sessions per user" hint="0 means no limit; the least recently used session ends first.">
+              <Field label={m.authn_max_sessions()} hint={m.authn_max_sessions_hint()}>
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -617,15 +618,14 @@
                   onchange={(e) => setSigninField('auto_create_on_sso', (e.target as HTMLInputElement).checked)}
                 />
                 <div class="auth-toggle-text">
-                  <div class="auth-toggle-label">Auto-create accounts on first SSO sign-in</div>
-                  <div class="auth-toggle-hint">Lands new users in the per-provider default role.</div>
+                  <div class="auth-toggle-label">{m.authn_auto_create()}</div>
+                  <div class="auth-toggle-hint">{m.authn_auto_create_hint()}</div>
                 </div>
               </label>
             </div>
 
             <p class="auth-callback-blurb">
-              Password rotation and reuse rules, remember-me, requiring 2FA for admins, turning off
-              local passwords and self-registration come in a later release.
+              {m.authn_later_release()}
             </p>
 
             {#if signinDirty}
@@ -636,7 +636,7 @@
                   onclick={loadSignin}
                   disabled={signinSaving}
                 >
-                  Discard
+                  {m.authn_discard()}
                 </button>
                 <button
                   type="button"
@@ -644,7 +644,7 @@
                   onclick={saveSignin}
                   disabled={signinSaving}
                 >
-                  {signinSaving ? 'Saving…' : 'Save settings'}
+                  {signinSaving ? m.common_saving() : m.authn_save_settings()}
                 </button>
               </div>
             {/if}

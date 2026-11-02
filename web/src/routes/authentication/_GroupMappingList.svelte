@@ -7,6 +7,7 @@
   import { scopeLabel } from '$lib/access';
   import ScopePicker from '$lib/components/access/ScopePicker.svelte';
   import { Plus, X } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     mappings: GroupMapping[];
@@ -24,8 +25,8 @@
     defaultRole = $bindable(),
     roles,
     groupClaim,
-    title = 'Group → role mappings',
-    hint = 'Each mapping gives members of the group a role on a scope; a user in several groups gets all of them. Sign-in replaces the account’s identity provider assignments with these.',
+    title = m.authn_gml_title(),
+    hint = m.authn_gml_hint(),
   }: Props = $props();
 
   const builtIns = ['viewer', 'operator', 'deployer', 'host-admin', 'admin'] as const;
@@ -67,40 +68,40 @@
 
   {#if mappings.length > 0}
     <div class="gml-list">
-      {#each mappings as m, i (i)}
+      {#each mappings as row, i (i)}
         <div class="gml-row">
           <input
             class="dm-input gml-group"
-            placeholder={groupClaim ? `value of "${groupClaim}" claim` : 'group name'}
-            value={m.group}
+            placeholder={groupClaim ? m.authn_gml_claim_ph({ claim: groupClaim }) : m.authn_gml_group_ph()}
+            value={row.group}
             oninput={(e) => setGroup(i, (e.target as HTMLInputElement).value)}
           />
           <select
             class="dm-input gml-role"
-            value={m.role}
+            value={row.role}
             onchange={(e) => setRole(i, (e.target as HTMLSelectElement).value)}
           >
             {#each allRoleNames as r}
               <option value={r}>{roleLabel(r)}</option>
             {/each}
           </select>
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs gml-scope" title="Where the role applies"
-            onclick={() => (editingScope = editingScope === i ? null : i)}>on {scopeLabel(m.scope)}</button>
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs gml-scope" title={m.authn_gml_scope_title()}
+            onclick={() => (editingScope = editingScope === i ? null : i)}>{m.authn_gml_on_scope({ scope: scopeLabel(row.scope) })}</button>
           <button
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs gml-remove"
             onclick={() => remove(i)}
-            title="Remove mapping"
-            aria-label="Remove mapping"
+            title={m.authn_gml_remove()}
+            aria-label={m.authn_gml_remove()}
           >
             <X size={11} strokeWidth={1.5} />
           </button>
         </div>
         {#if editingScope === i}
           <div class="gml-scopeedit">
-            <ScopePicker value={m.scope ?? { type: 'global' }} label="Role applies on" onchange={(v) => setScope(i, v)} />
+            <ScopePicker value={row.scope ?? { type: 'global' }} label={m.authn_gml_applies_on()} onchange={(v) => setScope(i, v)} />
             <div class="gml-scopeactions">
-              <button type="button" class="dm-btn dm-btn-xs" onclick={() => (editingScope = null)}>Done</button>
+              <button type="button" class="dm-btn dm-btn-xs" onclick={() => (editingScope = null)}>{m.common_done()}</button>
             </div>
           </div>
         {/if}
@@ -113,11 +114,11 @@
     class="dm-btn dm-btn-ghost dm-btn-xs gml-add"
     onclick={addRow}
   >
-    <Plus size={11} strokeWidth={1.5} /> Add mapping
+    <Plus size={11} strokeWidth={1.5} /> {m.authn_gml_add()}
   </button>
 
   <div class="gml-default">
-    <span class="gml-default-label">Default role</span>
+    <span class="gml-default-label">{m.authn_default_role()}</span>
     <select
       class="dm-input gml-default-select"
       value={defaultRole}
@@ -127,7 +128,7 @@
         <option value={r}>{roleLabel(r)}</option>
       {/each}
     </select>
-    <span class="gml-default-hint">Assigned on everything when no mapping matches.</span>
+    <span class="gml-default-hint">{m.authn_gml_default_hint()}</span>
   </div>
 </div>
 

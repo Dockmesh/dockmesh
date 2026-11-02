@@ -6,6 +6,7 @@
   import { ldapDefaultsForMode } from './_types';
   import { Field } from '$lib/components/editorial';
   import GroupMappingList from './_GroupMappingList.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     config: LDAPConfig;
@@ -44,7 +45,7 @@
   </div>
 {/if}
 
-<div class="ldap-fieldset">Directory mode</div>
+<div class="ldap-fieldset">{m.authn_ldap_mode()}</div>
 <div class="ldap-mode" role="radiogroup">
   <button
     type="button"
@@ -55,7 +56,7 @@
     <span class="ldap-mode-icon">📂</span>
     <div class="ldap-mode-text">
       <span class="ldap-mode-label">OpenLDAP</span>
-      <span class="ldap-mode-blurb">389 DS · FreeIPA · uid-based filter.</span>
+      <span class="ldap-mode-blurb">{m.authn_ldap_openldap_blurb()}</span>
     </div>
   </button>
   <button
@@ -67,21 +68,21 @@
     <span class="ldap-mode-icon">🪟</span>
     <div class="ldap-mode-text">
       <span class="ldap-mode-label">Active Directory</span>
-      <span class="ldap-mode-blurb">Microsoft AD · sAMAccountName-based filter.</span>
+      <span class="ldap-mode-blurb">{m.authn_ldap_ad_blurb()}</span>
     </div>
   </button>
 </div>
 
-<div class="ldap-fieldset">Connection</div>
+<div class="ldap-fieldset">{m.authn_ldap_connection()}</div>
 <div class="ldap-grid-host">
-  <Field label="Host">
+  <Field label={m.common_host()}>
     <input
       class="dm-input acc-input-mono"
       bind:value={config.host}
       placeholder={config.mode === 'ad' ? 'dc01.corp.example' : 'ldap.example.com'}
     />
   </Field>
-  <Field label="Port">
+  <Field label={m.common_port()}>
     <input
       type="number"
       class="dm-input acc-input-mono"
@@ -92,12 +93,12 @@
   </Field>
 </div>
 
-<Field label="TLS mode">
+<Field label={m.authn_ldap_tls_mode()}>
   <div class="ldap-tls" role="radiogroup">
     {#each [
       { id: 'ldaps' as const, label: 'LDAPS', port: 636 },
       { id: 'starttls' as const, label: 'StartTLS', port: 389 },
-      { id: 'none' as const, label: 'None (insecure)', port: 389 },
+      { id: 'none' as const, label: m.authn_ldap_tls_none(), port: 389 },
     ] as opt}
       <button
         type="button"
@@ -115,14 +116,14 @@
   <label class="ldap-toggle">
     <input type="checkbox" bind:checked={config.skip_verify} />
     <span class="ldap-toggle-text">
-      Skip TLS verification
-      <span class="ldap-toggle-warn">— accepts any certificate. Self-signed only.</span>
+      {m.authn_ldap_skip_verify()}
+      <span class="ldap-toggle-warn">{m.authn_ldap_skip_verify_warn()}</span>
     </span>
   </label>
 {/if}
 
-<div class="ldap-fieldset">Bind credentials</div>
-<Field label="Bind DN" hint="Account used by Dockmesh to perform searches.">
+<div class="ldap-fieldset">{m.authn_ldap_bind_creds()}</div>
+<Field label={m.authn_ldap_bind_dn()} hint={m.authn_ldap_bind_dn_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.bind_dn}
@@ -132,8 +133,8 @@
   />
 </Field>
 <Field
-  label={editing ? 'Bind password (leave blank to keep)' : 'Bind password'}
-  hint="Stored encrypted at rest."
+  label={editing ? m.authn_ldap_bind_pw_keep() : m.authn_ldap_bind_pw()}
+  hint={m.authn_stored_encrypted()}
 >
   <input
     class="dm-input acc-input-mono"
@@ -143,8 +144,8 @@
   />
 </Field>
 
-<div class="ldap-fieldset">User search</div>
-<Field label="User search base" hint="DN under which to search for users.">
+<div class="ldap-fieldset">{m.authn_ldap_user_search()}</div>
+<Field label={m.authn_ldap_user_base()} hint={m.authn_ldap_user_base_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.user_search_base}
@@ -153,28 +154,28 @@
       : 'ou=people,dc=example,dc=com'}
   />
 </Field>
-<Field label="User search filter" hint="%s is replaced with the login username.">
+<Field label={m.authn_ldap_user_filter()} hint={m.authn_ldap_user_filter_hint()}>
   <input class="dm-input acc-input-mono" bind:value={config.user_search_filter} />
 </Field>
 
 <Field
-  label="Subject attribute"
-  hint="Immutable id that accounts are keyed by. Empty: objectGUID (Active Directory), else entryUUID (OpenLDAP), else the DN. Use another unique id only, never uid or mail."
+  label={m.authn_ldap_subject()}
+  hint={m.authn_ldap_subject_hint()}
 >
-  <input class="dm-input acc-input-mono" bind:value={config.subject_attribute} placeholder="objectGUID, else entryUUID" />
+  <input class="dm-input acc-input-mono" bind:value={config.subject_attribute} placeholder={m.authn_ldap_subject_ph()} />
 </Field>
 
 <div class="ldap-grid-2">
-  <Field label="Username attribute">
+  <Field label={m.authn_username_attr()}>
     <input class="dm-input acc-input-mono" bind:value={config.username_attribute} />
   </Field>
-  <Field label="Email attribute">
+  <Field label={m.authn_email_attr()}>
     <input class="dm-input acc-input-mono" bind:value={config.email_attribute} />
   </Field>
 </div>
 
-<div class="ldap-fieldset">Group lookup</div>
-<Field label="Group search base" hint="Optional DN to search for groups under.">
+<div class="ldap-fieldset">{m.authn_ldap_group_lookup()}</div>
+<Field label={m.authn_ldap_group_base()} hint={m.authn_ldap_group_base_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.group_search_base}
@@ -183,7 +184,7 @@
       : 'ou=groups,dc=example,dc=com'}
   />
 </Field>
-<Field label="Group membership attribute" hint="memberOf for AD; cn or memberOf depending on schema for OpenLDAP.">
+<Field label={m.authn_ldap_group_attr()} hint={m.authn_ldap_group_attr_hint()}>
   <input class="dm-input acc-input-mono" bind:value={config.group_membership_attribute} />
 </Field>
 
@@ -191,9 +192,9 @@
   bind:mappings={config.group_mappings}
   bind:defaultRole={config.default_role}
   {roles}
-  groupClaim="group DN or CN"
-  title="Group → role mappings"
-  hint="Group DNs or CNs; with several matches the last one listed wins."
+  groupClaim={m.authn_ldap_group_claim()}
+  title={m.authn_gml_title()}
+  hint={m.authn_ldap_gml_hint()}
 />
 
 <style>

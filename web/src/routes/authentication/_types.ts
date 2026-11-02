@@ -6,6 +6,7 @@
 export type ProviderKind = 'oidc' | 'oauth2' | 'saml' | 'ldap';
 
 import type { Scope } from '$lib/api';
+import { m } from '$lib/paraglide/messages.js';
 
 export interface GroupMapping {
   group: string;
@@ -95,27 +96,27 @@ export const OIDC_TEMPLATES: OIDCTemplate[] = [
   { id: 'keycloak', label: 'Keycloak', icon: '🔐',
     issuer_hint: 'https://auth.example/realms/main',
     scopes: 'openid profile email groups',
-    help: 'Self-hosted realm. Map realm-roles or groups to Dockmesh roles.' },
+    help: m.authn_tpl_keycloak_help() },
   { id: 'authelia', label: 'Authelia', icon: '🛡️',
     issuer_hint: 'https://auth.example',
     scopes: 'openid profile email groups',
-    help: 'Self-hosted, lighter than Keycloak. groups claim available since 4.x.' },
+    help: m.authn_tpl_authelia_help() },
   { id: 'azure', label: 'Microsoft 365 (Azure AD)', icon: '🪟',
     issuer_hint: 'https://login.microsoftonline.com/{tenant-id}/v2.0',
     scopes: 'openid profile email',
-    help: 'Multi-tenant: tenant-id = "common". Single-tenant: paste your directory ID.' },
+    help: m.authn_tpl_azure_help() },
   { id: 'google', label: 'Google', icon: 'G',
     issuer_hint: 'https://accounts.google.com',
     scopes: 'openid profile email',
-    help: 'Restrict to a Workspace domain via "hd" claim if needed.' },
+    help: m.authn_tpl_google_help() },
   { id: 'gitlab', label: 'GitLab', icon: '🦊',
     issuer_hint: 'https://gitlab.example',
     scopes: 'openid profile email',
-    help: 'Self-hosted GitLab works the same as gitlab.com.' },
-  { id: 'generic', label: 'Generic OIDC', icon: '○',
+    help: m.authn_tpl_gitlab_help() },
+  { id: 'generic', label: m.authn_tpl_generic_oidc_label(), icon: '○',
     issuer_hint: 'https://auth.example',
     scopes: 'openid profile email',
-    help: 'Anything that speaks the OpenID-Connect spec.' },
+    help: m.authn_tpl_generic_oidc_help() },
 ];
 
 export interface OAuth2Template {
@@ -143,7 +144,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     username_field: 'login',
     email_field: 'email',
     groups_field: '',
-    help: 'OAuth Apps under Developer Settings. Org-level groups need read:org and a separate /user/orgs lookup.' },
+    help: m.authn_tpl_github_help() },
   { id: 'gitlab', label: 'GitLab OAuth', icon: '🦊',
     authorization_url: 'https://gitlab.com/oauth/authorize',
     token_url: 'https://gitlab.com/oauth/token',
@@ -153,7 +154,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     username_field: 'username',
     email_field: 'email',
     groups_field: '',
-    help: 'OAuth-only path (no OIDC). Prefer OIDC unless you need fine-grained scopes.' },
+    help: m.authn_tpl_gitlab_oauth_help() },
   { id: 'google', label: 'Google OAuth', icon: 'G',
     authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth',
     token_url: 'https://oauth2.googleapis.com/token',
@@ -163,8 +164,8 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     username_field: 'email',
     email_field: 'email',
     groups_field: '',
-    help: 'OAuth-only path. OIDC is recommended for Google.' },
-  { id: 'generic', label: 'Generic OAuth2', icon: '○',
+    help: m.authn_tpl_google_oauth_help() },
+  { id: 'generic', label: m.authn_tpl_generic_oauth2_label(), icon: '○',
     authorization_url: 'https://auth.example/oauth/authorize',
     token_url: 'https://auth.example/oauth/token',
     userinfo_url: 'https://auth.example/oauth/userinfo',
@@ -173,7 +174,7 @@ export const OAUTH2_TEMPLATES: OAuth2Template[] = [
     username_field: 'username',
     email_field: 'email',
     groups_field: 'groups',
-    help: 'Any RFC 6749 OAuth 2.0 server with a userinfo-style endpoint.' },
+    help: m.authn_tpl_generic_oauth2_help() },
 ];
 
 export interface SAMLTemplate {
@@ -197,7 +198,7 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     groups_attribute: 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups',
     nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
     subject_attribute: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
-    help: 'Configure as Enterprise App. Add SP entity ID + ACS URL in App Registration.' },
+    help: m.authn_tpl_azure_saml_help() },
   { id: 'adfs', label: 'AD FS', icon: '🪟',
     idp_metadata_url_hint: 'https://adfs.example.com/FederationMetadata/2007-06/FederationMetadata.xml',
     username_attribute: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
@@ -205,7 +206,7 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     groups_attribute: 'http://schemas.xmlsoap.org/claims/Group',
     nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
     subject_attribute: '',
-    help: 'Add Relying Party Trust on the AD FS server with the ACS URL below.' },
+    help: m.authn_tpl_adfs_help() },
   { id: 'okta', label: 'Okta', icon: '🌀',
     idp_metadata_url_hint: 'https://your-tenant.okta.com/app/{app-id}/sso/saml/metadata',
     username_attribute: 'NameID',
@@ -213,7 +214,7 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     groups_attribute: 'groups',
     nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
     subject_attribute: '',
-    help: 'Create a new SAML 2.0 application in Okta. Configure attribute statements for groups.' },
+    help: m.authn_tpl_okta_help() },
   { id: 'authentik', label: 'Authentik / Keycloak', icon: '🔐',
     idp_metadata_url_hint: 'https://auth.example/application/saml/dockmesh/metadata/',
     username_attribute: 'http://schemas.goauthentik.io/2021/02/saml/username',
@@ -221,15 +222,15 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     groups_attribute: 'http://schemas.xmlsoap.org/claims/Group',
     nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
     subject_attribute: '',
-    help: 'Both Authentik and Keycloak ship SAML provider templates. Use the upstream metadata URL.' },
-  { id: 'generic', label: 'Generic SAML 2.0', icon: '○',
+    help: m.authn_tpl_authentik_help() },
+  { id: 'generic', label: m.authn_tpl_generic_saml_label(), icon: '○',
     idp_metadata_url_hint: 'https://idp.example/metadata',
     username_attribute: 'NameID',
     email_attribute: 'email',
     groups_attribute: 'groups',
     nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
     subject_attribute: '',
-    help: 'Any SAML 2.0 IdP with HTTP-Redirect or HTTP-POST bindings.' },
+    help: m.authn_tpl_generic_saml_help() },
 ];
 
 // ── Helper: detect kind from issuer/host ─────────────────────────────

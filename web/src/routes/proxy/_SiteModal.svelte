@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { api, ApiError, isFanOut } from '$lib/api';
   import { Modal, Stepper } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
@@ -35,7 +36,7 @@
   let options = $state<OptionsForm>(toForm(null));
   let fieldErrors = $state<Record<string, string>>({});
 
-  const STEPS = ['Name', 'Destination', 'Certificate', 'Advanced'];
+  const STEPS = [m.common_name(), m.proxy_sm_step_destination(), m.proxy_sm_certificate(), m.proxy_sm_advanced()];
   const ADVANCED = 3;
 
   $effect(() => {
@@ -97,13 +98,13 @@
     if (step === 0) {
       const h = host.trim().toLowerCase();
       if (!h || !HOST_RE.test(h)) {
-        error = 'Enter one hostname, e.g. photos.example.org.';
+        error = m.proxy_sm_err_host();
         return;
       }
       host = h;
     }
     if (step === 1 && !UPSTREAM_RE.test(upstream)) {
-      error = kind === 'container' ? 'Pick a container and port.' : 'Enter host:port, e.g. 192.168.10.40:5001.';
+      error = kind === 'container' ? m.proxy_sm_err_container() : m.proxy_sm_err_address();
       return;
     }
     step++;
@@ -113,30 +114,30 @@
     error = '';
     fieldErrors = {};
     if (editing && !UPSTREAM_RE.test(upstream)) {
-      error = 'Enter host:port, e.g. localhost:3000.';
+      error = m.proxy_sm_err_address_edit();
       return;
     }
     saving = true;
     try {
       if (editing) {
         await api.proxy.updateRoute(editing.id, upstream, tls);
-        toast.success('Site updated', editing.host);
+        toast.success(m.proxy_site_updated(), editing.host);
       } else {
         const since = Date.now();
         const custom = changedGroups(options, toForm(null)).length > 0;
         await api.proxy.createRoute(host, upstream, tls, custom ? toPayload(options) : undefined);
         const op = await operations.find(opRef.proxySite(host), 'proxy.site', since);
         if (op) await operations.open(op.id);
-        else toast.success('Site created', host);
+        else toast.success(m.proxy_site_created(), host);
       }
       open = false;
       onsaved?.();
     } catch (e) {
-      error = e instanceof ApiError ? e.message : 'Saving failed';
+      error = e instanceof ApiError ? e.message : m.proxy_saving_failed();
       const fe = editing ? null : parseFieldError(error);
       if (fe) {
         fieldErrors = { [fe.field]: fe.message };
-        error = 'Check the advanced options.';
+        error = m.proxy_sm_err_check_advanced();
         step = ADVANCED;
       }
     } finally {
@@ -145,13 +146,13 @@
   }
 
   const TLS_OPTS: Array<{ id: TLSMode; hint: string }> = [
-    { id: 'auto', hint: 'public name; DNS must point to this server' },
-    { id: 'internal', hint: 'names only used at home, browsers warn until the CA is trusted' },
-    { id: 'none', hint: 'no encryption' }
+    { id: 'auto', hint: m.proxy_sm_tls_auto_hint() },
+    { id: 'internal', hint: m.proxy_sm_tls_internal_hint() },
+    { id: 'none', hint: m.proxy_sm_tls_none_hint() }
   ];
 </script>
 
-<Modal bind:open title={editing ? `Edit ${editing.host}` : 'New site'} maxWidth={step === ADVANCED && !editing ? 'max-w-3xl' : 'max-w-xl'}>
+<Modal bind:open title={editing ? m.proxy_sm_edit_title({ host: editing.host }) : m.proxy_new_site()} maxWidth={step === ADVANCED && !editing ? 'max-w-3xl' : 'max-w-xl'}>
   {#if !editing}
     <Stepper steps={STEPS} current={step} />
   {/if}
@@ -159,31 +160,31 @@
   <div class="ns">
     {#if editing || step === 1}
       {#if !editing}
-        <div class="opts" role="radiogroup" aria-label="Where should {host} go?">
-          <span class="lbl">Where should <b class="dm-mono">{host}</b> go?</span>
+        <div class="opts" role="radiogroup" aria-label={m.proxy_sm_where_aria({ host })}>
+          <span class="lbl">{m.proxy_sm_where_before()} <b class="dm-mono">{host}</b> {m.proxy_sm_where_after()}</span>
           <label class="opt" class:on={kind === 'container'}>
             <input type="radio" bind:group={kind} value="container" disabled={!targets.length} />
-            <span><b>A container</b> <span class="dm-dim">on the server, through a published port</span></span>
+            <span><b>{m.proxy_sm_kind_container()}</b> <span class="dm-dim">{m.proxy_sm_kind_container_hint()}</span></span>
           </label>
           <label class="opt" class:on={kind === 'address'}>
             <input type="radio" bind:group={kind} value="address" />
-            <span><b>Another address</b> <span class="dm-dim">NAS, router, any host:port</span></span>
+            <span><b>{m.proxy_sm_kind_address()}</b> <span class="dm-dim">{m.proxy_sm_kind_address_hint()}</span></span>
           </label>
         </div>
       {/if}
       {#if kind === 'container' && !editing}
         <div class="grid">
           <div class="dm-field">
-            <label for="ns-ct">Container</label>
+            <label for="ns-ct">{m.common_container()}</label>
             <select id="ns-ct" class="dm-input" bind:value={container}>
-              <option value="" disabled>Pick a container</option>
+              <option value="" disabled>{m.proxy_sm_pick_container()}</option>
               {#each targets as t (t.container)}
                 <option value={t.container}>{t.container}{t.stack ? ` · ${t.stack}` : ''}</option>
               {/each}
             </select>
           </div>
           <div class="dm-field">
-            <label for="ns-port">Published port</label>
+            <label for="ns-port">{m.proxy_sm_published_port()}</label>
             <select id="ns-port" class="dm-input" bind:value={port} disabled={!picked}>
               {#each picked?.ports ?? [] as p (p)}<option value={String(p)}>{p}</option>{/each}
             </select>
@@ -191,28 +192,28 @@
         </div>
       {:else}
         <div class="dm-field">
-          <label for="ns-addr">Goes to</label>
-          <input id="ns-addr" class="dm-input dm-mono" bind:value={address} placeholder="192.168.10.40:5001 or localhost:3000" autocomplete="off" list="ns-targets" />
+          <label for="ns-addr">{m.proxy_sm_goes_to()}</label>
+          <input id="ns-addr" class="dm-input dm-mono" bind:value={address} placeholder={m.proxy_sm_goes_to_ph()} autocomplete="off" list="ns-targets" />
           <datalist id="ns-targets">
             {#each targets as t (t.container)}{#each t.ports as p (p)}<option value="localhost:{p}">{t.container}</option>{/each}{/each}
           </datalist>
-          <span class="hint">host:port. Caddy runs on the server's host network: use localhost and a published port for containers there.</span>
+          <span class="hint">{m.proxy_sm_goes_to_hint()}</span>
         </div>
       {/if}
     {/if}
 
     {#if !editing && step === 0}
       <div class="dm-field">
-        <label for="ns-host">Name</label>
+        <label for="ns-host">{m.common_name()}</label>
         <input id="ns-host" class="dm-input dm-mono" bind:value={host} placeholder="photos.example.org" autocomplete="off"
           onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); next(); } }} />
-        <span class="hint">One hostname per site; it must point to this server in DNS. Wildcard names need a DNS challenge, which Dockmesh does not set up.</span>
+        <span class="hint">{m.proxy_sm_host_hint()}</span>
       </div>
     {/if}
 
     {#if editing || step === 2}
-      <div class="opts" role="radiogroup" aria-label="Certificate">
-        <span class="lbl">Certificate</span>
+      <div class="opts" role="radiogroup" aria-label={m.proxy_sm_certificate()}>
+        <span class="lbl">{m.proxy_sm_certificate()}</span>
         {#each TLS_OPTS as o (o.id)}
           <label class="opt" class:on={tls === o.id}>
             <input type="radio" bind:group={tls} value={o.id} />
@@ -221,12 +222,12 @@
         {/each}
       </div>
       {#if !editing}
-        <p class="result"><b class="dm-mono">{host}</b> → <span class="dm-mono">{upstream}</span> with {TLS_LABEL[tls]}. Caddy defaults for everything else unless you change them under Advanced; you can see each step after creating it.</p>
+        <p class="result"><b class="dm-mono">{host}</b> → <span class="dm-mono">{upstream}</span> {m.proxy_sm_result({ tls: TLS_LABEL[tls] })}</p>
       {/if}
     {/if}
 
     {#if !editing && step === ADVANCED}
-      <p class="result">Optional. Open a group to change it; everything you leave closed keeps Caddy's defaults. You can change all of this later on the site's Options tab.</p>
+      <p class="result">{m.proxy_sm_advanced_hint()}</p>
       <OptionsEditor bind:form={options} {tls} {host} errors={fieldErrors} collapsible />
     {/if}
 
@@ -235,15 +236,15 @@
 
   {#snippet footer()}
     {#if editing}
-      <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
-      <button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>Save</button>
+      <button type="button" class="dm-btn" onclick={() => (open = false)}>{m.common_cancel()}</button>
+      <button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>{m.common_save()}</button>
     {:else}
-      {#if step > 0}<button type="button" class="dm-btn" onclick={() => { error = ''; step--; }}>Back</button>
-      {:else}<button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>{/if}
-      {#if step < 2}<button type="button" class="dm-btn dm-btn-primary" onclick={next}>Next</button>
+      {#if step > 0}<button type="button" class="dm-btn" onclick={() => { error = ''; step--; }}>{m.common_back()}</button>
+      {:else}<button type="button" class="dm-btn" onclick={() => (open = false)}>{m.common_cancel()}</button>{/if}
+      {#if step < 2}<button type="button" class="dm-btn dm-btn-primary" onclick={next}>{m.common_next()}</button>
       {:else}
-        {#if step === 2}<button type="button" class="dm-btn" onclick={next}>Advanced</button>{/if}
-        <button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>Create site</button>
+        {#if step === 2}<button type="button" class="dm-btn" onclick={next}>{m.proxy_sm_advanced()}</button>{/if}
+        <button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>{m.proxy_sm_create()}</button>
       {/if}
     {/if}
   {/snippet}

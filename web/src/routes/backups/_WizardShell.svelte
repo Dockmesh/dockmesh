@@ -5,6 +5,7 @@
   import { X } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
   import { trapFocus, portal } from '$lib/a11y';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -31,7 +32,7 @@
     stepIdx,
     width = 720,
     nextDisabled = false,
-    finishLabel = 'Create',
+    finishLabel = m.common_create(),
     busy = false,
     onclose,
     onstep,
@@ -63,11 +64,11 @@
             <h2 id={titleId}>{title}</h2>
             {#if subtitle}<p>{subtitle}</p>{/if}
           </div>
-          <span class="dm-num dm-dim">Step {stepIdx + 1} of {steps.length}</span>
-          <button type="button" class="x" onclick={onclose} aria-label="Close"><X size={15} strokeWidth={1.8} /></button>
+          <span class="dm-num dm-dim">{m.backups_wizard_step_of({ n: stepIdx + 1, total: steps.length })}</span>
+          <button type="button" class="x" onclick={onclose} aria-label={m.common_close()}><X size={15} strokeWidth={1.8} /></button>
         </header>
 
-        <ol class="steps" aria-label="Steps">
+        <ol class="steps" aria-label={m.backups_wizard_steps()}>
           {#each steps as label, i (i)}
             <li class:done={i < stepIdx} class:on={i === stepIdx}>
               <button
@@ -86,14 +87,14 @@
 
         <footer class="f">
           {#if stepIdx > 0}
-            <button type="button" class="dm-btn" onclick={onback} disabled={busy}>Back</button>
+            <button type="button" class="dm-btn" onclick={onback} disabled={busy}>{m.common_back()}</button>
           {:else}
-            <button type="button" class="dm-btn" onclick={onclose}>Cancel</button>
+            <button type="button" class="dm-btn" onclick={onclose}>{m.common_cancel()}</button>
           {/if}
           {#if !isLast}
-            <button type="button" class="dm-btn dm-btn-primary" onclick={onnext} disabled={nextDisabled || busy}>Next</button>
+            <button type="button" class="dm-btn dm-btn-primary" onclick={onnext} disabled={nextDisabled || busy}>{m.common_next()}</button>
           {:else}
-            <button type="button" class="dm-btn dm-btn-primary" onclick={onfinish} disabled={nextDisabled || busy}>{busy ? 'Saving…' : finishLabel}</button>
+            <button type="button" class="dm-btn dm-btn-primary" onclick={onfinish} disabled={nextDisabled || busy}>{busy ? m.common_saving() : finishLabel}</button>
           {/if}
         </footer>
       </div>

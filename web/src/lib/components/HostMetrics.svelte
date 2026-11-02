@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
   import { api, type HistoryReason, type HostMetricsSample, type SystemMetrics } from '$lib/api';
@@ -108,14 +109,14 @@
       fmt: (v) => `${v.toFixed(1)} %`
     },
     {
-      label: 'Memory',
+      label: m.metrics_memory(),
       color: 'var(--violet)',
       values: data.map((s) => pct(s.mem_used, s.mem_total)),
       max: 100,
       fmt: (v) => `${v.toFixed(0)} %`
     },
     {
-      label: 'Disk',
+      label: m.metrics_disk(),
       color: 'var(--warn)',
       values: data.map((s) => pct(s.disk_used, s.disk_total)),
       max: 100,
@@ -126,19 +127,19 @@
   const rangeOptions = $derived(
     (Object.keys(RANGE_S) as Range[])
       .filter((r) => r === 'live' || hasHistory)
-      .map((r) => ({ key: r, label: r }))
+      .map((r) => ({ key: r, label: r === 'live' ? m.metrics_range_live() : r }))
   );
 </script>
 
-<section class="hm" aria-label="Host resources">
+<section class="hm" aria-label={m.metrics_host_resources()}>
   <div class="hm-h">
-    <h2 class="dm-h2">Resources</h2>
+    <h2 class="dm-h2">{m.shell_nav_resources()}</h2>
     {#if zoom}
-      <span class="zoomed">Zoomed · double-click a chart to reset</span>
+      <span class="zoomed">{m.metrics_zoomed()}</span>
     {/if}
     <span class="dm-sp"></span>
     <Segmented
-      label="Time range"
+      label={m.metrics_time_range()}
       size="sm"
       options={rangeOptions}
       value={zoom ? '' : range}
@@ -155,13 +156,13 @@
     to={domain[1]}
     onzoom={(a, b) => (zoom = [a, b])}
     onreset={() => (zoom = null)}
-    empty={range === 'live' ? 'Waiting for the first sample…' : 'No samples stored for this range yet.'}
+    empty={range === 'live' ? m.metrics_waiting_first() : m.metrics_no_samples_range()}
   />
   <p class="dm-sub hm-hint">
     {#if latest}
-      CPU % is relative to all {latest.cpu_cores} cores, memory to {fmtMem(latest.mem_total)} of RAM{latest.disk_total > 0
-        ? `, disk to the ${fmtBytes(latest.disk_total)} filesystem at ${latest.disk_path}`
-        : ''}.
+      {latest.disk_total > 0
+        ? m.metrics_host_hint_disk({ cores: latest.cpu_cores, mem: fmtMem(latest.mem_total), size: fmtBytes(latest.disk_total), path: latest.disk_path })
+        : m.metrics_host_hint({ cores: latest.cpu_cores, mem: fmtMem(latest.mem_total) })}
     {/if}
     {historyHint(noHistoryReason, hostName)}
   </p>

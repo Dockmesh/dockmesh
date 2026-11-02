@@ -26,6 +26,7 @@
   import OAuth2Fields from './_OAuth2Fields.svelte';
   import SAMLFields from './_SAMLFields.svelte';
   import LDAPFields from './_LDAPFields.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   type AnyProvider =
     | (OIDCProvider & { kind: 'oidc' })
@@ -115,30 +116,29 @@
     }
   }
 
-  const unlinkNote =
-    'Saving unlinks every account of this provider: users who sign in again get new accounts, or are linked by verified email where that is allowed.';
+  const unlinkNote = m.authn_unlink_note();
 
   const unlinkWarning = $derived.by(() => {
     if (!editing || editing.kind !== kind) return '';
     switch (editing.kind) {
       case 'oidc':
         return urlKey(editing.issuer_url) !== urlKey(oidc.issuer_url)
-          ? `A different issuer is another identity provider. ${unlinkNote}`
+          ? m.authn_unlink_issuer({ note: unlinkNote })
           : '';
       case 'oauth2':
         return urlKey(editing.userinfo_url) !== urlKey(oauth2.userinfo_url) ||
           (editing.subject_field ?? '').trim() !== oauth2.subject_field.trim()
-          ? `A different userinfo URL or subject field identifies users differently. ${unlinkNote}`
+          ? m.authn_unlink_oauth2({ note: unlinkNote })
           : '';
       case 'ldap':
         return editing.host.trim().toLowerCase() !== ldap.host.trim().toLowerCase() || editing.port !== ldap.port ||
           (editing.subject_attribute ?? '').trim().toLowerCase() !== ldap.subject_attribute.trim().toLowerCase()
-          ? `A different directory server or subject attribute identifies users differently. ${unlinkNote}`
+          ? m.authn_unlink_ldap({ note: unlinkNote })
           : '';
       case 'saml':
         return saml.idp_metadata_xml.trim() !== '' &&
           saml.idp_metadata_xml.trim() !== (editing.idp_metadata_xml ?? '').trim()
-          ? 'If the new metadata belongs to another IdP entity, saving unlinks every account of this provider.'
+          ? m.authn_unlink_saml()
           : '';
     }
     return '';
@@ -250,7 +250,7 @@
       if (t) {
         oidc.issuer_url = t.issuer_hint;
         oidc.scopes = t.scopes;
-        if (!oidc.display_name) oidc.display_name = `Sign in with ${t.label}`;
+        if (!oidc.display_name) oidc.display_name = m.authn_sign_in_with({ name: t.label });
       }
     } else if (kind === 'oauth2') {
       const t = OAUTH2_TEMPLATES.find((x) => x.id === id);
@@ -263,7 +263,7 @@
         oauth2.username_field = t.username_field;
         oauth2.email_field = t.email_field;
         oauth2.groups_field = t.groups_field;
-        if (!oauth2.display_name) oauth2.display_name = `Sign in with ${t.label}`;
+        if (!oauth2.display_name) oauth2.display_name = m.authn_sign_in_with({ name: t.label });
       }
     } else if (kind === 'saml') {
       const t = SAML_TEMPLATES.find((x) => x.id === id);
@@ -274,7 +274,7 @@
         saml.groups_attribute = t.groups_attribute;
         saml.nameid_format = t.nameid_format;
         saml.subject_attribute = t.subject_attribute;
-        if (!saml.display_name) saml.display_name = `Sign in with ${t.label}`;
+        if (!saml.display_name) saml.display_name = m.authn_sign_in_with({ name: t.label });
       }
     }
     mode = 'form';
@@ -300,7 +300,7 @@
   }
 
   function copyText(s: string) {
-    copyWithToast(s, 'Copied');
+    copyWithToast(s, m.common_copied());
   }
 
   // ── Validation ──────────────────────────────────────────────────────
@@ -357,7 +357,7 @@
       open = false;
       onSaved();
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -381,10 +381,10 @@
     };
     if (editing && editing.kind === 'oidc') {
       await api.oidc.update(editing.id, payload);
-      toast.success('Provider updated', oidc.slug);
+      toast.success(m.authn_provider_updated(), oidc.slug);
     } else {
       await api.oidc.create(payload);
-      toast.success('Provider added', oidc.slug);
+      toast.success(m.authn_provider_added(), oidc.slug);
     }
   }
 
@@ -409,10 +409,10 @@
     };
     if (editing && editing.kind === 'oauth2') {
       await api.oauth2.update(editing.id, payload);
-      toast.success('Provider updated', oauth2.slug);
+      toast.success(m.authn_provider_updated(), oauth2.slug);
     } else {
       await api.oauth2.create(payload);
-      toast.success('Provider added', oauth2.slug);
+      toast.success(m.authn_provider_added(), oauth2.slug);
     }
   }
 
@@ -433,10 +433,10 @@
     };
     if (editing && editing.kind === 'saml') {
       await api.saml.update(editing.id, payload);
-      toast.success('Provider updated', saml.slug);
+      toast.success(m.authn_provider_updated(), saml.slug);
     } else {
       await api.saml.create(payload);
-      toast.success('Provider added', saml.slug);
+      toast.success(m.authn_provider_added(), saml.slug);
     }
   }
 
@@ -464,10 +464,10 @@
     };
     if (editing && editing.kind === 'ldap') {
       await api.ldap.update(editing.id, payload);
-      toast.success('Provider updated', ldap.slug);
+      toast.success(m.authn_provider_updated(), ldap.slug);
     } else {
       await api.ldap.create(payload);
-      toast.success('Provider added', ldap.slug);
+      toast.success(m.authn_provider_added(), ldap.slug);
     }
   }
 
@@ -503,10 +503,10 @@
   });
 
   const eyebrow = $derived(
-    mode === 'kind' ? 'Add provider' :
-    mode === 'template' ? `Add ${currentKindMeta?.label} provider` :
-    editing ? 'Edit provider' :
-    `New ${currentKindMeta?.label} provider`,
+    mode === 'kind' ? m.authn_add_provider() :
+    mode === 'template' ? m.authn_add_kind_provider({ kind: currentKindMeta?.label ?? '' }) :
+    editing ? m.authn_edit_provider() :
+    m.authn_new_kind_provider({ kind: currentKindMeta?.label ?? '' }),
   );
 
   const saveDisabled = $derived(
@@ -527,13 +527,13 @@
 >
   {#snippet title()}
     {#if mode === 'kind'}
-      Pick a <em>provider type</em>
+      {m.authn_pick_type_before()} <em>{m.authn_pick_type_em()}</em> {m.authn_pick_type_after()}
     {:else if mode === 'template'}
-      Pick a <em>{currentKindMeta?.label}</em> template
+      {m.authn_pick_tpl_before()} <em>{currentKindMeta?.label}</em> {m.authn_pick_tpl_after()}
     {:else if editing}
-      Edit <em class="ed-accent">{editing.display_name}</em>
+      {m.authn_edit_title_before()} <em class="ed-accent">{editing.display_name}</em> {m.authn_edit_title_after()}
     {:else}
-      Connect a <em class="ed-accent">{currentTemplateLabel ?? currentKindMeta?.label ?? 'provider'}</em>
+      {m.authn_connect_before()} <em class="ed-accent">{currentTemplateLabel ?? currentKindMeta?.label ?? m.authn_provider_lc()}</em> {m.authn_connect_after()}
     {/if}
   {/snippet}
 
@@ -592,7 +592,7 @@
     <form id="pm-form" class="pm-form" onsubmit={(e) => { e.preventDefault(); save(); }}>
       <div class="pm-grid-2 pm-grid-narrow-wide">
         <div class="pm-field">
-          <span class="pm-label">Slug</span>
+          <span class="pm-label">{m.authn_slug()}</span>
           <input
             class="dm-input acc-input-mono"
             value={activeConfig().slug}
@@ -606,10 +606,10 @@
             disabled={editing !== null}
             placeholder="auth"
           />
-          <span class="pm-hint">URL-safe id used in callbacks.</span>
+          <span class="pm-hint">{m.authn_slug_hint()}</span>
         </div>
         <div class="pm-field">
-          <span class="pm-label">Display name</span>
+          <span class="pm-label">{m.authn_display_name()}</span>
           <input
             class="dm-input"
             value={activeConfig().display_name}
@@ -620,9 +620,9 @@
               else if (kind === 'saml') saml.display_name = v;
               else if (kind === 'ldap') ldap.display_name = v;
             }}
-            placeholder={`Sign in with ${currentTemplateLabel ?? currentKindMeta?.label ?? 'IdP'}`}
+            placeholder={m.authn_sign_in_with({ name: currentTemplateLabel ?? currentKindMeta?.label ?? 'IdP' })}
           />
-          <span class="pm-hint">Shown on the sign-in button.</span>
+          <span class="pm-hint">{m.authn_display_name_hint()}</span>
         </div>
       </div>
 
@@ -638,7 +638,7 @@
             else if (kind === 'ldap') ldap.enabled = v;
           }}
         />
-        <span>Enabled — accept sign-ins via this provider</span>
+        <span>{m.authn_enabled_accept()}</span>
       </label>
 
       {#if kind === 'oidc' || kind === 'oauth2'}
@@ -654,7 +654,7 @@
             else if (kind === 'ldap') ldap.allow_email_link = v;
           }}
         />
-        <span>Link to existing accounts with the same verified email</span>
+        <span>{m.authn_link_email()}</span>
       </label>
       {/if}
 
@@ -704,26 +704,26 @@
     {#if mode === 'kind'}
       <span></span>
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={close}>
-        Cancel
+        {m.common_cancel()}
       </button>
     {:else if mode === 'template'}
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm pm-back" onclick={back}>
-        <ChevronLeft size={11} strokeWidth={1.5} /> Back
+        <ChevronLeft size={11} strokeWidth={1.5} /> {m.common_back()}
       </button>
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={close}>
-        Cancel
+        {m.common_cancel()}
       </button>
     {:else}
       {#if !editing}
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm pm-back" onclick={back}>
-          <ChevronLeft size={11} strokeWidth={1.5} /> Back
+          <ChevronLeft size={11} strokeWidth={1.5} /> {m.common_back()}
         </button>
       {:else}
         <span></span>
       {/if}
       <div class="pm-form-actions">
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={close}>
-          Cancel
+          {m.common_cancel()}
         </button>
         <button
           type="submit"
@@ -731,7 +731,7 @@
           class="dm-btn dm-btn-primary dm-btn-sm"
           disabled={saveDisabled}
         >
-          {busy ? 'Saving…' : editing ? 'Save' : 'Add provider'}
+          {busy ? m.common_saving() : editing ? m.common_save() : m.authn_add_provider()}
         </button>
       </div>
     {/if}

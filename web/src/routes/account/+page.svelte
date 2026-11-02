@@ -19,6 +19,7 @@
   //     enrollment (existing flow). A recovery code disables 2FA;
   //     otherwise admin → /users → reset 2FA.
   //   - No .txt download for codes; clipboard copy is enough.
+  import LanguagePicker from '$lib/language/LanguagePicker.svelte';
   import { api, ApiError, type Session, type PasswordPolicy, type Assignment, type CustomRole } from '$lib/api';
   import { assignmentLabel } from '$lib/access';
   import { allowed } from '$lib/rbac.svelte';
@@ -33,6 +34,8 @@
     ShieldCheck, ShieldOff, Copy, Trash2, Terminal, User as UserIcon,
     AlertTriangle,
   } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   // /me shape — the type in api.ts is incomplete; mfa_enabled and
   // created_at are present in the actual response (handler returns the
@@ -43,6 +46,7 @@
     email?: string;
     mfa_enabled?: boolean;
     created_at?: string;
+    language?: string;
     assignments?: Assignment[];
   }
 
@@ -101,7 +105,7 @@
       if (roleList.length === 0 && allowed('roles.view')) roleList = await api.roles.list().catch(() => []);
       draftEmail = me.email ?? '';
     } catch (err) {
-      toast.error('Failed to load profile', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_load_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -135,10 +139,10 @@
     identitySaving = true;
     try {
       await api.users.update(me.id, { email: draftEmail });
-      toast.success('Profile saved');
+      toast.success(m.account_profile_saved());
       await loadMe();
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       identitySaving = false;
     }
@@ -156,10 +160,10 @@
     passwordBusy = true;
     try {
       await api.users.changePassword(me.id, newPassword, currentPassword);
-      toast.success('Password updated');
+      toast.success(m.account_password_updated());
       currentPassword = ''; newPassword = ''; confirmPassword = '';
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       passwordBusy = false;
     }
@@ -171,7 +175,7 @@
     if (pw.length >= 12) s++;
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
     if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
-    return { score: s, label: ['too short', 'weak', 'fair', 'good', 'strong'][s] };
+    return { score: s, label: [m.account_strength_too_short(), m.account_strength_weak(), m.account_strength_fair(), m.account_strength_good(), m.account_strength_strong()][s] };
   }
 
   // ── 2FA ──────────────────────────────────────────────────────────────
@@ -182,7 +186,7 @@
       mfaEnroll = await api.mfa.enrollStart();
       mfaOpen = true;
     } catch (err) {
-      toast.error('Failed to start enrollment', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_mfa_start_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       mfaBusy = false;
     }
@@ -197,7 +201,7 @@
       mfaStep = 'recovery';
       await loadMe();
     } catch (err) {
-      toast.error('Verification failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_mfa_verify_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       mfaBusy = false;
     }
@@ -229,12 +233,12 @@
       if (mfaOffMode === 'reenroll') {
         await startMFAEnroll();
       } else {
-        toast.success('2FA disabled');
+        toast.success(m.account_mfa_disabled_toast());
         await loadMe();
       }
     } catch (err) {
       toast.error(
-        err instanceof ApiError && err.status === 400 ? 'Invalid code' : 'Failed',
+        err instanceof ApiError && err.status === 400 ? m.account_invalid_code() : m.account_failed(),
         err instanceof ApiError && err.status !== 400 ? err.message : undefined
       );
     } finally {
@@ -251,25 +255,25 @@
     const ok = await confirm.ask(
       isCurrent
         ? {
-            title: 'Revoke current session',
-            message: 'Revoking the current session will log you out on the next refresh.',
-            body: 'Continue?', confirmLabel: 'Revoke', danger: true,
+            title: m.account_revoke_current_title(),
+            message: m.account_revoke_current_message(),
+            body: m.account_revoke_current_body(), confirmLabel: m.account_revoke(), danger: true,
           }
         : {
-            title: 'Revoke session',
-            message: 'Revoke this session?',
-            body: 'Any client using it (browser, CLI, script) will be logged out on next request.',
-            confirmLabel: 'Revoke', danger: true,
+            title: m.account_revoke_title(),
+            message: m.account_revoke_message(),
+            body: m.account_revoke_body(),
+            confirmLabel: m.account_revoke(), danger: true,
           },
     );
     if (!ok) return;
     sessionsBusy = true;
     try {
       await api.auth.revokeSession(familyID);
-      toast.success('Session revoked');
+      toast.success(m.account_session_revoked());
       await loadSessions();
     } catch (err) {
-      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.account_revoke_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       sessionsBusy = false;
     }
@@ -278,33 +282,33 @@
   // ── Helpers ──────────────────────────────────────────────────────────
   function fmtDate(iso?: string): string {
     if (!iso) return '—';
-    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    return fmtDateTime(iso, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   function fmtAgo(iso?: string): string {
     if (!iso) return '—';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return 'now';
-    if (d < 3600) return `${Math.round(d / 60)}m ago`;
-    if (d < 86400) return `${Math.round(d / 3600)}h ago`;
-    if (d < 2 * 86400) return 'yesterday';
-    return `${Math.round(d / 86400)}d ago`;
+    if (d < 60) return m.account_ago_now();
+    if (d < 3600) return m.account_ago_min({ n: Math.round(d / 60) });
+    if (d < 86400) return m.account_ago_h({ n: Math.round(d / 3600) });
+    if (d < 2 * 86400) return m.account_ago_yesterday();
+    return m.account_ago_d({ n: Math.round(d / 86400) });
   }
 
   function fmtSession(ua?: string): { device: string; isCli: boolean } {
-    if (!ua) return { device: 'unknown', isCli: false };
+    if (!ua) return { device: m.account_ua_unknown(), isCli: false };
     const cli = ua.match(/^([a-zA-Z0-9_.-]+)\/([0-9.]+)/);
     if (cli && !ua.includes('Mozilla')) {
       return { device: `${cli[1]} ${cli[2]}`, isCli: true };
     }
-    let os = 'unknown';
+    let os: string = m.account_ua_unknown();
     if (/Windows NT 11/i.test(ua)) os = 'Windows 11';
     else if (/Windows NT 10\.0/i.test(ua)) os = 'Windows';
     else if (/Mac OS X/i.test(ua)) os = 'macOS';
     else if (/Linux/i.test(ua)) os = 'Linux';
     else if (/Android/i.test(ua)) os = 'Android';
     else if (/iPhone|iPad|iOS/i.test(ua)) os = 'iOS';
-    let browser = 'browser';
+    let browser: string = m.account_ua_browser();
     const chrome = ua.match(/Chrome\/(\d+)/);
     const firefox = ua.match(/Firefox\/(\d+)/);
     const safari = ua.match(/Version\/(\d+).*Safari/);
@@ -318,7 +322,7 @@
 
 
   function copyText(s: string) {
-    copyWithToast(s, 'Copied');
+    copyWithToast(s, m.common_copied());
   }
 
   function initials(name: string): string {
@@ -341,20 +345,20 @@
       <!-- ───────────────────────── Header ───────────────────────── -->
       <header class="acc-header">
         <div class="acc-header-text">
-          <h1 class="ed-title acc-title">Account</h1>
+          <h1 class="ed-title acc-title">{m.account_title()}</h1>
           <p class="ed-subtitle acc-subtitle">
-            Signed in as {me.username}{me.created_at ? ` · joined ${fmtDate(me.created_at)}` : ''}{lastLogin ? ` · last login ${fmtAgo(lastLogin.created_at)}${lastLogin.ip ? ` from ${lastLogin.ip}` : ''}` : ''}
+            {m.account_subtitle_signed_in({ name: me.username })}{me.created_at ? ` · ${m.account_subtitle_joined({ date: fmtDate(me.created_at) })}` : ''}{lastLogin ? ` · ${lastLogin.ip ? m.account_subtitle_last_login_from({ ago: fmtAgo(lastLogin.created_at), ip: lastLogin.ip }) : m.account_subtitle_last_login({ ago: fmtAgo(lastLogin.created_at) })}` : ''}
           </p>
         </div>
         <div class="acc-header-aside">
-          <span class="ed-eyebrow acc-aside-eyebrow">Access</span>
+          <span class="ed-eyebrow acc-aside-eyebrow">{m.account_access()}</span>
           <div class="acc-aside-pills">
             {#each me.assignments ?? [] as a (a.id)}
-              <span class="dm-pill dm-pill-neutral" title={a.via ? `via ${a.via}` : undefined}>
+              <span class="dm-pill dm-pill-neutral" title={a.via ? m.account_via({ via: a.via }) : undefined}>
                 <span class="dm-pill-dot"></span>{assignmentLabel(a, roleList)}
               </span>
             {:else}
-              <span class="dm-pill dm-pill-neutral"><span class="dm-pill-dot"></span>No assignments</span>
+              <span class="dm-pill dm-pill-neutral"><span class="dm-pill-dot"></span>{m.account_no_assignments()}</span>
             {/each}
             {#if me.mfa_enabled}
               <span class="dm-pill dm-pill-success">
@@ -369,27 +373,27 @@
 
       <!-- ───────────────────── 01 · Identity ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>Identity</Eyebrow>
+        <Eyebrow>{m.account_identity()}</Eyebrow>
 
         <div class="dm-card acc-identity-card">
           <div class="acc-identity-grid">
             <div class="acc-avatar-col">
               <span class="acc-avatar">{initials(me.username)}</span>
               <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" disabled>
-                change
+                {m.account_avatar_change()}
               </button>
             </div>
 
             <div class="acc-identity-fields">
-              <Field label="Username" hint="Used for sign-in; it cannot be changed.">
+              <Field label={m.account_username()} hint={m.account_username_hint()}>
                 <input class="dm-input acc-input-mono acc-input-locked" value={me.username} disabled />
               </Field>
 
-              <Field label="Display name">
+              <Field label={m.account_display_name()}>
                 <input class="dm-input" value="" placeholder="—" disabled />
               </Field>
 
-              <Field label="Email" hint="System notifications + password recovery.">
+              <Field label={m.account_email()} hint={m.account_email_hint()}>
                 <input
                   class="dm-input acc-input-mono"
                   type="email"
@@ -398,12 +402,16 @@
                 />
               </Field>
 
-              <Field label="Joined">
+              <Field label={m.account_joined()}>
                 <input
                   class="dm-input acc-input-mono acc-input-locked"
                   value={fmtDate(me.created_at)}
                   disabled
                 />
+              </Field>
+
+              <Field label={m.lang_label()} hint={m.lead_language_hint()}>
+                <LanguagePicker value={me.language ?? ''} />
               </Field>
             </div>
           </div>
@@ -416,7 +424,7 @@
                 onclick={discardIdentity}
                 disabled={identitySaving}
               >
-                Discard
+                {m.account_discard()}
               </button>
               <button
                 type="button"
@@ -424,7 +432,7 @@
                 onclick={saveIdentity}
                 disabled={identitySaving}
               >
-                {identitySaving ? 'Saving…' : 'Save changes'}
+                {identitySaving ? m.common_saving() : m.account_save_changes()}
               </button>
             </div>
           {/if}
@@ -433,14 +441,14 @@
 
       <!-- ───────────────────── 02 · Security ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>Security</Eyebrow>
+        <Eyebrow>{m.account_security()}</Eyebrow>
 
         <div class="acc-grid-2">
           <!-- Password card -->
           <form class="dm-card acc-pw-card" onsubmit={changeOwnPassword}>
             <div class="acc-card-head">
-              <span class="acc-card-title">Change password</span>
-              <span class="acc-card-meta">min {minLen} chars</span>
+              <span class="acc-card-title">{m.account_change_password()}</span>
+              <span class="acc-card-meta">{m.account_min_chars_meta({ n: minLen })}</span>
             </div>
 
             <!-- Hidden username input for password-manager autocomplete. -->
@@ -455,7 +463,7 @@
             />
 
             <div class="acc-pw-fields">
-              <Field label="Current password">
+              <Field label={m.account_current_password()}>
                 <input
                   class="dm-input acc-input-mono"
                   type="password"
@@ -465,10 +473,10 @@
               </Field>
 
               <Field
-                label="New password"
+                label={m.account_new_password()}
                 hint={policy && (policy.require_upper || policy.require_lower || policy.require_digit || policy.require_symbol)
-                  ? `Min ${minLen} chars · ${[policy.require_upper && 'upper', policy.require_lower && 'lower', policy.require_digit && 'digit', policy.require_symbol && 'symbol'].filter(Boolean).join(' + ')}`
-                  : `Min ${minLen} chars.`}
+                  ? m.account_pw_hint_reqs({ n: minLen, reqs: [policy.require_upper && m.account_req_upper(), policy.require_lower && m.account_req_lower(), policy.require_digit && m.account_req_digit(), policy.require_symbol && m.account_req_symbol()].filter(Boolean).join(' + ') })
+                  : m.account_pw_hint({ n: minLen })}
               >
                 <input
                   class="dm-input acc-input-mono"
@@ -491,7 +499,7 @@
                 </div>
               {/if}
 
-              <Field label="Confirm new password">
+              <Field label={m.account_confirm_password()}>
                 <input
                   class="dm-input acc-input-mono"
                   type="password"
@@ -499,7 +507,7 @@
                   autocomplete="new-password"
                 />
                 {#if confirmPassword.length > 0 && confirmPassword !== newPassword}
-                  <span class="acc-input-err">Passwords don't match.</span>
+                  <span class="acc-input-err">{m.account_pw_mismatch()}</span>
                 {/if}
               </Field>
             </div>
@@ -510,7 +518,7 @@
                 class="dm-btn dm-btn-primary dm-btn-sm"
                 disabled={!canSubmitPassword || passwordBusy}
               >
-                {passwordBusy ? 'Updating…' : 'Update password'}
+                {passwordBusy ? m.account_updating() : m.account_update_password()}
               </button>
             </div>
           </form>
@@ -527,16 +535,16 @@
               </span>
               <div class="acc-2fa-text">
                 <div class="acc-card-title">
-                  Two-factor auth —
+                  {m.account_2fa_title()}
                   <em class="ed-accent" data-state={me.mfa_enabled ? 'enabled' : 'off'}>
-                    {me.mfa_enabled ? 'enabled' : 'off'}
+                    {me.mfa_enabled ? m.account_2fa_enabled() : m.account_2fa_off()}
                   </em>
                 </div>
                 <p class="ed-subtitle acc-2fa-blurb">
                   {#if me.mfa_enabled}
-                    TOTP enrolled. Use your authenticator app on next sign-in.
+                    {m.account_2fa_on_blurb()}
                   {:else}
-                    Anyone with your password can sign in. Strongly recommended.
+                    {m.account_2fa_off_blurb()}
                   {/if}
                 </p>
               </div>
@@ -550,7 +558,7 @@
                   onclick={reEnrollMFA}
                   disabled={mfaBusy}
                 >
-                  Re-enroll device
+                  {m.account_reenroll()}
                 </button>
                 <button
                   type="button"
@@ -558,7 +566,7 @@
                   onclick={disableMFA}
                   disabled={mfaBusy}
                 >
-                  <ShieldOff size={13} strokeWidth={1.5} /> Disable
+                  <ShieldOff size={13} strokeWidth={1.5} /> {m.common_disable()}
                 </button>
               {:else}
                 <button
@@ -567,7 +575,7 @@
                   onclick={startMFAEnroll}
                   disabled={mfaBusy}
                 >
-                  <ShieldCheck size={13} strokeWidth={1.5} /> Enable 2FA
+                  <ShieldCheck size={13} strokeWidth={1.5} /> {m.account_enable_2fa()}
                 </button>
               {/if}
             </div>
@@ -577,12 +585,12 @@
 
       <!-- ───────────────────── 03 · Sessions ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>Sessions</Eyebrow>
+        <Eyebrow>{m.account_sessions()}</Eyebrow>
 
         <div class="dm-card acc-sessions">
           {#if visibleSessions.length === 0}
             <div class="acc-sessions-empty">
-              {sessions.length === 0 ? 'No active sessions.' : 'No active sessions. Toggle below to see expired and revoked.'}
+              {sessions.length === 0 ? m.account_no_sessions() : m.account_no_sessions_toggle()}
             </div>
           {:else}
             {#each visibleSessions as s, i (s.family_id)}
@@ -604,20 +612,20 @@
                   <div class="acc-session-device">
                     <span class="acc-session-device-text">{ua.device}</span>
                     {#if s.is_current}
-                      <em class="ed-accent acc-session-current">— current session</em>
+                      <em class="ed-accent acc-session-current">{m.account_current_session()}</em>
                     {/if}
                     {#if ua.isCli}
                       <span class="dm-pill dm-pill-neutral acc-session-clipill">
-                        <span class="dm-pill-dot"></span>cli token
+                        <span class="dm-pill-dot"></span>{m.account_cli_token()}
                       </span>
                     {/if}
                     {#if s.revoked_at}
                       <span class="dm-pill dm-pill-neutral acc-session-clipill">
-                        <span class="dm-pill-dot"></span>revoked
+                        <span class="dm-pill-dot"></span>{m.account_revoked_pill()}
                       </span>
                     {/if}
                   </div>
-                  <span class="acc-session-meta">{s.user_agent ? '' : 'no user-agent'}</span>
+                  <span class="acc-session-meta">{s.user_agent ? '' : m.account_no_user_agent()}</span>
                 </div>
 
                 <div class="acc-session-ip">
@@ -626,7 +634,7 @@
                 </div>
 
                 <span class="acc-session-time">
-                  {#if s.revoked_at}revoked {fmtAgo(s.revoked_at)}{:else}created {fmtAgo(s.created_at)}{/if}
+                  {#if s.revoked_at}{m.account_revoked_ago({ ago: fmtAgo(s.revoked_at) })}{:else}{m.account_created_ago({ ago: fmtAgo(s.created_at) })}{/if}
                 </span>
 
                 <div class="acc-session-revoke">
@@ -639,7 +647,7 @@
                       onclick={() => revokeSession(s.family_id, s.is_current)}
                       disabled={sessionsBusy}
                     >
-                      <Trash2 size={12} strokeWidth={1.5} /> Revoke
+                      <Trash2 size={12} strokeWidth={1.5} /> {m.account_revoke()}
                     </button>
                   {:else}
                     <span class="acc-session-dash">—</span>
@@ -658,9 +666,9 @@
               onclick={() => (showInactiveSessions = !showInactiveSessions)}
             >
               {#if showInactiveSessions}
-                Hide expired and revoked
+                {m.account_hide_inactive()}
               {:else}
-                Show {hiddenSessionCount} expired or revoked
+                {m.account_show_inactive({ n: hiddenSessionCount })}
               {/if}
             </button>
           </div>
@@ -669,13 +677,13 @@
 
       <!-- ───────────────────── 04 · Account (Danger) ───────────────── -->
       <section class="acc-section">
-        <Eyebrow>Account</Eyebrow>
+        <Eyebrow>{m.account_danger_eyebrow()}</Eyebrow>
 
         <div class="acc-danger-card">
           <div class="acc-danger-text">
-            <div class="acc-card-title">Sign out everywhere</div>
+            <div class="acc-card-title">{m.account_sign_out_everywhere()}</div>
             <p class="acc-danger-blurb">
-              Revokes every session including this one. You'll need to sign in again.
+              {m.account_sign_out_everywhere_blurb()}
             </p>
           </div>
           <button
@@ -683,7 +691,7 @@
             class="dm-btn dm-btn-secondary dm-btn-sm"
             disabled
           >
-            Sign out everywhere
+            {m.account_sign_out_everywhere()}
           </button>
         </div>
       </section>
@@ -694,29 +702,29 @@
 <!-- ───────────────────────── 2FA enrollment modal ───────────────────────── -->
 <EditorialModal
   bind:open={mfaOpen}
-  eyebrow={mfaStep === 'qr' ? 'Two-factor · enroll' : 'Recovery codes'}
-  title={mfaStep === 'qr' ? 'Scan and verify' : 'Save these now'}
+  eyebrow={mfaStep === 'qr' ? m.account_mfa_eyebrow_enroll() : m.account_mfa_eyebrow_recovery()}
+  title={mfaStep === 'qr' ? m.account_mfa_title_scan() : m.account_mfa_title_save()}
   width={480}
   onclose={closeMFA}
 >
   {#if mfaStep === 'qr' && mfaEnroll}
     <div class="acc-mfa-body">
       <p class="ed-subtitle">
-        Scan the QR code with your authenticator app, then enter the 6-digit code it shows.
+        {m.account_mfa_scan_hint()}
       </p>
 
       <div class="acc-mfa-qr-frame">
-        <img src={mfaEnroll.qr_data_url} alt="TOTP QR code" class="acc-mfa-qr" />
+        <img src={mfaEnroll.qr_data_url} alt={m.account_mfa_qr_alt()} class="acc-mfa-qr" />
       </div>
 
-      <Field label="Or paste this secret">
+      <Field label={m.account_mfa_paste_secret()}>
         {#snippet right()}
           <button
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs"
             onclick={() => copyText(mfaEnroll!.secret)}
           >
-            <Copy size={11} strokeWidth={1.5} /> copy
+            <Copy size={11} strokeWidth={1.5} /> {m.account_copy_lower()}
           </button>
         {/snippet}
         <input
@@ -727,7 +735,7 @@
       </Field>
 
       <form onsubmit={verifyMFAEnroll}>
-        <Field label="6-digit code">
+        <Field label={m.account_mfa_code_label()}>
           <input
             class="dm-input acc-input-mono acc-mfa-code"
             bind:value={mfaCode}
@@ -739,14 +747,14 @@
         </Field>
         <div class="acc-mfa-actions">
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={closeMFA}>
-            Cancel
+            {m.common_cancel()}
           </button>
           <button
             type="submit"
             class="dm-btn dm-btn-primary dm-btn-sm"
             disabled={mfaCode.trim().length < 6 || mfaBusy}
           >
-            {mfaBusy ? 'Verifying…' : 'Verify and enable'}
+            {mfaBusy ? m.account_verifying() : m.account_verify_enable()}
           </button>
         </div>
       </form>
@@ -756,8 +764,7 @@
       <div class="acc-mfa-warn">
         <ShieldCheck size={14} strokeWidth={1.5} />
         <span>
-          <strong>Save these recovery codes now.</strong> Each works once instead of a TOTP code if
-          you lose access to your authenticator. They won't be shown again.
+          <strong>{m.account_recovery_warn_strong()}</strong> {m.account_recovery_warn_rest()}
         </span>
       </div>
 
@@ -773,10 +780,10 @@
           class="dm-btn dm-btn-secondary dm-btn-sm"
           onclick={() => copyText(mfaRecovery.join('\n'))}
         >
-          <Copy size={12} strokeWidth={1.5} /> Copy all
+          <Copy size={12} strokeWidth={1.5} /> {m.account_copy_all()}
         </button>
         <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={closeMFA}>
-          I've saved them
+          {m.account_saved_them()}
         </button>
       </div>
     </div>
@@ -786,22 +793,20 @@
 <!-- ─────────────────── 2FA disable / re-enroll confirmation ─────────────────── -->
 <EditorialModal
   bind:open={mfaOffOpen}
-  eyebrow="Two-factor"
-  title={mfaOffMode === 'disable' ? 'Disable 2FA' : 'Replace your authenticator'}
+  eyebrow={m.account_mfa_off_eyebrow()}
+  title={mfaOffMode === 'disable' ? m.account_disable_2fa() : m.account_replace_authenticator()}
   width={440}
   onclose={() => (mfaOffOpen = false)}
 >
   <form class="acc-mfa-body" onsubmit={submitMFAOff}>
     <p class="ed-subtitle">
       {#if mfaOffMode === 'disable'}
-        Your account will be protected by the password only. Enter a code from your authenticator,
-        or one of your recovery codes, to confirm.
+        {m.account_mfa_off_disable_text()}
       {:else}
-        Your current authenticator and recovery codes stop working. Enter a code from it, or a
-        recovery code, to continue to the new QR code.
+        {m.account_mfa_off_reenroll_text()}
       {/if}
     </p>
-    <Field label="Code or recovery code">
+    <Field label={m.account_code_or_recovery()}>
       <input
         class="dm-input acc-input-mono"
         bind:value={mfaOffCode}
@@ -811,14 +816,14 @@
     </Field>
     <div class="acc-mfa-actions">
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (mfaOffOpen = false)}>
-        Cancel
+        {m.common_cancel()}
       </button>
       <button
         type="submit"
         class="dm-btn dm-btn-sm {mfaOffMode === 'disable' ? 'dm-btn-danger' : 'dm-btn-primary'}"
         disabled={mfaOffCode.trim().length < 6 || mfaOffBusy}
       >
-        {mfaOffBusy ? 'Checking…' : mfaOffMode === 'disable' ? 'Disable 2FA' : 'Continue'}
+        {mfaOffBusy ? m.account_checking() : mfaOffMode === 'disable' ? m.account_disable_2fa() : m.account_continue()}
       </button>
     </div>
   </form>

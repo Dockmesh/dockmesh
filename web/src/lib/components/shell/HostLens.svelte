@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { tick } from 'svelte';
   import type { HostInfo } from '$lib/api';
   import { hosts } from '$lib/stores/host.svelte';
@@ -87,8 +88,8 @@
       onclick={() => (open ? hide() : show())}
       aria-haspopup="listbox"
       aria-expanded={open}
-      aria-label="Host filter: {current.name}"
-      title="Filter every page by host"
+      aria-label={m.shell_lens_aria({ name: current.name })}
+      title={m.shell_lens_title()}
     >
       <span class="dm-dot {current.kind === 'all' ? 'acc' : warn ? 'bad' : 'ok'}"></span>
       <span class="name">{current.name}</span>
@@ -97,21 +98,21 @@
 
     {#if open}
       <div class="pop" role="presentation" onkeydown={onKey}>
-        <div class="h">Show pages for</div>
+        <div class="h">{m.shell_lens_show_for()}</div>
         {#if showSearch}
           <div class="search">
             <Search size={13} />
             <input
               bind:this={input}
               bind:value={query}
-              placeholder="Search hosts or #tag"
-              aria-label="Search hosts"
+              placeholder={m.shell_lens_placeholder()}
+              aria-label={m.shell_lens_search()}
               aria-controls={listId}
               aria-activedescendant={rows[active] ? `${listId}-${rows[active].id}` : undefined}
             />
           </div>
         {/if}
-        <ul id={listId} role="listbox" aria-label="Hosts">
+        <ul id={listId} role="listbox" aria-label={m.common_hosts()}>
           {#each rows as h, i (h.id)}
             {@const tags = h.tags ?? []}
             <!-- svelte-ignore a11y_click_events_have_key_events (keys are handled on the popover) -->
@@ -124,7 +125,7 @@
               class:act={i === active}
               class:off={!usable(h)}
               class:sep={h.kind === 'all'}
-              title={usable(h) ? '' : `${h.name} is ${h.status}`}
+              title={usable(h) ? '' : m.shell_lens_host_is({ name: h.name, status: h.status })}
               onclick={() => pick(h)}
               onmouseenter={() => (active = i)}
             >
@@ -140,10 +141,10 @@
               <span class="meta" title={meta(h)}>{meta(h)}</span>
             </li>
           {:else}
-            <li class="none" role="presentation">No host matches “{query}”.</li>
+            <li class="none" role="presentation">{m.shell_lens_none({ query })}</li>
           {/each}
         </ul>
-        <a class="foot" href="/hosts" onclick={() => hide()}><Server size={13} /> Manage hosts</a>
+        <a class="foot" href="/hosts" onclick={() => hide()}><Server size={13} /> {m.shell_lens_manage()}</a>
       </div>
     {/if}
   </div>

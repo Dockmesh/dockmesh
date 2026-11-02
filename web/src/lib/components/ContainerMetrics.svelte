@@ -13,6 +13,7 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
   import { api, type HistoryReason, type MetricsSample } from '$lib/api';
@@ -25,7 +26,7 @@
   let {
     id,
     host = 'local',
-    hostName = 'this host',
+    hostName = m.metrics_this_host(),
     running,
     latest = null,
     events = []
@@ -145,33 +146,33 @@
     return [
       { label: 'CPU', color: 'var(--accent)', values: cpu, max: 100, fmt: (v) => `${v.toFixed(1)} %` },
       {
-        label: 'Memory',
+        label: m.metrics_memory(),
         color: 'var(--violet)',
         values: mem,
         max: 100,
         fmt: (v) => `${fmtMem((memBase * v) / 100)} · ${v.toFixed(0)} %`
       },
-      { label: 'Network', color: 'var(--ok)', values: net, fmt: (v) => `${fmtBytes(v)}/s` },
-      { label: 'Block I/O', color: 'var(--warn)', values: blk, fmt: (v) => `${fmtBytes(v)}/s` }
+      { label: m.common_network(), color: 'var(--ok)', values: net, fmt: (v) => `${fmtBytes(v)}/s` },
+      { label: m.metrics_block_io(), color: 'var(--warn)', values: blk, fmt: (v) => `${fmtBytes(v)}/s` }
     ];
   });
 
   const rangeOptions = $derived(
     (Object.keys(RANGE_S) as Range[])
       .filter((r) => r === 'live' || hasHistory)
-      .map((r) => ({ key: r, label: r }))
+      .map((r) => ({ key: r, label: r === 'live' ? m.metrics_range_live() : r }))
   );
 </script>
 
-<section class="cm" aria-label="Container resources">
+<section class="cm" aria-label={m.metrics_container_resources()}>
   <div class="cm-h">
-    <h2 class="dm-h2">Container resources</h2>
+    <h2 class="dm-h2">{m.metrics_container_resources()}</h2>
     {#if zoom}
-      <span class="zoomed">Zoomed · double-click a chart to reset</span>
+      <span class="zoomed">{m.metrics_zoomed()}</span>
     {/if}
     <span class="dm-sp"></span>
     <Segmented
-      label="Time range"
+      label={m.metrics_time_range()}
       size="sm"
       options={rangeOptions}
       value={zoom ? '' : range}
@@ -191,24 +192,24 @@
     onreset={() => (zoom = null)}
     empty={range === 'live'
       ? running
-        ? 'Waiting for the first sample…'
-        : 'The container is not running.'
-      : 'No samples stored for this range yet.'}
+        ? m.metrics_waiting_first()
+        : m.metrics_container_not_running()
+      : m.metrics_no_samples_range()}
   />
   <p class="dm-sub cm-hint">
-    Measured for this container only.
+    {m.metrics_container_only()}
     {#if limited}
-      Memory is relative to its limit of {fmtMem(memLimit)}.
+      {m.metrics_container_mem_limit({ mem: fmtMem(memLimit) })}
     {:else if memTotal}
-      No memory limit, so memory is relative to host RAM ({fmtMem(memTotal)}).
+      {m.metrics_container_mem_host({ mem: fmtMem(memTotal) })}
     {/if}
     {#if cores}
-      CPU % is relative to all {cores} cores of {hostName}.
+      {m.metrics_container_cpu({ cores, host: hostName })}
     {/if}
     {historyHint(noHistoryReason, hostName)}
   </p>
   {#if events.some((e) => e.ts >= domain[0] && e.ts <= domain[1])}
-    <p class="dm-sub cm-legend"><span style="color: var(--accent)">┊</span> event · drag across a chart to zoom</p>
+    <p class="dm-sub cm-legend"><span style="color: var(--accent)">┊</span> {m.metrics_event_legend()}</p>
   {/if}
 </section>
 

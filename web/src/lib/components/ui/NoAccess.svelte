@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { Lock } from 'lucide-svelte';
   import EmptyState from './EmptyState.svelte';
 
@@ -7,13 +8,13 @@
     description?: string;
   }
   let {
-    title = "You don't have access to this page",
-    description = 'None of your roles allows it. Ask an admin if you need it.'
+    title = m.ui_noaccess_title(),
+    description = m.ui_noaccess_desc()
   }: Props = $props();
 </script>
 
 <EmptyState icon={Lock} {title} {description}>
   {#snippet action()}
-    <a class="dm-btn dm-btn-secondary dm-btn-sm" href="/">Back to overview</a>
+    <a class="dm-btn dm-btn-secondary dm-btn-sm" href="/">{m.ui_noaccess_back()}</a>
   {/snippet}
 </EmptyState>

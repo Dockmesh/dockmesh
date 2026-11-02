@@ -8,6 +8,7 @@
   import { Skeleton, Switch } from '$lib/components/ui';
   import { createSettingsForm } from './settingsForm.svelte';
   import AgentReachability from '$lib/components/AgentReachability.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const form = createSettingsForm();
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
@@ -44,25 +45,25 @@
     api.system
       .info()
       .then((i) => (systemInfo = i))
-      .catch((err) => toast.error('Failed to load system info', err instanceof ApiError ? err.message : undefined));
+      .catch((err) => toast.error(m.settings_sysinfo_failed(), err instanceof ApiError ? err.message : undefined));
   });
 
   function fmtUptime(secs?: number): string {
     if (!secs) return '—';
     const d = Math.floor(secs / 86400);
     const h = Math.floor((secs % 86400) / 3600);
-    const m = Math.floor((secs % 3600) / 60);
+    const mins = Math.floor((secs % 3600) / 60);
     if (d > 0) return `${d}d ${h}h`;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
+    if (h > 0) return `${h}h ${mins}m`;
+    return `${mins}m`;
   }
 </script>
 
 <div class="dm-page">
   <div class="dm-ph">
     <div>
-      <h1>General</h1>
-      <div class="dm-sub">Instance address, proxies in front of Dockmesh and the image scanner</div>
+      <h1>{m.settings_general_title()}</h1>
+      <div class="dm-sub">{m.settings_general_sub()}</div>
     </div>
   </div>
 
@@ -70,16 +71,16 @@
     <div class="dm-form-sec">
       <div>
         <h4>Dockmesh</h4>
-        <p>The running build of this server.</p>
+        <p>{m.settings_build_hint()}</p>
       </div>
       <div>
         {#if systemInfo}
           <dl class="dm-kv">
-            <dt>Version</dt><dd class="dm-mono">{systemInfo.version}</dd>
-            <dt>Commit</dt><dd class="dm-mono">{systemInfo.commit.slice(0, 7)}</dd>
-            <dt>Built</dt><dd class="dm-mono">{systemInfo.build_date.slice(0, 10)}</dd>
-            <dt>Platform</dt><dd class="dm-mono">{systemInfo.os}/{systemInfo.arch} · {systemInfo.go_version}</dd>
-            <dt>Uptime</dt><dd class="dm-mono">{fmtUptime(systemInfo.uptime_seconds)}</dd>
+            <dt>{m.settings_version()}</dt><dd class="dm-mono">{systemInfo.version}</dd>
+            <dt>{m.settings_commit()}</dt><dd class="dm-mono">{systemInfo.commit.slice(0, 7)}</dd>
+            <dt>{m.settings_built()}</dt><dd class="dm-mono">{systemInfo.build_date.slice(0, 10)}</dd>
+            <dt>{m.settings_platform()}</dt><dd class="dm-mono">{systemInfo.os}/{systemInfo.arch} · {systemInfo.go_version}</dd>
+            <dt>{m.settings_uptime()}</dt><dd class="dm-mono">{fmtUptime(systemInfo.uptime_seconds)}</dd>
           </dl>
         {:else}
           <Skeleton width="320px" height="6rem" />
@@ -89,13 +90,13 @@
 
     <div class="dm-form-sec">
       <div>
-        <h4>Base URL</h4>
-        <p>The address users open. Agent install commands download from it. <span class="dm-mono">DOCKMESH_BASE_URL</span> in dockmesh.env wins over this field.</p>
+        <h4>{m.settings_base_url()}</h4>
+        <p>{m.settings_base_url_before()} <span class="dm-mono">DOCKMESH_BASE_URL</span>{m.settings_base_url_after()}</p>
       </div>
       <div>
         <input
           class="dm-input set-in"
-          aria-label="Base URL"
+          aria-label={m.settings_base_url()}
           placeholder="https://dockmesh.example.com"
           value={form.get('base_url')}
           oninput={(e) => form.set('base_url', e.currentTarget.value)}
@@ -105,13 +106,13 @@
 
     <div class="dm-form-sec">
       <div>
-        <h4>Agent public URL</h4>
-        <p>The wss:// address agents enroll at and connect to; the agent certificate gets this name added on save. Empty derives it from the base URL. <span class="dm-mono">DOCKMESH_AGENT_PUBLIC_URL</span> wins over this field.</p>
+        <h4>{m.settings_agent_url()}</h4>
+        <p>{m.settings_agent_url_before()} <span class="dm-mono">DOCKMESH_AGENT_PUBLIC_URL</span>{m.settings_wins_after()}</p>
       </div>
       <div>
         <input
           class="dm-input set-in"
-          aria-label="Agent public URL"
+          aria-label={m.settings_agent_url()}
           placeholder="wss://dockmesh.example.com:8443/connect"
           value={form.get('agent_public_url')}
           oninput={(e) => form.set('agent_public_url', e.currentTarget.value)}
@@ -122,29 +123,29 @@
 
     <div class="dm-form-sec">
       <div>
-        <h4>Trusted proxies</h4>
-        <p>Only these addresses may set the client address and HTTPS headers. Empty means localhost only.</p>
+        <h4>{m.settings_trusted_proxies()}</h4>
+        <p>{m.settings_trusted_proxies_hint()}</p>
       </div>
       <div>
         <input
           class="dm-input set-in"
-          aria-label="Trusted proxies"
+          aria-label={m.settings_trusted_proxies()}
           placeholder="10.0.0.5, 172.16.0.0/12"
           value={form.get('trusted_proxies')}
           oninput={(e) => form.set('trusted_proxies', e.currentTarget.value)}
         />
-        <span class="dm-sub">Comma-separated IPs or CIDRs (X-Forwarded-For, X-Real-IP, X-Forwarded-Proto).</span>
+        <span class="dm-sub">{m.settings_trusted_proxies_sub()}</span>
       </div>
     </div>
 
     <div class="dm-form-sec">
       <div>
-        <h4>Vulnerability scanner</h4>
-        <p>Scan images for known CVEs with Grype.</p>
+        <h4>{m.settings_scanner()}</h4>
+        <p>{m.settings_scanner_hint()}</p>
       </div>
       <div>
         <Switch
-          label="Scan images with Grype"
+          label={m.settings_scanner_switch()}
           checked={form.get('scanner_enabled') === 'true'}
           onchange={(v) => form.set('scanner_enabled', v ? 'true' : 'false')}
         />
@@ -153,9 +154,9 @@
   </div>
 
   <div class="set-bar">
-    <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>Discard</button>
+    <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>{m.settings_discard()}</button>
     <button type="button" class="dm-btn dm-btn-primary" onclick={form.save} disabled={!form.dirty || form.busy}>
-      {form.busy ? 'Saving…' : 'Save'}
+      {form.busy ? m.common_saving() : m.common_save()}
     </button>
   </div>
 </div>

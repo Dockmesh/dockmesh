@@ -8421,7 +8421,7 @@ components:
         config:
           type: object
           description: >-
-            Channel-type-specific. Secret fields (`password`, `token`, `integration_key`, `app_token`, `user_key`, and `url` for slack, discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling `<field>_set: true` when stored; an empty or omitted secret on update keeps the stored value.
+            Channel-type-specific. Secret fields (`password`, `token`, `integration_key`, `app_token`, `user_key`, and `url` for slack, discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling `<field>_set: true` when stored; an empty or omitted secret on update keeps the stored value. Every type also takes `language` (`en`, `de`; default `en`) for the messages it sends; email recipients with a Dockmesh account get their own language instead.
         enabled: {type: boolean}
         mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
         last_sent_at: {type: string, format: date-time, description: Last successful delivery.}

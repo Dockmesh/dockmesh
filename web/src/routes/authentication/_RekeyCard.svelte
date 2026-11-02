@@ -3,6 +3,8 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { notices } from '$lib/stores/notices.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { fmtDate } from '$lib/i18n';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     kind: 'saml' | 'sso';
@@ -20,7 +22,7 @@
     try {
       const p = await client.rekeyPending();
       accounts = p.accounts;
-      until = p.until?.slice(0, 10) ?? '';
+      until = p.until ? fmtDate(p.until) : '';
     } catch {
       accounts = [];
     }
@@ -33,20 +35,20 @@
   async function end() {
     const n = accounts.length;
     if (!(await confirm.ask({
-      title: `End ${label} re-keying`,
-      message: `Stop re-keying ${n} ${label} account${n === 1 ? '' : 's'}?`,
+      title: m.authn_rekey_end_title({ label }),
+      message: m.authn_rekey_end_message({ count: n, label }),
       body: kind === 'saml'
-        ? 'These accounts then no longer pick up their new subject at sign-in; an admin has to remove and recreate them if they are still needed.'
-        : 'These accounts then can no longer sign in through their provider; an admin has to remove and recreate them if they are still needed.',
-      confirmLabel: 'End re-keying', danger: true,
+        ? m.authn_rekey_body_saml()
+        : m.authn_rekey_body_sso(),
+      confirmLabel: m.authn_rekey_end(), danger: true,
     }))) return;
     try {
       const r = await client.endRekey();
-      toast.success('Re-keying ended', `${r.ended} account${r.ended === 1 ? '' : 's'}`);
+      toast.success(m.authn_rekey_ended(), m.authn_rekey_ended_count({ count: r.ended }));
       await load();
       notices.refresh();
     } catch (err) {
-      toast.error('Ending re-keying failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.authn_rekey_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
@@ -55,22 +57,18 @@
   <div class="dm-card rekey">
     <div class="rekey-text">
       <div class="rekey-title">
-        {accounts.length} {label} account{accounts.length === 1 ? '' : 's'} not re-keyed yet
+        {m.authn_rekey_title({ count: accounts.length, label })}
       </div>
       <p class="rekey-body">
         {#if kind === 'saml'}
-          Created through SAML before the upgrade and not signed in since. Each takes its new subject at its next
-          sign-in with a matching email{until ? ` until ${until}` : ''}; until then a user of the same identity provider
-          with one of these emails can sign in to it.
+          {until ? m.authn_rekey_saml_until({ until }) : m.authn_rekey_saml()}
         {:else}
-          Linked before the upgrade and not signed in since. Each moves to its provider's immutable user id at its
-          next sign-in{until ? ` until ${until}` : ''}; when the login name or directory entry changed since, the email
-          has to match the account as well.
+          {until ? m.authn_rekey_sso_until({ until }) : m.authn_rekey_sso()}
         {/if}
       </p>
       <p class="rekey-accounts">{accounts.join(', ')}</p>
     </div>
-    <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={end}>End re-keying</button>
+    <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={end}>{m.authn_rekey_end()}</button>
   </div>
 {/if}
 

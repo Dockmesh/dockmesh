@@ -34,6 +34,8 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtBytes } from '$lib/format';
+  import { fmtDate, fmtDateTime } from '$lib/i18n';
+  import { m } from '$lib/paraglide/messages.js';
   import { hosts, isAllHosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
@@ -264,7 +266,7 @@
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Download failed');
+      toast.error(e instanceof Error ? e.message : m.containers_files_download_failed());
     }
   }
 
@@ -281,7 +283,7 @@
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Download failed');
+      toast.error(e instanceof Error ? e.message : m.containers_files_download_failed());
     }
   }
 
@@ -302,9 +304,9 @@
         truncated: false
       };
       filesEditing = false;
-      toast.success('File saved');
+      toast.success(m.containers_files_saved());
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : m.containers_files_save_failed());
     } finally {
       filesSaving = false;
     }
@@ -315,15 +317,15 @@
 
   async function uploadFile(file: File) {
     if (file.size > UPLOAD_LIMIT_MIB << 20) {
-      toast.error(`${file.name} is larger than the ${UPLOAD_LIMIT_MIB} MiB upload limit`);
+      toast.error(m.containers_files_too_large({ name: file.name, limit: UPLOAD_LIMIT_MIB }));
       return;
     }
     if (filesEntries.some((e) => e.name === file.name)) {
       const ok = await confirm.ask({
-        title: 'Replace file',
-        message: `Replace ${joinPath(filesPath, file.name)}?`,
-        body: 'The file in the container is overwritten with the uploaded one.',
-        confirmLabel: 'Replace',
+        title: m.containers_files_replace_title(),
+        message: m.containers_files_replace_message({ path: joinPath(filesPath, file.name) }),
+        body: m.containers_files_replace_body(),
+        confirmLabel: m.containers_files_replace_confirm(),
         danger: true
       });
       if (!ok) return;
@@ -337,10 +339,10 @@
       const dest = joinPath(filesPath, file.name);
       try {
         await api.containers.files.write(id, dest, b64, 0, targetHost);
-        toast.success(`Uploaded ${file.name}`);
+        toast.success(m.containers_files_uploaded({ name: file.name }));
         await loadFiles(filesPath);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Upload failed');
+        toast.error(e instanceof Error ? e.message : m.containers_files_upload_failed());
       }
     };
     reader.readAsArrayBuffer(file);
@@ -348,25 +350,25 @@
 
   async function deleteEntry(entry: CtnFileEntry) {
     const full = joinPath(filesPath, entry.name);
-    const what = entry.type === 'symlink' ? 'symbolic link' : 'file';
+    const isLink = entry.type === 'symlink';
     const ok = await confirm.ask({
-      title: `Delete ${what}`,
-      message: `Delete ${full}?`,
-      body: entry.type === 'symlink' ? 'Only the link is removed, not its target.' : 'The file is removed from the container. This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: isLink ? m.containers_files_delete_link_title() : m.containers_files_delete_file_title(),
+      message: m.containers_files_delete_message({ path: full }),
+      body: isLink ? m.containers_files_delete_link_body() : m.containers_files_delete_file_body(),
+      confirmLabel: m.common_delete(),
       danger: true
     });
     if (!ok) return;
     try {
       await api.containers.files.delete(id, full, targetHost);
-      toast.success(`Deleted ${entry.name}`);
+      toast.success(m.containers_files_deleted({ name: entry.name }));
       if (filesPreview?.path === full) {
         filesPreview = null;
         filesEditing = false;
       }
       await loadFiles(filesPath);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : m.containers_files_delete_failed());
     }
   }
 
@@ -384,16 +386,16 @@
     const t = new Date(iso).getTime();
     if (!t) return '';
     const diff = Date.now() - t;
-    if (diff < 0) return new Date(iso).toLocaleString();
+    if (diff < 0) return fmtDateTime(iso);
     const sec = Math.floor(diff / 1000);
-    if (sec < 60) return `${sec}s ago`;
+    if (sec < 60) return m.containers_rel_s_ago({ n: sec });
     const min = Math.floor(sec / 60);
-    if (min < 60) return `${min}m ago`;
+    if (min < 60) return m.containers_rel_m_ago({ n: min });
     const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr}h ago`;
+    if (hr < 24) return m.containers_rel_h_ago({ n: hr });
     const days = Math.floor(hr / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
+    if (days < 30) return m.containers_rel_d_ago({ n: days });
+    return fmtDate(iso);
   }
 
   // Auto-load the root listing when the Files tab is opened for the
@@ -429,10 +431,10 @@
   // it to "HH:MM:SS.mmm" for the dedicated time column. Falls back to
   // empty + the raw line when no timestamp is present.
   function parseLogLine(line: string): { ts: string; body: string } {
-    const m = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+(.*)$/);
-    if (!m) return { ts: '', body: line };
-    const t = m[1].match(/[T ](\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)/);
-    return { ts: t ? t[1] : m[1], body: m[2] };
+    const mt = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+(.*)$/);
+    if (!mt) return { ts: '', body: line };
+    const t = mt[1].match(/[T ](\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)/);
+    return { ts: t ? t[1] : mt[1], body: mt[2] };
   }
   // logLineEntries / logCounts / filteredLogLines are declared further
   // down — see right after `let logs = $state<string[]>([])` to avoid
@@ -539,7 +541,7 @@
     try {
       info = await api.containers.inspect(id, targetHost);
     } catch (err) {
-      toast.error('Load failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_detail_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -561,35 +563,35 @@
   }
 
   async function doUpdate() {
-    if (!(await confirm.ask({ title: 'Update container', message: 'Pull the latest image and recreate this container?', body: 'The old image is kept as a rollback snapshot. Recreate preserves mounts and env vars.', confirmLabel: 'Update' }))) return;
+    if (!(await confirm.ask({ title: m.containers_upd_confirm_title(), message: m.containers_upd_confirm_message(), body: m.containers_upd_confirm_body(), confirmLabel: m.containers_upd_confirm_label() }))) return;
     updateBusy = true;
     try {
       const res = await api.containers.doUpdate(id);
       if (!res.updated) {
-        toast.info('Already up to date', res.image);
+        toast.info(m.containers_upd_already_current(), res.image);
       } else {
-        toast.success('Updated', res.image);
+        toast.success(m.containers_upd_updated(), res.image);
         // Container id changed — navigate to the new one.
         goto(`/containers/${res.container_id}`);
         return;
       }
       await loadUpdateData();
     } catch (err) {
-      toast.error('Update failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_upd_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       updateBusy = false;
     }
   }
 
   async function doRollback(historyId: number) {
-    if (!(await confirm.ask({ title: 'Roll back container', message: 'Roll back this container to the previous image version?', body: 'The currently-running image is replaced with the snapshot captured during the last update.', confirmLabel: 'Roll back' }))) return;
+    if (!(await confirm.ask({ title: m.containers_rb_confirm_title(), message: m.containers_rb_confirm_message(), body: m.containers_rb_confirm_body(), confirmLabel: m.containers_rb_confirm_label() }))) return;
     updateBusy = true;
     try {
       const res = await api.containers.rollback(id, historyId);
-      toast.success('Rolled back', res.image);
+      toast.success(m.containers_rb_done(), res.image);
       goto(`/containers/${res.container_id}`);
     } catch (err) {
-      toast.error('Rollback failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_rb_failed(), err instanceof ApiError ? err.message : undefined);
       updateBusy = false;
     }
   }
@@ -597,17 +599,27 @@
   function fmtRelTime(ts?: string | null): string {
     if (!ts) return '—';
     const d = (Date.now() - new Date(ts).getTime()) / 1000;
-    if (d < 60) return 'just now';
-    if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-    if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-    if (d < 2592000) return `${Math.floor(d / 86400)}d ago`;
-    return new Date(ts).toLocaleDateString();
+    if (d < 60) return m.time_just_now();
+    if (d < 3600) return m.containers_rel_m_ago({ n: Math.floor(d / 60) });
+    if (d < 86400) return m.containers_rel_h_ago({ n: Math.floor(d / 3600) });
+    if (d < 2592000) return m.containers_rel_d_ago({ n: Math.floor(d / 86400) });
+    return fmtDate(ts);
+  }
+  // Same buckets as fmtRelTime without the "ago", for "up 3h".
+  function fmtRelBare(ts?: string | null): string {
+    if (!ts) return '—';
+    const d = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (d < 60) return m.time_just_now();
+    if (d < 3600) return `${Math.floor(d / 60)}m`;
+    if (d < 86400) return `${Math.floor(d / 3600)}h`;
+    if (d < 2592000) return `${Math.floor(d / 86400)}d`;
+    return fmtDate(ts);
   }
 
   function shortDigest(d?: string): string {
     if (!d) return '—';
-    const m = d.match(/sha256:([a-f0-9]{12})/);
-    return m ? m[0] : d.slice(0, 19);
+    const mt = d.match(/sha256:([a-f0-9]{12})/);
+    return mt ? mt[0] : d.slice(0, 19);
   }
 
   // ---------- Logs ----------
@@ -674,7 +686,7 @@
     } catch (err) {
       if (gen !== logsGen) return;
       if (logsReconnectAttempt === 0) {
-        toast.error('Logs connect failed', err instanceof ApiError ? err.message : undefined);
+        toast.error(m.containers_logs_connect_failed(), err instanceof ApiError ? err.message : undefined);
       }
       scheduleLogsReconnect();
     }
@@ -806,7 +818,7 @@
       };
       execWs.onclose = () => {
         execConnected = false;
-        term?.write('\r\n\x1b[33m[session closed]\x1b[0m\r\n');
+        term?.write(`\r\n\x1b[33m${m.containers_exec_session_closed()}\x1b[0m\r\n`);
       };
 
       term.onData((data) => {
@@ -826,7 +838,7 @@
       resizeObserver.observe(execContainer);
     } catch (err) {
       if (gen !== execGen) return;
-      toast.error('Exec failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_exec_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   function disconnectExec() {
@@ -840,42 +852,51 @@
   }
 
   // ---------- Actions ----------
-  async function action(op: 'start' | 'stop' | 'restart' | 'pause' | 'unpause') {
+  type Op = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
+  const OP_NAME: Record<Op, () => string> = {
+    start: m.containers_op_start, stop: m.containers_op_stop, restart: m.containers_op_restart,
+    pause: m.containers_op_pause, unpause: m.containers_op_unpause
+  };
+  const OP_DONE: Record<Op, () => string> = {
+    start: m.containers_op_done_start, stop: m.containers_op_done_stop, restart: m.containers_op_done_restart,
+    pause: m.containers_op_done_pause, unpause: m.containers_op_done_unpause
+  };
+  async function action(op: Op) {
     try {
       if (op === 'start') await api.containers.start(id, targetHost);
       else if (op === 'stop') await api.containers.stop(id, targetHost);
       else if (op === 'restart') await api.containers.restart(id, targetHost);
       else if (op === 'pause') await api.containers.pause(id, targetHost);
       else if (op === 'unpause') await api.containers.unpause(id, targetHost);
-      toast.success(op);
+      toast.success(OP_DONE[op]());
       await loadInfo();
       if (tab === 'logs') connectLogs();
     } catch (err) {
-      toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_op_failed({ op: OP_NAME[op]() }), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   // Kill is separate because it's destructive + carries a signal. Default
   // signal "" lets Docker pick SIGKILL.
   async function killContainer() {
-    if (!(await confirm.ask({ title: 'Kill container', message: 'Send SIGKILL to this container?', body: 'In-flight writes may be lost. The container exits immediately without a graceful shutdown.', confirmLabel: 'Kill', danger: true }))) return;
+    if (!(await confirm.ask({ title: m.containers_kill_title(), message: m.containers_kill_message(), body: m.containers_kill_body(), confirmLabel: m.containers_kill_label(), danger: true }))) return;
     try {
       await api.containers.kill(id, '', targetHost);
-      toast.success('Killed', 'SIGKILL sent');
+      toast.success(m.containers_kill_done(), m.containers_kill_sent());
       await loadInfo();
     } catch (err) {
-      toast.error('Kill failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_kill_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function remove() {
-    if (!(await confirm.ask({ title: 'Remove container', message: 'Remove this container?', body: 'Volumes are kept. Image stays available for redeploy.', confirmLabel: 'Remove', danger: true }))) return;
+    if (!(await confirm.ask({ title: m.containers_remove_title(), message: m.containers_detail_remove_message(), body: m.containers_detail_remove_body(), confirmLabel: m.common_remove(), danger: true }))) return;
     try {
       await api.containers.remove(id, true, targetHost);
-      toast.success('Removed');
+      toast.success(m.containers_detail_removed());
       goto('/containers');
     } catch (err) {
-      toast.error('Remove failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.containers_detail_remove_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -926,7 +947,7 @@
       const name = svc || containerName(info) || id.slice(0, 12);
       if (fromStack && proj) {
         pageContext.set(name, [
-          { label: 'Stacks', href: '/stacks' },
+          { label: m.common_stacks(), href: '/stacks' },
           { label: proj, href: `/stacks/${encodeURIComponent(proj)}` },
         ]);
       } else {
@@ -976,30 +997,43 @@
 
   const statusTone = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off'; label: string }>(() => {
     const st = info?.State;
-    if (!st) return { tone: 'off', label: 'unknown' };
-    if (st.Paused) return { tone: 'warn', label: 'paused' };
+    if (!st) return { tone: 'off', label: m.containers_status_unknown() };
+    if (st.Paused) return { tone: 'warn', label: m.containers_status_paused() };
     if (st.Running) {
-      if (st.Health?.Status === 'unhealthy') return { tone: 'warn', label: 'unhealthy' };
-      if (st.Restarting) return { tone: 'warn', label: 'restarting' };
-      return { tone: 'ok', label: 'running' };
+      if (st.Health?.Status === 'unhealthy') return { tone: 'warn', label: m.containers_status_unhealthy() };
+      if (st.Restarting) return { tone: 'warn', label: m.containers_status_restarting() };
+      return { tone: 'ok', label: m.containers_status_running() };
     }
-    if (st.Status === 'dead' || (st.ExitCode ?? 0) !== 0) return { tone: 'bad', label: st.Status === 'dead' ? 'dead' : `exited ${st.ExitCode}` };
-    return { tone: 'off', label: st.Status ?? 'stopped' };
+    if (st.Status === 'dead' || (st.ExitCode ?? 0) !== 0) return { tone: 'bad', label: st.Status === 'dead' ? m.containers_status_dead() : m.containers_status_exited_code({ code: st.ExitCode }) };
+    return { tone: 'off', label: st.Status ? stateLabel(st.Status) : m.containers_status_stopped() };
   });
 
+  function stateLabel(s: string): string {
+    switch (s) {
+      case 'running': return m.containers_status_running();
+      case 'restarting': return m.containers_status_restarting();
+      case 'paused': return m.containers_status_paused();
+      case 'dead': return m.containers_status_dead();
+      case 'exited': return m.containers_status_exited();
+      case 'created': return m.containers_status_created();
+      case 'removing': return m.containers_status_removing();
+      default: return s;
+    }
+  }
+
   const hostName = $derived(
-    hosts.available.find((h) => h.id === targetHost)?.name ?? (targetHost === 'local' ? 'the server' : targetHost)
+    hosts.available.find((h) => h.id === targetHost)?.name ?? (targetHost === 'local' ? m.containers_detail_the_server() : targetHost)
   );
 
   const chartEvents = $derived.by<ChartEvent[]>(() => {
     const out: ChartEvent[] = [];
     const started = info?.State?.StartedAt ? Date.parse(info.State.StartedAt) : NaN;
-    if (isFinite(started)) out.push({ ts: started, label: 'container started', color: 'var(--warn)' });
+    if (isFinite(started)) out.push({ ts: started, label: m.containers_event_started(), color: 'var(--warn)' });
     for (const e of updateHistory) {
       const t = Date.parse(e.applied_at);
-      if (isFinite(t)) out.push({ ts: t, label: `image updated · ${e.image_ref}` });
+      if (isFinite(t)) out.push({ ts: t, label: m.containers_event_image_updated({ ref: e.image_ref }) });
       const rb = e.rolled_back_at ? Date.parse(e.rolled_back_at) : NaN;
-      if (isFinite(rb)) out.push({ ts: rb, label: `rolled back · ${e.image_ref}`, color: 'var(--warn)' });
+      if (isFinite(rb)) out.push({ ts: rb, label: m.containers_event_rolled_back({ ref: e.image_ref }), color: 'var(--warn)' });
     }
     return out;
   });
@@ -1023,11 +1057,11 @@
   const headerMenu = $derived.by<MenuItem[]>(() => {
     if (!info) return [];
     const items: MenuItem[] = [];
-    if (canControl && info.State?.Running && !info.State?.Paused) items.push({ label: 'Pause', onclick: () => action('pause') });
-    if (canControl && (info.State?.Running || info.State?.Paused)) items.push({ label: 'Kill', onclick: killContainer });
-    items.push({ label: 'Copy ID', onclick: () => void copyWithToast(info.Id ?? id, 'Copied container ID') });
-    if (ctxStack) items.push({ label: `Open stack ${ctxStack}`, href: `/stacks/${encodeURIComponent(ctxStack)}` });
-    if (canRemove) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
+    if (canControl && info.State?.Running && !info.State?.Paused) items.push({ label: m.containers_menu_pause(), onclick: () => action('pause') });
+    if (canControl && (info.State?.Running || info.State?.Paused)) items.push({ label: m.containers_kill_label(), onclick: killContainer });
+    items.push({ label: m.containers_menu_copy_id(), onclick: () => void copyWithToast(info.Id ?? id, m.containers_menu_copied_id()) });
+    if (ctxStack) items.push({ label: m.containers_menu_open_stack({ stack: ctxStack }), href: `/stacks/${encodeURIComponent(ctxStack)}` });
+    if (canRemove) items.push({ separator: true }, { label: m.containers_menu_remove(), danger: true, onclick: remove });
     return items;
   });
 
@@ -1036,17 +1070,17 @@
   });
 
   const tabItems = $derived([
-    { key: 'overview', label: 'Overview' },
-    { key: 'logs', label: 'Logs', count: wsConnected ? 'live' : null },
-    ...(canExec ? [{ key: 'exec', label: 'Terminal', count: execConnected ? 'attached' : null }] : []),
-    { key: 'inspect', label: 'Inspect' },
+    { key: 'overview', label: m.common_overview() },
+    { key: 'logs', label: m.common_logs(), count: wsConnected ? m.containers_tab_live() : null },
+    ...(canExec ? [{ key: 'exec', label: m.containers_menu_terminal(), count: execConnected ? m.containers_tab_attached() : null }] : []),
+    { key: 'inspect', label: m.containers_menu_inspect() },
     {
       key: 'network',
-      label: 'Network',
+      label: m.common_network(),
       count: info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0 ? Object.keys(info.NetworkSettings?.Networks ?? {}).length : null
     },
-    ...(canFiles ? [{ key: 'files', label: 'Files' }] : []),
-    ...(canUpgrade && !isRemote ? [{ key: 'updates', label: 'Updates', count: updateHistory.length || null }] : [])
+    ...(canFiles ? [{ key: 'files', label: m.containers_tab_files() }] : []),
+    ...(canUpgrade && !isRemote ? [{ key: 'updates', label: m.containers_tab_updates(), count: updateHistory.length || null }] : [])
   ]);
 </script>
 
@@ -1061,32 +1095,32 @@
     <header class="dm-ph ctn-ph">
       <h1>{ctxService || containerName(info) || id.slice(0, 12)}</h1>
       <StatusChip tone={statusTone.tone} label={statusTone.label} title={info.State?.Status} />
-      {#if isSystem}<StatusChip tone="acc" label="System" title="Managed by Dockmesh" />{/if}
+      {#if isSystem}<StatusChip tone="acc" label={m.containers_detail_system()} title={m.containers_list_managed_by_dockmesh()} />{/if}
       <span class="dm-sub dm-mono ctn-ph-sub">
-        {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? `up ${fmtRelTime(info.State?.StartedAt).replace(' ago', '')}` : 'not running'}{(info.RestartCount ?? 0) > 0 ? ` · ${info.RestartCount} restart${info.RestartCount === 1 ? '' : 's'}` : ''} · {hostName} · {id.slice(0, 12)}
+        {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? m.containers_detail_up({ time: fmtRelBare(info.State?.StartedAt) }) : m.containers_detail_not_running()}{(info.RestartCount ?? 0) > 0 ? ` · ${m.containers_detail_restarts({ count: info.RestartCount })}` : ''} · {hostName} · {id.slice(0, 12)}
       </span>
       <span class="dm-sp"></span>
       {#if canControl}
         {#if info.State?.Paused}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> Resume</button>
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> {m.containers_detail_resume()}</button>
         {:else if info.State?.Running}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> Restart</button>
-          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> Stop</button>
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> {m.common_restart()}</button>
+          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('start')}><Play size={14} /> Start</button>
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('start')}><Play size={14} /> {m.common_start()}</button>
         {/if}
       {/if}
-      <Menu label="More actions" items={headerMenu} />
+      <Menu label={m.containers_detail_more_actions()} items={headerMenu} />
     </header>
   {/if}
 
   {#if info && isSystem}
     <div class="ctn-remote">
       {#if systemComponent === 'proxy'}
-        Dockmesh runs this container as its reverse proxy and keeps it in sync with your sites. Change it under
-        <a href="/proxy">Reverse proxy</a>.
+        {m.containers_detail_proxy_notice()}
+        <a href="/proxy">{m.containers_detail_proxy_link()}</a>.
       {:else}
-        Dockmesh runs this container for itself; it is shown read-only.
+        {m.containers_detail_system_notice()}
       {/if}
     </div>
   {/if}
@@ -1094,12 +1128,11 @@
   {#if isRemote}
     <div class="ctn-remote">
       <span class="ctn-remote-bullet">·</span>
-      Remote host — Logs / Stats / Terminal / Inspect stream via the agent. Image updates stay
-      local-only on the central daemon.
+      {m.containers_detail_remote_notice()}
     </div>
   {/if}
 
-  <Tabs label="Container sections" tabs={tabItems} active={tab} onchange={(k) => (tab = k as TabKey)} />
+  <Tabs label={m.containers_detail_sections()} tabs={tabItems} active={tab} onchange={(k) => (tab = k as TabKey)} />
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
@@ -1128,21 +1161,21 @@
       <div class="ctn-overview-main">
         <!-- Identity -->
         <section class="ctn-block">
-          <h3 class="ctn-h3">Identity</h3>
+          <h3 class="ctn-h3">{m.containers_detail_identity()}</h3>
           <dl class="ctn-kv">
-            <dt>ID</dt>
+            <dt>{m.containers_detail_id()}</dt>
             <dd>{id.slice(0, 12)}</dd>
 
-            <dt>Image</dt>
+            <dt>{m.common_image()}</dt>
             <dd>{info.Config?.Image}</dd>
 
             {#if cmdParts.length > 0}
-              <dt>Command</dt>
+              <dt>{m.containers_detail_command()}</dt>
               <dd>{JSON.stringify(cmdParts)}</dd>
             {/if}
 
             {#if envLines.length > 0}
-              <dt>Environment</dt>
+              <dt>{m.containers_detail_environment()}</dt>
               <dd class="ctn-kv-env">
                 {#each (envExpanded ? envLines : envLines.slice(0, 3)) as e (e)}
                   {@const idx = e.indexOf('=')}
@@ -1160,30 +1193,30 @@
                     onclick={() => (envExpanded = !envExpanded)}
                   >
                     {envExpanded
-                      ? `hide ${envLines.length - 3}`
-                      : `show ${envLines.length - 3} more`}
+                      ? m.containers_detail_env_hide({ n: envLines.length - 3 })
+                      : m.containers_detail_env_show({ n: envLines.length - 3 })}
                   </button>
                 {/if}
               </dd>
             {/if}
 
             {#if portRows.length > 0}
-              <dt>Ports</dt>
+              <dt>{m.common_ports()}</dt>
               <dd>
                 {#each portRows as p, i (p.port)}{#if i > 0} · {/if}{p.port}{/each}
               </dd>
             {/if}
 
-            <dt>Created</dt>
+            <dt>{m.common_created()}</dt>
             <dd>{info.Created?.slice(0, 19).replace('T', ' ')} · {fmtRelTime(info.Created)}</dd>
 
             {#if info.HostConfig?.RestartPolicy?.Name}
-              <dt>Restart</dt>
+              <dt>{m.containers_detail_restart_policy()}</dt>
               <dd>{info.HostConfig.RestartPolicy.Name}</dd>
             {/if}
 
             {#if info.Config?.User}
-              <dt>User</dt>
+              <dt>{m.common_user()}</dt>
               <dd>{info.Config.User}</dd>
             {/if}
           </dl>
@@ -1195,9 +1228,9 @@
              only exposes one healthcheck per container; we render exactly
              that one row, status-coloured. -->
         <section class="ctn-block">
-          <h3 class="ctn-h3">Health</h3>
+          <h3 class="ctn-h3">{m.containers_detail_health()}</h3>
           {#if !health || health.Status === 'none'}
-            <p class="ctn-empty-line">No <code>healthcheck</code> configured. Status comes from the container's running/stopped state only.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_healthcheck_before()} <code>healthcheck</code> {m.containers_detail_no_healthcheck_after()}</p>
           {:else}
             {@const probeTest = info.Config?.Healthcheck?.Test}
             {@const probeCmd = Array.isArray(probeTest) && probeTest.length > 1
@@ -1205,22 +1238,22 @@
               : 'CMD'}
             {@const probeIntervalNs = info.Config?.Healthcheck?.Interval ?? 0}
             {@const probeIntervalSec = Math.max(1, Math.round(probeIntervalNs / 1_000_000_000))}
-            {@const probeMeta = `${probeCmd} · every ${probeIntervalSec}s`}
+            {@const probeMeta = m.containers_detail_probe_meta({ cmd: probeCmd, sec: probeIntervalSec })}
             <div class="ctn-health-box">
               {#if health.Status === 'unhealthy'}
                 <div class="ed-row" data-status="failing" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">Healthcheck</span>
+                    <span class="ctn-health-name">{m.containers_detail_healthcheck()}</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
-                    <span class="dm-pill dm-pill-danger ctn-health-pill"><span class="dm-pill-dot"></span>exit {health.Log?.[0]?.ExitCode ?? '?'}</span>
+                    <span class="dm-pill dm-pill-danger ctn-health-pill"><span class="dm-pill-dot"></span>{m.containers_detail_exit_code({ code: health.Log?.[0]?.ExitCode ?? '?' })}</span>
                     {#if health.FailingStreak > 0}
-                      <span class="ctn-health-streak">{health.FailingStreak} consecutive failures</span>
+                      <span class="ctn-health-streak">{m.containers_detail_failing_streak({ count: health.FailingStreak })}</span>
                     {/if}
                   </div>
-                  <span class="ctn-health-when">since {fmtRelTime(health.Log?.[0]?.Start)}</span>
+                  <span class="ctn-health-when">{m.containers_detail_failing_since({ time: fmtRelTime(health.Log?.[0]?.Start) })}</span>
                 </div>
                 {#if health.Log?.[0]?.Output}
                   <pre class="ctn-health-output">{health.Log[0].Output.slice(0, 400)}</pre>
@@ -1229,11 +1262,11 @@
                 <div class="ed-row" data-status="degraded" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">Healthcheck</span>
+                    <span class="ctn-health-name">{m.containers_detail_healthcheck()}</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
-                    <span class="dm-pill dm-pill-warning ctn-health-pill"><span class="dm-pill-dot"></span>starting</span>
+                    <span class="dm-pill dm-pill-warning ctn-health-pill"><span class="dm-pill-dot"></span>{m.containers_status_starting()}</span>
                   </div>
                   <span class="ctn-health-when">{fmtRelTime(info.State?.StartedAt)}</span>
                 </div>
@@ -1241,13 +1274,13 @@
                 <div class="ed-row" data-status="running" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">Healthcheck</span>
+                    <span class="ctn-health-name">{m.containers_detail_healthcheck()}</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
-                    <span class="dm-pill dm-pill-success ctn-health-pill"><span class="dm-pill-dot"></span>healthy</span>
+                    <span class="dm-pill dm-pill-success ctn-health-pill"><span class="dm-pill-dot"></span>{m.containers_status_healthy()}</span>
                   </div>
-                  <span class="ctn-health-when">last ok {fmtRelTime(health.Log?.[0]?.End)}</span>
+                  <span class="ctn-health-when">{m.containers_detail_last_ok({ time: fmtRelTime(health.Log?.[0]?.End) })}</span>
                 </div>
               {/if}
             </div>
@@ -1257,24 +1290,24 @@
         <!-- Restart history (summarized — Docker doesn't expose individual
              restart events, so we show count + last-start + last-exit). -->
         <section class="ctn-block">
-          <h3 class="ctn-h3">Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</h3>
+          <h3 class="ctn-h3">{m.containers_detail_restart_history()} · {m.containers_detail_restarts({ count: restartCount })}</h3>
           {#if restartCount === 0 && info.State?.Running}
-            <p class="ctn-empty-line">No restarts since this container was created. Running cleanly since <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_restarts_before()} <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
           {:else}
             <ol class="ctn-restart-list">
               {#if info.State?.StartedAt}
                 <li class="ed-feed-item">
                   <span class="ed-feed-time">{fmtRelTime(info.State.StartedAt)}</span>
                   <span class="ed-feed-text">
-                    <strong>last start</strong> · {info.State?.Running ? 'currently running' : 'not running'}
+                    <strong>{m.containers_detail_last_start()}</strong> · {info.State?.Running ? m.containers_detail_currently_running() : m.containers_detail_not_running()}
                   </span>
                   <span class="ed-feed-actor">
                     {#if info.State?.ExitCode !== undefined && info.State.ExitCode !== 0}
-                      exit {info.State.ExitCode}
+                      {m.containers_detail_exit_code({ code: info.State.ExitCode })}
                     {:else if !info.State?.Running}
-                      stopped
+                      {m.containers_status_stopped()}
                     {:else}
-                      live
+                      {m.containers_detail_live()}
                     {/if}
                   </span>
                 </li>
@@ -1283,16 +1316,16 @@
                 <li class="ed-feed-item">
                   <span class="ed-feed-time">{fmtRelTime(info.State.FinishedAt)}</span>
                   <span class="ed-feed-text">
-                    <strong>last finish</strong> · {info.State?.Error || 'clean exit'}
+                    <strong>{m.containers_detail_last_finish()}</strong> · {info.State?.Error || m.containers_detail_clean_exit()}
                   </span>
                   <span class="ed-feed-actor">
-                    exit {info.State?.ExitCode ?? 0}
+                    {m.containers_detail_exit_code({ code: info.State?.ExitCode ?? 0 })}
                   </span>
                 </li>
               {/if}
             </ol>
             <p class="ctn-restart-note">
-              Per-restart details (reason, signal, OOM kill) aren't surfaced by Docker — the count above is the lifetime restart count for this container id.
+              {m.containers_detail_restart_note()}
             </p>
           {/if}
         </section>
@@ -1300,17 +1333,17 @@
 
       <aside class="ctn-overview-rail">
         <section class="dm-card ctn-rail-card">
-          <h3 class="ctn-h3">Mounts · {mounts.length}</h3>
+          <h3 class="ctn-h3">{m.containers_detail_mounts()} · {mounts.length}</h3>
           {#if mounts.length === 0}
-            <p class="ctn-empty-line">No volumes or bind mounts.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_mounts()}</p>
           {:else}
             <ul class="ctn-mounts">
-              {#each mounts as m (m.Destination)}
+              {#each mounts as mt (mt.Destination)}
                 <li>
-                  <span class="ctn-mount-name">{m.Name || m.Source}</span>
+                  <span class="ctn-mount-name">{mt.Name || mt.Source}</span>
                   <span class="ctn-mount-arrow">→</span>
-                  <span class="ctn-mount-dest">{m.Destination}</span>
-                  {#if m.RW === false}<span class="dm-pill dm-pill-neutral ctn-mount-ro">ro</span>{/if}
+                  <span class="ctn-mount-dest">{mt.Destination}</span>
+                  {#if mt.RW === false}<span class="dm-pill dm-pill-neutral ctn-mount-ro">ro</span>{/if}
                 </li>
               {/each}
             </ul>
@@ -1318,9 +1351,9 @@
         </section>
 
         <section class="dm-card ctn-rail-card">
-          <h3 class="ctn-h3">Networks · {networks.length}</h3>
+          <h3 class="ctn-h3">{m.common_networks()} · {networks.length}</h3>
           {#if networks.length === 0}
-            <p class="ctn-empty-line">Not attached to any user network.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_user_network()}</p>
           {:else}
             <ul class="ctn-networks">
               {#each networks as [netName, cfg] (netName)}
@@ -1338,21 +1371,21 @@
 
         {#if ctxStack}
           <section class="dm-card-flat ctn-rail-card">
-            <h3 class="ctn-h3">Stack context</h3>
+            <h3 class="ctn-h3">{m.containers_detail_stack_context()}</h3>
             <p class="ctn-stack-blurb">
-              Service <em class="ed-accent">{ctxService || '—'}</em> of stack
+              {m.containers_detail_stack_service()} <em class="ed-accent">{ctxService || '—'}</em> {m.containers_detail_stack_of()}
               <em class="ed-accent">{ctxStack}</em>.
             </p>
             <a href={`/stacks/${encodeURIComponent(ctxStack)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
-              ↑ Open {ctxStack}
+              ↑ {m.containers_detail_open_named({ name: ctxStack })}
             </a>
           </section>
         {/if}
 
         <section class="dm-card ctn-rail-card">
-          <h3 class="ctn-h3">Endpoints</h3>
+          <h3 class="ctn-h3">{m.containers_detail_endpoints()}</h3>
           {#if portRows.length === 0}
-            <p class="ctn-empty-line">No exposed ports.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_exposed_ports()}</p>
           {:else}
             <ul class="ctn-endpoints">
               {#each portRows as p (p.port)}
@@ -1360,14 +1393,14 @@
                   {#each p.bindings as b (b.HostIp + b.HostPort)}
                     <li>
                       <span class="ctn-endpoint-port">:{b.HostPort} → {p.port}</span>
-                      <span class="ctn-endpoint-mode-host">Host</span>
+                      <span class="ctn-endpoint-mode-host">{m.common_host()}</span>
                       <ExternalLink size={11} strokeWidth={1.5} class="ctn-endpoint-icon" />
                     </li>
                   {/each}
                 {:else}
                   <li>
                     <span class="ctn-endpoint-port">{p.port}</span>
-                    <span class="ctn-endpoint-mode">Internal</span>
+                    <span class="ctn-endpoint-mode">{m.containers_detail_internal()}</span>
                   </li>
                 {/if}
               {/each}
@@ -1381,11 +1414,11 @@
       <div class="ctn-logs-bar">
         <div class="ctn-log-filters">
           {#each [
-            ['all', 'All', logs.length],
-            ['error', 'Error', logCounts.error],
-            ['warn', 'Warn', logCounts.warn],
-            ['info', 'Info', logCounts.info],
-            ['fatal', 'Fatal', logCounts.fatal],
+            ['all', m.common_all(), logs.length],
+            ['error', m.common_error(), logCounts.error],
+            ['warn', m.containers_logs_warn(), logCounts.warn],
+            ['info', m.containers_logs_info(), logCounts.info],
+            ['fatal', m.containers_logs_fatal(), logCounts.fatal],
           ] as [id, label, n] (id)}
             <button
               type="button"
@@ -1413,14 +1446,14 @@
             onclick={() => { wsConnected ? disconnectLogs() : connectLogs(); }}
           >
             <span class="ctn-log-follow-dot"></span>
-            {wsConnected ? 'following' : 'paused'}
+            {wsConnected ? m.containers_logs_following() : m.containers_logs_paused()}
           </button>
           <button
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs"
             onclick={() => (logs = [])}
           >
-            <Trash size={11} strokeWidth={1.5} /> Clear
+            <Trash size={11} strokeWidth={1.5} /> {m.containers_logs_clear()}
           </button>
         </div>
       </div>
@@ -1434,34 +1467,34 @@
           </div>
         {/each}
         {#if filteredLogLines.length === 0 && logs.length > 0}
-          <div class="ctn-logs-empty"><em>no lines match this filter.</em></div>
+          <div class="ctn-logs-empty"><em>{m.containers_logs_no_match()}</em></div>
         {:else if logs.length === 0 && wsConnected}
-          <div class="ctn-logs-empty"><em>waiting for first line…</em></div>
+          <div class="ctn-logs-empty"><em>{m.containers_logs_waiting_first()}</em></div>
         {:else if logs.length === 0}
-          <div class="ctn-logs-empty"><em>not streaming — click "paused" to reconnect.</em></div>
+          <div class="ctn-logs-empty"><em>{m.containers_logs_not_streaming()}</em></div>
         {/if}
         {#if wsConnected && logs.length > 0}
           <div class="ctn-log-row" style="opacity: 0.55">
             <span class="ctn-log-ts"></span>
             <span class="ctn-log-lvl ctn-log-lvl--info">···</span>
-            <span class="ctn-log-msg">waiting for next line<span class="ed-cursor"></span></span>
+            <span class="ctn-log-msg">{m.containers_logs_waiting_next()}<span class="ed-cursor"></span></span>
           </div>
         {/if}
       </div>
 
       <div class="ctn-log-foot">
         <span>
-          {filteredLogLines.length} of {logs.length} lines · stream
+          {m.containers_logs_foot_lines({ shown: filteredLogLines.length, total: logs.length })}
           <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em>
         </span>
-        <span>Tail · since boot</span>
+        <span>{m.containers_logs_foot_tail()}</span>
       </div>
     </div>
   {:else if tab === 'exec' && canExec}
     <div class="ctn-tab-pane">
       <div class="ctn-term-bar">
         <div class="ctn-term-shell-pills">
-          <span class="ctn-term-shell-label">Shell:</span>
+          <span class="ctn-term-shell-label">{m.containers_exec_shell()}</span>
           {#each ['sh', 'bash'] as const as s (s)}
             <button
               type="button"
@@ -1479,27 +1512,27 @@
               class="dm-btn dm-btn-primary dm-btn-sm"
               onclick={connectExec}
             >
-              <TerminalIcon size={12} strokeWidth={1.5} /> Attach to /bin/{execShell}
+              <TerminalIcon size={12} strokeWidth={1.5} /> {m.containers_exec_attach({ shell: execShell })}
             </button>
           {:else}
             <span class="dm-pill dm-pill-success ctn-meta-pill">
-              <span class="dm-pill-dot"></span>attached
+              <span class="dm-pill-dot"></span>{m.containers_exec_attached()}
             </span>
             <button
               type="button"
               class="dm-btn dm-btn-ghost dm-btn-sm"
               onclick={disconnectExec}
-            >Detach</button>
+            >{m.containers_exec_detach()}</button>
           {/if}
         </div>
       </div>
       <div bind:this={execContainer} class="ctn-term-shell"></div>
       <div class="ctn-term-foot">
         {#if execConnected}
-          connected to <em class="ed-accent">/bin/{execShell}</em> · try
+          {m.containers_exec_connected_to()} <em class="ed-accent">/bin/{execShell}</em> · {m.containers_exec_try()}
           <code>ls /etc</code>, <code>ps</code>, <code>env</code>
         {:else}
-          not attached · Attach uses <em class="ed-accent">docker exec</em> against the running container
+          {m.containers_exec_not_attached_before()} <em class="ed-accent">docker exec</em> {m.containers_exec_not_attached_after()}
         {/if}
       </div>
     </div>
@@ -1519,7 +1552,7 @@
               <div class="ctn-updates-banner-head">
                 <div class="ctn-updates-banner-text">
                   <div class="ctn-updates-banner-eyebrow">
-                    <h3 class="ctn-h3">Update available</h3>
+                    <h3 class="ctn-h3">{m.containers_upd_available()}</h3>
                   </div>
                   <div class="ctn-updates-vdiff">
                     <span class="ctn-updates-vdiff-old">{currentTagShort || imageTag}</span>
@@ -1536,7 +1569,7 @@
                   </div>
                   <p class="ctn-updates-banner-meta">
                     {#if updatePreview.remote_last_updated}
-                      Released <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtBytes(updatePreview.remote_size, '—')}</span>{/if}.
+                      {m.containers_upd_released()} <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtBytes(updatePreview.remote_size, '—')}</span>{/if}.
                     {/if}
                     {#if updatePreview.latest_release?.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                       {updatePreview.latest_release.name}.
@@ -1551,7 +1584,7 @@
                     disabled={updateBusy}
                   >
                     <Download size={12} strokeWidth={1.5} />
-                    {updateBusy ? 'Pulling…' : 'Pull & restart'}
+                    {updateBusy ? m.containers_upd_pulling() : m.containers_upd_pull_restart()}
                   </button>
                   {#if updatePreview.latest_release?.url}
                     <a
@@ -1560,7 +1593,7 @@
                       rel="noopener"
                       class="dm-btn dm-btn-secondary dm-btn-sm"
                     >
-                      <ExternalLink size={11} strokeWidth={1.5} /> Release
+                      <ExternalLink size={11} strokeWidth={1.5} /> {m.containers_upd_release()}
                     </a>
                   {/if}
                 </div>
@@ -1580,12 +1613,12 @@
                     <Package size={18} strokeWidth={1.5} />
                   </span>
                   <div>
-                    <h3 class="ctn-h3">Up to date</h3>
+                    <h3 class="ctn-h3">{m.containers_upd_up_to_date()}</h3>
                     <div class="ctn-updates-image-ref">{updatePreview.image}</div>
                     <div class="ctn-updates-image-meta">
-                      <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
+                      <div>{m.containers_upd_local_meta({ digest: shortDigest(updatePreview.current_digest), time: fmtRelTime(updatePreview.current_created) })}</div>
                       {#if updatePreview.remote_last_updated}
-                        <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtBytes(updatePreview.remote_size, '—')}</div>
+                        <div>{m.containers_upd_remote_meta({ time: fmtRelTime(updatePreview.remote_last_updated), size: fmtBytes(updatePreview.remote_size, '—') })}</div>
                       {/if}
                     </div>
                   </div>
@@ -1597,7 +1630,7 @@
                   disabled={updateBusy}
                 >
                   <Download size={12} strokeWidth={1.5} />
-                  {updateBusy ? 'Pulling…' : 'Re-pull image'}
+                  {updateBusy ? m.containers_upd_pulling() : m.containers_upd_repull()}
                 </button>
               </div>
             </div>
@@ -1609,7 +1642,7 @@
               <div class="ctn-updates-release-head">
                 <div class="ctn-updates-release-title">
                   <h3 class="ctn-h3">
-                    Release notes{#if updatePreview.latest_release.tag} · {updatePreview.latest_release.tag}{/if}
+                    {m.containers_upd_release_notes()}{#if updatePreview.latest_release.tag} · {updatePreview.latest_release.tag}{/if}
                   </h3>
                   {#if updatePreview.latest_release.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                     <h3>{updatePreview.latest_release.name}</h3>
@@ -1622,7 +1655,7 @@
                     rel="noopener"
                     class="ctn-inline-link"
                   >
-                    Open on GitHub <ExternalLink size={11} strokeWidth={1.5} />
+                    {m.containers_upd_open_github()} <ExternalLink size={11} strokeWidth={1.5} />
                   </a>
                 {/if}
               </div>
@@ -1634,41 +1667,41 @@
             <section class="ctn-block">
               <h3 class="ctn-h3">
                 {#if updateAvailable && currentTagShort && newTag}
-                  Image diff · {updatePreview.image.split(':')[0]}:{currentTagShort} → {newTag}
+                  {m.containers_upd_image_diff()} · {updatePreview.image.split(':')[0]}:{currentTagShort} → {newTag}
                 {:else}
-                  Image · {updatePreview.image}
+                  {m.common_image()} · {updatePreview.image}
                 {/if}
               </h3>
               <div class="ctn-updates-imgdiff">
                 {#if sizeDelta !== null}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">Size delta</span>
+                    <span class="ed-metric-label">{m.containers_upd_size_delta()}</span>
                     <div
                       class="ed-metric-value"
                       class:ctn-updates-delta-down={sizeDelta < 0}
                       class:ctn-updates-delta-up={sizeDelta > 0}
                     >{fmtSizeDelta(sizeDelta)}</div>
-                    <span class="ed-metric-meta">from {fmtBytes(updatePreview.local_size, '—')}</span>
+                    <span class="ed-metric-meta">{m.containers_upd_from_size({ size: fmtBytes(updatePreview.local_size, '—') })}</span>
                   </div>
                 {:else if updatePreview.remote_size}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">Remote size</span>
+                    <span class="ed-metric-label">{m.containers_upd_remote_size()}</span>
                     <div class="ed-metric-value">{fmtBytes(updatePreview.remote_size, '—')}</div>
-                    <span class="ed-metric-meta">On registry</span>
+                    <span class="ed-metric-meta">{m.containers_upd_on_registry()}</span>
                   </div>
                 {/if}
                 {#if updatePreview.remote_last_updated}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">Pushed</span>
+                    <span class="ed-metric-label">{m.containers_upd_pushed()}</span>
                     <div class="ed-metric-value">{fmtRelTime(updatePreview.remote_last_updated)}</div>
-                    <span class="ed-metric-meta">{newTag || updatePreview.latest_release?.tag || 'latest tag'}</span>
+                    <span class="ed-metric-meta">{newTag || updatePreview.latest_release?.tag || m.containers_upd_latest_tag()}</span>
                   </div>
                 {/if}
                 {#if updatePreview.current_digest}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">Local digest</span>
+                    <span class="ed-metric-label">{m.containers_upd_local_digest()}</span>
                     <div class="ed-metric-value mono">{shortDigest(updatePreview.current_digest)}</div>
-                    <span class="ed-metric-meta">built {fmtRelTime(updatePreview.current_created)}</span>
+                    <span class="ed-metric-meta">{m.containers_upd_built({ time: fmtRelTime(updatePreview.current_created) })}</span>
                   </div>
                 {/if}
               </div>
@@ -1693,12 +1726,12 @@
 
       <aside class="ctn-updates-rail">
         <div class="dm-card-flat ctn-updates-rail-card">
-          <h3 class="ctn-h3">Version history</h3>
+          <h3 class="ctn-h3">{m.containers_upd_version_history()}</h3>
           <ul class="ctn-updates-versions">
             <li>
               <span class="ctn-updates-version-tag current">{currentTagShort || imageTag || '—'}</span>
               <span class="ctn-updates-version-meta">
-                current{#if info?.State?.StartedAt} · {fmtRelTime(info.State.StartedAt)}{/if}
+                {m.containers_upd_current()}{#if info?.State?.StartedAt} · {fmtRelTime(info.State.StartedAt)}{/if}
               </span>
             </li>
             {#each updateHistory.slice(0, 6) as e (e.id)}
@@ -1706,19 +1739,19 @@
               <li>
                 <span class="ctn-updates-version-tag">{trimV(tag) || shortDigest(e.old_digest)}</span>
                 <span class="ctn-updates-version-meta">
-                  {fmtRelTime(e.applied_at)}{#if e.rolled_back_at} · rolled back{/if}
+                  {fmtRelTime(e.applied_at)}{#if e.rolled_back_at} · {m.containers_upd_rolled_back()}{/if}
                 </span>
               </li>
             {/each}
           </ul>
           {#if updateHistory.length === 0}
-            <p class="ctn-updates-rail-empty">No previous versions yet.</p>
+            <p class="ctn-updates-rail-empty">{m.containers_upd_no_versions()}</p>
           {/if}
         </div>
 
         {#if updateHistory.length > 0}
           <div class="dm-card-flat ctn-updates-rail-card">
-            <h3 class="ctn-h3">Rollback timeline</h3>
+            <h3 class="ctn-h3">{m.containers_upd_rollback_timeline()}</h3>
             <ol class="ctn-updates-history">
               <span class="ctn-updates-history-rule" aria-hidden="true"></span>
               {#each updateHistory as e, i (e.id)}
@@ -1728,16 +1761,16 @@
                     <div class="ctn-updates-history-head">
                       <span class="ctn-updates-history-ref">{e.image_ref}</span>
                       {#if e.rolled_back_at}
-                        <span class="dm-pill dm-pill-warning ctn-meta-pill"><span class="dm-pill-dot"></span>rolled back</span>
+                        <span class="dm-pill dm-pill-warning ctn-meta-pill"><span class="dm-pill-dot"></span>{m.containers_upd_rolled_back()}</span>
                       {:else}
                         <button
                           type="button"
                           class="dm-btn dm-btn-ghost dm-btn-xs"
                           onclick={() => doRollback(e.id)}
                           disabled={updateBusy}
-                          title="Roll back to this image"
+                          title={m.containers_upd_rollback_title()}
                         >
-                          <Undo2 size={11} strokeWidth={1.5} /> Rollback
+                          <Undo2 size={11} strokeWidth={1.5} /> {m.containers_upd_rollback()}
                         </button>
                       {/if}
                     </div>
@@ -1763,16 +1796,16 @@
               class="ctn-inspect-toggle"
               class:active={inspectView === v}
               onclick={() => (inspectView = v as any)}
-            >{v}</button>
+            >{v === 'pretty' ? m.containers_inspect_pretty() : m.containers_inspect_raw()}</button>
           {/each}
           <button
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs"
             onclick={async () => {
-              void copyWithToast(JSON.stringify(info, null, 2), 'Copied JSON');
+              void copyWithToast(JSON.stringify(info, null, 2), m.containers_inspect_copied());
             }}
           >
-            <FileText size={11} strokeWidth={1.5} /> Copy
+            <FileText size={11} strokeWidth={1.5} /> {m.common_copy()}
           </button>
         </div>
       </div>
@@ -1789,10 +1822,10 @@
     <div class="ctn-network-pane">
       <!-- LEFT: Connected networks -->
       <div>
-        <h3 class="ctn-h3">Connected networks</h3>
+        <h3 class="ctn-h3">{m.containers_net_connected()}</h3>
         {#if netEntries.length === 0}
           <div class="ctn-network-empty">
-            <p>Not attached to any user network. Default bridge or host networking.</p>
+            <p>{m.containers_net_none()}</p>
           </div>
         {:else}
           <div class="ctn-network-list">
@@ -1817,16 +1850,16 @@
           </div>
         {/if}
         <p class="ctn-network-note">
-          Container is on {netEntries.length === 0 ? 'no user' : netEntries.length === 1 ? 'a single' : `${netEntries.length}`} network{netEntries.length === 1 ? '' : 's'}. Attach more via the Networks page or via <code>compose.yaml</code>.
+          {netEntries.length === 0 ? m.containers_net_note_none() : netEntries.length === 1 ? m.containers_net_note_one() : m.containers_net_note_many({ count: netEntries.length })} {m.containers_net_attach_before()} <code>compose.yaml</code>{m.containers_net_attach_after()}
         </p>
       </div>
 
       <!-- RIGHT: Port bindings -->
       <div>
-        <h3 class="ctn-h3">Port bindings · {portRows2.length}</h3>
+        <h3 class="ctn-h3">{m.containers_net_port_bindings()} · {portRows2.length}</h3>
         {#if portRows2.length === 0}
           <div class="ctn-network-empty">
-            <p>No ports declared in the image or compose.</p>
+            <p>{m.containers_net_no_ports()}</p>
           </div>
         {:else}
           <div class="ctn-network-list">
@@ -1836,52 +1869,52 @@
                   <div class="ctn-port-row">
                     <span class="ctn-port-name">{p.port}</span>
                     <span class="dm-pill dm-pill-success ctn-meta-pill">{b.HostIp || '0.0.0.0'}:{b.HostPort}</span>
-                    <span class="ctn-port-note">host-mapped</span>
+                    <span class="ctn-port-note">{m.containers_net_host_mapped()}</span>
                   </div>
                 {/each}
               {:else}
                 <div class="ctn-port-row">
                   <span class="ctn-port-name">{p.port}</span>
-                  <span class="dm-pill dm-pill-neutral ctn-meta-pill">Internal</span>
-                  <span class="ctn-port-note">No host binding</span>
+                  <span class="dm-pill dm-pill-neutral ctn-meta-pill">{m.containers_detail_internal()}</span>
+                  <span class="ctn-port-note">{m.containers_net_no_host_binding()}</span>
                 </div>
               {/if}
             {/each}
           </div>
         {/if}
         <p class="ctn-network-note">
-          Internal ports are reachable from other containers on the same network only.
+          {m.containers_net_internal_note()}
         </p>
       </div>
 
       <!-- BOTTOM: Throughput row, full-width -->
       {#if stats}
         <div class="ctn-network-throughput">
-          <h3 class="ctn-h3">Throughput · last 60s</h3>
+          <h3 class="ctn-h3">{m.containers_net_throughput()}</h3>
           <div class="ctn-throughput-grid">
             <EdMetric
-              label="rx total"
+              label={m.containers_net_rx_total()}
               value={fmtBytes(stats.net_rx)}
-              meta="since start"
+              meta={m.containers_net_since_start()}
             />
             <EdMetric
-              label="tx total"
+              label={m.containers_net_tx_total()}
               value={fmtBytes(stats.net_tx)}
-              meta="since start"
+              meta={m.containers_net_since_start()}
             />
             <EdMetric
-              label="rx rate"
+              label={m.containers_net_rx_rate()}
               value={statsHistory.length > 1
                 ? `${fmtBytes(Math.max(0, stats.net_rx - statsHistory[0].net_rx) / Math.max(1, statsHistory.length))}/s`
                 : '—'}
-              meta="avg over buffer"
+              meta={m.containers_net_avg_buffer()}
             />
             <EdMetric
-              label="tx rate"
+              label={m.containers_net_tx_rate()}
               value={statsHistory.length > 1
                 ? `${fmtBytes(Math.max(0, stats.net_tx - statsHistory[0].net_tx) / Math.max(1, statsHistory.length))}/s`
                 : '—'}
-              meta="avg over buffer"
+              meta={m.containers_net_avg_buffer()}
             />
           </div>
         </div>
@@ -1890,7 +1923,7 @@
   {:else if tab === 'files' && info && canFiles}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
-        <nav class="ctn-files-crumbs" aria-label="Path">
+        <nav class="ctn-files-crumbs" aria-label={m.common_path()}>
           {#each filesCrumbs as crumb, i (crumb.path)}
             {#if i > 0}
               <ChevronRight size={12} strokeWidth={1.5} class="ctn-files-crumb-sep" />
@@ -1909,10 +1942,10 @@
             class="ctn-files-action"
             onclick={pickAndUpload}
             disabled={!canWriteFiles}
-            title={canWriteFiles ? `Upload a file (up to ${UPLOAD_LIMIT_MIB} MiB) into this directory` : 'Uploading also needs the terminal permission'}
+            title={canWriteFiles ? m.containers_files_upload_title({ limit: UPLOAD_LIMIT_MIB }) : m.containers_files_upload_needs_exec()}
           >
             <Upload size={13} strokeWidth={1.6} />
-            <span>Upload</span>
+            <span>{m.common_upload()}</span>
           </button>
         </div>
       </div>
@@ -1920,26 +1953,26 @@
       {#if filesError}
         <div class="ctn-files-error">
           <p>{filesError}</p>
-          <button type="button" class="ctn-files-action" onclick={() => loadFiles(filesPath)}>Retry</button>
+          <button type="button" class="ctn-files-action" onclick={() => loadFiles(filesPath)}>{m.common_retry()}</button>
         </div>
       {/if}
 
       <div class="ctn-files-table">
         <div class="ctn-files-head">
-          <span>Name</span>
-          <span class="ctn-files-cell-right">Size</span>
-          <span>Mode</span>
-          <span>Modified</span>
+          <span>{m.common_name()}</span>
+          <span class="ctn-files-cell-right">{m.common_size()}</span>
+          <span>{m.containers_files_mode()}</span>
+          <span>{m.containers_files_modified()}</span>
           <span></span>
         </div>
         {#if filesLoading && !filesEntries.length}
           <div class="ctn-files-pending">
-            <p>Loading {filesPath}…</p>
+            <p>{m.containers_files_loading_path({ path: filesPath })}</p>
           </div>
         {:else if !filesEntries.length}
           <div class="ctn-files-pending">
             <FilesIcon size={18} strokeWidth={1.5} class="ctn-files-icon" />
-            <p>Empty directory.</p>
+            <p>{m.containers_files_empty()}</p>
           </div>
         {:else}
           {#if filesPath !== '/'}
@@ -1956,7 +1989,7 @@
               </span>
               <span class="ctn-files-cell-right">—</span>
               <span class="ctn-files-mode">—</span>
-              <span class="ctn-files-modified">Parent</span>
+              <span class="ctn-files-modified">{m.containers_files_parent()}</span>
               <span></span>
             </div>
           {/if}
@@ -1991,7 +2024,7 @@
                     type="button"
                     class="ctn-files-row-action"
                     onclick={(e) => { e.stopPropagation(); downloadEntry(entry); }}
-                    title="Download"
+                    title={m.common_download()}
                   >
                     <Download size={13} strokeWidth={1.6} />
                   </button>
@@ -2001,8 +2034,8 @@
                     type="button"
                     class="ctn-files-row-action"
                     onclick={(e) => { e.stopPropagation(); deleteEntry(entry); }}
-                    title="Delete"
-                    aria-label="Delete {entry.name}"
+                    title={m.common_delete()}
+                    aria-label={m.containers_files_delete_named({ name: entry.name })}
                   >
                     <Trash size={13} strokeWidth={1.6} />
                   </button>
@@ -2021,10 +2054,10 @@
               <span class="ctn-files-preview-size">
                 {fmtBytes(filesPreview.size)}
                 {#if filesPreview.truncated}
-                  · truncated at 1 MiB
+                  · {m.containers_files_truncated()}
                 {/if}
                 {#if filesPreview.binary}
-                  · binary
+                  · {m.containers_files_binary()}
                 {/if}
               </span>
             </div>
@@ -2037,7 +2070,7 @@
                   disabled={filesSaving}
                 >
                   <XIcon size={13} strokeWidth={1.6} />
-                  <span>Cancel</span>
+                  <span>{m.common_cancel()}</span>
                 </button>
                 <button
                   type="button"
@@ -2046,7 +2079,7 @@
                   disabled={filesSaving}
                 >
                   <Save size={13} strokeWidth={1.6} />
-                  <span>{filesSaving ? 'Saving…' : 'Save'}</span>
+                  <span>{filesSaving ? m.common_saving() : m.common_save()}</span>
                 </button>
               {:else}
                 <button
@@ -2055,7 +2088,7 @@
                   onclick={downloadCurrentPreview}
                 >
                   <Download size={13} strokeWidth={1.6} />
-                  <span>Download</span>
+                  <span>{m.common_download()}</span>
                 </button>
                 {#if !filesPreview.binary && !filesPreview.truncated}
                   <button
@@ -2063,10 +2096,10 @@
                     class="ctn-files-action"
                     onclick={() => { filesEditValue = filesPreview?.content ?? ''; filesEditing = true; }}
                     disabled={!canWriteFiles}
-                    title={canWriteFiles ? 'Edit this file' : 'Editing also needs the terminal permission'}
+                    title={canWriteFiles ? m.containers_files_edit_title() : m.containers_files_edit_needs_exec()}
                   >
                     <Pencil size={13} strokeWidth={1.6} />
-                    <span>Edit</span>
+                    <span>{m.common_edit()}</span>
                   </button>
                 {/if}
               {/if}
@@ -2080,10 +2113,10 @@
             </div>
           </div>
           {#if filesPreviewLoading}
-            <div class="ctn-files-preview-body ctn-files-preview-loading">Loading…</div>
+            <div class="ctn-files-preview-body ctn-files-preview-loading">{m.common_loading()}</div>
           {:else if filesPreview.binary}
             <div class="ctn-files-preview-body ctn-files-preview-binary">
-              Binary file — preview disabled. Use Download to fetch the raw bytes.
+              {m.containers_files_binary_notice()}
             </div>
           {:else if filesEditing}
             <textarea

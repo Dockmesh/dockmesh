@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { urlTab } from '$lib/urlTab.svelte';
   import { fmtAgo } from '$lib/format';
+  import { fmtDateTime, fmtNumber } from '$lib/i18n';
   import { api, ApiError, type Operation } from '$lib/api';
   import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
@@ -114,40 +116,40 @@
     return 'ok';
   }
   function httpsNote(r: Site): string {
-    if (r.tls_mode === 'none') return 'not encrypted';
-    if (r.cert_days_left == null) return 'no certificate served yet';
-    return `expires in ${r.cert_days_left} d`;
+    if (r.tls_mode === 'none') return m.proxy_not_encrypted();
+    if (r.cert_days_left == null) return m.proxy_no_cert_yet();
+    return m.proxy_expires_in_d({ n: r.cert_days_left });
   }
   const siteHref = (r: Site) => `/proxy/${encodeURIComponent(r.host)}`;
   const opOf = (host: string) => operations.latest(opRef.proxySite(host), 'proxy.site');
 
   async function enableProxy() {
     busy = true;
-    toast.info('Starting Caddy', 'Pulling the image if needed…');
+    toast.info(m.proxy_starting(), m.proxy_starting_hint());
     try {
       await api.proxy.enable();
-      toast.success('Proxy enabled');
+      toast.success(m.proxy_enabled_toast());
       await load();
     } catch (err) {
-      toast.error('Enable failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_enable_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
   }
   async function disableProxy() {
     if (!(await confirm.ask({
-      title: 'Stop the reverse proxy',
-      message: 'Stop and remove the Caddy container?',
-      body: 'Every site stops answering. Sites stay saved; starting the proxy again applies them.',
-      confirmLabel: 'Stop', danger: true
+      title: m.proxy_stop_title(),
+      message: m.proxy_stop_message(),
+      body: m.proxy_stop_body(),
+      confirmLabel: m.common_stop(), danger: true
     }))) return;
     busy = true;
     try {
       await api.proxy.disable();
-      toast.info('Proxy stopped');
+      toast.info(m.proxy_stopped_toast());
       await load();
     } catch (err) {
-      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_stop_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -157,40 +159,40 @@
     const next = !r.enabled;
     try {
       await api.proxy.setRouteEnabled(r.id, next);
-      toast.success(next ? 'Site enabled' : 'Site disabled', r.host);
+      toast.success(next ? m.proxy_site_enabled() : m.proxy_site_disabled(), r.host);
       await load();
     } catch (err) {
-      toast.error('Change failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_change_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function deleteSite(r: Site) {
     if (!(await confirm.ask({
-      title: 'Delete site',
-      message: `Delete ${r.host}?`,
-      body: 'Requests to this name get no answer from Caddy after the next reload. The container it points to is not touched.',
-      confirmLabel: 'Delete', danger: true
+      title: m.proxy_delete_site_title(),
+      message: m.proxy_delete_site_message({ host: r.host }),
+      body: m.proxy_delete_site_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.proxy.deleteRoute(r.id);
-      toast.success('Site deleted', r.host);
+      toast.success(m.proxy_site_deleted(), r.host);
       await load();
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
   async function bulkDelete() {
     const list = routes.filter((r) => selected.has(r.id));
     if (!(await confirm.ask({
-      title: 'Delete sites',
-      message: `Delete ${list.length} site${list.length === 1 ? '' : 's'}?`,
+      title: m.proxy_delete_sites_title(),
+      message: m.proxy_delete_sites_message({ count: list.length }),
       body: list.map((r) => r.host).join(', '),
-      confirmLabel: 'Delete', danger: true
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     let ok = 0, fail = 0;
     for (const r of list) {
       try { await api.proxy.deleteRoute(r.id); ok++; } catch { fail++; }
     }
-    toast[fail ? 'warning' : 'success'](`Deleted ${ok}${fail ? `, ${fail} failed` : ''}`);
+    toast[fail ? 'warning' : 'success'](fail ? m.proxy_bulk_deleted_failed({ ok, fail }) : m.proxy_bulk_deleted({ ok }));
     selected = new Set();
     await load();
   }
@@ -210,13 +212,13 @@
   }
   function menuFor(r: Site): MenuItem[] {
     const items: MenuItem[] = [
-      { label: 'Open', kbd: '↵', href: siteHref(r) },
-      { label: 'Open in browser', href: `${r.tls_mode === 'none' ? 'http' : 'https'}://${r.host}` }
+      { label: m.common_open(), kbd: '↵', href: siteHref(r) },
+      { label: m.proxy_open_in_browser(), href: `${r.tls_mode === 'none' ? 'http' : 'https'}://${r.host}` }
     ];
-    if (canUpdate) items.push({ label: 'Edit', onclick: () => openEdit(r) });
+    if (canUpdate) items.push({ label: m.common_edit(), onclick: () => openEdit(r) });
     const op = opOf(r.host);
-    if (op) items.push({ label: 'Show last creation steps', onclick: () => operations.open(op.id) });
-    if (canDelete) items.push({ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteSite(r) });
+    if (op) items.push({ label: m.proxy_show_creation_steps(), onclick: () => operations.open(op.id) });
+    if (canDelete) items.push({ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteSite(r) });
     return items;
   }
 
@@ -226,7 +228,7 @@
   const activity = $derived.by<Activity[]>(() => {
     const out: Activity[] = acme.map((e) => ({
       ts: e.ts,
-      what: e.kind === 'renew' ? 'Certificate renewed' : e.kind === 'obtain' ? 'Certificate' : 'Certificate failed',
+      what: e.kind === 'renew' ? m.proxy_act_cert_renewed() : e.kind === 'obtain' ? m.proxy_sm_certificate() : m.proxy_act_cert_failed(),
       text: `${e.host ?? '—'}: ${e.message}${e.issuer ? ` (${e.issuer})` : ''}`,
       tone: e.successful ? 'ok' : 'bad'
     }));
@@ -234,8 +236,8 @@
       const warn = o.steps.find((s) => s.status === 'warning');
       out.push({
         ts: o.finished_at ?? o.created_at,
-        what: 'New site',
-        text: `${o.target}${o.actor_name ? ` by ${o.actor_name}` : ''}${o.error ? `: ${o.error}` : warn ? `: ${warn.detail}` : ''}`,
+        what: m.proxy_new_site(),
+        text: `${o.target}${o.actor_name ? ` ${m.proxy_act_by({ name: o.actor_name })}` : ''}${o.error ? `: ${o.error}` : warn ? `: ${warn.detail}` : ''}`,
         tone: isActive(o) ? 'off' : o.status === 'failed' ? 'bad' : warn ? 'warn' : 'ok',
         op: o
       });
@@ -250,42 +252,42 @@
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Reverse proxy</h1>
+    <h1>{m.proxy_title()}</h1>
     <span class="dm-sub">
-      {#if status === null}Caddy status unknown
-      {:else if !status.enabled}Caddy is off
-      {:else}Caddy{status.version ? ` ${status.version}` : ''} · <span class={status.running ? 'ok' : 'bad'}>{status.running ? 'running' : 'stopped'}</span>{/if}
-      · {live} site{live === 1 ? '' : 's'} live
-      {#if latestCaddy}· <a href="/proxy?tab=caddy" onclick={(e) => { e.preventDefault(); setTab('caddy'); }}>{latestCaddy} recommended</a>{/if}
+      {#if status === null}{m.proxy_status_unknown()}
+      {:else if !status.enabled}{m.proxy_caddy_off()}
+      {:else}Caddy{status.version ? ` ${status.version}` : ''} · <span class={status.running ? 'ok' : 'bad'}>{status.running ? m.proxy_running() : m.proxy_stopped()}</span>{/if}
+      · {m.proxy_sites_live({ count: live })}
+      {#if latestCaddy}· <a href="/proxy?tab=caddy" onclick={(e) => { e.preventDefault(); setTab('caddy'); }}>{m.proxy_version_recommended({ version: latestCaddy })}</a>{/if}
     </span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
     {#if canCreate && status?.enabled}
-      <button type="button" class="dm-btn" onclick={() => (showImport = true)} disabled={!status.running} title={status.running ? '' : 'Caddy must run to read a Caddyfile'}>Import Caddyfile</button>
-      <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New site</button>
+      <button type="button" class="dm-btn" onclick={() => (showImport = true)} disabled={!status.running} title={status.running ? '' : m.proxy_import_needs_running()}>{m.proxy_import_title()}</button>
+      <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> {m.proxy_new_site()}</button>
     {/if}
     {#if status?.running && canCreate}
-      <Menu label="Proxy actions" items={[{ label: 'Stop the proxy…', danger: true, icon: PowerOff, onclick: disableProxy }]} />
+      <Menu label={m.proxy_actions()} items={[{ label: m.proxy_stop_menu(), danger: true, icon: PowerOff, onclick: disableProxy }]} />
     {/if}
   </div>
 
   {#if status && (!status.enabled || !status.running)}
     <div class="px-notice" role="status">
       <div>
-        <b>{!status.enabled ? 'The reverse proxy is off' : 'Caddy is enabled but not running'}</b>
-        <p>{!status.enabled ? 'Enabling pulls the Caddy image if needed, starts a managed container on ports 80 and 443 and applies every saved site.' : 'Start it to serve the saved sites again.'}</p>
+        <b>{!status.enabled ? m.proxy_notice_off() : m.proxy_notice_not_running()}</b>
+        <p>{!status.enabled ? m.proxy_notice_off_hint() : m.proxy_notice_not_running_hint()}</p>
       </div>
       {#if canCreate}
-        <button type="button" class="dm-btn dm-btn-primary" disabled={busy} onclick={enableProxy}><Power size={14} /> {status.enabled ? 'Start' : 'Enable proxy'}</button>
+        <button type="button" class="dm-btn dm-btn-primary" disabled={busy} onclick={enableProxy}><Power size={14} /> {status.enabled ? m.common_start() : m.proxy_enable()}</button>
       {/if}
     </div>
   {/if}
 
   <Tabs
     tabs={[
-      { key: 'sites', label: 'Sites', count: routes.length },
-      { key: 'certificates', label: 'Certificates', count: certSites.length || null, dot: certWarn > 0 },
-      { key: 'activity', label: 'Activity' },
+      { key: 'sites', label: m.proxy_tab_sites(), count: routes.length },
+      { key: 'certificates', label: m.proxy_tab_certificates(), count: certSites.length || null, dot: certWarn > 0 },
+      { key: 'activity', label: m.proxy_tab_activity() },
       { key: 'caddy', label: 'Caddy' }
     ]}
     active={tab}
@@ -298,48 +300,48 @@
         {#each Array(4) as _, i (i)}<div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="55%" height="0.9rem" /></div>{/each}
       </div>
     {:else if routes.length === 0}
-      <EmptyState title="No sites yet" description={status?.enabled ? 'A site maps a public name to a container or address; Caddy gets its certificate.' : 'Enable the proxy first, then add sites.'}>
+      <EmptyState title={m.proxy_empty_title()} description={status?.enabled ? m.proxy_empty_hint() : m.proxy_empty_hint_off()}>
         {#snippet action()}
           {#if canCreate && status?.enabled}
-            <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} /> New site</button>
+            <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} /> {m.proxy_new_site()}</button>
           {/if}
         {/snippet}
       </EmptyState>
     {:else}
       <div class="dm-toolbar">
-        <input class="dm-filter" type="search" placeholder="Filter sites…" bind:value={search} aria-label="Filter sites" />
+        <input class="dm-filter" type="search" placeholder={m.proxy_filter_ph()} bind:value={search} aria-label={m.proxy_filter()} />
         <span class="dm-sp"></span>
         {#if selected.size && canDelete}
-          <span class="dm-sub">{selected.size} selected</span>
-          <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={bulkDelete}>Delete…</button>
-          <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>Clear</button>
+          <span class="dm-sub">{m.proxy_selected({ n: selected.size })}</span>
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={bulkDelete}>{m.common_delete_ellipsis()}</button>
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>{m.proxy_clear()}</button>
         {/if}
       </div>
-      <div class="dm-tbl" role="table" aria-label="Sites">
+      <div class="dm-tbl" role="table" aria-label={m.proxy_tab_sites()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {SITE_COLS}">
-          <span role="columnheader">{#if canDelete}<input type="checkbox" aria-label="Select all" checked={allSelected} onchange={() => (selected = allSelected ? new Set() : new Set(visible.map((r) => r.id)))} />{/if}</span>
+          <span role="columnheader">{#if canDelete}<input type="checkbox" aria-label={m.proxy_select_all()} checked={allSelected} onchange={() => (selected = allSelected ? new Set() : new Set(visible.map((r) => r.id)))} />{/if}</span>
           <span role="columnheader"></span>
-          <span role="columnheader">Site</span>
-          <span role="columnheader">Goes to</span>
+          <span role="columnheader">{m.proxy_col_site()}</span>
+          <span role="columnheader">{m.proxy_sm_goes_to()}</span>
           <span role="columnheader">HTTPS</span>
-          <span role="columnheader">Options</span>
+          <span role="columnheader">{m.proxy_col_options()}</span>
           <span role="columnheader" class="num-h">Req/s</span>
-          <span role="columnheader">On</span>
+          <span role="columnheader">{m.common_on()}</span>
           <span role="columnheader"></span>
         </div>
         {#each visible as r (r.id)}
           {@const op = opOf(r.host)}
           {@const opts = optionSummary(r.options)}
-          {@const m = perHost.get(r.host)}
+          {@const hm = perHost.get(r.host)}
           <div class="dm-tr dm-click" role="row" class:dm-sel={selected.has(r.id)} style="grid-template-columns: {SITE_COLS}"
             tabindex="0" onclick={() => goto(siteHref(r))} onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(siteHref(r)); }}>
             <span role="cell">
-              {#if canDelete}<input type="checkbox" aria-label="Select {r.host}" checked={selected.has(r.id)} onclick={(e) => e.stopPropagation()} onchange={() => toggleOne(r.id)} />{/if}
+              {#if canDelete}<input type="checkbox" aria-label={m.proxy_select_one({ host: r.host })} checked={selected.has(r.id)} onclick={(e) => e.stopPropagation()} onchange={() => toggleOne(r.id)} />{/if}
             </span>
             <span role="cell"><span class="dm-dot {siteTone(r)}"></span></span>
             <span role="cell" class="dm-nm">
               <a href={siteHref(r)} onclick={(e) => e.stopPropagation()}>{r.host}</a>
-              <small>{r.enabled ? (r.options?.routing?.www_redirect ? `www.${r.host} redirects here` : ' ') : 'disabled'}</small>
+              <small>{r.enabled ? (r.options?.routing?.www_redirect ? m.proxy_www_redirects_here({ host: r.host }) : ' ') : m.proxy_disabled()}</small>
             </span>
             <span role="cell" class="dm-mono px-up" title={r.upstream}>{r.upstream}</span>
             <span role="cell" class="dm-nm">
@@ -351,33 +353,32 @@
               {/if}
             </span>
             <span role="cell" class="dm-dim" title={opts.join(', ')}>
-              {#if opts.length}{opts.slice(0, 2).join(', ')}{#if opts.length > 2} <span class="dm-num">+{opts.length - 2}</span>{/if}{:else}<span class="dm-dim">defaults</span>{/if}
+              {#if opts.length}{opts.slice(0, 2).join(', ')}{#if opts.length > 2} <span class="dm-num">+{opts.length - 2}</span>{/if}{:else}<span class="dm-dim">{m.proxy_defaults()}</span>{/if}
             </span>
-            <span role="cell" class="dm-num num-c">{r.enabled && m ? m.requests_per_second.toFixed(1) : '—'}</span>
+            <span role="cell" class="dm-num num-c">{r.enabled && hm ? fmtNumber(hm.requests_per_second, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—'}</span>
             <span role="cell"><span role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-              <Switch checked={r.enabled} label="Serve {r.host}" hideLabel disabled={!canUpdate} onchange={() => toggleEnabled(r)} />
+              <Switch checked={r.enabled} label={m.proxy_serve({ host: r.host })} hideLabel disabled={!canUpdate} onchange={() => toggleEnabled(r)} />
             </span></span>
             <span role="cell" class="dm-tr-menu"><span role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-              <Menu label="Actions for {r.host}" items={menuFor(r)} />
+              <Menu label={m.proxy_actions_for({ host: r.host })} items={menuFor(r)} />
             </span></span>
           </div>
         {/each}
-        {#if visible.length === 0}<div class="dm-empty">No sites match “{search}”.</div>{/if}
+        {#if visible.length === 0}<div class="dm-empty">{m.proxy_no_match({ q: search })}</div>{/if}
       </div>
       {#if metrics}
         <p class="dm-sub px-foot">
-          All sites: {metrics.requests_per_second.toFixed(1)} req/s · p95 {metrics.p95_latency_ms.toFixed(0)} ms ·
-          {(metrics.status_buckets['5xx'] ?? 0).toLocaleString()} server errors since Caddy started
+          {m.proxy_foot_metrics({ rps: fmtNumber(metrics.requests_per_second, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), p95: fmtNumber(Math.round(metrics.p95_latency_ms)), errors: fmtNumber(metrics.status_buckets['5xx'] ?? 0) })}
         </p>
       {/if}
     {/if}
   {:else if tab === 'certificates'}
     {#if certSites.length === 0}
-      <EmptyState title="No HTTPS sites" description="Sites with Let's Encrypt or the internal CA show their certificate here." />
+      <EmptyState title={m.proxy_no_https_title()} description={m.proxy_no_https_hint()} />
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Certificates">
+      <div class="dm-tbl" role="table" aria-label={m.proxy_tab_certificates()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {CERT_COLS}">
-          <span role="columnheader">Name</span><span role="columnheader">Issuer</span><span role="columnheader">Expires in</span><span role="columnheader">Status</span>
+          <span role="columnheader">{m.common_name()}</span><span role="columnheader">{m.proxy_col_issuer()}</span><span role="columnheader">{m.proxy_col_expires_in()}</span><span role="columnheader">{m.common_status()}</span>
         </div>
         {#each certSites as r (r.id)}
           {@const soon = certExpiresSoon(r)}
@@ -385,36 +386,36 @@
             onclick={() => goto(siteHref(r))} onkeydown={(e) => { if (e.key === 'Enter') goto(siteHref(r)); }}>
             <span role="cell" class="dm-mono">{r.host}</span>
             <span role="cell" class="dm-dim">{r.cert_issuer || TLS_LABEL[r.tls_mode]}</span>
-            <span role="cell" class="dm-num" class:warn={soon}>{r.cert_days_left != null ? `${r.cert_days_left} days` : '—'}</span>
+            <span role="cell" class="dm-num" class:warn={soon}>{r.cert_days_left != null ? m.proxy_days({ count: r.cert_days_left }) : '—'}</span>
             <span role="cell">
-              {#if !r.enabled}<StatusChip tone="off" label="site off" />
-              {:else if r.cert_days_left == null}<StatusChip tone="warn" label="not served" title="The name may not point to this server yet, or Caddy is still getting the certificate" />
-              {:else}<StatusChip tone={soon ? 'warn' : 'ok'} label={soon ? 'renew soon' : 'valid'} />{/if}
+              {#if !r.enabled}<StatusChip tone="off" label={m.proxy_chip_site_off()} />
+              {:else if r.cert_days_left == null}<StatusChip tone="warn" label={m.proxy_chip_not_served()} title={m.proxy_chip_not_served_hint()} />
+              {:else}<StatusChip tone={soon ? 'warn' : 'ok'} label={soon ? m.proxy_chip_renew_soon() : m.proxy_chip_valid()} />{/if}
             </span>
           </div>
         {/each}
       </div>
-      <p class="dm-sub px-foot">Caddy renews certificates about 30 days before they expire. <InfoTip text="“Renew soon” means a renewal has not worked yet. The Activity tab shows why." /></p>
+      <p class="dm-sub px-foot">{m.proxy_renew_note()} <InfoTip text={m.proxy_renew_tip()} /></p>
     {/if}
   {:else if tab === 'activity'}
     {#if activity.length === 0}
-      <EmptyState title="No activity yet" description="Certificate events since Caddy started and the sites created in the last 7 days show up here." />
+      <EmptyState title={m.proxy_no_activity_title()} description={m.proxy_no_activity_hint()} />
     {:else}
-      <div class="dm-tbl" role="table" aria-label="Proxy activity">
+      <div class="dm-tbl" role="table" aria-label={m.proxy_activity_table()}>
         {#each activity as a, i (i)}
           <div class="dm-tr" class:dm-click={!!a.op} role="row" style="grid-template-columns: {ACT_COLS}" tabindex={a.op ? 0 : -1}
             onclick={() => a.op && operations.open(a.op.id)} onkeydown={(e) => { if (e.key === 'Enter' && a.op) operations.open(a.op.id); }}>
-            <span role="cell" class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{fmtAgo(a.ts)}</span>
+            <span role="cell" class="dm-num dm-dim" title={fmtDateTime(a.ts)}>{fmtAgo(a.ts)}</span>
             <span role="cell">{a.what}</span>
             <span role="cell" class="dm-dim" title={a.text}>{a.text}</span>
             <span role="cell">
               {#if a.op && isActive(a.op)}<OpProgress op={a.op} compact />
-              {:else}<StatusChip tone={a.tone} label={a.tone === 'ok' ? 'ok' : a.tone === 'warn' ? 'warning' : a.tone === 'bad' ? 'failed' : 'running'} />{/if}
+              {:else}<StatusChip tone={a.tone} label={a.tone === 'ok' ? m.proxy_chip_ok() : a.tone === 'warn' ? m.proxy_chip_warning() : a.tone === 'bad' ? m.proxy_chip_failed() : m.proxy_running()} />{/if}
             </span>
           </div>
         {/each}
       </div>
-      <p class="dm-sub px-foot">Certificate events come from Caddy's log since it last started (the last 200).</p>
+      <p class="dm-sub px-foot">{m.proxy_activity_note()}</p>
     {/if}
   {:else}
     <CaddyTab running={!!status?.running} onchanged={load} />

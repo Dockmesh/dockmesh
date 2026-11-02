@@ -12,6 +12,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { fmtVersion, semverBump } from '$lib/version';
   import { autoRefresh } from '$lib/autorefresh';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Container {
     Id: string;
@@ -83,14 +84,14 @@
       allowed('hosts.view') ? api.agents.list().catch(() => []) : Promise.resolve([])
     ]);
     if (st?.update_available && !st.is_dev_build) {
-      out.push({ name: 'Dockmesh', note: 'Server; agents follow their upgrade policy', from: fmtVersion(st.current_version), to: fmtVersion(st.latest_version), href: '/settings/updates' });
+      out.push({ name: 'Dockmesh', note: m.updates_sys_dockmesh_note(), from: fmtVersion(st.current_version), to: fmtVersion(st.latest_version), href: '/settings/updates' });
     }
     if (pv?.managed && pv.current && pv.default && newer(pv.default, pv.current)) {
-      out.push({ name: 'Caddy (reverse proxy)', note: 'Version tested with this Dockmesh release', from: pv.current, to: pv.default, href: '/proxy?tab=caddy' });
+      out.push({ name: m.updates_sys_caddy_name(), note: m.updates_sys_caddy_note(), from: pv.current, to: pv.default, href: '/proxy?tab=caddy' });
     }
     for (const a of agents as Array<{ id: string; name: string; status: string; version?: string }>) {
       if (a.status !== 'online' || !a.version || !serverVersion || a.version === serverVersion) continue;
-      out.push({ name: `Agent ${a.name}`, note: 'Follows the agent upgrade policy', from: fmtVersion(a.version), to: fmtVersion(serverVersion), href: `/hosts/${encodeURIComponent(a.id)}` });
+      out.push({ name: m.updates_sys_agent_name({ name: a.name }), note: m.updates_sys_agent_note(), from: fmtVersion(a.version), to: fmtVersion(serverVersion), href: `/hosts/${encodeURIComponent(a.id)}` });
     }
     system = out;
   }
@@ -172,8 +173,8 @@
   }
 
   function denied(r: AppRow): string | null {
-    if (!canUpdate) return 'Needs the containers.upgrade permission';
-    if (r.stack && !canDeploy) return `Updating a container of stack ${r.stack} rebuilds it from compose.yaml and needs stacks.deploy`;
+    if (!canUpdate) return m.updates_denied_perm();
+    if (r.stack && !canDeploy) return m.updates_denied_stack({ stack: r.stack });
     return null;
   }
 
@@ -183,9 +184,9 @@
     const found = operations.find(opRef.container(r.id), 'image.update', since);
     api.containers.doUpdate(r.id).then(
       (res) => {
-        if (!res.updated) toast.info(`${r.name} is already up to date`);
+        if (!res.updated) toast.info(m.updates_already_current({ name: r.name }));
       },
-      (e) => toast.error(`Update of ${r.name} failed`, e instanceof ApiError ? e.message : undefined)
+      (e) => toast.error(m.updates_one_failed({ name: r.name }), e instanceof ApiError ? e.message : undefined)
     );
     await found;
   }
@@ -201,20 +202,27 @@
       started = next;
       operations.track(res.operations);
       selected = new Set();
-      toast.info(`${list.length} update${list.length === 1 ? '' : 's'} queued`, 'They run one after another on the server; you can leave this page.');
+      toast.info(m.updates_queued({ count: list.length }), m.updates_queued_body());
     } catch (e) {
-      toast.error('Could not queue the updates', e instanceof ApiError ? e.message : undefined);
+      toast.error(m.updates_queue_failed(), e instanceof ApiError ? e.message : undefined);
     } finally {
       bulkBusy = false;
     }
   }
 
   const stats = $derived<Stat[]>([
-    { label: 'App images', value: apps.length, note: apps.length ? 'newer image available' : 'all up to date', tone: apps.length ? 'warn' : '' },
-    { label: 'System', value: system.length, note: system.length ? 'components to update' : 'all current' },
-    { label: 'Last check', value: fmtAgo(Object.values(checks).map((c) => c.checked_at).sort().pop()), note: 'registries are checked every 30 min' },
-    { label: 'Updated · this week', value: recentOps.filter((o) => Date.now() - Date.parse(o.finished_at ?? o.created_at) < 7 * 86400_000).length }
+    { label: m.updates_stat_app_images(), value: apps.length, note: apps.length ? m.updates_stat_newer() : m.updates_stat_all_up_to_date(), tone: apps.length ? 'warn' : '' },
+    { label: m.updates_stat_system(), value: system.length, note: system.length ? m.updates_stat_components() : m.updates_stat_all_current() },
+    { label: m.updates_stat_last_check(), value: fmtAgo(Object.values(checks).map((c) => c.checked_at).sort().pop()), note: m.updates_stat_last_check_note() },
+    { label: m.updates_stat_week(), value: recentOps.filter((o) => Date.now() - Date.parse(o.finished_at ?? o.created_at) < 7 * 86400_000).length }
   ]);
+
+  function kindLabel(kind: string): string {
+    if (kind === 'major') return m.updates_kind_major();
+    if (kind === 'minor') return m.updates_kind_minor();
+    if (kind === 'patch') return m.updates_kind_patch();
+    return kind;
+  }
 
   const APP_COLS = '22px minmax(180px, 1.3fr) minmax(200px, 1.6fr) minmax(150px, 1fr) 110px 190px';
   const SYS_COLS = 'minmax(180px, 1.3fr) minmax(200px, 1.4fr) 80px minmax(160px, 1fr) 100px';
@@ -223,13 +231,13 @@
 
 <section class="dm-page">
   <div class="dm-ph">
-    <h1>Updates</h1>
-    <span class="dm-sub">{apps.length} app image{apps.length === 1 ? '' : 's'} · {system.length} system component{system.length === 1 ? '' : 's'}</span>
+    <h1>{m.updates_title()}</h1>
+    <span class="dm-sub">{m.updates_sub_apps({ count: apps.length })} · {m.updates_sub_system({ count: system.length })}</span>
     <span class="dm-sp"></span>
     <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
     {#if canUpdate}
       <button type="button" class="dm-btn dm-btn-primary" disabled={!selected.size || bulkBusy} onclick={updateSelected}>
-        Update selected{selected.size ? ` (${selected.size})` : ''}
+        {m.updates_update_selected()}{selected.size ? ` (${selected.size})` : ''}
       </button>
     {/if}
   </div>
@@ -238,16 +246,16 @@
 
   {#if system.length}
     <div>
-      <h2 class="dm-h2">System</h2>
-      <div class="dm-tbl" role="table" aria-label="System updates">
+      <h2 class="dm-h2">{m.updates_system()}</h2>
+      <div class="dm-tbl" role="table" aria-label={m.updates_system_label()}>
         {#each system as s (s.name)}
           {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, ''))}
           <div class="dm-tr" role="row" style="grid-template-columns: {SYS_COLS}">
             <span role="cell" class="dm-nm"><span class="dm-t">{s.name}</span><small>{s.note}</small></span>
             <span role="cell" class="dm-mono up-ver" title="{s.from} → {s.to}">{s.from} → <b>{s.to}</b></span>
-            <span role="cell">{#if kind}<StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kind} />{:else}<span class="dm-dim" title="Not a release version, so there is no update kind">—</span>{/if}</span>
+            <span role="cell">{#if kind}<StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kindLabel(kind)} />{:else}<span class="dm-dim" title={m.updates_no_kind()}>—</span>{/if}</span>
             <span role="cell"></span>
-            <span role="cell" class="up-act"><a class="dm-btn dm-btn-sm" href={s.href}>Open</a></span>
+            <span role="cell" class="up-act"><a class="dm-btn dm-btn-sm" href={s.href}>{m.common_open()}</a></span>
           </div>
         {/each}
       </div>
@@ -255,9 +263,9 @@
   {/if}
 
   <div>
-    <h2 class="dm-h2">Apps</h2>
+    <h2 class="dm-h2">{m.updates_apps()}</h2>
     {#if hosts.id !== 'local' && hosts.id !== 'all'}
-      <p class="dm-sub up-note">Image updates run on the server host only; containers on agents are not listed here.</p>
+      <p class="dm-sub up-note">{m.updates_agents_note()}</p>
     {/if}
     {#if loading}
       <div class="dm-tbl">
@@ -266,17 +274,17 @@
         {/each}
       </div>
     {:else if rows.length === 0}
-      <EmptyState title="All app images are up to date" description="The server checks the registries of running containers every 30 minutes." />
+      <EmptyState title={m.updates_empty_title()} description={m.updates_empty_desc()} />
     {:else}
-      <div class="dm-tbl" role="table" aria-label="App image updates">
+      <div class="dm-tbl" role="table" aria-label={m.updates_apps_label()}>
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {APP_COLS}">
           <span role="columnheader">
-            {#if canUpdate}<input type="checkbox" aria-label="Select all" checked={allSelected} onchange={toggleAll} />{/if}
+            {#if canUpdate}<input type="checkbox" aria-label={m.updates_select_all()} checked={allSelected} onchange={toggleAll} />{/if}
           </span>
-          <span role="columnheader">Container</span>
-          <span role="columnheader">Image</span>
-          <span role="columnheader">Digest</span>
-          <span role="columnheader">Checked</span>
+          <span role="columnheader">{m.common_container()}</span>
+          <span role="columnheader">{m.common_image()}</span>
+          <span role="columnheader">{m.updates_col_digest()}</span>
+          <span role="columnheader">{m.updates_col_checked()}</span>
           <span role="columnheader"></span>
         </div>
         {#each rows as r (r.id)}
@@ -285,12 +293,12 @@
           <div class="dm-tr" role="row" class:dm-sel={selected.has(r.id)} style="grid-template-columns: {APP_COLS}">
             <span role="cell">
               {#if canUpdate && (!op || !isActive(op))}
-                <input type="checkbox" aria-label="Select {r.name}" checked={selected.has(r.id)} disabled={!!why} onchange={() => toggle(r.id)} />
+                <input type="checkbox" aria-label={m.updates_select_named({ name: r.name })} checked={selected.has(r.id)} disabled={!!why} onchange={() => toggle(r.id)} />
               {/if}
             </span>
             <span role="cell" class="dm-nm">
               <a href="/containers/{encodeURIComponent(r.id)}">{r.name}</a>
-              <small>{r.stack ? `stack ${r.stack}` : 'standalone'}</small>
+              <small>{r.stack ? m.updates_in_stack({ stack: r.stack }) : m.updates_standalone()}</small>
             </span>
             <span role="cell" class="dm-mono up-ver" title={r.image}>{r.image}</span>
             <span role="cell" class="dm-mono dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
@@ -302,29 +310,29 @@
                 <OpProgress {op} />
                 <CancelOpButton {op} />
               {:else if canUpdate}
-                <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/containers/{encodeURIComponent(r.id)}?tab=updates">Notes</a>
-                <button type="button" class="dm-btn dm-btn-sm" disabled={!!why} title={why ?? `Pull the newer image and replace ${r.name}`} onclick={() => updateOne(r)}>Update</button>
+                <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/containers/{encodeURIComponent(r.id)}?tab=updates">{m.updates_notes()}</a>
+                <button type="button" class="dm-btn dm-btn-sm" disabled={!!why} title={why ?? m.updates_update_hint({ name: r.name })} onclick={() => updateOne(r)}>{m.updates_update()}</button>
               {:else}
-                <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/containers/{encodeURIComponent(r.id)}?tab=updates">Notes</a>
+                <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/containers/{encodeURIComponent(r.id)}?tab=updates">{m.updates_notes()}</a>
               {/if}
             </span>
           </div>
         {/each}
       </div>
-      <p class="dm-sub up-note">An update pulls the new image and replaces the container once it runs. <InfoTip text="The current image stays as the rollback target. Stack containers are rebuilt from the stack's compose.yaml." /></p>
+      <p class="dm-sub up-note">{m.updates_footer_note()} <InfoTip text={m.updates_footer_tip()} /></p>
     {/if}
   </div>
 
   {#if recentOps.length}
     <div>
-      <h2 class="dm-h2">Recently updated</h2>
-      <div class="dm-tbl" role="table" aria-label="Recently updated">
+      <h2 class="dm-h2">{m.updates_recent()}</h2>
+      <div class="dm-tbl" role="table" aria-label={m.updates_recent()}>
         {#each recentOps as o (o.id)}
           {@const pull = o.steps.find((s) => s.key === 'pull')}
           <div class="dm-tr dm-click" role="row" style="grid-template-columns: {REC_COLS}" onclick={() => operations.open(o.id)}
             onkeydown={(e) => { if (e.key === 'Enter') operations.open(o.id); }} tabindex="0">
-            <span role="cell" class="dm-nm"><span class="dm-t">{o.target}</span><small>{o.stack ? `stack ${o.stack}` : 'standalone'}{o.actor_name ? ` · by ${o.actor_name}` : ''}</small></span>
-            <span role="cell" class="dm-mono dm-dim dm-trunc">new image {pull?.detail ?? ''}</span>
+            <span role="cell" class="dm-nm"><span class="dm-t">{o.target}</span><small>{o.stack ? m.updates_in_stack({ stack: o.stack }) : m.updates_standalone()}{o.actor_name ? ` · ${m.updates_by({ name: o.actor_name })}` : ''}</small></span>
+            <span role="cell" class="dm-mono dm-dim dm-trunc">{m.updates_new_image({ detail: pull?.detail ?? '' })}</span>
             <span role="cell" class="dm-num dm-dim">{fmtAgo(o.finished_at)}</span>
           </div>
         {/each}

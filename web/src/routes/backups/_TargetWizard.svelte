@@ -9,6 +9,7 @@
   import { stepValid, type TargetType } from '$lib/backupTargetForm';
   import WizardShell from './_WizardShell.svelte';
   import { Check, X, RefreshCw, AlertTriangle } from 'lucide-svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     open: boolean;
@@ -22,7 +23,7 @@
   }
   let { open, editing, onclose, onsave }: Props = $props();
 
-  const STEPS = ['Type', 'Connection', 'Test'];
+  const STEPS = [m.common_type(), m.backups_connection(), m.common_test()];
   let step = $state(0);
   let busy = $state(false);
 
@@ -40,11 +41,11 @@
   // Per-check phase status. Set in lock-step with the probe so the
   // five-row check list animates from idle → running → ok / fail.
   let checks = $state<Array<{ id: string; label: string; state: 'idle' | 'running' | 'ok' | 'fail' }>>([
-    { id: 'connect', label: 'Connect to endpoint', state: 'idle' },
-    { id: 'auth',    label: 'Authenticate',         state: 'idle' },
-    { id: 'write',   label: 'Write probe file',     state: 'idle' },
-    { id: 'read',    label: 'Read probe back',      state: 'idle' },
-    { id: 'delete',  label: 'Delete probe',         state: 'idle' }
+    { id: 'connect', label: m.backups_twiz_check_connect(), state: 'idle' },
+    { id: 'auth',    label: m.backups_twiz_check_auth(),    state: 'idle' },
+    { id: 'write',   label: m.backups_twiz_check_write(),   state: 'idle' },
+    { id: 'read',    label: m.backups_twiz_check_read(),    state: 'idle' },
+    { id: 'delete',  label: m.backups_twiz_check_delete(),  state: 'idle' }
   ]);
   let testStartedAt = $state(0);
   let testDurationMs = $state(0);
@@ -88,10 +89,10 @@
     acceptingKey = true;
     try {
       await api.backups.acceptTargetHostKey(editing.id);
-      toast.success('Host key accepted');
+      toast.success(m.backups_host_key_accepted());
       await runTest();
     } catch (err) {
-      toast.error('Could not accept host key', err instanceof ApiError ? err.message : (err as Error).message);
+      toast.error(m.backups_accept_host_key_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
       acceptingKey = false;
     }
@@ -157,18 +158,18 @@
       if (cfgPayload.port) cfgPayload.port = parseInt(cfgPayload.port) || 0;
       await onsave({ name: name.trim(), type, config: cfgPayload }, !!editing, editing?.id);
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+      toast.error(m.backups_save_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
       busy = false;
     }
   }
 
   function targetTypeMeta(t: string): { label: string; glyph: string; blurb: string } {
-    if (t === 's3') return { label: 'S3 / object store', glyph: 'S3', blurb: 'AWS S3, MinIO, Wasabi, B2 — object storage with credentials.' };
-    if (t === 'sftp') return { label: 'SFTP over SSH', glyph: 'FTP', blurb: 'Any SSH host with chrooted user. Uses key or password auth.' };
-    if (t === 'smb') return { label: 'SMB / NAS share', glyph: 'NAS', blurb: 'Synology, QNAP, TrueNAS, Windows shares.' };
-    if (t === 'webdav') return { label: 'WebDAV', glyph: 'DAV', blurb: 'Nextcloud, ownCloud, generic WebDAV endpoints.' };
-    return { label: 'Local directory', glyph: 'LOC', blurb: 'On-host path. Survives crashes but not full host loss.' };
+    if (t === 's3') return { label: m.backups_ttype_s3_label(), glyph: 'S3', blurb: m.backups_ttype_s3_blurb() };
+    if (t === 'sftp') return { label: m.backups_ttype_sftp_label(), glyph: 'FTP', blurb: m.backups_ttype_sftp_blurb() };
+    if (t === 'smb') return { label: m.backups_ttype_smb_label(), glyph: 'NAS', blurb: m.backups_ttype_smb_blurb() };
+    if (t === 'webdav') return { label: 'WebDAV', glyph: 'DAV', blurb: m.backups_ttype_webdav_blurb() };
+    return { label: m.backups_ttype_local_label(), glyph: 'LOC', blurb: m.backups_ttype_local_blurb() };
   }
   const meta = $derived(targetTypeMeta(type));
 
@@ -176,14 +177,14 @@
 
 <WizardShell
   {open}
-  title={editing ? 'Edit target' : 'Where backups should land.'}
+  title={editing ? m.backups_twiz_edit_title() : m.backups_twiz_new_title()}
   subtitle={editing && editing.job_count != null
     ? targetUsage(editing.job_count)
-    : 'A target is a destination — local, NAS, SFTP, S3, WebDAV. Multiple jobs can share one target.'}
+    : m.backups_twiz_subtitle()}
   steps={STEPS}
   stepIdx={step}
   {busy}
-  finishLabel={editing ? 'Save changes' : (testState === 'ok' ? 'Save target' : 'Save anyway')}
+  finishLabel={editing ? m.backups_save_changes() : (testState === 'ok' ? m.backups_twiz_save_target() : m.backups_save_anyway())}
   nextDisabled={!canContinue}
   {onclose}
   onstep={(i) => (step = i)}
@@ -197,23 +198,23 @@
   {#if step === 0}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label">Target type</label>
-        <span class="wiz-field-hint">Pick the kind of storage. The next step asks for type-specific connection details.</span>
+        <label class="wiz-field-label">{m.backups_twiz_type_label()}</label>
+        <span class="wiz-field-hint">{m.backups_twiz_type_hint()}</span>
         <div class="wiz-radio-grid">
           {#each ['local', 'sftp', 'smb', 'webdav', 's3'] as t (t)}
-            {@const m = targetTypeMeta(t)}
+            {@const tm = targetTypeMeta(t)}
             <button type="button" class="wiz-radio-card" class:active={type === t} onclick={() => (type = t as TargetType)}>
-              <span class="wiz-target-glyph">{m.glyph}</span>
-              <span class="wiz-radio-card-label">{m.label}</span>
-              <span class="wiz-radio-card-meta">{m.blurb}</span>
+              <span class="wiz-target-glyph">{tm.glyph}</span>
+              <span class="wiz-radio-card-label">{tm.label}</span>
+              <span class="wiz-radio-card-meta">{tm.blurb}</span>
             </button>
           {/each}
         </div>
       </div>
 
       <div class="wiz-field">
-        <label class="wiz-field-label" for="t-name">Target name</label>
-        <span class="wiz-field-hint">A short identifier. Shows up in run logs and the target picker.</span>
+        <label class="wiz-field-label" for="t-name">{m.backups_twiz_name_label()}</label>
+        <span class="wiz-field-hint">{m.backups_twiz_name_hint()}</span>
         <input id="t-name" class="wiz-input wiz-input-mono" bind:value={name} />
       </div>
     </div>
@@ -226,136 +227,136 @@
     <div class="wiz-stack">
       {#if type === 'local'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-path">Path</label>
-          <span class="wiz-field-hint">Absolute path. Must be writable by the dockmesh service user.</span>
+          <label class="wiz-field-label" for="t-path">{m.common_path()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_local_path_hint()}</span>
           <input id="t-path" class="wiz-input wiz-input-mono" placeholder={defaultPath || '/srv/backups'} value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
       {:else if type === 'sftp'}
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-host">Host</label>
+            <label class="wiz-field-label" for="t-host">{m.common_host()}</label>
             <input id="t-host" class="wiz-input wiz-input-mono" placeholder="backup.example.com" value={cfg.host ?? ''} oninput={(e) => (cfg = { ...cfg, host: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-port">Port</label>
+            <label class="wiz-field-label" for="t-port">{m.common_port()}</label>
             <input id="t-port" class="wiz-input wiz-input-mono" placeholder="22" value={cfg.port ?? ''} oninput={(e) => (cfg = { ...cfg, port: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-user">Username</label>
+            <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
             <input id="t-user" class="wiz-input wiz-input-mono" value={cfg.username ?? ''} oninput={(e) => (cfg = { ...cfg, username: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-pass">Password</label>
+            <label class="wiz-field-label" for="t-pass">{m.backups_cfg_password()}</label>
             <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={cfg.password ?? ''} oninput={(e) => (cfg = { ...cfg, password: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-key">Private key (optional)</label>
-          <span class="wiz-field-hint">PEM or OpenSSH private key, used instead of or besides the password. Stored encrypted, never shown again.{cfg.private_key_set && !cfg.private_key ? ' A key is saved; leave empty to keep it.' : ''}</span>
+          <label class="wiz-field-label" for="t-key">{m.backups_twiz_private_key_label()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_private_key_hint()}{cfg.private_key_set && !cfg.private_key ? ` ${m.backups_twiz_private_key_saved()}` : ''}</span>
           <textarea id="t-key" class="wiz-input wiz-input-mono" rows="4" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={cfg.private_key ?? ''} oninput={(e) => (cfg = { ...cfg, private_key: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-rpath">Remote path</label>
-          <span class="wiz-field-hint">Where to write under the user's home. Created if missing.</span>
+          <label class="wiz-field-label" for="t-rpath">{m.backups_twiz_remote_path()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_remote_path_hint()}</span>
           <input id="t-rpath" class="wiz-input wiz-input-mono" placeholder="/backups" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
       {:else if type === 'smb'}
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-host">Server</label>
+            <label class="wiz-field-label" for="t-host">{m.backups_cfg_server()}</label>
             <input id="t-host" class="wiz-input wiz-input-mono" placeholder="192.168.1.100" value={cfg.host ?? ''} oninput={(e) => (cfg = { ...cfg, host: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-port">Port</label>
+            <label class="wiz-field-label" for="t-port">{m.common_port()}</label>
             <input id="t-port" class="wiz-input wiz-input-mono" placeholder="445" value={cfg.port ?? ''} oninput={(e) => (cfg = { ...cfg, port: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-share">Share</label>
+            <label class="wiz-field-label" for="t-share">{m.backups_cfg_share()}</label>
             <input id="t-share" class="wiz-input wiz-input-mono" placeholder="backups" value={cfg.share ?? ''} oninput={(e) => (cfg = { ...cfg, share: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-spath">Path within share</label>
+            <label class="wiz-field-label" for="t-spath">{m.backups_twiz_share_path()}</label>
             <input id="t-spath" class="wiz-input wiz-input-mono" placeholder="dockmesh" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-user">Username</label>
+            <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
             <input id="t-user" class="wiz-input wiz-input-mono" value={cfg.username ?? ''} oninput={(e) => (cfg = { ...cfg, username: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-pass">Password</label>
+            <label class="wiz-field-label" for="t-pass">{m.backups_cfg_password()}</label>
             <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={cfg.password ?? ''} oninput={(e) => (cfg = { ...cfg, password: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
       {:else if type === 'webdav'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-url">WebDAV URL</label>
-          <span class="wiz-field-hint">Full WebDAV endpoint including the user-specific suffix on Nextcloud.</span>
+          <label class="wiz-field-label" for="t-url">{m.backups_twiz_webdav_url()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_webdav_url_hint()}</span>
           <input id="t-url" class="wiz-input wiz-input-mono" placeholder="https://nextcloud.example.com/remote.php/dav/files/user/" value={cfg.url ?? ''} oninput={(e) => (cfg = { ...cfg, url: (e.currentTarget as HTMLInputElement).value })} />
         </div>
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-user">Username</label>
+            <label class="wiz-field-label" for="t-user">{m.backups_username()}</label>
             <input id="t-user" class="wiz-input wiz-input-mono" value={cfg.username ?? ''} oninput={(e) => (cfg = { ...cfg, username: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-pass">App password</label>
+            <label class="wiz-field-label" for="t-pass">{m.backups_twiz_app_password()}</label>
             <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={cfg.password ?? ''} oninput={(e) => (cfg = { ...cfg, password: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-path">Path</label>
-          <span class="wiz-field-hint">Subfolder under the WebDAV endpoint. Created if missing.</span>
+          <label class="wiz-field-label" for="t-path">{m.common_path()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_webdav_path_hint()}</span>
           <input id="t-path" class="wiz-input wiz-input-mono" placeholder="/backups" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-ca">Custom CA certificate (optional)</label>
-          <span class="wiz-field-hint">PEM certificate to trust for an https endpoint signed by a private CA.</span>
+          <label class="wiz-field-label" for="t-ca">{m.backups_twiz_ca_label()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_ca_hint_https()}</span>
           <textarea id="t-ca" class="wiz-input wiz-input-mono" rows="3" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" value={cfg.ca_cert ?? ''} oninput={(e) => (cfg = { ...cfg, ca_cert: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
         </div>
       {:else if type === 's3'}
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-ep">Endpoint</label>
+            <label class="wiz-field-label" for="t-ep">{m.backups_cfg_endpoint()}</label>
             <input id="t-ep" class="wiz-input wiz-input-mono" placeholder="s3.amazonaws.com" value={cfg.endpoint ?? ''} oninput={(e) => (cfg = { ...cfg, endpoint: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-region">Region</label>
+            <label class="wiz-field-label" for="t-region">{m.backups_cfg_region()}</label>
             <input id="t-region" class="wiz-input wiz-input-mono" placeholder="us-east-1" value={cfg.region ?? ''} oninput={(e) => (cfg = { ...cfg, region: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-bucket">Bucket</label>
+          <label class="wiz-field-label" for="t-bucket">{m.backups_cfg_bucket()}</label>
           <input id="t-bucket" class="wiz-input wiz-input-mono" placeholder="my-backups" value={cfg.bucket ?? ''} oninput={(e) => (cfg = { ...cfg, bucket: (e.currentTarget as HTMLInputElement).value })} />
         </div>
         <div class="wiz-grid-2">
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-ak">Access key</label>
+            <label class="wiz-field-label" for="t-ak">{m.backups_cfg_access_key()}</label>
             <input id="t-ak" class="wiz-input wiz-input-mono" value={cfg.access_key ?? ''} oninput={(e) => (cfg = { ...cfg, access_key: (e.currentTarget as HTMLInputElement).value })} />
           </div>
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-sk">Secret key</label>
+            <label class="wiz-field-label" for="t-sk">{m.backups_cfg_secret_key()}</label>
             <input id="t-sk" class="wiz-input wiz-input-mono" type="password" value={cfg.secret_key ?? ''} oninput={(e) => (cfg = { ...cfg, secret_key: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
         <div class="wiz-field">
-          <label class="wiz-field-label" for="t-prefix">Prefix (optional)</label>
-          <span class="wiz-field-hint">Folder inside the bucket, nested levels allowed (backups/dockmesh).</span>
+          <label class="wiz-field-label" for="t-prefix">{m.backups_twiz_prefix_label()}</label>
+          <span class="wiz-field-hint">{m.backups_twiz_prefix_hint()}</span>
           <input id="t-prefix" class="wiz-input wiz-input-mono" placeholder="backups/dockmesh" value={cfg.prefix ?? ''} oninput={(e) => (cfg = { ...cfg, prefix: (e.currentTarget as HTMLInputElement).value })} />
         </div>
         <label class="wiz-check">
           <input type="checkbox" checked={!!cfg.use_ssl} onchange={(e) => (cfg = { ...cfg, use_ssl: (e.currentTarget as HTMLInputElement).checked })} />
-          <span>Use TLS (https). Required by AWS, Wasabi, B2 and most hosted services.</span>
+          <span>{m.backups_twiz_use_tls()}</span>
         </label>
         {#if cfg.use_ssl}
           <div class="wiz-field">
-            <label class="wiz-field-label" for="t-ca">Custom CA certificate (optional)</label>
-            <span class="wiz-field-hint">PEM certificate to trust for an endpoint signed by a private CA.</span>
+            <label class="wiz-field-label" for="t-ca">{m.backups_twiz_ca_label()}</label>
+            <span class="wiz-field-hint">{m.backups_twiz_ca_hint()}</span>
             <textarea id="t-ca" class="wiz-input wiz-input-mono" rows="3" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" value={cfg.ca_cert ?? ''} oninput={(e) => (cfg = { ...cfg, ca_cert: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
           </div>
         {/if}
@@ -377,7 +378,7 @@
           </div>
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={runTest} disabled={testState === 'testing'}>
             <RefreshCw size={11} strokeWidth={1.5} class={testState === 'testing' ? 'ed-spin' : ''} />
-            {testState === 'testing' ? 'Testing…' : 'Run test'}
+            {testState === 'testing' ? m.backups_testing() : m.backups_twiz_run_test()}
           </button>
         </div>
 
@@ -395,8 +396,8 @@
               {/if}
               <span class="wiz-test-label">{c.label}</span>
               <span class="font-mono wiz-test-state">
-                {#if c.state === 'ok'}ok
-                {:else if c.state === 'fail'}failed
+                {#if c.state === 'ok'}{m.backups_check_ok()}
+                {:else if c.state === 'fail'}{m.backups_run_failed()}
                 {:else if c.state === 'running'}…
                 {:else}—{/if}
               </span>
@@ -408,11 +409,11 @@
           <div class="wiz-info-box wiz-info-success" style="margin-top: 14px;">
             <Check size={12} strokeWidth={1.8} class="wiz-info-icon" />
             <span>
-              Round-trip succeeded in <span class="font-mono">{testDurationMs}ms</span>.
+              {m.backups_twiz_roundtrip_before()} <span class="font-mono">{testDurationMs}ms</span>{m.backups_twiz_roundtrip_after()}
               {#if testResult.total_bytes && testResult.total_bytes > 0}
-                Storage: <span class="font-mono">{fmtBytes(testResult.free_bytes, '—')}</span> free of <span class="font-mono">{fmtBytes(testResult.total_bytes, '—')}</span>.
+                {m.backups_twiz_storage()} <span class="font-mono">{fmtBytes(testResult.free_bytes, '—')}</span> {m.backups_twiz_free_of()} <span class="font-mono">{fmtBytes(testResult.total_bytes, '—')}</span>.
               {:else}
-                Target ready to receive backups.
+                {m.backups_twiz_ready()}
               {/if}
             </span>
           </div>
@@ -420,17 +421,17 @@
           <div class="wiz-info-box wiz-info-fail" style="margin-top: 14px;">
             <AlertTriangle size={12} strokeWidth={1.5} class="wiz-info-icon" />
             <span>
-              <strong>Connection test failed.</strong>
-              <span class="font-mono wiz-test-err">{testResult.error || 'unknown error'}</span>
+              <strong>{m.backups_twiz_test_failed()}</strong>
+              <span class="font-mono wiz-test-err">{testResult.error || m.backups_unknown_error()}</span>
             </span>
             {#if hostKeyChanged}
-              <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={acceptHostKey} disabled={acceptingKey} title="Trust the key the server presents now">
-                Accept new host key
+              <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={acceptHostKey} disabled={acceptingKey} title={m.backups_twiz_trust_key_title()}>
+                {m.backups_twiz_accept_new_host_key()}
               </button>
             {/if}
           </div>
         {:else if testState === 'idle'}
-          <p class="wiz-test-hint font-mono">Click "Run test" to validate the connection. You can also save without testing — the next backup run will surface any error.</p>
+          <p class="wiz-test-hint font-mono">{m.backups_twiz_idle_hint()}</p>
         {/if}
       </div>
     </div>

@@ -21,6 +21,8 @@
   import { Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, User, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime, fmtTime } from '$lib/i18n';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
@@ -114,14 +116,15 @@
       ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
       : `${elapsed}s`;
     const stepStr = p.step_total > 0 && p.step_index > 0 ? `${p.step_index}/${p.step_total}` : '';
+    const sv = { service: p.service ?? '', step: stepStr ? `(${stepStr})` : '', elapsed: elapsedStr };
     switch (p.phase) {
-      case 'starting':         return `deploying… ${elapsedStr}`;
-      case 'pulling':          return `pulling ${p.service ?? ''} ${stepStr ? `(${stepStr})` : ''} · ${elapsedStr}`;
-      case 'creating':         return `creating ${p.service ?? ''} ${stepStr ? `(${stepStr})` : ''} · ${elapsedStr}`;
-      case 'starting_container': return `starting ${p.service ?? ''} ${stepStr ? `(${stepStr})` : ''} · ${elapsedStr}`;
-      case 'healthcheck':      return `healthcheck ${p.service ?? ''} ${stepStr ? `(${stepStr})` : ''} · ${elapsedStr}`;
-      case 'done':             return `deploy ok · ${elapsedStr}`;
-      case 'failed':           return `deploy failed · ${elapsedStr}`;
+      case 'starting':         return m.stacks_d_dp_deploying({ elapsed: elapsedStr });
+      case 'pulling':          return m.stacks_d_dp_pulling(sv);
+      case 'creating':         return m.stacks_d_dp_creating(sv);
+      case 'starting_container': return m.stacks_d_dp_starting(sv);
+      case 'healthcheck':      return m.stacks_d_dp_healthcheck(sv);
+      case 'done':             return m.stacks_d_dp_done({ elapsed: elapsedStr });
+      case 'failed':           return m.stacks_d_dp_failed({ elapsed: elapsedStr });
     }
     return '';
   }
@@ -133,12 +136,12 @@
   // A deploy of stack files changed outside Dockmesh needs an explicit OK.
   async function confirmExternalChanges(err: unknown): Promise<boolean> {
     if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
-    const files: string = (err.body.files as string[] | undefined)?.join(', ') || 'compose.yaml or .env';
+    const files: string = (err.body.files as string[] | undefined)?.join(', ') || m.stacks_ext_files_fallback();
     return confirm.ask({
-      title: 'Stack files changed outside Dockmesh',
-      message: `${files} of "${err.body.stack ?? name}" changed since Dockmesh last wrote them.`,
-      body: 'Something other than Dockmesh changed these files, for example a container that mounts the stack directory. Review them in the editor before you deploy them as they are.',
-      confirmLabel: 'Deploy anyway', danger: true,
+      title: m.stacks_ext_title(),
+      message: m.stacks_ext_message({ files, name: err.body.stack ?? name }),
+      body: m.stacks_d_ext_body(),
+      confirmLabel: m.stacks_ext_confirm(), danger: true,
     });
   }
   let dirty = $state(false);
@@ -533,15 +536,15 @@
     return {
       cpu,
       cpuLabel: count > 0 ? `${cpu.toFixed(1)}%` : '—',
-      cpuMeta: count > 0 ? `of the host · ${cpuCores.toFixed(2)} cores · ${count} container${count === 1 ? '' : 's'}` : 'no live samples',
+      cpuMeta: count > 0 ? m.stacks_d_cpu_meta({ cores: cpuCores.toFixed(2), containers: m.stacks_n_containers({ count }) }) : m.stacks_d_no_samples(),
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,
       memLabel: count > 0 ? fmtMem(mem) : '—',
-      memMeta: count > 0 && memLim > 0 ? `of ${fmtMem(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
+      memMeta: count > 0 && memLim > 0 ? m.stacks_d_mem_of_limit({ limit: fmtMem(memLim) }) : count > 0 ? m.stacks_d_no_limit() : m.stacks_d_no_samples(),
       net: netRate,
       netLabel: count > 0 ? `${fmtBytes(netRate.rx)}/s ↓` : '—',
-      netMeta: count > 0 ? `${fmtBytes(netRate.tx)}/s ↑` : 'no live samples',
+      netMeta: count > 0 ? `${fmtBytes(netRate.tx)}/s ↑` : m.stacks_d_no_samples(),
       count,
     };
   });
@@ -665,7 +668,7 @@
       historyEntries = raw ?? [];
       historyLoadedOnce = true;
     } catch (err) {
-      toast.error('Load history failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_load_history_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       historyLoading = false;
     }
@@ -678,7 +681,7 @@
       yamlPrevEntry = null;
       showYaml = true;
     } catch (err) {
-      toast.error('Load snapshot failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_load_snapshot_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -689,7 +692,7 @@
     if (!yamlEntry) return;
     const prevListEntry = historyEntries.find((e) => e.version === yamlEntry!.version - 1);
     if (!prevListEntry) {
-      toast.info('No previous deploy to diff against');
+      toast.info(m.stacks_d_no_prev_deploy());
       return;
     }
     yamlDiffLoading = true;
@@ -697,7 +700,7 @@
       yamlPrevEntry = await api.stacks.getDeployment(name, prevListEntry.id);
       yamlMode = 'diff';
     } catch (err) {
-      toast.error('Load previous failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_load_prev_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       yamlDiffLoading = false;
     }
@@ -737,7 +740,7 @@
       rollbackEntry = await api.stacks.getDeployment(name, id);
       showRollbackConfirm = true;
     } catch (err) {
-      toast.error('Load snapshot failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_load_snapshot_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -754,8 +757,8 @@
         res = await api.stacks.rollback(name, entryId, stackHost, true);
       }
       toast.success(
-        `Rolled back to #${res.rolled_back_to}`,
-        `${res.result.services.length} service(s) redeployed`
+        m.stacks_d_rolled_back({ version: res.rolled_back_to }),
+        m.stacks_d_services_redeployed({ count: res.result.services.length })
       );
       showRollbackConfirm = false;
       rollbackEntry = null;
@@ -763,7 +766,7 @@
       await load();
       await loadHistory();
     } catch (err) {
-      toast.error('Rollback failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_rollback_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       rollbackBusy = false;
     }
@@ -818,14 +821,17 @@
   // stable badge. Every entry gets one — even plain manual deploys —
   // so the timeline column-aligns instead of jumping around based on
   // whether the row happens to have a note set.
-  function deployTriggerBadge(note?: string): { label: string; variant: 'info' | 'warn' | 'neutral' } {
+  // `raw` is the note text the label stands for, so the history row only
+  // repeats the note when the label doesn't already show it.
+  function deployTriggerBadge(note?: string): { label: string; raw: string; variant: 'info' | 'warn' | 'neutral' } {
     const n = (note ?? '').trim();
-    if (n === '') return { label: 'manual', variant: 'neutral' };
-    if (n.startsWith('rollback')) return { label: n, variant: 'warn' };
-    if (n === 'git auto-deploy') return { label: 'git auto-deploy', variant: 'info' };
-    if (n.startsWith('env:')) return { label: 'env override', variant: 'neutral' };
+    if (n === '') return { label: m.stacks_d_trigger_manual(), raw: '', variant: 'neutral' };
+    if (n.startsWith('rollback')) return { label: n, raw: n, variant: 'warn' };
+    if (n === 'git auto-deploy') return { label: m.stacks_d_trigger_git(), raw: n, variant: 'info' };
+    if (n.startsWith('env:')) return { label: m.stacks_d_trigger_env(), raw: 'env override', variant: 'neutral' };
     // Custom note — show truncated, full text in tooltip.
-    return { label: n.length > 24 ? n.slice(0, 24) + '…' : n, variant: 'neutral' };
+    const label = n.length > 24 ? n.slice(0, 24) + '…' : n;
+    return { label, raw: label, variant: 'neutral' };
   }
 
   // splitImageRef breaks an image reference into displayable parts so
@@ -927,9 +933,9 @@
     try {
       await api.stacks.setActiveEnvironment(name, active);
       await loadEnvs();
-      toast.success(active ? `Active environment: ${active}` : 'Environment cleared');
+      toast.success(active ? m.stacks_d_active_env({ name: active }) : m.stacks_d_env_cleared());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       envBusy = false;
     }
@@ -941,12 +947,12 @@
       await api.stacks.setDependencies(name, depsEditList);
       await loadDeps();
       showDepsEditor = false;
-      toast.success('Dependencies updated');
+      toast.success(m.stacks_d_deps_updated());
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
-        toast.error('Cycle detected', 'That would create a dependency loop — pick a different edge.');
+        toast.error(m.stacks_d_cycle(), m.stacks_d_cycle_body());
       } else {
-        toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+        toast.error(m.stacks_d_save_failed(), err instanceof ApiError ? err.message : undefined);
       }
     } finally {
       depsBusy = false;
@@ -987,12 +993,12 @@
         parallelism: rollingParallel,
         failure_action: rollingFailure
       }, stackHost);
-      toast.success('Rolling update complete', `${rollingTarget}: ${res.updated}/${res.total_replicas} updated${res.rolled_back ? ' (rolled back)' : ''}`);
+      toast.success(m.stacks_d_rolling_done(), `${m.stacks_d_rolling_detail({ service: rollingTarget, updated: res.updated, total: res.total_replicas })}${res.rolled_back ? m.stacks_d_rolled_back_suffix() : ''}`);
       showRolling = false;
       await loadReplicaCounts();
       await refreshStatus();
     } catch (err) {
-      rollingErr = err instanceof ApiError ? err.message : 'rolling update failed';
+      rollingErr = err instanceof ApiError ? err.message : m.stacks_d_rolling_failed();
     } finally {
       rollingBusy = false;
     }
@@ -1002,9 +1008,9 @@
     if (!allowed('stacks.deploy')) return;
     try {
       const list = await api.stacks.listScale(name, stackHost);
-      const m = new Map<string, number>();
-      for (const e of list) m.set(e.service, e.replicas);
-      replicaCounts = m;
+      const counts = new Map<string, number>();
+      for (const e of list) counts.set(e.service, e.replicas);
+      replicaCounts = counts;
     } catch { /* ignore — not critical */ }
   }
 
@@ -1024,7 +1030,7 @@
     scaleBusy = true;
     try {
       const res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, stackHost);
-      toast.success('Scaled', `${scaleTarget}: ${res.previous} → ${res.current}`);
+      toast.success(m.stacks_d_scaled(), `${scaleTarget}: ${res.previous} → ${res.current}`);
       showScale = false;
       await loadReplicaCounts();
       await refreshStatus();
@@ -1034,12 +1040,12 @@
         try {
           const body = await err.json?.() ?? err;
           if (body?.force_needed) {
-            toast.warning(body.message ?? 'Stateful service warning — enable force to proceed');
+            toast.warning(body.message ?? m.stacks_d_stateful_warning());
             return;
           }
         } catch {}
       }
-      toast.error('Scale failed', err instanceof ApiError ? err.message : String(err));
+      toast.error(m.stacks_d_scale_failed(), err instanceof ApiError ? err.message : String(err));
     } finally {
       scaleBusy = false;
     }
@@ -1066,7 +1072,7 @@
     try {
       migratePreflight = await api.migrations.preflight(name, migrateTarget);
     } catch (err) {
-      toast.error('Preflight failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_preflight_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       migratePreflightLoading = false;
     }
@@ -1075,19 +1081,19 @@
   async function startMigration() {
     migrateBusy = true;
     try {
-      let m;
+      let mig;
       try {
-        m = await api.migrations.initiate(name, migrateTarget);
+        mig = await api.migrations.initiate(name, migrateTarget);
       } catch (err) {
         if (!(await confirmExternalChanges(err))) throw err;
-        m = await api.migrations.initiate(name, migrateTarget, true);
+        mig = await api.migrations.initiate(name, migrateTarget, true);
       }
-      activeMigration = m;
+      activeMigration = mig;
       showMigrate = false;
-      toast.success('Migration started', `${name} → ${migrateTarget}`);
-      pollMigration(m.id);
+      toast.success(m.stacks_d_migration_started(), `${name} → ${migrateTarget}`);
+      pollMigration(mig.id);
     } catch (err) {
-      toast.error('Migration failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_migration_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       migrateBusy = false;
     }
@@ -1108,16 +1114,16 @@
     const stack = name;
     const iv = setInterval(async () => {
       try {
-        const m = await api.migrations.get(stack, id);
+        const mig = await api.migrations.get(stack, id);
         if (migrationPoll !== iv) return;
-        activeMigration = m;
-        if (['completed', 'failed', 'rolled_back'].includes(m.status)) {
+        activeMigration = mig;
+        if (['completed', 'failed', 'rolled_back'].includes(mig.status)) {
           stopMigrationPoll();
-          if (m.status === 'completed') {
-            toast.success('Migration completed');
+          if (mig.status === 'completed') {
+            toast.success(m.stacks_d_migration_completed());
             await load();
           } else {
-            toast.error('Migration ' + m.status, m.error_message);
+            toast.error(mig.status === 'failed' ? m.stacks_d_migration_failed() : m.stacks_d_migration_status({ status: mig.status }), mig.error_message);
           }
         }
       } catch {
@@ -1201,15 +1207,15 @@
     try {
       const res = await api.stacks.configureGitSource(name, gitForm);
       if (res.sync_error) {
-        toast.error('Saved, but first sync failed', res.sync_error);
+        toast.error(m.stacks_d_git_saved_sync_failed(), res.sync_error);
       } else {
-        toast.success('Git source saved', res.sync?.changed ? `synced ${res.sync.new_sha.slice(0, 7)}` : 'up to date');
+        toast.success(m.stacks_d_git_saved(), res.sync?.changed ? m.stacks_d_synced_sha({ sha: res.sync.new_sha.slice(0, 7) }) : m.stacks_d_up_to_date());
       }
       showGitDialog = false;
       await loadGitSource();
       await load();
     } catch (err) {
-      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_save_failed_to(), err instanceof ApiError ? err.message : undefined);
     } finally {
       gitBusy = false;
     }
@@ -1220,26 +1226,26 @@
     gitBusy = true;
     try {
       const res = await api.stacks.syncGitSource(name);
-      toast.success(res.changed ? `Synced ${res.new_sha.slice(0, 7)}` : 'Already up to date');
-      if (res.deployed) toast.success('Auto-deploy triggered');
+      toast.success(res.changed ? m.stacks_d_synced_sha_cap({ sha: res.new_sha.slice(0, 7) }) : m.stacks_d_already_up_to_date());
+      if (res.deployed) toast.success(m.stacks_d_auto_deploy_triggered());
       await loadGitSource();
       await load();
     } catch (err) {
-      toast.error('Sync failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_sync_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       gitBusy = false;
     }
   }
 
   async function disconnectGit() {
-    if (!(await confirm.ask({ title: 'Disconnect git source', message: 'Disconnect git source?', body: 'The compose.yaml stays in place on disk. Future pushes to the repo will no longer sync automatically.', confirmLabel: 'Disconnect' }))) return;
+    if (!(await confirm.ask({ title: m.stacks_d_disconnect_title(), message: m.stacks_d_disconnect_message(), body: m.stacks_d_disconnect_body(), confirmLabel: m.stacks_d_disconnect() }))) return;
     gitBusy = true;
     try {
       await api.stacks.deleteGitSource(name);
-      toast.success('Git source disconnected');
+      toast.success(m.stacks_d_git_disconnected());
       gitSource = null;
     } catch (err) {
-      toast.error('Failed to disconnect', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_disconnect_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       gitBusy = false;
     }
@@ -1283,7 +1289,7 @@
       }
       await loadReplicaCounts();
     } catch (err) {
-      toast.error('Load failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -1311,9 +1317,9 @@
     try {
       await stackOps.run(stackHost, name, () => api.stacks.update(name, compose, env || undefined));
       dirty = false;
-      toast.success('Saved');
+      toast.success(m.common_saved());
     } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_d_save_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -1332,13 +1338,13 @@
         }
       });
       modifiedOutside = [];
-      toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'Local'}`);
+      toast.success(m.stacks_deployed(), m.stacks_d_deployed_on({ count: res.services.length, host: hosts.selected?.name ?? m.common_local() }));
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.
       if (historyLoadedOnce) loadHistory();
     } catch (err) {
-      toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_deploy_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -1350,9 +1356,9 @@
     try {
       await stackOps.run(stackHost, name, () => api.stacks.stop(name, stackHost));
       services = [];
-      toast.info('Stopped');
+      toast.info(m.stacks_stopped_toast());
     } catch (err) {
-      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.stacks_stop_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
@@ -1391,9 +1397,9 @@
       stackStatus = 'ok';
       recoverWarnings = res.warnings ?? [];
       const cc = res.recovered_from?.container_count ?? 0;
-      toast.success('Compose reconstructed', `From ${cc} container${cc === 1 ? '' : 's'}. Review the YAML before redeploying.`);
+      toast.success(m.stacks_d_reconstructed(), m.stacks_d_reconstructed_detail({ count: cc }));
     } catch (err) {
-      toast.error('Recovery failed', err instanceof ApiError ? err.message : String(err));
+      toast.error(m.stacks_d_recovery_failed(), err instanceof ApiError ? err.message : String(err));
     } finally {
       recoverBusy = false;
     }
@@ -1401,10 +1407,10 @@
   async function restoreFromBackup() {
     if (restoreBusy || anyBusy || !latestBackupRun) return;
     if (!(await confirm.ask({
-      title: `Restore ${name} from backup`,
-      message: `Restore the compose file and all named volumes from the backup taken on ${latestBackupRun.finished_at ?? 'unknown'}.`,
-      body: 'Existing volume data will be replaced with the snapshot. Bind mounts to host paths are not touched. Containers are not started — review and click Deploy after the restore.',
-      confirmLabel: 'Restore',
+      title: m.stacks_d_restore_title({ name }),
+      message: m.stacks_d_restore_message({ date: latestBackupRun.finished_at ?? m.stacks_d_unknown() }),
+      body: m.stacks_d_restore_body(),
+      confirmLabel: m.stacks_d_restore(),
       danger: true
     }))) return;
     restoreBusy = true;
@@ -1416,27 +1422,27 @@
       env = detail.env ?? '';
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       recoverWarnings = res.warnings ?? [];
-      toast.success('Restored from backup', `${res.files_restored.length} file(s), ${res.volumes_restored.length} volume(s). Review and click Deploy.`);
+      toast.success(m.stacks_d_restored(), m.stacks_d_restored_detail({ files: res.files_restored.length, volumes: res.volumes_restored.length }));
     } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : String(err));
+      toast.error(m.stacks_d_restore_failed(), err instanceof ApiError ? err.message : String(err));
     } finally {
       restoreBusy = false;
     }
   }
   async function discardGhost() {
     if (!(await confirm.ask({
-      title: `Discard stack ${name}`,
-      message: 'Drops the dockmesh record for this stack.',
-      body: 'Running containers are NOT touched — they keep running until you stop them via docker / Containers page. The stack just disappears from this list.',
-      confirmLabel: 'Discard',
+      title: m.stacks_d_discard_title({ name }),
+      message: m.stacks_d_discard_message(),
+      body: m.stacks_d_discard_body(),
+      confirmLabel: m.stacks_d_discard(),
       danger: true
     }))) return;
     try {
       await api.stacks.discard(name);
-      toast.success('Discarded', name);
+      toast.success(m.stacks_d_discarded(), name);
       goto('/stacks');
     } catch (err) {
-      toast.error('Discard failed', err instanceof ApiError ? err.message : String(err));
+      toast.error(m.stacks_d_discard_failed(), err instanceof ApiError ? err.message : String(err));
     }
   }
 
@@ -1454,48 +1460,61 @@
   });
   // ── Page header, tabs and the header menu.
   const stackState = $derived.by<{ tone: Tone; label: string }>(() => {
-    if (services.length === 0) return { tone: 'off', label: everDeployed ? 'not running' : 'not deployed' };
+    if (services.length === 0) return { tone: 'off', label: everDeployed ? m.stacks_d_state_not_running() : m.stacks_d_state_not_deployed() };
     const running = services.filter((s) => s.state === 'running');
-    if (running.length === 0) return { tone: 'off', label: 'stopped' };
+    if (running.length === 0) return { tone: 'off', label: m.stacks_d_state_stopped() };
     const unhealthy = running.some((s) => (s.status ?? '').toLowerCase().includes('unhealthy'));
-    if (running.length < services.length || unhealthy) return { tone: 'warn', label: 'degraded' };
-    return { tone: 'ok', label: 'running' };
+    if (running.length < services.length || unhealthy) return { tone: 'warn', label: m.stacks_d_state_degraded() };
+    return { tone: 'ok', label: m.stacks_d_state_running() };
   });
   const lastDeploy = $derived(historyEntries[0]);
 
+  const STATE_LABEL: Record<string, () => string> = {
+    created: m.topology_state_created,
+    running: m.topology_state_running,
+    paused: m.topology_state_paused,
+    restarting: m.topology_state_restarting,
+    removing: m.topology_state_removing,
+    exited: m.topology_state_exited,
+    dead: m.topology_state_dead
+  };
+  function stateLabel(state: string): string {
+    return STATE_LABEL[state]?.() ?? state;
+  }
+
   const tabItems = $derived<TabItem[]>([
-    { key: 'overview', label: 'Overview', count: services.length || null },
-    { key: 'compose', label: 'Compose', dot: dirty },
-    { key: 'environment', label: 'Environment', count: envRows.length || null },
-    { key: 'logs', label: 'Logs' },
-    ...(canDeploy ? [{ key: 'history', label: 'History', count: historyEntries.length || null }] : []),
-    { key: 'settings', label: 'Settings' }
+    { key: 'overview', label: m.common_overview(), count: services.length || null },
+    { key: 'compose', label: m.stacks_d_tab_compose(), dot: dirty },
+    { key: 'environment', label: m.stacks_d_tab_environment(), count: envRows.length || null },
+    { key: 'logs', label: m.common_logs() },
+    ...(canDeploy ? [{ key: 'history', label: m.stacks_d_tab_history(), count: historyEntries.length || null }] : []),
+    { key: 'settings', label: m.common_settings() }
   ]);
 
   const headerMenu = $derived.by<MenuItem[]>(() => {
     const out: MenuItem[] = [];
     if (canWrite) {
-      out.push({ label: gitSource ? 'Edit git source' : 'Connect a git repository', icon: GitBranch, onclick: openGitDialog });
-      if (gitSource) out.push({ label: 'Sync from git now', icon: RefreshCw, onclick: syncNow, disabled: gitBusy });
-      out.push({ label: 'Edit dependencies', icon: Layers, onclick: openDepsEditor });
+      out.push({ label: gitSource ? m.stacks_d_edit_git() : m.stacks_d_connect_git(), icon: GitBranch, onclick: openGitDialog });
+      if (gitSource) out.push({ label: m.stacks_d_sync_git_now(), icon: RefreshCw, onclick: syncNow, disabled: gitBusy });
+      out.push({ label: m.stacks_d_edit_deps(), icon: Layers, onclick: openDepsEditor });
     }
-    out.push({ label: 'Reload from disk', icon: RefreshCw, onclick: load });
+    out.push({ label: m.stacks_d_reload_disk(), icon: RefreshCw, onclick: load });
     if (allowed('stacks.delete')) {
       out.push({ separator: true });
-      out.push({ label: 'Delete stack…', icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
+      out.push({ label: m.stacks_d_delete_stack(), icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
     }
     return out;
   });
 
   function serviceMenu(s: { service: string; container_id: string; image: string }): MenuItem[] {
-    const out: MenuItem[] = [{ label: 'Open container', href: `/containers/${s.container_id}?from=stack` }];
+    const out: MenuItem[] = [{ label: m.topology_open_container(), href: `/containers/${s.container_id}?from=stack` }];
     if (canDeploy) {
-      out.push({ label: 'Rolling update…', icon: Repeat, onclick: () => openRolling(s.service) });
-      out.push({ label: 'Scale…', icon: Maximize2, onclick: () => openScale(s.service) });
+      out.push({ label: m.stacks_d_rolling_ellipsis(), icon: Repeat, onclick: () => openRolling(s.service) });
+      out.push({ label: m.stacks_d_scale_ellipsis(), icon: Maximize2, onclick: () => openScale(s.service) });
     }
     if (canUpdateImages) {
       out.push({
-        label: hasImageUpdate(s.image) ? 'Update image…' : 'Pull and update image…',
+        label: hasImageUpdate(s.image) ? m.stacks_d_update_image() : m.stacks_d_pull_update_image(),
         icon: RefreshCw,
         disabled: !!svcOp(s.service) && isActive(svcOp(s.service)!),
         onclick: () => updateImage(s)
@@ -1533,10 +1552,10 @@
   }
   async function updateImage(s: { service: string; container_id: string; image: string }) {
     const ok = await confirm.ask({
-      title: `Update ${s.service}`,
-      message: `Pulls ${s.image} and, when it changed, recreates every replica of ${s.service} from compose.yaml.`,
-      body: 'The current image is kept for a rollback and volumes are carried over. Compose changes saved since the last deploy are applied too.',
-      confirmLabel: 'Update'
+      title: m.stacks_d_update_title({ service: s.service }),
+      message: m.stacks_d_update_message({ image: s.image, service: s.service }),
+      body: m.stacks_d_update_body(),
+      confirmLabel: m.updates_update()
     });
     if (!ok) return;
     const since = Date.now();
@@ -1549,11 +1568,11 @@
     try {
       const res = await req;
       if (!op) {
-        if (res.updated) toast.success(`${s.service} updated`);
-        else toast.info(`${s.service} is already up to date`);
+        if (res.updated) toast.success(m.stacks_d_service_updated({ service: s.service }));
+        else toast.info(m.updates_already_current({ name: s.service }));
       }
     } catch (e) {
-      if (!op) toast.error(`Update of ${s.service} failed`, (e as Error).message);
+      if (!op) toast.error(m.updates_one_failed({ name: s.service }), (e as Error).message);
     }
     await refreshStatus();
     void loadImageUpdates();
@@ -1566,68 +1585,67 @@
     <h1 class="stk-name">{name}</h1>
     <StatusChip tone={stackState.tone} label={stackState.label} />
     <span class="dm-sub stk-sub">
-      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'Local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
+      {#if services.length > 0}{m.stacks_d_sub_running({ running: services.filter((s) => s.state === 'running').length, total: services.length })}{/if}{isRemote && hosts.selected ? hosts.selected.name : m.common_local()}{#if lastDeploy}{m.stacks_d_sub_deployed({ ago: fmtAgo(lastDeploy.deployed_at) })}{#if lastDeploy.deployed_by_name}{m.stacks_d_sub_by({ name: lastDeploy.deployed_by_name })}{/if}{/if}
       {#if anyBusy || deployProgress}
         ·
         <span
           class:stk-deploy-failed={deployProgress?.phase === 'failed'}
           class:stk-deploy-done={deployProgress?.phase === 'done'}
-        >{deployStatusLabel(deployProgress, deployElapsed) || 'deploying…'}</span>
+        >{deployStatusLabel(deployProgress, deployElapsed) || m.stacks_d_deploying()}</span>
       {/if}
     </span>
     <span class="dm-sp"></span>
     {#if stackStatus !== 'needs_recovery' && canDeploy}
       <button type="button" class="dm-btn dm-btn-primary" onclick={deploy} disabled={anyBusy}>
-        <Play size={13} strokeWidth={1.8} /> Deploy
+        <Play size={13} strokeWidth={1.8} /> {m.common_deploy()}
       </button>
       {#if hosts.available.length > 1}
         <button type="button" class="dm-btn" onclick={openMigrate} disabled={anyBusy}>
-          <ArrowRightLeft size={13} strokeWidth={1.8} /> Migrate
+          <ArrowRightLeft size={13} strokeWidth={1.8} /> {m.stacks_d_migrate()}
         </button>
       {/if}
     {/if}
     {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate') && services.some((s) => s.state === 'running')}
       <button type="button" class="dm-btn" onclick={stop} disabled={anyBusy}>
-        <Square size={12} strokeWidth={1.8} /> Stop
+        <Square size={12} strokeWidth={1.8} /> {m.common_stop()}
       </button>
     {/if}
-    <Menu label="More stack actions" items={headerMenu} width={240} />
+    <Menu label={m.stacks_d_more_actions()} items={headerMenu} width={240} />
   </header>
 
   {#if stackStatus === 'needs_recovery'}
     <div class="stk-notice warn" role="alert">
       <div class="stk-notice-h">
         <AlertTriangle size={15} />
-        <b>Compose file is missing or empty</b>
+        <b>{m.stacks_d_missing_title()}</b>
       </div>
       <p>
-        This stack still has a deployment record and possibly running containers, but
-        <code>/stacks/{name}/compose.yaml</code> is gone or empty. The editor stays hidden until the stack is
-        recovered or discarded, so an empty file can't overwrite the running workload.
+        {m.stacks_d_missing_p1()}
+        <code>/stacks/{name}/compose.yaml</code> {m.stacks_d_missing_p2()}
       </p>
       <div class="dm-tbl stk-recover">
         <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
-          <span class="dm-nm"><span class="dm-t">Recover from running containers</span><small>Writes a best-effort compose.yaml from the containers labelled com.docker.compose.project={name}. Review it before redeploying.</small></span>
-          <span><Button variant="primary" size="sm" onclick={recoverFromContainers} loading={recoverBusy} disabled={recoverBusy}><RotateCcw size={13} /> Recover</Button></span>
+          <span class="dm-nm"><span class="dm-t">{m.stacks_d_recover_title()}</span><small>{m.stacks_d_recover_desc({ name })}</small></span>
+          <span><Button variant="primary" size="sm" onclick={recoverFromContainers} loading={recoverBusy} disabled={recoverBusy}><RotateCcw size={13} /> {m.stacks_d_recover()}</Button></span>
         </div>
         <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
           <span class="dm-nm">
-            <span class="dm-t">Restore from last backup</span>
+            <span class="dm-t">{m.stacks_d_restore_last()}</span>
             <small>
               {#if latestBackupRun === undefined}
-                Looking for a stack backup of {name}…
+                {m.stacks_d_looking_backup({ name })}
               {:else if latestBackupRun === null}
-                No successful stack backup of {name} found.
+                {m.stacks_d_no_backup({ name })}
               {:else}
-                {latestBackupRun.job_name} · {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} · {fmtBytes(latestBackupRun.size_bytes)}. Replaces compose and named volumes; bind mounts stay.
+                {latestBackupRun.job_name} · {latestBackupRun.finished_at ? fmtDateTime(latestBackupRun.finished_at) : m.stacks_d_unknown()} · {fmtBytes(latestBackupRun.size_bytes)}. {m.stacks_d_restore_replaces()}
               {/if}
             </small>
           </span>
-          <span><Button variant="secondary" size="sm" onclick={restoreFromBackup} loading={restoreBusy} disabled={restoreBusy || !latestBackupRun}><History size={13} /> Restore</Button></span>
+          <span><Button variant="secondary" size="sm" onclick={restoreFromBackup} loading={restoreBusy} disabled={restoreBusy || !latestBackupRun}><History size={13} /> {m.stacks_d_restore()}</Button></span>
         </div>
         <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
-          <span class="dm-nm"><span class="dm-t">Remove stack record</span><small>Forgets the stack in Dockmesh. Running containers are not touched.</small></span>
-          <span><Button variant="danger" size="sm" onclick={discardGhost}><Trash2 size={13} /> Discard record</Button></span>
+          <span class="dm-nm"><span class="dm-t">{m.stacks_d_remove_record()}</span><small>{m.stacks_d_remove_record_desc()}</small></span>
+          <span><Button variant="danger" size="sm" onclick={discardGhost}><Trash2 size={13} /> {m.stacks_d_discard_record()}</Button></span>
         </div>
       </div>
     </div>
@@ -1635,7 +1653,7 @@
 
   {#if recoverWarnings.length > 0}
     <div class="stk-notice warn">
-      <div class="stk-notice-h"><AlertTriangle size={15} /><b>Review the recovered compose before redeploying</b></div>
+      <div class="stk-notice-h"><AlertTriangle size={15} /><b>{m.stacks_d_review_recovered()}</b></div>
       <ul>{#each recoverWarnings as w}<li>{w}</li>{/each}</ul>
     </div>
   {/if}
@@ -1644,11 +1662,11 @@
     <div class="stk-notice warn stk-notice-row">
       <AlertTriangle size={15} />
       <div class="stk-notice-t">
-        <b>{externalChange.file || 'Stack directory'} was {externalChange.type} outside Dockmesh</b>
-        <span class:stk-bad={dirty}>{dirty ? 'You have unsaved edits; reloading discards them.' : 'Reload to pick up the change.'}</span>
+        <b>{externalChange.type === 'removed' ? m.stacks_d_ext_removed({ file: externalChange.file || m.stacks_d_stack_directory() }) : m.stacks_d_ext_modified({ file: externalChange.file || m.stacks_d_stack_directory() })}</b>
+        <span class:stk-bad={dirty}>{dirty ? m.stacks_d_unsaved_discard() : m.stacks_d_reload_pick_up()}</span>
       </div>
-      <Button size="sm" variant="secondary" onclick={load}><RefreshCw size={13} /> Reload</Button>
-      <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
+      <Button size="sm" variant="secondary" onclick={load}><RefreshCw size={13} /> {m.stacks_d_reload()}</Button>
+      <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>{m.stacks_d_ignore()}</Button>
     </div>
   {/if}
 
@@ -1656,8 +1674,8 @@
     <div class="stk-notice warn stk-notice-row">
       <AlertTriangle size={15} />
       <div class="stk-notice-t">
-        <b>Modified outside Dockmesh: {modifiedOutside.join(', ')}</b>
-        <span>Review these files before deploying; the next deploy asks for confirmation.</span>
+        <b>{m.stacks_d_modified_outside({ files: modifiedOutside.join(', ') })}</b>
+        <span>{m.stacks_d_modified_outside_hint()}</span>
       </div>
     </div>
   {/if}
@@ -1666,8 +1684,8 @@
     <div class="stk-notice warn stk-notice-row">
       <AlertTriangle size={15} />
       <div class="stk-notice-t">
-        <b>A service mounts the stack directory</b>
-        <span>Its containers can change compose.yaml and .env. Mount a subdirectory (<code>./data:/app/data</code>) or add <code>:ro</code>.</span>
+        <b>{m.stacks_d_mounts_title()}</b>
+        <span>{m.stacks_d_mounts_a()}<code>./data:/app/data</code>{m.stacks_d_mounts_b()} <code>:ro</code>{m.stacks_d_mounts_c()}</span>
       </div>
     </div>
   {/if}
@@ -1676,11 +1694,11 @@
     <div class="stk-notice stk-notice-row">
       <Loader2 size={15} class="animate-spin" />
       <div class="stk-notice-t">
-        <b>Migrating to {activeMigration.target_host_id}</b>
+        <b>{m.stacks_d_migrating_to({ host: activeMigration.target_host_id })}</b>
         <span>
-          Phase: {activeMigration.phase ?? activeMigration.status}
+          {m.stacks_d_phase({ phase: activeMigration.phase ?? activeMigration.status })}
           {#if activeMigration.progress?.current_volume}
-            · volume {activeMigration.progress.volume_index}/{activeMigration.progress.volumes_total}: {activeMigration.progress.current_volume}
+            {m.stacks_d_migr_volume({ index: activeMigration.progress.volume_index, total: activeMigration.progress.volumes_total, name: activeMigration.progress.current_volume })}
           {/if}
         </span>
       </div>
@@ -1693,25 +1711,25 @@
       <GitBranch size={15} />
       <div class="stk-notice-t">
         {#if gitSource.last_sync_error}
-          <b>Last git sync failed</b><span title={gitSource.last_sync_error}>{gitSource.last_sync_error}</span>
+          <b>{m.stacks_d_git_sync_failed()}</b><span title={gitSource.last_sync_error}>{gitSource.last_sync_error}</span>
         {:else if (gitSource.last_env_drift?.new_from_repo?.length ?? 0) + (gitSource.last_env_drift?.new_from_compose?.length ?? 0) > 0}
-          <b>Env drift from the last sync</b>
+          <b>{m.stacks_d_env_drift_last()}</b>
           <span>
-            {#if gitSource.last_env_drift?.new_from_repo?.length}new from repo: <code>{gitSource.last_env_drift.new_from_repo.join(', ')}</code>{/if}
-            {#if gitSource.last_env_drift?.new_from_compose?.length} needed by compose: <code>{gitSource.last_env_drift.new_from_compose.join(', ')}</code>{/if}
-            · fill in the values on the Environment tab.
+            {#if gitSource.last_env_drift?.new_from_repo?.length}{m.stacks_d_new_from_repo()} <code>{gitSource.last_env_drift.new_from_repo.join(', ')}</code>{/if}
+            {#if gitSource.last_env_drift?.new_from_compose?.length} {m.stacks_d_needed_by_compose()} <code>{gitSource.last_env_drift.new_from_compose.join(', ')}</code>{/if}
+            {m.stacks_d_fill_values()}
           </span>
         {:else}
-          <b>Git webhook disabled</b>
-          <span>Pushes only reach this stack through polling or Sync now. Set a webhook secret in the git source settings.</span>
+          <b>{m.stacks_d_webhook_disabled()}</b>
+          <span>{m.stacks_d_webhook_disabled_desc()}</span>
         {/if}
       </div>
-      <Button size="sm" variant="ghost" onclick={() => (activeTab = 'settings')}>Git source</Button>
+      <Button size="sm" variant="ghost" onclick={() => (activeTab = 'settings')}>{m.stacks_d_git_source()}</Button>
     </div>
   {/if}
 
   {#if stackStatus !== 'needs_recovery'}
-    <Tabs label="Stack sections" tabs={tabItems} active={activeTab} onchange={(k) => (activeTab = k as TabKey)} />
+    <Tabs label={m.stacks_d_sections()} tabs={tabItems} active={activeTab} onchange={(k) => (activeTab = k as TabKey)} />
 
     <!-- Overview -->
     {#if activeTab === 'overview'}
@@ -1726,7 +1744,7 @@
             {@const cols = 'minmax(140px, 1.3fr) minmax(140px, 1.5fr) 120px 64px 84px 34px'}
             <div class="dm-tbl">
               <div class="dm-tr dm-th" style="grid-template-columns: {cols}">
-                <span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
+                <span>{m.stacks_d_col_service()}</span><span>{m.common_image()}</span><span>{m.common_state()}</span><span class="r">CPU</span><span class="r">{m.stacks_d_memory()}</span><span></span>
               </div>
               {#each services as s (s.service + s.container_id)}
                 {@const count = replicaCounts.get(s.service) ?? 0}
@@ -1747,36 +1765,36 @@
                   </span>
                   <span class="dm-mono dm-dim stk-img" title={s.image}>
                     {s.image.split('/').pop()}
-                    {#if hasImageUpdate(s.image)}<span class="stk-upd" title="A newer image is available"> · update</span>{/if}
+                    {#if hasImageUpdate(s.image)}<span class="stk-upd" title={m.stacks_d_newer_image()}>{m.stacks_d_update_tag()}</span>{/if}
                   </span>
                   <span>
                     {#if op && (isActive(op) || Date.now() - Date.parse(op.finished_at ?? op.created_at) < 60_000)}
                       <OpProgress {op} compact />
                     {:else}
-                      <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? 'unhealthy' : s.state} />
+                      <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? m.stacks_d_unhealthy() : stateLabel(s.state)} />
                     {/if}
                   </span>
                   <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>
                   <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtMem(st.mem_used) : '—'}</span>
                   <span class="dm-tr-menu" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-                    <Menu label={`Actions for ${s.service}`} items={serviceMenu(s)} width={220} />
+                    <Menu label={m.stacks_actions_for({ name: s.service })} items={serviceMenu(s)} width={220} />
                   </span>
                 </div>
               {/each}
             </div>
           {:else}
-            <div class="dm-tbl"><div class="dm-empty">No containers run for this stack. Deploy it to start them.</div></div>
+            <div class="dm-tbl"><div class="dm-empty">{m.stacks_d_no_containers()}</div></div>
           {/if}
 
           {#if canDeploy}
           <section>
             <div class="stk-sec-h">
-              <h2 class="dm-h2">Recent deploys</h2>
+              <h2 class="dm-h2">{m.stacks_d_recent_deploys()}</h2>
               <span class="dm-sp"></span>
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (activeTab = 'history')}>History <ArrowRight size={12} /></button>
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (activeTab = 'history')}>{m.stacks_d_tab_history()} <ArrowRight size={12} /></button>
             </div>
             {#if historyEntries.length === 0}
-              <p class="stk-line">{historyLoading ? 'Loading…' : 'No deploys recorded yet.'}</p>
+              <p class="stk-line">{historyLoading ? m.common_loading() : m.stacks_d_no_deploys()}</p>
             {:else}
               <div class="dm-tbl">
                 {#each historyEntries.slice(0, 3) as entry, i (entry.id)}
@@ -1784,11 +1802,11 @@
                   <div class="dm-tr" style="grid-template-columns: 44px minmax(0, 1fr) 110px 100px">
                     <span class="dm-num dm-dim">#{entry.version}</span>
                     <span class="dm-trunc" title={entry.note || badge.label}>{entry.note || badge.label}<span class="dm-dim">{entry.deployed_by_name ? ` · ${entry.deployed_by_name}` : ''}</span></span>
-                    <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
+                    <span class="dm-num dm-dim" title={fmtDateTime(entry.deployed_at)}>{fmtAgo(entry.deployed_at)}</span>
                     <span>
-                      {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />
-                      {:else if i === 0}<StatusChip tone="ok" label="current" />
-                      {:else}<StatusChip tone="off" label="success" />{/if}
+                      {#if entry.success === false}<StatusChip tone="bad" label={m.stacks_d_chip_failed()} title={entry.error_message} />
+                      {:else if i === 0}<StatusChip tone="ok" label={m.stacks_d_chip_current()} />
+                      {:else}<StatusChip tone="off" label={m.stacks_d_chip_success()} />{/if}
                     </span>
                   </div>
                 {/each}
@@ -1800,28 +1818,28 @@
 
         <aside class="stk-col">
           <section>
-            <h2 class="dm-h2">Resources · rolled up</h2>
+            <h2 class="dm-h2">{m.stacks_d_resources()}</h2>
             <dl class="dm-kv">
               <dt>CPU</dt><dd class="dm-num">{statsRollup.cpuLabel} <span class="dm-dim">{statsRollup.cpuMeta}</span></dd>
-              <dt>Memory</dt><dd class="dm-num">{statsRollup.memLabel} <span class="dm-dim">{statsRollup.memMeta}</span></dd>
-              <dt>Network</dt><dd class="dm-num">{statsRollup.netLabel} <span class="dm-dim">{statsRollup.netMeta}</span></dd>
-              <dt>Host</dt><dd>{#if isRemote}<a href={`/hosts/${stackHost}`}>{hosts.selected?.name ?? stackHost}</a>{:else}<a href="/hosts/local">Local</a>{/if}</dd>
-              <dt>Source</dt>
+              <dt>{m.stacks_d_memory()}</dt><dd class="dm-num">{statsRollup.memLabel} <span class="dm-dim">{statsRollup.memMeta}</span></dd>
+              <dt>{m.common_network()}</dt><dd class="dm-num">{statsRollup.netLabel} <span class="dm-dim">{statsRollup.netMeta}</span></dd>
+              <dt>{m.common_host()}</dt><dd>{#if isRemote}<a href={`/hosts/${stackHost}`}>{hosts.selected?.name ?? stackHost}</a>{:else}<a href="/hosts/local">{m.common_local()}</a>{/if}</dd>
+              <dt>{m.common_source()}</dt>
               <dd>
                 {#if gitSource}
                   <span class="stk-src"><GitBranch size={12} /> <span class="dm-trunc" title={gitSource.repo_url}>{gitSource.repo_url}</span></span>
-                  <span class="dm-dim">{gitSource.branch}{gitSource.auto_deploy ? ' · auto-deploy on push' : ''}</span>
+                  <span class="dm-dim">{gitSource.branch}{gitSource.auto_deploy ? m.stacks_d_auto_deploy_push() : ''}</span>
                 {:else}
-                  compose editor
+                  {m.stacks_d_compose_editor()}
                 {/if}
               </dd>
-              <dt>Endpoints</dt>
+              <dt>{m.stacks_d_endpoints()}</dt>
               <dd class="dm-num">
                 {#if composeEndpoints.length === 0}
-                  <span class="dm-dim">No ports declared</span>
+                  <span class="dm-dim">{m.stacks_d_no_ports()}</span>
                 {:else}
                   {#each composeEndpoints as ep, i (ep.service + i)}
-                    <div>{ep.service} :{ep.port}{#if ep.mode === 'host'} <ExternalLink size={10} />{:else} <span class="dm-dim">internal</span>{/if}</div>
+                    <div>{ep.service} :{ep.port}{#if ep.mode === 'host'} <ExternalLink size={10} />{:else} <span class="dm-dim">{m.topology_internal()}</span>{/if}</div>
                   {/each}
                 {/if}
               </dd>
@@ -1829,26 +1847,26 @@
           </section>
 
           <section>
-            <h2 class="dm-h2">Networks · volumes</h2>
+            <h2 class="dm-h2">{m.stacks_d_nets_vols()}</h2>
             {#if composeNetworks.length === 0 && composeVolumes.length === 0}
-              <p class="stk-line">No top-level networks or volumes declared.</p>
+              <p class="stk-line">{m.stacks_d_no_nets_vols()}</p>
             {:else}
               <div class="stk-tags">
-                {#each composeNetworks as n (n)}<span class="stk-tag" title="network">{n}</span>{/each}
-                {#each composeVolumes as v (v)}<span class="stk-tag" title="volume">{v}</span>{/each}
+                {#each composeNetworks as n (n)}<span class="stk-tag" title={m.stacks_d_tag_network()}>{n}</span>{/each}
+                {#each composeVolumes as v (v)}<span class="stk-tag" title={m.stacks_d_tag_volume()}>{v}</span>{/each}
               </div>
             {/if}
           </section>
 
           {#if deps && (deps.depends_on.length > 0 || deps.dependents.length > 0)}
             <section>
-              <h2 class="dm-h2">Dependencies</h2>
+              <h2 class="dm-h2">{m.stacks_d_dependencies()}</h2>
               <dl class="dm-kv">
                 {#if deps.depends_on.length > 0}
-                  <dt>Needs</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
+                  <dt>{m.stacks_d_needs()}</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
                 {/if}
                 {#if deps.dependents.length > 0}
-                  <dt>Needed by</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
+                  <dt>{m.stacks_d_needed_by()}</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
                 {/if}
               </dl>
             </section>
@@ -1857,8 +1875,8 @@
           {#if !gitLoading && !gitSource && canWrite}
             <button type="button" class="stk-connect" onclick={openGitDialog}>
               <GitBranch size={16} />
-              <span><b>Connect a git repository</b><small>Sync compose.yaml and .env from a repo, deploy on push or on demand.</small></span>
-              <span class="dm-btn dm-btn-sm">Connect</span>
+              <span><b>{m.stacks_d_connect_git()}</b><small>{m.stacks_d_connect_desc()}</small></span>
+              <span class="dm-btn dm-btn-sm">{m.stacks_d_connect()}</span>
             </button>
           {/if}
         </aside>
@@ -1868,15 +1886,15 @@
     <!-- Compose: read-only until Edit, so a stray keystroke can't change a deployed file. -->
     {#if activeTab === 'compose'}
       <div class="stk-toolbar">
-        <span class="dm-mono stk-file">compose.yaml{#if dirty}<span class="stk-unsaved"> · unsaved</span>{/if}</span>
+        <span class="dm-mono stk-file">compose.yaml{#if dirty}<span class="stk-unsaved">{m.stacks_d_unsaved()}</span>{/if}</span>
         <span class="dm-sp"></span>
         {#if !composeEditing}
-          {#if canWrite}<button type="button" class="dm-btn" onclick={startComposeEdit}><Pencil size={13} /> Edit</button>{/if}
+          {#if canWrite}<button type="button" class="dm-btn" onclick={startComposeEdit}><Pencil size={13} /> {m.common_edit()}</button>{/if}
         {:else}
-          <button type="button" class="dm-btn dm-btn-ghost" onclick={() => { composeEditing = false; }} disabled={anyBusy}>Cancel</button>
-          <button type="button" class="dm-btn" onclick={saveCompose} disabled={anyBusy || !dirty}><Save size={13} /> Save</button>
+          <button type="button" class="dm-btn dm-btn-ghost" onclick={() => { composeEditing = false; }} disabled={anyBusy}>{m.common_cancel()}</button>
+          <button type="button" class="dm-btn" onclick={saveCompose} disabled={anyBusy || !dirty}><Save size={13} /> {m.common_save()}</button>
           {#if canDeploy}
-            <button type="button" class="dm-btn dm-btn-primary" onclick={saveAndRedeploy} disabled={anyBusy || !dirty}><Play size={13} /> Save &amp; deploy</button>
+            <button type="button" class="dm-btn dm-btn-primary" onclick={saveAndRedeploy} disabled={anyBusy || !dirty}><Play size={13} /> {m.stacks_d_save_deploy()}</button>
           {/if}
         {/if}
       </div>
@@ -1889,24 +1907,24 @@
 
     <!-- Environment -->
     {#if activeTab === 'environment' && envHidden}
-      <div class="dm-tbl"><div class="dm-empty">.env is hidden: reading it needs Deploy on this stack or the “See environment values” extra.</div></div>
+      <div class="dm-tbl"><div class="dm-empty">{m.stacks_d_env_hidden()}</div></div>
     {:else if activeTab === 'environment'}
       <div class="stk-toolbar">
-        <span class="dm-sub">{envRows.length} variable{envRows.length === 1 ? '' : 's'} in .env{#if dirty}<span class="stk-unsaved"> · unsaved</span>{/if}</span>
+        <span class="dm-sub">{m.stacks_d_n_variables({ count: envRows.length })}{#if dirty}<span class="stk-unsaved">{m.stacks_d_unsaved()}</span>{/if}</span>
         <span class="dm-sp"></span>
         <button type="button" class="dm-btn dm-btn-ghost" onclick={() => (envShowSecrets = !envShowSecrets)}>
-          {#if envShowSecrets}<EyeOff size={13} /> Hide secrets{:else}<Eye size={13} /> Show secrets{/if}
+          {#if envShowSecrets}<EyeOff size={13} /> {m.stacks_d_hide_secrets()}{:else}<Eye size={13} /> {m.stacks_d_show_secrets()}{/if}
         </button>
-        {#if canWrite}<button type="button" class="dm-btn" onclick={envAddRow}><Plus size={13} /> Add variable</button>{/if}
-        {#if dirty}<button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={anyBusy}><Save size={13} /> Save</button>{/if}
+        {#if canWrite}<button type="button" class="dm-btn" onclick={envAddRow}><Plus size={13} /> {m.stacks_d_add_variable()}</button>{/if}
+        {#if dirty}<button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={anyBusy}><Save size={13} /> {m.common_save()}</button>{/if}
       </div>
 
       {#if envRows.length === 0}
-        <div class="dm-tbl"><div class="dm-empty">No .env variables yet. Values referenced as <code>${'{KEY}'}</code> in compose are resolved at deploy time.</div></div>
+        <div class="dm-tbl"><div class="dm-empty">{m.stacks_d_no_env_before()} <code>${'{KEY}'}</code> {m.stacks_d_no_env_after()}</div></div>
       {:else}
         {@const ecols = 'minmax(160px, 0.9fr) minmax(200px, 1.6fr) minmax(120px, 0.8fr) 64px'}
         <div class="dm-tbl">
-          <div class="dm-tr dm-th" style="grid-template-columns: {ecols}"><span>Key</span><span>Value</span><span>Used by</span><span></span></div>
+          <div class="dm-tr dm-th" style="grid-template-columns: {ecols}"><span>{m.common_key()}</span><span>{m.common_value()}</span><span>{m.stacks_d_used_by()}</span><span></span></div>
           {#each envRows as row, i (i)}
             {@const isSec = isSecretKey(row.key)}
             {@const scopes = envScopeFor(compose, row.key)}
@@ -1914,30 +1932,30 @@
             <div class="dm-tr" style="grid-template-columns: {ecols}">
               <span class="dm-mono">
                 {#if editing}
-                  <input class="dm-input stk-cell-input" aria-label="Key" bind:value={envRows[i].key} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
+                  <input class="dm-input stk-cell-input" aria-label={m.common_key()} bind:value={envRows[i].key} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
                 {:else}{row.key}{/if}
               </span>
               <span class="dm-mono stk-val">
                 {#if editing}
-                  <input class="dm-input stk-cell-input" aria-label="Value" bind:value={envRows[i].value} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
+                  <input class="dm-input stk-cell-input" aria-label={m.common_value()} bind:value={envRows[i].value} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
                 {:else if isSec && !envShowSecrets}
                   ••••••••••
                 {:else if row.value}
                   <span title={row.value}>{row.value}</span>
                 {:else}
-                  <span class="dm-dim">(empty)</span>
+                  <span class="dm-dim">{m.stacks_d_empty()}</span>
                 {/if}
-                {#if isSec && !editing}<span class="stk-tag">secret</span>{/if}
+                {#if isSec && !editing}<span class="stk-tag">{m.stacks_d_secret()}</span>{/if}
               </span>
-              <span class="dm-trunc" title={scopes.join(', ')}>{#if scopes.length === 0}<span class="dm-dim">unused</span>{:else}{scopes.join(', ')}{/if}</span>
+              <span class="dm-trunc" title={scopes.join(', ')}>{#if scopes.length === 0}<span class="dm-dim">{m.templates_unused()}</span>{:else}{scopes.join(', ')}{/if}</span>
               <span class="dm-tr-menu stk-row-btns">
                 {#if canWrite}
                   {#if editing}
-                    <button type="button" class="stk-ibtn" onclick={envSaveEdit} title="Done" aria-label="Done editing"><CheckCircle2 size={13} /></button>
+                    <button type="button" class="stk-ibtn" onclick={envSaveEdit} title={m.common_done()} aria-label={m.stacks_d_done_editing()}><CheckCircle2 size={13} /></button>
                   {:else}
-                    <button type="button" class="stk-ibtn" onclick={() => (envEditingIdx = i)} title="Edit {row.key}" aria-label="Edit {row.key}"><Pencil size={12} /></button>
+                    <button type="button" class="stk-ibtn" onclick={() => (envEditingIdx = i)} title={m.stacks_d_edit_key({ key: row.key })} aria-label={m.stacks_d_edit_key({ key: row.key })}><Pencil size={12} /></button>
                   {/if}
-                  <button type="button" class="stk-ibtn danger" onclick={() => envDeleteRow(i)} title="Delete {row.key}" aria-label="Delete {row.key}"><Trash2 size={12} /></button>
+                  <button type="button" class="stk-ibtn danger" onclick={() => envDeleteRow(i)} title={m.stacks_d_delete_key({ key: row.key })} aria-label={m.stacks_d_delete_key({ key: row.key })}><Trash2 size={12} /></button>
                 {/if}
               </span>
             </div>
@@ -1946,16 +1964,16 @@
       {/if}
 
       <section>
-        <h2 class="dm-h2">Overlays</h2>
+        <h2 class="dm-h2">{m.stacks_d_overlays()}</h2>
         {#if !envs || envs.available.length === 0}
-          <p class="stk-line">No overlays. A <code>compose.&lt;env&gt;.yaml</code> next to compose.yaml shows up here.</p>
+          <p class="stk-line">{m.stacks_d_no_overlays_before()} <code>compose.&lt;env&gt;.yaml</code> {m.stacks_d_no_overlays_after()}</p>
         {:else}
           <p class="stk-line">
-            {#if envs.active}Deploys merge <code>compose.{envs.active}.yaml</code> on top of the base.{:else}Deploys use the base compose.yaml as it is.{/if}
+            {#if envs.active}{m.stacks_d_overlay_merge_before()} <code>compose.{envs.active}.yaml</code> {m.stacks_d_overlay_merge_after()}{:else}{m.stacks_d_overlay_base_only()}{/if}
           </p>
           {#if canDeploy}
             <div class="stk-tags">
-              <button type="button" class="stk-tag stk-pick" class:on={envs.active === ''} onclick={() => setActiveEnv('')} disabled={envBusy}>base</button>
+              <button type="button" class="stk-tag stk-pick" class:on={envs.active === ''} onclick={() => setActiveEnv('')} disabled={envBusy}>{m.stacks_d_base()}</button>
               {#each envs.available as e (e)}
                 <button type="button" class="stk-tag stk-pick" class:on={envs.active === e} onclick={() => setActiveEnv(e)} disabled={envBusy}>{e}</button>
               {/each}
@@ -1976,50 +1994,50 @@
             </button>
           {/each}
           {#if logServiceFilter.size > 0}
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logServiceFilter = new Set(); }}>Show all</button>
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logServiceFilter = new Set(); }}>{m.stacks_d_show_all()}</button>
           {/if}
         </div>
         <span class="dm-sp"></span>
         <button type="button" class="dm-btn dm-btn-sm" onclick={toggleLogTailing}>
-          {#if logTailing}<Square size={11} /> Pause{:else}<Play size={11} /> Follow{/if}
+          {#if logTailing}<Square size={11} /> {m.stacks_d_pause()}{:else}<Play size={11} /> {m.stacks_d_follow()}{/if}
         </button>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logLines = []; }}>Clear</button>
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logLines = []; }}>{m.stacks_d_clear()}</button>
       </div>
       <div class="stk-logs dm-mono" bind:this={logEl}>
         {#if visibleLogLines.length === 0}
-          <div class="dm-dim">{logSockets.size === 0 ? 'Not streaming. Press Follow to start.' : 'Waiting for the first line…'}</div>
+          <div class="dm-dim">{logSockets.size === 0 ? m.stacks_d_not_streaming() : m.stacks_d_waiting_line()}</div>
         {:else}
           {#each visibleLogLines as l, i (i)}
             {@const kind = logLevelKind(l.line)}
             <div class="stk-ln">
-              <span class="dm-dim" title={new Date(l.ts).toISOString()}>{new Date(l.ts).toLocaleTimeString()}</span>
+              <span class="dm-dim" title={new Date(l.ts).toISOString()}>{fmtTime(l.ts)}</span>
               <span class="stk-ln-svc" style:color={svcColor(l.service)}>{l.service}</span>
               <span class:warn={kind === 'warn'} class:bad={kind === 'err'} class:ok={kind === 'ok'}>{l.line}</span>
             </div>
           {/each}
         {/if}
       </div>
-      <p class="stk-line">Last {visibleLogLines.length} lines from {logSockets.size} container{logSockets.size === 1 ? '' : 's'} · keeps up to {LOG_BUFFER_MAX}.</p>
+      <p class="stk-line">{m.stacks_d_log_footer({ lines: visibleLogLines.length, containers: m.stacks_n_containers({ count: logSockets.size }), max: LOG_BUFFER_MAX })}</p>
     {/if}
 
     <!-- History -->
     {#if activeTab === 'history'}
       <div class="stk-toolbar">
-        <span class="dm-sub">{historyEntries.length} deploy{historyEntries.length === 1 ? '' : 's'}</span>
+        <span class="dm-sub">{m.stacks_d_n_deploys({ count: historyEntries.length })}</span>
         <span class="dm-sp"></span>
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={loadHistory} disabled={historyLoading}>
-          <RefreshCw size={12} class={historyLoading ? 'animate-spin' : ''} /> Refresh
+          <RefreshCw size={12} class={historyLoading ? 'animate-spin' : ''} /> {m.common_refresh()}
         </button>
       </div>
       {#if historyLoading && historyEntries.length === 0}
         <div class="stk-skel"><Skeleton width="100%" height="2.5rem" /><Skeleton width="100%" height="2.5rem" /></div>
       {:else if historyEntries.length === 0}
-        <div class="dm-tbl"><div class="dm-empty">No deploy history yet. The next successful deploy lands here and you can roll back to it.</div></div>
+        <div class="dm-tbl"><div class="dm-empty">{m.stacks_d_no_history()}</div></div>
       {:else}
         {@const hcols = '52px minmax(180px, 1.6fr) 110px 110px 70px 96px 150px'}
         <div class="dm-tbl">
           <div class="dm-tr dm-th" style="grid-template-columns: {hcols}">
-            <span>#</span><span>Change</span><span>By</span><span>When</span><span class="r">Took</span><span>Result</span><span></span>
+            <span>#</span><span>{m.stacks_d_col_change()}</span><span>{m.stacks_d_col_by()}</span><span>{m.stacks_d_col_when()}</span><span class="r">{m.stacks_d_col_took()}</span><span>{m.stacks_d_col_result()}</span><span></span>
           </div>
           {#each historyEntries as entry, i (entry.id)}
             {@const badge = deployTriggerBadge(entry.note)}
@@ -2032,29 +2050,29 @@
             <div class="dm-tr" style="grid-template-columns: {hcols}">
               <span class="dm-num dm-dim">#{entry.version}</span>
               <span class="dm-trunc" title={entry.note || badge.label}>
-                {badge.label}{#if entry.note && entry.note !== badge.label}<span class="dm-dim"> · {entry.note}</span>{/if}
+                {badge.label}{#if entry.note && entry.note !== badge.raw}<span class="dm-dim"> · {entry.note}</span>{/if}
                 {#if entry.git_commit_sha}
                   {@const url = buildGitCommitURL(gitSource?.repo_url ?? '', entry.git_commit_sha)}
                   {#if url}<a class="dm-mono stk-sha" href={url} target="_blank" rel="noopener">{entry.git_commit_sha.slice(0, 7)}</a>{:else}<code class="stk-sha">{entry.git_commit_sha.slice(0, 7)}</code>{/if}
                 {/if}
               </span>
               <span class="dm-trunc">{entry.deployed_by_name ?? '—'}</span>
-              <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
+              <span class="dm-num dm-dim" title={fmtDateTime(entry.deployed_at)}>{fmtAgo(entry.deployed_at)}</span>
               <span class="dm-num dm-dim r">{entry.duration_ms ? formatDuration(entry.duration_ms) : '—'}</span>
               <span>
-                {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />
-                {:else if i === 0}<StatusChip tone="ok" label="current" />
-                {:else}<StatusChip tone="off" label="success" />{/if}
+                {#if entry.success === false}<StatusChip tone="bad" label={m.stacks_d_chip_failed()} title={entry.error_message} />
+                {:else if i === 0}<StatusChip tone="ok" label={m.stacks_d_chip_current()} />
+                {:else}<StatusChip tone="off" label={m.stacks_d_chip_success()} />{/if}
               </span>
               <span class="dm-tr-menu stk-row-btns">
                 {#if entry.services && entry.services.length > 0}
-                  <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-expanded={open} onclick={() => (open ? collapseRow(entry.id) : expandRow(entry.id))} title="Images per service">
+                  <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-expanded={open} onclick={() => (open ? collapseRow(entry.id) : expandRow(entry.id))} title={m.stacks_d_images_per_service()}>
                     {entry.services.length}{changed.length ? ` · ${changed.length}Δ` : ''}
                   </button>
                 {/if}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => openYaml(entry.id)}>Compose</button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => openYaml(entry.id)}>{m.stacks_d_tab_compose()}</button>
                 {#if canDeploy && i !== 0}
-                  <button type="button" class="dm-btn dm-btn-sm" onclick={() => openRollbackConfirm(entry.id)}>Roll back</button>
+                  <button type="button" class="dm-btn dm-btn-sm" onclick={() => openRollbackConfirm(entry.id)}>{m.stacks_d_roll_back()}</button>
                 {/if}
               </span>
             </div>
@@ -2066,7 +2084,7 @@
                   <div class:stk-changed={isChanged}>
                     <span>{svc.service}</span>
                     <code title={svc.image}>{parts.host ? parts.host + '/' : ''}{parts.repo}:<b>{parts.tag}</b></code>
-                    {#if isChanged}<span class="stk-delta" title="Changed vs #{historyEntries[i + 1]?.version}">changed</span>{/if}
+                    {#if isChanged}<span class="stk-delta" title={m.stacks_d_changed_vs({ version: historyEntries[i + 1]?.version ?? '' })}>{m.stacks_d_changed()}</span>{/if}
                   </div>
                 {/each}
               </div>
@@ -2081,66 +2099,66 @@
       <div class="stk-settings">
         <div class="dm-form-sec">
           <div>
-            <h4>Git source</h4>
-            <p>Sync compose.yaml and .env from a repository, deploy on push or on demand.</p>
+            <h4>{m.stacks_d_git_source()}</h4>
+            <p>{m.stacks_d_git_source_desc()}</p>
           </div>
           <div>
             {#if gitLoading}
-              <span class="dm-dim">Loading…</span>
+              <span class="dm-dim">{m.common_loading()}</span>
             {:else if gitSource}
               <dl class="dm-kv stk-git">
-                <dt>Repository</dt><dd class="dm-mono">{gitSource.repo_url}</dd>
-                <dt>Branch</dt><dd class="dm-mono">{gitSource.branch}{gitSource.path_in_repo && gitSource.path_in_repo !== '.' ? ` · ${gitSource.path_in_repo}` : ''}</dd>
-                <dt>Deploy</dt><dd>{gitSource.auto_deploy ? 'automatically after each sync' : 'manually'} · webhook {gitSource.has_webhook_secret ? 'on' : 'off (no secret set)'}</dd>
-                <dt>Last sync</dt>
+                <dt>{m.stacks_d_repository()}</dt><dd class="dm-mono">{gitSource.repo_url}</dd>
+                <dt>{m.stacks_git_branch()}</dt><dd class="dm-mono">{gitSource.branch}{gitSource.path_in_repo && gitSource.path_in_repo !== '.' ? ` · ${gitSource.path_in_repo}` : ''}</dd>
+                <dt>{m.common_deploy()}</dt><dd>{gitSource.auto_deploy ? m.stacks_d_auto_after_sync() : m.stacks_d_manually()} · {gitSource.has_webhook_secret ? m.stacks_d_webhook_on() : m.stacks_d_webhook_off()}</dd>
+                <dt>{m.stacks_d_last_sync()}</dt>
                 <dd>
-                  {#if gitSource.last_sync_sha}<code>{gitSource.last_sync_sha.slice(0, 7)}</code>{#if gitSource.last_sync_at} · {new Date(gitSource.last_sync_at).toLocaleString()}{/if}{:else}never{/if}
+                  {#if gitSource.last_sync_sha}<code>{gitSource.last_sync_sha.slice(0, 7)}</code>{#if gitSource.last_sync_at} · {fmtDateTime(gitSource.last_sync_at)}{/if}{:else}{m.common_never()}{/if}
                   {#if gitSource.last_sync_error}<div class="stk-bad">{gitSource.last_sync_error}</div>{/if}
                 </dd>
               </dl>
               {#if canWrite}
                 <div class="stk-btns">
-                  <button type="button" class="dm-btn" onclick={syncNow} disabled={gitBusy}><RefreshCw size={12} class={gitBusy ? 'animate-spin' : ''} /> Sync now</button>
-                  <button type="button" class="dm-btn" onclick={openGitDialog} disabled={gitBusy}><Pencil size={12} /> Edit</button>
-                  <button type="button" class="dm-btn dm-btn-ghost" onclick={disconnectGit} disabled={gitBusy}><Unlink size={12} /> Disconnect</button>
+                  <button type="button" class="dm-btn" onclick={syncNow} disabled={gitBusy}><RefreshCw size={12} class={gitBusy ? 'animate-spin' : ''} /> {m.stacks_d_sync_now()}</button>
+                  <button type="button" class="dm-btn" onclick={openGitDialog} disabled={gitBusy}><Pencil size={12} /> {m.common_edit()}</button>
+                  <button type="button" class="dm-btn dm-btn-ghost" onclick={disconnectGit} disabled={gitBusy}><Unlink size={12} /> {m.stacks_d_disconnect()}</button>
                 </div>
               {/if}
             {:else if canWrite}
-              <button type="button" class="dm-btn" onclick={openGitDialog}><LinkIcon size={12} /> Connect a repository</button>
+              <button type="button" class="dm-btn" onclick={openGitDialog}><LinkIcon size={12} /> {m.stacks_d_connect_repo()}</button>
             {:else}
-              <span class="dm-dim">Not connected.</span>
+              <span class="dm-dim">{m.stacks_d_not_connected()}</span>
             {/if}
           </div>
         </div>
 
         <div class="dm-form-sec">
           <div>
-            <h4>Dependencies</h4>
-            <p>The stacks this one needs and the stacks that need it.</p>
+            <h4>{m.stacks_d_dependencies()}</h4>
+            <p>{m.stacks_d_deps_desc()}</p>
           </div>
           <div>
             {#if !deps || (deps.depends_on.length === 0 && deps.dependents.length === 0)}
-              <span class="dm-dim">No prerequisites or dependents.</span>
+              <span class="dm-dim">{m.stacks_d_no_deps()}</span>
             {:else}
               <dl class="dm-kv">
-                {#if deps.depends_on.length > 0}<dt>Needs</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
-                {#if deps.dependents.length > 0}<dt>Needed by</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
+                {#if deps.depends_on.length > 0}<dt>{m.stacks_d_needs()}</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
+                {#if deps.dependents.length > 0}<dt>{m.stacks_d_needed_by()}</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
               </dl>
             {/if}
-            {#if canDeploy}<button type="button" class="dm-btn" onclick={openDepsEditor}>Edit dependencies</button>{/if}
+            {#if canDeploy}<button type="button" class="dm-btn" onclick={openDepsEditor}>{m.stacks_d_edit_deps()}</button>{/if}
           </div>
         </div>
 
         <div class="dm-form-sec">
           <div>
-            <h4 class="stk-bad">Delete this stack</h4>
+            <h4 class="stk-bad">{m.stacks_d_delete_this()}</h4>
             <p>
-              Stops {services.length} service{services.length === 1 ? '' : 's'}, removes the containers, deletes
-              <code>stacks/{name}/</code> and its deploy history. Networks, volumes and images are only removed if you choose so next.
+              {m.stacks_d_delete_desc_before({ services: m.stacks_d_n_services({ count: services.length }) })}
+              <code>stacks/{name}/</code> {m.stacks_d_delete_desc_after()}
             </p>
           </div>
           <div>
-            <button type="button" class="dm-btn dm-btn-danger" onclick={openDelete} disabled={anyBusy}><Trash2 size={13} /> Delete stack…</button>
+            <button type="button" class="dm-btn dm-btn-danger" onclick={openDelete} disabled={anyBusy}><Trash2 size={13} /> {m.stacks_d_delete_stack()}</button>
           </div>
         </div>
       </div>
@@ -2149,7 +2167,7 @@
 </section>
 
 <!-- View YAML snapshot modal -->
-<Modal bind:open={showYaml} title={yamlEntry ? `Deploy #${yamlEntry.version} — ${new Date(yamlEntry.deployed_at).toLocaleString()}` : 'Deploy snapshot'} maxWidth="max-w-3xl">
+<Modal bind:open={showYaml} title={yamlEntry ? m.stacks_d_snapshot_title({ version: yamlEntry.version, date: fmtDateTime(yamlEntry.deployed_at) }) : m.stacks_d_snapshot()} maxWidth="max-w-3xl">
   {#if yamlEntry}
     <div class="space-y-3">
       <div class="text-xs text-[var(--fg-muted)] flex items-center gap-3 flex-wrap">
@@ -2165,7 +2183,7 @@
       </div>
       {#if yamlEntry.services && yamlEntry.services.length > 0}
         <div class="text-xs space-y-0.5 border border-[var(--border)] rounded-md p-3 bg-[var(--surface)]">
-          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">Resolved images</div>
+          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">{m.stacks_d_resolved_images()}</div>
           {#each yamlEntry.services as svc}
             <div class="font-mono flex gap-2">
               <span class="text-[var(--fg-muted)]">{svc.service}</span>
@@ -2184,7 +2202,7 @@
             class:bg-[var(--bg)]={yamlMode === 'raw'}
             class:font-medium={yamlMode === 'raw'}
             onclick={() => (yamlMode = 'raw')}
-          >Raw compose</button>
+          >{m.stacks_d_raw_compose()}</button>
           <button
             type="button"
             class="px-2 py-1 text-xs rounded transition"
@@ -2193,12 +2211,12 @@
             onclick={showYamlDiff}
             disabled={yamlDiffLoading}
           >
-            Diff vs #{yamlEntry.version - 1}
+            {m.stacks_d_diff_vs({ version: yamlEntry.version - 1 })}
           </button>
         </div>
         {#if yamlMode === 'diff' && yamlPrevEntry}
           <span class="text-xs text-[var(--fg-muted)]">
-            comparing against {new Date(yamlPrevEntry.deployed_at).toLocaleString()}
+            {m.stacks_d_comparing({ date: fmtDateTime(yamlPrevEntry.deployed_at) })}
           </span>
         {/if}
       </div>
@@ -2221,20 +2239,20 @@
     </div>
   {/if}
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showYaml = false)}>Close</Button>
+    <Button variant="secondary" onclick={() => (showYaml = false)}>{m.common_close()}</Button>
   {/snippet}
 </Modal>
 
 <!-- Dependencies editor modal -->
-<Modal bind:open={showDepsEditor} title="Dependencies for {name}" maxWidth="max-w-lg">
+<Modal bind:open={showDepsEditor} title={m.stacks_d_deps_title({ name })} maxWidth="max-w-lg">
   <div class="space-y-4 text-sm">
     <div class="text-xs text-[var(--fg-muted)]">
-      Stacks listed here will be deployed first (if they aren't already running) whenever you deploy
-      <span class="font-mono">{name}</span>. Deep chains deploy bottom-up. Cycles are rejected.
+      {m.stacks_d_deps_intro_before()}
+      <span class="font-mono">{name}</span>{m.stacks_d_deps_intro_after()}
     </div>
     <div class="space-y-2">
       {#if depsEditList.length === 0}
-        <div class="text-xs text-[var(--fg-muted)]">No prerequisites yet.</div>
+        <div class="text-xs text-[var(--fg-muted)]">{m.stacks_d_no_prereq()}</div>
       {:else}
         <div class="flex flex-wrap gap-1.5">
           {#each depsEditList as d}
@@ -2243,8 +2261,8 @@
               <button
                 class="text-[var(--fg-muted)] hover:text-[var(--color-danger-400)]"
                 onclick={() => depRemove(d)}
-                title="Remove"
-                aria-label="Remove {d}"
+                title={m.common_remove()}
+                aria-label={m.templates_remove_named({ name: d })}
               >
                 <X class="w-3 h-3" />
               </button>
@@ -2254,14 +2272,14 @@
       {/if}
     </div>
     <div class="space-y-1">
-      <label class="text-xs font-medium text-[var(--fg-muted)]" for="dep-picker">Add a dependency</label>
+      <label class="text-xs font-medium text-[var(--fg-muted)]" for="dep-picker">{m.stacks_d_add_dep()}</label>
       <div class="flex gap-2">
         <input
           id="dep-picker"
           class="dm-input flex-1"
           list="dep-stack-options"
           bind:value={depsNewEntry}
-          placeholder="Pick a stack…"
+          placeholder={m.stacks_d_pick_stack()}
           onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); depAdd(depsNewEntry); } }}
         />
         <datalist id="dep-stack-options">
@@ -2271,53 +2289,51 @@
         </datalist>
         <Button variant="secondary" onclick={() => depAdd(depsNewEntry)} disabled={!depsNewEntry.trim()}>
           <Plus class="w-3.5 h-3.5" />
-          Add
+          {m.common_add()}
         </Button>
       </div>
       <div class="text-[11px] text-[var(--fg-muted)]">
-        Unknown stack names are accepted — declaring an edge for a stack you haven't created yet is fine.
+        {m.stacks_d_unknown_ok()}
       </div>
     </div>
   </div>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showDepsEditor = false)} disabled={depsBusy}>Cancel</Button>
-    <Button variant="primary" onclick={saveDeps} loading={depsBusy} disabled={depsBusy}>Save</Button>
+    <Button variant="secondary" onclick={() => (showDepsEditor = false)} disabled={depsBusy}>{m.common_cancel()}</Button>
+    <Button variant="primary" onclick={saveDeps} loading={depsBusy} disabled={depsBusy}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 
 <!-- Rollback confirm modal -->
-<Modal bind:open={showRollbackConfirm} title="Roll back to deploy #{rollbackEntry?.version}" maxWidth="max-w-lg">
+<Modal bind:open={showRollbackConfirm} title={m.stacks_d_rollback_title({ version: rollbackEntry?.version ?? '' })} maxWidth="max-w-lg">
   {#if rollbackEntry}
     <div class="space-y-4 text-sm">
       <div class="flex items-start gap-3 p-3 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)]">
         <AlertTriangle class="w-4 h-4 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
         <div class="space-y-1">
           <div>
-            This will overwrite <span class="font-mono">compose.yaml</span> with the snapshot from
-            <span class="font-medium">{new Date(rollbackEntry.deployed_at).toLocaleString()}</span>
-            and redeploy the stack.
+            {m.stacks_d_rb_overwrite()} <span class="font-mono">compose.yaml</span> {m.stacks_d_rb_snapshot_from()}
+            <span class="font-medium">{fmtDateTime(rollbackEntry.deployed_at)}</span>
+            {m.stacks_d_rb_redeploy()}
           </div>
           <div class="text-xs text-[var(--fg-muted)]">
-            Your current <span class="font-mono">.env</span> is kept as-is — secrets added or changed
-            since this deploy will still use their current values. If you need to roll env back too,
-            restore it manually after rollback.
+            {m.stacks_d_rb_env_before()} <span class="font-mono">.env</span> {m.stacks_d_rb_env_after()}
           </div>
           {#if rollbackEntry.environment}
             <div class="text-xs text-[var(--fg-muted)]">
-              This deploy used the <span class="font-mono">{rollbackEntry.environment}</span> environment;
-              the current <span class="font-mono">compose.{rollbackEntry.environment}.yaml</span> is applied again.
+              {m.stacks_d_rb_envused_before()} <span class="font-mono">{rollbackEntry.environment}</span>{m.stacks_d_rb_envused_mid()}
+              <span class="font-mono">compose.{rollbackEntry.environment}.yaml</span> {m.stacks_d_rb_envused_after()}
             </div>
           {/if}
         </div>
       </div>
       {#if !rollbackEntry.compose_yaml}
         <div class="text-xs text-[var(--color-danger-400)]">
-          This deploy's compose snapshot was removed because it contained .env values. Roll back to another deploy.
+          {m.stacks_d_rb_no_snapshot()}
         </div>
       {/if}
       {#if rollbackEntry.services && rollbackEntry.services.length > 0}
         <div class="text-xs space-y-0.5 border border-[var(--border)] rounded-md p-3 bg-[var(--surface)]">
-          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">Images that will be redeployed</div>
+          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">{m.stacks_d_rb_images()}</div>
           {#each rollbackEntry.services as svc}
             <div class="font-mono flex gap-2">
               <span class="text-[var(--fg-muted)]">{svc.service}</span>
@@ -2329,20 +2345,20 @@
     </div>
   {/if}
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showRollbackConfirm = false)} disabled={rollbackBusy}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showRollbackConfirm = false)} disabled={rollbackBusy}>{m.common_cancel()}</Button>
     <Button variant="primary" onclick={doRollback} loading={rollbackBusy} disabled={rollbackBusy || !rollbackEntry?.compose_yaml}>
       <RotateCcw class="w-4 h-4" />
-      Roll back
+      {m.stacks_d_roll_back()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- Scale modal -->
-<Modal bind:open={showScale} title="Scale {scaleTarget}" maxWidth="max-w-sm">
+<Modal bind:open={showScale} title={m.stacks_d_scale_title({ service: scaleTarget })} maxWidth="max-w-sm">
   <div class="space-y-4">
     <div>
       <label for="scale-slider" class="block text-xs font-medium text-[var(--fg-muted)] mb-2">
-        Replicas: <span class="text-[var(--fg)] font-bold text-lg">{scaleValue}</span>
+        {m.stacks_d_replicas()} <span class="text-[var(--fg)] font-bold text-lg">{scaleValue}</span>
       </label>
       <input
         id="scale-slider"
@@ -2361,14 +2377,14 @@
     {#if scaleCheck?.has_container_name}
       <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
         <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
-        <div>This service has <code class="font-mono">container_name</code> set. Remove it in the compose file to allow scaling beyond 1.</div>
+        <div>{m.stacks_d_scale_cname_before()} <code class="font-mono">container_name</code> {m.stacks_d_scale_cname_after()}</div>
       </div>
     {/if}
 
     {#if scaleCheck?.has_hard_port}
       <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
         <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
-        <div>Hard-coded host port <code class="font-mono">{scaleCheck.hard_port_detail}</code>. Use a port range or remove the binding to scale beyond 1.</div>
+        <div>{m.stacks_d_scale_port_before()} <code class="font-mono">{scaleCheck.hard_port_detail}</code>{m.stacks_d_scale_port_after()}</div>
       </div>
     {/if}
 
@@ -2377,58 +2393,57 @@
         <div class="flex items-start gap-2">
           <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
           <div>
-            This service looks like a database (<strong>{scaleCheck.stateful_image}</strong>) with mounted volumes.
-            Scaling may cause data corruption.
+            {m.stacks_d_scale_db_before()}<strong>{scaleCheck.stateful_image}</strong>{m.stacks_d_scale_db_after()}
           </div>
         </div>
         <label class="flex items-center gap-2 mt-2 cursor-pointer">
           <input type="checkbox" bind:checked={scaleForce} class="rounded" />
-          <span>I understand the risk — proceed anyway</span>
+          <span>{m.stacks_d_scale_risk()}</span>
         </label>
       </div>
     {/if}
   </div>
 
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showScale = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showScale = false)}>{m.common_cancel()}</Button>
     <Button
       variant="primary"
       loading={scaleBusy}
       disabled={scaleBusy || (scaleValue > 1 && (scaleCheck?.has_container_name || scaleCheck?.has_hard_port)) || (scaleCheck?.is_stateful && scaleValue > 1 && !scaleForce)}
       onclick={doScale}
     >
-      Scale to {scaleValue}
+      {m.stacks_d_scale_to({ count: scaleValue })}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- Rolling update modal -->
-<Modal bind:open={showRolling} title="Rolling update: {rollingTarget}" maxWidth="max-w-md">
+<Modal bind:open={showRolling} title={m.stacks_d_rolling_title({ service: rollingTarget })} maxWidth="max-w-md">
   <div class="space-y-3">
     <p class="text-xs text-[var(--fg-muted)]">
-      Replaces every replica of <span class="font-mono">{rollingTarget}</span> one batch at a time. The container count stays the same; use Scale to change replica count.
+      {m.stacks_d_rolling_intro_before()} <span class="font-mono">{rollingTarget}</span> {m.stacks_d_rolling_intro_after()}
     </p>
     <div>
-      <label for="rolling-order" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Order</label>
+      <label for="rolling-order" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.stacks_d_order()}</label>
       <select id="rolling-order" class="dm-input" bind:value={rollingOrder}>
-        <option value="stop-first">stop-first (stop old, then start new)</option>
-        <option value="start-first">start-first (start new, then stop old)</option>
+        <option value="stop-first">{m.stacks_d_order_stop_first()}</option>
+        <option value="start-first">{m.stacks_d_order_start_first()}</option>
       </select>
       <p class="text-xs text-[var(--fg-muted)] mt-1">
-        start-first needs no hard host-port or container_name — it'll briefly run 2× the replicas.
+        {m.stacks_d_order_hint()}
       </p>
     </div>
     <div>
-      <label for="rolling-parallel" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Parallelism</label>
+      <label for="rolling-parallel" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.stacks_d_parallelism()}</label>
       <input id="rolling-parallel" type="number" min="1" max="10" class="dm-input" bind:value={rollingParallel} />
-      <p class="text-xs text-[var(--fg-muted)] mt-1">How many replicas to replace at once. 1 = safest.</p>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">{m.stacks_d_parallelism_hint()}</p>
     </div>
     <div>
-      <label for="rolling-failure" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">On failure</label>
+      <label for="rolling-failure" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.stacks_d_on_failure()}</label>
       <select id="rolling-failure" class="dm-input" bind:value={rollingFailure}>
-        <option value="pause">pause — stop at first failed replica</option>
-        <option value="continue">continue — replace remaining anyway</option>
-        <option value="rollback">rollback — restart old replicas and abort</option>
+        <option value="pause">{m.stacks_d_fail_pause()}</option>
+        <option value="continue">{m.stacks_d_fail_continue()}</option>
+        <option value="rollback">{m.stacks_d_fail_rollback()}</option>
       </select>
     </div>
     {#if rollingErr}
@@ -2439,40 +2454,40 @@
     {/if}
   </div>
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showRolling = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showRolling = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" loading={rollingBusy} disabled={rollingBusy} onclick={doRolling}>
-      <Repeat class="w-3.5 h-3.5" /> Roll
+      <Repeat class="w-3.5 h-3.5" /> {m.stacks_d_roll()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- Migrate modal -->
-<Modal bind:open={showMigrate} title="Migrate {name}" maxWidth="max-w-lg">
+<Modal bind:open={showMigrate} title={m.stacks_d_migrate_title({ name })} maxWidth="max-w-lg">
   <div class="space-y-4">
     <div>
-      <label for="migrate-target" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Target host</label>
+      <label for="migrate-target" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.templates_dd_target_host()}</label>
       <select
         id="migrate-target"
         class="dm-input text-sm"
         bind:value={migrateTarget}
         onchange={() => { migratePreflight = null; if (migrateTarget) runPreflight(); }}
       >
-        <option value="">Select a host…</option>
+        <option value="">{m.stacks_d_select_host()}</option>
         {#each hosts.available.filter(h => h.id !== stackHost && h.id !== 'all') as h}
-          <option value={h.id} disabled={h.status !== 'online'}>{h.name} {h.status !== 'online' ? `(${h.status})` : ''}</option>
+          <option value={h.id} disabled={h.status !== 'online'}>{h.name} {h.status !== 'online' ? `(${h.status === 'offline' ? m.common_offline() : h.status})` : ''}</option>
         {/each}
       </select>
     </div>
 
     {#if migratePreflightLoading}
       <div class="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
-        <Loader2 class="w-4 h-4 animate-spin" /> Running pre-flight checks…
+        <Loader2 class="w-4 h-4 animate-spin" /> {m.stacks_d_running_preflight()}
       </div>
     {/if}
 
     {#if migratePreflight}
       <div class="space-y-1.5">
-        <div class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Pre-flight checks</div>
+        <div class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">{m.stacks_d_preflight()}</div>
         {#each migratePreflight.checks as check}
           <div class="flex items-center gap-2 text-xs">
             {#if check.passed}
@@ -2490,19 +2505,18 @@
 
       {#if !migratePreflight.passed}
         <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)]">
-          Pre-flight checks failed. Fix the issues above before migrating.
+          {m.stacks_d_preflight_failed_hint()}
         </div>
       {/if}
     {/if}
 
     <p class="text-xs text-[var(--fg-muted)]">
-      The stack will be <strong>stopped</strong> on the current host during transfer (Safe Mode).
-      Downtime depends on volume size.
+      {m.stacks_d_migrate_note_before()} <strong>{m.stacks_d_migrate_stopped()}</strong> {m.stacks_d_migrate_note_after()}
     </p>
   </div>
 
   {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showMigrate = false)}>Cancel</Button>
+    <Button variant="secondary" onclick={() => (showMigrate = false)}>{m.common_cancel()}</Button>
     <Button
       variant="primary"
       loading={migrateBusy}
@@ -2510,107 +2524,107 @@
       onclick={startMigration}
     >
       <ArrowRightLeft class="w-4 h-4" />
-      Start migration
+      {m.stacks_d_start_migration()}
     </Button>
   {/snippet}
 </Modal>
 
 <!-- Git source configure dialog -->
-<Modal bind:open={showGitDialog} title={gitSource ? 'Edit git source' : 'Connect a git repository'} maxWidth="max-w-lg">
+<Modal bind:open={showGitDialog} title={gitSource ? m.stacks_d_edit_git() : m.stacks_d_connect_git()} maxWidth="max-w-lg">
   <form onsubmit={saveGitSource} id="git-form" class="space-y-4">
     <div>
-      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-repo">Repository URL</label>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-repo">{m.stacks_git_repo_url()}</label>
       <input id="git-repo" class="dm-input" placeholder="https://github.com/acme/stack.git" bind:value={gitForm.repo_url} />
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-branch">Branch</label>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-branch">{m.stacks_git_branch()}</label>
         <input id="git-branch" class="dm-input" bind:value={gitForm.branch as any} />
       </div>
       <div>
-        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-path">Path in repo</label>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-path">{m.stacks_git_path()}</label>
         <input id="git-path" class="dm-input" placeholder="." bind:value={gitForm.path_in_repo as any} />
       </div>
     </div>
     <div>
-      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-auth">Authentication</label>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-auth">{m.stacks_git_auth()}</label>
       <select id="git-auth" class="dm-input" bind:value={gitForm.auth_kind as any}>
-        <option value="none">None (public repo)</option>
-        <option value="http">HTTPS username + password / token</option>
-        <option value="ssh">SSH private key</option>
+        <option value="none">{m.stacks_git_auth_none()}</option>
+        <option value="http">{m.stacks_d_auth_http()}</option>
+        <option value="ssh">{m.stacks_d_auth_ssh()}</option>
       </select>
     </div>
     {#if gitForm.auth_kind === 'http'}
       <div>
-        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-user">Username</label>
-        <input id="git-user" class="dm-input" placeholder="your-github-username" bind:value={gitForm.username as any} />
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-user">{m.stacks_git_username()}</label>
+        <input id="git-user" class="dm-input" placeholder={m.stacks_git_username_placeholder()} bind:value={gitForm.username as any} />
       </div>
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-pass">
-          Personal access token
-          {#if gitSource?.has_password}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
+          {m.stacks_git_pat()}
+          {#if gitSource?.has_password}<span class="font-normal normal-case">{m.stacks_d_keep_existing()}</span>{/if}
         </label>
-        <input id="git-pass" type="password" class="dm-input" placeholder="ghp_… or github_pat_…" bind:value={gitForm.password as any} />
+        <input id="git-pass" type="password" class="dm-input" placeholder={m.stacks_git_pat_or()} bind:value={gitForm.password as any} />
       </div>
       {#if gitForm.repo_url && /github\.com/.test(gitForm.repo_url)}
         <div class="text-xs text-[var(--fg-muted)] leading-relaxed">
-          <strong class="text-[var(--fg)]">GitHub requires a PAT</strong>, not your account password.
+          <strong class="text-[var(--fg)]">{m.stacks_d_gh_pat()}</strong>{m.stacks_d_gh_not_password()}
           <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener" class="underline">
-            Create one
+            {m.stacks_d_gh_create()}
           </a>
-          with <code class="font-mono">Contents: Read-only</code> permission on this repo.
+          {m.stacks_d_gh_with()} <code class="font-mono">Contents: Read-only</code> {m.stacks_d_gh_permission()}
         </div>
       {/if}
     {:else if gitForm.auth_kind === 'ssh'}
       <div>
-        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-sshuser">SSH user</label>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-sshuser">{m.stacks_git_ssh_user()}</label>
         <input id="git-sshuser" class="dm-input" placeholder="git" bind:value={gitForm.username as any} />
       </div>
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-sshkey">
-          Private key (PEM)
-          {#if gitSource?.has_ssh_key}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
+          {m.stacks_d_private_key_pem()}
+          {#if gitSource?.has_ssh_key}<span class="font-normal normal-case">{m.stacks_d_keep_existing()}</span>{/if}
         </label>
         <textarea id="git-sshkey" class="dm-input font-mono text-xs" rows="5" bind:value={gitForm.ssh_key as any}></textarea>
       </div>
     {/if}
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-poll">Poll interval (sec)</label>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-poll">{m.stacks_d_poll_sec()}</label>
         <input id="git-poll" type="number" min="0" class="dm-input" bind:value={gitForm.poll_interval_sec as any} />
-        <p class="text-xs text-[var(--fg-muted)] mt-1">60+ sec, or 0 for manual / webhook-only.</p>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">{m.stacks_d_poll_hint()}</p>
       </div>
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-webhook">
-          Webhook secret (HMAC)
-          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
+          {m.stacks_d_webhook_hmac()}
+          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">{m.stacks_d_keep_existing()}</span>{/if}
         </label>
         <div class="flex gap-2">
           <input id="git-webhook" type="text" autocomplete="off" class="dm-input font-mono text-xs" bind:value={gitForm.webhook_secret as any} />
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={generateWebhookSecret}>Generate</button>
+          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={generateWebhookSecret}>{m.stacks_d_generate()}</button>
         </div>
-        <p class="text-xs text-[var(--fg-muted)] mt-1">Required for webhooks. Copy it into your git provider; it is not shown again.</p>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">{m.stacks_d_webhook_hint()}</p>
       </div>
     </div>
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" bind:checked={gitForm.auto_deploy as any} />
-      Auto-deploy on new commits
+      {m.stacks_git_auto_deploy()}
     </label>
     {#if gitSource}
       <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded p-2 border border-[var(--border)]">
-        <p class="font-medium text-[var(--fg)] mb-1">Webhook URL</p>
+        <p class="font-medium text-[var(--fg)] mb-1">{m.stacks_d_webhook_url()}</p>
         <code class="text-[11px] font-mono break-all">POST {location.origin}/api/v1/stacks/{name}/git/webhook</code>
         {#if !gitSource.has_webhook_secret && !gitForm.webhook_secret}
-          <p class="mt-1 text-[var(--color-warning-400)]">Disabled until a webhook secret is set.</p>
+          <p class="mt-1 text-[var(--color-warning-400)]">{m.stacks_d_webhook_disabled_until()}</p>
         {/if}
       </div>
     {/if}
   </form>
   {#snippet footer()}
-    <Button variant="ghost" onclick={() => (showGitDialog = false)}>Cancel</Button>
+    <Button variant="ghost" onclick={() => (showGitDialog = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" onclick={saveGitSource} disabled={gitBusy || !gitForm.repo_url}>
       <LinkIcon class="w-3.5 h-3.5" />
-      {gitBusy ? 'Saving…' : gitSource ? 'Save' : 'Connect & sync'}
+      {gitBusy ? m.common_saving() : gitSource ? m.common_save() : m.stacks_d_connect_sync()}
     </Button>
   {/snippet}
 </Modal>

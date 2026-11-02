@@ -7,6 +7,7 @@
   import { Field } from '$lib/components/editorial';
   import { Copy } from 'lucide-svelte';
   import GroupMappingList from './_GroupMappingList.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   interface Props {
     config: OAuth2Config;
@@ -38,7 +39,7 @@
   </div>
 {/if}
 
-<Field label="Authorization URL" hint="OAuth 2.0 authorization endpoint.">
+<Field label={m.authn_authorization_url()} hint={m.authn_authorization_url_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.authorization_url}
@@ -46,7 +47,7 @@
   />
 </Field>
 
-<Field label="Token URL" hint="Where the code is exchanged for an access token.">
+<Field label={m.authn_token_url()} hint={m.authn_token_url_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.token_url}
@@ -54,7 +55,7 @@
   />
 </Field>
 
-<Field label="Userinfo URL" hint="Endpoint returning the authenticated user's profile JSON.">
+<Field label={m.authn_userinfo_url()} hint={m.authn_userinfo_url_hint()}>
   <input
     class="dm-input acc-input-mono"
     bind:value={config.userinfo_url}
@@ -63,12 +64,12 @@
 </Field>
 
 <div class="oa-grid-2">
-  <Field label="Client ID">
+  <Field label={m.authn_client_id()}>
     <input class="dm-input acc-input-mono" bind:value={config.client_id} />
   </Field>
   <Field
-    label={editing ? 'Client secret (leave blank to keep)' : 'Client secret'}
-    hint="Stored encrypted at rest."
+    label={editing ? m.authn_client_secret_keep() : m.authn_client_secret()}
+    hint={m.authn_stored_encrypted()}
   >
     <input
       class="dm-input acc-input-mono"
@@ -79,25 +80,25 @@
   </Field>
 </div>
 
-<Field label="Scopes" hint="Space-separated, as the provider expects them.">
+<Field label={m.authn_scopes()} hint={m.authn_oauth2_scopes_hint()}>
   <input class="dm-input acc-input-mono" bind:value={config.scopes} />
 </Field>
 
-<div class="oa-fieldset">User-info attribute mapping</div>
+<div class="oa-fieldset">{m.authn_userinfo_mapping()}</div>
 <Field
-  label="Subject field"
-  hint="Immutable user id in the userinfo JSON that accounts are keyed by. Empty: sub, else id. Never use a login name or email, which can be renamed and reused."
+  label={m.authn_subject_field()}
+  hint={m.authn_subject_field_hint()}
 >
-  <input class="dm-input acc-input-mono" bind:value={config.subject_field} placeholder="sub, else id" />
+  <input class="dm-input acc-input-mono" bind:value={config.subject_field} placeholder={m.authn_subject_field_ph()} />
 </Field>
 <div class="oa-grid-3">
-  <Field label="Username field" hint="Property in userinfo JSON.">
+  <Field label={m.authn_username_field()} hint={m.authn_username_field_hint()}>
     <input class="dm-input acc-input-mono" bind:value={config.username_field} placeholder="login" />
   </Field>
-  <Field label="Email field">
+  <Field label={m.authn_email_field()}>
     <input class="dm-input acc-input-mono" bind:value={config.email_field} placeholder="email" />
   </Field>
-  <Field label="Groups field" hint="Optional; some providers need a separate /orgs lookup.">
+  <Field label={m.authn_groups_field()} hint={m.authn_groups_field_hint()}>
     <input class="dm-input acc-input-mono" bind:value={config.groups_field} placeholder="groups" />
   </Field>
 </div>
@@ -109,14 +110,14 @@
   groupClaim={config.groups_field}
 />
 
-<Field label="Callback URL" hint="Configure this on the provider side.">
+<Field label={m.authn_callback_url()} hint={m.authn_callback_url_hint()}>
   {#snippet right()}
     <button
       type="button"
       class="dm-btn dm-btn-ghost dm-btn-xs"
       onclick={() => onCopy(callbackUrl)}
     >
-      <Copy size={11} strokeWidth={1.5} /> copy
+      <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
     </button>
   {/snippet}
   <input class="dm-input acc-input-mono" readonly value={callbackUrl} />

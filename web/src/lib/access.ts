@@ -1,4 +1,5 @@
 import type { Assignment, CustomRole, RoleCatalog, Scope } from './api';
+import { m } from '$lib/paraglide/messages.js';
 
 export type HostNames = Record<string, string>;
 
@@ -6,13 +7,13 @@ export function scopeLabel(s: Scope | undefined, hosts: HostNames = {}): string 
   const hn = (id?: string) => (id ? hosts[id] ?? id : '');
   switch (s?.type) {
     case 'host':
-      return `host ${hn(s.host)}`;
+      return m.lib_scope_host({ host: hn(s.host) });
     case 'host_tag':
-      return `hosts tagged ${s.value}`;
+      return m.lib_scope_host_tag({ tag: s.value ?? '' });
     case 'stack':
-      return s.host ? `stack ${s.value} on ${hn(s.host)}` : `stack ${s.value}`;
+      return s.host ? m.lib_scope_stack_on({ stack: s.value ?? '', host: hn(s.host) }) : m.lib_scope_stack({ stack: s.value ?? '' });
     default:
-      return 'everything';
+      return m.lib_scope_everything();
   }
 }
 
@@ -25,7 +26,7 @@ export function roleDisplay(roles: CustomRole[], name: string): string {
 }
 
 export function assignmentLabel(a: Assignment, roles: CustomRole[], hosts: HostNames = {}): string {
-  return `${roleDisplay(roles, a.role)} on ${scopeLabel(a.scope, hosts)}`;
+  return m.lib_assignment({ role: roleDisplay(roles, a.role), scope: scopeLabel(a.scope, hosts) });
 }
 
 export function levelIndex(cat: RoleCatalog, area: string, level: string | undefined): number {
@@ -57,7 +58,7 @@ export function areaSummaries(cat: RoleCatalog, levels: Record<string, string>, 
         label: a.label,
         scoped: a.scoped,
         level: a.levels[i]?.key ?? 'none',
-        levelLabel: a.levels[i]?.label ?? 'None',
+        levelLabel: a.levels[i]?.label ?? m.common_none(),
         can: a.levels.slice(1, i + 1).flatMap((l) => l.items),
         cannot: a.levels.slice(i + 1).flatMap((l) => l.items)
       };
@@ -65,26 +66,26 @@ export function areaSummaries(cat: RoleCatalog, levels: Record<string, string>, 
 }
 
 const PHRASE: Record<string, Record<string, string>> = {
-  stacks: { view: 'see stacks', operate: 'stop stacks', deploy: 'deploy stacks', manage: 'create and delete stacks' },
-  containers: { view: 'see containers', operate: 'restart containers', manage: 'remove and update containers' },
-  resources: { view: 'see images and volumes', manage: 'manage images and volumes' },
-  hosts: { view: 'see hosts', manage: 'manage hosts' },
-  proxy: { view: 'see proxy routes', manage: 'manage proxy routes' },
-  backups: { view: 'see backups', operate: 'run and restore backups', manage: 'manage backup jobs' },
-  alerts: { view: 'see alerts', manage: 'manage alerts' },
-  users: { view: 'see users', manage: 'manage users and roles' },
-  settings: { view: 'read the audit log', manage: 'change settings' }
+  stacks: { view: m.lib_can_stacks_view(), operate: m.lib_can_stacks_operate(), deploy: m.lib_can_stacks_deploy(), manage: m.lib_can_stacks_manage() },
+  containers: { view: m.lib_can_containers_view(), operate: m.lib_can_containers_operate(), manage: m.lib_can_containers_manage() },
+  resources: { view: m.lib_can_resources_view(), manage: m.lib_can_resources_manage() },
+  hosts: { view: m.lib_can_hosts_view(), manage: m.lib_can_hosts_manage() },
+  proxy: { view: m.lib_can_proxy_view(), manage: m.lib_can_proxy_manage() },
+  backups: { view: m.lib_can_backups_view(), operate: m.lib_can_backups_operate(), manage: m.lib_can_backups_manage() },
+  alerts: { view: m.lib_can_alerts_view(), manage: m.lib_can_alerts_manage() },
+  users: { view: m.lib_can_users_view(), manage: m.lib_can_users_manage() },
+  settings: { view: m.lib_can_settings_view(), manage: m.lib_can_settings_manage() }
 };
 const EXTRA_SHORT: Record<string, string> = {
-  terminal: 'open terminals',
-  files: 'browse files',
-  env: 'see secrets in env',
-  backup_download: 'download backups',
-  key_export: 'export the backup key'
+  terminal: m.lib_can_terminal(),
+  files: m.lib_can_files(),
+  env: m.lib_can_env(),
+  backup_download: m.lib_can_backup_download(),
+  key_export: m.lib_can_key_export()
 };
 
 function list(xs: string[], n: number): string {
-  return xs.length <= n ? xs.join(', ') : `${xs.slice(0, n).join(', ')} and ${xs.length - n} more`;
+  return xs.length <= n ? xs.join(', ') : m.lib_list_more({ items: xs.slice(0, n).join(', '), count: xs.length - n });
 }
 
 // One line: "Can deploy stacks, restart containers and 3 more. Cannot create and delete stacks."
@@ -103,7 +104,7 @@ export function roleOneLine(cat: RoleCatalog | null, r: Pick<CustomRole, 'levels
   }
   for (const e of r.extras) if (EXTRA_SHORT[e]) can.push(EXTRA_SHORT[e]);
   for (const e of ['terminal', 'files']) if (!r.extras.includes(e)) cannot.push(EXTRA_SHORT[e]);
-  if (top && cat.extras.every((e) => r.extras.includes(e.key))) return 'Can do everything.';
-  const a = can.length ? `Can ${list(can, 3)}.` : 'No access.';
-  return cannot.length ? `${a} Cannot ${list(cannot, 2)}.` : a;
+  if (top && cat.extras.every((e) => r.extras.includes(e.key))) return m.lib_role_everything();
+  const a = can.length ? m.lib_role_can({ list: list(can, 3) }) : m.lib_role_no_access();
+  return cannot.length ? `${a} ${m.lib_role_cannot({ list: list(cannot, 2) })}` : a;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   // Frame for the pages shown without a session (sign-in, setup): brand,
   // one card, a quiet footer. These pages render outside the app chrome,
   // so the theme toggle lives here.
@@ -34,8 +35,8 @@
     type="button"
     class="theme-toggle auth-theme"
     onclick={toggleTheme}
-    aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-    title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+    aria-label={theme === 'dark' ? m.auth_switch_light() : m.auth_switch_dark()}
+    title={theme === 'dark' ? m.auth_switch_light() : m.auth_switch_dark()}
   >
     {#if theme === 'dark'}<Sun size={13} strokeWidth={1.5} />{:else}<Moon size={13} strokeWidth={1.5} />{/if}
   </button>
@@ -51,7 +52,7 @@
     </section>
 
     <footer class="auth-foot">
-      {#if footer}{@render footer()}{:else}Dockmesh · self-hosted · AGPL-3.0{/if}
+      {#if footer}{@render footer()}{:else}{m.auth_footer()}{/if}
     </footer>
   </div>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import type { Snippet } from 'svelte';
   import { X } from 'lucide-svelte';
   import { trapFocus, portal } from '$lib/a11y';
@@ -59,7 +60,7 @@
           {:else}
             <h2 id={titleId}>{title}</h2>
           {/if}
-          <button type="button" onclick={close} class="dlg-x" aria-label="Close">
+          <button type="button" onclick={close} class="dlg-x" aria-label={m.common_close()}>
             <X size={15} strokeWidth={1.8} />
           </button>
         </div>

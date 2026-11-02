@@ -7,6 +7,8 @@
   import { Button, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { waitForRestart } from '$lib/restart';
+  import { m } from '$lib/paraglide/messages.js';
+  import { fmtDateTime } from '$lib/i18n';
 
   interface Props {
     open: boolean;
@@ -41,7 +43,7 @@
         ? await api.backups.stageSystemRestoreFromRun(run.id)
         : await api.backups.stageSystemRestoreUpload(file!, key);
       if (result.sanity && !result.sanity.passed) {
-        error = result.sanity.summary ?? 'the backup failed the restore checks';
+        error = result.sanity.summary ?? m.backups_sysrestore_checks_failed();
         phase = 'pick';
         return;
       }
@@ -57,7 +59,7 @@
     try {
       await api.backups.applySystemRestore();
     } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.backups_restore_failed(), err instanceof ApiError ? err.message : undefined);
       phase = 'staged';
       return;
     }
@@ -80,26 +82,31 @@
     if (which === 'file') file = f;
     else key = f;
   }
+
+  function checkStatus(s: string): string {
+    if (s === 'ok') return m.backups_check_ok();
+    if (s === 'warn') return m.backups_check_warn();
+    if (s === 'fail') return m.backups_check_fail();
+    return s;
+  }
 </script>
 
-<Modal {open} title="Restore the whole system" maxWidth="max-w-lg" onclose={phase === 'staged' ? discard : onclose}>
+<Modal {open} title={m.backups_sysrestore_title()} maxWidth="max-w-lg" onclose={phase === 'staged' ? discard : onclose}>
   <div class="space-y-4 text-sm">
     <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)]">
-      Replaces this server's database, users, keys, settings and stack files with the backup's,
-      then restarts Dockmesh. Volumes and running containers are not touched. The replaced files
-      are kept next to the data and stacks directories (<span class="font-mono">.pre-restore</span>).
+      {m.backups_sysrestore_warning_before()} (<span class="font-mono">.pre-restore</span>).
     </div>
 
     {#if phase === 'pick' || phase === 'staging'}
       {#if run}
-        <p>Backup: <span class="font-mono">{run.job_name}</span>, run #{run.id}{run.finished_at ? `, ${new Date(run.finished_at).toLocaleString()}` : ''}.</p>
+        <p>{m.backups_sysrestore_backup_label()} <span class="font-mono">{run.job_name}</span>{m.backups_sysrestore_run_suffix({ id: run.id })}{run.finished_at ? `, ${fmtDateTime(run.finished_at)}` : ''}.</p>
       {:else}
         <label class="block">
-          <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">System backup file (.tar.gz or .tar.gz.age)</span>
+          <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.backups_sysrestore_file_label()}</span>
           <input type="file" accept=".gz,.age,.tar" onchange={(e) => onfile(e, 'file')} />
         </label>
         <label class="block">
-          <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Backup key file (only for encrypted backups of another install)</span>
+          <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">{m.backups_sysrestore_key_label()}</span>
           <input type="file" accept=".txt,.key" onchange={(e) => onfile(e, 'key')} />
         </label>
       {/if}
@@ -107,30 +114,30 @@
       {#if result?.sanity && !result.sanity.passed}
         <ul class="text-xs space-y-1">
           {#each result.sanity.checks as c (c.name)}
-            <li class:text-[var(--color-danger-400)]={c.status === 'fail'}>{c.status} · {c.name}{c.message ? ` — ${c.message}` : ''}</li>
+            <li class:text-[var(--color-danger-400)]={c.status === 'fail'}>{checkStatus(c.status)} · {c.name}{c.message ? ` — ${c.message}` : ''}</li>
           {/each}
         </ul>
       {/if}
     {:else if phase === 'staged' && result}
-      <p>The backup was unpacked and checked ({result.counts?.files ?? 0} files). Nothing has been replaced yet.</p>
+      <p>{m.backups_sysrestore_staged({ files: result.counts?.files ?? 0 })}</p>
       <ul class="text-xs space-y-1">
         {#each result.sanity?.checks ?? [] as c (c.name)}
-          <li class:text-[var(--color-warning-400)]={c.status === 'warn'}>{c.status} · {c.name}{c.message ? ` — ${c.message}` : ''}</li>
+          <li class:text-[var(--color-warning-400)]={c.status === 'warn'}>{checkStatus(c.status)} · {c.name}{c.message ? ` — ${c.message}` : ''}</li>
         {/each}
       </ul>
-      <p>Restart now to finish. You will sign in again with an account of the restored install.</p>
+      <p>{m.backups_sysrestore_restart_hint()}</p>
     {:else if phase === 'restarting'}
-      <p>Restarting Dockmesh and swapping the restored files in… This page reloads when the server is back.</p>
+      <p>{m.backups_sysrestore_restarting()}</p>
     {/if}
   </div>
   {#snippet footer()}
     {#if phase === 'staged'}
-      <Button variant="secondary" onclick={discard}>Discard</Button>
-      <Button variant="danger" onclick={apply}>Restart and restore</Button>
+      <Button variant="secondary" onclick={discard}>{m.backups_discard()}</Button>
+      <Button variant="danger" onclick={apply}>{m.backups_restart_and_restore()}</Button>
     {:else if phase !== 'restarting'}
-      <Button variant="secondary" onclick={onclose}>Cancel</Button>
+      <Button variant="secondary" onclick={onclose}>{m.common_cancel()}</Button>
       <Button variant="danger" onclick={stage} disabled={phase === 'staging' || (!run && !file)}>
-        {phase === 'staging' ? 'Checking…' : 'Check backup'}
+        {phase === 'staging' ? m.backups_checking() : m.backups_check_backup()}
       </Button>
     {/if}
   {/snippet}

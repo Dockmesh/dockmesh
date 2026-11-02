@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { RefreshCw } from 'lucide-svelte';
 
   // Pages keep polling and pass the time of their last successful load.
@@ -16,21 +17,21 @@
   });
 
   const ago = $derived.by(() => {
-    if (!updatedAt) return 'loading';
+    if (!updatedAt) return m.ui_live_loading();
     const s = Math.max(0, Math.round((now - updatedAt) / 1000));
-    if (s < 60) return `updated ${s} s ago`;
-    const m = Math.round(s / 60);
-    if (m < 60) return `updated ${m} min ago`;
-    return `updated ${Math.round(m / 60)} h ago`;
+    if (s < 60) return m.ui_live_updated_s({ n: s });
+    const mins = Math.round(s / 60);
+    if (mins < 60) return m.ui_live_updated_min({ n: mins });
+    return m.ui_live_updated_h({ n: Math.round(mins / 60) });
   });
   const stale = $derived(!!updatedAt && now - updatedAt > 90_000);
 </script>
 
 <span class="live" class:stale class:paused>
   <span class="d" aria-hidden="true"></span>
-  <span>{paused ? 'Paused' : 'Live'} · {ago}</span>
+  <span>{paused ? m.ui_live_paused() : m.ui_live_live()} · {ago}</span>
   {#if onrefresh}
-    <button type="button" onclick={onrefresh} aria-label="Refresh now" title="Refresh now" disabled={busy}>
+    <button type="button" onclick={onrefresh} aria-label={m.ui_live_refresh_now()} title={m.ui_live_refresh_now()} disabled={busy}>
       <RefreshCw size={13} strokeWidth={1.8} class={busy ? 'spin' : ''} />
     </button>
   {/if}

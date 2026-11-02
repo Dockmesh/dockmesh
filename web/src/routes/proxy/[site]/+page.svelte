@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages.js';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type Operation } from '$lib/api';
   import { fmtAgo } from '$lib/format';
+  import { fmtDate, fmtDateTime, fmtNumber } from '$lib/i18n';
   import { Skeleton, StatBar, StatusChip, Switch, Menu, EmptyState, Tabs } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
@@ -49,7 +51,7 @@
   const canDelete = $derived(allowed('proxy.delete'));
 
   $effect(() => {
-    pageContext.set(host, [{ label: 'Reverse proxy', href: '/proxy' }]);
+    pageContext.set(host, [{ label: m.proxy_title(), href: '/proxy' }]);
     return () => pageContext.clear();
   });
 
@@ -72,7 +74,7 @@
       operations.track(ops);
       if (s) metrics = await api.proxy.routeMetrics(s.id).catch(() => null);
     } catch (e) {
-      toast.error('Could not load the site', (e as Error).message);
+      toast.error(m.proxy_site_load_failed(), (e as Error).message);
     } finally {
       loading = false;
     }
@@ -96,7 +98,7 @@
     try {
       const p = await api.proxy.routeConfig(site.id);
       preview = JSON.stringify(p.config, null, 2);
-      if (p.blocked) previewErr = 'The stored options fail validation, so Caddy does not serve this site.';
+      if (p.blocked) previewErr = m.proxy_preview_blocked();
     } catch (e) {
       previewErr = (e as Error).message;
     }
@@ -118,13 +120,13 @@
       base = toForm(updated.options);
       form = toForm(updated.options);
       resetPreview();
-      toast.success('Options saved', site.host);
+      toast.success(m.proxy_options_saved(), site.host);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Saving failed';
+      const msg = e instanceof ApiError ? e.message : m.proxy_saving_failed();
       const fe = parseFieldError(msg);
       if (fe) fieldErrors = { [fe.field]: fe.message };
       else saveErr = msg;
-      toast.error('Options not saved', fe ? fe.message : msg);
+      toast.error(m.proxy_options_not_saved(), fe ? fe.message : msg);
     } finally {
       saving = false;
     }
@@ -141,27 +143,27 @@
     const next = !site.enabled;
     try {
       await api.proxy.setRouteEnabled(site.id, next);
-      toast.success(next ? 'Site enabled' : 'Site disabled', site.host);
+      toast.success(next ? m.proxy_site_enabled() : m.proxy_site_disabled(), site.host);
       await load();
     } catch (err) {
-      toast.error('Change failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_change_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
   async function remove() {
     if (!site) return;
     if (!(await confirm.ask({
-      title: 'Delete site',
-      message: `Delete ${site.host}?`,
-      body: 'Requests to this name get no answer from Caddy after the next reload. The container it points to is not touched.',
-      confirmLabel: 'Delete', danger: true
+      title: m.proxy_delete_site_title(),
+      message: m.proxy_delete_site_message({ host: site.host }),
+      body: m.proxy_delete_site_body(),
+      confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
       await api.proxy.deleteRoute(site.id);
-      toast.success('Site deleted', site.host);
+      toast.success(m.proxy_site_deleted(), site.host);
       goto('/proxy');
     } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.proxy_delete_failed(), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -173,12 +175,12 @@
   const stats = $derived.by<Stat[]>(() => {
     if (!site) return [];
     return [
-      { label: 'Requests', value: metrics ? metrics.requests.toLocaleString() : '—', note: metrics ? `${metrics.requests_per_second.toFixed(1)} req/s` : 'since Caddy started' },
-      { label: 'Latency p95', value: metrics && metrics.requests ? `${metrics.p95_latency_ms.toFixed(0)} ms` : '—' },
-      { label: 'Errors (5xx)', value: metrics ? errors5xx.toLocaleString() : '—', tone: errors5xx > 0 ? 'bad' : '' },
+      { label: m.proxy_stat_requests(), value: metrics ? fmtNumber(metrics.requests) : '—', note: metrics ? `${fmtNumber(metrics.requests_per_second, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} req/s` : m.proxy_stat_since_start() },
+      { label: m.proxy_stat_latency(), value: metrics && metrics.requests ? `${fmtNumber(Math.round(metrics.p95_latency_ms))} ms` : '—' },
+      { label: m.proxy_stat_errors(), value: metrics ? fmtNumber(errors5xx) : '—', tone: errors5xx > 0 ? 'bad' : '' },
       {
-        label: 'Certificate',
-        value: site.tls_mode === 'none' ? 'None' : site.cert_days_left != null ? `${site.cert_days_left} d` : 'Not served',
+        label: m.proxy_sm_certificate(),
+        value: site.tls_mode === 'none' ? m.common_none() : site.cert_days_left != null ? m.proxy_days_short({ n: site.cert_days_left }) : m.proxy_not_served(),
         note: TLS_LABEL[site.tls_mode],
         tone: certTone === 'warn' ? 'warn' : ''
       }
@@ -189,15 +191,15 @@
   const activity = $derived.by<Row[]>(() => {
     const out: Row[] = acme.map((e) => ({
       ts: e.ts,
-      what: e.kind === 'renew' ? 'Certificate renewed' : e.kind === 'obtain' ? 'Certificate' : 'Certificate failed',
+      what: e.kind === 'renew' ? m.proxy_act_cert_renewed() : e.kind === 'obtain' ? m.proxy_sm_certificate() : m.proxy_act_cert_failed(),
       text: `${e.message}${e.issuer ? ` (${e.issuer})` : ''}`,
       tone: e.successful ? 'ok' : 'bad'
     }));
     for (const o of ops) {
       out.push({
         ts: o.finished_at ?? o.created_at,
-        what: 'Created',
-        text: `${o.actor_name ? `by ${o.actor_name}` : ''}${o.error ? ` · ${o.error}` : ''}`,
+        what: m.common_created(),
+        text: `${o.actor_name ? m.proxy_act_by({ name: o.actor_name }) : ''}${o.error ? ` · ${o.error}` : ''}`,
         tone: isActive(o) ? 'off' : o.status === 'failed' ? 'bad' : 'ok',
         op: o
       });
@@ -208,14 +210,14 @@
   const ACT_COLS = '90px 150px minmax(0, 1fr)';
 
   const menu = $derived.by<MenuItem[]>(() => {
-    const items: MenuItem[] = [{ label: `Visit ${site?.host ?? ''}`, href: url }];
-    if (canDelete) items.push({ separator: true }, { label: 'Delete…', danger: true, onclick: remove });
+    const items: MenuItem[] = [{ label: m.proxy_visit({ host: site?.host ?? '' }), href: url }];
+    if (canDelete) items.push({ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: remove });
     return items;
   });
 </script>
 
 {#snippet actRow(a: Row)}
-  <span class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{fmtAgo(a.ts)}</span>
+  <span class="dm-num dm-dim" title={fmtDateTime(a.ts)}>{fmtAgo(a.ts)}</span>
   <span class="ev"><span class="dm-dot {a.tone === 'off' ? '' : a.tone}"></span>{a.what}</span>
   <span class="dm-trunc dm-dim" title={a.text}>{a.text || '—'}</span>
 {/snippet}
@@ -225,31 +227,31 @@
     <Skeleton width="40%" height="1.6rem" />
     <Skeleton width="100%" height="3.2rem" />
   {:else if !site}
-    <EmptyState title="Site not found" description="It was deleted, or the name is spelled differently.">
-      {#snippet action()}<a class="dm-btn dm-btn-primary" href="/proxy">Back to the reverse proxy</a>{/snippet}
+    <EmptyState title={m.proxy_site_not_found()} description={m.proxy_site_not_found_hint()}>
+      {#snippet action()}<a class="dm-btn dm-btn-primary" href="/proxy">{m.proxy_back_to_proxy()}</a>{/snippet}
     </EmptyState>
   {:else}
     <div class="dm-ph">
       <h1 class="dm-trunc">{site.host}</h1>
-      {#if !canUpdate}<StatusChip tone={site.enabled ? 'ok' : 'off'} label={site.enabled ? 'Live' : 'Off'} />{/if}
+      {#if !canUpdate}<StatusChip tone={site.enabled ? 'ok' : 'off'} label={site.enabled ? m.proxy_live() : m.common_off()} />{/if}
       <span class="dm-sub dm-trunc">→ <span class="dm-mono">{site.upstream}</span> · {TLS_LABEL[site.tls_mode]}</span>
       <span class="dm-sp"></span>
-      <a class="dm-btn" href={url} target="_blank" rel="noopener">Open site <ExternalLink size={13} /></a>
+      <a class="dm-btn" href={url} target="_blank" rel="noopener">{m.proxy_open_site()} <ExternalLink size={13} /></a>
       {#if canUpdate}
-        <Switch checked={site.enabled} label={site.enabled ? 'Live' : 'Off'} onchange={toggle} />
-        <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showEdit = true)}>Edit</button>
+        <Switch checked={site.enabled} label={site.enabled ? m.proxy_live() : m.common_off()} onchange={toggle} />
+        <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showEdit = true)}>{m.common_edit()}</button>
       {/if}
-      <Menu label="Actions for {site.host}" items={menu} />
+      <Menu label={m.proxy_actions_for({ host: site.host })} items={menu} />
     </div>
 
     <StatBar items={stats} />
 
     <Tabs
-      label="Site sections"
+      label={m.proxy_site_sections()}
       tabs={[
-        { key: 'overview', label: 'Overview' },
-        { key: 'options', label: 'Options', count: opts.length || null, dot: changed.length > 0 },
-        { key: 'config', label: 'Config' }
+        { key: 'overview', label: m.common_overview() },
+        { key: 'options', label: m.proxy_col_options(), count: opts.length || null, dot: changed.length > 0 },
+        { key: 'config', label: m.proxy_tab_config() }
       ]}
       active={tab}
       onchange={(k) => (tab = k as TabKey)}
@@ -258,40 +260,40 @@
     {#if tab === 'overview'}
     <div class="cols">
       <section>
-        <h2 class="dm-h2">Details</h2>
+        <h2 class="dm-h2">{m.common_details()}</h2>
         <dl class="dm-kv">
-          <dt>Goes to</dt><dd class="dm-mono">{site.upstream}</dd>
+          <dt>{m.proxy_sm_goes_to()}</dt><dd class="dm-mono">{site.upstream}</dd>
           <dt>HTTPS</dt><dd>{TLS_LABEL[site.tls_mode]}</dd>
           {#if site.tls_mode !== 'none'}
-            <dt>Certificate</dt>
+            <dt>{m.proxy_sm_certificate()}</dt>
             <dd>
               {#if site.cert_valid_to}
-                {site.cert_days_left} days left · {site.cert_issuer || 'unknown issuer'}
-                <span class="dm-dim" title={new Date(site.cert_valid_to).toLocaleString()}>· until {new Date(site.cert_valid_to).toLocaleDateString()}</span>
+                {m.proxy_days_left({ n: site.cert_days_left ?? 0 })} · {site.cert_issuer || m.proxy_unknown_issuer()}
+                <span class="dm-dim" title={fmtDateTime(site.cert_valid_to)}>· {m.proxy_until({ date: fmtDate(site.cert_valid_to) })}</span>
               {:else}
-                <span class="dm-dim">Not served yet. The name may not point here, or Caddy is still getting it.</span>
+                <span class="dm-dim">{m.proxy_not_served_yet()}</span>
               {/if}
             </dd>
           {/if}
-          <dt>Options</dt>
-          <dd>{opts.length ? opts.join(' · ') : 'Caddy defaults'} <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tab = 'options')}>{canUpdate ? 'Edit' : 'Show'}</button></dd>
-          <dt>Created</dt><dd title={site.created_at ? new Date(site.created_at).toLocaleString() : ''}>{site.created_at ? fmtAgo(site.created_at) : '—'}</dd>
+          <dt>{m.proxy_col_options()}</dt>
+          <dd>{opts.length ? opts.join(' · ') : m.proxy_oe_defaults()} <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tab = 'options')}>{canUpdate ? m.common_edit() : m.proxy_show()}</button></dd>
+          <dt>{m.common_created()}</dt><dd title={site.created_at ? fmtDateTime(site.created_at) : ''}>{site.created_at ? fmtAgo(site.created_at) : '—'}</dd>
           {#if site.updated_at && site.updated_at !== site.created_at}
-            <dt>Changed</dt><dd title={new Date(site.updated_at).toLocaleString()}>{fmtAgo(site.updated_at)}</dd>
+            <dt>{m.proxy_changed()}</dt><dd title={fmtDateTime(site.updated_at)}>{fmtAgo(site.updated_at)}</dd>
           {/if}
         </dl>
         {#if metrics && metrics.requests > 0}
-          <h2 class="dm-h2 sp">Responses</h2>
+          <h2 class="dm-h2 sp">{m.proxy_responses()}</h2>
           <dl class="dm-kv">
             {#each ['2xx', '3xx', '4xx', '5xx'] as b (b)}
-              <dt>{b}</dt><dd class="dm-num" class:bad={b === '5xx' && (metrics.status_buckets[b] ?? 0) > 0}>{(metrics.status_buckets[b] ?? 0).toLocaleString()}</dd>
+              <dt>{b}</dt><dd class="dm-num" class:bad={b === '5xx' && (metrics.status_buckets[b] ?? 0) > 0}>{fmtNumber(metrics.status_buckets[b] ?? 0)}</dd>
             {/each}
           </dl>
         {/if}
       </section>
 
       <section>
-        <h2 class="dm-h2">Activity</h2>
+        <h2 class="dm-h2">{m.proxy_tab_activity()}</h2>
         <div class="dm-tbl">
           {#each activity as a, i (i)}
             {#if a.op}
@@ -303,7 +305,7 @@
               <div class="dm-tr" style="grid-template-columns: {ACT_COLS}">{@render actRow(a)}</div>
             {/if}
           {:else}
-            <div class="dm-empty">No certificate events for this site yet.</div>
+            <div class="dm-empty">{m.proxy_no_cert_events()}</div>
           {/each}
         </div>
       </section>
@@ -314,14 +316,14 @@
         <div class="sec-h">
           <span class="dm-sub">
             {canUpdate
-              ? "Every option starts at Caddy's default. Dockmesh checks each value before Caddy sees it."
-              : 'Read-only: changing options needs proxy edit rights. Header values are hidden.'}
+              ? m.proxy_options_hint()
+              : m.proxy_options_readonly()}
           </span>
           <span class="dm-sp"></span>
           {#if canUpdate}
-            {#if changed.length}<span class="dm-sub">{changed.length} group{changed.length === 1 ? '' : 's'} changed</span>{/if}
-            <button type="button" class="dm-btn dm-btn-sm" disabled={!changed.length || saving} onclick={resetOptions}>Reset</button>
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={!changed.length || saving} onclick={saveOptions}>Save options</button>
+            {#if changed.length}<span class="dm-sub">{m.proxy_groups_changed({ count: changed.length })}</span>{/if}
+            <button type="button" class="dm-btn dm-btn-sm" disabled={!changed.length || saving} onclick={resetOptions}>{m.common_reset()}</button>
+            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={!changed.length || saving} onclick={saveOptions}>{m.proxy_save_options()}</button>
           {/if}
         </div>
         {#if saveErr}<p class="err" role="alert">{saveErr}</p>{/if}
@@ -330,9 +332,9 @@
     {:else}
       <section>
         <div class="sec-h">
-          <span class="dm-sub">What Dockmesh sends to Caddy for this site, as saved (read-only). Secrets and password hashes are hidden.</span>
+          <span class="dm-sub">{m.proxy_config_hint()}</span>
           <span class="dm-sp"></span>
-          <button type="button" class="dm-btn dm-btn-sm" onclick={() => { resetPreview(); loadPreview(); }}>Reload</button>
+          <button type="button" class="dm-btn dm-btn-sm" onclick={() => { resetPreview(); loadPreview(); }}>{m.proxy_reload()}</button>
         </div>
         {#if previewErr}<p class="err">{previewErr}</p>{/if}
         {#if preview !== null}<pre class="pv dm-mono">{preview}</pre>{:else if !previewErr}<Skeleton width="100%" height="8rem" />{/if}

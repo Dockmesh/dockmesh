@@ -8,6 +8,7 @@
   import { StatusChip, Switch } from '$lib/components/ui';
   import { Copy, RefreshCw } from 'lucide-svelte';
   import { createSettingsForm } from '../settingsForm.svelte';
+  import { m } from '$lib/paraglide/messages.js';
 
   const form = createSettingsForm();
   let status = $state<UpdateStatus | null>(null);
@@ -30,53 +31,53 @@
     checking = true;
     try {
       status = await api.system.checkUpdateNow();
-      toast.success('Check complete', status?.update_available ? `Update available: ${status.latest_version}` : 'Up to date');
+      toast.success(m.settings_check_complete(), status?.update_available ? m.settings_update_available_v({ version: status.latest_version ?? '' }) : m.settings_up_to_date_toast());
     } catch (err) {
-      toast.error('Check failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(m.settings_check_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       checking = false;
     }
   }
 
   function fmtRelative(iso: string | undefined): string {
-    if (!iso) return 'never';
+    if (!iso) return m.common_never();
     const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-    if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)} h ago`;
-    return `${Math.floor(secs / 86400)} d ago`;
+    if (secs < 60) return m.time_just_now();
+    if (secs < 3600) return m.time_min_ago({ n: Math.floor(secs / 60) });
+    if (secs < 86400) return m.time_h_ago({ n: Math.floor(secs / 3600) });
+    return m.time_d_ago({ n: Math.floor(secs / 86400) });
   }
 
   const verdict = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off' | 'acc'; label: string }>(() => {
     if (!status) return { tone: 'off', label: '—' };
-    if (status.error) return { tone: 'bad', label: 'check failed' };
-    if (status.is_dev_build && status.latest_version) return { tone: 'warn', label: 'dev build' };
-    if (status.update_available) return { tone: 'acc', label: 'update available' };
-    if (!status.enabled) return { tone: 'off', label: 'checks off' };
-    return { tone: 'ok', label: 'up to date' };
+    if (status.error) return { tone: 'bad', label: m.settings_verdict_check_failed() };
+    if (status.is_dev_build && status.latest_version) return { tone: 'warn', label: m.settings_verdict_dev_build() };
+    if (status.update_available) return { tone: 'acc', label: m.settings_verdict_update_available() };
+    if (!status.enabled) return { tone: 'off', label: m.settings_verdict_checks_off() };
+    return { tone: 'ok', label: m.settings_verdict_up_to_date() };
   });
 </script>
 
 <div class="dm-page">
   <div class="dm-ph">
     <div>
-      <h1>Updates</h1>
-      <div class="dm-sub">Dockmesh version and automatic update checks</div>
+      <h1>{m.settings_updates_title()}</h1>
+      <div class="dm-sub">{m.settings_updates_sub()}</div>
     </div>
   </div>
 
   <div>
     <div class="dm-form-sec">
       <div>
-        <h4>Dockmesh version</h4>
-        <p>Running {status?.current_version ?? '…'}. Updates keep your data and stacks.</p>
+        <h4>{m.settings_dockmesh_version()}</h4>
+        <p>{m.settings_running_version({ version: status?.current_version ?? '…' })}</p>
       </div>
       <div>
         <div class="up-row">
           <StatusChip tone={verdict.tone} label={verdict.label} />
-          <span class="dm-sub">latest {status?.latest_version || '—'} · checked {fmtRelative(status?.checked_at)}</span>
+          <span class="dm-sub">{m.settings_latest_checked({ version: status?.latest_version || '—', ago: fmtRelative(status?.checked_at) })}</span>
           <button type="button" class="dm-btn dm-btn-sm" onclick={checkNow} disabled={checking}>
-            <RefreshCw size={12} class={checking ? 'up-spin' : ''} /> {checking ? 'Checking…' : 'Check now'}
+            <RefreshCw size={12} class={checking ? 'up-spin' : ''} /> {checking ? m.settings_checking() : m.settings_check_now()}
           </button>
         </div>
         {#if status?.error}
@@ -84,15 +85,15 @@
         {/if}
         {#if status?.update_available}
           <div class="up-box">
-            <b>{status.is_dev_build ? `Release ${status.latest_version} available` : `Update to ${status.latest_version}`}</b>
+            <b>{status.is_dev_build ? m.settings_release_available({ version: status.latest_version ?? '' }) : m.settings_update_to({ version: status.latest_version ?? '' })}</b>
             {#if status.release_url}
-              <a href={status.release_url} target="_blank" rel="noopener">Release notes</a>
+              <a href={status.release_url} target="_blank" rel="noopener">{m.settings_release_notes()}</a>
             {/if}
-            <span class="dm-sub">Run on this host; the service restart takes a few seconds:</span>
+            <span class="dm-sub">{m.settings_run_on_host()}</span>
             <div class="up-cmd">
               <code class="dm-mono">{upgradeOneLiner}</code>
-              <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(upgradeOneLiner, 'Command copied')}>
-                <Copy size={12} /> Copy
+              <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(upgradeOneLiner, m.settings_command_copied())}>
+                <Copy size={12} /> {m.common_copy()}
               </button>
             </div>
           </div>
@@ -102,17 +103,17 @@
 
     <div class="dm-form-sec">
       <div>
-        <h4>Automatic update checks</h4>
-        <p>Looks for new releases on GitHub. Turn off for air-gapped installs.</p>
+        <h4>{m.settings_auto_checks()}</h4>
+        <p>{m.settings_auto_checks_hint()}</p>
       </div>
       <div>
         <Switch
-          label="Check for updates"
+          label={m.settings_check_for_updates()}
           checked={form.get('update_check_enabled') === 'true'}
           onchange={(v) => form.set('update_check_enabled', v ? 'true' : 'false')}
         />
         <label class="up-int">
-          <span class="dm-sub">Every</span>
+          <span class="dm-sub">{m.settings_every()}</span>
           <input
             type="number"
             class="dm-input"
@@ -121,16 +122,16 @@
             value={form.get('update_check_interval_minutes') || '120'}
             oninput={(e) => form.set('update_check_interval_minutes', e.currentTarget.value)}
           />
-          <span class="dm-sub">minutes (15 to 10080)</span>
+          <span class="dm-sub">{m.settings_minutes_range()}</span>
         </label>
       </div>
     </div>
   </div>
 
   <div class="set-bar">
-    <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>Discard</button>
+    <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>{m.settings_discard()}</button>
     <button type="button" class="dm-btn dm-btn-primary" onclick={form.save} disabled={!form.dirty || form.busy}>
-      {form.busy ? 'Saving…' : 'Save'}
+      {form.busy ? m.common_saving() : m.common_save()}
     </button>
   </div>
 </div>
