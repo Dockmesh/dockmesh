@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: Agents need this version to pull private images with the server's registry credentials; older agents keep pulling anonymously. Git sources saved with poll interval 0 before were stored as 300 seconds; set 0 again to turn polling off.
+time: 2026-11-02T17:58:34.8010776+01:00
