@@ -143,6 +143,13 @@ var wsRecheckInterval = 30 * time.Second
 // is lost (on res, when given), so revoking a session or an assignment
 // also ends open shells and log streams. Stops when the handler returns.
 func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm, res *rbac.Resource) {
+	h.wsWatchRefresh(r, conn, perm, res, nil)
+}
+
+// wsWatchRefresh is wsWatch for streams that filter by the caller's scope
+// while they run: refresh gets the request carrying the identity of every
+// re-check that keeps the connection open.
+func (h *Handlers) wsWatchRefresh(r *http.Request, conn *websocket.Conn, perm rbac.Perm, res *rbac.Resource, refresh func(*http.Request)) {
 	t, _ := r.Context().Value(wsTicketKey{}).(*auth.WSTicket)
 	if t == nil {
 		return
@@ -160,6 +167,9 @@ func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm
 			if err == nil {
 				idCtx := middleware.WithIdentity(ctx, id)
 				if (res == nil && middleware.Allowed(idCtx, perm)) || (res != nil && middleware.AllowedOn(idCtx, perm, *res)) {
+					if refresh != nil {
+						refresh(r.WithContext(middleware.WithIdentity(r.Context(), id)))
+					}
 					continue
 				}
 			}
