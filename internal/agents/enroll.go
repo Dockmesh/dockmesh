@@ -23,7 +23,7 @@ const (
 // EnrollURL is the https URL of the enrollment endpoint on the agent
 // listener, derived from the public wss:// agent URL.
 func (s *Service) EnrollURL() string {
-	return enrollURLFromAgentURL(s.agentURL)
+	return enrollURLFromAgentURL(s.AgentURL())
 }
 
 func enrollURLFromAgentURL(agentURL string) string {

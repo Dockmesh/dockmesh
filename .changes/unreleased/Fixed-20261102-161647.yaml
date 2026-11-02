@@ -1,0 +1,3 @@
+kind: Fixed
+body: Reinstalling over a kept data directory or into a different install directory reuses the existing dockmesh.env instead of rewriting it
+time: 2026-11-02T16:16:47.2636978+01:00

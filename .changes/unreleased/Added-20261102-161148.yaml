@@ -1,0 +1,3 @@
+kind: Added
+body: Add host and Settings check the agent URL from the server and explain split DNS, closed ports and proxies that terminate TLS
+time: 2026-11-02T16:11:48.0749467+01:00

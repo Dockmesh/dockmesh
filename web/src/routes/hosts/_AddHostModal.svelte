@@ -12,6 +12,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyToClipboard } from '$lib/clipboard';
   import { Plus, X, Check, Copy, ArrowRight } from 'lucide-svelte';
+  import AgentReachability from '$lib/components/AgentReachability.svelte';
 
   interface Props {
     onclose: () => void;
@@ -184,6 +185,7 @@
             </div>
           </div>
           {#if !createResult}
+            <div class="ed-add-host-reach"><AgentReachability /></div>
             <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={generateToken} disabled={creating || !hostname.trim()}>
               {creating ? 'Generating…' : 'Generate install command'}
               <ArrowRight size={11} strokeWidth={1.5} />
@@ -387,6 +389,7 @@
     font-size: 11.5px; color: var(--fg-subtle); margin-right: 4px;
   }
 
+  .ed-add-host-reach { margin-bottom: 14px; }
   .ed-add-host-confirm {
     font-size: 11px; color: var(--color-success-400);
     margin: 4px 0 0; display: inline-flex; align-items: center; gap: 6px;

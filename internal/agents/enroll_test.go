@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -33,6 +34,21 @@ func newTestService(t *testing.T) (*Service, *pki.Manager) {
 		t.Fatal(err)
 	}
 	return NewService(database, mgr, "http://dockmesh.test:8080", "wss://dockmesh.test:8443/connect"), mgr
+}
+
+// serveListenerTLS serves h with exactly cfg, the way the agent listener
+// does. httptest.StartTLS would add its own certificate and shadow
+// cfg.GetCertificate.
+func serveListenerTLS(t *testing.T, cfg *tls.Config, h http.Handler) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h, TLSConfig: cfg, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.ServeTLS(ln, "", "") }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "https://" + ln.Addr().String()
 }
 
 func enrollReq(token string) EnrollRequest {
@@ -255,16 +271,13 @@ func TestServerTLSConfigKeepsEnrolledAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvURL := serveListenerTLS(t, tlsCfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(r.TLS.PeerCertificates) == 0 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	srv.TLS = tlsCfg
-	srv.StartTLS()
-	defer srv.Close()
 
 	res, err := svc.Create(context.Background(), "edge-1")
 	if err != nil {
@@ -298,7 +311,7 @@ func TestServerTLSConfigKeepsEnrolledAgents(t *testing.T) {
 		c := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 			RootCAs: roots, Certificates: certs, MinVersion: tls.VersionTLS12,
 		}}}
-		resp, err := c.Get(srv.URL + "/connect")
+		resp, err := c.Get(srvURL + "/connect")
 		if err != nil {
 			return 0, err
 		}

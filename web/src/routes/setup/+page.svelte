@@ -745,8 +745,8 @@
             {@render checkLine('fail', 'Not a valid URL')}
           {/if}
           <span class="hint">
-            Saved as <span class="dm-mono">DOCKMESH_BASE_URL</span>. The LAN address is fine for now; once you have a
-            domain, change it under Settings without restarting the server.
+            Saved as the base URL setting; remote agents connect to the same host on the agent listener port (8443 by default). The LAN address is fine
+            for now; once you have a domain, change both under Settings → General without restarting the server.
           </span>
         </div>
         <div class="foot">

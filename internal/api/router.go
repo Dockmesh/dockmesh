@@ -724,6 +724,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermHostsCreate))
 				r.Post("/agents", h.CreateAgent)
 				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
+				r.Post("/agents/reachability", h.CheckAgentReachability)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))

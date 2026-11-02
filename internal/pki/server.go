@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -21,12 +22,22 @@ import (
 
 const serverCertValidity = 5 * 365 * 24 * time.Hour
 
-// ensureServerCert loads the listener cert from disk and only issues a new
+// maxServerSANs bounds the listener cert, which keeps every name and IP it
+// ever had.
+const maxServerSANs = 32
+
+func (m *Manager) ensureServerCert(hosts []string) error {
+	m.serverMu.Lock()
+	defer m.serverMu.Unlock()
+	return m.ensureServerCertLocked(hosts)
+}
+
+// ensureServerCertLocked loads the listener cert from disk and only issues a new
 // one when the file is missing, unusable (key mismatch, foreign CA) or does
 // not cover every entry in hosts. A re-issued cert keeps the SANs of the
 // old one, so names added with `dockmesh ca reissue-server` survive a
 // restart with an unchanged DOCKMESH_AGENT_SANS.
-func (m *Manager) ensureServerCert(hosts []string) error {
+func (m *Manager) ensureServerCertLocked(hosts []string) error {
 	certPath := filepath.Join(m.dir, serverCertFile)
 	keyPath := filepath.Join(m.dir, serverKeyFile)
 
@@ -49,8 +60,10 @@ func (m *Manager) ensureServerCert(hosts []string) error {
 	if old != nil && kErr == nil {
 		problem := m.pairProblem(old, keyPEM)
 		if problem == "" && coversHosts(old, hosts) {
-			m.setServer(old, certPEM, keyPEM)
-			return nil
+			if m.serverX509 != nil && m.serverX509.Equal(old) {
+				return nil
+			}
+			return m.setServer(old, certPEM, keyPEM)
 		}
 		if problem != "" {
 			slog.Warn("agent server certificate unusable, issuing a new one", "reason", problem)
@@ -76,6 +89,10 @@ func (m *Manager) ensureServerCert(hosts []string) error {
 			dns = append(dns, h)
 		}
 	}
+	if d, i := mergeSANs(dns, ips); len(d)+len(i) > maxServerSANs {
+		return fmt.Errorf("the agent server certificate would carry %d names and IPs, more than %d; "+
+			"remove old ones with dockmesh ca rotate", len(d)+len(i), maxServerSANs)
+	}
 	cert, newCert, newKey, err := m.issueServerCert(dns, ips)
 	if err != nil {
 		return err
@@ -83,14 +100,19 @@ func (m *Manager) ensureServerCert(hosts []string) error {
 	if err := writeServerPair(m.dir, newCert, newKey); err != nil {
 		return err
 	}
-	m.setServer(cert, newCert, newKey)
-	return nil
+	return m.setServer(cert, newCert, newKey)
 }
 
-func (m *Manager) setServer(cert *x509.Certificate, certPEM, keyPEM []byte) {
+func (m *Manager) setServer(cert *x509.Certificate, certPEM, keyPEM []byte) error {
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
 	m.serverX509 = cert
 	m.serverCert = certPEM
 	m.serverKey = keyPEM
+	m.serverTLS = &pair
+	return nil
 }
 
 // pairProblem says why cert + keyPEM cannot serve the listener, or "" if
@@ -351,6 +373,13 @@ func ReissueServerCert(dir string, add []string, now time.Time) (*ReissueResult,
 	res.SANs = certSANs(cert)
 	res.NotAfter = cert.NotAfter
 	return res, nil
+}
+
+// ValidateSAN reports whether s can go into the listener cert as a DNS
+// name or IP address.
+func ValidateSAN(s string) error {
+	_, _, err := parseSAN(s)
+	return err
 }
 
 // parseSAN validates one --add-san value. It returns the IP for IP

@@ -191,20 +191,74 @@ get_time() {
 # Env files of an earlier install at the script's default data dirs.
 ENV_FILE_CANDIDATES=(/var/lib/dockmesh/dockmesh.env /data/dockmesh.env /usr/local/var/dockmesh/dockmesh.env)
 
-# Copy FILE to FILE.bak, or to FILE.bak.<timestamp>.<random> when FILE.bak
-# already exists, so the first backup (usually the hand-tuned original) is
-# never overwritten by a later reinstall. Prints the backup path.
-backup_env_file() {
-  local f="$1"
-  if $USE_SUDO test -L "$f.bak"; then
-    die "refusing to back up $f: $f.bak is a symlink — remove it and re-run"
-  fi
-  # shellcheck disable=SC2016
-  $USE_SUDO bash -c 'set -C; umask 077
-    for b in "$1.bak" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM"; do
-      if { cat -- "$1" >"$b"; } 2>/dev/null; then printf "%s" "$b"; exit 0; fi
-    done
-    exit 1' _ "$f" || die "could not back up $f"
+# Owners an env file of an earlier install may have to be reused.
+TRUSTED_ENV_OWNERS="root dockmesh"
+
+# env_file_trusted FILE succeeds when FILE may become the config of a
+# service with Docker access: named dockmesh.env, and the file and its
+# directory not writable by group or others and owned by a trusted owner
+# or by a UID without an account (uninstall.sh deletes the service user
+# but keeps its data).
+env_file_trusted() {
+  local f="$1" p meta uid mode owner
+  [ "$(basename "$f")" = "dockmesh.env" ] || return 1
+  for p in "$f" "$(dirname "$f")"; do
+    meta="$($USE_SUDO stat -c '%u %a' "$p" 2>/dev/null || $USE_SUDO stat -f '%u %Lp' "$p" 2>/dev/null)" || return 1
+    uid="${meta%% *}"
+    mode="${meta##* }"
+    if owner="$(id -nu "$uid" 2>/dev/null)"; then
+      case " $TRUSTED_ENV_OWNERS " in *" $owner "*) ;; *) return 1 ;; esac
+    fi
+    [ $(( 8#$mode & 8#022 )) -eq 0 ] || return 1
+  done
+}
+
+# data_dir_allowed DIR fails for system directories the script must never
+# take over as a data dir.
+data_dir_allowed() {
+  case "${1%/}" in
+    ""|/|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var|/var/lib) return 1 ;;
+  esac
+}
+
+# find_existing_env_file [PATH...] prints the first regular env file among
+# the given paths and ENV_FILE_CANDIDATES. A reinstall with a different
+# INSTALL_DIR, or over a data dir kept by uninstall.sh, picks up that file
+# instead of writing a new one. One that fails env_file_trusted or sits in
+# a system directory stops the install.
+find_existing_env_file() {
+  local p
+  for p in "$@" "${ENV_FILE_CANDIDATES[@]}"; do
+    [ -n "$p" ] || continue
+    if $USE_SUDO test -f "$p" && ! $USE_SUDO test -L "$p"; then
+      if ! env_file_trusted "$p"; then
+        die "refusing to reuse $p: it must be named dockmesh.env and, like its directory, be owned by root or dockmesh and not writable by group or others"
+      fi
+      if ! data_dir_allowed "$(dirname "$p")"; then
+        die "refusing to reuse $p: $(dirname "$p") is a system directory, not a Dockmesh data dir"
+      fi
+      printf '%s' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# warn_stale_asset_paths ENV_FILE ASSET_DIR warns when a kept env file
+# points the agent installer or binaries at a path that no longer exists,
+# and names the lines to change. The file itself is left alone.
+warn_stale_asset_paths() {
+  local env_file="$1" asset_dir="$2" key want have
+  for key in DOCKMESH_INSTALL_SCRIPT DOCKMESH_BINARY_DIR; do
+    case "$key" in
+      DOCKMESH_INSTALL_SCRIPT) want="$asset_dir/install-agent.sh" ;;
+      *) want="$asset_dir/bin" ;;
+    esac
+    have="$($USE_SUDO grep -E "^[[:space:]]*(export[[:space:]]+)?$key=" "$env_file" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true)"
+    if [ -n "$have" ] && [ "$have" != "$want" ] && ! $USE_SUDO test -e "$have"; then
+      warn "$env_file sets $key=$have, which does not exist; change it to $key=$want"
+    fi
+  done
 }
 
 # Succeeds only on a host without an earlier install: no service unit, no
@@ -230,10 +284,12 @@ setup_flag_wanted() {
   return 0
 }
 
-# write_env_file ENV_FILE DATA_DIR ASSET_DIR [OWNER]
+# write_env_file ENV_FILE DATA_DIR ASSET_DIR [OWNER] creates the bootstrap
+# env file. An existing one is the live config of an earlier install and is
+# never rewritten.
 write_env_file() {
   local env_file="$1" data_dir="$2" asset_dir="$3" owner="${4:-}"
-  local old_db="" bak="" setup_line="" tmp
+  local setup_line="" tmp
   if $USE_SUDO test -L "$env_file"; then
     die "refusing to write $env_file: it is a symlink — remove it and re-run"
   fi
@@ -241,16 +297,13 @@ write_env_file() {
     die "refusing to write $env_file: it is a directory"
   fi
   if $USE_SUDO test -e "$env_file"; then
-    old_db="$($USE_SUDO grep -E '^[[:space:]]*(export[[:space:]]+)?DOCKMESH_DB_PATH=' "$env_file" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true)"
+    info "env file        $env_file exists — kept unchanged"
+    return 0
   fi
-  if setup_flag_wanted "$env_file" "$data_dir/data/dockmesh.db" "$old_db"; then
+  if setup_flag_wanted "$env_file" "$data_dir/data/dockmesh.db"; then
     setup_line="DOCKMESH_SETUP_FORCE=true"
   else
     info "earlier install found — setup wizard not forced open"
-  fi
-  if $USE_SUDO test -e "$env_file"; then
-    bak="$(backup_env_file "$env_file")" || exit 1
-    ok "env backup      $bak"
   fi
   # shellcheck disable=SC2016
   tmp="$($USE_SUDO bash -c 'set -C; umask 077
@@ -1013,9 +1066,22 @@ if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
   info "run 'sudo dockmesh init' interactively when ready"
   step_done
 else
+  # An env file of an earlier install (kept data, other INSTALL_DIR) wins
+  # over the defaults, so its data dir and settings are picked back up.
+  UNIT_ENV_FILE=""
+  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ]; then
+    UNIT_ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' || true)"
+  fi
+  KEPT_ENV_FILE="$(find_existing_env_file "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/dockmesh.env}" "$UNIT_ENV_FILE" || true)"
   # Default data root: /data if mounted as a separate volume, else
   # /var/lib/dockmesh on Linux, /usr/local/var/dockmesh on macOS.
-  if [ -d /data ] && [ -w /data -o "$(id -u)" = "0" ]; then
+  if [ -n "$KEPT_ENV_FILE" ]; then
+    DATA_DIR="$(dirname "$KEPT_ENV_FILE")"
+    if [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$DATA_DIR" != "$DOCKMESH_DATA_DIR" ]; then
+      die "DOCKMESH_DATA_DIR=$DOCKMESH_DATA_DIR, but the earlier install's config is $KEPT_ENV_FILE — set DOCKMESH_DATA_DIR=$DATA_DIR or move that file away"
+    fi
+    info "earlier install $KEPT_ENV_FILE"
+  elif [ -d /data ] && [ -w /data -o "$(id -u)" = "0" ]; then
     DATA_DIR="${DOCKMESH_DATA_DIR:-/data}"
   elif [ "$OS" = "darwin" ]; then
     DATA_DIR="${DOCKMESH_DATA_DIR:-/usr/local/var/dockmesh}"
@@ -1045,7 +1111,14 @@ else
   # service can write everywhere; on macOS root owns it.
   $USE_SUDO mkdir -p "$DATA_DIR/data" "$DATA_DIR/stacks"
   if [ "$OS" = "linux" ]; then
-    $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
+    if [ -n "$KEPT_ENV_FILE" ]; then
+      # A recreated service user may have a new UID; only the dirs the
+      # service writes are handed back to it.
+      $USE_SUDO chown dockmesh:docker "$DATA_DIR"
+      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR/data" "$DATA_DIR/stacks"
+    else
+      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
+    fi
     $USE_SUDO chmod 750 "$DATA_DIR"
   fi
   ok "data layout     $DATA_DIR/{data,stacks}"
@@ -1055,12 +1128,18 @@ else
   # wizard's commit handler scrubs that flag at the end so a future
   # service restart behaves normally.
   ENV_FILE="$DATA_DIR/dockmesh.env"
-  if [ "$OS" = "linux" ]; then
-    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
+  if [ -n "$KEPT_ENV_FILE" ]; then
+    ENV_FILE="$KEPT_ENV_FILE"
+    warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
+    ok "env file        $ENV_FILE (kept)"
   else
-    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
+    if [ "$OS" = "linux" ]; then
+      write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
+    else
+      write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
+    fi
+    ok "env file        $ENV_FILE"
   fi
-  ok "env file        $ENV_FILE"
 
   # Service unit. Linux = systemd; macOS = launchd.
   if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
@@ -1148,6 +1227,13 @@ if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
     "" \
     "Guided CLI wizard — data dir, admin user, listen port, systemd unit." \
     "Everything defaults to sane values. ~2 minutes."
+elif [ -n "${KEPT_ENV_FILE:-}" ]; then
+  box "Dockmesh is back" \
+    "" \
+    "  http://$WIZARD_HOST:8080" \
+    "" \
+    "Reused $KEPT_ENV_FILE and the data next to it." \
+    "Sign in with your existing account."
 else
   box "Open the install wizard" \
     "" \

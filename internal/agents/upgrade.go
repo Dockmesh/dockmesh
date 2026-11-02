@@ -36,14 +36,14 @@ type SettingsStore interface {
 // snapshot so admins can see at a glance how many hosts are on the
 // server version and how many are pending.
 type UpgradePolicy struct {
-	Mode             string `json:"mode"`
-	StagePercent     int    `json:"stage_percent"`
-	StageGapSec      int    `json:"stage_gap_sec"`
-	ServerVersion    string `json:"server_version"`
-	ConnectedTotal   int    `json:"connected_total"`
-	ConnectedUpToDate int   `json:"connected_up_to_date"`
-	ConnectedPending int    `json:"connected_pending"`
-	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
+	Mode              string     `json:"mode"`
+	StagePercent      int        `json:"stage_percent"`
+	StageGapSec       int        `json:"stage_gap_sec"`
+	ServerVersion     string     `json:"server_version"`
+	ConnectedTotal    int        `json:"connected_total"`
+	ConnectedUpToDate int        `json:"connected_up_to_date"`
+	ConnectedPending  int        `json:"connected_pending"`
+	LastRunAt         *time.Time `json:"last_run_at,omitempty"`
 }
 
 // UpgradeInput is the PUT body.
@@ -63,7 +63,7 @@ type UpgradeController struct {
 
 	mu         sync.Mutex
 	lastRunAt  time.Time
-	stageQueue []string  // agent ids left to upgrade in the current staged wave
+	stageQueue []string // agent ids left to upgrade in the current staged wave
 	attempts   map[string]upgradeAttempt
 	now        func() time.Time
 }
@@ -292,7 +292,7 @@ func (c *UpgradeController) buildUpgradeReq(ag *ConnectedAgent) (*AgentUpgradeRe
 		return nil, err
 	}
 	return &AgentUpgradeReq{
-		BinaryURL: c.agents.publicURL + "/install/" + name,
+		BinaryURL: c.agents.PublicURL() + "/install/" + name,
 		Version:   version.Version,
 		SHA256:    sum,
 	}, nil
