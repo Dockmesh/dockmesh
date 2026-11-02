@@ -23,3 +23,13 @@ export function stackInLens(
   if (lensId === 'all' || hasContainersHere || !stack.deployment) return true;
   return stack.deployment.host_id === lensId;
 }
+
+/** Compose project names of a container list, for stackInLens. */
+export function composeProjects(containers: { Labels?: Record<string, string> }[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of containers) {
+    const p = c.Labels?.['com.docker.compose.project'];
+    if (p) out.add(p);
+  }
+  return out;
+}

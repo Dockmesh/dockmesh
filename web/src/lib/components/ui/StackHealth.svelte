@@ -33,11 +33,12 @@
     total,
     unhealthy = 0,
     members = [],
-    unknown = false
-  }: { running: number; total: number; unhealthy?: number; members?: Member[]; unknown?: boolean } = $props();
+    unknown = false,
+    notDeployed = false
+  }: { running: number; total: number; unhealthy?: number; members?: Member[]; unknown?: boolean; notDeployed?: boolean } = $props();
 
-  const tone = $derived(unknown ? 'off' : groupTone(running, total, unhealthy));
-  const label = $derived(unknown ? 'No status' : groupLabel(running, total, unhealthy));
+  const tone = $derived(unknown || notDeployed ? 'off' : groupTone(running, total, unhealthy));
+  const label = $derived(notDeployed ? 'Not deployed' : unknown ? 'No status' : groupLabel(running, total, unhealthy));
   const tip = $derived.by(() => {
     const bad = members.filter((m) => m.unhealthy || m.state !== 'running');
     if (!bad.length) return label;
