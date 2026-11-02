@@ -82,6 +82,11 @@ func (s *HistoryStore) RecordEnvironment(ctx context.Context, stackName, hostID,
 	return s.insert(ctx, stackName, hostID, composeYAML, environment, note, userID, services, true, 0, "", "")
 }
 
+// RecordGit records a git auto-deploy attempt, successful or not.
+func (s *HistoryStore) RecordGit(ctx context.Context, stackName, hostID, composeYAML, environment string, services []DeployHistoryService, success bool, durationMS int64, gitCommitSHA, errorMessage string) (int64, error) {
+	return s.insert(ctx, stackName, hostID, composeYAML, environment, "git auto-deploy", "", services, success, durationMS, gitCommitSHA, errorMessage)
+}
+
 func (s *HistoryStore) insert(ctx context.Context, stackName, hostID, composeYAML, environment, note, userID string, services []DeployHistoryService, success bool, durationMS int64, gitCommitSHA, errorMessage string) (int64, error) {
 	var servicesJSON sql.NullString
 	if len(services) > 0 {
