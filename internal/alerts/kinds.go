@@ -55,7 +55,7 @@ func containerKind(kind string) bool {
 var (
 	dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 	exitCode   = regexp.MustCompile(`^-?[0-9]{1,10}$`)
-	mountPath  = regexp.MustCompile(`^/[A-Za-z0-9._@+/-]{0,254}$`)
+	mountPath  = regexp.MustCompile(`^/[A-Za-z0-9 ._@+/-]{0,254}$`)
 	roleName   = regexp.MustCompile(`^[a-z_-]{1,32}$`)
 )
 
@@ -231,10 +231,19 @@ func (s *Service) syncWatchers(ctx context.Context) {
 			}
 			continue
 		}
+		// Checked under evMu, which Stop holds while cancelling watchers, so
+		// none starts after Stop and Stop waits for all of them.
 		s.evMu.Lock()
+		if s.stopped.Load() {
+			s.evMu.Unlock()
+			cancel()
+			return
+		}
 		s.watching[id] = cancel
+		s.wg.Add(1)
 		s.evMu.Unlock()
 		go func() {
+			defer s.wg.Done()
 			defer func() {
 				cancel()
 				s.evMu.Lock()
