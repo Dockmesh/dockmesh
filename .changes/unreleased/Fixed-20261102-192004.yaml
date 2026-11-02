@@ -1,0 +1,3 @@
+kind: Fixed
+body: "Saving a job in the wizard keeps its custom pre-hooks and its post-hooks; both can be edited there."
+time: 2026-11-02T19:20:04Z

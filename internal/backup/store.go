@@ -238,9 +238,9 @@ func (s *store) listRunLogs(ctx context.Context, runID int64) ([]RunLogEntry, er
 func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 	srcs, _ := json.Marshal(j.Sources)
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO backup_runs (job_id, job_name, status, sources_json, encrypted)
-		VALUES (?, ?, ?, ?, ?)`,
-		j.ID, j.Name, StatusRunning, string(srcs), boolInt(j.Encrypt))
+		INSERT INTO backup_runs (job_id, job_name, host_id, status, sources_json, encrypted)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		j.ID, j.Name, defaultStr(j.HostID, "local"), StatusRunning, string(srcs), boolInt(j.Encrypt))
 	if err != nil {
 		return 0, err
 	}
@@ -345,7 +345,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 		limit = 100
 	}
 	return s.queryRuns(ctx, `
-		SELECT id, job_id, job_name, status, started_at, finished_at,
+		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
@@ -354,7 +354,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 // latestRuns returns the most recent run of every job that has one.
 func (s *store) latestRuns(ctx context.Context) ([]Run, error) {
 	return s.queryRuns(ctx, `
-		SELECT id, job_id, job_name, status, started_at, finished_at,
+		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs
@@ -374,7 +374,7 @@ func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run
 		var finished, pruned sql.NullTime
 		var encInt int
 		var srcs string
-		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
+		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
 			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 			return nil, err
 		}
@@ -395,7 +395,7 @@ func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run
 
 func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, job_id, job_name, status, started_at, finished_at,
+		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs WHERE id = ?`, id)
@@ -403,7 +403,7 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	var finished, pruned sql.NullTime
 	var encInt int
 	var srcs string
-	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
+	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
 		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRunNotFound

@@ -1,0 +1,3 @@
+kind: Fixed
+body: "Who may read or restore a backup run, and where a restore goes by default, follows the host the run was taken on, not the host its job was moved to later."
+time: 2026-11-02T19:20:02Z

@@ -4,7 +4,7 @@
   import { urlTab } from '$lib/urlTab.svelte';
   import { page } from '$app/state';
   import { api, ApiError, runRestorable } from '$lib/api';
-  import type { BackupJob, BackupJobInput, BackupRun, BackupTarget } from '$lib/api';
+  import type { BackupJob, BackupJobInput, BackupRun, BackupTarget, RestoreLeftover } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -55,6 +55,40 @@
     untrack(loadAll);
   });
   $effect(() => autoRefresh(loadAll, 5_000));
+
+  // Copies of the files a system restore replaced; admin-only on the server.
+  let leftovers = $state<RestoreLeftover[]>([]);
+  let deletingLeftovers = $state(false);
+  async function loadLeftovers() {
+    if (!allowed('system.upgrade')) return;
+    try {
+      leftovers = (await api.backups.stagedSystemRestore()).leftovers ?? [];
+    } catch {
+      leftovers = [];
+    }
+  }
+  $effect(() => { untrack(loadLeftovers); });
+
+  async function deleteLeftovers() {
+    const ok = await confirm.ask({
+      title: 'Delete the files kept by the system restore?',
+      message: 'The database, secret key and stacks from before the restore are deleted for good.',
+      body: leftovers.map((l) => l.path).join(', '),
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
+    deletingLeftovers = true;
+    try {
+      await api.backups.deleteRestoreLeftovers();
+      toast.success('Deleted', 'The files kept by the system restore are gone.');
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      deletingLeftovers = false;
+      await loadLeftovers();
+    }
+  }
 
   // ?edit=<id> comes from the job and target detail pages.
   let editHandled = '';
@@ -340,6 +374,27 @@
       <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>
     {/if}
   </div>
+
+  {#if leftovers.length > 0}
+    <div class="attn" role="status" data-testid="restore-leftovers">
+      <div class="attn-h">
+        <AlertTriangle size={14} strokeWidth={1.8} />
+        <b>Files from before the system restore are kept</b>
+        <span class="dm-dim">· they include the old database and secret key. Delete them once the restored install works.</span>
+        <span class="dm-sp"></span>
+        <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={deleteLeftovers} disabled={deletingLeftovers}>
+          {deletingLeftovers ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+      {#each leftovers as l (l.path)}
+        <div class="attn-row">
+          <span class="dm-mono dm-trunc" title={l.path}>{l.path}</span>
+          <span class="dm-sp"></span>
+          <span class="dm-dim">{fmtBytes(l.bytes)} · {new Date(l.restored_at).toLocaleString()}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <Tabs
     tabs={[

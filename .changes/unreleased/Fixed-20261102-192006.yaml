@@ -1,0 +1,3 @@
+kind: Fixed
+body: "Download key backup on the encryption settings page works; it used a plain link that carried no session token."
+time: 2026-11-02T19:20:06Z

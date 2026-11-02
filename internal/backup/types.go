@@ -94,9 +94,11 @@ type Hook struct {
 
 // Run is one row of backup_runs.
 type Run struct {
-	ID         int64      `json:"id"`
-	JobID      int64      `json:"job_id"`
-	JobName    string     `json:"job_name"`
+	ID      int64  `json:"id"`
+	JobID   int64  `json:"job_id"`
+	JobName string `json:"job_name"`
+	// HostID is the host the run was taken on ("local" for the server).
+	HostID     string     `json:"host_id"`
 	Status     string     `json:"status"` // running | success | success_with_warnings | failed
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`

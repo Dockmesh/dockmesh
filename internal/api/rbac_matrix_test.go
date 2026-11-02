@@ -335,6 +335,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/restore/system", rbac.PermSystemUpgrade},
 	{"DELETE", "/api/v1/restore/system", rbac.PermSystemUpgrade},
 	{"POST", "/api/v1/restore/system/apply", rbac.PermSystemUpgrade},
+	{"DELETE", "/api/v1/restore/system/leftovers", rbac.PermSystemUpgrade},
 	{"GET", "/api/v1/proxy/status", rbac.PermProxyView},
 	{"GET", "/api/v1/proxy/routes", rbac.PermProxyView},
 	{"GET", "/api/v1/proxy/routes/{id}/metrics", rbac.PermProxyView},

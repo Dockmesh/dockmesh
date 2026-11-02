@@ -140,6 +140,8 @@ var categories = map[string]string{
 	"proxy.version_update":          CategoryChanges,
 	"proxy.version_rollback":        CategoryChanges,
 	"proxy.settings_update":         CategoryChanges,
+	ActionBackupRun:                 CategoryChanges,
+	ActionBackupRestore:             CategoryChanges,
 	"backup.accept_host_key":        CategoryChanges,
 	"backup.accept_target_host_key": CategoryChanges,
 
@@ -155,6 +157,7 @@ var categories = map[string]string{
 	"system.restore_stage":      CategorySystem,
 	"system.restore_apply":      CategorySystem,
 	"system.restore_discard":    CategorySystem,
+	"system.restore_cleanup":    CategorySystem,
 }
 
 // Category returns the category of an action. Actions without an entry,

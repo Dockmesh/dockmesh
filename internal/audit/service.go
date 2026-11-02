@@ -78,6 +78,8 @@ const (
 	ActionBackupDownload     = "backup.download"
 	ActionBackupKeyExport    = "backup.key_export"
 	ActionBackupJobRepaired  = "backup.job_repaired"
+	ActionBackupRun          = "backup.run"
+	ActionBackupRestore      = "backup.restore"
 
 	// ActionScopeDenied is logged when none of the caller's assignments
 	// allows the request on the resource it acts on.

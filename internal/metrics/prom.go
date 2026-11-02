@@ -81,7 +81,7 @@ func NewPromMetrics(db *sql.DB) *PromMetrics {
 
 		BackupLastDurationSec: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "dockmesh_backup_last_duration_seconds",
-			Help: "Duration of the most recent run of each backup job.",
+			Help: "Duration of the most recent successful run of each backup job.",
 		}, []string{"job"}),
 
 		DeployDurationSec: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -203,29 +203,42 @@ func (m *PromMetrics) refresh(ctx context.Context) {
 		rows.Close()
 	}
 
-	// Backup job timestamps — last run per job.
-	rows, err = m.db.QueryContext(ctx, `
-		SELECT j.name, r.finished_at, r.duration_ms
+	if err := m.refreshBackups(ctx); err != nil {
+		slog.Debug("prom refresh: backups", "err", err)
+	}
+}
+
+// refreshBackups sets the time and duration of each job's newest
+// successful run.
+func (m *PromMetrics) refreshBackups(ctx context.Context) error {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT j.name, r.started_at, r.finished_at
 		  FROM backup_jobs j
-		  LEFT JOIN backup_runs r ON r.id = (
+		  JOIN backup_runs r ON r.id = (
 		    SELECT id FROM backup_runs
 		     WHERE job_id = j.id AND status IN ('success', 'success_with_warnings')
-		     ORDER BY finished_at DESC LIMIT 1)
+		       AND finished_at IS NOT NULL
+		     ORDER BY id DESC LIMIT 1)
 		 WHERE j.deleted_at IS NULL`)
-	if err == nil {
-		for rows.Next() {
-			var name string
-			var finished *time.Time
-			var durMs *int64
-			if err := rows.Scan(&name, &finished, &durMs); err == nil && finished != nil {
-				m.BackupLastRunTimestamp.WithLabelValues(name).Set(float64(finished.Unix()))
-				if durMs != nil {
-					m.BackupLastDurationSec.WithLabelValues(name).Set(float64(*durMs) / 1000.0)
-				}
-			}
-		}
-		rows.Close()
+	if err != nil {
+		return err
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var started, finished sql.NullTime
+		if err := rows.Scan(&name, &started, &finished); err != nil {
+			return err
+		}
+		if !finished.Valid {
+			continue
+		}
+		m.BackupLastRunTimestamp.WithLabelValues(name).Set(float64(finished.Time.Unix()))
+		if started.Valid {
+			m.BackupLastDurationSec.WithLabelValues(name).Set(max(finished.Time.Sub(started.Time).Seconds(), 0))
+		}
+	}
+	return rows.Err()
 }
 
 // -----------------------------------------------------------------------------

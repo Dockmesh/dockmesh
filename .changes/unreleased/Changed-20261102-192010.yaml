@@ -1,0 +1,3 @@
+kind: Changed
+body: "`dmctl backup run` waits until the run finishes and exits non-zero when it failed; `--no-wait` returns once it started."
+time: 2026-11-02T19:20:10Z

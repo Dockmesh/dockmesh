@@ -4,9 +4,10 @@
   // `Dockmesh Wizard (6)/backup-wizards.jsx::JobWizard`. Owns its
   // form state internally — the parent passes `editing` (or null) and
   // a `save` callback, the wizard packages the final BackupJobInput.
-  import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget, type BackupHost, type StackListEntry } from '$lib/api';
+  import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupTarget, type BackupHost, type StackListEntry } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { fmtBytes } from '$lib/format';
+  import { HOOK_PRESETS, hookToRow, inlineTargetConfig, rowsToHooks, type HookRow } from '$lib/backupHooks';
   import WizardShell from './_WizardShell.svelte';
   import {
     LayoutDashboard, Layers, HardDrive, Lock, Clock,
@@ -60,14 +61,56 @@
   // Retention + hooks
   let keepN = $state(14);
   let keepDays = $state(30);
-  const HOOK_PRESETS = [
-    { id: 'pg',     label: 'PostgreSQL dump',  container: 'postgres', cmd: 'pg_dumpall -U postgres -f /tmp/dump.sql' },
-    { id: 'mysql',  label: 'MySQL dump',       container: 'mysql',    cmd: 'mysqldump -u root --all-databases > /tmp/dump.sql' },
-    { id: 'maria',  label: 'MariaDB dump',     container: 'mariadb',  cmd: 'mariadb-dump -u root --all-databases > /tmp/dump.sql' },
-    { id: 'redis',  label: 'Redis save',       container: 'redis',    cmd: 'redis-cli BGSAVE' },
-    { id: 'mongo',  label: 'MongoDB dump',     container: 'mongo',    cmd: 'mongodump --out /tmp/dump' }
+  let preHooks = $state<HookRow[]>([]);
+  let postHooks = $state<HookRow[]>([]);
+
+  // Container names on the job's host for the hook pickers, narrowed to
+  // the picked stack or the containers that mount the picked volume.
+  let hookContainers = $state<string[]>([]);
+  let hookContainersFor = $state('');
+  $effect(() => {
+    if (!open || step !== 3 || sourceKind === 'system' || !jobHost) return;
+    const key = `${jobHost}|${sourceKind}|${sourceRef}`;
+    if (hookContainersFor === key) return;
+    hookContainersFor = key;
+    const kind = sourceKind;
+    const ref = sourceRef;
+    api.containers.list(true, jobHost)
+      .then((cs) => {
+        if (hookContainersFor !== key) return;
+        const list = Array.isArray(cs) ? cs : [];
+        hookContainers = list
+          .filter((c: any) => kind === 'stack'
+            ? c.Labels?.['com.docker.compose.project'] === ref
+            : (c.Mounts ?? []).some((m: any) => m.Type === 'volume' && m.Name === ref))
+          .map((c: any) => String(c.Names?.[0] ?? '').replace(/^\//, ''))
+          .filter(Boolean)
+          .sort();
+      })
+      .catch(() => {
+        if (hookContainersFor === key) hookContainers = [];
+      });
+  });
+
+  const HOOK_SECTIONS = [
+    { kind: 'pre' as const, label: 'Pre-backup hooks', hint: 'Run in a container before the archive is written, e.g. to dump a database into its volume. A failure stops the run.' },
+    { kind: 'post' as const, label: 'Post-backup hooks', hint: 'Run after the archive is written. A failure marks the run as a success with warnings.' }
   ];
-  let pickedHooks = $state<Set<string>>(new Set());
+
+  function setHooks(kind: 'pre' | 'post', rows: HookRow[]) {
+    if (kind === 'pre') preHooks = rows;
+    else postHooks = rows;
+  }
+
+  function defaultHookContainer(): string {
+    return hookContainers.length === 1 ? hookContainers[0] : '';
+  }
+
+  function addPreset(id: string) {
+    const p = HOOK_PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    preHooks = [...preHooks, { container: defaultHookContainer(), command: p.command }];
+  }
 
   // ─── Available resources for the source picker (loaded lazily on
   // step 0 so the wizard opens fast even on a fleet with thousands of
@@ -182,12 +225,8 @@
       encrypt = editing.encrypt;
       keepN = editing.retention_count;
       keepDays = editing.retention_days;
-      pickedHooks = new Set();
-      for (const h of editing.pre_hooks ?? []) {
-        const cmdStr = h.cmd.join(' ');
-        const preset = HOOK_PRESETS.find((p) => p.cmd === cmdStr || (h.container.includes(p.container) && cmdStr.includes(p.cmd.split(' ')[0])));
-        if (preset) pickedHooks.add(preset.id);
-      }
+      preHooks = (editing.pre_hooks ?? []).map(hookToRow);
+      postHooks = (editing.post_hooks ?? []).map(hookToRow);
     } else {
       name = 'new-backup-job';
       sourceKind = 'system';
@@ -203,7 +242,8 @@
       encrypt = true;
       keepN = 14;
       keepDays = 30;
-      pickedHooks = new Set();
+      preHooks = [];
+      postHooks = [];
       selectPreTarget(targets[0]?.id ?? -1);
     }
     loadResources();
@@ -287,24 +327,19 @@
       } else {
         sources.push({ type: sourceKind, name: sourceRef.trim() });
       }
-      const preHooks: BackupHook[] = [];
-      for (const id of pickedHooks) {
-        const p = HOOK_PRESETS.find((x) => x.id === id);
-        if (p) preHooks.push({ container: p.container, cmd: p.cmd.split(/\s+/) });
-      }
       const payload: BackupJobInput = {
         name: name.trim(),
         host_id: jobHost || undefined,
         target_id: preTargetId !== -1 ? preTargetId : undefined,
         target_type: targetType,
-        target_config: targetConfig,
+        target_config: preTargetId !== -1 ? targetConfig : inlineTargetConfig(targetType, targetConfig),
         sources,
         schedule: cronExpr,
         retention_count: keepN,
         retention_days: keepDays,
         encrypt,
-        pre_hooks: preHooks,
-        post_hooks: [],
+        pre_hooks: rowsToHooks(preHooks),
+        post_hooks: rowsToHooks(postHooks),
         enabled: editing?.enabled ?? true
       };
       await onsave(payload, !!editing, editing?.id);
@@ -602,7 +637,7 @@
             </div>
             <div class="wiz-field">
               <label class="wiz-field-label" for="t-port">Port</label>
-              <input id="t-port" class="wiz-input wiz-input-mono" placeholder="22" value={targetConfig.port ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, port: (e.currentTarget as HTMLInputElement).value })} />
+              <input id="t-port" class="wiz-input wiz-input-mono" type="number" min="1" max="65535" placeholder="22" value={targetConfig.port ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, port: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
           <div class="wiz-grid-2">
@@ -614,6 +649,11 @@
               <label class="wiz-field-label" for="t-pass">Password</label>
               <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={targetConfig.password ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, password: (e.currentTarget as HTMLInputElement).value })} />
             </div>
+          </div>
+          <div class="wiz-field">
+            <label class="wiz-field-label" for="t-key">Private key (optional)</label>
+            <span class="wiz-field-hint">PEM or OpenSSH private key, used instead of or besides the password. Stored encrypted, never shown again.{targetConfig.private_key_set && !targetConfig.private_key ? ' A key is saved; leave empty to keep it.' : ''}</span>
+            <textarea id="t-key" class="wiz-input wiz-input-mono wiz-textarea" rows="4" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={targetConfig.private_key ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, private_key: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
           </div>
           <div class="wiz-field">
             <label class="wiz-field-label" for="t-rpath">Remote path</label>
@@ -644,6 +684,15 @@
               <input id="t-sk" class="wiz-input wiz-input-mono" type="password" value={targetConfig.secret_key ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, secret_key: (e.currentTarget as HTMLInputElement).value })} />
             </div>
           </div>
+          <div class="wiz-field">
+            <label class="wiz-field-label" for="t-prefix">Prefix (optional)</label>
+            <span class="wiz-field-hint">Folder inside the bucket, nested levels allowed (backups/dockmesh).</span>
+            <input id="t-prefix" class="wiz-input wiz-input-mono" placeholder="backups/dockmesh" value={targetConfig.prefix ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, prefix: (e.currentTarget as HTMLInputElement).value })} />
+          </div>
+          <label class="wiz-check">
+            <input type="checkbox" checked={!!targetConfig.use_ssl} onchange={(e) => (targetConfig = { ...targetConfig, use_ssl: (e.currentTarget as HTMLInputElement).checked })} />
+            <span>Use TLS (https). Required by AWS, Wasabi, B2 and most hosted services.</span>
+          </label>
         {:else if targetType === 'smb'}
           <div class="wiz-grid-2">
             <div class="wiz-field">
@@ -689,7 +738,7 @@
           <span class="wiz-toggle-text">
             <Lock size={11} strokeWidth={1.5} class="wiz-toggle-icon" />
             <span class="wiz-toggle-label">{encrypt ? 'Encrypt at rest with age' : 'No encryption (not recommended)'}</span>
-            <span class="wiz-toggle-hint">Recipient key is configured globally in Settings → Backups.</span>
+            <span class="wiz-toggle-hint">Uses this server's backup key. Export it under Settings → Encryption, or encrypted archives can't be restored on another install.</span>
           </span>
         </label>
       </div>
@@ -702,8 +751,8 @@
   {#if step === 3}
     <div class="wiz-stack">
       <div class="wiz-field">
-        <label class="wiz-field-label" for="ret-n">Keep at least N runs</label>
-        <span class="wiz-field-hint">The newest N runs are always retained, even if older than max age.</span>
+        <label class="wiz-field-label" for="ret-n">Keep the newest N runs</label>
+        <span class="wiz-field-hint">After each run, archives beyond the newest N are deleted. The newest archive is never deleted.</span>
         <div class="wiz-slider">
           <input id="ret-n" type="range" min="1" max="60" bind:value={keepN} />
           <span class="wiz-slider-val font-mono">{keepN} runs</span>
@@ -712,37 +761,60 @@
 
       <div class="wiz-field">
         <label class="wiz-field-label" for="ret-d">Max age (days)</label>
-        <span class="wiz-field-hint">Older runs are deleted after a successful new run. 0 = no limit.</span>
+        <span class="wiz-field-hint">After each run, archives older than this are deleted too, even among the newest N. 0 = no limit.</span>
         <div class="wiz-slider">
           <input id="ret-d" type="range" min="0" max="365" bind:value={keepDays} />
           <span class="wiz-slider-val font-mono">{keepDays === 0 ? 'no limit' : keepDays + 'd'}</span>
         </div>
       </div>
 
-      <div class="wiz-field">
-        <label class="wiz-field-label">Pre-backup hooks</label>
-        <span class="wiz-field-hint">Run inside source containers before snapshot. Pick presets that match your stack.</span>
-        <div class="wiz-hook-grid">
-          {#each HOOK_PRESETS as h (h.id)}
-            {@const checked = pickedHooks.has(h.id)}
-            <label class="wiz-hook-card" class:active={checked}>
+      {#if hookContainers.length}
+        <datalist id="hook-containers">
+          {#each hookContainers as c (c)}<option value={c}></option>{/each}
+        </datalist>
+      {/if}
+      {#each HOOK_SECTIONS as sec (sec.kind)}
+        {@const rows = sec.kind === 'pre' ? preHooks : postHooks}
+        <div class="wiz-field">
+          <span class="wiz-field-label">{sec.label}</span>
+          <span class="wiz-field-hint">{sec.hint} Commands run with <code>sh -c</code> inside the container, so redirects and environment variables work.</span>
+          {#each rows as row, i (i)}
+            <div class="wiz-hook-row" data-testid="hook-row-{sec.kind}">
               <input
-                type="checkbox"
-                {checked}
-                onchange={(e) => {
-                  const next = new Set(pickedHooks);
-                  if ((e.currentTarget as HTMLInputElement).checked) next.add(h.id); else next.delete(h.id);
-                  pickedHooks = next;
-                }}
+                class="wiz-input wiz-input-mono wiz-hook-container"
+                placeholder="container"
+                aria-label="Container"
+                list="hook-containers"
+                value={row.container}
+                oninput={(e) => setHooks(sec.kind, rows.map((r, j) => (j === i ? { ...r, container: (e.currentTarget as HTMLInputElement).value } : r)))}
               />
-              <span class="wiz-hook-text">
-                <span class="wiz-hook-label">{h.label}</span>
-                <span class="font-mono wiz-hook-cmd">{h.cmd}</span>
-              </span>
-            </label>
+              <input
+                class="wiz-input wiz-input-mono wiz-hook-command"
+                placeholder="command"
+                aria-label="Command"
+                value={row.command}
+                oninput={(e) => setHooks(sec.kind, rows.map((r, j) => (j === i ? { ...r, command: (e.currentTarget as HTMLInputElement).value } : r)))}
+              />
+              <button type="button" class="wiz-hook-btn" aria-label="Remove hook" onclick={() => setHooks(sec.kind, rows.filter((_, j) => j !== i))}>Remove</button>
+            </div>
           {/each}
+          <div class="wiz-hook-actions">
+            <button type="button" class="wiz-hook-btn" onclick={() => setHooks(sec.kind, [...rows, { container: defaultHookContainer(), command: '' }])}>Add command</button>
+            {#if sec.kind === 'pre'}
+              <span class="wiz-hook-presets-label">Presets:</span>
+              {#each HOOK_PRESETS as p (p.id)}
+                <button type="button" class="wiz-hook-btn" title={p.command} onclick={() => addPreset(p.id)}>{p.label}</button>
+              {/each}
+            {/if}
+          </div>
         </div>
-      </div>
+      {/each}
+      {#if preHooks.some((r) => r.command.includes('dockmesh-dump'))}
+        <div class="wiz-info-box">
+          <HardDrive size={12} strokeWidth={1.5} class="wiz-info-icon" />
+          <span>The dump presets write into the data directory of the official database images. If your container keeps its data elsewhere, change the path to one inside a backed-up volume.</span>
+        </div>
+      {/if}
 
       <div class="wiz-info-box wiz-info-success">
         <Check size={12} strokeWidth={1.8} class="wiz-info-icon" />
@@ -1003,35 +1075,21 @@
     line-height: 1.5;
   }
 
-  /* Hook picker grid */
-  .wiz-hook-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 8px;
-  }
-  .wiz-hook-card {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 10px 12px;
+  /* Hook editor */
+  .wiz-hook-row { display: grid; grid-template-columns: minmax(140px, 1fr) 3fr auto; gap: 8px; margin-bottom: 6px; }
+  .wiz-hook-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .wiz-hook-presets-label { font-size: 11.5px; color: var(--fg-subtle); margin-left: 6px; }
+  .wiz-hook-btn {
+    height: 28px;
+    padding: 0 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg-elevated);
+    color: var(--fg);
+    font-size: 12px;
     cursor: pointer;
-    transition: border-color 120ms, background 120ms;
   }
-  .wiz-hook-card:hover { border-color: var(--border-strong); }
-  .wiz-hook-card.active {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
-  }
-  .wiz-hook-card input { accent-color: var(--accent); margin-top: 3px; flex-shrink: 0; }
-  .wiz-hook-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .wiz-hook-label { font-size: 12.5px; color: var(--fg); }
-  .wiz-hook-cmd {
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    word-break: break-all;
-    line-height: 1.4;
-  }
+  .wiz-hook-btn:hover { border-color: var(--border-strong); }
+  .wiz-textarea { height: auto; padding: 8px 12px; resize: vertical; }
+  .wiz-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted, inherit); }
 </style>

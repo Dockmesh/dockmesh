@@ -235,8 +235,11 @@ paths:
         downloads or verifies the archive (409 here, nothing written); once
         it writes it runs to the end.
 
-        Requires the job's host and the destination host within the
-        caller's scope (403). Stack runs write the target stack's files, so
+        Requires the host the run was taken on and the destination host
+        within the caller's scope (403). Non-admins can't restore into
+        Dockmesh's own volumes: the proxy and agent volumes and any volume a
+        Dockmesh container (server, proxy, agent) mounts on the destination
+        host (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
         stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
@@ -281,8 +284,11 @@ paths:
         For stack backups `target_stack` (or, for older clients,
         `dest_volume`) names the stack.
 
-        Requires the job's host and the destination host within the
-        caller's scope (403). Stack runs write the target stack's files, so
+        Requires the host the run was taken on and the destination host
+        within the caller's scope (403). Non-admins can't restore into
+        Dockmesh's own volumes: the proxy and agent volumes and any volume a
+        Dockmesh container (server, proxy, agent) mounts on the destination
+        host (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
         stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
@@ -365,6 +371,10 @@ paths:
                     oneOf:
                       - {$ref: "#/components/schemas/StagedRestore"}
                       - {type: "null"}
+                  leftovers:
+                    type: array
+                    description: Copies of the files earlier system restores replaced, oldest first.
+                    items: {$ref: "#/components/schemas/RestoreLeftover"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
     post:
@@ -460,6 +470,25 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
           description: Nothing staged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /restore/system/leftovers:
+    delete:
+      operationId: restore.system_leftovers_delete
+      tags: [backups]
+      summary: Delete the files earlier system restores kept
+      description: |
+        Needs `system.upgrade` on everything (admin). Removes every
+        `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`
+        directory, which hold the replaced database, secret key and stacks,
+        and resolves the admin notice about them.
+      responses:
+        "204": {description: Deleted (also when there was nothing to delete).}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A restore is being staged or applied.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -593,7 +622,7 @@ paths:
       tags: [backups]
       summary: Update a backup target
       description: >-
-        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it).
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
       requestBody:
         required: true
         content:
@@ -619,7 +648,7 @@ paths:
       tags: [backups]
       summary: Delete a backup target
       description: >-
-        Needs access to every job that uses or used the target, like an update; admin only if a system job uses it.
+        Needs access to every job that uses or used the target, like an update; admin only if a system job uses it or the audit log is archived to it.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -946,6 +975,7 @@ components:
         id: {type: integer, format: int64}
         job_id: {type: integer, format: int64}
         job_name: {type: string}
+        host_id: {type: string, description: Host the run was taken on (`local` for the server). Access to the run and the default restore host follow it, not the job's current host.}
         status:
           type: string
           enum: [running, success, success_with_warnings, failed]
@@ -961,6 +991,13 @@ components:
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}
+    RestoreLeftover:
+      type: object
+      required: [path, restored_at, bytes]
+      properties:
+        path: {type: string, description: Directory on the server.}
+        restored_at: {type: string, format: date-time}
+        bytes: {type: integer, format: int64}
     StagedRestore:
       type: object
       properties:

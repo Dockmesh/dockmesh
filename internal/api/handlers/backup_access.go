@@ -60,8 +60,11 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 // requireTargetAccess guards writes to a saved target (its settings, its
 // accepted host key): they change where every job using it writes, so the
 // caller needs requireJobAccess for each of those jobs, deleted ones
-// included. A target with a system job is admin-only.
+// included. A target with a system job or the audit archive is admin-only.
 func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	if !h.requireNotAuditTarget(w, r, targetID) {
+		return false
+	}
 	if h.Backups == nil {
 		return true
 	}
@@ -78,9 +81,25 @@ func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, t
 	return true
 }
 
+// isAuditTarget reports whether the audit log is archived to targetID.
+func (h *Handlers) isAuditTarget(targetID int64) bool {
+	return targetID > 0 && h.AuditRetention != nil && h.AuditRetention.Config().TargetID == targetID
+}
+
+// requireNotAuditTarget keeps the audit archive target to admins: its
+// settings say where the tamper-evidence log goes.
+func (h *Handlers) requireNotAuditTarget(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	if !h.isAuditTarget(targetID) || h.callerIsAdmin(r) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "only an admin can use or change the target the audit log is archived to")
+	return false
+}
+
 // requireRunAccess guards everything that reads or restores a run's
-// archive or log: system runs need an admin, all others the job's host in
-// the caller's scope. A run whose job is gone is admin-only.
+// archive or log: system runs need an admin, all others the host the run
+// was taken on in the caller's scope. A run whose job is gone is
+// admin-only.
 func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run *backup.Run, perm rbac.Perm) bool {
 	if backup.HasSystemSource(run.Sources) {
 		if h.callerIsAdmin(r) {
@@ -101,10 +120,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return false
 	}
-	hostID := job.HostID
-	if hostID == "" {
-		hostID = "local"
-	}
+	hostID := backup.RunHostOf(run, job)
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
@@ -116,9 +132,9 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 	return true
 }
 
-// backupRunVisible applies backupJobVisible to the job a run belongs to.
-// System runs and runs of a deleted job are admin-only, like their
-// archives. jobs holds the current jobs by id.
+// backupRunVisible applies backupJobVisible to the host and sources the
+// run was taken with. System runs and runs of a deleted job are
+// admin-only, like their archives. jobs holds the current jobs by id.
 func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[int64]backup.Job) bool {
 	if backup.HasSystemSource(run.Sources) {
 		return h.callerIsAdmin(r)
@@ -127,6 +143,8 @@ func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[i
 	if !ok {
 		return h.callerIsAdmin(r)
 	}
+	job.HostID = backup.RunHostOf(run, &job)
+	job.Sources = run.Sources
 	return h.backupJobVisible(r, job)
 }
 
@@ -144,9 +162,16 @@ func (h *Handlers) backupJobsByID(r *http.Request) (map[int64]backup.Job, error)
 
 // backupTargetVisible hides a saved target whose jobs the caller cannot
 // all see: its settings name the share, bucket or server those jobs write
-// to. A target no job uses stays visible so it can be picked for a new job.
+// to. A target no job uses stays visible so it can be picked for a new job,
+// unless the audit log is archived to it.
 func (h *Handlers) backupTargetVisible(r *http.Request, targetID int64) (bool, error) {
-	if h.Backups == nil || h.callerIsAdmin(r) {
+	if h.callerIsAdmin(r) {
+		return true, nil
+	}
+	if h.isAuditTarget(targetID) {
+		return false, nil
+	}
+	if h.Backups == nil {
 		return true, nil
 	}
 	jobs, err := h.Backups.JobsUsingTarget(r.Context(), targetID)

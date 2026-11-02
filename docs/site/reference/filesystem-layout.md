@@ -62,7 +62,7 @@ Deploys do not run from this directory. Dockmesh writes `compose.yaml` and the d
 
 ## Backups
 
-The default local backup target path is `./data/backups`, relative to the server's working directory. The systemd units written by `install.sh` and `dockmesh init` set no `WorkingDirectory`, so on those installs this resolves to `/data/backups`, outside the data root. Under the `dockmesh init` unit, which only allows writes to the data root, writing there fails. Set an absolute path (for example `/var/lib/dockmesh/data/backups`) on local targets. A system backup includes the whole data directory, so a backup target inside it makes every system backup contain the previous ones. See [Backups](../operations/backups.md).
+A local backup target without a path writes to `backups/` in the data directory. An install that already had archives in `./data/backups` below the server's working directory keeps writing there; the directory is chosen once and saved as the `backups.empty_path_dir` setting. A relative path on a local target is still resolved against the working directory, which the systemd units written by `install.sh` and `dockmesh init` leave at `/`, so set an absolute path on local targets. A system backup includes the whole data directory, so a backup target inside it makes every system backup contain the previous ones. See [Backups](../operations/backups.md).
 
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
 Archives are written as `jobs/<job-name>/<timestamp>-r<run-id>.tar.gz`, with `.age` appended when encrypted. A system backup archive contains `dockmesh.db`, `stacks/...` and `data/...`.

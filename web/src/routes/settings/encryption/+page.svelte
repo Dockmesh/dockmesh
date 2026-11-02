@@ -14,6 +14,19 @@
     if (!allowed('system.update')) goto('/', { replace: true });
   });
 
+  let exporting = $state(false);
+
+  async function exportKey() {
+    exporting = true;
+    try {
+      await api.secrets.exportKey();
+    } catch (err) {
+      toast.error('Key download failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      exporting = false;
+    }
+  }
+
   async function rotate() {
     const ok = await confirm.ask({
       title: 'Rotate encryption key?',
@@ -50,9 +63,9 @@
         <p>The key encrypts secrets, stack .env files and backup archives. Without it, backups cannot be restored on a new server.</p>
       </div>
       <div>
-        <a class="dm-btn dm-btn-primary" href="/api/v1/system/backup-key/export" download="dockmesh-backup-key.txt">
-          <Download size={14} /> Download key backup
-        </a>
+        <button type="button" class="dm-btn dm-btn-primary" onclick={exportKey} disabled={exporting}>
+          <Download size={14} /> {exporting ? 'Downloading…' : 'Download key backup'}
+        </button>
         <span class="dm-sub">
           After a full loss, import this key on the new host before running <code class="dm-mono">dockmesh restore</code>.
           <a href="https://dockmesh.dev/docs/operations/disaster-recovery/" target="_blank" rel="noopener">Recovery playbook</a>
