@@ -77,7 +77,7 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackCreate, "agent:"+res.Agent.Name, nil)
+	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, nil)
 	writeJSON(w, http.StatusCreated, res)
 }
 
@@ -129,7 +129,7 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("host tags cleanup after agent delete", "id", id, "err", err)
 		}
 	}
-	h.audit(r, audit.ActionStackDelete, "agent:"+id, nil)
+	h.audit(r, audit.ActionAgentDelete, "agent:"+id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -222,7 +222,7 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
-	h.audit(r, audit.ActionStackDeploy, id, map[string]any{
+	h.audit(r, audit.ActionAgentUpgrade, id, map[string]any{
 		"action":  "agent-upgrade",
 		"version": req.Version,
 		"binary":  path.Base(req.BinaryURL),

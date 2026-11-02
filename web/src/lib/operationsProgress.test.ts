@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Operation, OperationStep } from '$lib/api';
-import { canCancel, cancelConsequence, cancelPerm, currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress, shortMessage } from './operationsProgress';
+import { canCancel, cancelConsequence, cancelPerm, currentStep, elapsed, errorHint, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress, shortMessage } from './operationsProgress';
 
 function op(steps: Partial<OperationStep>[], status: Operation['status'] = 'running'): Operation {
   return {
@@ -112,4 +112,21 @@ describe('cancel', () => {
   it('reports the step a cancelled operation stopped in', () => {
     expect(currentStep(op([{ status: 'succeeded' }, { status: 'cancelled', label: 'Archive' }], 'cancelled'))?.label).toBe('Archive');
   });
+});
+
+describe('errorHint', () => {
+  const cases: [string, string][] = [
+    ['open /mnt/backups/x.tar.gz: permission denied', "Dockmesh can't write"],
+    ['write /data/x: no space left on device', 'The disk is full'],
+    ['dial tcp 10.0.0.5:22: connect: connection refused', 'Nothing answered'],
+    ['dial tcp: lookup nas.lan: no such host', "doesn't resolve"],
+    ['something odd happened', '']
+  ];
+  for (const [msg, want] of cases) {
+    it(msg, () => {
+      const got = errorHint(msg);
+      if (want) expect(got).toContain(want);
+      else expect(got).toBe('');
+    });
+  }
 });

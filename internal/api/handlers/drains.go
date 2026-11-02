@@ -52,7 +52,7 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackDeploy, hostID, map[string]any{
+	h.audit(r, audit.ActionHostDrain, hostID, map[string]any{
 		"action":   "drain",
 		"drain_id": d.ID,
 		"stacks":   len(d.Plan),
@@ -134,7 +134,7 @@ func (h *Handlers) AbortDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackDeploy, chi.URLParam(r, "id"), map[string]any{
+	h.audit(r, audit.ActionHostDrainAbort, chi.URLParam(r, "id"), map[string]any{
 		"action":   "drain-abort",
 		"drain_id": drainID,
 	})

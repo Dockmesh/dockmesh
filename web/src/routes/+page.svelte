@@ -15,6 +15,7 @@
   import { sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { stackInLens } from '$lib/lens';
+  import { actionPhrase, targetLabel } from '$lib/auditText';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -38,6 +39,15 @@
   let summary = $state<ContainerSummary | null>(null);
   let stackRows = $state<StackRow[]>([]);
   let changes = $state<Awaited<ReturnType<typeof api.audit.list>>>([]);
+  let userNames = $state(new Map<string, string>());
+  $effect(() => {
+    if (!allowed('audit.view') || !allowed('users.view')) return;
+    api.users
+      .list()
+      .then((list) => (userNames = new Map(list.map((u) => [u.id, u.username]))))
+      .catch(() => {});
+  });
+  const hostNames = $derived(new Map(hosts.available.map((h) => [h.id, h.name])));
   let attention = $state<AttentionItem[] | null>(null);
   let runs = $state<BackupRun[] | null>(null);
   let hostList = $state<HostInfo[]>([]);
@@ -375,7 +385,7 @@
               {#each changes as e (e.id)}
                 <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
                   <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
-                  <span class="dm-trunc"><b>{e.username || 'system'}</b> <span class="dm-mono act">{e.action}</span> {e.target ?? ''}</span>
+                  <span class="dm-trunc" title={e.action}><b>{e.username || 'System'}</b> {actionPhrase(e.action)} <b>{targetLabel(e.action, e.target, { users: userNames, hosts: hostNames })}</b></span>
                 </div>
               {:else}
                 <div class="dm-empty">No changes recorded yet.</div>
@@ -437,5 +447,4 @@
   .sec-h { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
   .sec-h .dm-h2 { margin: 0; }
   .more { margin-top: 6px; }
-  .act { font-size: 12px; color: var(--muted); }
 </style>

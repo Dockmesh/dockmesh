@@ -11,6 +11,8 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { Download, ShieldCheck, Settings2, X } from 'lucide-svelte';
   import { auditTargetHref, csvLine, CATEGORY_LABEL, type AuditCategory } from './_links';
+  import { actionPhrase, targetLabel, type AuditNames } from '$lib/auditText';
+  import { hosts } from '$lib/stores/host.svelte';
 
   interface AuditEntry {
     id: number;
@@ -36,6 +38,20 @@
   let search = $state('');
   let detail = $state<AuditEntry | null>(null);
   let detailOpen = $state(false);
+
+  let userNames = $state(new Map<string, string>());
+  const names = $derived<AuditNames>({
+    users: userNames,
+    hosts: new Map(hosts.available.filter((h) => h.kind !== 'all').map((h) => [h.id, h.name]))
+  });
+  $effect(() => {
+    if (!allowed('users.view')) return;
+    api.users
+      .list()
+      .then((list) => (userNames = new Map(list.map((u) => [u.id, u.username]))))
+      .catch(() => {});
+  });
+  const target = (e: AuditEntry) => targetLabel(e.action, e.target, names);
 
   async function load() {
     loading = true;
@@ -69,7 +85,7 @@
       if (category !== 'all' && catOf(e) !== category) return false;
       const q = search.trim().toLowerCase();
       if (!q) return true;
-      return (e.username ?? '').toLowerCase().includes(q) || e.action.toLowerCase().includes(q) || (e.target ?? '').toLowerCase().includes(q);
+      return (e.username ?? '').toLowerCase().includes(q) || e.action.toLowerCase().includes(q) || actionPhrase(e.action).includes(q) || (e.target ?? '').toLowerCase().includes(q) || target(e).toLowerCase().includes(q);
     })
   );
 
@@ -323,9 +339,9 @@
               <button type="button" class="lnk" title="Show only {e.username || e.user_id}" onclick={(ev) => { ev.stopPropagation(); setUser(e.user_id!); }}>{e.username || e.user_id}</button>
             {:else}<span class="dm-dim">System</span>{/if}
           </span>
-          <span role="cell" class="dm-mono dm-trunc" title={e.action}>{e.action}</span>
+          <span role="cell" class="dm-trunc" title={e.action}>{actionPhrase(e.action)}</span>
           <span role="cell" class="dm-trunc" title={e.target ?? ''}>
-            {#if href}<a {href} onclick={(ev) => ev.stopPropagation()}>{e.target}</a>{:else}<span class="dm-dim">{e.target || '—'}</span>{/if}
+            {#if href}<a {href} onclick={(ev) => ev.stopPropagation()}>{target(e)}</a>{:else}<span class="dm-dim">{target(e) || '—'}</span>{/if}
           </span>
           {#if category === 'all'}<span role="cell" class="dm-dim">{CATEGORY_LABEL[catOf(e)]}</span>{/if}
         </div>
@@ -343,9 +359,9 @@
     <dl class="dm-kv">
       <dt>Time</dt><dd>{new Date(detail.ts).toLocaleString()} <span class="dm-dim">· {fmtAgo(detail.ts)}</span></dd>
       <dt>User</dt><dd>{detail.username || detail.user_id || 'System'}</dd>
-      <dt>Action</dt><dd class="dm-mono">{detail.action}</dd>
+      <dt>Action</dt><dd>{actionPhrase(detail.action)} <span class="dm-mono dm-dim">{detail.action}</span></dd>
       <dt>Category</dt><dd>{CATEGORY_LABEL[catOf(detail)]}</dd>
-      <dt>Target</dt><dd>{#if href}<a {href}>{detail.target}</a>{:else}{detail.target || '—'}{/if}</dd>
+      <dt>Target</dt><dd>{#if href}<a {href}>{target(detail)}</a>{:else}{target(detail) || '—'}{/if}{#if detail.target && target(detail) !== detail.target} <span class="dm-mono dm-dim">{detail.target}</span>{/if}</dd>
       {#if detail.row_hash}<dt>Row hash</dt><dd class="dm-mono hash" title={detail.row_hash}>{detail.row_hash}</dd>{/if}
     </dl>
     <h3 class="dm-h2 sp">Details</h3>
