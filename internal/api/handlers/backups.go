@@ -561,6 +561,11 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
+	for _, src := range in.Sources {
+		if src.Type == "volume" && !h.requireVolumeNotOwn(w, r, src.Name) {
+			return false
+		}
+	}
 	hooks := append(append([]backup.Hook{}, in.PreHooks...), in.PostHooks...)
 	if len(hooks) == 0 {
 		return true
@@ -583,6 +588,9 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 		}
 		if !h.allowedOn(r, req, rbac.PermContainersExec) {
 			h.writeScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
+			return false
+		}
+		if !h.requireNotOwnContainer(w, r, rbac.PermContainersExec, hostID, hk.Container) {
 			return false
 		}
 	}

@@ -176,7 +176,7 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
 	}
-	return true
+	return h.requireNotOwnContainer(w, r, perm, hostID, containerID)
 }
 
 // requireStackScope is requireContainerScope for a stack on hostID.

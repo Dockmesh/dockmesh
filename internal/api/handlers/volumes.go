@@ -167,6 +167,9 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireVolumeNotOwn(w, r, name) {
+		return
+	}
 	sub := r.URL.Query().Get("path")
 	entries, err := target.VolumeBrowseEntries(r.Context(), name, sub)
 	if err != nil {
@@ -195,6 +198,9 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireVolumeNotOwn(w, r, name) {
+		return
+	}
 	sub := r.URL.Query().Get("path")
 	if sub == "" {
 		writeError(w, http.StatusBadRequest, "path is required")

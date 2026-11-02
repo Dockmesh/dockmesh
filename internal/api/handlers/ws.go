@@ -190,7 +190,7 @@ func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, per
 		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return scopeReq, false
 	}
-	return scopeReq, true
+	return scopeReq, h.requireNotOwnContainer(w, r, perm, hostID, containerID)
 }
 
 // WSLogs streams container logs over a WebSocket connection.

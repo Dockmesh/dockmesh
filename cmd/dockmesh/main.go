@@ -392,6 +392,21 @@ func main() {
 		slog.Warn("docker daemon not reachable yet — container endpoints will return 503 until it comes up",
 			"err", dockerCli.LastError())
 	}
+	// The server's own container is protected like the proxy: non-admins
+	// can't stop it, exec into it or read its files.
+	go func() {
+		for !dockerCli.Connected() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
+		if id := host.DetectSelfContainer(ctx, dockerCli.Raw()); id != "" {
+			host.SetSelfContainerID(id)
+			slog.Info("running in a container", "container", id[:12])
+		}
+	}()
 
 	// Let the system-metrics sampler query Docker's configured limits
 	// (Docker Desktop VM caps on macOS, cgroup limits on constrained

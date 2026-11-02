@@ -124,15 +124,19 @@ type containerFS struct {
 }
 
 // openContainerFS inspects the container and refuses Dockmesh's own
-// helper containers and containers with the Docker socket mounted: files
-// there reach the daemon itself, which is the host, or hold Dockmesh's
-// keys and database.
+// containers (labelled helpers and the proxy, and the server's own
+// container) and containers with the Docker socket mounted: files there
+// reach the daemon itself, which is the host, or hold Dockmesh's keys and
+// database.
 func openContainerFS(ctx context.Context, cli client.ContainerAPIClient, id string) (*containerFS, error) {
 	info, err := cli.ContainerInspect(ctx, id)
 	if err != nil {
 		return nil, statErr(err)
 	}
 	if info.Config != nil && info.Config.Labels["dockmesh.component"] != "" {
+		return nil, ErrContainerFilesRefused
+	}
+	if self := SelfContainerID(); self != "" && info.ID == self {
 		return nil, ErrContainerFilesRefused
 	}
 	for _, m := range info.Mounts {
