@@ -723,6 +723,9 @@ func main() {
 	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
 		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})
+	noticesSvc.Register(restore.LeftoverNoticeKey, func(ctx context.Context, n *notices.Service) error {
+		return restore.SyncLeftoverNotice(ctx, cfg, n)
+	})
 	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
 		return syncUnencryptableNotice(ctx, n, backupSvc)
 	})

@@ -157,6 +157,7 @@ var categories = map[string]string{
 	"system.restore_stage":      CategorySystem,
 	"system.restore_apply":      CategorySystem,
 	"system.restore_discard":    CategorySystem,
+	"system.restore_cleanup":    CategorySystem,
 }
 
 // Category returns the category of an action. Actions without an entry,

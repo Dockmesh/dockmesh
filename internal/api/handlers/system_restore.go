@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,7 +38,12 @@ func (h *Handlers) GetStagedRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"staged": info})
+	leftovers, err := restore.Leftovers(h.RestoreConfig)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"staged": info, "leftovers": leftovers})
 }
 
 // StageSystemRestore prepares a system restore from a saved run
@@ -182,6 +188,40 @@ func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.audit(r, "system.restore_discard", "", nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteRestoreLeftovers deletes the copies earlier system restores kept
+// of the files they replaced.
+//
+//	DELETE /restore/system/leftovers
+func (h *Handlers) DeleteRestoreLeftovers(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can delete what a system restore kept")
+		return
+	}
+	if h.RestoreConfig == nil {
+		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
+		return
+	}
+	if !stageMu.TryLock() {
+		writeError(w, http.StatusConflict, "a restore is being staged")
+		return
+	}
+	defer stageMu.Unlock()
+	n, err := restore.RemoveLeftovers(h.RestoreConfig)
+	if n > 0 {
+		h.audit(r, "system.restore_cleanup", "", map[string]any{"removed": n})
+	}
+	if h.Notices != nil {
+		if serr := restore.SyncLeftoverNotice(r.Context(), h.RestoreConfig, h.Notices); serr != nil {
+			slog.Warn("restore leftover notice", "err", serr)
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

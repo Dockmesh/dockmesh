@@ -800,6 +800,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/restore/system", h.StageSystemRestore)
 				r.Delete("/restore/system", h.DiscardSystemRestore)
 				r.Post("/restore/system/apply", h.ApplySystemRestore)
+				r.Delete("/restore/system/leftovers", h.DeleteRestoreLeftovers)
 			})
 
 			// -------------------------- PROXY -------------------------------
