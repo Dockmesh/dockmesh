@@ -2299,8 +2299,7 @@ export const api = {
     }>>(`/backups/runs/${runId}/log`),
     // downloadArchive streams the tar.gz for a successful run. The
     // backend transparently decrypts age-encrypted archives so the
-    // user always gets plaintext bytes. We auth via bearer token then
-    // hand the user a Blob URL — same pattern as audit-log export.
+    // user always gets plaintext bytes.
     downloadArchive: (runId: number): Promise<void> =>
       saveDownload(`/backups/runs/${runId}/archive`, `backup-run-${runId}.tar.gz`),
     // Empty fields mean: the backed-up volume/stack, on the host it was

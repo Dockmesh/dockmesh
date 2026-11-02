@@ -9,15 +9,15 @@ export interface HookRow {
   orig?: string[];
 }
 
-// Dump presets write into the database's own data directory of the
-// official images, which is the volume the backup picks up. They run
-// through `sh -c`, so redirects and the image's password variables work.
 export interface HookPreset {
   id: string;
   label: string;
   command: string;
 }
 
+// Dump presets write into the database's own data directory of the
+// official images, which is the volume the backup picks up. They run
+// through `sh -c`, so redirects and the image's password variables work.
 export const HOOK_PRESETS: HookPreset[] = [
   { id: 'pg', label: 'PostgreSQL dump', command: 'pg_dumpall -U "${POSTGRES_USER:-postgres}" -f /var/lib/postgresql/data/dockmesh-dump.sql' },
   { id: 'mysql', label: 'MySQL dump', command: 'mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases > /var/lib/mysql/dockmesh-dump.sql' },
@@ -52,7 +52,7 @@ export function rowsToHooks(rows: HookRow[]): BackupHook[] {
 // inlineTargetConfig converts form values to the types the server expects.
 export function inlineTargetConfig(type: string, cfg: Record<string, any>): Record<string, any> {
   const out = { ...cfg };
-  if ((type === 'sftp' || type === 'smb') && 'port' in out) {
+  if (type === 'sftp' && 'port' in out) {
     const port = parseInt(String(out.port), 10);
     if (Number.isFinite(port) && port > 0) out.port = port;
     else delete out.port;

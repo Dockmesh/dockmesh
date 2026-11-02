@@ -58,7 +58,7 @@ Know the limits of each target type before you rely on it:
 - **SFTP**: the target and job forms take a password, a private key (PEM or OpenSSH) or both.
 - **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing returns wrong paths, so retention deletes nothing. Do not use SMB targets there.
 - **WebDAV**: the whole archive is held in server memory before upload, and requests time out after 30 seconds. **Test connection** always reports success for WebDAV. Use it only for small archives.
-- **Inline port**: the inline form in the job wizard has a port field only for SFTP and sends it as text, which the server rejects when the job runs. For a non-default SFTP port, or any SMB port, create a saved target and pick it.
+- **Inline port**: the inline form in the job wizard has no SMB port field. For a non-default SMB port, create a saved target and pick it.
 
 ## Creating a job
 

@@ -27,13 +27,13 @@ type backupJob struct {
 }
 
 type backupRun struct {
-	ID        int64  `json:"id"`
-	JobID     int64  `json:"job_id"`
-	Status    string `json:"status"`
-	StartedAt string `json:"started_at"`
-	EndedAt   string `json:"finished_at,omitempty"`
-	SizeBytes int64  `json:"size_bytes"`
-	Error     string `json:"error,omitempty"`
+	ID         int64  `json:"id"`
+	JobID      int64  `json:"job_id"`
+	Status     string `json:"status"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	SizeBytes  int64  `json:"size_bytes"`
+	Error      string `json:"error,omitempty"`
 }
 
 func backupJobsListCmd() *cobra.Command {
@@ -127,9 +127,6 @@ func backupRunCmd() *cobra.Command {
 // survives a few failed requests in a row, such as a server restart
 // during a long backup.
 func waitBackupRun(ctx context.Context, c *Client, runID int64, every time.Duration) (*backupRun, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	const maxFailures = 5
 	failures := 0
 	path := fmt.Sprintf("/api/v1/backups/runs/%d", runID)

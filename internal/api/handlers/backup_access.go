@@ -106,7 +106,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return false
 	}
-	hostID := runHost(run, job)
+	hostID := backup.RunHostOf(run, job)
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
@@ -129,21 +129,9 @@ func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[i
 	if !ok {
 		return h.callerIsAdmin(r)
 	}
-	job.HostID = runHost(run, &job)
+	job.HostID = backup.RunHostOf(run, &job)
 	job.Sources = run.Sources
 	return h.backupJobVisible(r, job)
-}
-
-// runHost is the host run was taken on; runs recorded before hosts were
-// stored on the run fall back to the job's host.
-func runHost(run *backup.Run, job *backup.Job) string {
-	if run.HostID != "" {
-		return run.HostID
-	}
-	if job.HostID != "" {
-		return job.HostID
-	}
-	return "local"
 }
 
 func (h *Handlers) backupJobsByID(r *http.Request) (map[int64]backup.Job, error) {

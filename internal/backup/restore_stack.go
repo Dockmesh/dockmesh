@@ -144,7 +144,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 		return nil, err
 	}
 	if opts.HostID == "" {
-		opts.HostID = runHostOf(run, job)
+		opts.HostID = RunHostOf(run, job)
 	}
 	host, err := s.exec.resolveHost(opts.HostID)
 	if err != nil {
@@ -524,11 +524,12 @@ func (s *Service) RunHost(ctx context.Context, runID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return runHostOf(run, job), nil
+	return RunHostOf(run, job), nil
 }
 
-// runHostOf falls back to the job's host for a run that has none stored.
-func runHostOf(run *Run, job *Job) string {
+// RunHostOf is the host run was taken on; runs recorded before hosts were
+// stored on the run fall back to the job's host.
+func RunHostOf(run *Run, job *Job) string {
 	if run.HostID != "" {
 		return run.HostID
 	}
