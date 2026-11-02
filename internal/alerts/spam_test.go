@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/system"
 )
 
 // capture records delivered groups instead of sending them.
@@ -234,7 +236,7 @@ func TestHistoryRetention(t *testing.T) {
 	insert(oom.ID, "oom-new", "fired", recent)
 	insert(999, "deleted-rule", "fired", old)
 
-	s.pruneHistory(context.Background(), time.Now())
+	s.pruneHistoryNow(context.Background(), time.Now())
 
 	rows, err := database.Query(`SELECT container_name FROM alert_history ORDER BY id`)
 	if err != nil {
@@ -281,7 +283,7 @@ func TestPruneStateDropsQuietCooldowns(t *testing.T) {
 	}
 }
 
-func TestHistoryLimitAppliesAfterScopeFilter(t *testing.T) {
+func TestHistoryLimitAppliesToTheGivenHosts(t *testing.T) {
 	s, database := newEvalService(t)
 	r := eventRule(t, s, RuleInput{Kind: KindOOM})
 	for i := 0; i < 30; i++ {
@@ -294,11 +296,71 @@ func TestHistoryLimitAppliesAfterScopeFilter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := s.History(context.Background(), 2, func(e HistoryEntry) bool { return e.HostID == "mine" })
+	got, err := s.History(context.Background(), 2, []string{"mine"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].HostID != "mine" || got[1].HostID != "mine" {
 		t.Fatalf("history = %+v, want the two newest entries of host mine", got)
+	}
+}
+
+func TestFlappingTargetFoldsIntoOneEntry(t *testing.T) {
+	s, database := newEvalService(t)
+	s.groupWindow = 0
+	sent := captureSends(s)
+	r := eventRule(t, s, RuleInput{Kind: KindContainerStopped, CooldownSeconds: 600})
+	for i := 0; i < 20; i++ {
+		at := time.Duration(i) * 10 * time.Second
+		s.handleEvent(context.Background(), ev("die", at, "1"))
+		s.handleEvent(context.Background(), ev("start", at+5*time.Second))
+	}
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", false})
+	if got := repeatsOf(t, database, r.ID)[0].repeats; got != 19 {
+		t.Fatalf("repeats = %d, want 19", got)
+	}
+	if n := len(sent.all()); n != 2 {
+		t.Fatalf("sent %d notifications, want the first fire and resolve", n)
+	}
+
+	// Still down at the end: the fold keeps the alert active, also after a restart.
+	s.handleEvent(context.Background(), ev("die", 210*time.Second, "1"))
+	restarted := NewService(database, nil)
+	if err := restarted.loadFiringState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.isFiring(tkey{r.ID, "local", "web"}) {
+		t.Fatal("folded alert not active after restart")
+	}
+}
+
+func TestValidMounts(t *testing.T) {
+	in := []system.Mount{
+		{MountPoint: "/var/lib/docker", Roles: []string{"docker_root"}},
+		{MountPoint: "/<!channel> <https://evil.example|x>", Roles: []string{"docker_root"}},
+		{MountPoint: "relative", Roles: []string{"data"}},
+		{MountPoint: "/srv", Roles: []string{"data", "<b>"}},
+	}
+	got := validMounts(in)
+	if len(got) != 2 || got[0].MountPoint != "/var/lib/docker" || got[1].MountPoint != "/srv" || len(got[1].Roles) != 1 {
+		t.Fatalf("valid mounts = %+v", got)
+	}
+	many := make([]system.Mount, maxMountsPerHost+10)
+	for i := range many {
+		many[i] = system.Mount{MountPoint: fmt.Sprintf("/m%d", i)}
+	}
+	if n := len(validMounts(many)); n != maxMountsPerHost {
+		t.Fatalf("kept %d mounts, want %d", n, maxMountsPerHost)
+	}
+}
+
+func TestDieHistoryKeepsOnlyTheThreshold(t *testing.T) {
+	s, _ := newEvalService(t)
+	k := tkey{1, "local", "web"}
+	for i := 0; i < 100; i++ {
+		s.recordDie(k, evalNow.Add(time.Duration(i)*time.Second), time.Hour, 3)
+	}
+	if ts, _ := s.dies.get(k); len(ts) != 3 {
+		t.Fatalf("kept %d dies, want 3", len(ts))
 	}
 }

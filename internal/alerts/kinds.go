@@ -55,6 +55,8 @@ func containerKind(kind string) bool {
 var (
 	dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 	exitCode   = regexp.MustCompile(`^-?[0-9]{1,10}$`)
+	mountPath  = regexp.MustCompile(`^/[A-Za-z0-9._@+/-]{0,254}$`)
+	roleName   = regexp.MustCompile(`^[a-z_-]{1,32}$`)
 )
 
 // ContainerEvent is a Docker container event from any host.
@@ -356,7 +358,7 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 			window := time.Duration(r.DurationSeconds) * time.Second
 			switch {
 			case ev.Action == "die" && !userStop:
-				n := s.recordDie(key, ev.Time, window)
+				n := s.recordDie(key, ev.Time, window, max(int(r.Threshold), 1))
 				if float64(n) >= r.Threshold && !firing {
 					s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s restarted %d times in %s", where, n, window), float64(n), ev.Time)
 				}
@@ -382,13 +384,17 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 }
 
 // recordDie appends t to key's die history, drops entries older than
-// window and returns how many remain. A container beyond the rule's
-// target cap on its host is not tracked and counts zero.
-func (s *Service) recordDie(key tkey, t time.Time, window time.Duration) int {
+// window and returns how many remain, at most keep: only reaching the
+// threshold matters. A container beyond the rule's target cap on its
+// host is not tracked and counts zero.
+func (s *Service) recordDie(key tkey, t time.Time, window time.Duration, keep int) int {
 	s.evMu.Lock()
 	defer s.evMu.Unlock()
 	prev, _ := s.dies.get(key)
 	kept := append(pruneBefore(prev, t.Add(-window)), t)
+	if len(kept) > keep {
+		kept = append(kept[:0], kept[len(kept)-keep:]...)
+	}
 	if !s.dies.set(key, kept) {
 		return 0
 	}
@@ -504,42 +510,59 @@ const (
 	historyRetention = 30 * 24 * time.Hour
 	historyPruneTick = time.Hour
 	historyPruneMax  = 5000
+	// historyPruneBatches bounds one pass; a backlog continues on the
+	// next evaluation instead of holding the write lock for long.
+	historyPruneBatches = 20
 )
 
-// pruneHistory deletes expired history in batches, at most once per
-// historyPruneTick.
+// pruneHistory starts a background pass that deletes expired history in
+// batches, at most once per historyPruneTick.
 func (s *Service) pruneHistory(ctx context.Context, now time.Time) {
-	if now.Sub(s.prunedAt) < historyPruneTick {
+	if (now.Sub(s.prunedAt) < historyPruneTick && !s.pruneMore.Load()) || !s.pruneBusy.CompareAndSwap(false, true) {
 		return
 	}
 	s.prunedAt = now
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.pruneBusy.Store(false)
+		s.pruneMore.Store(s.pruneHistoryNow(ctx, now))
+	}()
+}
+
+// pruneHistoryNow runs one pass and reports whether expired entries are
+// left. The keep check is correlated on the (rule, host, target) index,
+// so each batch costs its own size, not a scan of the table.
+func (s *Service) pruneHistoryNow(ctx context.Context, now time.Time) bool {
 	cutoff := dbTime(now.Add(-historyRetention))
 	total := int64(0)
-	for {
+	defer func() {
+		if total > 0 {
+			slog.Info("alerts: pruned history", "entries", total, "older_than", historyRetention)
+		}
+	}()
+	for i := 0; i < historyPruneBatches; i++ {
 		res, err := s.db.ExecContext(ctx, `
 			DELETE FROM alert_history WHERE id IN (
-				SELECT id FROM alert_history
-				 WHERE occurred_at < ?
-				   AND id NOT IN (
-					SELECT h.id FROM alert_history h
-					  JOIN (SELECT MAX(id) AS max_id FROM alert_history
-					         GROUP BY rule_id, host_id, container_name) l ON h.id = l.max_id
-					  JOIN alert_rules r ON r.id = h.rule_id
-					 WHERE h.status = 'fired' AND r.kind NOT IN (?, ?))
+				SELECT h.id FROM alert_history h
+				 WHERE h.occurred_at < ?
+				   AND NOT (h.status = 'fired'
+				        AND h.rule_id IN (SELECT id FROM alert_rules WHERE kind NOT IN (?, ?))
+				        AND h.id = (SELECT MAX(x.id) FROM alert_history x
+				                     WHERE x.rule_id = h.rule_id AND x.host_id = h.host_id
+				                       AND x.container_name = h.container_name))
 				 LIMIT ?)`, cutoff, KindOOM, KindBackupFailed, historyPruneMax)
 		if err != nil {
 			slog.Warn("alerts: prune history", "err", err)
-			return
+			return false
 		}
 		n, _ := res.RowsAffected()
 		total += n
 		if n < historyPruneMax {
-			break
+			return false
 		}
 	}
-	if total > 0 {
-		slog.Info("alerts: pruned history", "entries", total, "older_than", historyRetention)
-	}
+	return true
 }
 
 // -----------------------------------------------------------------------------
@@ -594,7 +617,7 @@ func (s *Service) evalDisk(ctx context.Context, r *Rule, hosts []HostMounts, now
 			continue
 		}
 		seen := map[string]bool{}
-		for _, m := range hm.Mounts {
+		for _, m := range validMounts(hm.Mounts) {
 			tgt := targetName(hm.HostID, hm.HostName, m.MountPoint)
 			seen[tgt] = true
 			if m.Total == 0 {
@@ -824,4 +847,30 @@ func (s *Service) evalCerts(ctx context.Context, r *Rule, now time.Time) {
 				c.Domain, c.NotAfter.Local().Format("2006-01-02")), days, now)
 		}
 	}
+}
+
+// maxMountsPerHost bounds the mounts one host's disk report adds.
+const maxMountsPerHost = 64
+
+// validMounts drops mounts whose path or roles an agent made up: both end
+// up in channel markup and in history.
+func validMounts(in []system.Mount) []system.Mount {
+	out := make([]system.Mount, 0, min(len(in), maxMountsPerHost))
+	for _, m := range in {
+		if len(out) == maxMountsPerHost {
+			break
+		}
+		if !mountPath.MatchString(m.MountPoint) {
+			continue
+		}
+		roles := make([]string, 0, len(m.Roles))
+		for _, role := range m.Roles {
+			if roleName.MatchString(role) {
+				roles = append(roles, role)
+			}
+		}
+		m.Roles = roles
+		out = append(out, m)
+	}
+	return out
 }

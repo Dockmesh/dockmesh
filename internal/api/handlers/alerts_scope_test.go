@@ -67,6 +67,9 @@ func TestAlertRulesNeedGlobalAccess(t *testing.T) {
 		t.Errorf("scoped user rescoping a catch-all rule: %d, want 403", rr.Code)
 	}
 
+	if _, err := e.db.Exec(`INSERT INTO agents (id, name, status) VALUES ('agent-prod', 'prod', 'online'), ('agent-other', 'other', 'online')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.db.Exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, host_id)
 		VALUES (1, 'oom', 'a', 'fired', 'm', 'agent-prod'), (1, 'oom', 'b', 'fired', 'm', 'agent-other'), (1, 'oom', 'c', 'fired', 'm', '')`); err != nil {
 		t.Fatal(err)

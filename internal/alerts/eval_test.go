@@ -178,7 +178,7 @@ func TestEvalCooldownSuppressesRenotify(t *testing.T) {
 	r := createRule(t, s, RuleInput{DurationSeconds: 60, CooldownSeconds: 3600})
 
 	run(t, s, database, r, evalNow, 95, 95, 95, 50, 50, 50, 95, 95, 95, 50, 50, 50)
-	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", true}, historyRow{"fired", false}, historyRow{"resolved", false})
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", false})
 }
 
 func TestEvalMutedUntilSuppressesFireAndResolve(t *testing.T) {

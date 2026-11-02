@@ -6,6 +6,8 @@ ALTER TABLE alert_history ADD COLUMN repeats INTEGER NOT NULL DEFAULT 0;
 -- Serves the latest-row-per-target lookups (firing state, active alerts,
 -- retention), which group by rule, host and target.
 CREATE INDEX idx_alert_history_key ON alert_history(rule_id, host_id, container_name, id);
+-- Scoped history lists entries of some hosts, newest first.
+CREATE INDEX idx_alert_history_host ON alert_history(host_id, occurred_at);
 
 -- CPU unit of metric rules: 'core' is 100 per busy core (docker stats),
 -- 'host' is the share of the whole host the charts show. Existing CPU

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,7 +135,7 @@ type Service struct {
 
 	// firing maps an active alert to whether its fire was notified.
 	// lastNotified holds the time of the last announced fire for the
-	// cooldown, lastRows the newest row of a one-shot target.
+	// cooldown, lastRows the newest fire and resolve entry of a target.
 	stateMu      sync.Mutex
 	firing       targetMap[bool]
 	lastNotified targetMap[time.Time]
@@ -168,6 +169,9 @@ type Service struct {
 	lastRunID int64 // backup_runs high-water mark; -1 until first read
 	certsAt   time.Time
 	certsBusy atomic.Bool
+	pruneBusy atomic.Bool
+	pruneMore atomic.Bool
+	stopped   atomic.Bool
 	certs     atomic.Pointer[[]CertStatus]
 }
 
@@ -265,9 +269,16 @@ func (s *Service) loadFiringState(ctx context.Context) error {
 	return rows.Err()
 }
 
-// Stop ends the loops and sends what is still waiting for its group.
+// Stop ends the loops and event watchers and sends what is still waiting
+// for its group; anything announced later goes out right away.
 func (s *Service) Stop() {
+	s.stopped.Store(true)
 	close(s.stop)
+	s.evMu.Lock()
+	for _, cancel := range s.watching {
+		cancel()
+	}
+	s.evMu.Unlock()
 	s.wg.Wait()
 	s.flushAll()
 }
@@ -399,17 +410,26 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// History returns the newest entries first. keep, when set, drops entries
-// the caller may not see before the limit applies, so a scoped caller
-// still gets up to limit entries of their own hosts.
-func (s *Service) History(ctx context.Context, limit int, keep func(HistoryEntry) bool) ([]HistoryEntry, error) {
+// History returns the newest entries first. hosts, when not nil, limits
+// the result to entries of those hosts, so a scoped caller gets up to
+// limit entries of their own hosts.
+func (s *Service) History(ctx context.Context, limit int, hosts []string) ([]HistoryEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	sqlLimit := limit
-	if keep != nil {
-		sqlLimit = -1
+	out := []HistoryEntry{}
+	where := ""
+	args := []any{}
+	if hosts != nil {
+		if len(hosts) == 0 {
+			return out, nil
+		}
+		where = " WHERE h.host_id IN (?" + strings.Repeat(", ?", len(hosts)-1) + ")"
+		for _, id := range hosts {
+			args = append(args, id)
+		}
 	}
+	args = append(args, limit)
 	// JOIN alert_rules so the UI can render severity-tinted history rows
 	// without a second query. LEFT JOIN to keep history entries whose
 	// rule has been deleted (rule_id may dangle).
@@ -418,14 +438,13 @@ func (s *Service) History(ctx context.Context, limit int, keep func(HistoryEntry
 		       h.host_id, h.container_name, h.status, h.message,
 		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.repeats, h.occurred_at
 		  FROM alert_history h
-		  LEFT JOIN alert_rules r ON r.id = h.rule_id
-		 ORDER BY h.occurred_at DESC, h.id DESC LIMIT ?`, sqlLimit)
+		  LEFT JOIN alert_rules r ON r.id = h.rule_id`+where+`
+		 ORDER BY h.occurred_at DESC, h.id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []HistoryEntry{}
-	for len(out) < limit && rows.Next() {
+	for rows.Next() {
 		var e HistoryEntry
 		var notified int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Kind,
@@ -434,9 +453,25 @@ func (s *Service) History(ctx context.Context, limit int, keep func(HistoryEntry
 			return nil, err
 		}
 		e.Notified = notified == 1
-		if keep == nil || keep(e) {
-			out = append(out, e)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// HostIDs lists the server and every enrolled agent.
+func (s *Service) HostIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM agents ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{"local"}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }
@@ -731,8 +766,9 @@ func (s *Service) inCooldown(r *Rule, k tkey, t time.Time) bool {
 
 // fireRule records a fire for t and announces it unless muted or in
 // cooldown. One-shot kinds (OOM, failed backup run) have nothing to
-// resolve, so they never enter the firing set; their repeats inside the
-// cooldown are counted on the previous entry instead of adding rows.
+// resolve, so they never enter the firing set. A suppressed fire inside
+// the repeat window is counted on the previous entry instead of adding
+// rows, so neither repeats nor a flapping target grow the history.
 func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, value float64, ts time.Time) {
 	k := keyOf(r.ID, t)
 	one := oneShot(r.Kind)
@@ -743,7 +779,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, v
 	if s.prom != nil {
 		s.prom.IncAlertFired(r.Severity, r.Name)
 	}
-	if one && !notified && s.countRepeat(ctx, r, k, ts) {
+	if !notified && s.countRepeat(ctx, r, k, ts, one) {
 		return
 	}
 	if !s.admit(k, one, notified) {
@@ -760,11 +796,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, v
 	} else {
 		rowID, _ = res.LastInsertId()
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE alert_rules SET firing_since = COALESCE(firing_since, ?), last_triggered_at = ? WHERE id = ?`,
-		nullIf(one, ts), ts, r.ID); err != nil {
-		slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
-	}
+	s.markRuleFired(ctx, r, one, ts)
 	s.stateMu.Lock()
 	if !one {
 		s.firing.set(k, notified)
@@ -772,7 +804,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, v
 	if notified {
 		s.lastNotified.set(k, ts)
 	}
-	if one && rowID > 0 {
+	if rowID > 0 {
 		s.lastRows.set(k, lastRow{id: rowID, at: ts})
 	}
 	s.stateMu.Unlock()
@@ -784,14 +816,41 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, v
 	}
 }
 
-// countRepeat folds a suppressed one-shot fire into the target's previous
-// entry when that is younger than the repeat window.
-func (s *Service) countRepeat(ctx context.Context, r *Rule, k tkey, ts time.Time) bool {
+func (s *Service) markRuleFired(ctx context.Context, r *Rule, one bool, ts time.Time) {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE alert_rules SET firing_since = COALESCE(firing_since, ?), last_triggered_at = ? WHERE id = ?`,
+		nullIf(one, ts), ts, r.ID); err != nil {
+		slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
+	}
+}
+
+// countRepeat folds a suppressed fire into the target's previous fire
+// entry when that is younger than the repeat window. For a target that
+// resolved in between, the resolve entry is dropped and the alert is
+// active again under the earlier fire, which keeps state and history
+// consistent across a restart.
+func (s *Service) countRepeat(ctx context.Context, r *Rule, k tkey, ts time.Time, one bool) bool {
 	s.stateMu.Lock()
 	row, ok := s.lastRows.get(k)
 	s.stateMu.Unlock()
-	if !ok || ts.Sub(row.at) >= r.repeatWindow() {
+	if !ok || ts.Sub(row.at) >= r.repeatWindow() || (!one && row.resolveID == 0) {
 		return false
+	}
+	if !one {
+		s.stateMu.Lock()
+		reopened := s.firing.set(k, false)
+		s.stateMu.Unlock()
+		if !reopened {
+			return false
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM alert_history WHERE id = ?`, row.resolveID); err != nil {
+			slog.Warn("alerts: fold resolve", "rule", r.Name, "err", err)
+		}
+		row.resolveID = 0
+		s.stateMu.Lock()
+		s.lastRows.set(k, row)
+		s.stateMu.Unlock()
+		s.markRuleFired(ctx, r, false, ts)
 	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE alert_history SET repeats = repeats + 1 WHERE id = ?`, row.id); err != nil {
@@ -806,7 +865,7 @@ func (s *Service) countRepeat(ctx context.Context, r *Rule, k tkey, ts time.Time
 func (s *Service) admit(k tkey, one, notified bool) bool {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	full := (!one && s.firing.full(k)) || (notified && s.lastNotified.full(k)) || (one && s.lastRows.full(k))
+	full := (!one && s.firing.full(k)) || (notified && s.lastNotified.full(k)) || s.lastRows.full(k)
 	if !full {
 		return true
 	}
@@ -829,11 +888,19 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, msg string
 	s.stateMu.Unlock()
 	notified := fireNotified && !r.mutedAt(ts)
 
-	if _, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
 		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)`,
-		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID); err != nil {
+		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID)
+	if err != nil {
 		slog.Warn("alerts: record resolve", "rule", r.Name, "err", err)
+	} else if id, err := res.LastInsertId(); err == nil {
+		s.stateMu.Lock()
+		if row, ok := s.lastRows.get(k); ok {
+			row.resolveID = id
+			s.lastRows.set(k, row)
+		}
+		s.stateMu.Unlock()
 	}
 	if !s.ruleHasFiring(r.ID) {
 		if _, err := s.db.ExecContext(ctx,

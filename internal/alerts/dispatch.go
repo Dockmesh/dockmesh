@@ -74,7 +74,7 @@ func (s *Service) announce(r *Rule, a announcement, resolved bool) {
 	if !resolved {
 		g.level = fireLevel(r, a.value)
 	}
-	if s.groupWindow <= 0 {
+	if s.groupWindow <= 0 || s.stopped.Load() {
 		g.add(a)
 		s.deliver(g)
 		return

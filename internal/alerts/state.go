@@ -103,9 +103,11 @@ func (m targetMap[V]) size() int {
 	return n
 }
 
-// lastRow is the newest alert_history row of a one-shot target, which
-// repeats inside the cooldown are counted on.
+// lastRow is the newest fire entry of a target and, once it resolved, its
+// resolve entry; suppressed fires inside the repeat window are counted on
+// the fire entry.
 type lastRow struct {
-	id int64
-	at time.Time
+	id        int64
+	resolveID int64
+	at        time.Time
 }

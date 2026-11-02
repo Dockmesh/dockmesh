@@ -49,6 +49,9 @@ func TestAlertEndpointsFollowScope(t *testing.T) {
 		Deployments: stacks.NewDeploymentStore(database), Alerts: alerts.NewService(database, nil)})
 	router := NewRouter(h, authSvc, nil, true, nil)
 
+	if _, err := database.Exec(`INSERT INTO agents (id, name, status) VALUES ('agent-1', 'edge', 'online')`); err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range []struct{ host, name string }{{"local", "web"}, {"agent-1", "edge/db"}, {"", "nightly"}} {
 		if _, err := database.Exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, host_id)
 			VALUES (1, 'r', ?, 'fired', '', ?)`, e.name, e.host); err != nil {

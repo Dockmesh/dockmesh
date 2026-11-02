@@ -292,13 +292,21 @@ func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	var keep func(alerts.HistoryEntry) bool
+	var hosts []string
 	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermAlertsHistory) {
-		keep = func(e alerts.HistoryEntry) bool {
-			return e.HostID != "" && h.inReadScope(r, e.HostID, "")
+		all, err := h.Alerts.HostIDs(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		hosts = []string{}
+		for _, id := range all {
+			if h.inReadScope(r, id, "") {
+				hosts = append(hosts, id)
+			}
 		}
 	}
-	entries, err := h.Alerts.History(r.Context(), limit, keep)
+	entries, err := h.Alerts.History(r.Context(), limit, hosts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
