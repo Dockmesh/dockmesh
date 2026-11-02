@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -147,7 +148,7 @@ func TestOwnContainerMounts(t *testing.T) {
 			t.Errorf("%s: %v, want %v", tt.volume, got, tt.want)
 		}
 	}
-	if err := (&Handlers{}).checkRestoreVolume(context.Background(), "local", "dockmesh-caddy-data"); err != errOwnVolume {
+	if err := (&Handlers{}).checkRestoreVolume(context.Background(), "local", "dockmesh-caddy-data"); !errors.Is(err, errOwnVolume) {
 		t.Errorf("known own volume: %v, want errOwnVolume", err)
 	}
 }
