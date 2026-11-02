@@ -28,27 +28,35 @@ func TestRekeyLegacy(t *testing.T) {
 		subject string // u1's subject afterwards
 	}{
 		{
-			name:    "same field moves without email",
-			setup:   func(t *testing.T, d *sql.DB) { legacyAccount(t, d, "u1", "alice", "alice@example.com", "1.2345678e+07", "+30 days") },
+			name: "same field moves without email",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "1.2345678e+07", "+30 days")
+			},
 			login:   LegacyLogin{Subject: "12345678", Legacy: "1.2345678e+07", SameSource: true, Email: "new@example.com"},
 			want:    "u1",
 			subject: "12345678",
 		},
 		{
-			name:    "login name with matching email",
-			setup:   func(t *testing.T, d *sql.DB) { legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days") },
+			name: "login name with matching email",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days")
+			},
 			login:   LegacyLogin{Subject: "1001", Legacy: "alice", Email: "ALICE@example.com"},
 			want:    "u1",
 			subject: "1001",
 		},
 		{
-			name:  "reused login name with another email",
-			setup: func(t *testing.T, d *sql.DB) { legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days") },
+			name: "reused login name with another email",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "+30 days")
+			},
 			login: LegacyLogin{Subject: "2002", Legacy: "alice", Email: "mallory@example.com"},
 		},
 		{
-			name:  "window ended",
-			setup: func(t *testing.T, d *sql.DB) { legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "-1 days") },
+			name: "window ended",
+			setup: func(t *testing.T, d *sql.DB) {
+				legacyAccount(t, d, "u1", "alice", "alice@example.com", "alice", "-1 days")
+			},
 			login: LegacyLogin{Subject: "1001", Legacy: "alice", Email: "alice@example.com"},
 		},
 		{
