@@ -572,6 +572,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/users/{id}", h.UpdateUser)
 				// P.12.1 — admin-only account unlock.
 				r.Post("/users/{id}/unlock", h.UnlockUser)
+				r.Get("/users/{id}/sessions", h.ListUserSessions)
+				r.Delete("/users/{id}/sessions/{family_id}", h.RevokeUserSession)
+				r.Post("/users/{id}/sessions/revoke-all", h.RevokeUserSessions)
 				r.Post("/assignments", h.CreateAssignment)
 				r.Delete("/assignments/{id}", h.DeleteAssignment)
 			})

@@ -37,6 +37,17 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	out, err := h.userSessions(r, uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// userSessions lists the sessions of uid, active ones unless the request
+// asks for ?include_revoked=1; the session of the request is marked.
+func (h *Handlers) userSessions(r *http.Request, uid string) ([]Session, error) {
 	includeRevoked := r.URL.Query().Get("include_revoked") == "1"
 	query := `
 		SELECT family_id, user_agent, ip, created_at, last_seen_at, expires_at, revoked_at
@@ -56,18 +67,17 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.DB.QueryContext(r.Context(), query, uid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
+	current := middleware.SessionID(r.Context())
 	out := []Session{}
 	for rows.Next() {
 		var s Session
 		var ua, ip sql.NullString
 		var revoked, lastSeen sql.NullTime
 		if err := rows.Scan(&s.FamilyID, &ua, &ip, &s.CreatedAt, &lastSeen, &s.ExpiresAt, &revoked); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+			return nil, err
 		}
 		if ua.Valid {
 			s.UserAgent = ua.String
@@ -83,9 +93,10 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 			t := revoked.Time
 			s.RevokedAt = &t
 		}
+		s.IsCurrent = current != "" && s.FamilyID == current
 		out = append(out, s)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, rows.Err()
 }
 
 // RevokeAllMySessions invalidates every active session belonging to
@@ -141,5 +152,65 @@ func (h *Handlers) RevokeMySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "auth.session_revoke", familyID, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListUserSessions returns another user's sessions for an admin.
+//
+//	GET /api/v1/users/{id}/sessions
+func (h *Handlers) ListUserSessions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !h.requireManageUser(w, r, id) {
+		return
+	}
+	out, err := h.userSessions(r, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// RevokeUserSession ends one session of another user. Open shells and
+// streams of that session close at their next re-check.
+//
+//	DELETE /api/v1/users/{id}/sessions/{family_id}
+func (h *Handlers) RevokeUserSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !h.requireManageUser(w, r, id) {
+		return
+	}
+	familyID := chi.URLParam(r, "family_id")
+	res, err := h.DB.ExecContext(r.Context(), `
+		UPDATE sessions
+		   SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE family_id = ? AND user_id = ? AND revoked_at IS NULL`,
+		familyID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	h.audit(r, "auth.session_revoke", familyID, map[string]any{"user_id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RevokeUserSessions ends every session of another user.
+//
+//	POST /api/v1/users/{id}/sessions/revoke-all
+func (h *Handlers) RevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !h.requireManageUser(w, r, id) {
+		return
+	}
+	n, err := h.Auth.RevokeUserSessions(r.Context(), id, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "auth.session_revoke_all", id, map[string]any{"count": n})
 	w.WriteHeader(http.StatusNoContent)
 }
