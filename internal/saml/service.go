@@ -279,7 +279,16 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if in.DefaultRole == "" {
 		in.DefaultRole = "viewer"
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// Accounts still carrying this slug belong to an earlier provider.
+	if _, err := auth.UnlinkProvider(ctx, tx, "saml", in.Slug); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO saml_providers
 			(slug, display_name, entity_id, sso_url, slo_url,
 			 idp_metadata_xml, idp_cert_pem,
@@ -296,6 +305,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 		}
 		return nil, fmt.Errorf("insert saml provider: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	id, _ := res.LastInsertId()
 	if len(in.GroupMappings) > 0 {
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
@@ -308,27 +320,42 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.GetProvider(ctx, id)
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, error) {
+// UpdateProvider saves the provider. Metadata of another IdP entity means
+// the stored subjects name other users, so the provider's accounts are
+// unlinked; the count is returned.
+func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
 	var err error
 	if in.NameIDFormat, err = checkNameIDFormat(in.NameIDFormat); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	var unlinked int64
 	// Re-parse metadata only if the body supplied a non-empty value; an
 	// empty string means "keep the stored XML" so admins can tweak
 	// attribute mappings without re-pasting the whole blob.
 	if in.IdPMetadataXML != "" {
 		meta, err := parseIdPMetadata(in.IdPMetadataXML)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
+			return nil, 0, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
 		}
-		// Another IdP behind the same provider must not re-key its accounts.
-		if _, err := s.db.ExecContext(ctx, `
-			UPDATE users SET saml_rekey_until = NULL
-			 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ? AND entity_id <> ?)`,
-			id, meta.EntityID); err != nil {
-			return nil, err
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, 0, err
 		}
-		_, err = s.db.ExecContext(ctx, `
+		defer tx.Rollback() //nolint:errcheck // no-op after Commit
+		var slug, oldEntity string
+		if err := tx.QueryRowContext(ctx, `SELECT slug, entity_id FROM saml_providers WHERE id = ?`, id).
+			Scan(&slug, &oldEntity); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, 0, ErrProviderNotFound
+			}
+			return nil, 0, err
+		}
+		if oldEntity != meta.EntityID {
+			if unlinked, err = auth.UnlinkProvider(ctx, tx, "saml", slug); err != nil {
+				return nil, 0, err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `
 			UPDATE saml_providers SET
 				display_name = ?, entity_id = ?, sso_url = ?, slo_url = ?,
 				idp_metadata_xml = ?, idp_cert_pem = ?,
@@ -342,7 +369,10 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			in.GroupsAttribute, in.DefaultRole,
 			boolInt(in.Enabled), boolInt(in.IsDefault), id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, 0, err
 		}
 	} else {
 		_, err := s.db.ExecContext(ctx, `
@@ -356,37 +386,45 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			in.EmailAttribute, in.GroupsAttribute,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if in.GroupMappings != nil {
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
-			return nil, err
+			return nil, unlinked, err
 		}
 	}
 	if err := s.auth.SetEmailLinking(ctx, "saml", id, in.AllowEmailLink); err != nil {
-		return nil, err
+		return nil, unlinked, err
 	}
-	return s.GetProvider(ctx, id)
+	p, err := s.GetProvider(ctx, id)
+	return p, unlinked, err
 }
 
-func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
+// DeleteProvider removes the provider and unlinks its accounts, so a new
+// provider that reuses the slug cannot sign into them. It returns how many
+// accounts were unlinked.
+func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	// A new provider with the same slug may be another IdP, so the marked
-	// accounts of this one must not be re-keyed through it.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE users SET saml_rekey_until = NULL
-		 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ?)`, id); err != nil {
-		return err
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT slug FROM saml_providers WHERE id = ?`, id).Scan(&slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n, err := auth.UnlinkProvider(ctx, tx, "saml", slug)
+	if err != nil {
+		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM saml_providers WHERE id = ?`, id); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	return n, tx.Commit()
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {

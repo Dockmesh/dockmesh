@@ -13,7 +13,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +59,7 @@ type Provider struct {
 	UserinfoURL      string         `json:"userinfo_url"`
 	ClientID         string         `json:"client_id"`
 	Scopes           string         `json:"scopes"`
+	SubjectField     string         `json:"subject_field"`
 	UsernameField    string         `json:"username_field"`
 	EmailField       string         `json:"email_field"`
 	GroupsField      string         `json:"groups_field"`
@@ -81,6 +85,7 @@ type ProviderInput struct {
 	ClientID         string         `json:"client_id"`
 	ClientSecret     string         `json:"client_secret"`
 	Scopes           string         `json:"scopes"`
+	SubjectField     string         `json:"subject_field"`
 	UsernameField    string         `json:"username_field"`
 	EmailField       string         `json:"email_field"`
 	GroupsField      string         `json:"groups_field"`
@@ -121,7 +126,7 @@ func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, 
 func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, slug, display_name, authorization_url, token_url, userinfo_url,
-		       client_id, scopes, username_field, email_field, groups_field,
+		       client_id, scopes, subject_field, username_field, email_field, groups_field,
 		       default_role, enabled, is_default,
 		       last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
@@ -177,7 +182,7 @@ func (s *Service) ListEnabledPublic(ctx context.Context) ([]PublicProvider, erro
 func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, authorization_url, token_url, userinfo_url,
-		       client_id, scopes, username_field, email_field, groups_field,
+		       client_id, scopes, subject_field, username_field, email_field, groups_field,
 		       default_role, enabled, is_default,
 		       last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
@@ -203,7 +208,7 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 func (s *Service) getProviderInternalBySlug(ctx context.Context, slug string) (*Provider, string, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, authorization_url, token_url, userinfo_url,
-		       client_id, scopes, username_field, email_field, groups_field,
+		       client_id, scopes, subject_field, username_field, email_field, groups_field,
 		       default_role, enabled, is_default,
 		       last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at,
@@ -217,7 +222,7 @@ func (s *Service) getProviderInternalBySlug(ctx context.Context, slug string) (*
 	var lastTestOK sql.NullInt64
 	if err := row.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.AuthorizationURL, &p.TokenURL, &p.UserinfoURL,
-		&p.ClientID, &p.Scopes, &p.UsernameField, &p.EmailField, &p.GroupsField,
+		&p.ClientID, &p.Scopes, &p.SubjectField, &p.UsernameField, &p.EmailField, &p.GroupsField,
 		&p.DefaultRole, &enabled, &isDefault,
 		&lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt, &clientSecret,
@@ -260,15 +265,24 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// Accounts still carrying this slug belong to an earlier provider.
+	if _, err := auth.UnlinkProvider(ctx, tx, "oauth2", in.Slug); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO oauth2_providers
 			(slug, display_name, authorization_url, token_url, userinfo_url,
-			 client_id, client_secret, scopes,
+			 client_id, client_secret, scopes, subject_field,
 			 username_field, email_field, groups_field,
 			 default_role, enabled, is_default)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, in.Slug, in.DisplayName, in.AuthorizationURL, in.TokenURL, in.UserinfoURL,
-		in.ClientID, enc, in.Scopes,
+		in.ClientID, enc, in.Scopes, in.SubjectField,
 		in.UsernameField, in.EmailField, in.GroupsField,
 		in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault))
 	if err != nil {
@@ -276,6 +290,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, fmt.Errorf("a provider with that slug already exists")
 		}
 		return nil, fmt.Errorf("insert oauth2 provider: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	if len(in.GroupMappings) > 0 {
@@ -289,59 +306,113 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	return s.GetProvider(ctx, id)
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, error) {
+// UpdateProvider saves the provider. When the userinfo host or the subject
+// field changes, the stored subjects mean other users, so the provider's
+// accounts are unlinked; the count is returned.
+func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
 	in = applyDefaults(in)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug, oldUserinfo, oldSubjectField string
+	if err := tx.QueryRowContext(ctx, `SELECT slug, userinfo_url, subject_field FROM oauth2_providers WHERE id = ?`, id).
+		Scan(&slug, &oldUserinfo, &oldSubjectField); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, ErrProviderNotFound
+		}
+		return nil, 0, err
+	}
 	if in.ClientSecret == "" {
-		_, err := s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE oauth2_providers SET
 				display_name = ?, authorization_url = ?, token_url = ?, userinfo_url = ?,
-				client_id = ?, scopes = ?,
+				client_id = ?, scopes = ?, subject_field = ?,
 				username_field = ?, email_field = ?, groups_field = ?,
 				default_role = ?, enabled = ?, is_default = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.AuthorizationURL, in.TokenURL, in.UserinfoURL,
-			in.ClientID, in.Scopes,
+			in.ClientID, in.Scopes, in.SubjectField,
 			in.UsernameField, in.EmailField, in.GroupsField,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
-		if err != nil {
-			return nil, err
-		}
 	} else {
-		enc, err := s.encryptSecret(in.ClientSecret)
-		if err != nil {
-			return nil, err
+		var enc string
+		if enc, err = s.encryptSecret(in.ClientSecret); err != nil {
+			return nil, 0, err
 		}
-		_, err = s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			UPDATE oauth2_providers SET
 				display_name = ?, authorization_url = ?, token_url = ?, userinfo_url = ?,
-				client_id = ?, client_secret = ?, scopes = ?,
+				client_id = ?, client_secret = ?, scopes = ?, subject_field = ?,
 				username_field = ?, email_field = ?, groups_field = ?,
 				default_role = ?, enabled = ?, is_default = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.AuthorizationURL, in.TokenURL, in.UserinfoURL,
-			in.ClientID, enc, in.Scopes,
+			in.ClientID, enc, in.Scopes, in.SubjectField,
 			in.UsernameField, in.EmailField, in.GroupsField,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
-		if err != nil {
-			return nil, err
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	var unlinked int64
+	if IdentityKey(oldUserinfo, oldSubjectField) != IdentityKey(in.UserinfoURL, in.SubjectField) {
+		if unlinked, err = auth.UnlinkProvider(ctx, tx, "oauth2", slug); err != nil {
+			return nil, 0, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
 	}
 	if in.GroupMappings != nil {
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
-			return nil, err
+			return nil, unlinked, err
 		}
 	}
 	if err := s.auth.SetEmailLinking(ctx, "oauth2", id, in.AllowEmailLink); err != nil {
-		return nil, err
+		return nil, unlinked, err
 	}
-	return s.GetProvider(ctx, id)
+	p, err := s.GetProvider(ctx, id)
+	return p, unlinked, err
 }
 
-func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM oauth2_providers WHERE id = ?`, id)
-	return err
+// DeleteProvider removes the provider and unlinks its accounts, so a new
+// provider that reuses the slug cannot sign into them. It returns how many
+// accounts were unlinked.
+func (s *Service) DeleteProvider(ctx context.Context, id int64) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT slug FROM oauth2_providers WHERE id = ?`, id).Scan(&slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n, err := auth.UnlinkProvider(ctx, tx, "oauth2", slug)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oauth2_providers WHERE id = ?`, id); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// IdentityKey is what the provider's subjects are unique within: the
+// userinfo endpoint's origin and the field they are read from.
+func IdentityKey(userinfoURL, subjectField string) string {
+	origin := strings.TrimRight(strings.TrimSpace(userinfoURL), "/")
+	if u, err := url.Parse(origin); err == nil && u.Host != "" {
+		origin = strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	}
+	return origin + "\n" + strings.TrimSpace(subjectField)
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
@@ -436,11 +507,18 @@ func (s *Service) StartLogin(ctx context.Context, slug string) (string, *Pending
 	}
 	cfg := s.buildConfig(p, clientSecret)
 	state := randomToken(24)
-	url := cfg.AuthCodeURL(state)
-	return url, &Pending{Slug: slug, State: state}, nil
+	authURL := cfg.AuthCodeURL(state)
+	return authURL, &Pending{Slug: slug, State: state}, nil
 }
 
-func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, state, userAgent, ip string) (*auth.LoginResult, error) {
+// LoginResult is a completed OAuth2 sign-in. RekeyedUser is set when it
+// moved an account from its legacy subject to the immutable one.
+type LoginResult struct {
+	*auth.LoginResult
+	RekeyedUser string `json:"-"`
+}
+
+func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, state, userAgent, ip string) (*LoginResult, error) {
 	if pending == nil || state != pending.State {
 		return nil, ErrInvalidState
 	}
@@ -457,12 +535,9 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 	if err != nil {
 		return nil, err
 	}
-	subject := stringClaim(claims, p.UsernameField)
-	if subject == "" {
-		subject = stringClaim(claims, "sub")
-	}
-	if subject == "" {
-		return nil, errors.New("userinfo did not return an id claim")
+	subject, subjectField, err := Subject(p.SubjectField, claims)
+	if err != nil {
+		return nil, err
 	}
 	email := stringClaim(claims, p.EmailField)
 	if email == "" {
@@ -473,6 +548,15 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 		name = strings.Split(email, "@")[0]
 	}
 
+	legacy, legacyField := LegacySubject(p.UsernameField, claims)
+	rekeyed, err := s.auth.RekeyLegacy(ctx, auth.LegacyLogin{
+		Kind: "oauth2", Provider: p.Slug, Subject: subject,
+		Legacy: legacy, SameSource: legacyField == subjectField, Email: email,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	groups := stringSliceClaim(claims, p.GroupsField)
 	assignments := rbac.IdPAssignments("OAuth2 "+p.DisplayName, groups, GroupRules(p.GroupMappings), p.DefaultRole, nil)
 
@@ -481,7 +565,53 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	res, err := s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{LoginResult: res, RekeyedUser: rekeyed}, nil
+}
+
+// Subject reads the immutable user id from userinfo: the configured field,
+// or "sub", else "id". It also returns the field it came from.
+func Subject(field string, claims map[string]any) (string, string, error) {
+	field = strings.TrimSpace(field)
+	if field != "" {
+		if v := idClaim(claims, field); v != "" {
+			return v, field, nil
+		}
+		return "", "", fmt.Errorf("userinfo has no %q field to identify the user", field)
+	}
+	for _, f := range []string{"sub", "id"} {
+		if v := idClaim(claims, f); v != "" {
+			return v, f, nil
+		}
+	}
+	return "", "", errors.New(`userinfo has neither a "sub" nor an "id" field to identify the user; set the subject field`)
+}
+
+// LegacySubject is the key accounts were stored under before subjects
+// became immutable: the username field, else "sub", formatted as then.
+func LegacySubject(usernameField string, claims map[string]any) (string, string) {
+	if v := stringClaim(claims, usernameField); v != "" {
+		return v, usernameField
+	}
+	return stringClaim(claims, "sub"), "sub"
+}
+
+// idClaim formats a string or numeric id; JSON numbers arrive as float64
+// and are written without an exponent.
+func idClaim(m map[string]any, key string) string {
+	switch x := m[key].(type) {
+	case string:
+		return x
+	case float64:
+		if x == math.Trunc(x) && math.Abs(x) < 1<<53 {
+			return strconv.FormatInt(int64(x), 10)
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	}
+	return ""
 }
 
 func (s *Service) buildConfig(p *Provider, clientSecret string) *oauth2.Config {
@@ -671,7 +801,7 @@ func scanRow(r scannerIface) (*Provider, error) {
 	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.AuthorizationURL, &p.TokenURL, &p.UserinfoURL,
-		&p.ClientID, &p.Scopes, &p.UsernameField, &p.EmailField, &p.GroupsField,
+		&p.ClientID, &p.Scopes, &p.SubjectField, &p.UsernameField, &p.EmailField, &p.GroupsField,
 		&p.DefaultRole, &enabled, &isDefault,
 		&lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,

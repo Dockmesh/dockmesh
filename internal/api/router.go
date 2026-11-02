@@ -653,6 +653,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/saml/rekey/end", h.EndSAMLRekey)
 			})
 
+			// ------------------------ SSO RE-KEY (OAuth2, LDAP) ----------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
+				r.Get("/sso/rekey", h.GetSSORekey)
+				r.Post("/sso/rekey/end", h.EndSSORekey)
+			})
+
 			// -------------------------- LDAP ADMIN ---------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))

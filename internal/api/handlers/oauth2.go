@@ -98,7 +98,8 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	if res.User != nil {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "oauth2"})
 	}
-	h.finishSSOLogin(w, r, res)
+	h.auditSSORekey(r, res.RekeyedUser, "oauth2", claims.Pending.Slug)
+	h.finishSSOLogin(w, r, res.LoginResult)
 }
 
 // -----------------------------------------------------------------------------
@@ -177,12 +178,13 @@ func (h *Handlers) UpdateOAuth2Provider(w http.ResponseWriter, r *http.Request) 
 	if !h.requireIdPGrants(w, r, in.DefaultRole, oauth2auth.GroupRules(in.GroupMappings)) {
 		return
 	}
-	p, err := h.OAuth2.UpdateProvider(r.Context(), id, in)
+	p, unlinked, err := h.OAuth2.UpdateProvider(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, "oauth2.provider_update", idStr, nil)
+	h.audit(r, "oauth2.provider_update", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -197,11 +199,13 @@ func (h *Handlers) DeleteOAuth2Provider(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.OAuth2.DeleteProvider(r.Context(), id); err != nil {
+	unlinked, err := h.OAuth2.DeleteProvider(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "oauth2.provider_delete", idStr, nil)
+	h.audit(r, "oauth2.provider_delete", idStr, unlinkedDetails(unlinked))
+	h.syncSSORekeyNotices(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -32,6 +32,8 @@ const (
 	ActionRefresh            = "auth.refresh"
 	ActionSAMLRekey          = "auth.saml_rekey"
 	ActionSAMLRekeyEnd       = "auth.saml_rekey_end"
+	ActionSSORekey           = "auth.sso_rekey"
+	ActionSSORekeyEnd        = "auth.sso_rekey_end"
 	ActionUserCreate         = "user.create"
 	ActionUserUpdate         = "user.update"
 	ActionUserDelete         = "user.delete"

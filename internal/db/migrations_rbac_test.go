@@ -154,6 +154,10 @@ func TestSAMLRekeyMarkerMigration(t *testing.T) {
 	if err := migrateUpTo(database, "073_login_limit.sql"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.Exec(`INSERT INTO saml_providers (slug, display_name, entity_id, sso_url, idp_metadata_xml, idp_cert_pem)
+		VALUES ('corp', 'Corp', 'https://idp.example', 'https://idp.example/sso', '', '')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, password, role, saml_provider, saml_subject) VALUES
 		('s1', 'ann', 'x', 'viewer', 'corp', 'G-1'), ('l1', 'bob', 'x', 'viewer', NULL, NULL)`); err != nil {
 		t.Fatal(err)

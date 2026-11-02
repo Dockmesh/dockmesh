@@ -24,6 +24,8 @@ var categories = map[string]string{
 	ActionRefresh:               CategoryAuth,
 	ActionSAMLRekey:             CategoryAuth,
 	ActionSAMLRekeyEnd:          CategoryAuth,
+	ActionSSORekey:              CategoryAuth,
+	ActionSSORekeyEnd:           CategoryAuth,
 	ActionScopeDenied:           CategoryAuth,
 	"auth.sso_login":            CategoryAuth,
 	"auth.session_revoke":       CategoryAuth,
