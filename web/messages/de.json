@@ -4536,7 +4536,7 @@
   "shell_pal_toggle_theme": "Dunkel / Hell umschalten",
   "shell_pal_tokens_sub": "Persönliche Zugriffstokens",
   "shell_search_everything": "Alles durchsuchen",
-  "shell_search_everything_ellipsis": "Alles durchsuchen…",
+  "shell_search_everything_ellipsis": "Suchen…",
   "shell_search_title": "Suchen ({key}+K)",
   "shell_settings_auth": "Authentifizierung",
   "shell_settings_auth_hint": "Identitätsanbieter: OIDC, SAML, LDAP, OAuth2",

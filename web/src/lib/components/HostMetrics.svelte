@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtNumber } from '$lib/i18n';
   import { m } from '$lib/paraglide/messages.js';
   import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
@@ -106,7 +107,7 @@
       color: 'var(--accent)',
       values: data.map((s) => s.cpu_percent),
       max: 100,
-      fmt: (v) => `${v.toFixed(1)} %`
+      fmt: (v) => `${fmtNumber(v, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
     },
     {
       label: m.metrics_memory(),
@@ -120,7 +121,7 @@
       color: 'var(--warn)',
       values: data.map((s) => pct(s.disk_used, s.disk_total)),
       max: 100,
-      fmt: (v) => `${v.toFixed(1)} %`
+      fmt: (v) => `${fmtNumber(v, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
     }
   ]);
 

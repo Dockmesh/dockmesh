@@ -13,6 +13,7 @@
 </script>
 
 <script lang="ts">
+  import { fmtNumber } from '$lib/i18n';
   import { m } from '$lib/paraglide/messages.js';
   import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
@@ -144,7 +145,7 @@
         : rate(s.blk_read + s.blk_write, data[i - 1].blk_read + data[i - 1].blk_write, s.ts - data[i - 1].ts)
     );
     return [
-      { label: 'CPU', color: 'var(--accent)', values: cpu, max: 100, fmt: (v) => `${v.toFixed(1)} %` },
+      { label: 'CPU', color: 'var(--accent)', values: cpu, max: 100, fmt: (v) => `${fmtNumber(v, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %` },
       {
         label: m.metrics_memory(),
         color: 'var(--violet)',

@@ -1,6 +1,6 @@
 // Shared text formats for lists and detail pages.
 import { m } from '$lib/paraglide/messages.js';
-import { fmtDate } from '$lib/i18n';
+import { fmtDate, fmtNumber } from '$lib/i18n';
 
 // "just now", "3 min ago", "2 h ago", "5 d ago", then the date.
 export function fmtAgo(ts?: string | number | null, empty = '—'): string {
@@ -25,7 +25,7 @@ export function fmtBytes(n?: number | null, empty = '0 B'): string {
     v /= 1000;
     i++;
   }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  return `${fmtNumber(v, { minimumFractionDigits: i === 0 ? 0 : 1, maximumFractionDigits: i === 0 ? 0 : 1, useGrouping: false })} ${units[i]}`;
 }
 
 // Binary units for memory and memory limits, like `docker stats`.
@@ -38,7 +38,7 @@ export function fmtMem(n?: number | null, empty = '0 B'): string {
     v /= 1024;
     i++;
   }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  return `${fmtNumber(v, { minimumFractionDigits: i === 0 ? 0 : 1, maximumFractionDigits: i === 0 ? 0 : 1, useGrouping: false })} ${units[i]}`;
 }
 
 // Threshold class for a usage percentage: '' below warnAt, then warn, bad from 90.

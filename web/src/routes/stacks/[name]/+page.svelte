@@ -23,7 +23,7 @@
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
-  import { fmtDateTime, fmtTime } from '$lib/i18n';
+  import { fmtDateTime, fmtNumber, fmtTime } from '$lib/i18n';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
@@ -536,8 +536,8 @@
     if (unlimited) memLim = 0;
     return {
       cpu,
-      cpuLabel: count > 0 ? `${cpu.toFixed(1)}%` : '—',
-      cpuMeta: count > 0 ? m.stacks_d_cpu_meta({ cores: cpuCores.toFixed(2), containers: m.stacks_n_containers({ count }) }) : m.stacks_d_no_samples(),
+      cpuLabel: count > 0 ? `${fmtNumber(cpu, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : '—',
+      cpuMeta: count > 0 ? m.stacks_d_cpu_meta({ cores: fmtNumber(cpuCores, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), containers: m.stacks_n_containers({ count }) }) : m.stacks_d_no_samples(),
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,
@@ -790,7 +790,7 @@
   // Skips fractional seconds for >10 s so the column stays narrow.
   function formatDuration(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
-    if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 10_000) return `${fmtNumber(ms / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}s`;
     if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
     const min = Math.floor(ms / 60_000);
     const s = Math.round((ms % 60_000) / 1000);
@@ -1763,7 +1763,7 @@
                       <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? m.stacks_d_unhealthy() : containerStateLabel(s.state)} />
                     {/if}
                   </span>
-                  <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>
+                  <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${fmtNumber(st.cpu_percent, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : '—'}</span>
                   <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtMem(st.mem_used) : '—'}</span>
                   <span class="dm-tr-menu" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
                     <Menu label={m.stacks_actions_for({ name: s.service })} items={serviceMenu(s)} width={220} />
