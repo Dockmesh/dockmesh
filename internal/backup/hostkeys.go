@@ -29,7 +29,7 @@ func (s *Service) AcceptHostKey(ctx context.Context, jobID int64) error {
 		return err
 	}
 	if job.TargetID > 0 {
-		return targets.NewTargetStore(s.store.db).AcceptHostKey(ctx, job.TargetID, s.notices)
+		return s.store.targets().AcceptHostKey(ctx, job.TargetID, s.notices)
 	}
 	if err := targets.JobKeyRecorder(s.store.db, jobID).AcceptPendingHostKey(ctx); err != nil {
 		return err

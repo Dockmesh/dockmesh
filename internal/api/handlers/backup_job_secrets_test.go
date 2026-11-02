@@ -11,7 +11,7 @@ import (
 
 func TestJobTargetSecrets(t *testing.T) {
 	ctx := context.Background()
-	store := targets.NewTargetStore(openRedactionTestDB(t))
+	store := targets.NewTargetStore(openRedactionTestDB(t), nil)
 	saved, err := store.Create(ctx, targets.TargetInput{
 		Name: "nas", Type: "smb",
 		Config: map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "s3cret", "path": "backups"},

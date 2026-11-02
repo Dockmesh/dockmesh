@@ -41,7 +41,7 @@ func smbJob(name string, cfg map[string]any) JobInput {
 func TestRepairJobSecrets(t *testing.T) {
 	svc, n := newTestService(t, true)
 	ctx := context.Background()
-	ts := targets.NewTargetStore(svc.store.db)
+	ts := svc.store.targets()
 
 	nas := map[string]any{"host": "nas", "port": 445, "share": "bk", "username": "u", "path": "backups"}
 	withPass := func(c map[string]any, p string) map[string]any {
@@ -141,7 +141,7 @@ func TestRepairJobSecrets(t *testing.T) {
 func TestRepairJobSecretsResolvesNotice(t *testing.T) {
 	svc, n := newTestService(t, true)
 	ctx := context.Background()
-	ts := targets.NewTargetStore(svc.store.db)
+	ts := svc.store.targets()
 
 	job, err := createLegacyJob(ctx, svc, smbJob("lonely", map[string]any{"host": "gone", "share": "x", "username": "u", "password": ""}))
 	if err != nil {

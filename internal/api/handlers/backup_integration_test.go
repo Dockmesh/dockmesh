@@ -25,7 +25,7 @@ func TestJobsFromSavedTargetsAgainstRealServers(t *testing.T) {
 			}
 			ctx := context.Background()
 			svc, database := integration.NewService(t)
-			store := targets.NewTargetStore(database)
+			store := targets.NewTargetStore(database, nil)
 
 			saved, err := store.Create(ctx, targets.TargetInput{Name: "nas", Type: c.Type, Config: c.Config})
 			if err != nil {

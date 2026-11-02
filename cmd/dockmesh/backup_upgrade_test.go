@@ -31,7 +31,7 @@ func TestRepairJobSecretsRunsOnce(t *testing.T) {
 	n := notices.NewService(database)
 	svc.SetNotices(n)
 	st := settings.NewStore(database)
-	ts := targets.NewTargetStore(database)
+	ts := svc.Targets()
 
 	loc := func(pw string) map[string]any {
 		return map[string]any{"host": "nas", "share": "bk", "username": "u", "password": pw}
@@ -80,7 +80,7 @@ func TestPrepareJobTargetsRepairsBeforeMigrating(t *testing.T) {
 	n := notices.NewService(database)
 	svc.SetNotices(n)
 	st := settings.NewStore(database)
-	ts := targets.NewTargetStore(database)
+	ts := svc.Targets()
 
 	saved, err := ts.Create(ctx, targets.TargetInput{Name: "nas", Type: "smb",
 		Config: map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "s3cret"}})

@@ -32,7 +32,7 @@ func TestBackupReadsFollowScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.h.HostTags = tags
-	e.h.BackupTargets = targets.NewTargetStore(e.db)
+	e.h.BackupTargets = targets.NewTargetStore(e.db, nil)
 	e.router.Group(func(r chi.Router) {
 		r.Use(middleware.NewAuth(e.h.Auth))
 		r.Use(e.h.StackScope)

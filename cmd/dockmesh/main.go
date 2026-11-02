@@ -906,7 +906,7 @@ func main() {
 	// backup_targets row into a live target.Build, streams NDJSON to
 	// it on archive_target runs. Nil-safe if the backup-targets store
 	// is ever unavailable — archive_target mode then reports an error.
-	backupTargetStore := targets.NewTargetStore(database)
+	backupTargetStore := backupSvc.Targets()
 	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
 	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
 	auditRetention.Start(ctx)

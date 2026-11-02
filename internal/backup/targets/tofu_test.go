@@ -50,7 +50,7 @@ func TestStoredTargetHostKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	st := NewTargetStore(database)
+	st := NewTargetStore(database, nil)
 	n := notices.NewService(database)
 	tgt, err := st.Create(ctx, TargetInput{Name: "offsite", Type: "sftp", Config: map[string]any{"host": "a.example", "username": "u"}})
 	if err != nil {

@@ -66,7 +66,7 @@ func (s *Service) SetNotices(n *notices.Service) {
 }
 
 func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
-	st := newStore(db)
+	st := newStore(db, sec)
 	runCtx, cancel := context.WithCancel(context.Background())
 	return &Service{
 		store:     st,
@@ -139,6 +139,9 @@ func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
 	}
 	return j, err
 }
+
+// Targets returns the saved-target store, sharing the job store's key.
+func (s *Service) Targets() *targets.TargetStore { return s.store.targets() }
 
 // DefaultLocalPath is the directory the wizards suggest for a local target.
 func (s *Service) DefaultLocalPath() string {

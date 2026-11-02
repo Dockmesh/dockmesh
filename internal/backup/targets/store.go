@@ -3,9 +3,11 @@ package targets
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
 // StoredTarget is one row of backup_targets.
@@ -31,12 +33,16 @@ type TargetInput struct {
 	Config any    `json:"config"`
 }
 
-// TargetStore provides CRUD for the backup_targets table.
+// TargetStore provides CRUD for the backup_targets table. Credentials in
+// a target's config are stored encrypted with sec.
 type TargetStore struct {
-	db *sql.DB
+	db  *sql.DB
+	sec *secrets.Service
 }
 
-func NewTargetStore(db *sql.DB) *TargetStore { return &TargetStore{db: db} }
+func NewTargetStore(db *sql.DB, sec *secrets.Service) *TargetStore {
+	return &TargetStore{db: db, sec: sec}
+}
 
 func (s *TargetStore) List(ctx context.Context) ([]StoredTarget, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -50,7 +56,7 @@ func (s *TargetStore) List(ctx context.Context) ([]StoredTarget, error) {
 	// Non-nil slice so the JSON response is [] not null.
 	out := make([]StoredTarget, 0)
 	for rows.Next() {
-		t, err := scanTarget(rows)
+		t, err := s.scanTarget(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -64,14 +70,17 @@ func (s *TargetStore) Get(ctx context.Context, id int64) (*StoredTarget, error) 
 		SELECT id, name, type, config_json, status, total_bytes, used_bytes,
 		       last_checked_at, `+jobCountColumn+`, created_at, updated_at
 		FROM backup_targets WHERE id = ?`, id)
-	return scanTarget(row)
+	return s.scanTarget(row)
 }
 
 func (s *TargetStore) Create(ctx context.Context, in TargetInput) (*StoredTarget, error) {
-	cfg, _ := json.Marshal(KeepHostKey("", nil, in.Type, in.Config))
+	cfg, err := SealConfig(s.sec, KeepHostKey("", nil, in.Type, in.Config))
+	if err != nil {
+		return nil, err
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_targets (name, type, config_json) VALUES (?, ?, ?)`,
-		in.Name, in.Type, string(cfg))
+		in.Name, in.Type, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -84,10 +93,13 @@ func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*St
 	if err != nil {
 		return nil, err
 	}
-	cfg, _ := json.Marshal(KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
+	cfg, err := SealConfig(s.sec, KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
+	if err != nil {
+		return nil, err
+	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE backup_targets SET name = ?, type = ?, config_json = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, in.Name, in.Type, string(cfg), id)
+		WHERE id = ?`, in.Name, in.Type, cfg, id)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +140,7 @@ const jobCountColumn = `(SELECT COUNT(*) FROM backup_jobs j
 
 type scanner interface{ Scan(dest ...any) error }
 
-func scanTarget(r scanner) (*StoredTarget, error) {
+func (s *TargetStore) scanTarget(r scanner) (*StoredTarget, error) {
 	var t StoredTarget
 	var cfgJSON string
 	var checked sql.NullTime
@@ -138,7 +150,11 @@ func scanTarget(r scanner) (*StoredTarget, error) {
 		return nil, err
 	}
 	t.JobCount = &jobs
-	_ = json.Unmarshal([]byte(cfgJSON), &t.Config)
+	cfg, err := OpenConfig(s.sec, cfgJSON)
+	if err != nil {
+		return nil, fmt.Errorf("backup target %q: %w", t.Name, err)
+	}
+	t.Config = cfg
 	if checked.Valid {
 		t.LastCheckedAt = &checked.Time
 	}
