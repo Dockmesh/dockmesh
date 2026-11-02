@@ -435,9 +435,6 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
         "500":
           description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
           content:

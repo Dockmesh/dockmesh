@@ -1072,7 +1072,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 			services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
 		}
 		// The merged compose has the .env values filled in, so history
-		// keeps the base file and the override name instead.
+		// keeps the base file and the override name.
 		note := ""
 		if envOverride != "" {
 			note = "env: " + envOverride

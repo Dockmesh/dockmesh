@@ -36,7 +36,7 @@ func SealConfig(sec *secrets.Service, cfg any) (string, error) {
 }
 
 // OpenConfig parses a stored config and decrypts its credential fields.
-// Unparseable JSON yields a nil config, as before encryption.
+// Unparseable JSON yields a nil config.
 func OpenConfig(sec *secrets.Service, raw string) (any, error) {
 	var cfg any
 	if json.Unmarshal([]byte(raw), &cfg) != nil {
