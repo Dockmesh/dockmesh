@@ -12,10 +12,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// A host-scoped user may only manage event rules bound to one of their
-// hosts and only sees history from those hosts; otherwise a catch-all
-// rule would forward other teams' events to the user's own channel.
-func TestAlertRulesRespectHostScope(t *testing.T) {
+// Alert rules are instance-wide, so only an assignment on everything may
+// write them, even when the route guard is bypassed; history follows the
+// caller's host scope.
+func TestAlertRulesNeedGlobalAccess(t *testing.T) {
 	e := newAuthzEnv(t)
 	ctx := context.Background()
 	tags := hosttags.New(e.db)
@@ -52,7 +52,7 @@ func TestAlertRulesRespectHostScope(t *testing.T) {
 		{"unscoped user, catch-all rule", globalTok, rule(""), http.StatusCreated},
 		{"scoped user, catch-all rule", scopedTok, rule(""), http.StatusForbidden},
 		{"scoped user, other host", scopedTok, rule("agent-other"), http.StatusForbidden},
-		{"scoped user, own host", scopedTok, rule("agent-prod"), http.StatusCreated},
+		{"scoped user, own host", scopedTok, rule("agent-prod"), http.StatusForbidden},
 		{"scoped user, global backup rule", scopedTok, map[string]any{"name": "b", "kind": "backup_failed", "container_filter": "*", "scope_host": "agent-prod"}, http.StatusForbidden},
 	}
 	for _, tt := range tests {

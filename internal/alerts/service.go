@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,13 +17,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 var (
 	ErrInvalidMetric    = errors.New("metric must be cpu_percent or mem_percent")
 	ErrInvalidOperator  = errors.New(`operator must be "gt" (or ">") or "lt" (or "<")`)
 	ErrInvalidThreshold = errors.New("threshold required")
+	ErrInvalidCPUUnit   = errors.New(`cpu_unit must be "host" or "core"`)
 	ErrInvalidKind      = errors.New("unknown rule kind")
 	// ErrBuiltinImmutable is returned when a caller tries to delete a
 	// built-in alert rule. Disabling and editing are still allowed; only
@@ -38,12 +37,15 @@ type Rule struct {
 	Name string `json:"name"`
 	// Kind selects the evaluator; "metric" is the CPU/memory threshold
 	// rule, the others are listed in kinds.go.
-	Kind            string     `json:"kind"`
-	ContainerFilter string     `json:"container_filter"`
-	ScopeHost       string     `json:"scope_host"`
-	ScopeTag        string     `json:"scope_tag"`
-	ScopeStack      string     `json:"scope_stack"`
-	Metric          string     `json:"metric"`
+	Kind            string `json:"kind"`
+	ContainerFilter string `json:"container_filter"`
+	ScopeHost       string `json:"scope_host"`
+	ScopeTag        string `json:"scope_tag"`
+	ScopeStack      string `json:"scope_stack"`
+	Metric          string `json:"metric"`
+	// CPUUnit is the unit of a CPU threshold: "host" (share of the whole
+	// host) or "core" (100 per busy core, as docker stats shows it).
+	CPUUnit         string     `json:"cpu_unit,omitempty"`
 	Operator        string     `json:"operator"`
 	Threshold       float64    `json:"threshold"`
 	DurationSeconds int        `json:"duration_seconds"`
@@ -84,7 +86,10 @@ type HistoryEntry struct {
 	Threshold     float64 `json:"threshold"`
 	// Notified is false when the transition was recorded but channels
 	// were not pinged (muted or inside the cooldown).
-	Notified   bool      `json:"notified"`
+	Notified bool `json:"notified"`
+	// Repeats counts later occurrences of a one-shot alert inside the
+	// cooldown that were folded into this entry instead of a new one.
+	Repeats    int       `json:"repeats"`
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
@@ -96,6 +101,7 @@ type RuleInput struct {
 	ScopeTag        string  `json:"scope_tag"`
 	ScopeStack      string  `json:"scope_stack"`
 	Metric          string  `json:"metric"`
+	CPUUnit         string  `json:"cpu_unit,omitempty"`
 	Operator        string  `json:"operator"`
 	Threshold       float64 `json:"threshold"`
 	DurationSeconds int     `json:"duration_seconds"`
@@ -122,15 +128,26 @@ type Service struct {
 
 	interval time.Duration
 
-	stop chan struct{}
-	wg   sync.WaitGroup
+	stop    chan struct{}
+	wg      sync.WaitGroup
+	baseCtx context.Context
 
-	// firing maps "rule_id|container" to whether the fire was notified;
-	// presence means the alert is active. lastNotified holds the time of
-	// the last announced fire per key for cooldown.
+	// firing maps an active alert to whether its fire was notified.
+	// lastNotified holds the time of the last announced fire for the
+	// cooldown, lastRows the newest row of a one-shot target.
 	stateMu      sync.Mutex
-	firing       map[string]bool
-	lastNotified map[string]time.Time
+	firing       targetMap[bool]
+	lastNotified targetMap[time.Time]
+	lastRows     targetMap[lastRow]
+	capWarned    map[ruleHost]bool
+	prunedAt     time.Time
+
+	// outbox holds announcements waiting for their group window; send
+	// replaces delivery in tests.
+	groupWindow time.Duration
+	outMu       sync.Mutex
+	outbox      map[groupKey]*outGroup
+	send        func(*outGroup)
 
 	srcMu   sync.Mutex
 	sources Sources
@@ -143,7 +160,7 @@ type Service struct {
 	// container, and the running watcher per host.
 	evMu        sync.Mutex
 	stopping    map[string]time.Time
-	dies        map[string][]time.Time
+	dies        targetMap[[]time.Time]
 	rate        map[string]eventBucket
 	watching    map[string]context.CancelFunc
 	unsupported string
@@ -168,10 +185,14 @@ func NewService(db *sql.DB, notifier *notify.Service) *Service {
 		notify:       notifier,
 		interval:     DefaultSampleInterval,
 		stop:         make(chan struct{}),
-		firing:       make(map[string]bool),
-		lastNotified: make(map[string]time.Time),
+		firing:       targetMap[bool]{},
+		lastNotified: targetMap[time.Time]{},
+		lastRows:     targetMap[lastRow]{},
+		capWarned:    map[ruleHost]bool{},
+		groupWindow:  groupWindow,
+		outbox:       map[groupKey]*outGroup{},
 		stopping:     make(map[string]time.Time),
-		dies:         make(map[string][]time.Time),
+		dies:         targetMap[[]time.Time]{},
 		rate:         make(map[string]eventBucket),
 		watching:     make(map[string]context.CancelFunc),
 		lastRunID:    -1,
@@ -182,25 +203,26 @@ func NewService(db *sql.DB, notifier *notify.Service) *Service {
 // from alert_history first so a restart doesn't lose track of currently
 // active alerts.
 func (s *Service) Start(ctx context.Context) {
+	s.baseCtx = context.WithoutCancel(ctx)
 	if err := s.loadFiringState(ctx); err != nil {
 		slog.Warn("alerts: load firing state", "err", err)
 	}
 	s.wg.Add(2)
 	go s.evalLoop(ctx)
 	go s.watchLoop(ctx)
-	slog.Info("alerts evaluator started", "firing", len(s.firing))
+	slog.Info("alerts evaluator started", "firing", s.firing.size())
 }
 
 // loadFiringState rebuilds the firing and cooldown state from
 // alert_history: a key whose latest row is "fired" is still active.
 func (s *Service) loadFiringState(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT h.rule_id, h.container_name, h.notified
+		SELECT h.rule_id, h.host_id, h.container_name, h.notified
 		FROM alert_history h
 		JOIN (
-			SELECT rule_id, container_name, MAX(id) AS max_id
+			SELECT MAX(id) AS max_id
 			FROM alert_history
-			GROUP BY rule_id, container_name
+			GROUP BY rule_id, host_id, container_name
 		) latest ON h.id = latest.max_id
 		JOIN alert_rules r ON r.id = h.rule_id
 		WHERE h.status = 'fired' AND r.kind NOT IN ('oom', 'backup_failed')`)
@@ -210,14 +232,13 @@ func (s *Service) loadFiringState(ctx context.Context) error {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	for rows.Next() {
-		var ruleID int64
-		var name string
+		var k tkey
 		var notified int
-		if err := rows.Scan(&ruleID, &name, &notified); err != nil {
+		if err := rows.Scan(&k.rule, &k.host, &k.target, &notified); err != nil {
 			rows.Close()
 			return err
 		}
-		s.firing[stateKey(ruleID, name)] = notified == 1
+		s.firing.set(k, notified == 1)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -225,29 +246,34 @@ func (s *Service) loadFiringState(ctx context.Context) error {
 	}
 
 	rows, err = s.db.QueryContext(ctx, `
-		SELECT rule_id, container_name, CAST(strftime('%s', MAX(occurred_at)) AS INTEGER)
+		SELECT rule_id, host_id, container_name, CAST(strftime('%s', MAX(occurred_at)) AS INTEGER)
 		FROM alert_history
-		WHERE status = 'fired' AND notified = 1
-		GROUP BY rule_id, container_name`)
+		WHERE status = 'fired' AND notified = 1 AND occurred_at >= ?
+		GROUP BY rule_id, host_id, container_name`, dbTime(time.Now().Add(-stateTTL)))
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var ruleID, unix int64
-		var name string
-		if err := rows.Scan(&ruleID, &name, &unix); err != nil {
+		var k tkey
+		var unix int64
+		if err := rows.Scan(&k.rule, &k.host, &k.target, &unix); err != nil {
 			return err
 		}
-		s.lastNotified[stateKey(ruleID, name)] = time.Unix(unix, 0)
+		s.lastNotified.set(k, time.Unix(unix, 0))
 	}
 	return rows.Err()
 }
 
+// Stop ends the loops and sends what is still waiting for its group.
 func (s *Service) Stop() {
 	close(s.stop)
 	s.wg.Wait()
+	s.flushAll()
 }
+
+// dbTime formats t like CURRENT_TIMESTAMP, the layout occurred_at holds.
+func dbTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
 
 // -----------------------------------------------------------------------------
 // CRUD
@@ -256,7 +282,7 @@ func (s *Service) Stop() {
 func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, kind, container_filter, scope_host, scope_tag, scope_stack,
-		       metric, operator, threshold,
+		       metric, cpu_unit, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
 		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
@@ -299,10 +325,10 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules
-			(name, kind, container_filter, scope_host, scope_tag, scope_stack, metric, operator, threshold,
+			(name, kind, container_filter, scope_host, scope_tag, scope_stack, metric, cpu_unit, operator, threshold,
 			 duration_seconds, channel_ids, enabled, severity, cooldown_seconds, muted_until, mute_schedule)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.Operator, in.Threshold,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.CPUUnit, in.Operator, in.Threshold,
 		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule)
 	if err != nil {
 		return nil, err
@@ -312,6 +338,13 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, error) {
+	// A client that doesn't know about units keeps the rule's unit; the
+	// host default is for new rules.
+	if in.CPUUnit == "" {
+		if cur, err := s.getRule(ctx, id); err == nil && cur.cpuRule() {
+			in.CPUUnit = cur.cpuUnit()
+		}
+	}
 	in = normalizeInput(in)
 	if err := validateInput(in); err != nil {
 		return nil, err
@@ -334,12 +367,12 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE alert_rules SET
 			name = ?, kind = ?, container_filter = ?, scope_host = ?, scope_tag = ?, scope_stack = ?,
-			metric = ?, operator = ?,
+			metric = ?, cpu_unit = ?, operator = ?,
 			threshold = ?, duration_seconds = ?, channel_ids = ?, enabled = ?,
 			severity = ?, cooldown_seconds = ?, muted_until = ?, mute_schedule = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.Operator, in.Threshold,
+		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.CPUUnit, in.Operator, in.Threshold,
 		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule, id); err != nil {
 		return nil, err
 	}
@@ -366,9 +399,16 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error) {
+// History returns the newest entries first. keep, when set, drops entries
+// the caller may not see before the limit applies, so a scoped caller
+// still gets up to limit entries of their own hosts.
+func (s *Service) History(ctx context.Context, limit int, keep func(HistoryEntry) bool) ([]HistoryEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
+	}
+	sqlLimit := limit
+	if keep != nil {
+		sqlLimit = -1
 	}
 	// JOIN alert_rules so the UI can render severity-tinted history rows
 	// without a second query. LEFT JOIN to keep history entries whose
@@ -376,32 +416,34 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''), COALESCE(r.kind, ''),
 		       h.host_id, h.container_name, h.status, h.message,
-		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.occurred_at
+		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.repeats, h.occurred_at
 		  FROM alert_history h
 		  LEFT JOIN alert_rules r ON r.id = h.rule_id
-		 ORDER BY h.occurred_at DESC, h.id DESC LIMIT ?`, limit)
+		 ORDER BY h.occurred_at DESC, h.id DESC LIMIT ?`, sqlLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []HistoryEntry{}
-	for rows.Next() {
+	for len(out) < limit && rows.Next() {
 		var e HistoryEntry
 		var notified int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Kind,
 			&e.HostID, &e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
-			&notified, &e.OccurredAt); err != nil {
+			&notified, &e.Repeats, &e.OccurredAt); err != nil {
 			return nil, err
 		}
 		e.Notified = notified == 1
-		out = append(out, e)
+		if keep == nil || keep(e) {
+			out = append(out, e)
+		}
 	}
 	return out, rows.Err()
 }
 
 // RuleStats summarises recent activity for a single rule over a window
-// of days. fires_count is the number of "fired" history rows in that
-// window. last_fired is the most recent occurred_at, nil if quiet.
+// of days. fires_count counts the fires in that window, repeats folded
+// into one entry included. last_fired is the newest entry, nil if quiet.
 type RuleStats struct {
 	RuleID     int64      `json:"rule_id"`
 	WindowDays int        `json:"window_days"`
@@ -418,10 +460,10 @@ func (s *Service) RuleStatsByID(ctx context.Context, ruleID int64, days int) (*R
 	cutoff := time.Now().AddDate(0, 0, -days)
 	out := &RuleStats{RuleID: ruleID, WindowDays: days}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), CAST(strftime('%s', MAX(occurred_at)) AS INTEGER)
+		SELECT COUNT(*) + COALESCE(SUM(repeats), 0), CAST(strftime('%s', MAX(occurred_at)) AS INTEGER)
 		  FROM alert_history
 		 WHERE rule_id = ? AND status = 'fired' AND occurred_at >= ?`,
-		ruleID, cutoff.UTC().Format("2006-01-02 15:04:05"))
+		ruleID, dbTime(cutoff))
 	var lastFired sql.NullInt64
 	if err := row.Scan(&out.FiresCount, &lastFired); err != nil {
 		return nil, err
@@ -464,6 +506,7 @@ func (s *Service) evalAll(ctx context.Context, now time.Time) {
 	}
 	s.setRules(rules)
 	s.pruneState(now)
+	s.pruneHistory(ctx, now)
 	s.refreshCerts(ctx, now)
 
 	src := s.src()
@@ -503,22 +546,57 @@ func (s *Service) evalAll(ctx context.Context, now time.Time) {
 	}
 }
 
-func metricExpr(metric string) (string, error) {
-	switch metric {
+// metricExpr is the SQL value a metric rule compares. Container CPU is
+// stored per core; "host" divides by the cores the sample was taken on.
+// Rows from before cores were recorded count as one core.
+func metricExpr(r *Rule) (string, error) {
+	switch r.Metric {
 	case "cpu_percent":
-		return "cpu_percent", nil
+		if r.cpuUnit() == CPUUnitHost {
+			return "m.cpu_percent / MAX(m.cpu_cores, 1)", nil
+		}
+		return "m.cpu_percent", nil
 	case "mem_percent":
-		return "CASE WHEN mem_limit > 0 THEN (mem_used * 100.0 / mem_limit) ELSE 0 END", nil
+		return "CASE WHEN m.mem_limit > 0 THEN (m.mem_used * 100.0 / m.mem_limit) ELSE 0 END", nil
 	}
 	return "", ErrInvalidMetric
 }
 
-// evalRule loads the recent sample series per matching container on the
-// server host and lets decide() compute the edge; fired alerts are filed
-// under host "local", so agent samples are left out. Containers that are firing but have
-// no samples left in the lookback window are resolved.
+// CPU threshold units.
+const (
+	CPUUnitHost = "host"
+	CPUUnitCore = "core"
+)
+
+func (r *Rule) cpuRule() bool {
+	return (r.Kind == "" || r.Kind == KindMetric) && r.Metric == "cpu_percent"
+}
+
+// cpuUnit is the rule's CPU unit; rules stored without one predate the
+// choice and were written against per-core values.
+func (r *Rule) cpuUnit() string {
+	if r.CPUUnit == CPUUnitHost {
+		return CPUUnitHost
+	}
+	return CPUUnitCore
+}
+
+// metricLabel names the compared value in messages.
+func (r *Rule) metricLabel() string {
+	switch {
+	case r.Metric == "mem_percent":
+		return "memory %"
+	case r.cpuUnit() == CPUUnitHost:
+		return "CPU % of host"
+	}
+	return "CPU % of one core"
+}
+
+// evalRule loads the recent sample series of every container on every
+// host the rule covers and lets decide() compute the edge. Alerts whose
+// container has no samples left in the lookback window are resolved.
 func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
-	col, err := metricExpr(r.Metric)
+	col, err := metricExpr(r)
 	if err != nil {
 		return err
 	}
@@ -535,66 +613,85 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	whereName := ""
 	args := []any{now.Add(-lookback).Unix(), now.Unix()}
 	if r.ContainerFilter != "" && r.ContainerFilter != "*" {
-		whereName = " AND container_name = ?"
+		whereName = " AND m.container_name = ?"
 		args = append(args, r.ContainerFilter)
 	}
+	// Samples of agents that were removed are left out.
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT container_name, ts, %s
-		  FROM metrics_raw
-		 WHERE host_id = 'local' AND ts >= ? AND ts <= ?%s
-		 ORDER BY container_name, ts`, col, whereName), args...)
+		SELECT m.host_id, COALESCE(a.name, ''), m.container_name, m.ts, %s
+		  FROM metrics_raw m
+		  LEFT JOIN agents a ON a.id = m.host_id
+		 WHERE (m.host_id = 'local' OR a.id IS NOT NULL) AND m.ts >= ? AND m.ts <= ?%s
+		 ORDER BY m.host_id, m.container_name, m.ts`, col, whereName), args...)
 	if err != nil {
 		return err
 	}
-	series := map[string][]metricSample{}
-	var order []string
+	type seriesOf struct {
+		target  target
+		where   string
+		samples []metricSample
+	}
+	series := map[tkey]*seriesOf{}
+	var order []tkey
+	inScope := map[string]bool{}
 	for rows.Next() {
-		var name string
+		var hostID, hostName, name string
 		var smp metricSample
-		if err := rows.Scan(&name, &smp.TS, &smp.Value); err != nil {
+		if err := rows.Scan(&hostID, &hostName, &name, &smp.TS, &smp.Value); err != nil {
 			rows.Close()
 			return err
 		}
-		if _, ok := series[name]; !ok {
-			order = append(order, name)
+		ok, seen := inScope[hostID]
+		if !seen {
+			ok = s.inScope(r, hostID, "")
+			inScope[hostID] = ok
 		}
-		series[name] = append(series[name], smp)
+		if !ok {
+			continue
+		}
+		t := target{hostID: hostID, name: targetName(hostID, hostName, name)}
+		k := keyOf(r.ID, t)
+		cur := series[k]
+		if cur == nil {
+			where := name
+			if hostName != "" {
+				where += " on " + hostName
+			}
+			cur = &seriesOf{target: t, where: where}
+			series[k] = cur
+			order = append(order, k)
+		}
+		cur.samples = append(cur.samples, smp)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	for _, name := range order {
-		smp := series[name]
-		key := stateKey(r.ID, name)
-		wasFiring := s.isFiring(key)
+	for _, k := range order {
+		cur := series[k]
+		smp := cur.samples
+		wasFiring := s.isFiring(k)
 		firing := decide(smp, r.Operator, r.Threshold, duration, wasFiring, now, s.interval)
 		last := smp[len(smp)-1].Value
 		switch {
 		case firing && !wasFiring:
-			s.fireRule(ctx, r, "local", name, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
-				r.Name, name, r.Metric, last, r.Operator, r.Threshold), last, now)
+			s.fireRule(ctx, r, cur.target, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
+				r.Name, cur.where, r.metricLabel(), last, r.Operator, r.Threshold), last, now)
 		case !firing && wasFiring:
-			s.resolveRule(ctx, r, name, fmt.Sprintf("%s on %s resolved: %s = %.1f",
-				r.Name, name, r.Metric, last), last, now)
+			s.resolveRule(ctx, r, cur.target, fmt.Sprintf("%s on %s resolved: %s = %.1f",
+				r.Name, cur.where, r.metricLabel(), last), last, now)
 		}
 	}
 
-	prefix := fmt.Sprintf("%d|", r.ID)
-	var gone []string
 	s.stateMu.Lock()
-	for key := range s.firing {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		if name := strings.TrimPrefix(key, prefix); series[name] == nil {
-			gone = append(gone, name)
-		}
-	}
+	active := s.firing.keysOf(r.ID)
 	s.stateMu.Unlock()
-	for _, name := range gone {
-		s.resolveRule(ctx, r, name, fmt.Sprintf("%s on %s resolved: no samples", r.Name, name), 0, now)
+	for _, k := range active {
+		if series[k] == nil {
+			s.resolveRule(ctx, r, target{hostID: k.host, name: k.target},
+				fmt.Sprintf("%s on %s resolved: no samples", r.Name, k.target), 0, now)
+		}
 	}
 	return nil
 }
@@ -608,126 +705,134 @@ func (r *Rule) mutedAt(t time.Time) bool {
 	return IsMutedNow(r.MuteSchedule, t)
 }
 
-// inCooldown reports whether a fire notification for key went out less
+// cooldown is how long after an announced fire the same target stays
+// quiet. Repeats of one-shot alerts fold into one entry for at least a
+// minute even when the rule has no cooldown.
+func (r *Rule) cooldown() time.Duration {
+	return time.Duration(r.CooldownSeconds) * time.Second
+}
+
+func (r *Rule) repeatWindow() time.Duration {
+	return max(r.cooldown(), time.Minute)
+}
+
+// inCooldown reports whether a fire notification for k went out less
 // than cooldown_seconds ago. Suppressed fires don't count, so a flapping
 // container is still announced once per cooldown period.
-func (s *Service) inCooldown(r *Rule, key string, t time.Time) bool {
+func (s *Service) inCooldown(r *Rule, k tkey, t time.Time) bool {
 	if r.CooldownSeconds <= 0 {
 		return false
 	}
 	s.stateMu.Lock()
-	last, ok := s.lastNotified[key]
+	last, ok := s.lastNotified.get(k)
 	s.stateMu.Unlock()
-	return ok && t.Sub(last) < time.Duration(r.CooldownSeconds)*time.Second
+	return ok && t.Sub(last) < r.cooldown()
 }
 
-// fireRule records a fire for container and notifies unless muted or in
+// fireRule records a fire for t and announces it unless muted or in
 // cooldown. One-shot kinds (OOM, failed backup run) have nothing to
-// resolve, so they never enter the firing set.
-func (s *Service) fireRule(ctx context.Context, r *Rule, hostID, container, msg string, value float64, ts time.Time) {
-	key := stateKey(r.ID, container)
+// resolve, so they never enter the firing set; their repeats inside the
+// cooldown are counted on the previous entry instead of adding rows.
+func (s *Service) fireRule(ctx context.Context, r *Rule, t target, msg string, value float64, ts time.Time) {
+	k := keyOf(r.ID, t)
+	one := oneShot(r.Kind)
 	muted := r.mutedAt(ts)
-	cooling := s.inCooldown(r, key, ts)
+	cooling := s.inCooldown(r, k, ts)
 	notified := !muted && !cooling
 
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
-		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?)`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), hostID); err != nil {
-		slog.Warn("alerts: record fire", "rule", r.Name, "err", err)
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE alert_rules SET firing_since = COALESCE(firing_since, ?), last_triggered_at = ? WHERE id = ?`,
-		nullIf(oneShot(r.Kind), ts), ts, r.ID); err != nil {
-		slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
-	}
-	s.stateMu.Lock()
-	if !oneShot(r.Kind) {
-		s.firing[key] = notified
-	}
-	if notified {
-		s.lastNotified[key] = ts
-	}
-	s.stateMu.Unlock()
-
-	slog.Info("alert fired", "rule", r.Name, "container", container, "value", value,
-		"muted", muted, "cooldown", cooling)
 	if s.prom != nil {
 		s.prom.IncAlertFired(r.Severity, r.Name)
 	}
-	if !notified {
+	if one && !notified && s.countRepeat(ctx, r, k, ts) {
+		return
+	}
+	if !s.admit(k, one, notified) {
 		return
 	}
 
-	if s.notify != nil && len(r.ChannelIDs) > 0 {
-		level := notify.LevelWarning
-		switch {
-		case r.Severity == "critical", r.Kind == KindMetric && r.Operator == "gt" && value >= r.Threshold*1.5:
-			level = notify.LevelCritical
-		case r.Severity == "info":
-			level = notify.LevelInfo
-		}
-		s.notify.SendToAll(ctx, r.ChannelIDs, notify.Notification{
-			Title:     "🔥 " + r.Name,
-			Body:      msg,
-			Level:     level,
-			Container: container,
-			Metric:    r.Metric,
-			Value:     value,
-			Threshold: r.Threshold,
-			Time:      ts,
-		})
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID)
+	var rowID int64
+	if err != nil {
+		slog.Warn("alerts: record fire", "rule", r.Name, "err", err)
+	} else {
+		rowID, _ = res.LastInsertId()
 	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE alert_rules SET firing_since = COALESCE(firing_since, ?), last_triggered_at = ? WHERE id = ?`,
+		nullIf(one, ts), ts, r.ID); err != nil {
+		slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
+	}
+	s.stateMu.Lock()
+	if !one {
+		s.firing.set(k, notified)
+	}
+	if notified {
+		s.lastNotified.set(k, ts)
+	}
+	if one && rowID > 0 {
+		s.lastRows.set(k, lastRow{id: rowID, at: ts})
+	}
+	s.stateMu.Unlock()
 
-	// Bell-icon feed — independent of the channel-list. Even when the
-	// rule has no external channels set, operators want a durable trail
-	// in the UI.
-	if s.notifs != nil {
-		_, _ = s.notifs.Emit(ctx, alertNotification(r, hostID, msg))
+	slog.Info("alert fired", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value,
+		"muted", muted, "cooldown", cooling)
+	if notified {
+		s.announce(r, announcement{target: t, msg: msg, value: value, ts: ts}, false)
 	}
 }
 
-// alertNotification addresses a firing alert to alert viewers whose scope
-// covers the alert's host. Backup and certificate rules have no host, so
-// like their history entries they only reach unscoped viewers.
-func alertNotification(r *Rule, hostID, msg string) notifications.EmitInput {
-	sev := notifications.SevWarning
-	switch r.Severity {
-	case "critical":
-		sev = notifications.SevError
-	case "info":
-		sev = notifications.SevInfo
+// countRepeat folds a suppressed one-shot fire into the target's previous
+// entry when that is younger than the repeat window.
+func (s *Service) countRepeat(ctx context.Context, r *Rule, k tkey, ts time.Time) bool {
+	s.stateMu.Lock()
+	row, ok := s.lastRows.get(k)
+	s.stateMu.Unlock()
+	if !ok || ts.Sub(row.at) >= r.repeatWindow() {
+		return false
 	}
-	return notifications.EmitInput{
-		Kind:     notifications.KindAlertFire,
-		Severity: sev,
-		Title:    "Alert firing: " + r.Name,
-		Body:     msg,
-		Link:     "/alerts",
-		Perm:     rbac.PermAlertsView,
-		HostID:   hostID,
-		Unscoped: hostID == "",
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE alert_history SET repeats = repeats + 1 WHERE id = ?`, row.id); err != nil {
+		slog.Warn("alerts: count repeat", "rule", r.Name, "err", err)
 	}
+	return true
 }
 
-// resolveRule records the resolve and notifies only when the matching
+// admit refuses a fire that would make its rule track more than
+// maxTargetsPerHost targets on one host. The first refusal per rule and
+// host is logged; pruneState re-arms the warning.
+func (s *Service) admit(k tkey, one, notified bool) bool {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	full := (!one && s.firing.full(k)) || (notified && s.lastNotified.full(k)) || (one && s.lastRows.full(k))
+	if !full {
+		return true
+	}
+	if rh := k.ruleHost(); !s.capWarned[rh] {
+		s.capWarned[rh] = true
+		slog.Warn("alerts: rule tracks too many targets on one host, ignoring new ones",
+			"rule_id", k.rule, "host", k.host, "limit", maxTargetsPerHost)
+	}
+	return false
+}
+
+// resolveRule records the resolve and announces it only when the matching
 // fire was announced and the rule isn't muted now — a "resolved" for an
 // alert nobody was told about is noise.
-func (s *Service) resolveRule(ctx context.Context, r *Rule, container, msg string, value float64, ts time.Time) {
-	key := stateKey(r.ID, container)
+func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, msg string, value float64, ts time.Time) {
+	k := keyOf(r.ID, t)
 	s.stateMu.Lock()
-	fireNotified := s.firing[key]
-	delete(s.firing, key)
+	fireNotified, _ := s.firing.get(k)
+	s.firing.del(k)
 	s.stateMu.Unlock()
 	notified := fireNotified && !r.mutedAt(ts)
 
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
-		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?,
-		        COALESCE((SELECT host_id FROM alert_history
-		                   WHERE rule_id = ? AND container_name = ? AND status = 'fired'
-		                   ORDER BY id DESC LIMIT 1), ''))`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), r.ID, container); err != nil {
+		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID); err != nil {
 		slog.Warn("alerts: record resolve", "rule", r.Name, "err", err)
 	}
 	if !s.ruleHasFiring(r.ID) {
@@ -737,39 +842,23 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, container, msg strin
 			slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
 		}
 	}
-	slog.Info("alert resolved", "rule", r.Name, "container", container, "value", value, "notified", notified)
-
-	if notified && s.notify != nil && len(r.ChannelIDs) > 0 {
-		s.notify.SendToAll(ctx, r.ChannelIDs, notify.Notification{
-			Title:     "✅ " + r.Name + " resolved",
-			Body:      msg,
-			Level:     notify.LevelInfo,
-			Container: container,
-			Metric:    r.Metric,
-			Value:     value,
-			Threshold: r.Threshold,
-			Time:      ts,
-		})
+	slog.Info("alert resolved", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value, "notified", notified)
+	if notified {
+		s.announce(r, announcement{target: t, msg: msg, value: value, ts: ts}, true)
 	}
 }
 
-func (s *Service) isFiring(key string) bool {
+func (s *Service) isFiring(k tkey) bool {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	_, ok := s.firing[key]
+	_, ok := s.firing.get(k)
 	return ok
 }
 
 func (s *Service) ruleHasFiring(ruleID int64) bool {
-	prefix := fmt.Sprintf("%d|", ruleID)
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	for key := range s.firing {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
-	}
-	return false
+	return s.firing.hasRule(ruleID)
 }
 
 // -----------------------------------------------------------------------------
@@ -782,7 +871,7 @@ func (s *Service) Rule(ctx context.Context, id int64) (*Rule, error) { return s.
 func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, kind, container_filter, scope_host, scope_tag, scope_stack,
-		       metric, operator, threshold,
+		       metric, cpu_unit, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
 		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
@@ -805,7 +894,7 @@ func scanRule(r rowScanner) (*Rule, error) {
 	var firingSince, lastT, lastR sql.NullTime
 	if err := r.Scan(
 		&rule.ID, &rule.Name, &rule.Kind, &rule.ContainerFilter,
-		&rule.ScopeHost, &rule.ScopeTag, &rule.ScopeStack, &rule.Metric, &rule.Operator,
+		&rule.ScopeHost, &rule.ScopeTag, &rule.ScopeStack, &rule.Metric, &rule.CPUUnit, &rule.Operator,
 		&rule.Threshold, &rule.DurationSeconds, &ids, &enabled,
 		&severity, &rule.CooldownSeconds, &mutedUntil, &muteSchedule, &builtin,
 		&firingSince, &lastT, &lastR, &rule.CreatedAt, &rule.UpdatedAt,
@@ -867,8 +956,8 @@ var maxDuration = map[string]int{
 	KindHostOffline: 30 * 24 * 3600,
 }
 
-// normalizeInput folds operator aliases and defaults the kind and the
-// target filter.
+// normalizeInput folds operator aliases and defaults the kind, the target
+// filter and the CPU unit; only CPU rules keep a unit.
 func normalizeInput(in RuleInput) RuleInput {
 	if in.Kind == "" {
 		in.Kind = KindMetric
@@ -876,6 +965,12 @@ func normalizeInput(in RuleInput) RuleInput {
 	in.Operator = normalizeOperator(in.Operator)
 	if in.ContainerFilter == "" && in.Kind != KindMetric {
 		in.ContainerFilter = "*"
+	}
+	switch {
+	case in.Kind != KindMetric || in.Metric != "cpu_percent":
+		in.CPUUnit = ""
+	case in.CPUUnit == "":
+		in.CPUUnit = CPUUnitHost
 	}
 	return in
 }
@@ -909,6 +1004,13 @@ func validateInput(in RuleInput) error {
 		if in.Threshold == 0 {
 			return ErrInvalidThreshold
 		}
+		if in.Metric == "cpu_percent" && in.CPUUnit != CPUUnitHost && in.CPUUnit != CPUUnitCore {
+			return ErrInvalidCPUUnit
+		}
+		// Samples carry no stack, so a stack scope could never match.
+		if in.ScopeStack != "" {
+			return errors.New("metric rules can be limited to a host or host tag, not a stack")
+		}
 	case KindRestartLoop:
 		if in.Threshold < 2 || in.DurationSeconds <= 0 {
 			return errors.New("restart loop needs threshold >= 2 restarts and duration_seconds > 0")
@@ -927,12 +1029,6 @@ func validateInput(in RuleInput) error {
 		return ErrInvalidKind
 	}
 	return nil
-}
-
-func stateKey(ruleID int64, container string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%s", ruleID, container)
-	return b.String()
 }
 
 func nullIf(cond bool, v any) any {
@@ -974,12 +1070,13 @@ func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
 		       h.container_name, COALESCE(h.message, ''), h.occurred_at
 		FROM alert_history h
 		JOIN (
-			SELECT rule_id, container_name, MAX(id) AS max_id
+			SELECT MAX(id) AS max_id
 			FROM alert_history
-			GROUP BY rule_id, container_name
+			WHERE rule_id IN (SELECT id FROM alert_rules WHERE enabled = 1 AND kind NOT IN (?, ?))
+			GROUP BY rule_id, host_id, container_name
 		) latest ON h.id = latest.max_id
 		JOIN alert_rules r ON r.id = h.rule_id
-		WHERE h.status = 'fired' AND r.enabled = 1 AND r.kind NOT IN (?, ?)
+		WHERE h.status = 'fired'
 		ORDER BY h.occurred_at DESC`, KindOOM, KindBackupFailed)
 	if err != nil {
 		return nil, fmt.Errorf("list firing alerts: %w", err)

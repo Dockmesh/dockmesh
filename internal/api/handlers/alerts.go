@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/notify"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -141,26 +143,23 @@ func (h *Handlers) TestNotificationChannel(w http.ResponseWriter, r *http.Reques
 // alert rules
 // -----------------------------------------------------------------------------
 
-const errAlertScope = "out of scope: host-scoped roles may only manage rules limited to one of their hosts"
+// Alert rules and channels are instance-wide: every alerts permission
+// except history is global-only, so the route guards already keep scoped
+// callers out. The handlers check again rather than rely on it.
 
-// alertRuleInScope lets a host-scoped caller manage only rules bound to a
-// host they can access: an unscoped rule would deliver events from every
-// host to a channel the caller picks. Metric rules watch the local host.
-func (h *Handlers) alertRuleInScope(r *http.Request, kind, scopeHost string) bool {
-	if h.callerUnscoped(r) {
+const errAlertsGlobal = "alert rules are instance-wide and need alert access on everything"
+
+// alertsGlobally writes 403 unless the caller holds perm on everything.
+func alertsGlobally(w http.ResponseWriter, r *http.Request, perm rbac.Perm) bool {
+	if middleware.AccessOf(r.Context()).AllowsGlobally(perm) {
 		return true
 	}
-	if kind == "" || kind == alerts.KindMetric {
-		return h.inReadScope(r, "local", "")
-	}
-	if !alerts.HostBound(kind) || scopeHost == "" {
-		return false
-	}
-	return h.inReadScope(r, scopeHost, "")
+	writeError(w, http.StatusForbidden, errAlertsGlobal)
+	return false
 }
 
 func (h *Handlers) ListAlertRules(w http.ResponseWriter, r *http.Request) {
-	if h.Alerts == nil {
+	if h.Alerts == nil || !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermAlertsView) {
 		writeJSON(w, http.StatusOK, []alerts.Rule{})
 		return
 	}
@@ -177,13 +176,12 @@ func (h *Handlers) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
+	if !alertsGlobally(w, r, rbac.PermAlertsCreate) {
+		return
+	}
 	var in alerts.RuleInput
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	if !h.alertRuleInScope(r, in.Kind, in.ScopeHost) {
-		writeError(w, http.StatusForbidden, errAlertScope)
 		return
 	}
 	rule, err := h.Alerts.Create(r.Context(), in)
@@ -200,6 +198,9 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
+	if !alertsGlobally(w, r, rbac.PermAlertsUpdate) {
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -209,17 +210,6 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
-	}
-	if !h.callerUnscoped(r) {
-		cur, err := h.Alerts.Rule(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "rule not found")
-			return
-		}
-		if !h.alertRuleInScope(r, cur.Kind, cur.ScopeHost) || !h.alertRuleInScope(r, in.Kind, in.ScopeHost) {
-			writeError(w, http.StatusForbidden, errAlertScope)
-			return
-		}
 	}
 	rule, err := h.Alerts.Update(r.Context(), id, in)
 	if err != nil {
@@ -235,16 +225,13 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
+	if !alertsGlobally(w, r, rbac.PermAlertsDelete) {
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
-	}
-	if !h.callerUnscoped(r) {
-		if cur, err := h.Alerts.Rule(r.Context(), id); err == nil && !h.alertRuleInScope(r, cur.Kind, cur.ScopeHost) {
-			writeError(w, http.StatusForbidden, errAlertScope)
-			return
-		}
 	}
 	if err := h.Alerts.Delete(r.Context(), id); err != nil {
 		// Built-in rules are not deletable — surface 409 so the UI can
@@ -269,6 +256,9 @@ func (h *Handlers) GetAlertRuleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
+	if !alertsGlobally(w, r, rbac.PermAlertsView) {
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -288,6 +278,9 @@ func (h *Handlers) GetAlertRuleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// ListAlertHistory returns the newest entries. A caller with history
+// access on only some hosts sees the entries of those hosts; entries of
+// backup and certificate rules belong to no host and need global access.
 func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Alerts == nil {
 		writeJSON(w, http.StatusOK, []alerts.HistoryEntry{})
@@ -299,16 +292,13 @@ func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	entries, err := h.Alerts.History(r.Context(), limit)
-	if err == nil && !h.callerUnscoped(r) {
-		visible := entries[:0]
-		for _, e := range entries {
-			if e.HostID != "" && h.inReadScope(r, e.HostID, "") {
-				visible = append(visible, e)
-			}
+	var keep func(alerts.HistoryEntry) bool
+	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermAlertsHistory) {
+		keep = func(e alerts.HistoryEntry) bool {
+			return e.HostID != "" && h.inReadScope(r, e.HostID, "")
 		}
-		entries = visible
 	}
+	entries, err := h.Alerts.History(r.Context(), limit, keep)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -312,6 +312,10 @@ func (h *Handlers) GetScalingRules(w http.ResponseWriter, r *http.Request) {
 	if cfg == nil {
 		cfg = &scaling.ScalingConfig{}
 	}
+	// Show the unit stored rules are evaluated in.
+	for i := range cfg.Rules {
+		cfg.Rules[i].CPUUnit = cfg.Rules[i].Unit()
+	}
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -333,6 +337,13 @@ func (h *Handlers) SetScalingRules(w http.ResponseWriter, r *http.Request) {
 	if err := cfg.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// Rules written without a unit are new to units; they get the host
+	// share the charts show.
+	for i := range cfg.Rules {
+		if cfg.Rules[i].CPUUnit == "" {
+			cfg.Rules[i].CPUUnit = scaling.CPUUnitHost
+		}
 	}
 	// Load existing meta file to preserve other fields (migration, etc).
 	meta, err := scaling.LoadMeta(dir)

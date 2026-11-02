@@ -729,12 +729,10 @@ paths:
       summary: Auto-scaling rules configured for this stack (P.8)
       responses:
         "200":
-          description: Rules.
+          description: Scaling config; empty when none is stored.
           content:
             application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/ScalingRule"}
+              schema: {$ref: "#/components/schemas/ScalingConfig"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
     put:
@@ -745,21 +743,13 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [rules]
-              properties:
-                rules:
-                  type: array
-                  items: {$ref: "#/components/schemas/ScalingRule"}
+            schema: {$ref: "#/components/schemas/ScalingConfig"}
       responses:
         "200":
-          description: Stored rules.
+          description: Stored config.
           content:
             application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/ScalingRule"}
+              schema: {$ref: "#/components/schemas/ScalingConfig"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -1349,18 +1339,33 @@ components:
         errors:
           type: array
           items: {type: string}
+    ScalingConfig:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        rules:
+          type: array
+          items: {$ref: "#/components/schemas/ScalingRule"}
     ScalingRule:
       type: object
-      required: [service, metric, operator, threshold]
+      required: [service, min_replicas, max_replicas, scale_up]
       properties:
         service: {type: string}
-        metric: {type: string, enum: [cpu_percent, mem_percent]}
-        operator: {type: string, enum: [gt, lt]}
-        threshold: {type: number}
-        min_replicas: {type: integer}
-        max_replicas: {type: integer}
-        cooldown_seconds: {type: integer}
-        duration_seconds: {type: integer}
+        min_replicas: {type: integer, minimum: 0}
+        max_replicas: {type: integer, minimum: 1}
+        scale_up: {$ref: "#/components/schemas/ScalingThreshold"}
+        scale_down: {$ref: "#/components/schemas/ScalingThreshold"}
+        cooldown_seconds: {type: integer, minimum: 0}
+        cpu_unit:
+          type: string
+          enum: [host, core]
+          description: 'Unit of CPU thresholds: "host" is the share of the whole host, "core" 100 per busy core. Reads report "core" for rules saved without a unit; a write without it stores "host".'
+    ScalingThreshold:
+      type: object
+      properties:
+        metric: {type: string, enum: [cpu, memory]}
+        threshold_percent: {type: number, minimum: 0, maximum: 100}
+        duration_seconds: {type: integer, minimum: 0}
     DeployHistoryEntry:
       type: object
       required: [id, stack_name, host_id, deployed_at]

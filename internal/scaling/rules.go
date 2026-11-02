@@ -27,13 +27,31 @@ type Rule struct {
 	ScaleUp         ThresholdConfig `json:"scale_up"`
 	ScaleDown       ThresholdConfig `json:"scale_down"`
 	CooldownSeconds int             `json:"cooldown_seconds"`
+	// CPUUnit is the unit of CPU thresholds: "host" (share of the whole
+	// host) or "core" (100 per busy core). Rules saved without one predate
+	// the choice and use "core".
+	CPUUnit string `json:"cpu_unit,omitempty"`
+}
+
+// CPU threshold units.
+const (
+	CPUUnitHost = "host"
+	CPUUnitCore = "core"
+)
+
+// Unit returns the rule's CPU unit, "core" for rules saved without one.
+func (r Rule) Unit() string {
+	if r.CPUUnit == CPUUnitHost {
+		return CPUUnitHost
+	}
+	return CPUUnitCore
 }
 
 // ThresholdConfig describes when to trigger a scale action.
 type ThresholdConfig struct {
 	Metric           string  `json:"metric"`            // "cpu" | "memory"
-	ThresholdPercent float64 `json:"threshold_percent"`  // 0-100
-	DurationSeconds  int     `json:"duration_seconds"`   // how long the threshold must be exceeded
+	ThresholdPercent float64 `json:"threshold_percent"` // 0-100
+	DurationSeconds  int     `json:"duration_seconds"`  // how long the threshold must be exceeded
 }
 
 // Validate checks a ScalingConfig for structural errors.
@@ -60,6 +78,11 @@ func (c *ScalingConfig) Validate() error {
 		if r.CooldownSeconds < 0 {
 			return fmt.Errorf("rule[%d]: cooldown_seconds must be >= 0", i)
 		}
+		switch r.CPUUnit {
+		case "", CPUUnitHost, CPUUnitCore:
+		default:
+			return fmt.Errorf("rule[%d]: cpu_unit must be %q or %q", i, CPUUnitHost, CPUUnitCore)
+		}
 	}
 	return nil
 }
@@ -83,9 +106,9 @@ func validateThreshold(name string, t ThresholdConfig) error {
 // MetaFile represents the full .dockmesh.meta.json content. Other
 // slices (migration hooks, etc.) add their own fields here.
 type MetaFile struct {
-	Scaling            *ScalingConfig  `json:"scaling,omitempty"`
-	Migration          json.RawMessage `json:"migration,omitempty"` // preserved for future P.9
-	ActiveEnvironment  string          `json:"active_environment,omitempty"` // P.12.8 — name of the compose.<name>.yaml overlay to apply by default
+	Scaling           *ScalingConfig  `json:"scaling,omitempty"`
+	Migration         json.RawMessage `json:"migration,omitempty"`          // preserved for future P.9
+	ActiveEnvironment string          `json:"active_environment,omitempty"` // P.12.8 — name of the compose.<name>.yaml overlay to apply by default
 }
 
 // LoadMeta reads and parses the .dockmesh.meta.json from a stack dir.

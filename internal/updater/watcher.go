@@ -251,6 +251,7 @@ func (w *Watcher) poll(ctx context.Context) {
 				Body:     "A newer manifest is published upstream",
 				Link:     "/resources?tab=images",
 				Perm:     rbac.PermImagesView,
+				HostID:   "local",
 			})
 		}
 	}

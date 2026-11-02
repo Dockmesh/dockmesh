@@ -214,11 +214,11 @@ func TestLoadFiringStateRestoresCooldown(t *testing.T) {
 	if err := restarted.loadFiringState(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	key := stateKey(r.ID, "web")
-	if notified, ok := restarted.firing[key]; !ok || !notified {
+	key := tkey{r.ID, "local", "web"}
+	if notified, ok := restarted.firing.get(key); !ok || !notified {
 		t.Fatalf("firing state after restart = %v,%v; want active and notified", notified, ok)
 	}
-	if _, ok := restarted.lastNotified[key]; !ok {
+	if _, ok := restarted.lastNotified.get(key); !ok {
 		t.Fatal("cooldown timestamp not restored")
 	}
 }

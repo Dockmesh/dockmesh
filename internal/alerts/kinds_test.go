@@ -335,10 +335,10 @@ func TestOneShotNotRestoredAsFiring(t *testing.T) {
 	if err := restarted.loadFiringState(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := restarted.firing[stateKey(r.ID, "web")]; ok {
+	if _, ok := restarted.firing.get(tkey{r.ID, "local", "web"}); ok {
 		t.Fatal("one-shot alert restored as firing")
 	}
-	if _, ok := restarted.lastNotified[stateKey(r.ID, "web")]; !ok {
+	if _, ok := restarted.lastNotified.get(tkey{r.ID, "local", "web"}); !ok {
 		t.Fatal("cooldown for one-shot alert not restored")
 	}
 }
@@ -454,11 +454,11 @@ func TestDieHistoryPrunedForQuietContainers(t *testing.T) {
 	s, _ := newEvalService(t)
 	r := eventRule(t, s, RuleInput{Kind: KindRestartLoop, Threshold: 3, DurationSeconds: 300})
 	s.handleEvent(context.Background(), ev("die", 0, "0"))
-	if len(s.dies) != 1 {
-		t.Fatalf("dies = %d, want 1", len(s.dies))
+	if s.dies.size() != 1 {
+		t.Fatalf("dies = %d, want 1", s.dies.size())
 	}
 	s.expireRestartLoops(context.Background(), r, evalNow.Add(10*time.Minute))
-	if len(s.dies) != 0 {
+	if s.dies.size() != 0 {
 		t.Fatalf("die history of a quiet container kept: %v", s.dies)
 	}
 }

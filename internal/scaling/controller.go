@@ -39,13 +39,13 @@ type Controller struct {
 type phase int
 
 const (
-	phaseStable    phase = iota
-	phaseExceeded        // threshold breached, accumulating duration
-	phaseCooldown        // just scaled, waiting for cooldown to expire
+	phaseStable   phase = iota
+	phaseExceeded       // threshold breached, accumulating duration
+	phaseCooldown       // just scaled, waiting for cooldown to expire
 )
 
 type ruleState struct {
-	phase     phase
+	phase         phase
 	exceededSince time.Time
 	cooldownUntil time.Time
 	lastReplicas  int
@@ -135,7 +135,7 @@ func (c *Controller) evaluateRule(ctx context.Context, stackName string, rule Ru
 	// by checking the rule; the handler validates at config time.)
 
 	// Query recent metrics for this service's containers.
-	avg, err := c.serviceAvg(ctx, stackName, rule.Service, rule.ScaleUp.Metric)
+	avg, err := c.serviceAvg(ctx, stackName, rule.Service, rule.ScaleUp.Metric, rule.Unit())
 	if err != nil {
 		slog.Debug("scaling: metrics query", "key", key, "err", err)
 		return
@@ -209,8 +209,8 @@ func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, k
 }
 
 // serviceAvg computes the average metric value across all replicas of
-// a service over the last 60 seconds.
-func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric string) (float64, error) {
+// a service over the last 60 seconds, CPU in the given unit.
+func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric, cpuUnit string) (float64, error) {
 	if c.metrics == nil {
 		return 0, fmt.Errorf("metrics collector unavailable")
 	}
@@ -242,7 +242,7 @@ func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric 
 		for _, s := range samples {
 			switch strings.ToLower(metric) {
 			case "cpu":
-				total += s.CPUPercentCore
+				total += cpuValue(s, cpuUnit)
 			case "memory":
 				if s.MemLimit > 0 {
 					total += float64(s.MemUsed) / float64(s.MemLimit) * 100
@@ -255,6 +255,13 @@ func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric 
 		return 0, nil
 	}
 	return total / float64(count), nil
+}
+
+func cpuValue(s metrics.Sample, unit string) float64 {
+	if unit == CPUUnitHost {
+		return s.CPUPercent
+	}
+	return s.CPUPercentCore
 }
 
 // ReplicaCount returns the last known replica count for a service.
@@ -286,4 +293,3 @@ func (c *Controller) UpdateReplicaCount(stackName, service string, count int) {
 	st.phase = phaseCooldown
 	st.cooldownUntil = time.Now().Add(60 * time.Second)
 }
-
