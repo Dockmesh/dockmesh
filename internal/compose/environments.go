@@ -53,6 +53,9 @@ func DiscoverEnvironments(stackDir string) ([]string, error) {
 	return out, nil
 }
 
+// IsEnvironmentFile reports whether name is a compose.<env>.yaml override.
+func IsEnvironmentFile(name string) bool { return envFilePattern.MatchString(name) }
+
 // ValidateEnvironmentName enforces the naming rules DiscoverEnvironments
 // relies on. Callers hitting the set-active-environment endpoint get a
 // 400 instead of writing a garbage name into the meta file.

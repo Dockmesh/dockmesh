@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -555,9 +556,8 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 //
 // When path_in_repo points at a directory, ALL sibling files in that
 // directory are also mirrored into the stack dir so compose `build:`
-// references (Dockerfiles, config files, etc.) resolve correctly.
-// Files prefixed with . are skipped except .env / .env.age (the
-// canonical secrets). Fixes FINDING-8.
+// references (Dockerfiles, config files, etc.) resolve correctly;
+// skipSibling lists what is never mirrored.
 //
 // .env policy: on first sync (no existing stack) seed from the repo's
 // .env. On every subsequent sync, run mergeEnvFiles so the operator's
@@ -661,6 +661,26 @@ func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
 	return out, nil
 }
 
+// skipSibling reports whether a repo path must not be mirrored into the
+// stack dir: the compose/.env files the main copy writes, git metadata, and
+// files Dockmesh owns there. The meta file carries migration hooks run via
+// sh -c and the default override; override files change what a deploy
+// runs. A repo push must not be able to replace either.
+func skipSibling(rel string) bool {
+	if strings.HasPrefix(rel, ".git") {
+		return true
+	}
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	switch rel {
+	case "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml",
+		".env", ".env.age":
+		return true
+	}
+	return strings.HasPrefix(rel, ".dockmesh") || compose.IsEnvironmentFile(rel)
+}
+
 // copyTreeSiblings mirrors all non-dotfile entries under srcRel (relative
 // to the clone) into dst, recursively, EXCEPT the compose / .env files the
 // main copy already handled. Tops out at 64 MiB per file to keep
@@ -670,14 +690,6 @@ func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
 // could leave symlinks there.
 func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 	const maxFile = 64 << 20
-	skip := map[string]bool{
-		"compose.yaml":        true,
-		"compose.yml":         true,
-		"docker-compose.yaml": true,
-		"docker-compose.yml":  true,
-		".env":                true,
-		".git":                true,
-	}
 	out, err := os.OpenRoot(dst)
 	if err != nil {
 		return err
@@ -696,9 +708,7 @@ func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 		if rel == "" || rel == "." {
 			return nil
 		}
-		// skip top-level compose / .env (already written) and anything
-		// git-adjacent.
-		if skip[rel] || strings.HasPrefix(rel, ".git") {
+		if skipSibling(rel) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
