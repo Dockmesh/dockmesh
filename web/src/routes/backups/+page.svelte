@@ -338,7 +338,7 @@
     if (e.key === 'Enter' && e.target === e.currentTarget) goto(href);
   }
 
-  const JOB_COLS = '14px minmax(160px, 1.2fr) minmax(160px, 1.3fr) 110px minmax(110px, 0.9fr) minmax(130px, 1fr) minmax(170px, 1.2fr) 50px 40px';
+  const JOB_COLS = '14px minmax(150px, 1.2fr) minmax(140px, 1.3fr) 90px minmax(100px, 0.9fr) minmax(100px, 1fr) minmax(120px, 1.2fr) 50px 40px';
   const RUN_COLS = '110px minmax(150px, 1fr) minmax(220px, 1.4fr) 90px 100px minmax(120px, 1fr) 40px';
   const TGT_COLS = '14px minmax(160px, 1fr) 80px minmax(200px, 2fr) 60px minmax(150px, 1fr) 40px';
 

@@ -196,7 +196,7 @@
   const cols = $derived(
     view === 'host'
       ? '22px minmax(220px, 2.2fr) 130px minmax(140px, 1.4fr) 110px 90px 40px'
-      : '22px minmax(220px, 2.2fr) 130px 110px minmax(140px, 1.4fr) 110px 90px 40px'
+      : '22px minmax(200px, 2.2fr) 130px 110px minmax(140px, 1.4fr) 110px 90px 40px'
   );
 
   interface Group {

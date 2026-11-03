@@ -245,7 +245,7 @@
     return out.sort((a, b) => b.ts.localeCompare(a.ts));
   });
 
-  const SITE_COLS = '22px 14px minmax(200px, 1.4fr) minmax(170px, 1.2fr) 160px minmax(150px, 1fr) 80px 56px 36px';
+  const SITE_COLS = '22px 14px minmax(180px, 1.4fr) minmax(160px, 1.2fr) 150px minmax(140px, 1fr) 80px 56px 36px';
   const CERT_COLS = 'minmax(200px, 1.4fr) minmax(160px, 1fr) 120px 120px';
   const ACT_COLS = '110px 150px minmax(0, 1fr) 110px';
 </script>

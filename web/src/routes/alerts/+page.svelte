@@ -103,7 +103,7 @@
     return `${fmtNumber(e.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %${e.threshold != null ? ` / ${fmtNumber(e.threshold)} %` : ''}`;
   }
 
-  const HCOLS = '110px minmax(160px, 1fr) minmax(140px, 0.9fr) 110px minmax(220px, 1.6fr) 150px';
+  const HCOLS = '110px minmax(150px, 1fr) minmax(130px, 0.9fr) 110px minmax(200px, 1.6fr) 150px';
 
   function exportCSV() {
     const csv = ['Time,Status,Rule,Container,Value,Threshold,Message']

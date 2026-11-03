@@ -26,7 +26,7 @@
   const canUpdate = $derived(allowed('alerts.update'));
   const canDelete = $derived(allowed('alerts.delete'));
 
-  const COLS = '14px 84px minmax(170px, 1.2fr) minmax(220px, 1.6fr) minmax(140px, 1fr) minmax(90px, 0.7fr) 96px 44px 36px';
+  const COLS = '14px 84px minmax(160px, 1.2fr) minmax(200px, 1.6fr) minmax(120px, 1fr) minmax(90px, 0.7fr) 96px 44px 36px';
 
   let filter = $state('');
 
