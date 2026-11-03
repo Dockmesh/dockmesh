@@ -9,6 +9,9 @@
   },
   "apps": {
     "http": {
+      "metrics": {
+        "per_host": true
+      },
       "servers": {
         "dockmesh_http": {
           "listen": [
