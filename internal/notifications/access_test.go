@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -66,7 +67,6 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		in   EmitInput
 		want []string
 	}{
-		{"no permission set", EmitInput{Kind: KindAlertFire, Title: "t1"}, nil},
 		{"stack on host b", EmitInput{Kind: KindDeployOK, Title: "t2", Perm: rbac.PermStacksView, HostID: "b", StackName: "x"}, []string{"admin", "viewer"}},
 		{"stack y on host b", EmitInput{Kind: KindDeployOK, Title: "t3", Perm: rbac.PermStacksView, HostID: "b", StackName: "y"}, []string{"admin", "viewer", "stackY"}},
 		{"stack on host a", EmitInput{Kind: KindDeployOK, Title: "t4", Perm: rbac.PermStacksView, HostID: "a", StackName: "x"}, []string{"admin", "viewer", "hostA"}},
@@ -74,6 +74,20 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		{"unscoped only", EmitInput{Kind: KindBackupFail, Title: "t6", Perm: rbac.PermStacksView, HostID: "a", Unscoped: true}, []string{"admin", "viewer"}},
 		{"unscoped needs the permission", EmitInput{Kind: KindBackupFail, Title: "t7", Perm: rbac.PermSystemUpdate, Unscoped: true}, nil},
 	}
+	t.Run("no permission set", func(t *testing.T) {
+		if _, err := svc.Emit(context.Background(), EmitInput{Kind: KindAlertFire, Title: "t1"}); !errors.Is(err, ErrNoPermission) {
+			t.Fatalf("fan-out without a permission: %v, want ErrNoPermission", err)
+		}
+		for id := range users {
+			list, err := svc.List(context.Background(), id, false, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list) != 0 {
+				t.Fatalf("%s received a refused notification", id)
+			}
+		}
+	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := svc.Emit(context.Background(), tt.in); err != nil {

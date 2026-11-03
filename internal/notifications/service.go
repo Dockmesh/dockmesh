@@ -86,7 +86,7 @@ type EmitInput struct {
 
 	// Fan-out only (UserID empty): the permission a user needs to receive
 	// the notification, and the host and stack it is about, if any, which
-	// the user's scope must cover. Without Perm nobody receives it.
+	// the user's scope must cover. Emit refuses a fan-out without Perm.
 	Perm      rbac.Perm
 	HostID    string
 	StackName string
@@ -96,6 +96,10 @@ type EmitInput struct {
 }
 
 var ErrNotFound = errors.New("notification not found")
+
+// ErrNoPermission refuses a fan-out event that names no permission: it
+// would reach nobody.
+var ErrNoPermission = errors.New("notification fan-out needs a permission")
 
 type Service struct {
 	db     *sql.DB
@@ -133,6 +137,10 @@ func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 	}
 	if in.UserID != "" {
 		return s.insertOne(ctx, in.UserID, in)
+	}
+	if in.Perm == "" {
+		slog.Error("notification refused: fan-out without a permission", "kind", in.Kind, "title", in.Title)
+		return 0, ErrNoPermission
 	}
 	// Fan-out path. Ask the directory for active users and insert one
 	// row per user. Failures of individual inserts are logged and the

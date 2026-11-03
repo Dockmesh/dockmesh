@@ -391,11 +391,18 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 }
 
 // runNotification addresses a run notification to the users who may open
-// the run: unscoped admins for system jobs, otherwise backup viewers whose
-// scope covers the job's host.
+// the run.
 func runNotification(job *Job, runID int64) notifications.EmitInput {
+	in := jobNotification(job)
+	in.Link = fmt.Sprintf("/backups/runs/%d", runID)
+	return in
+}
+
+// jobNotification addresses a notification about a job: unscoped admins
+// for system jobs, otherwise backup viewers whose scope covers the job's
+// host.
+func jobNotification(job *Job) notifications.EmitInput {
 	in := notifications.EmitInput{
-		Link:   fmt.Sprintf("/backups/runs/%d", runID),
 		Perm:   rbac.PermBackupsView,
 		HostID: defaultStr(job.HostID, "local"),
 	}

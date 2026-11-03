@@ -158,15 +158,7 @@ func (s *Service) unschedule(id int64) {
 func (s *Service) runScheduled(jobID int64, name string) {
 	if !s.claim(jobID) {
 		slog.Warn("backup: scheduled run skipped, the previous run is still in progress", "job", name)
-		if n := s.exec.notifs; n != nil {
-			_, _ = n.Emit(s.runCtx, notifications.EmitInput{
-				Kind:     notifications.KindBackupFail,
-				Severity: notifications.SevWarning,
-				Title:    "Backup skipped: " + name,
-				Body:     "The scheduled run was skipped because the previous run of this job is still in progress.",
-				Link:     "/backups",
-			})
-		}
+		s.notifySkipped(jobID, name)
 		return
 	}
 	defer s.release(jobID)
@@ -177,6 +169,28 @@ func (s *Service) runScheduled(jobID int64, name string) {
 		return
 	}
 	_, _ = s.exec.Run(s.runCtx, job)
+}
+
+// notifySkipped tells the job's audience that a scheduled run did not
+// start, addressed like the job's run notifications.
+func (s *Service) notifySkipped(jobID int64, name string) {
+	n := s.exec.notifs
+	if n == nil {
+		return
+	}
+	job, err := s.store.getJob(s.runCtx, jobID)
+	if err != nil {
+		slog.Warn("backup: skipped run not notified", "job", name, "err", err)
+		return
+	}
+	in := jobNotification(job)
+	in.Kind, in.Severity = notifications.KindBackupFail, notifications.SevWarning
+	in.Title = "Backup skipped: " + job.Name
+	in.Body = "The scheduled run was skipped because the previous run of this job is still in progress."
+	in.Link = "/backups"
+	if _, err := n.Emit(s.runCtx, in); err != nil {
+		slog.Warn("backup: skipped run not notified", "job", name, "err", err)
+	}
 }
 
 func (s *Service) nextRun(jobID int64) *time.Time {
