@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"strings"
 	"time"
@@ -802,12 +804,30 @@ func (h *Handlers) DiscoverStacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostID := r.URL.Query().Get("host")
+	if host.IsAll(hostID) {
+		// Hosts that don't answer contribute nothing, like the other
+		// all-hosts lists; the reply stays a plain array.
+		targets := h.filterHostsByScope(r, h.Hosts.PickAll(r.Context()))
+		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]adopt.DiscoveredStack, error) {
+			return svc.Discover(ctx, hh.ID())
+		})
+		list := res.Items
+		slices.SortFunc(list, func(a, b adopt.DiscoveredStack) int {
+			return cmp.Or(cmp.Compare(a.ProjectName, b.ProjectName), cmp.Compare(a.HostID, b.HostID))
+		})
+		writeJSON(w, http.StatusOK, h.filterDiscovered(r, list))
+		return
+	}
 	if !h.requireHostAccess(w, r, hostID) {
 		return
 	}
 	list, err := svc.Discover(r.Context(), hostID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrUnknownHost) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, h.filterDiscovered(r, list))

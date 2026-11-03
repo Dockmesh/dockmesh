@@ -63,7 +63,10 @@ paths:
       parameters:
         - name: host
           in: query
-          description: Target host ID. Defaults to the local host.
+          description: >-
+            Target host ID. Defaults to the local host. `all` asks every
+            host in the caller's scope and merges the answers into one
+            array; hosts that don't answer are left out.
           required: false
           schema: {type: string}
       responses:
@@ -76,6 +79,7 @@ paths:
                 items: {$ref: "#/components/schemas/DiscoveredStack"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/HostUnavailable"}
   /stacks/adopt:
     post:
       operationId: stacks.adopt
