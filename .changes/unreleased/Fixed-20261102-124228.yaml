@@ -1,3 +1,0 @@
-kind: Fixed
-body: Audit entries written by an API token name the token's owner and the token, instead of showing up as "system".
-time: 2026-11-02T12:42:28.3065316+01:00

@@ -1,3 +1,0 @@
-kind: Fixed
-body: "A local backup target without a path writes to <data directory>/backups instead of a directory relative to the server's working directory."
-time: 2026-11-02T19:20:08Z

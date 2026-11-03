@@ -1,3 +1,0 @@
-kind: Fixed
-body: Deploying with an environment override now resolves global environment variables in the override merge.
-time: 2026-11-02T14:00:49.7855677+01:00

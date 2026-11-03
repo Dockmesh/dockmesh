@@ -1,3 +1,0 @@
-kind: Fixed
-body: Git auto-deploys run on the host the stack is deployed on (or was created for) instead of always on the server, record the deployment, apply global variables and the default environment override, and force a fresh pull on agents too.
-time: 2026-11-02T17:59:02Z

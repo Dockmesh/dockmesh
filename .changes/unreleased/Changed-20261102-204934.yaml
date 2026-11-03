@@ -1,3 +1,0 @@
-kind: Changed
-body: Redesigned sign-in page with its own two-factor step, a session-expired notice and the password reset command; the unused Remember this device box is gone.
-time: 2026-11-02T20:49:34.4711084+01:00

@@ -1,3 +1,0 @@
-kind: Fixed
-body: A failing upgrade after restoring a backup now keeps a pre-migration copy of the restored database instead of reusing an older snapshot
-time: 2026-11-02T16:18:25.4815257+01:00

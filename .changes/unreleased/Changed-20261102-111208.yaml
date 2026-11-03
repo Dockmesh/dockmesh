@@ -1,3 +1,0 @@
-kind: Changed
-body: When a rule fires for many targets on one host at once, its channels and the bell get one message ("12 containers on dm-agent1") instead of one per target; the resolved message is grouped the same way.
-time: 2026-11-02T11:12:08.8248153+01:00

@@ -1,3 +1,0 @@
-kind: Security
-body: An API token created with another API token never holds more than that token holds at the time of use, and stops working when that token is revoked or expires.
-time: 2026-11-02T12:42:34.6865031+01:00

@@ -1,3 +1,0 @@
-kind: Fixed
-body: The Authentication page and the provider dialog show the callback, ACS and metadata URLs the server really sends to identity providers (built from `DOCKMESH_BASE_URL`) and warn while it is unset. New providers from a template get the plain provider name as button label, no prefilled example issuer, and the Keycloak template no longer asks for a `groups` scope the realm may not have.
-time: 2026-11-03T11:28:49.9558146+01:00

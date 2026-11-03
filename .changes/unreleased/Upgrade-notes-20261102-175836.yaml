@@ -1,3 +1,0 @@
-kind: Upgrade notes
-body: "[git-override-confirm, admins] Git auto-deploys and migrations now apply the stack's default environment override, but only one a manual deploy used with the same file; deploy a stack with an override once by hand to confirm it."
-time: 2026-11-02T17:58:36Z

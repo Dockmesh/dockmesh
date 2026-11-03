@@ -1,3 +1,0 @@
-kind: Fixed
-body: Alert history is pruned after 30 days (an alert that is still active keeps its entry), OOM kills and failed backups that repeat inside the rule's cooldown are counted on one entry instead of adding new ones, and a rule tracks at most 500 targets per host, so a noisy or misbehaving agent can no longer grow the database and server memory without bound.
-time: 2026-11-02T11:12:08.2840983+01:00

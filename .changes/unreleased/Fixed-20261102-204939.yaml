@@ -1,3 +1,0 @@
-kind: Fixed
-body: The new proxy site dialog suggested container names, which Caddy can't reach from the host network; it now offers published ports on localhost.
-time: 2026-11-02T20:49:39.1496341+01:00

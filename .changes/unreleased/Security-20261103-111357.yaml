@@ -1,3 +1,0 @@
-kind: Security
-body: 'Changing or running the agent upgrade policy needs Hosts: Manage on everything; a grant on some hosts or tags could set fleet-wide auto-upgrade before.'
-time: 2026-11-03T11:13:57.6138681+01:00

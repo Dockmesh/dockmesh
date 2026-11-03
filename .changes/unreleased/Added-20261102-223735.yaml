@@ -1,3 +1,0 @@
-kind: Added
-body: API errors carry a stable `code` next to the English `error` text, and `PUT /api/v1/me/language` sets the signed-in user's language (`en`, `de` or empty for the browser language).
-time: 2026-11-02T22:37:35.6595082+01:00

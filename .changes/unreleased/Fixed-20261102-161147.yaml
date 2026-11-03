@@ -1,3 +1,0 @@
-kind: Fixed
-body: Agent install commands and the agent certificate now use the URL from the setup wizard and the Settings page instead of localhost; dockmesh.env still wins
-time: 2026-11-02T16:11:47.5192933+01:00

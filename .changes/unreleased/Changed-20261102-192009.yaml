@@ -1,3 +1,0 @@
-kind: Changed
-body: "Running and restoring a backup are audited as `backup.run` and `backup.restore` instead of `stack.deploy` and `container.rollback`."
-time: 2026-11-02T19:20:09Z

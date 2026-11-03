@@ -1,3 +1,0 @@
-kind: Changed
-body: 'CPU alert rules and autoscaling rules state their unit: "% of host", the share of the whole host the charts show and the default for new rules, or "% of one core" (100 per busy core, as docker stats shows it). The API field is `cpu_unit`.'
-time: 2026-11-02T11:12:09.9306993+01:00

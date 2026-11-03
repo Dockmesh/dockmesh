@@ -1,3 +1,0 @@
-kind: Added
-body: The access check on the user page also answers for every host with a tag (`host_tag` on `POST /api/v1/access/check`).
-time: 2026-11-02T12:42:25.1584956+01:00

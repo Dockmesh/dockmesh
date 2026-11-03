@@ -1,3 +1,0 @@
-kind: Fixed
-body: Host-scoped users get bell notifications for alerts on their hosts and no longer see CVE-scan and image-update notices of the server; alert history returns up to the requested number of entries from the caller's hosts, and an admin on everything who also holds a narrower assignment keeps the full alerts view.
-time: 2026-11-02T11:12:10.495875+01:00
