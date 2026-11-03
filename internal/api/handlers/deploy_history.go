@@ -80,22 +80,22 @@ func (h *Handlers) GetDeployHistoryEntry(w http.ResponseWriter, r *http.Request)
 // "rolled back to v12" in the list and, if the rollback causes a new
 // problem, roll forward again. P.12.6.
 func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
 	if h.DeployHistory == nil {
 		writeError(w, http.StatusServiceUnavailable, "deploy history store not configured")
 		return
 	}
-	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
+	if h.refuseOtherHost(w, r, name, target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)

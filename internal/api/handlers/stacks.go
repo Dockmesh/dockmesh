@@ -939,18 +939,18 @@ func writeAdoptError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
+	name := chi.URLParam(r, "name")
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
+	if h.refuseOtherHost(w, r, name, target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
@@ -1232,18 +1232,18 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name strin
 }
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
+	name := chi.URLParam(r, "name")
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
+	if h.refuseOtherHost(w, r, name, target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)

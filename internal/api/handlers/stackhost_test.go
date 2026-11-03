@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
@@ -90,6 +91,10 @@ func TestStackRequestsStayOnTheStacksHost(t *testing.T) {
 			}
 			if tc.refused && w.Code != 409 {
 				t.Fatalf("status = %d, want 409", w.Code)
+			}
+			// No caller in the request, so the stack's host is not visible.
+			if tc.refused && strings.Contains(w.Body.String(), "host_id") {
+				t.Fatalf("409 names a host the caller can't see: %s", w.Body)
 			}
 		})
 	}

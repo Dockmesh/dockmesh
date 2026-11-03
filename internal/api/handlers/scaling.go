@@ -26,18 +26,18 @@ type scaleRequest struct {
 // Safety: refuses if container_name or hard port bindings are set.
 // Warns (but proceeds with force=true) if the service is stateful.
 func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
+	name := chi.URLParam(r, "name")
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
+	if h.refuseOtherHost(w, r, name, target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
@@ -138,18 +138,18 @@ type rollingUpdateRequest struct {
 //
 // P.12.5b.
 func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
+	name := chi.URLParam(r, "name")
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
+	if h.refuseOtherHost(w, r, name, target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
