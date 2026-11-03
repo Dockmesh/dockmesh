@@ -199,6 +199,20 @@ func TestSSOStateCookieSecure(t *testing.T) {
 			}
 		})
 	}
+
+	// The callback URLs come from the resolved base URL, so the cookie
+	// follows it too when DOCKMESH_BASE_URL overrides a plain-http setting.
+	if err := store.Set(context.Background(), settings.KeyBaseURL, "http://dm.lan"); err != nil {
+		t.Fatal(err)
+	}
+	e.h.PublicURLs = func() agents.Endpoints {
+		return agents.Endpoints{BaseURL: "https://env.example.com", BaseSource: agents.SourceEnv}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/auth/oidc/x/login", nil)
+	req.RemoteAddr = "10.0.0.9:1"
+	if !e.h.cookiesSecure(req) {
+		t.Error("https base URL from the env did not make the cookie Secure")
+	}
 }
 
 func TestSAMLStateCookie(t *testing.T) {
