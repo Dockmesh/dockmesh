@@ -25,7 +25,7 @@ The URLs Dockmesh gives to providers are built from `DOCKMESH_BASE_URL` in `dock
 | SAML | ACS `<base>/api/v1/auth/saml/<slug>/acs`, SP metadata and entity ID `<base>/api/v1/auth/saml/<slug>/metadata` |
 | LDAP | none. Dockmesh binds to the directory itself |
 
-The provider dialog shows the URL as **Callback URL** or **ACS URL (read-only)**. The dialog builds it from the **Base URL** setting, while the server uses `DOCKMESH_BASE_URL`, so check that both name the same address.
+The **Callback URLs** box on the Authentication page and the provider dialog (**Callback URL**, **ACS URL (read-only)**) show these URLs with the base the server uses. While `DOCKMESH_BASE_URL` is unset, the box warns that providers send users back to `http://localhost:8080`.
 
 ## Configuration fields
 

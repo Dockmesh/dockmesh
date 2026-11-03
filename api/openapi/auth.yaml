@@ -561,6 +561,29 @@ paths:
                     raw: {type: object, additionalProperties: true}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /auth/callback-base:
+    get:
+      operationId: auth.callback_base
+      tags: [auth]
+      summary: Base URL of the SSO callback, ACS and metadata URLs
+      description: |
+        The base URL the OIDC, OAuth2 and SAML providers' redirect, ACS and
+        metadata URLs are built from: `DOCKMESH_BASE_URL`, or
+        `http://localhost:8080` when it is unset (`from_env` false). The
+        Base URL setting is not used for these URLs.
+      responses:
+        "200":
+          description: Callback base.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [base_url, from_env]
+                properties:
+                  base_url: {type: string, example: "https://dockmesh.example.com"}
+                  from_env: {type: boolean}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /ws/ticket:
     post:
       operationId: ws.ticket

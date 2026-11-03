@@ -248,9 +248,8 @@
     if (kind === 'oidc') {
       const t = OIDC_TEMPLATES.find((x) => x.id === id);
       if (t) {
-        oidc.issuer_url = t.issuer_hint;
         oidc.scopes = t.scopes;
-        if (!oidc.display_name) oidc.display_name = m.authn_sign_in_with({ name: t.label });
+        if (!oidc.display_name) oidc.display_name = t.label;
       }
     } else if (kind === 'oauth2') {
       const t = OAUTH2_TEMPLATES.find((x) => x.id === id);
@@ -263,7 +262,7 @@
         oauth2.username_field = t.username_field;
         oauth2.email_field = t.email_field;
         oauth2.groups_field = t.groups_field;
-        if (!oauth2.display_name) oauth2.display_name = m.authn_sign_in_with({ name: t.label });
+        if (!oauth2.display_name) oauth2.display_name = t.label;
       }
     } else if (kind === 'saml') {
       const t = SAML_TEMPLATES.find((x) => x.id === id);
@@ -274,7 +273,7 @@
         saml.groups_attribute = t.groups_attribute;
         saml.nameid_format = t.nameid_format;
         saml.subject_attribute = t.subject_attribute;
-        if (!saml.display_name) saml.display_name = m.authn_sign_in_with({ name: t.label });
+        if (!saml.display_name) saml.display_name = t.label;
       }
     }
     mode = 'form';
@@ -620,7 +619,7 @@
               else if (kind === 'saml') saml.display_name = v;
               else if (kind === 'ldap') ldap.display_name = v;
             }}
-            placeholder={m.authn_sign_in_with({ name: currentTemplateLabel ?? currentKindMeta?.label ?? 'IdP' })}
+            placeholder={currentTemplateLabel ?? currentKindMeta?.label ?? 'IdP'}
           />
           <span class="pm-hint">{m.authn_display_name_hint()}</span>
         </div>

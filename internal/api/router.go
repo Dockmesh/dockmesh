@@ -624,6 +624,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/auth/providers", h.ListAuthProviders)
+				r.Get("/auth/callback-base", h.SSOCallbackBase)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------

@@ -2,7 +2,26 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 )
+
+type ssoBaseView struct {
+	BaseURL string `json:"base_url"`
+	FromEnv bool   `json:"from_env"`
+}
+
+// SSOCallbackBase returns the base URL the OIDC, OAuth2 and SAML services
+// build their callback, ACS and metadata URLs from, so the settings page
+// shows the URLs the server really sends to identity providers.
+//
+//	GET /api/v1/auth/callback-base
+func (h *Handlers) SSOCallbackBase(w http.ResponseWriter, r *http.Request) {
+	out := ssoBaseView{BaseURL: "http://localhost:8080"}
+	if c := h.RestoreConfig; c != nil && c.BaseURL != "" {
+		out = ssoBaseView{BaseURL: strings.TrimRight(c.BaseURL, "/"), FromEnv: c.BaseURLFromEnv}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
 
 // UnifiedProvider is the wire shape returned by
 // GET /api/v1/auth/providers. Four backend tables (oidc/oauth2/saml/

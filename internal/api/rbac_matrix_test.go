@@ -253,6 +253,7 @@ var routeGates = []struct {
 	{"PUT", "/api/v1/audit/webhook", rbac.PermAuditWrite},
 	{"POST", "/api/v1/audit/webhook/test", rbac.PermAuditWrite},
 	{"GET", "/api/v1/auth/providers", rbac.PermSystemUpdate},
+	{"GET", "/api/v1/auth/callback-base", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/oidc/providers", rbac.PermSystemUpdate},
 	{"POST", "/api/v1/oidc/providers", rbac.PermSystemUpdate},
 	{"PUT", "/api/v1/oidc/providers/{id}", rbac.PermSystemUpdate},
