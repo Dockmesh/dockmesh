@@ -1317,7 +1317,9 @@ func agentEndpoints(cfg *config.Config, st *settings.Store) agents.Endpoints {
 		EnvAgentURL:     os.Getenv("DOCKMESH_AGENT_PUBLIC_URL"),
 		SettingBaseURL:  st.Get(settings.KeyBaseURL, ""),
 		SettingAgentURL: st.Get(settings.KeyAgentPublicURL, ""),
-		DefaultBaseURL:  cfg.BaseURL,
-		AgentListen:     cfg.AgentListen,
+		// Not cfg.BaseURL: that holds DOCKMESH_BASE_URL, which must not come
+		// back as the default after it failed validation above.
+		DefaultBaseURL: config.DefaultBaseURL,
+		AgentListen:    cfg.AgentListen,
 	})
 }

@@ -87,6 +87,7 @@ func TestInviteLinksUseThePublicBaseURL(t *testing.T) {
 		{"wizard URL", "", "https://dm.lan", "https://dm.lan/invite/"},
 		{"changed in settings", "", "https://dockmesh.example.com/", "https://dockmesh.example.com/invite/"},
 		{"env overrides", "https://env.example.com", "https://dockmesh.example.com", "https://env.example.com/invite/"},
+		{"invalid env falls back to the setting", "https://bad host", "https://dockmesh.example.com", "https://dockmesh.example.com/invite/"},
 	}
 	for _, s := range steps {
 		t.Run(s.name, func(t *testing.T) {

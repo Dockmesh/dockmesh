@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// DefaultBaseURL is the public address used when neither DOCKMESH_BASE_URL
+// nor the Base URL setting gives one.
+const DefaultBaseURL = "http://localhost:8080"
+
 type Config struct {
 	HTTPAddr          string
 	DBPath            string
@@ -72,9 +76,7 @@ func Load() (*Config, error) {
 		// Proxy is opt-in: many users already run Traefik or NPM.
 		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
 		ProxyImage:   envOr("DOCKMESH_PROXY_IMAGE", ""),
-		// BaseURL is the fallback when neither DOCKMESH_BASE_URL nor the
-		// Base URL setting gives the public address.
-		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
+		BaseURL:      envOr("DOCKMESH_BASE_URL", DefaultBaseURL),
 		// Remote-agent mTLS listener (concept §3.1). Empty = disabled.
 		// AgentPublicURL is the wss:// URL printed in the install hint;
 		// must be reachable by the agent host. AgentSANs adds extra
