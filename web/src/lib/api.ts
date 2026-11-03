@@ -1517,6 +1517,9 @@ export interface AttentionItem {
   severity: 'critical' | 'warning' | 'info';
   title: string;
   detail?: string;
+  title_key?: string;
+  detail_key?: string;
+  params?: Record<string, string | number>;
   link: string;
   object: { type: string; id: string; name?: string; host_id?: string };
   since?: string;

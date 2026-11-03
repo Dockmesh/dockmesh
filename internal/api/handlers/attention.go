@@ -22,16 +22,22 @@ import (
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
-// AttentionItem is one entry of GET /attention.
+// AttentionItem is one entry of GET /attention. Title and Detail are
+// English; the UI renders TitleKey and DetailKey with Params in the
+// user's language instead. A detail without a key is runtime text (an
+// error, an alert message) and shown as sent.
 type AttentionItem struct {
-	ID       string          `json:"id"`
-	Kind     string          `json:"kind"`
-	Severity string          `json:"severity"`
-	Title    string          `json:"title"`
-	Detail   string          `json:"detail,omitempty"`
-	Link     string          `json:"link"`
-	Object   AttentionObject `json:"object"`
-	Since    *time.Time      `json:"since,omitempty"`
+	ID        string          `json:"id"`
+	Kind      string          `json:"kind"`
+	Severity  string          `json:"severity"`
+	Title     string          `json:"title"`
+	Detail    string          `json:"detail,omitempty"`
+	TitleKey  string          `json:"title_key,omitempty"`
+	DetailKey string          `json:"detail_key,omitempty"`
+	Params    map[string]any  `json:"params,omitempty"`
+	Link      string          `json:"link"`
+	Object    AttentionObject `json:"object"`
+	Since     *time.Time      `json:"since,omitempty"`
 }
 
 // AttentionObject names the resource an item is about.
@@ -162,14 +168,17 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 		switch a.Status {
 		case "offline":
 			out = append(out, AttentionItem{
-				ID:       "host_offline:" + a.ID,
-				Kind:     "host_offline",
-				Severity: attentionCritical,
-				Title:    a.Name + " is offline",
-				Detail:   "The agent is not connected.",
-				Link:     link,
-				Object:   obj,
-				Since:    a.LastSeenAt,
+				ID:        "host_offline:" + a.ID,
+				Kind:      "host_offline",
+				Severity:  attentionCritical,
+				Title:     a.Name + " is offline",
+				Detail:    "The agent is not connected.",
+				TitleKey:  "host_offline",
+				DetailKey: "host_offline_detail",
+				Params:    map[string]any{"name": a.Name},
+				Link:      link,
+				Object:    obj,
+				Since:     a.LastSeenAt,
 			})
 		case "online":
 			v, ok := outdated[a.ID]
@@ -177,13 +186,16 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 				continue
 			}
 			builds = append(builds, AttentionItem{
-				ID:       "agent_outdated:" + a.ID,
-				Kind:     "agent_outdated",
-				Severity: attentionInfo,
-				Title:    a.Name + " runs a different agent build",
-				Detail:   fmt.Sprintf("Agent %s, server %s.", orUnknown(v), version.Version),
-				Link:     link,
-				Object:   obj,
+				ID:        "agent_outdated:" + a.ID,
+				Kind:      "agent_outdated",
+				Severity:  attentionInfo,
+				Title:     a.Name + " runs a different agent build",
+				Detail:    fmt.Sprintf("Agent %s, server %s.", orUnknown(v), version.Version),
+				TitleKey:  "agent_outdated",
+				DetailKey: "agent_outdated_detail",
+				Params:    map[string]any{"name": a.Name, "agent": v, "server": version.Version},
+				Link:      link,
+				Object:    obj,
 			})
 		}
 	}
@@ -202,13 +214,16 @@ func groupAgentBuilds(items []AttentionItem) []AttentionItem {
 		names = append(names, it.Object.Name)
 	}
 	return []AttentionItem{{
-		ID:       "agent_outdated:*",
-		Kind:     "agent_outdated",
-		Severity: attentionInfo,
-		Title:    fmt.Sprintf("%d agents run a different build", len(items)),
-		Detail:   fmt.Sprintf("%s. Server %s.", strings.Join(names, ", "), version.Version),
-		Link:     "/hosts",
-		Object:   AttentionObject{Type: "hosts", ID: "*"},
+		ID:        "agent_outdated:*",
+		Kind:      "agent_outdated",
+		Severity:  attentionInfo,
+		Title:     fmt.Sprintf("%d agents run a different build", len(items)),
+		Detail:    fmt.Sprintf("%s. Server %s.", strings.Join(names, ", "), version.Version),
+		TitleKey:  "agents_outdated",
+		DetailKey: "agents_outdated_detail",
+		Params:    map[string]any{"count": len(items), "names": strings.Join(names, ", "), "server": version.Version},
+		Link:      "/hosts",
+		Object:    AttentionObject{Type: "hosts", ID: "*"},
 	}}
 }
 
@@ -232,13 +247,16 @@ func attentionContainerItems(rows []containerRow) []AttentionItem {
 			link += "?host=" + url.QueryEscape(c.HostID)
 		}
 		out = append(out, AttentionItem{
-			ID:       kind + ":" + c.HostID + ":" + c.ID,
-			Kind:     kind,
-			Severity: severity,
-			Title:    title,
-			Detail:   c.Status + " on " + c.HostName + ".",
-			Link:     link,
-			Object:   AttentionObject{Type: "container", ID: c.ID, Name: name, HostID: c.HostID},
+			ID:        kind + ":" + c.HostID + ":" + c.ID,
+			Kind:      kind,
+			Severity:  severity,
+			Title:     title,
+			Detail:    c.Status + " on " + c.HostName + ".",
+			TitleKey:  kind,
+			DetailKey: "container_detail",
+			Params:    map[string]any{"name": name, "status": c.Status, "host": c.HostName},
+			Link:      link,
+			Object:    AttentionObject{Type: "container", ID: c.ID, Name: name, HostID: c.HostID},
 		})
 	}
 	return out
@@ -293,20 +311,23 @@ func (h *Handlers) attentionBackups(r *http.Request) []AttentionItem {
 		if run.FinishedAt != nil {
 			since = *run.FinishedAt
 		}
-		detail := firstLine(run.Error)
+		detail, detailKey := firstLine(run.Error), ""
 		if detail == "" {
-			detail = "The last run failed."
+			detail, detailKey = "The last run failed.", "backup_failed_detail"
 		}
 		jobID := strconv.FormatInt(j.ID, 10)
 		out = append(out, AttentionItem{
-			ID:       "backup_failed:" + jobID,
-			Kind:     "backup_failed",
-			Severity: attentionCritical,
-			Title:    "Backup " + j.Name + " failed",
-			Detail:   detail,
-			Link:     "/backups/runs/" + strconv.FormatInt(run.ID, 10),
-			Object:   AttentionObject{Type: "backup_job", ID: jobID, Name: j.Name, HostID: j.HostID},
-			Since:    &since,
+			ID:        "backup_failed:" + jobID,
+			Kind:      "backup_failed",
+			Severity:  attentionCritical,
+			Title:     "Backup " + j.Name + " failed",
+			Detail:    detail,
+			TitleKey:  "backup_failed",
+			DetailKey: detailKey,
+			Params:    map[string]any{"name": j.Name},
+			Link:      "/backups/runs/" + strconv.FormatInt(run.ID, 10),
+			Object:    AttentionObject{Type: "backup_job", ID: jobID, Name: j.Name, HostID: j.HostID},
+			Since:     &since,
 		})
 	}
 	return out
@@ -376,6 +397,8 @@ func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow, covered
 			Severity: severity,
 			Title:    f.RuleName + " is firing",
 			Detail:   f.Message,
+			TitleKey: "alert_firing",
+			Params:   map[string]any{"name": f.RuleName},
 			Link:     "/alerts",
 			Object:   obj,
 			Since:    &since,
@@ -474,27 +497,37 @@ func (h *Handlers) attentionImageUpdates(rows []containerRow, showNames bool) []
 	}
 	out := make([]AttentionItem, 0, len(images))
 	for _, img := range images {
-		names := users[img]
-		var detail string
-		switch {
-		case !showNames:
-			detail = fmt.Sprintf("Used by %d container%s.", len(names), plural(len(names)))
-		case len(names) > 1:
-			detail = fmt.Sprintf("Used by %s and %d more.", names[0], len(names)-1)
-		default:
-			detail = "Used by " + names[0] + "."
-		}
-		out = append(out, AttentionItem{
-			ID:       "image_update:" + img,
-			Kind:     "image_update",
-			Severity: attentionInfo,
-			Title:    "Update available for " + img,
-			Detail:   detail,
-			Link:     "/resources?tab=images",
-			Object:   AttentionObject{Type: "image", ID: img, Name: img},
-		})
+		out = append(out, imageUpdateItem(img, users[img], showNames))
 	}
 	return out
+}
+
+func imageUpdateItem(img string, names []string, showNames bool) AttentionItem {
+	params := map[string]any{"image": img}
+	var detail, detailKey string
+	switch {
+	case !showNames:
+		detail, detailKey = fmt.Sprintf("Used by %d container%s.", len(names), plural(len(names))), "image_used_by_count"
+		params["count"] = len(names)
+	case len(names) > 1:
+		detail, detailKey = fmt.Sprintf("Used by %s and %d more.", names[0], len(names)-1), "image_used_by_more"
+		params["name"], params["count"] = names[0], len(names)-1
+	default:
+		detail, detailKey = "Used by "+names[0]+".", "image_used_by_one"
+		params["name"] = names[0]
+	}
+	return AttentionItem{
+		ID:        "image_update:" + img,
+		Kind:      "image_update",
+		Severity:  attentionInfo,
+		Title:     "Update available for " + img,
+		Detail:    detail,
+		TitleKey:  "image_update",
+		DetailKey: detailKey,
+		Params:    params,
+		Link:      "/resources?tab=images",
+		Object:    AttentionObject{Type: "image", ID: img, Name: img},
+	}
 }
 
 // attentionCerts lists certificates close to expiry. Proxy routes are
@@ -524,24 +557,28 @@ func (h *Handlers) attentionCerts(r *http.Request) []AttentionItem {
 		if days <= certCriticalDays {
 			severity = attentionCritical
 		}
-		title := fmt.Sprintf("Certificate for %s expires in %d days", rt.Host, days)
+		title, titleKey := fmt.Sprintf("Certificate for %s expires in %d days", rt.Host, days), "cert_expires_days"
 		switch {
 		case !rt.CertValidTo.After(time.Now()):
-			title = "Certificate for " + rt.Host + " has expired"
+			title, titleKey = "Certificate for "+rt.Host+" has expired", "cert_expired"
 		case days == 1:
 			title = "Certificate for " + rt.Host + " expires in 1 day"
 		case days == 0:
-			title = "Certificate for " + rt.Host + " expires today"
+			title, titleKey = "Certificate for "+rt.Host+" expires today", "cert_expires_today"
 		}
+		validTo := rt.CertValidTo.UTC().Format("2006-01-02")
 		routeID := strconv.FormatInt(rt.ID, 10)
 		out = append(out, AttentionItem{
-			ID:       "cert_expiring:" + routeID,
-			Kind:     "cert_expiring",
-			Severity: severity,
-			Title:    title,
-			Detail:   "Valid until " + rt.CertValidTo.UTC().Format("2006-01-02") + ", issued by " + orUnknown(rt.CertIssuer) + ".",
-			Link:     "/proxy",
-			Object:   AttentionObject{Type: "proxy_route", ID: routeID, Name: rt.Host},
+			ID:        "cert_expiring:" + routeID,
+			Kind:      "cert_expiring",
+			Severity:  severity,
+			Title:     title,
+			Detail:    "Valid until " + validTo + ", issued by " + orUnknown(rt.CertIssuer) + ".",
+			TitleKey:  titleKey,
+			DetailKey: "cert_detail",
+			Params:    map[string]any{"host": rt.Host, "days": days, "valid_to": validTo, "issuer": rt.CertIssuer},
+			Link:      "/proxy",
+			Object:    AttentionObject{Type: "proxy_route", ID: routeID, Name: rt.Host},
 		})
 	}
 	return out

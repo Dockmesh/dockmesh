@@ -675,6 +675,56 @@
   "apierr_webhook_rejected": "Webhook abgelehnt",
   "apierr_ws_ticket_perm_required": "?for=<perm> erforderlich (eines von containers.view, containers.logs, containers.exec, system.view)",
   "apierr_you_can_only_change_your_own_avatar": "Nur der eigene Avatar kann geändert werden",
+  "attn_agent_outdated": "{name} nutzt einen anderen Agent-Build",
+  "attn_agent_outdated_detail": "Agent {agent}, Server {server}.",
+  "attn_agents_outdated": "{count} Agents nutzen einen anderen Build",
+  "attn_agents_outdated_detail": "{names}. Server {server}.",
+  "attn_alert_firing": "{name} ist ausgelöst",
+  "attn_backup_failed": "Backup {name} ist fehlgeschlagen",
+  "attn_backup_failed_detail": "Der letzte Lauf ist fehlgeschlagen.",
+  "attn_cert_detail": "Gültig bis {date}, ausgestellt von {issuer}.",
+  "attn_cert_expired": "Zertifikat für {host} ist abgelaufen",
+  "attn_cert_expires_days": [
+    {
+      "declarations": [
+        "input days",
+        "local daysPlural = days: plural"
+      ],
+      "selectors": [
+        "daysPlural"
+      ],
+      "match": {
+        "daysPlural=one": "Zertifikat für {host} läuft in {days} Tag ab",
+        "daysPlural=*": "Zertifikat für {host} läuft in {days} Tagen ab"
+      }
+    }
+  ],
+  "attn_cert_expires_today": "Zertifikat für {host} läuft heute ab",
+  "attn_container_detail": "{status} auf {host}.",
+  "attn_container_exited": "{name} wurde mit einem Fehler beendet",
+  "attn_container_restarting": "{name} startet ständig neu",
+  "attn_container_unhealthy": "{name} ist ungesund",
+  "attn_host_offline": "{name} ist offline",
+  "attn_host_offline_detail": "Der Agent ist nicht verbunden.",
+  "attn_image_update": "Update für {image} verfügbar",
+  "attn_image_used_by_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Von {count} Container genutzt.",
+        "countPlural=*": "Von {count} Containern genutzt."
+      }
+    }
+  ],
+  "attn_image_used_by_more": "Genutzt von {name} und {count} weiteren.",
+  "attn_image_used_by_one": "Genutzt von {name}.",
+  "attn_unknown": "unbekannt",
   "audit_act_agent_create": "Host hinzugefügt",
   "audit_act_agent_delete": "Host entfernt",
   "audit_act_agent_rotate_token": "Neues Token ausgestellt",
