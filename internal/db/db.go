@@ -16,8 +16,6 @@ import (
 // span under whatever parent trace is on the context. When tracing
 // is disabled (no OTLP endpoint configured) the wrapper is a cheap
 // passthrough — spans have no exporter, so they're dropped.
-//
-// P.12.3.1 — deep tracing.
 func Open(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

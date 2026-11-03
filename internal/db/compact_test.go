@@ -20,7 +20,7 @@ func TestRewrittenSecretsLeaveNoTrace(t *testing.T) {
 	sealed := `{"password":"enc:` + strings.Repeat("x", 300) + `"}`
 	tests := []struct {
 		name     string
-		legacy   bool // rewrite through a connection without secure_delete, as older releases did
+		legacy   bool // rewrite through a connection without secure_delete
 		compact  bool
 		wantGone bool
 	}{
@@ -47,13 +47,13 @@ func TestRewrittenSecretsLeaveNoTrace(t *testing.T) {
 				}
 			}
 			if tt.legacy {
-				raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=secure_delete(0)")
+				legacy, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=secure_delete(0)")
 				if err != nil {
 					t.Fatal(err)
 				}
-				raw.SetMaxOpenConns(1)
-				write(raw)
-				raw.Close()
+				legacy.SetMaxOpenConns(1)
+				write(legacy)
+				legacy.Close()
 			}
 			d, err := Open(path)
 			if err != nil {
