@@ -30,6 +30,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import { goto } from '$app/navigation';
   import {
     ShieldCheck, ShieldOff, Copy, Trash2, Terminal, User as UserIcon,
     AlertTriangle,
@@ -276,6 +277,27 @@
       toast.error(m.account_revoke_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
       sessionsBusy = false;
+    }
+  }
+
+  let signOutBusy = $state(false);
+  async function signOutEverywhere() {
+    const ok = await confirm.ask({
+      title: m.account_sign_out_everywhere_title(),
+      message: m.users_signout_all_message(),
+      confirmLabel: m.account_sign_out_everywhere(),
+      danger: true,
+    });
+    if (!ok) return;
+    signOutBusy = true;
+    try {
+      await api.auth.revokeAllSessions();
+      toast.info(m.users_signed_out_all());
+      goto('/login');
+    } catch (err) {
+      toast.error(m.users_sessions_end_failed(), err instanceof ApiError ? err.message : undefined);
+    } finally {
+      signOutBusy = false;
     }
   }
 
@@ -689,7 +711,8 @@
           <button
             type="button"
             class="dm-btn dm-btn-secondary dm-btn-sm"
-            disabled
+            disabled={signOutBusy}
+            onclick={signOutEverywhere}
           >
             {m.account_sign_out_everywhere()}
           </button>

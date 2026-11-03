@@ -104,6 +104,7 @@
   "account_show_inactive": "Show {n} expired or revoked",
   "account_sign_out_everywhere": "Sign out everywhere",
   "account_sign_out_everywhere_blurb": "Revokes every session including this one. You'll need to sign in again.",
+  "account_sign_out_everywhere_title": "Sign out everywhere?",
   "account_strength_fair": "fair",
   "account_strength_good": "good",
   "account_strength_strong": "strong",

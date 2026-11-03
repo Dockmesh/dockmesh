@@ -104,6 +104,7 @@
   "account_show_inactive": "{n} abgelaufene oder widerrufene anzeigen",
   "account_sign_out_everywhere": "Überall abmelden",
   "account_sign_out_everywhere_blurb": "Widerruft alle Sitzungen, auch diese. Danach ist eine erneute Anmeldung nötig.",
+  "account_sign_out_everywhere_title": "Überall abmelden?",
   "account_strength_fair": "mittel",
   "account_strength_good": "gut",
   "account_strength_strong": "stark",

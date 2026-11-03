@@ -72,3 +72,30 @@ func TestAdminManagesUserSessions(t *testing.T) {
 		t.Errorf("user manager listing an admin's sessions: %d, want 403", rr.Code)
 	}
 }
+
+// Sign out everywhere from My account ends every session of the caller,
+// including the one making the request, and no one else's.
+func TestRevokeAllMySessions(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.DB = e.db
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Post("/sessions/revoke-all", e.h.RevokeAllMySessions)
+	})
+	e.user("pat", "viewer")
+	e.user("sam", "viewer")
+	first, second := e.login("pat"), e.login("pat")
+	other := e.login("sam")
+
+	if rr := e.do(http.MethodPost, "/sessions/revoke-all", first.AccessToken, nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("revoke all: %d %s", rr.Code, rr.Body)
+	}
+	for name, tok := range map[string]string{"calling session": first.AccessToken, "other session": second.AccessToken} {
+		if rr := e.do(http.MethodGet, "/me", tok, nil); rr.Code != http.StatusUnauthorized {
+			t.Errorf("%s alive after sign out everywhere: %d", name, rr.Code)
+		}
+	}
+	if rr := e.do(http.MethodGet, "/me", other.AccessToken, nil); rr.Code != http.StatusOK {
+		t.Errorf("another user's session ended: %d", rr.Code)
+	}
+}

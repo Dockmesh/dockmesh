@@ -1712,6 +1712,8 @@ export const api = {
       request<Session[]>('/sessions' + (includeRevoked ? '?include_revoked=1' : '')),
     revokeSession: (familyId: string) =>
       request<void>(`/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' }),
+    // Ends this session too, so its local tokens are dropped.
+    revokeAllSessions: () => request<void>('/sessions/revoke-all', { method: 'POST' }).then(() => auth.clear()),
     getPolicy: () => request<PasswordPolicy>('/auth/policy'),
     setPolicy: (p: PasswordPolicy) =>
       request<PasswordPolicy>('/auth/policy', {
