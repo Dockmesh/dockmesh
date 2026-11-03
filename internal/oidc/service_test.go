@@ -63,16 +63,16 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 
 func TestScopesAcceptSpacesAndCommas(t *testing.T) {
 	tests := []struct {
-		in, stored string
-		want       []string
+		name, in, stored string
+		want             []string
 	}{
-		{"openid profile email", "openid profile email", []string{"openid", "profile", "email"}},
-		{"openid,profile,email", "openid profile email", []string{"openid", "profile", "email"}},
-		{" openid, profile  groups ", "openid profile groups", []string{"openid", "profile", "groups"}},
-		{"", "openid profile email", []string{"openid", "profile", "email"}},
+		{"spaces", "openid profile email", "openid profile email", []string{"openid", "profile", "email"}},
+		{"commas", "openid,profile,email", "openid profile email", []string{"openid", "profile", "email"}},
+		{"mixed", " openid, profile  groups ", "openid profile groups", []string{"openid", "profile", "groups"}},
+		{"empty", "", "openid profile email", []string{"openid", "profile", "email"}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)

@@ -476,7 +476,7 @@
   // Rows of a single-host list carry no host_id; they belong to the host
   // the list was loaded for.
   function rowHost(r: { host_id?: string }): string {
-    return r.host_id ?? (hosts.isAll ? 'local' : hosts.id || 'local');
+    return r.host_id ?? (isAll ? 'local' : hosts.id || 'local');
   }
   function hostQuery(r: { host_id?: string }): string {
     const h = rowHost(r);

@@ -355,7 +355,7 @@ paths:
       security: []
       responses:
         "410":
-          description: Gone; the message names the agent-port enrollment URL.
+          description: Gone; agents enroll with the install command from the Hosts page.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8104,6 +8104,11 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: Volume is in use.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Host offline, or its agent can't remove volumes yet.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

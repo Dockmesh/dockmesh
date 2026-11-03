@@ -109,6 +109,11 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Host offline, or its agent can't remove volumes yet.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /volumes/{name}/browse:
     get:
       operationId: volumes.browse

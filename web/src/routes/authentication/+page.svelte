@@ -644,7 +644,7 @@
             </div>
 
             <p class="auth-callback-blurb">
-              {m.authn_later_release()}
+              {m.authn_not_available()}
             </p>
 
             {#if signinDirty}
@@ -874,13 +874,13 @@
   }
   .auth-callback-kind {
     flex: none;
-    min-width: 5.5rem;
-    font-size: 0.75rem;
+    min-width: 88px;
+    font-size: 11.5px;
     color: var(--fg-muted);
   }
   .auth-callback-warn {
-    margin: 0.5rem 0 0;
-    font-size: 0.8125rem;
+    margin: 6px 0 0;
+    font-size: 11.5px;
     color: var(--warn);
   }
   .auth-callback-blurb {

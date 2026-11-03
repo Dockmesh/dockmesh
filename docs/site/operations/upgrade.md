@@ -99,7 +99,7 @@ Some releases sign everyone out once, for example when the session format change
 
 ## Rolling back
 
-Putting only the previous binary back is not a supported downgrade. Migrations only go forward, and the older binary does not check the schema version: it starts on the migrated database, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.x it does not start at all (`setup state init failed ... no such column: role`).
+Putting only the previous binary back is not a supported downgrade. Migrations only go forward, and the older binary does not check the schema version: it starts on the migrated database, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.2 it does not start at all (`setup state init failed ... no such column: role`).
 
 The way back is the previous binary together with the pre-migration snapshot the upgrade wrote. Changes made after the upgrade are lost.
 

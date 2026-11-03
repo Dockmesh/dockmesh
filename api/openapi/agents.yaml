@@ -249,7 +249,7 @@ paths:
       security: []
       responses:
         "410":
-          description: Gone; the message names the agent-port enrollment URL.
+          description: Gone; agents enroll with the install command from the Hosts page.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

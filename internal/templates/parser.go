@@ -239,6 +239,9 @@ func validate(def ParamDef, val string) error {
 			return fmt.Errorf("parameter %q: bad pattern: %w", def.Name, err)
 		}
 		if !re.MatchString(val) {
+			if def.Secret {
+				return fmt.Errorf("parameter %q does not match /%s/", def.Name, def.Pattern)
+			}
 			return fmt.Errorf("parameter %q: value %q does not match /%s/", def.Name, val, def.Pattern)
 		}
 	}

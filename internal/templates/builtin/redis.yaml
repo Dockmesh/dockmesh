@@ -17,14 +17,19 @@ parameters:
   - name: port
     default: "6379"
     pattern: "^[0-9]{2,5}$"
+env: |
+  REDIS_PASSWORD={{password|secret}}
 compose: |
   services:
     redis:
       image: redis:7-alpine
       restart: unless-stopped
-      command: ["redis-server", "--appendonly", "yes", "--requirepass", "{{password|secret}}"]
+      # The password is read from stdin, so it shows neither in the
+      # container's command nor in the host's process list.
+      command: ["sh", "-c", "printf 'requirepass %s\\n' \"$$REDIS_PASSWORD\" | exec redis-server - --appendonly yes"]
       environment:
-        REDISCLI_AUTH: "{{password|secret}}"
+        REDIS_PASSWORD: "${REDIS_PASSWORD}"
+        REDISCLI_AUTH: "${REDIS_PASSWORD}"
       volumes:
         - redis_data:/data
       ports:

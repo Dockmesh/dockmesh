@@ -20,7 +20,7 @@ Dockmesh ships six templates. They are embedded in the binary and written to the
 
 Defaults are in parentheses; "generated" means a random value is created when you leave the field blank. Port parameters must be 2 to 5 digits. All six keep their data in named volumes.
 
-The Redis template always turns on authentication: `password` is passed to `redis-server --requirepass` and may contain letters, digits, `-` and `_` (at least 12 characters). It's also set as `REDISCLI_AUTH` in the container, so `redis-cli` inside it, the healthcheck and the **Redis save** backup hook sign in on their own. The password is stored in `compose.yaml` and is visible in the container's command line.
+The Redis template always turns on authentication. `password` may contain letters, digits, `-` and `_` (at least 12 characters) and is stored in the stack's `.env` as `REDIS_PASSWORD`, not in `compose.yaml`. Redis reads it on start from stdin, so it doesn't show in the container's command or the host's process list. It's also set as `REDISCLI_AUTH` in the container, so `redis-cli` inside it, the healthcheck and the **Redis save** backup hook sign in on their own; seeing it needs the extra to see environment values.
 
 The port is published on `127.0.0.1` unless you change `bind_address`, so only the host itself reaches Redis. Containers in the same stack reach it as `redis:6379` either way.
 
