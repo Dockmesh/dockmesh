@@ -33,9 +33,9 @@ func bootstrapConfig(adminID string) ([]byte, error) {
 }
 
 // adminIDLabel carries a random ID per container that Caddy's admin
-// config is tagged with. Any local process could listen on 127.0.0.1:2019;
-// only the managed Caddy answers to this ID, so no config (with DNS or
-// basic-auth credentials) is pushed to anything else.
+// config is tagged with, so config (with DNS or basic-auth credentials)
+// is not pushed to an unrelated program holding 127.0.0.1:2019. It does
+// not authenticate: the admin API is open to every local process.
 const adminIDLabel = "dockmesh.proxy.admin_id"
 
 func newAdminID() (string, error) {
