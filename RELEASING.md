@@ -10,6 +10,29 @@ changie is a Go program; run it pinned, as CI does:
 alias changie='go run github.com/miniscruff/changie@v1.26.0'
 ```
 
+## Testing a release
+
+Every release candidate is installed and exercised on lab VMs before it is tagged: a server, two
+agent hosts and the backup targets (local, SMB, SFTP, WebDAV, S3).
+
+1. Take a snapshot of every lab VM (`vzdump` or a Proxmox snapshot) before you start, so each
+   check can begin from a known state and a failed upgrade can be rolled back.
+2. For a minor release (`X.Y.0`) run the full suite: fresh install of the server and agents,
+   enrollment, stack deploy and update, reverse proxy, backups and restores against every target
+   type, SSO sign-in, alerts and notifications, and the upgrade from the previous release with
+   its data in place.
+3. For a patch release run the checks for the areas the release changes and their neighbours,
+   plus the upgrade from the previous release.
+4. A check you skip or change gets a written reason in the release PR's notes for the reviewer.
+   A failing check blocks the tag until it is fixed or explained.
+
+## Security advisories
+
+If the release fixes a vulnerability, prepare a GitHub Security Advisory for the repository
+before tagging: affected versions, the permission an attacker needs, impact, workaround and the
+fixed version. Add a `Security` fragment that names the issue and links the advisory, then
+publish the advisory together with the release.
+
 ## Cutting a release
 
 In a release PR (title `release: vX.Y.Z`, label `no-changelog`):

@@ -14,6 +14,8 @@ It is meant for people who already run Docker and Docker Compose and want one pl
 - **Hosts**: the local host the server runs on, plus remote hosts whose agents connect to the server. See [Hosts and agents](../concepts/hosts-and-agents.md).
 - **Around the stacks**: users and roles, single sign-on, API tokens, backups, alerts and notifications, an audit log, image vulnerability scans and an optional reverse proxy.
 
+The web UI is available in English and German; each user picks the language, see [First steps](./first-steps.md#language).
+
 ## The three binaries
 
 | Binary | Runs on | Purpose |

@@ -7,54 +7,73 @@ Dockmesh manages the local host directly through the Docker socket. Every other 
 
 ## Before you add the first agent
 
-The server builds the install command and the agent's connection URL from its own configuration. With the defaults, both point at `localhost`, which a remote host can't reach. Set these in the server's environment file (`dockmesh.env` for installs done with `install.sh`) and restart the server:
+Install commands and the agent's connection use two addresses of the server. Set them under **Settings → General** and click **Save**:
+
+| Field | Example | Used for |
+|---|---|---|
+| **Base URL** | `https://dockmesh.example.com` | The install command downloads the script and the agent binary from it. |
+| **Agent public URL** | `wss://dockmesh.example.com:8443/connect` | Enrollment, the permanent connection, certificate renewal and agent upgrades. Empty means `wss://<host of the base URL>:<agent port>/connect`. |
+
+The setup wizard fills both from the address you enter there. Saving a new agent URL adds its host name to the agent listener's certificate; names and IPs already in the certificate stay, so enrolled agents keep connecting.
+
+The server's environment file (`dockmesh.env`) can set the same values. These variables win over the fields; change them there and restart the server:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOCKMESH_BASE_URL` | `http://localhost:8080` | URL agents use to download the installer and enroll. Must be reachable from the remote host. |
+| `DOCKMESH_BASE_URL` | none (Settings) | Base URL. Without it, the **Base URL** field is used. |
+| `DOCKMESH_AGENT_PUBLIC_URL` | none (Settings) | `wss://` URL agents dial. Without it, the **Agent public URL** field is used, or the URL derived from the base URL. |
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Address of the mTLS agent listener on the server. |
-| `DOCKMESH_AGENT_PUBLIC_URL` | derived | `wss://` URL agents dial, e.g. `wss://dockmesh.example.com:8443/connect`. If unset, Dockmesh takes the host name from `DOCKMESH_BASE_URL` and the port from `DOCKMESH_AGENT_LISTEN`. |
-| `DOCKMESH_AGENT_SANS` | empty | Comma-separated host names and IPs added to the agent listener's server certificate. Include every name or IP that appears in `DOCKMESH_AGENT_PUBLIC_URL`. |
+| `DOCKMESH_AGENT_SANS` | empty | Extra host names and IPs for the agent listener's certificate, comma-separated. The agent URL's host is added automatically. |
+| `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `24h` | How long an enrollment token is valid, as a Go duration between `1m` and `720h`. The server refuses to start with any other value. |
 
-> **Note:** The public URL you enter in the web setup wizard is stored as a setting but isn't used for agent enrollment. Set `DOCKMESH_BASE_URL` in the environment file as well.
+The listener certificate always covers `localhost`, `127.0.0.1` and `::1`. Port 8443 (or whatever you chose) has to be open on the server, not on the agent host. See [Ports](../reference/ports.md).
 
-The server certificate always covers `localhost`, `127.0.0.1` and `::1`. When the SAN list contains a name the current certificate does not cover, Dockmesh issues a new server certificate on the next start. `dockmesh doctor` warns when `DOCKMESH_AGENT_PUBLIC_URL` isn't set. Port 8443 (or whatever you chose) has to be open on the server, not on the agent host. See [Ports](../reference/ports.md).
+### Check the agent URL
+
+**Check connection** under the **Agent public URL** field, and the same check that runs when you open the **Add host** dialog (above **Generate install command**), test the saved agent URL from the server: that it isn't `localhost` or a loopback address, that the listener certificate covers its host, that the name resolves, that the port accepts connections, and that the Dockmesh listener answers with its own certificate. A failed TLS check usually means a proxy terminates TLS in front of the port (a reverse proxy, or Cloudflare with proxying on). Agents authenticate with client certificates, so the connection must reach Dockmesh unchanged: use a DNS-only record, TCP passthrough or an address that bypasses the proxy.
+
+The check runs from the server. With split DNS or NAT, remote hosts can still get a different answer.
 
 ## Add a host
 
 1. Open **Hosts** and click **Add host**.
 2. Enter a **Hostname** (the name shown in Dockmesh) and, optionally, tags.
-3. Click **Generate install command**. The dialog shows a one-line command and the enrollment token.
+3. Click **Generate install command**. The dialog shows a one-line command and the enrollment token, together with the time the token expires.
 4. Run the command on the remote host as root.
-5. The dialog polls every 2 seconds and closes once the agent reports **online**.
+5. The dialog checks every 2 seconds and closes once the host is online.
 
 The command looks like this:
 
 ```bash
-curl -fsSL https://dockmesh.example.com/install/agent.sh?token=<token> | sudo bash
+curl -fsSL 'https://dockmesh.example.com/install/agent.sh?token=<token>&ca=<fingerprint>' | sudo bash
 ```
+
+The token is part of the URL, so a reverse proxy in front of Dockmesh writes it to its access log. It stays valid until it is used or expires; keep such logs private or re-issue the token if one leaked.
 
 Adding a host needs the `hosts.create` permission.
 
 ### What the installer does
 
-The script served at `/install/agent.sh` is `scripts/install-agent.sh` with the token and URLs filled in. It:
+The script served at `/install/agent.sh` is `scripts/install-agent.sh` with the token, the URLs, the agent CA and the agent binary checksums filled in. It:
 
-- supports Linux with systemd only (it exits on macOS and other systems),
+- supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`,
 - installs Docker from `get.docker.com` if it's missing (skip this with `--skip-docker`),
 - creates a locked `dockmesh-agent` system user in the `docker` group (use `--as-root` to run as root instead),
-- installs the binary to `/var/lib/dockmesh/bin/dockmesh-agent` with a symlink in `/usr/local/bin`,
-- writes `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,
-- removes certificates from an earlier enrollment in `/var/lib/dockmesh` so the new token takes effect.
+- downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the base URL and refuses to install it if its SHA-256 doesn't match,
+- installs the binary to `/var/lib/dockmesh-agent/bin/dockmesh-agent` and a root-owned copy to `/usr/local/bin/dockmesh-agent`, which the service refreshes at every start,
+- writes the agent CA to `/var/lib/dockmesh-agent/enroll-ca.pem`, `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,
+- removes certificates from an earlier enrollment so the new token takes effect,
+- waits up to 60 seconds for the agent to connect and prints the last log lines if it doesn't.
 
 Pass flags like this:
 
 ```bash
-curl -fsSL "https://dockmesh.example.com/install/agent.sh?token=<token>" | sudo bash -s -- --as-root
+curl -fsSL '<install-url>' | sudo bash -s -- --as-root
 ```
 
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-The installer accepts `x86_64` and `aarch64` hosts, but it always downloads `dockmesh-agent-linux-amd64` from the server. On an arm64 host, replace `/var/lib/dockmesh/bin/dockmesh-agent` with the `linux-arm64` binary from the [release tarball](https://github.com/dockmesh/dockmesh/releases) and restart the service. The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it).
+Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server.
+
+The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it). Without a binary for the host's architecture the installer stops.
 
 The enrollment token stays in `/etc/dockmesh-agent/agent.env` after enrollment. It can't be used again, but you can delete the `DOCKMESH_TOKEN` line once the host is online.
 
@@ -64,25 +83,31 @@ The agent reads these from its environment (the installer puts them in `agent.en
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` | Certificates, the persisted agent URL, stack mirror |
-| `DOCKMESH_ENROLL_URL` | none | `<base>/api/v1/agents/enroll`, required on first start |
-| `DOCKMESH_TOKEN` | none | Enrollment token, required on first start |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` (the installer writes `/var/lib/dockmesh-agent`) | Certificates, the saved agent URL, the stack mirror |
+| `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint, `https://<agent host>:8443/enroll`. Required on first start |
+| `DOCKMESH_TOKEN` | none | Enrollment token. Required on first start |
+| `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA. Required to enroll over `https://` |
+| `DOCKMESH_ENROLL_CA_FILE` | none | File with the agent CA certificate; must match the fingerprint |
 | `DOCKMESH_AGENT_URL` | URL saved at enrollment | `wss://` URL to dial; overrides the saved one |
+| `DOCKMESH_INSECURE_ENROLL` | unset | `true` allows enrollment over plain `http://`, like the `--insecure-enroll` flag |
+
+The agent refuses to enroll over plain `http://` unless you start it with `--insecure-enroll` (or `DOCKMESH_INSECURE_ENROLL=true`), because the token and the client key would cross the network unencrypted. Use it only in an isolated lab.
 
 `dockmesh-agent status` and `dockmesh-agent --version` are available on the host. Logs go to the journal: `journalctl -u dockmesh-agent -f`.
 
 ## Enrollment and certificates
 
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-Each host gets a single-use enrollment token. Tokens don't expire. Keep unused install commands private, or revoke the pending host if a command leaks. On enrollment the server generates the agent's key pair and a client certificate signed by its internal CA, and returns them together with the CA certificate. The agent doesn't verify the server's TLS certificate during this request. It trusts whatever CA the enroll endpoint returns, and pins that CA for all later connections. Only enroll over a network path you trust, and use an `https://` base URL.
+Each host gets a single-use enrollment token, valid for 24 hours unless `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` says otherwise. The agent enrolls on the server's agent port and trusts only the agent CA pinned in the install script, so it can't be redirected to another server. The server generates the agent's key pair and a client certificate signed by its CA, and the agent pins that CA for all later connections.
 
-<!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
-Agent certificates are valid for 365 days and are not renewed automatically. When a certificate expires, the agent can no longer connect. To bring it back, revoke the host and add it again (see below). Plan a re-enrollment before the year is up.
+The install script itself comes from the base URL and carries the CA fingerprint and the binary checksums. Use an `https://` base URL so nobody can change the script on the way.
+
+Agent certificates are valid for 365 days. An online agent renews its certificate over its connection once less than 30 days are left; the host keeps its ID. The host's **Overview** tab shows when the certificate expires. Admins get a notice for an agent whose certificate expires within 14 days, and a critical one for an offline agent whose certificate has expired. To bring such an agent back, re-issue its token (see below) and run the new install command on the host.
 
 The CA (10 years) and the agent listener's certificate (5 years) live in the data directory as `agents-ca.crt`/`.key` and `agents-server.crt`/`.key`. Back them up with the rest of the data directory. Losing them means re-enrolling every agent.
 
-<!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
-When the connection drops, the agent reconnects with a backoff from 1 to 60 seconds.
+### Re-issue a token
+
+**Re-issue…** on the host's **Maintenance** tab creates a new enrollment token for an existing host (needs `hosts.create`). Running the new install command on the host re-enrolls it under the same ID, so its stacks, tags and backup jobs stay. The old certificate works until the host enrolls with the new token. Use this for an expired or suspect certificate, or after reinstalling the host.
 
 ### Rotate the CA
 
@@ -94,27 +119,31 @@ sudo -u dockmesh dockmesh ca rotate --reissue-all-agents --env-file <data-dir>/d
 sudo systemctl start dockmesh
 ```
 
-The command prints one install command per host. Run each on its host. The installer removes the old certificates before enrolling. `dockmesh ca export --out ca.pem` writes the current CA certificate. See [dockmesh CLI](../reference/dockmesh-cli.md).
+The command prints one install command per host. Run each on its host. The installer removes the old certificates before enrolling. `dockmesh ca export --out ca.pem` writes the current CA certificate. To add names or IPs to the listener certificate without touching the CA, use `dockmesh ca reissue-server --add-san <name-or-ip>`. See [dockmesh CLI](../reference/dockmesh-cli.md).
 
 ## Host tags
 
-Tags are lowercase labels (letters, digits and hyphens, up to 32 characters, at most 20 per host). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu on **Hosts**, or on the **Tags** tab of the host detail page. Changing tags needs `hosts.tag`.
+Tags are lowercase labels (letters, digits and hyphens, up to 32 characters, at most 20 per host). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu on **Hosts**, or on the **Tags** tab of the host page. Changing tags needs `hosts.tag`.
 
-Tags are used for access scoping: an assignment on a host tag covers every host with that tag. See [Permissions](../concepts/permissions.md).
+Tags limit access (an assignment on a host tag covers every host with that tag, see [Permissions](../concepts/permissions.md)), registry credentials and alert rules to the hosts that carry them.
 
 ## Agent upgrades
 
-When an agent runs a different version than the server, **Hosts** shows the target version next to it. Click **Upgrade agent** in the row menu, **Upgrade now** on the host's **Maintenance** tab, or select several hosts and use **Bulk upgrade**. The agent downloads `dockmesh-agent-linux-<arch>` from the server, replaces itself and reconnects. This needs `hosts.update`.
+When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` over its mTLS connection to the agent port, checks it against the SHA-256 the server sends, replaces itself and reconnects.
 
-The upgrade policy decides whether the server does this on its own. It's evaluated every 60 seconds:
+Agents that speak an older protocol than the server show **agent update recommended** on the host page.
+
+The upgrade policy decides whether the server upgrades agents on its own. It's evaluated every 60 seconds:
 
 | Mode | Behaviour |
 |---|---|
-| `manual` (default) | Nothing happens until you click upgrade. |
+| `manual` (default) | Nothing happens until you start an upgrade. |
 | `auto` | Every connected agent that's behind is upgraded. |
 | `staged` | Each evaluation upgrades `stage_percent` of the outdated agents (default 10 %, at least one). `stage_gap_sec` is stored but not applied; waves are spaced by the 60-second evaluation. |
 
-There is no UI to change the mode. Use the API:
+In `auto` and `staged` mode, the server stops trying an agent after three attempts with the same binary that didn't leave it up to date, at least 5 minutes apart. The upgrade buttons always try.
+
+While agents are behind, the Hosts page shows how many, the mode and the last evaluation, and **Run policy now** outside `manual` mode. There is no UI to change the mode. Use the API:
 
 ```bash
 curl -X PUT https://dockmesh.example.com/api/v1/agents/upgrade-policy \
@@ -122,25 +151,23 @@ curl -X PUT https://dockmesh.example.com/api/v1/agents/upgrade-policy \
   -d '{"mode":"staged","stage_percent":25}'
 ```
 
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-The agent downloads the new binary from the server without checking a checksum or signature. Serve the server over HTTPS if you use `auto` or `staged`.
+See also [Upgrade](../operations/upgrade.md#upgrading-agents).
 
 ## Remove a host
 
-Open the host's row menu and click **Revoke…**, or use **Revoke** on the **Maintenance** tab (needs `hosts.delete`). This deletes the host from Dockmesh, and its certificate is no longer accepted. Containers on that host keep running. Dockmesh just stops tracking them. Afterwards, on the host:
+Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running. Dockmesh just stops tracking them. Afterwards, on the host:
 
 ```bash
 sudo systemctl disable --now dockmesh-agent
 ```
 
-To bring the host back, add it again with **Add host** and run the new install command.
-
-**Re-issue** on the **Maintenance** tab creates a new token for a host that hasn't finished enrolling. It doesn't help for an enrolled host. Remove and re-add that host instead.
+To bring the host back, add it again with **Add host** and run the new install command. It gets a new ID. To keep the ID, re-issue the token instead of revoking.
 
 ## Limits
 
-- Rolling updates and cleanup are not supported on remote hosts.
-- One-click image updates, vulnerability scans, alert rules and the metrics history cover the local host only.
-- Agent requests time out after 30 seconds. That includes image pulls during a remote deploy, so pull large images on the host in advance.
+- Rolling updates and stack cleanup are not supported on remote hosts.
+- Image pulls, volume and network create, remove and prune run on the local host only.
+- Vulnerability scans, image update detection and auto-scaling cover the local host only.
+- Live deploy progress isn't reported for remote hosts.
 
 See also [Migration and drain](./migration-and-drain.md) and [Troubleshooting](../troubleshooting/troubleshooting.md).

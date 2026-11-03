@@ -36,15 +36,13 @@ It asks one question per component:
 curl -fsSL https://get.dockmesh.dev/uninstall | sudo bash -s -- --yes
 ```
 
-`--dry-run` is not completely free of side effects: when the service user exists and its removal is selected, it still kills all processes of the `dockmesh` user, which stops a running server.
-
 ### How the data root is found
 
 The script looks for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one. It reads the asset paths from that file. Without an env file it assumes `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
 
 Before deleting, it checks that the directory contains `data/`, `stacks/` or `dockmesh.env`, and skips it with a warning otherwise. If the directory is a mount point, only its contents are removed.
 
-Removing the data root deletes the database, all stack files and the age key. Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the key. A local backup target inside the data root is deleted as well.
+Removing the data root deletes the database and its pre-migration snapshots, all stack files (including data that containers wrote through relative bind mounts into their stack directory) and the age key. Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the key. A local backup target inside the data root, such as the default `data/backups`, is deleted as well.
 
 ## What the script leaves behind
 
@@ -65,7 +63,9 @@ sudo docker rm -f dockmesh-proxy
 sudo docker volume rm dockmesh-caddy-data dockmesh-caddy-config
 ```
 
-**Helper images.** Dockmesh pulls `caddy:2` for the proxy, `alpine:3.24` for volume backups and restores, `alpine:3.24` (pinned by digest) for the volume browser, and `busybox:latest` for volume tar streams. Remove them with `docker image rm` if nothing else uses them.
+**Backups outside the data root.** Local backup targets elsewhere, for example under `/srv/backups`, and archives on remote targets are not touched.
+
+**Helper images.** Dockmesh pulls a `caddy` image for the proxy (by default `caddy:2.11.7` pinned by digest, or the Caddy version you switched to, or `DOCKMESH_PROXY_IMAGE`), `alpine:3.24` for volume backups and restores, `alpine:3.24` pinned by digest for the volume browser, `busybox:latest` for volume tar streams and `busybox:1.38` for moving bind-mount data of containers deployed by older versions. Agents pull `busybox:latest` on their hosts. Remove the images with `docker image rm` if nothing else uses them.
 
 **Scanner.** `install.sh` installs `grype` into `/usr/local/bin`. Remove it with `sudo rm /usr/local/bin/grype` if you don't use it otherwise.
 
@@ -73,30 +73,35 @@ sudo docker volume rm dockmesh-caddy-data dockmesh-caddy-config
 
 ## Remove an agent
 
-Remove the host in Dockmesh first: **Hosts** → row menu → **Revoke…**. This does not close an agent connection that is currently open, so stop the agent on the host as well.
+Remove the host in Dockmesh first: **Hosts** → row menu → **Revoke…**, then type the host's name to confirm. Revoking invalidates the agent's certificate and closes its connection, but the agent service on the host keeps trying to reconnect, so stop it there as well.
 
-`install-agent.sh` has no uninstall option. On the agent host:
+`install-agent.sh` has no uninstall option. Look up the agent's data directory first; current installs use `/var/lib/dockmesh-agent`:
+
+```bash
+sudo grep DOCKMESH_DATA_DIR /etc/dockmesh-agent/agent.env
+```
+
+Then, on the agent host:
 
 ```bash
 sudo systemctl disable --now dockmesh-agent
 sudo rm /etc/systemd/system/dockmesh-agent.service
 sudo systemctl daemon-reload
-sudo rm -rf /etc/dockmesh-agent /var/lib/dockmesh
+sudo rm -rf /etc/dockmesh-agent /var/lib/dockmesh-agent
 sudo rm -f /usr/local/bin/dockmesh-agent
 sudo userdel dockmesh-agent
 ```
 
-> **Warning:** the agent uses `/var/lib/dockmesh`, which is also the default data root of the server. Never run `rm -rf /var/lib/dockmesh` on a host where the Dockmesh server is installed.
+> **Warning:** agents installed by older releases used `/var/lib/dockmesh`, which is also the default data root of the server. Never run `rm -rf /var/lib/dockmesh` on a host where the Dockmesh server is installed.
 
-`/etc/dockmesh-agent/agent.env` still contains the enrollment token, so delete it even if you keep the rest. Containers that Dockmesh deployed on the host keep running; their stack files are mirrored under `/var/lib/dockmesh` and are gone after the cleanup above.
+`/etc/dockmesh-agent/agent.env` still contains the enrollment token, so delete it even if you keep the rest. Containers that Dockmesh deployed on the host keep running; their stack files are mirrored under `stacks/` in the agent's data directory and are gone after the cleanup above.
 
 ## Reinstall later
 
-If you kept the data root, `install.sh` uses the existing database, stacks and keys again. Because the binary is gone, it runs as a fresh install, though, and rewrites `dockmesh.env` with default values plus `DOCKMESH_SETUP_FORCE=true`. Save the file before reinstalling and put it back afterwards:
+If you kept the data root, run the installer again:
 
 ```bash
-sudo cp /var/lib/dockmesh/dockmesh.env /root/dockmesh.env.saved
 curl -fsSL https://get.dockmesh.dev | sudo bash
-sudo cp /root/dockmesh.env.saved /var/lib/dockmesh/dockmesh.env
-sudo systemctl restart dockmesh
 ```
+
+Because the binary is gone it runs as a fresh install, but it finds the kept `dockmesh.env` in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh` (or at `$DOCKMESH_DATA_DIR/dockmesh.env`), keeps the file unchanged and uses the database, stacks and keys next to it. It does not open the setup wizard; sign in with your existing account. A recreated `dockmesh` user can get a new UID, so the installer hands `data/` and `stacks/` back to it. The installer refuses to reuse an env file when the file or its directory is writable by group or others, or belongs to an account other than root or `dockmesh`.

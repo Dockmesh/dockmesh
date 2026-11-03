@@ -1,26 +1,26 @@
 ---
 title: Registries
-description: Store credentials for private image registries so deploys and pulls on the local host can fetch private images.
+description: Store credentials for private image registries, limit them to hosts by tag, and how deploys on the server and on agents use them.
 ---
 
-Without credentials, Docker pulls anonymously, and private images fail with "pull access denied" or "unauthorized". **Registries** in the sidebar stores a username and password or token per registry; Dockmesh hands them to Docker when it pulls an image from that registry.
+Without credentials, Docker pulls anonymously, and private images fail with "pull access denied" or "unauthorized". **Settings → Registries** stores a username and password or token per registry; Dockmesh hands them to Docker when it pulls an image from that registry, on the server host and on agent hosts.
 
 ## Adding a registry
 
-Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Harbor, Generic OCI) or add one by hand. The form has:
+Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Harbor, Generic OCI) or click **Add registry**. The form has:
 
 | Field | Notes |
 |---|---|
 | **Provider** | Fills in the URL and shows a hint for the token type. |
 | **Display label** | Free text shown in the list. |
-| **Registry URL** | Host only, for example `ghcr.io` or `registry.example.com:5000`. Scheme and trailing slash are removed. |
+| **Registry URL** | Host only, for example `ghcr.io` or `registry.example.com:5000`. Scheme and trailing slash are removed, and the host is lower-cased. Each URL can be saved once. |
 | **Username** | |
-| **Password / token** | Encrypted before it is stored when secrets encryption is on (see below); never returned by the API. When editing, leave it blank to keep the stored value. |
-| **Scope (host tags)** | Leave empty. See [Limits](#limits). |
+| **Password / token** | Stored encrypted and never returned by the API. When editing, leave it blank to keep the stored value. |
+| **Scope (host tags)** | Empty: the credential is used on every host. With tags: only on hosts that carry at least one of them. Tags are lowercase letters, digits and hyphens, 1 to 32 characters. |
 
 Use tokens with read-only scope: on GitHub a token with `read:packages`, on Docker Hub a personal access token, on Harbor a robot account. AWS ECR tokens expire after 12 hours (`aws ecr get-login-password`) and must be replaced by hand; Dockmesh has no ECR integration.
 
-**Test** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the local Docker engine and records the result. The list counts failing tests, and marks credentials as stale when they were last changed more than 90 days ago.
+**Test login** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the server host's Docker engine and records the result. The page counts failing tests and marks credentials as stale when they were last changed more than 90 days ago.
 
 ## How credentials are matched
 
@@ -32,46 +32,54 @@ When Dockmesh pulls an image, it takes the registry host from the image referenc
 | `ghcr.io/acme/app:1.0` | `ghcr.io` |
 | `registry.example.com:5000/app` | `registry.example.com:5000` |
 
-The registry URL you saved must equal that host exactly. For Docker Hub, save the URL as `docker.io`, not `index.docker.io` or `registry-1.docker.io`.
+The registry URL you saved must equal that host exactly. For Docker Hub, save the URL as `docker.io`, not `index.docker.io` or `registry-1.docker.io`. Entries without a stored password are not used.
+
+Then the scope is checked against the tags of the host the pull runs on: the server host uses its own tags (`local`), an agent host the tags it carries under **Hosts**. A credential whose tags the host doesn't carry is skipped and the pull is anonymous.
 
 ## Where credentials are used
 
-Credentials are applied to pulls on the **local host**:
+On the server host:
 
-- stack deploys, rollbacks and template deploys that run on the local host;
-- git-source auto-deploys;
-- **Pull image** and **Re-pull** on the **Resources** page;
-- one-click container image updates (see [Image updates](./image-updates.md)).
+- stack deploys, rollbacks, dependency deploys, template deploys and git auto-deploys;
+- **Pull image** on the **Resources** page;
+- image update checks and image updates (see [Image updates](./image-updates.md)), so private images show available updates too.
 
-They are **not** sent to agents. A stack deployed on a remote host pulls anonymously, and a `docker login` on that host does not change this, because the agent talks to the Docker API directly and does not read the Docker CLI's stored logins. A deploy only pulls images that are missing on the host, so the workaround is to pull private images on the remote host yourself before you deploy:
+On agent hosts, Dockmesh works out the images of the stack and sends the matching credentials with the request, for:
 
-```bash
-docker login ghcr.io -u <user>
-docker pull ghcr.io/acme/app:1.4.2
-```
+- stack deploys, rollbacks, template deploys and git auto-deploys;
+- scaling a service and the scale check before it.
 
-With `pull_policy: always` the deploy still tries to pull. When that fails and the image is already on the host, Dockmesh logs a warning and deploys the cached image, so you do not get a newer one.
+The agent uses them for that request only and does not store them. A `docker login` on the agent host makes no difference, because the agent talks to the Docker API directly and does not read the Docker CLI's stored logins.
 
-Image update checks for running containers query registries anonymously, so private images do not show available updates. See [Image updates](./image-updates.md).
+> **Note:** Agents older than the server ignore the credentials and keep pulling anonymously. Update the agent from **Hosts**. Since a registry without scope tags applies to every host, add scope tags to registries whose credentials must stay off some hosts.
+
+A deploy only pulls images that are missing on the host, unless the service sets `pull_policy: always` or the deploy forces a fresh pull (git auto-deploys do). When such a pull fails and the image is already on the host, Dockmesh logs a warning and deploys the cached image.
 
 ## Storage
 
-Passwords are encrypted with the server's age key (`secrets.age-key` in the data directory). If secrets encryption is disabled (`DOCKMESH_SECRETS_ENCRYPT_ENV=false`), they are stored without encryption. After `dockmesh secrets rotate`, stored registry passwords are not re-encrypted and can no longer be decrypted; enter them again.
+Passwords are encrypted with the server's secrets key (`secrets.age-key` in the data directory). If secrets encryption is turned off (`DOCKMESH_SECRETS_ENCRYPT_ENV=false`), they are stored without encryption. `dockmesh secrets rotate` and **Rotate key…** don't re-encrypt registry passwords, but the previous keys stay in `secrets.age-key.history`, so stored passwords remain readable after a rotation.
 
 Deleting a registry makes later pulls from it anonymous again. Images already on a host stay.
-
-## Limits
-
-- **Scope (host tags)** is saved but makes the credential unusable: Dockmesh never passes host tags when it looks up credentials, so a registry with any scope tag never matches. Leave the scope empty.
-- Only one credential per registry host is used. If you save two entries with the same URL, which one wins is not defined; keep one entry per host.
 
 ## Permissions
 
 | Action | Permission |
 |---|---|
-| List | `registries.view` |
-| Add | `registries.create` |
-| Edit and test | `registries.update` |
-| Delete | `registries.delete` |
+| List | `registries.view` (Images, volumes, networks & registries: View) |
+| Add | `registries.create` (Manage) |
+| Edit and test | `registries.update` (Manage) |
+| Delete | `registries.delete` (Manage) |
 
-The page only shows the list and the forms to users with `registries.update`.
+Registry credentials are instance-wide: only an assignment on everything grants these permissions. The page shows the list and the forms only to users with `registries.update`.
+
+## API
+
+| Method and path | Permission |
+|---|---|
+| `GET /api/v1/settings/registries` | `registries.view` |
+| `POST /api/v1/settings/registries` | `registries.create` |
+| `PUT /api/v1/settings/registries/{id}` | `registries.update` |
+| `POST /api/v1/settings/registries/{id}/test` | `registries.update` |
+| `DELETE /api/v1/settings/registries/{id}` | `registries.delete` |
+
+See [REST API](../reference/api.md).

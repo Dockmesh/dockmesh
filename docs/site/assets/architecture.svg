@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 432" width="940" height="432" role="img" aria-labelledby="arch-title arch-desc" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13">
+  <title id="arch-title">Dockmesh architecture</title>
+  <desc id="arch-desc">The browser and dmctl talk to the dockmesh server over HTTP on port 8080. The server contains the web UI, REST API, RBAC, stacks, SQLite and the scheduler. It drives the local Docker engine through the Docker SDK, runs grype as a subprocess and configures the dockmesh-proxy Caddy container through the Caddy admin API. Agents on remote hosts dial out to the server over a mutual-TLS WebSocket on port 8443.</desc>
+  <style>
+    .box { fill: #ffffff; stroke: #64748b; stroke-width: 1.5; }
+    .server { fill: #f8fafc; stroke: #2563eb; stroke-width: 2; }
+    .chip { fill: #e8eef6; stroke: #94a3b8; stroke-width: 1; }
+    .t { fill: #0f172a; }
+    .b { font-weight: 600; }
+    .m { fill: #475569; font-size: 12px; }
+    .ln { stroke: #475569; stroke-width: 1.5; fill: none; }
+    .ah { fill: #475569; }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #0f172a; stroke: #94a3b8; }
+      .server { fill: #111c33; stroke: #60a5fa; }
+      .chip { fill: #1e293b; stroke: #64748b; }
+      .t { fill: #f1f5f9; }
+      .m { fill: #cbd5e1; }
+      .ln { stroke: #cbd5e1; }
+      .ah { fill: #cbd5e1; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="ah" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="60" y="20" width="200" height="48" rx="6"/>
+  <text class="t b" x="160" y="49" text-anchor="middle">Browser (web UI)</text>
+  <rect class="box" x="360" y="20" width="200" height="48" rx="6"/>
+  <text class="t b" x="460" y="49" text-anchor="middle">dmctl / scripts</text>
+
+  <line class="ln" x1="160" y1="68" x2="160" y2="128" marker-end="url(#arrow)"/>
+  <line class="ln" x1="460" y1="68" x2="460" y2="128" marker-end="url(#arrow)"/>
+  <text class="m" x="310" y="96" text-anchor="middle">HTTP :8080</text>
+  <text class="m" x="310" y="112" text-anchor="middle">REST /api/v1 · WebSockets</text>
+
+  <rect class="server" x="40" y="130" width="540" height="160" rx="8"/>
+  <text class="t b" x="60" y="156">dockmesh server</text>
+  <rect class="chip" x="60" y="172" width="150" height="40" rx="4"/>
+  <text class="t" x="135" y="197" text-anchor="middle">Web UI (embedded)</text>
+  <rect class="chip" x="235" y="172" width="150" height="40" rx="4"/>
+  <text class="t" x="310" y="197" text-anchor="middle">REST API</text>
+  <rect class="chip" x="410" y="172" width="150" height="40" rx="4"/>
+  <text class="t" x="485" y="197" text-anchor="middle">RBAC</text>
+  <rect class="chip" x="60" y="226" width="150" height="40" rx="4"/>
+  <text class="t" x="135" y="251" text-anchor="middle">Stacks (files)</text>
+  <rect class="chip" x="235" y="226" width="150" height="40" rx="4"/>
+  <text class="t" x="310" y="251" text-anchor="middle">SQLite</text>
+  <rect class="chip" x="410" y="226" width="150" height="40" rx="4"/>
+  <text class="t" x="485" y="251" text-anchor="middle">Scheduler</text>
+
+  <line class="ln" x1="120" y1="290" x2="120" y2="358" marker-end="url(#arrow)"/>
+  <text class="m" x="128" y="330">Docker SDK</text>
+  <line class="ln" x1="310" y1="290" x2="310" y2="358" marker-end="url(#arrow)"/>
+  <text class="m" x="318" y="330">subprocess</text>
+  <line class="ln" x1="500" y1="290" x2="500" y2="358" marker-end="url(#arrow)"/>
+  <text class="m" x="508" y="322">Caddy admin API</text>
+  <text class="m" x="508" y="338">127.0.0.1:2019</text>
+
+  <rect class="box" x="40" y="360" width="160" height="56" rx="6"/>
+  <text class="t b" x="120" y="384" text-anchor="middle">Docker engine</text>
+  <text class="m" x="120" y="402" text-anchor="middle">server host</text>
+  <rect class="box" x="230" y="360" width="160" height="56" rx="6"/>
+  <text class="t b" x="310" y="384" text-anchor="middle">grype</text>
+  <text class="m" x="310" y="402" text-anchor="middle">vulnerability scanner</text>
+  <rect class="box" x="420" y="360" width="160" height="56" rx="6"/>
+  <text class="t b" x="500" y="384" text-anchor="middle">dockmesh-proxy</text>
+  <text class="m" x="500" y="402" text-anchor="middle">Caddy · :80 / :443</text>
+
+  <text class="m" x="800" y="128" text-anchor="middle">agents dial out</text>
+  <text class="m" x="800" y="144" text-anchor="middle">mTLS WebSocket :8443</text>
+  <rect class="box" x="700" y="156" width="200" height="56" rx="6"/>
+  <text class="t b" x="800" y="180" text-anchor="middle">dockmesh-agent</text>
+  <text class="m" x="800" y="198" text-anchor="middle">host A · Docker engine</text>
+  <rect class="box" x="700" y="228" width="200" height="56" rx="6"/>
+  <text class="t b" x="800" y="252" text-anchor="middle">dockmesh-agent</text>
+  <text class="m" x="800" y="270" text-anchor="middle">host B · Docker engine</text>
+  <line class="ln" x1="700" y1="184" x2="582" y2="184" marker-end="url(#arrow)"/>
+  <line class="ln" x1="700" y1="256" x2="582" y2="256" marker-end="url(#arrow)"/>
+</svg>

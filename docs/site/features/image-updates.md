@@ -1,47 +1,66 @@
 ---
 title: Image updates
-description: How Dockmesh detects newer images for running containers, what the one-click update does, and how to roll it back.
+description: How Dockmesh detects newer images for containers on the server host, the Updates page, single and batch updates, and rollback.
 ---
 
-Dockmesh checks whether the images of your running containers have a newer version in the registry. You can then update one container with a click and roll it back if needed.
+Dockmesh checks whether the images of running containers on the server host have a newer version in their registry. You can update one container or several at once, follow each update live, and roll back to the previous image.
 
-<!-- update after: updater: recreate stack containers via compose, keep volumes -->
-> **Warning:** The one-click update recreates a single container from its inspected configuration and bypasses compose. Anonymous volumes (a `VOLUME` declared in the image without a named volume or bind mount in `compose.yaml`) are not carried over, so their data is lost. Named volumes and bind mounts are kept. For stacks, prefer pulling and redeploying the stack.
+Update checks and updates only cover the server host, the one Dockmesh runs on. Containers on agent hosts aren't checked, aren't listed on the **Updates** page, and their container page has no **Updates** tab. To move a stack on an agent host to a newer image, pull and redeploy the stack.
 
 ## Detection
 
-<!-- update after: updater: recreate stack containers via compose, keep volumes -->
-- Every 30 minutes, Dockmesh lists the running containers on the local host and compares each image's local digest with the registry's current digest for the same tag.
-- The registry is queried without credentials. Images from private registries show an error instead of a result.
-- Images you built locally show an error, or show up as updatable if an image with the same name and tag exists in the registry.
-- Results are kept in memory. After a server restart, the first check runs again and can post the same notifications again.
-- Containers on agent hosts aren't checked.
+- Every 30 minutes, Dockmesh lists the running containers on the server host and compares each image's registry digest with the registry's current digest for the same tag.
+- Private registries are queried with the matching credentials from [Registries](./registries.md).
+- Images built or loaded locally have no registry digest and show "no registry digest (image built or loaded locally)" instead of a result.
+- Results are stored in the database, so a restart neither forgets them nor announces the same update again.
 
-When an image changes from up to date to update available, Dockmesh posts an `image.update` bell notification linking to the images list. The current results are also available from `GET /api/v1/images/updates`.
+When an image changes from up to date to update available, Dockmesh posts an `image.update` bell notification to users with `images.view` on the server host, and the update shows up as information under **Needs attention** (see [Monitoring](./monitoring.md#needs-attention)). The containers list marks the image with **update**. The current results are available from `GET /api/v1/images/updates`.
 
-## Update a container
+## The Updates page
 
-1. Open the container and switch to the **Updates** tab. The tab is hidden for containers on agent hosts.
-2. Dockmesh shows a preview. For Docker Hub images this includes the remote tag's last update time, size and, where available, the latest release. Other registries show less.
+**Updates** in the sidebar has two parts:
+
+- **Apps**: the app images on the server host that have a newer image, with stack, update kind (**major**, **minor**, **patch**, when the tag is a release version) and when it was checked, plus the containers updated recently.
+- **System**: the Dockmesh server version, the Caddy version of the [reverse proxy](./reverse-proxy.md#caddy-version) (the version tested with this Dockmesh release) and the agent versions, which follow the agent upgrade policy.
+
+Click **Update** on a row, or select several rows and click **Update selected**. Selected updates are queued and run one after another on the server, each as its own operation; you can leave the page while they run. The API for several containers is `POST /api/v1/containers/updates` with `{"container_ids": ["…"]}` (up to 100), which returns `202` with the queued operations. Every container is checked like a single update first, and each one is authorised again when its turn comes.
+
+## Update a single container
+
+1. Open the container and switch to the **Updates** tab.
+2. Dockmesh shows a preview. For Docker Hub images this includes the remote tag's push time, size and, where available, the latest GitHub release. Other registries show less.
 3. Click **Pull & restart** and confirm.
 
-Dockmesh then:
+The update runs as an operation with these steps, shown live with its log in the operations indicator (see [Monitoring](./monitoring.md#running-operations)):
 
-1. pulls the image tag again, using matching credentials from [Registries](./registries.md) if there are any,
-2. tags the old image as `<repo>:<tag>-rollback-<timestamp>`,
-3. stops and removes the container and creates a new one with the same name, configuration, host config and networks, using the new image,
-4. records the change in the container's update history.
+1. **Pull image**: pulls the tag again, with credentials from [Registries](./registries.md) if any match. If the pulled image is identical to the running one, the other steps are skipped.
+2. **Keep current image for rollback**: tags the old image as `<repo>:<tag>-rollback-<timestamp>`.
+3. **Replace container and wait until it runs**: the old container is renamed aside and stopped, the new one is created under the original name, and the old one is removed only once the new one runs and, if it has a healthcheck, passes it. If the new one fails, it is removed and the old one is put back. Named, anonymous and bind-mounted volumes are carried over.
 
-If the pulled image is identical to the running one, nothing is recreated. If creating the new container fails, the old one is already gone and its rollback tag is removed, so redeploy the stack to restore it. There's no health check or scan gate before the swap.
+The update keeps running if you close the page. It can be cancelled while it pulls; after that the swap isn't interrupted.
 
-Because the container is replaced outside compose, the stack's `compose.yaml` doesn't change. The next stack deploy recreates the container from `compose.yaml` again, with whatever image that tag resolves to.
+**Stack containers.** A container of a Dockmesh stack is rebuilt from the stack's `compose.yaml`, together with the other replicas of its service, one at a time. If one replica fails, the ones already moved are put back on the old image. The new image is recorded in the stack's deploy history. Because this applies the stack's current `compose.yaml`, it also needs `stacks.deploy` on the stack.
 
-Updating and rolling back need `containers.update`.
+**Standalone containers** are recreated with their own configuration. Values the new image defines (environment, command, entrypoint, working directory, user, labels, healthcheck) come from the new image unless they were set on the container itself.
+
+There's no vulnerability scan gate before the swap. Containers started with `--rm` are refused, since stopping them would delete them.
 
 ## Roll back
 
-The **Rollback timeline** on the **Updates** tab lists earlier updates. Use **Roll back to this image** on an entry to recreate the container from that entry's rollback tag, the same way as an update. Rollback tags are never deleted automatically. Remove old ones with an image prune or by hand when you no longer need them.
+The **Rollback timeline** on the **Updates** tab lists earlier updates. Use **Roll back to this image** on an entry to recreate the container from that entry's rollback tag, the same way as an update. A rollback only accepts history entries of the container it is called for.
 
-The API equivalents are `POST /api/v1/containers/{id}/update`, `POST /api/v1/containers/{id}/rollback` with a `history_id`, and `GET /api/v1/containers/{id}/update-history`.
+After each successful update, only the newest three rollback tags per image tag are kept. Set `DOCKMESH_UPDATE_ROLLBACK_KEEP` in the server environment to keep a different number. Only tags the updater created are removed; an image a container still uses stays.
+
+## Permissions
+
+| Action | Permission |
+|---|---|
+| See available updates | `containers.view` and `images.view` on the server host |
+| Update, update several, roll back, see the update history | `containers.upgrade` on the container's host and stack |
+| Update or roll back a stack container | also `stacks.deploy` on the stack |
+
+Dockmesh's own containers (the reverse proxy, agents, helpers) can only be updated by an admin. Each update is audited as `container.update`, each rollback as `container.rollback`.
+
+The API equivalents are `POST /api/v1/containers/{id}/update`, `POST /api/v1/containers/{id}/rollback` with a `history_id`, `GET /api/v1/containers/{id}/update-info` (the preview) and `GET /api/v1/containers/{id}/update-history`.
 
 See also [Containers](./containers.md) and [Stacks](./stacks.md).

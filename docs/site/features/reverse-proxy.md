@@ -1,116 +1,171 @@
 ---
 title: Reverse proxy
-description: The optional Caddy container Dockmesh manages on the local host, how to turn it on, routes, TLS modes and what to watch out for.
+description: The optional Caddy container Dockmesh manages on the server host, how to turn it on, sites, site options, Caddyfile import, Caddy versions and certificates.
 ---
 
-Dockmesh can run a Caddy reverse proxy for you. It isn't built into the binary. When the proxy is enabled, Dockmesh starts a Docker container on the local host and configures it through Caddy's admin API. The proxy is off by default. If you already run Traefik, nginx or another proxy, keep it off.
+Dockmesh can run a Caddy reverse proxy for you. It isn't built into the binary: when the proxy is enabled, Dockmesh runs Caddy as a Docker container on the server host and configures it through Caddy's admin API. The proxy is off by default. If you already run Traefik, nginx or another proxy, keep it off.
+
+Everything below happens on **Reverse proxy** in the sidebar, which has the tabs **Sites**, **Certificates**, **Activity** and **Caddy**.
 
 ## The proxy container
 
 | Property | Value |
 |---|---|
 | Container name | `dockmesh-proxy` |
-| Image | `caddy:2` (pulled if missing) |
+| Image | `caddy:2.11.7`, pinned by digest (see [Caddy version](#caddy-version)) |
 | Network | host network, listens on `:80` and `:443` |
-| Admin API | `127.0.0.1:2019` on the host, no authentication |
-| Volumes | `dockmesh-caddy-data` (certificates), `dockmesh-caddy-config` |
+| Admin API | `127.0.0.1:2019` on the host |
+| Restart policy | `unless-stopped` |
+| Volumes | `dockmesh-caddy-data` (certificates), `dockmesh-caddy-config` (config) |
 | Labels | `dockmesh.managed=true`, `dockmesh.component=proxy` |
 
-Ports 80 and 443 must be free on the local host. Because the admin API listens on loopback without authentication, any process on the server host can reconfigure Caddy. Don't run untrusted workloads with host networking on the same machine.
+Ports 80 and 443 must be free on the server host. The admin API has no authentication; it only answers on loopback and refuses requests from browsers on other sites. Any process on the server host can still reconfigure Caddy, so don't run untrusted workloads with host networking on the same machine.
 
-## Turn it on
+Caddy starts from the last config Dockmesh pushed (`caddy run --resume`), so a container that restarts on its own keeps serving its sites. Dockmesh also compares Caddy's running config with the saved sites every 30 seconds and pushes them again if they differ. On a server start the container is kept when it still matches the expected image and settings; otherwise it is replaced.
 
-There are two switches, and they behave differently:
+In the containers list `dockmesh-proxy` is marked as a system container and shown read-only. Only admins can stop, remove or update it, and only admins can browse or back up its two volumes, since they hold the TLS private keys and the proxy's credentials. See [Containers](./containers.md#dockmeshs-own-containers).
 
-- **Enable proxy** (or **Start**) on the **Proxy** page (`POST /api/v1/proxy/enable`) starts the container right away, but doesn't save the setting. After a server restart the proxy is off again in Dockmesh, and routes are no longer pushed to Caddy.
-- The `proxy_enabled` setting is read at startup. If it's `true`, the server starts the proxy on every boot.
+## Turn it on and off
 
-To keep the proxy on across restarts, set the setting. Either put `DOCKMESH_PROXY_ENABLED=true` in the server environment (Dockmesh copies it into the setting on the next start), or set it through the API, which also starts or stops the container:
+Click **Enable proxy** on the **Reverse proxy** page. Dockmesh pulls the Caddy image if needed, starts the container and applies every saved site. The choice is stored in the `proxy_enabled` setting, so the proxy starts again on every server boot. If the container exists but isn't running, the page offers **Start** instead.
 
-```bash
-curl -X PUT https://dockmesh.example.com/api/v1/settings \
-  -H "Authorization: Bearer dmt_…" -H "Content-Type: application/json" \
-  -d '[{"key":"proxy_enabled","value":"true"}]'
-```
+To turn it off, open the actions menu next to **New site** and choose **Stop the proxy…**. This stops and removes the container and stores `proxy_enabled=false`. Sites stay saved, and both volumes are kept, so issued certificates survive.
 
-Changing settings needs `system.update`. Enabling the proxy from the **Proxy** page needs `proxy.create`, disabling it needs `proxy.delete`.
+Enabling needs `proxy.create`, stopping needs `proxy.delete` (`POST /api/v1/proxy/enable`, `POST /api/v1/proxy/disable`). `DOCKMESH_PROXY_ENABLED=true` in the server environment also turns the proxy on; at startup it wins over a stored `false`, so remove it from the environment if you want to keep the proxy off.
 
-To turn it off for good, set `proxy_enabled` to `false` through the API and remove `DOCKMESH_PROXY_ENABLED` from the environment. As long as the variable is set to `true`, it overrides a stored `false` at startup. **Stop** on the **Proxy** page alone only lasts until the next restart. Disabling removes the container but keeps both volumes, so issued certificates survive.
+## Sites
 
-<!-- update after: proxy: keep the Caddy container, resume routes, serve tls none as http -->
-On every start with the proxy enabled, Dockmesh force-removes the `dockmesh-proxy` container and creates it again from `caddy:2`, then pushes the routes. The image tag isn't pinned, so a newer Caddy 2.x image is used whenever one is pulled. Routes exist only in Caddy's running config. If the container restarts on its own (Docker restart, host reboot without a Dockmesh restart), it comes up with no routes until Dockmesh pushes the config again, which happens on the next route change or server start.
+Click **New site** and enter the hostname. The dialog then asks where the site should go:
 
-## Routes
+| Choice | What you pick |
+|---|---|
+| **A container** | A container on the server and one of its published ports; the upstream becomes `localhost:<port>` |
+| **Another address** | Any `host:port`, such as a NAS, a router or a service on another machine (`192.168.10.40:5001`) |
 
-Click **Add route** on the **Proxy** page. A route has three fields:
+Caddy runs on the server's host network, so it reaches containers on the server through their published ports. Docker container names don't resolve there. Containers on agent hosts are reached like any other machine, by the host's address and a published port.
 
-| Field | Example | Notes |
-|---|---|---|
-| **Hostname** | `app.example.com` | The host name Caddy matches |
-| **Upstream** | `127.0.0.1:3000` | `host:port` Caddy connects to |
-| **TLS mode** | `auto` | See below |
+Then choose the certificate (see [TLS modes](#tls-modes)) and, optionally, open the **Advanced** step to set [site options](#site-options). **Create site** saves the site.
 
-Caddy runs with host networking, so it reaches containers through ports published on the host, like `127.0.0.1:3000`. Docker container names don't resolve from the host network. The upstream suggestions in the dialog offer `container-name:port` entries, and those won't connect unless the name resolves on the host. Dockmesh only checks that the upstream isn't empty.
+Rules Dockmesh checks:
 
-Every change sends the whole config to Caddy's `/load` endpoint, with no container restart. A route can be switched off with its toggle and keeps its settings. Routes need `proxy.create`, `proxy.update` and `proxy.delete`. Reading them needs `proxy.view`.
+- One hostname per site. It can't be `localhost`, a loopback address or a bare `*`.
+- The upstream must be a plain `host:port`: no scheme, path, placeholder or socket, and it can't point at the proxy's admin API.
+
+A site that breaks these rules (for example one saved by an older version) isn't served, and admins get a notice listing it.
+
+Creating a site runs as an operation with live progress: **Save the site**, **Apply the Caddy configuration** and **Get a certificate**. The certificate step waits up to 3 minutes for Caddy to obtain or serve the certificate; after that, or when you cancel it, the site stays and Caddy keeps trying. The step is skipped for HTTP-only sites. The progress also appears in the operations indicator in the top bar, and **Show last creation steps** in a site's menu opens it again. See [Monitoring](./monitoring.md#running-operations).
+
+Every change sends the whole config to Caddy's `/load` endpoint, without restarting the container. A site can be switched off and keeps its settings. Click a site to open its page, with the tabs **Overview**, **Options** and **Config**.
+
+| Action | Permission |
+|---|---|
+| View sites, certificates, activity, version and settings | `proxy.view` |
+| Enable the proxy, create sites, import a Caddyfile | `proxy.create` |
+| Edit sites and options, switch them on or off, change the Caddy version and proxy settings | `proxy.update` |
+| Delete sites, stop the proxy | `proxy.delete` |
+
+The proxy is server-wide: these permissions only count from an assignment on everything. See [Permissions](../concepts/permissions.md).
 
 ## Site options
 
-Open a site on the **Proxy** page and switch to its **Options** tab to change them. Each group starts at Caddy's defaults; options with side effects (plain HTTP next to HTTPS, HSTS, an IP allow list, forward auth, health checks, buffered uploads) carry a warning with the consequence. **Save options** sends the whole set; Dockmesh checks every value and shows a rejected one next to its field. When you create a site, the optional **Advanced** step offers the same groups, closed until you open one. The **Config** tab shows the Caddy JSON the saved site produces. Users who can only view the proxy see the options read-only.
+The **Options** tab of a site edits its options in six groups. Every option starts at Caddy's default. Options with side effects carry a warning that says what happens. **Save options** sends the whole set; Dockmesh checks every value and shows a rejected one next to its field. The **Config** tab shows the Caddy JSON the saved site produces. Users without `proxy.update` see the options read-only, with header values hidden.
 
-Over the API the options are the `options` object of `POST /api/v1/proxy/routes` and `PUT /api/v1/proxy/routes/{id}`. An empty object keeps Caddy's defaults, so existing routes behave as before.
-
-| Section | Options |
+| Group | Options |
 |---|---|
-| `performance` | `flush_immediately` (stream responses, for SSE and live logs), `buffer_requests` (off streams uploads to the app), `dial_timeout`, `read_timeout`, `write_timeout` (`30s`, `1h`, up to `168h`), `max_body_bytes`, `stream_close_delay` (keeps WebSockets open after a config change), `compression` |
-| `routing` | `extra_upstreams`, `lb_policy` (`round_robin`, `least_conn`, `first`, `client_ip_hash`), `health_path`, `www_redirect` |
-| `https` | `allow_http` (serve HTTP too instead of redirecting), `hsts` |
-| `access` | `basic_auth` users, `ip_mode` (`allow` or `deny`) with `ip_ranges`, `forward_auth` (`url`, `copy_headers`) |
-| `headers` | `security` (nosniff, SAMEORIGIN framing, strict referrer), `request_set`, `request_remove`, `response_set`, `response_remove` |
-| `logs` | `access_log` (one line per request in `docker logs dockmesh-proxy`) |
+| **Routing** | **More upstreams** (requests are shared with the site's destination), **Load balancing** (**Random (Caddy default)**, **Round robin**, **Fewest connections**, **First available**, **Same client, same upstream**), **Health check path**, **Redirect www.&lt;host&gt;** |
+| **HTTPS** | **Also serve plain HTTP** instead of redirecting, HSTS (one year) |
+| **Performance** | **Stream responses** (for server-sent events and live logs), **Buffer uploads** (up to 4 MiB per request; off streams uploads through), **Connect timeout**, **Read timeout**, **Write timeout** (durations like `30s` or `1h`, up to `168h`), **Largest upload**, **Keep streams on reload** (WebSockets stay open this long after a config change), **Compress responses** (zstd or gzip) |
+| **Access** | **Password protection** (basic auth users), **IP addresses** (**Everyone**, **Only the addresses below**, **Everyone except the addresses below**), **Ask an auth service first** (forward auth, for example Authelia or Authentik, with headers copied from its answer) |
+| **Headers** | **Security headers** (nosniff, SAMEORIGIN frames, strict referrer policy), headers set on or removed from requests to the upstream and responses to visitors |
+| **Logs** | **Access log**: one line per request in `docker logs dockmesh-proxy` |
 
-A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives.
+Values can't contain Caddy placeholders (`{…}`), and you can't add raw Caddy directives.
 
-Some values are write-only: once saved they are never shown again, not even to admins, and leaving the field empty keeps the stored value.
+Some values are write-only: once saved they are never shown again, not even to admins or in the config preview, and leaving the field empty keeps the stored value.
 
-- Basic-auth passwords are stored as bcrypt hashes; send a user without `password` to keep its password.
-- Request headers marked **Secret** (`"secret": true`, e.g. an `Authorization` or API-key header to the app) come back with an empty `value` and `value_set: true`; send them with an empty value to keep it. When the site gets an upstream it didn't have before (a new destination or an added load-balanced upstream), enter the value again. Response headers can't be secret, since every visitor receives them.
-- The query of the forward-auth URL (it can hold a token) is left out of every response, with `query_set: true`. A URL sent without a query keeps the stored one as long as scheme and host stay the same; for another server enter the query again, or set `clear_query` to drop it.
+- Basic-auth passwords (8 characters or more) are stored as bcrypt hashes.
+- Request headers marked **Secret**, such as an `Authorization` or API-key header for the app. When the site gets an upstream it didn't have before, enter the value again. Response headers can't be secret, since every visitor receives them.
+- The query of the forward-auth URL, which can hold a token. A URL saved without a query keeps the stored one as long as scheme and host stay the same; **Remove the stored query** drops it.
 
-Write-only keeps values out of the UI and the API; it doesn't protect them from someone who can edit the proxy and points another site, such as the auth service's own site, at a server they control. Caddy also keeps the full config in its own volume (`dockmesh-caddy-config`) and the TLS private keys in `dockmesh-caddy-data`; only admins can browse or back up those volumes, and nobody can open the `dockmesh-proxy` container's files from Dockmesh.
+Users who can view but not edit the proxy see every header value as `********` and the forward-auth URL only as `scheme://host:port`.
 
-`GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes, secret header values and the forward-auth query replaced. Users who can view proxy routes but not edit them (`proxy.update`) also see every other header value as `********` and the forward-auth URL only as `scheme://host:port`, since a token can sit in its path; a URL saved back in that form keeps the stored path and query. Changing a site writes a `proxy.route_update` audit entry that lists what changed (`upstream`, `tls_mode`, `enabled`, `options.<group>`), never the values.
+Write-only keeps values out of the UI and the API. It doesn't protect them from someone who can edit the proxy and points another site, such as the auth service's own site, at a server they control.
 
-### Importing a Caddyfile
+Changing a site writes a `proxy.route_update` audit entry that lists what changed (`upstream`, `tls_mode`, `enabled`, `options.<group>`), never the values.
 
-`POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": true}` shows how each site of an existing Caddyfile maps to a route and its options; without `dry_run` the sites are created **disabled**, so you can check them before they serve traffic. The proxy has to be running, because Caddy itself parses the file. Each site comes back as `ready`, `partial` (the `unsupported` list names what wasn't imported, such as `file_server`, path rules or placeholders like `{remote_host}`) or `skipped` (with the reason, for example a host that already has a route). `import <name>` works for snippets defined earlier in the same Caddyfile; imports of files or globs, imports with arguments, heredocs (`<<`), client certificate files and `{$ENV}` variables are refused, so paste that content instead. Because of that check, the word `import` can't appear anywhere else in the file either, not even in a comment. A block listing several names becomes one site per name, and a `www.` block that only redirects becomes the site's www redirect. Creating sites needs `proxy.create`.
+Over the API the options are the `options` object of `POST /api/v1/proxy/routes` and `PUT /api/v1/proxy/routes/{id}`. An empty object keeps Caddy's defaults. A `PUT` without `options` keeps the stored ones, a `PUT` with `options` replaces them. `GET /api/v1/proxy/routes/{id}/config` returns the generated Caddy config of one site.
 
-## Caddy version and proxy settings
+## Importing a Caddyfile
 
-`GET /api/v1/proxy/version` lists the Caddy versions tested with your Dockmesh release (pinned by digest) and the one that runs. `PUT /api/v1/proxy/version` with `{"version": "2.11.6"}` recreates the proxy container with that version; if Caddy doesn't come up with the current config, the previous version is started again and the call fails with 502. `POST /api/v1/proxy/version/rollback` goes back to the version before the last switch, whose image is kept until the next switch. Without a chosen version the proxy follows the default of each Dockmesh release. With `DOCKMESH_PROXY_IMAGE` set, the version can't be changed here.
+**Import Caddyfile** on the **Reverse proxy** page takes an existing Caddyfile. The proxy has to be running, because Caddy itself parses the file. Paste it and click **Analyze**: Dockmesh lists every site with how it maps to a site and its options, and changes nothing until you click **Import**.
 
-`PUT /api/v1/proxy/settings` sets `acme_email` (expiry notices; required for ZeroSSL), `acme_ca` (empty for Let's Encrypt, `letsencrypt_staging` for tests, or `zerossl`) and `trusted_proxies` (`cloudflare` trusts Cloudflare's published edge ranges, so IP filters and logs see the visitor's address). Switching versions and changing settings needs `proxy.update` and is recorded in the audit log; users without it see the ACME email with its local part hidden.
+Each site comes back as:
+
+| Status | Meaning |
+|---|---|
+| **ready** | Everything was converted |
+| **partial** | Imported, but the list under it names what wasn't, such as `file_server`, path rules, placeholders like `{remote_host}` or an own certificate (the site gets automatic HTTPS instead) |
+| **skipped** | Not imported, with the reason, for example a block without `reverse_proxy`, a host that already has a site or an upstream Dockmesh doesn't accept |
+
+What is converted: the hostnames and the `reverse_proxy` upstreams with their load balancing, health check and timeouts, `tls internal` and plain-HTTP sites, `encode`, `request_body` size limits, `basic_auth`, `forward_auth`, `header` and `request_header` set and remove rules, IP filters of the form `@x client_ip …` with `respond @x 403`, and the access log. A block listing several names becomes one site per name, and a `www.` block that only redirects becomes the site's www redirect. Global options aren't imported; the dialog lists them.
+
+Imported sites start **disabled**, so you can check them before they serve traffic.
+
+`import <name>` works for snippets defined earlier in the same Caddyfile; Dockmesh expands them before Caddy sees the file. Refused, so paste that content instead:
+
+- imports of files or globs, and imports with arguments or a block,
+- heredocs (`<<`),
+- client certificate files (`client_auth`, `trusted_ca_cert_file`, `trusted_leaf_cert_file`, `trust_pool`),
+- environment variables (`{$NAME}`).
+
+Because of that check, the word `import` can't appear anywhere else in the file, not even in a comment. The file can be up to 256 KiB.
+
+The API is `POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": true}`; without `dry_run` the sites are created. Importing needs `proxy.create` and is recorded as `proxy.import` in the audit log.
+
+## Caddy version
+
+The **Caddy** tab shows which Caddy version runs and the versions tested with your Dockmesh release, each pinned by digest. **Switch** replaces the container with the chosen version; sites are briefly unavailable. If Caddy doesn't come up with the current config, Dockmesh starts the previous version again and reports the switch as failed. **Go back** returns to the version before the last switch, whose image is kept until the next switch. The proxy has to be running to switch.
+
+Without a chosen version, the proxy follows the default of each Dockmesh release. When a newer default is available, the page header shows "*version* recommended", and the version also appears on the **Updates** page (see [Image updates](./image-updates.md)).
+
+With `DOCKMESH_PROXY_IMAGE` set in the server environment, Dockmesh runs that image and the version can't be changed here.
+
+The API is `GET` and `PUT /api/v1/proxy/version` (`{"version": "2.11.6"}`) and `POST /api/v1/proxy/version/rollback`. A failed switch returns `502`.
+
+## Proxy settings
+
+The **Caddy** tab also holds the proxy-wide settings (`PUT /api/v1/proxy/settings`):
+
+| Setting | API field | Values |
+|---|---|---|
+| **Certificate contact** | `acme_email` | Email the certificate authority uses for expiry warnings. Optional, required for ZeroSSL |
+| **Certificate authority** | `acme_ca` | Let's Encrypt (empty), `letsencrypt_staging` for tests (browsers don't trust these certificates), or `zerossl` |
+| **Trusted proxies** | `trusted_proxies` | `cloudflare` trusts Cloudflare's published edge ranges, so IP filters and logs see the visitor's address. Only enable it when all traffic comes through Cloudflare |
+
+Switching versions and changing settings need `proxy.update` and are recorded in the audit log. Users without it see the certificate contact with its local part hidden.
 
 ## TLS modes
 
 | Mode | Label in the UI | Behaviour |
 |---|---|---|
-| `auto` | **Let's Encrypt** | Caddy obtains a certificate over ACME. The host name must resolve to this server and port 80 must be reachable from the internet. |
-| `internal` | **Internal CA** | Caddy issues a certificate from its own local CA. Clients need to trust Caddy's root. |
-| `none` | **HTTP only** | No automation policy is set for the host. |
+| `auto` | **Let's Encrypt** | Caddy obtains a certificate over ACME from the configured certificate authority. The hostname must resolve to this server and port 80 must be reachable from the internet. |
+| `internal` | **Internal CA** | Caddy issues a certificate from its own local CA. Browsers warn until they trust Caddy's root. |
+| `none` | **HTTP only** | Served over plain HTTP on port 80, without a certificate or an HTTPS redirect. |
 
-<!-- update after: proxy: keep the Caddy container, resume routes, serve tls none as http -->
-`none` doesn't give you a plain-HTTP site. All routes share one Caddy server on `:80` and `:443` with automatic HTTPS, so Caddy still tries to get a certificate for a `none` host and redirects HTTP to HTTPS. If TLS terminates in front of Dockmesh (a load balancer or tunnel), point that at your service directly rather than through a `none` route.
+DNS-01 challenges and wildcard certificates can't be configured, and you can't upload your own certificate.
 
-DNS-01 challenges and wildcard certificates can't be configured, even though the hostname hint mentions them. You also can't upload your own certificate.
+## Certificates and activity
 
-## Certificates and ACME log
+The **Certificates** tab lists the HTTPS sites with issuer, days until expiry and a status: **valid**, **renew soon** (less than 14 days left, which means a renewal hasn't worked yet), **not served** (the name may not point to this server yet, or Caddy is still getting the certificate) or **site off**. Dockmesh reads the certificate by opening a TLS connection to each site on port 443, a few at a time in the background, and reuses the result for 15 minutes. Caddy renews certificates about 30 days before they expire.
 
-`GET /api/v1/proxy/routes` probes each route on port 443 and returns `cert_issuer`, `cert_valid_from`, `cert_valid_to` and `cert_days_left`. The UI doesn't show these fields.
+Expiring certificates also show up elsewhere:
 
-The **ACME activity** card on the **Proxy** page lists certificate events (obtain, renew, failure) that Dockmesh reads from the container's log. It keeps the last 200 events in memory, and the list is empty after a server restart. For the full log, run `docker logs dockmesh-proxy`.
+- **Needs attention** on the overview and under **Activity** lists certificates that expire within 30 days (critical within 7 days). See [Monitoring](./monitoring.md#needs-attention).
+- A built-in alert rule notifies when a certificate expires within 14 days. See [Alerts](./alerts.md).
 
-Per-route traffic metrics stay empty, because Caddy's metrics aren't enabled in the config Dockmesh pushes.
+The **Activity** tab merges certificate events (obtained, renewed, failed) from Caddy's log with the sites created in the last 7 days. Certificate events are kept in memory, the last 200 since Caddy started; for the full log run `docker logs dockmesh-proxy`.
+
+The site page shows requests, p95 latency and 5xx errors when Caddy reports them. The config Dockmesh pushes doesn't turn on Caddy's HTTP metrics, so these figures usually stay empty.
 
 ## Using your own proxy instead
 
