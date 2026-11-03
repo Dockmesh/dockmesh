@@ -99,14 +99,9 @@ Some releases sign everyone out once, for example when the session format change
 
 ## Rolling back
 
-To go back to the previous binary only:
+Putting only the previous binary back is not a supported downgrade. Migrations only go forward, and the older binary does not check the schema version: it starts on the migrated database, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.x it does not start at all (`setup state init failed ... no such column: role`).
 
-```bash
-sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
-sudo systemctl restart dockmesh
-```
-
-The older binary does not check the schema version. It starts on a database that the newer version has already migrated, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.2 it does not start (`setup state init failed ... no such column: role`), so restore the snapshot as well. For a clean rollback, put the pre-migration snapshot back as well. Changes made after the upgrade are lost.
+The way back is the previous binary together with the pre-migration snapshot the upgrade wrote. Changes made after the upgrade are lost.
 
 ```bash
 sudo systemctl stop dockmesh
