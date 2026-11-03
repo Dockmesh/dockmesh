@@ -41,7 +41,7 @@ It is built for homelabs and small teams with a handful to a few dozen hosts. It
 - **Updates** — see which images have a newer version, update one or many, roll back to the previous image
 - **Backups** — scheduled, age-encrypted backups of volumes, stacks and Dockmesh itself to local disk, SMB, SFTP, WebDAV or S3; read back and verified after every run; restore from the UI
 - **Reverse proxy** — optional Caddy with automatic HTTPS, per-site options, import of an existing Caddyfile
-- **Alerts** — CPU, memory and disk thresholds, container restarts, OOM kills, offline hosts and expiring certificates, sent to email, Discord, Slack or webhooks
+- **Alerts** — container CPU and memory, restart loops, stopped, unhealthy or OOM-killed containers, offline hosts, disk usage, failed or overdue backups and expiring certificates; sent to email, Discord, Slack, Teams, ntfy, Gotify, Pushover, PagerDuty or a generic webhook
 - **Access** — roles per area with host, tag or stack scope; SSO with OIDC, SAML, LDAP and OAuth2; 2FA; hash-chained audit log
 - **Security scans** — image vulnerability scans with Grype
 
@@ -55,18 +55,18 @@ On a Linux host with Docker Engine running:
 curl -fsSL https://get.dockmesh.dev | sudo bash
 ```
 
-The installer puts the binary in `/usr/local/bin`, creates a service user and a systemd unit and starts Dockmesh.
+The installer picks the amd64 or arm64 build, verifies its checksum, puts the binary in `/usr/local/bin`, creates a service user and a systemd unit and starts Dockmesh.
 Open `http://<host>:8080/setup` to create the admin account and finish the setup.
 
-Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host.
+Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host (Linux with systemd).
 
-Requirements, macOS, Docker Compose and offline installs: [installation guide](https://dockmesh.dev/docs/installation/).
+Requirements, macOS, manual and from-source installs and running in Docker: [installation guide](https://dockmesh.dev/docs/getting-started/installation/).
 
 ## Upgrade
 
-Dockmesh shows new releases in the UI. Run the installer again or use the in-app update; database changes are
-applied on start, and agents can be upgraded from **Hosts**. Read the [changelog](CHANGELOG.md) before a minor
-release.
+Dockmesh shows a banner in the UI when a new release is out. To upgrade the server, run the installer again
+(see the [upgrade guide](https://dockmesh.dev/docs/operations/upgrade/)); database changes are applied on start.
+Agents are upgraded from **Hosts**. Read the [changelog](CHANGELOG.md) before a minor release.
 
 ## How it works
 
@@ -76,8 +76,8 @@ release.
 
 ## Project status
 
-Dockmesh is before 1.0. Each release is tested on real machines (server and agents, upgrades, every backup target,
-SSO providers) before it is tagged; see the [changelog](CHANGELOG.md). Breaking changes are listed there with
+Dockmesh is before 1.0. Every release candidate is installed and tested on lab VMs before it is tagged; minor
+releases get the full run (server and agents, upgrades, every backup target, SSO sign-in). See the [changelog](CHANGELOG.md). Breaking changes are listed there with
 upgrade notes.
 
 ## Community
