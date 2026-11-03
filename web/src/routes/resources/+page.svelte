@@ -1010,8 +1010,8 @@
       </div>
     {:else}
       {@const grid = isAll
-        ? '24px minmax(220px, 1.4fr) 110px minmax(220px, 1.6fr) 130px 110px 100px 28px'
-        : '24px minmax(220px, 1.4fr) 110px minmax(220px, 1.6fr) 130px 110px 28px'}
+        ? '24px minmax(200px, 1.4fr) 90px minmax(180px, 1.6fr) 120px 100px 100px 28px'
+        : '24px minmax(200px, 1.4fr) 90px minmax(180px, 1.6fr) 120px 100px 28px'}
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <input type="checkbox" disabled={!canVolDelete} checked={volumeSelected.size === visibleVolumes.length && visibleVolumes.length > 0} onchange={toggleVolumeAll} />
@@ -1134,7 +1134,7 @@
         <EmptyState icon={NetworkIcon} title={networks.length === 0 ? m.resources_no_networks() : m.resources_no_networks_match()} description={networks.length === 0 ? m.resources_no_networks_hint() : m.resources_no_networks_match_hint()} />
       </div>
     {:else}
-      {@const grid = '24px minmax(220px, 1.5fr) 140px 140px 180px 90px 100px 28px'}
+      {@const grid = '24px minmax(200px, 1.5fr) 120px 130px 150px 90px 100px 28px'}
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <span></span>

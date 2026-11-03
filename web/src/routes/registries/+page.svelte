@@ -846,8 +846,8 @@
   }
   .reg-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1.2fr) minmax(200px, 1.2fr) 150px 150px minmax(140px, 1fr) 150px;
-    gap: 14px;
+    grid-template-columns: minmax(170px, 1.2fr) minmax(170px, 1.2fr) 120px 120px minmax(120px, 1fr) 150px;
+    gap: 12px;
     align-items: center;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-subtle);

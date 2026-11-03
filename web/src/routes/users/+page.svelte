@@ -187,7 +187,7 @@
     ...(allowed('users.create') ? [{ key: 'invites', label: m.users_tab_invites(), count: pendingInvites.length }] : [])
   ]);
 
-  const U_COLS = 'minmax(180px, 1.2fr) minmax(260px, 2.4fr) 110px 70px 110px 120px 36px';
+  const U_COLS = 'minmax(180px, 1.2fr) minmax(240px, 2.4fr) 110px 70px 110px 120px 36px';
   const R_COLS = 'minmax(280px, 2fr) 90px 100px minmax(260px, 3fr)';
   const I_COLS = 'minmax(180px, 1.2fr) minmax(200px, 1.6fr) 140px 120px 90px';
 </script>

@@ -301,7 +301,7 @@
     return items;
   }
 
-  const COLS = '22px 14px minmax(200px, 1.6fr) 64px 130px 130px 130px 110px 150px 40px';
+  const COLS = '22px 14px minmax(180px, 1.6fr) 64px 100px 100px 100px 110px minmax(90px, 150px) 40px';
 </script>
 
 <section class="dm-page">
