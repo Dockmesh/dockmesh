@@ -122,5 +122,5 @@ func (h *Handlers) SSOExchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
-	writeJSON(w, http.StatusOK, login)
+	writeLogin(w, http.StatusOK, login)
 }

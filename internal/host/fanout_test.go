@@ -117,6 +117,10 @@ func (f *fakeHost) ListVolumes(context.Context) ([]any, error) { panic("no") }
 func (f *fakeHost) InspectVolume(context.Context, string) (volume.Volume, error) {
 	panic("no")
 }
+func (f *fakeHost) CreateVolume(context.Context, string, string, map[string]string) (volume.Volume, error) {
+	panic("no")
+}
+func (f *fakeHost) RemoveVolume(context.Context, string, bool) error { panic("no") }
 func (f *fakeHost) DeployStack(context.Context, string, string, string) (*compose.DeployResult, error) {
 	panic("no")
 }

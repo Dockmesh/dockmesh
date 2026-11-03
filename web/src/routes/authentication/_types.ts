@@ -95,7 +95,7 @@ export interface OIDCTemplate {
 export const OIDC_TEMPLATES: OIDCTemplate[] = [
   { id: 'keycloak', label: 'Keycloak', icon: '🔐',
     issuer_hint: 'https://auth.example/realms/main',
-    scopes: 'openid profile email groups',
+    scopes: 'openid profile email',
     help: m.authn_tpl_keycloak_help() },
   { id: 'authelia', label: 'Authelia', icon: '🛡️',
     issuer_hint: 'https://auth.example',

@@ -1,0 +1,3 @@
+kind: Security
+body: The Redis template turns on password auth with a generated password and publishes the port on `127.0.0.1` by default (new `bind_address` parameter). Before, it ran without auth on every interface unless you typed `--requirepass` into the password field. Stacks already deployed from it are unchanged.
+time: 2026-11-03T11:21:20.9113659+01:00

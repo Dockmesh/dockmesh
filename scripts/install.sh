@@ -783,6 +783,37 @@ step 3 $TOTAL_STEPS "Downloading"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Grype is pinned to one release and checked against the SHA-256 below
+# before anything runs as root. Bump the version and all four sums
+# together from the release's grype_<version>_checksums.txt.
+GRYPE_VERSION="0.121.1"
+grype_sha256() {
+  case "$1" in
+    linux_amd64)  echo "bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657" ;;
+    linux_arm64)  echo "33670612aad351c48cf3c37f4a85d8b043d1b64b21e6034e675bb00b956d78c1" ;;
+    darwin_amd64) echo "20fefd09105fb7bf2bbfe29c6bb14edbe4c17214436753735c172465fffe69f6" ;;
+    darwin_arm64) echo "daa9ffdc0022b34fb476f94cbcabac9d850882c895d83e4a5ecf5e0ab13bce77" ;;
+  esac
+}
+
+install_grype() {
+  local platform="${OS}_${ARCH}" want got tarball dir
+  want="$(grype_sha256 "$platform")"
+  [ -n "$want" ] || return 1
+  tarball="grype_${GRYPE_VERSION}_${platform}.tar.gz"
+  dir="$TMP/grype"
+  mkdir -p "$dir"
+  curl -fsSL --proto '=https' -o "$dir/$tarball" \
+    "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/${tarball}" || return 1
+  got="$(sha256_of "$dir/$tarball")"
+  if [ "$got" != "$want" ]; then
+    warn "grype download checksum mismatch (got $got, want $want)"
+    return 1
+  fi
+  tar -xzf "$dir/$tarball" -C "$dir" grype || return 1
+  $USE_SUDO install -m 0755 "$dir/grype" "$INSTALL_DIR/grype"
+}
+
 info "$TARBALL"
 
 # Silent download + post-summary (Homebrew / apt / cargo pattern).
@@ -855,8 +886,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
   # already on the host — `grype` self-updates its DB, not its binary.
   if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ] && ! command -v grype >/dev/null 2>&1; then
     info "installing grype (CVE scanner)..."
-    if curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-        | $USE_SUDO sh -s -- -b "$INSTALL_DIR" >/dev/null 2>&1; then
+    if install_grype; then
       GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
       ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
     else
@@ -999,19 +1029,16 @@ ok "binary          $INSTALL_DIR/dockmesh"
 
 # Grype CVE scanner — drives the "Scan" action in the Resources view.
 # Without it the backend logs "scanner disabled" and the UI returns
-# 503 "scanner not configured" on every scan attempt. Anchore ships
-# a self-contained installer that drops a single binary at our PATH;
-# silent unless installation fails (in which case we warn but proceed
-# — scanning is a non-blocking feature). Skippable via env var for
-# air-gapped / minimal installs.
+# 503 "scanner not configured" on every scan attempt. A failed install
+# only warns: scanning is not required to run Dockmesh. Skippable via
+# env var for air-gapped / minimal installs.
 if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ]; then
   if command -v grype >/dev/null 2>&1; then
     GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
     ok "grype scanner   already installed (v${GRYPE_VER:-unknown})"
   else
     info "installing grype (CVE scanner)..."
-    if curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-        | $USE_SUDO sh -s -- -b "$INSTALL_DIR" >/dev/null 2>&1; then
+    if install_grype; then
       GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
       ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
     else

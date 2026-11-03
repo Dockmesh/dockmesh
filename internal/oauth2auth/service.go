@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/rbac"
 
@@ -706,6 +707,7 @@ func (s *Service) decryptSecret(stored string) (string, error) {
 }
 
 func applyDefaults(in ProviderInput) ProviderInput {
+	in.Scopes = strings.Join(splitScopes(in.Scopes), " ")
 	if in.UsernameField == "" {
 		in.UsernameField = "id"
 	}
@@ -721,17 +723,10 @@ func applyDefaults(in ProviderInput) ProviderInput {
 	return in
 }
 
+// splitScopes accepts scopes separated by spaces, as OAuth 2.0 writes
+// them, or by commas.
 func splitScopes(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 }
 
 func randomToken(n int) string {

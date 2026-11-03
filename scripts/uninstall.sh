@@ -261,8 +261,10 @@ if [ "$DO_STOP" = "1" ]; then
       ;;
   esac
   # Kill stragglers — someone may have started 'dockmesh serve' manually.
-  if pgrep -f '/usr/local/bin/dockmesh' >/dev/null 2>&1; then
-    run pkill -f '/usr/local/bin/dockmesh' 2>/dev/null || true
+  # Anchored so dockmesh-agent and dmctl from the same directory survive.
+  SERVER_PROC="^$BIN_DIR/dockmesh( |\$)"
+  if pgrep -f "$SERVER_PROC" >/dev/null 2>&1; then
+    run pkill -f "$SERVER_PROC" 2>/dev/null || true
     ok "killed lingering dockmesh processes"
   fi
 fi

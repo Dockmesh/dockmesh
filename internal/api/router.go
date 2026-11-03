@@ -115,7 +115,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/auth/oauth2/{slug}/login", h.OAuth2Login)
 		r.Get("/auth/oauth2/{slug}/callback", h.OAuth2Callback)
 
-		// Agent enrollment — token is the auth, no JWT required.
+		// Old enrollment route; answers 410 with the agent-port URL.
 		r.Post("/agents/enroll", h.EnrollAgent)
 
 		// Invite-link accept flow — token is the auth. Preview shows
@@ -624,6 +624,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/auth/providers", h.ListAuthProviders)
+				r.Get("/auth/callback-base", h.SSOCallbackBase)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------

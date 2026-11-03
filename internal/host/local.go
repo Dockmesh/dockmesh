@@ -325,6 +325,20 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
+func (h *LocalHost) CreateVolume(ctx context.Context, name, driver string, labels map[string]string) (volume.Volume, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return volume.Volume{}, ErrNoDocker
+	}
+	return h.cli.CreateVolume(ctx, name, driver, labels)
+}
+
+func (h *LocalHost) RemoveVolume(ctx context.Context, name string, force bool) error {
+	if h.cli == nil || !h.cli.Connected() {
+		return ErrNoDocker
+	}
+	return h.cli.RemoveVolume(ctx, name, force)
+}
+
 // VolumeBrowseEntries lists a directory inside a local volume.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {

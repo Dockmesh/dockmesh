@@ -51,6 +51,8 @@ const (
 	FrameReqNetworkInspect = "req.networks.inspect"
 	FrameReqVolumeList     = "req.volumes.list"
 	FrameReqVolumeInspect  = "req.volumes.inspect"
+	FrameReqVolumeCreate   = "req.volumes.create"
+	FrameReqVolumeRemove   = "req.volumes.remove"
 	// Volume content browsing (P.11.8). Read-only: list one directory
 	// level or read a single file capped at the caller's maxBytes.
 	// The stream frame for large-file download is deferred — the UI
@@ -161,6 +163,8 @@ const (
 	// CapContainerFiles, agent: answers the req.container.files.* frames
 	// and serves the "container_file" stream kind.
 	CapContainerFiles = "container_files"
+	// CapVolumeManage, agent: answers req.volumes.create and req.volumes.remove.
+	CapVolumeManage = "volumes.manage"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -252,6 +256,17 @@ type ResourceIDReq struct {
 
 type ImageRemoveReq struct {
 	ID    string `json:"id"`
+	Force bool   `json:"force,omitempty"`
+}
+
+type VolumeCreateReq struct {
+	Name   string            `json:"name"`
+	Driver string            `json:"driver,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+type VolumeRemoveReq struct {
+	Name  string `json:"name"`
 	Force bool   `json:"force,omitempty"`
 }
 

@@ -3,6 +3,7 @@ package oidc
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -55,6 +56,42 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 			}
 			if linked != 0 {
 				t.Error("account still linked after delete")
+			}
+		})
+	}
+}
+
+func TestScopesAcceptSpacesAndCommas(t *testing.T) {
+	tests := []struct {
+		name, in, stored string
+		want             []string
+	}{
+		{"spaces", "openid profile email", "openid profile email", []string{"openid", "profile", "email"}},
+		{"commas", "openid,profile,email", "openid profile email", []string{"openid", "profile", "email"}},
+		{"mixed", " openid, profile  groups ", "openid profile groups", []string{"openid", "profile", "groups"}},
+		{"empty", "", "openid profile email", []string{"openid", "profile", "email"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			if err := db.Migrate(database); err != nil {
+				t.Fatal(err)
+			}
+			s := NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil, "")
+			p, err := s.CreateProvider(context.Background(), ProviderInput{Slug: "kc", DisplayName: "Keycloak",
+				IssuerURL: "https://sso.example/realms/main", ClientID: "c", ClientSecret: "s", Scopes: tt.in})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Scopes != tt.stored {
+				t.Errorf("stored %q, want %q", p.Scopes, tt.stored)
+			}
+			if got := splitScopes(p.Scopes); !slices.Equal(got, tt.want) {
+				t.Errorf("split %q, want %q", got, tt.want)
 			}
 		})
 	}

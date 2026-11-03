@@ -1,0 +1,3 @@
+kind: Security
+body: The old enrollment route `POST /api/v1/agents/enroll` on the HTTP port is gone (it answers 410). It handed out an agent's key and certificate over whatever reached the HTTP port, plain HTTP included; the install command has enrolled on the agent port since v0.4.0.
+time: 2026-11-03T11:17:48.1988975+01:00

@@ -66,7 +66,7 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	if h.Audit != nil && res.User != nil {
 		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeLogin(w, http.StatusOK, res)
 }
 
 // MFAEnrollStart begins enrollment for the current user and returns the

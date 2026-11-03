@@ -294,12 +294,25 @@
     copyWithToast(s, m.common_copied());
   }
 
-  const callbackBase = $derived(typeof window !== 'undefined' ? window.location.origin : '');
+  // The server builds callback URLs from DOCKMESH_BASE_URL, not from the
+  // browser's address or the Base URL setting; show what it really sends.
+  let callbackBase = $state('');
+  let callbackFromEnv = $state(true);
+  async function loadCallbackBase() {
+    try {
+      const res = await api.auth.callbackBase();
+      callbackBase = res.base_url;
+      callbackFromEnv = res.from_env;
+    } catch {
+      /* the box stays without a base and the dialogs show the path only */
+    }
+  }
   const enabledProviders = $derived(providers.filter((p) => p.enabled));
 
   $effect(() => {
     if (allowed('system.update')) {
       loadProviders();
+      loadCallbackBase();
       loadRoles();
       loadPolicy();
       loadSignin();
@@ -436,16 +449,22 @@
 
         <div class="auth-callback-hint">
           <div class="auth-callback-title">{m.authn_callback_urls()}</div>
-          <div class="auth-callback-row">
-            <code class="auth-callback-code">{callbackBase}/api/v1/auth/oidc/<em>{`{slug}`}</em>/callback</code>
-            <button
-              type="button"
-              class="dm-btn dm-btn-ghost dm-btn-xs"
-              onclick={() => copyText(`${callbackBase}/api/v1/auth/oidc/{slug}/callback`)}
-            >
-              <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
-            </button>
-          </div>
+          {#each [{ kind: 'OIDC', path: 'oidc', end: 'callback' }, { kind: 'OAuth2', path: 'oauth2', end: 'callback' }, { kind: 'SAML ACS', path: 'saml', end: 'acs' }] as cb (cb.path)}
+            <div class="auth-callback-row">
+              <span class="auth-callback-kind">{cb.kind}</span>
+              <code class="auth-callback-code">{callbackBase}/api/v1/auth/{cb.path}/<em>{`{slug}`}</em>/{cb.end}</code>
+              <button
+                type="button"
+                class="dm-btn dm-btn-ghost dm-btn-xs"
+                onclick={() => copyText(`${callbackBase}/api/v1/auth/${cb.path}/{slug}/${cb.end}`)}
+              >
+                <Copy size={11} strokeWidth={1.5} /> {m.authn_copy_lc()}
+              </button>
+            </div>
+          {/each}
+          {#if callbackBase && !callbackFromEnv}
+            <p class="auth-callback-warn" role="status">{m.authn_callback_no_env({ url: callbackBase })}</p>
+          {/if}
           <p class="auth-callback-blurb">
             {m.authn_callback_blurb_before()}
             <code class="auth-inline-code">{`{slug}`}</code> {m.authn_callback_blurb_after()}
@@ -625,7 +644,7 @@
             </div>
 
             <p class="auth-callback-blurb">
-              {m.authn_later_release()}
+              {m.authn_not_available()}
             </p>
 
             {#if signinDirty}
@@ -852,6 +871,17 @@
     white-space: nowrap;
     min-width: 0;
     flex: 1;
+  }
+  .auth-callback-kind {
+    flex: none;
+    min-width: 88px;
+    font-size: 11.5px;
+    color: var(--fg-muted);
+  }
+  .auth-callback-warn {
+    margin: 6px 0 0;
+    font-size: 11.5px;
+    color: var(--warn);
   }
   .auth-callback-blurb {
     margin: 6px 0 0;

@@ -52,13 +52,13 @@ location ~ ^/api/v1/auth/(login|mfa)$ {
 | 80, 443 | Managed Caddy proxy, only when enabled | As your published apps require |
 | 2019 | Caddy admin API | Never; bound to `127.0.0.1` |
 
-The HTTP port also accepts enrollment at `POST /api/v1/agents/enroll` and returns the agent's key and certificate in the response. Reach it only through TLS (your proxy on 443), never over plain HTTP across a network.
+Agents enroll only on the agent listener, over TLS checked against the agents CA. The old route `POST /api/v1/agents/enroll` on the HTTP port answers `410 Gone`.
 
 The agent listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`. If you don't use remote agents, block 8443 in the firewall. Agent hosts need no inbound ports at all. See [Ports](../reference/ports.md).
 
 The managed proxy container `dockmesh-proxy` uses host networking, and its admin API on `127.0.0.1:2019` has no authentication. It refuses requests from browsers on other sites, and proxy routes can't forward to it, but any process on the server, and any container started with host networking, can change the proxy configuration. Don't run untrusted workloads with `network_mode: host` on the server.
 
-**Metrics.** `/metrics` requires a bearer token with Settings & audit: View on everything. Keep `DOCKMESH_METRICS_AUTH` at its default (`true`) unless the endpoint is only reachable from your monitoring network.
+**Metrics.** `/metrics` requires a bearer token with Settings & audit: Metrics (or higher) on everything; a role with only the Metrics level can't read the audit log. Keep `DOCKMESH_METRICS_AUTH` at its default (`true`) unless the endpoint is only reachable from your monitoring network.
 
 ## Setup wizard
 
@@ -144,4 +144,4 @@ The browser loads template icons from the HTTPS URLs the templates name; the Con
 | Self-upgrade | the agent listener's binary endpoint, mTLS | when an admin upgrades the agent | Don't upgrade from the UI |
 | Image pulls | registries, through the host's Docker daemon, with credentials the server sends for registries in scope | deploys and image updates on that host; `busybox` from Docker Hub for volume exports | Mirror the images |
 
-Backups of agent volumes stream through the agent connection; the server writes them to the backup target. The agent installer itself downloads the installer script and binary from `DOCKMESH_BASE_URL` and, when Docker is missing, runs `https://get.docker.com`. The server installer `install.sh` downloads from GitHub and installs Grype from `raw.githubusercontent.com/anchore/grype` unless `DOCKMESH_NO_SCANNER=1` is set.
+Backups of agent volumes stream through the agent connection; the server writes them to the backup target. The agent installer itself downloads the installer script and binary from `DOCKMESH_BASE_URL` and, when Docker is missing, runs `https://get.docker.com`. The server installer `install.sh` downloads from GitHub and installs a pinned Grype release from `github.com/anchore/grype/releases`, checked against a SHA-256 in the script, unless `DOCKMESH_NO_SCANNER=1` is set.

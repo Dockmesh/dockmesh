@@ -1,0 +1,3 @@
+kind: Fixed
+body: OIDC and OAuth2 scopes are accepted separated by spaces or commas and stored space-separated. `uninstall.sh` stops only the server process in `DOCKMESH_INSTALL_DIR`, not a `dockmesh-agent` started from the same directory.
+time: 2026-11-03T11:30:27.3760333+01:00

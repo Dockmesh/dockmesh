@@ -11,6 +11,7 @@ const TEXTS = new Map<string, () => string>([
   ["Operate", m.rbac_operate],
   ["Deploy", m.rbac_deploy],
   ["Manage", m.rbac_manage],
+  ["Metrics", m.rbac_metrics],
   ["Containers", m.rbac_containers],
   ["Images, volumes, networks & registries", m.rbac_images_volumes_networks_registries],
   ["Hosts", m.rbac_hosts],

@@ -321,11 +321,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, map[string]any{"user": user})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"user":          result.User,
-		"access_token":  result.AccessToken,
-		"refresh_token": result.RefreshToken,
-	})
+	writeLogin(w, http.StatusCreated, result)
 }
 
 func scopeLabels(ss []rbac.Scope) []string {

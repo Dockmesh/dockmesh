@@ -253,6 +253,7 @@ var routeGates = []struct {
 	{"PUT", "/api/v1/audit/webhook", rbac.PermAuditWrite},
 	{"POST", "/api/v1/audit/webhook/test", rbac.PermAuditWrite},
 	{"GET", "/api/v1/auth/providers", rbac.PermSystemUpdate},
+	{"GET", "/api/v1/auth/callback-base", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/oidc/providers", rbac.PermSystemUpdate},
 	{"POST", "/api/v1/oidc/providers", rbac.PermSystemUpdate},
 	{"PUT", "/api/v1/oidc/providers/{id}", rbac.PermSystemUpdate},
@@ -491,6 +492,19 @@ var alsoNeeds = map[string]rbac.Perm{
 	"DELETE /api/v1/containers/{id}/files": rbac.PermContainersExec,
 }
 
+// fleetWide are routes whose handler also needs the permission on
+// everything, because the action reaches every host.
+var fleetWide = map[string]bool{
+	"PUT /api/v1/agents/upgrade-policy":               true,
+	"POST /api/v1/agents/upgrade-policy/run":          true,
+	"POST /api/v1/hosts/{id}/drain/plan":              true,
+	"POST /api/v1/hosts/{id}/drain/execute":           true,
+	"GET /api/v1/hosts/{id}/drain/{drain_id}":         true,
+	"POST /api/v1/hosts/{id}/drain/{drain_id}/pause":  true,
+	"POST /api/v1/hosts/{id}/drain/{drain_id}/resume": true,
+	"POST /api/v1/hosts/{id}/drain/{drain_id}/abort":  true,
+}
+
 // Every built-in role, assigned on everything and on the local host, runs
 // against every permission-gated route: the route gate lets it through
 // exactly when the role holds the permission and, for instance-wide
@@ -549,8 +563,11 @@ func TestRouteGateMatrix(t *testing.T) {
 			if also, ok := alsoNeeds[g.method+" "+g.path]; ok {
 				want = want && c.perms[also]
 			}
+			if fleetWide[g.method+" "+g.path] {
+				want = want && c.scope.IsGlobal()
+			}
 			code, body := call(g.method, path, c.token)
-			denied := code == http.StatusForbidden && (body == "forbidden" || strings.Contains(body, "out of scope"))
+			denied := code == http.StatusForbidden && (body == "forbidden" || strings.Contains(body, "out of scope") || strings.Contains(body, "on everything"))
 			if denied == want {
 				t.Errorf("%s %s as %s: %d %s, want allowed=%v", g.method, g.path, c.name, code, body, want)
 			}

@@ -14,15 +14,17 @@ Dockmesh ships six templates. They are embedded in the binary and written to the
 | MySQL 8 | `mysql-8` | `mysql:8` | `db_name` (app), `db_user` (app), `db_password` and `root_password` (generated), `port` (3306) |
 | Nginx | `nginx` | `nginx:alpine` | `port` (8080) |
 | PostgreSQL 16 | `postgres-16` | `postgres:16-alpine` | `db_name` (app), `db_user` (postgres), `db_password` (generated), `port` (5432) |
-| Redis 7 | `redis-7` | `redis:7-alpine` | `password` (empty), `port` (6379) |
+| Redis 7 | `redis-7` | `redis:7-alpine` | `password` (generated), `bind_address` (127.0.0.1), `port` (6379) |
 | Uptime Kuma | `uptime-kuma` | `louislam/uptime-kuma:1` | `port` (3001) |
 | Vaultwarden | `vaultwarden` | `vaultwarden/server:latest` | `port` (8080), `admin_token` (generated), `signups_allowed` (`true` or `false`, default false) |
 
 Defaults are in parentheses; "generated" means a random value is created when you leave the field blank. Port parameters must be 2 to 5 digits. All six keep their data in named volumes.
 
-The Redis template inserts `password` into the `redis-server` command line exactly as entered. To turn on authentication, enter `--requirepass <password>`, not the password alone.
+The Redis template always turns on authentication. `password` may contain letters, digits, `-` and `_` (at least 12 characters) and is stored in the stack's `.env` as `REDIS_PASSWORD`, not in `compose.yaml`. Redis reads it on start from stdin, so it doesn't show in the container's command or the host's process list. It's also set as `REDISCLI_AUTH` in the container, so `redis-cli` inside it, the healthcheck and the **Redis save** backup hook sign in on their own; seeing it needs the extra to see environment values.
 
-> **Warning:** with the password left empty, Redis runs without authentication and the template publishes its port on every interface of the host. Docker's port rules bypass host firewalls such as ufw, so the port is reachable from any network that reaches the host. Set a password, or edit the stack's `compose.yaml` after deploying to bind the port to `127.0.0.1` or remove it. The password is stored in `compose.yaml` and is visible in the container's command line.
+The port is published on `127.0.0.1` unless you change `bind_address`, so only the host itself reaches Redis. Containers in the same stack reach it as `redis:6379` either way.
+
+> **Warning:** with `bind_address` set to `0.0.0.0`, the port is reachable from every network that reaches the host. Docker's port rules bypass host firewalls such as ufw. The MySQL, PostgreSQL, Nginx, Uptime Kuma and Vaultwarden templates publish their ports on every interface; Uptime Kuma creates its admin account on the first visit, so finish its setup right after deploying.
 
 ## Deploying a template
 

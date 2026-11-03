@@ -1,0 +1,3 @@
+kind: Fixed
+body: The restore progress dialog opens the restore you just started, not an earlier restore of the same backup run from the last minute.
+time: 2026-11-03T11:38:04.3398346+01:00

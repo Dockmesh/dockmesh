@@ -76,7 +76,7 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": slug, "kind": "ldap"})
 	}
 	h.auditSSORekey(r, res.RekeyedUser, "ldap", slug)
-	writeJSON(w, http.StatusOK, res.LoginResult)
+	writeLogin(w, http.StatusOK, res.LoginResult)
 }
 
 // -----------------------------------------------------------------------------

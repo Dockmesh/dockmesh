@@ -462,8 +462,16 @@ sudo journalctl -u dockmesh -b | grep -i migrat
 
 **Fix:** install Grype where the service user finds it on `PATH`, or set `DOCKMESH_SCANNER_BINARY` to its full path, and restart Dockmesh. The binary is only looked up at startup.
 
+Download a release, check it against the release's checksum file and install it (replace the version with the one you want and `amd64` with `arm64` on ARM):
+
 ```bash
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+V=0.121.1
+cd "$(mktemp -d)"
+curl -fsSLO "https://github.com/anchore/grype/releases/download/v$V/grype_${V}_linux_amd64.tar.gz"
+curl -fsSLO "https://github.com/anchore/grype/releases/download/v$V/grype_${V}_checksums.txt"
+sha256sum --ignore-missing -c "grype_${V}_checksums.txt"
+tar -xzf "grype_${V}_linux_amd64.tar.gz" grype
+sudo install -m 0755 grype /usr/local/bin/grype
 sudo systemctl restart dockmesh
 ```
 

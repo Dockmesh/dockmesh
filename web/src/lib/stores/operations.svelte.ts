@@ -173,14 +173,35 @@ function createOperationsStore() {
       for (const op of Array.isArray(ops) ? ops : [ops]) upsert(op);
       schedule();
     },
+    // Ids of the operations of ref the server already has, so a find right
+    // after starting another one can skip them.
+    async known(ref: string, kind: string): Promise<Set<string>> {
+      try {
+        for (const op of await api.operations.list({ ref, kind, limit: 20 })) upsert(op);
+      } catch {
+        /* without the list, find falls back to the time window */
+      }
+      return new Set(this.all.filter((o) => o.ref === ref && o.kind === kind).map((o) => o.id));
+    },
     // Waits briefly for the operation of ref to show up, e.g. right after
     // starting an action whose response does not name its operation.
-    async find(ref: string, kind: string, since: number, timeoutMs = 4000): Promise<Operation | undefined> {
+    // Operations in skip were there before the action started.
+    async find(
+      ref: string,
+      kind: string,
+      since: number,
+      timeoutMs = 4000,
+      skip: Set<string> = new Set()
+    ): Promise<Operation | undefined> {
       const deadline = Date.now() + timeoutMs;
       // Server and browser clocks may differ, so a minute of slack.
       const fresh = () =>
         this.all.find(
-          (o) => o.ref === ref && o.kind === kind && (isActive(o) || Date.parse(o.created_at) >= since - 60_000)
+          (o) =>
+            o.ref === ref &&
+            o.kind === kind &&
+            !skip.has(o.id) &&
+            (isActive(o) || Date.parse(o.created_at) >= since - 60_000)
         );
       while (Date.now() < deadline) {
         const hit = fresh();

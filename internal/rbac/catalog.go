@@ -93,8 +93,11 @@ var Areas = []Area{
 			Perms: []Perm{PermUsersCreate, PermUsersUpdate, PermUsersDelete, PermRolesCreate, PermRolesUpdate, PermRolesDelete, PermTokensManageOthers}},
 	}},
 	{Key: "settings", Label: "Settings & audit", Levels: []Level{none,
-		{Key: "view", Label: "View", Items: []string{"Read the audit log", "Scrape Prometheus metrics"},
-			Perms: []Perm{PermAuditView, PermMetricsView}},
+		// Below View so a Prometheus scrape token needs no audit access.
+		{Key: "metrics", Label: "Metrics", Items: []string{"Scrape Prometheus metrics"},
+			Perms: []Perm{PermMetricsView}},
+		{Key: "view", Label: "View", Items: []string{"Read the audit log"},
+			Perms: []Perm{PermAuditView}},
 		{Key: "manage", Label: "Manage", Items: []string{"Change instance settings", "Configure sign-in and identity providers", "Audit retention, export and SIEM webhook", "Install Dockmesh updates"},
 			Perms: []Perm{PermAuditExport, PermAuditWrite, PermSystemUpdate, PermSystemUpgrade}},
 	}},

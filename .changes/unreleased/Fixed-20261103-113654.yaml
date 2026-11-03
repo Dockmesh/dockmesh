@@ -1,0 +1,3 @@
+kind: Fixed
+body: Volumes are created and deleted on the host they belong to. Before, both always acted on the server's host, so deleting a volume listed for an agent host removed a server volume of the same name. Network rows of agent hosts open their network page. Agents need this version to create or delete volumes.
+time: 2026-11-03T11:36:54.9344156+01:00
