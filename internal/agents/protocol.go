@@ -172,6 +172,8 @@ const (
 	// CapResourceManage, agent: answers req.volumes.prune and the
 	// req.networks.create/remove/prune frames.
 	CapResourceManage = "resources.manage"
+	// CapVolumeFileDownload, agent: serves the "volume_file" stream kind.
+	CapVolumeFileDownload = "volume_file.download"
 )
 
 // Stream control ops beyond the exec "resize".

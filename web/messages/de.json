@@ -5942,5 +5942,6 @@
   "volumes_tab_files": "Dateien",
   "volumes_truncated_notice": "Nur das erste 1 MiB wird angezeigt. Für die ganze Datei herunterladen.",
   "volumes_truncated_preview": "gekürzte Vorschau",
+  "volumes_download_failed": "Download fehlgeschlagen",
   "volumes_utc": "UTC"
 }

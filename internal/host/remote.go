@@ -693,6 +693,37 @@ func (h *RemoteHost) VolumeReadFile(ctx context.Context, name, subpath string, m
 	return &out, nil
 }
 
+// ErrAgentNoVolumeDownload is returned for a volume file download on an
+// agent that predates the "volume_file" stream kind.
+var ErrAgentNoVolumeDownload = errors.New("the agent on this host is too old to download volume files; update it from the Hosts page")
+
+func (h *RemoteHost) VolumeDownloadFile(ctx context.Context, name, subpath string) (io.ReadCloser, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapVolumeFileDownload) {
+		return nil, ErrAgentNoVolumeDownload
+	}
+	s, err := ag.OpenStream(ctx, "volume_file", "", map[string]any{"volume": name, "path": subpath})
+	if err != nil {
+		return nil, fmt.Errorf("open volume_file stream: %w", err)
+	}
+	return &browseErrReader{ReadCloser: s}, nil
+}
+
+// browseErrReader maps the agent's stream error back to the browse
+// sentinels, so a refused path answers the same status as on the server.
+type browseErrReader struct{ io.ReadCloser }
+
+func (r *browseErrReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		err = agentBrowseError(err)
+	}
+	return n, err
+}
+
 // agentError keeps the agent's message but matches the sentinel it
 // carried, so errors.Is works across the wire.
 type agentError struct {

@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
+	"path"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -220,6 +223,53 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// DownloadVolumeFile streams a whole file inside a volume as an
+// attachment, for files past the preview cap and binary files.
+//
+//	GET /api/v1/volumes/{name}/browse/download?path=/data/app.db
+func (h *Handlers) DownloadVolumeFile(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
+		return
+	}
+	name := chi.URLParam(r, "name")
+	if !h.requireVolumeNotOwn(w, r, name) {
+		return
+	}
+	sub := r.URL.Query().Get("path")
+	if sub == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	rc, err := target.VolumeDownloadFile(r.Context(), name, sub)
+	if err != nil {
+		writeError(w, mapBrowseStatus(err), err.Error())
+		return
+	}
+	defer rc.Close()
+	// A refused path can arrive as the stream's first error; peeking keeps
+	// it a proper error response instead of a broken download.
+	br := bufio.NewReaderSize(rc, 32<<10)
+	if _, err := br.Peek(1); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, mapBrowseStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionVolumeReadFile, name, map[string]string{"path": sub, "host": target.ID(), "mode": "download"})
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeFilename(path.Base(sub))+"\"")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.Copy(w, br)
+}
+
 // mapBrowseStatus picks a reasonable HTTP code for the shared
 // host-package browse errors so the UI can branch without string
 // sniffing.
@@ -246,7 +296,8 @@ func mapBrowseStatus(err error) int {
 		return http.StatusRequestEntityTooLarge
 	case errors.Is(err, host.ErrVolumeMountpointMissing),
 		errors.Is(err, host.ErrContainerNoRm),
-		errors.Is(err, host.ErrAgentNoContainerFiles):
+		errors.Is(err, host.ErrAgentNoContainerFiles),
+		errors.Is(err, host.ErrAgentNoVolumeDownload):
 		return http.StatusConflict
 	case errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker):
 		return http.StatusServiceUnavailable
