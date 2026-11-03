@@ -26,9 +26,12 @@ type scaleRequest struct {
 // Safety: refuses if container_name or hard port bindings are set.
 // Warns (but proceeds with force=true) if the service is stateful.
 func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
@@ -135,9 +138,12 @@ type rollingUpdateRequest struct {
 //
 // P.12.5b.
 func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
@@ -234,7 +240,7 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 //
 //	GET /api/v1/stacks/{name}/services/{service}/scale
 func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -263,7 +269,7 @@ func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/stacks/{name}/scale
 func (h *Handlers) ListServiceScale(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return

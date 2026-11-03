@@ -84,9 +84,12 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "deploy history store not configured")
 		return
 	}
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {

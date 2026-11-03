@@ -939,9 +939,12 @@ func writeAdoptError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
@@ -1229,9 +1232,12 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name strin
 }
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if h.refuseOtherHost(w, r, chi.URLParam(r, "name"), target) {
 		return
 	}
 	if !h.requireHostAccess(w, r, target.ID()) {
@@ -1271,12 +1277,20 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
-	target, err := h.pickHost(r)
+	name := chi.URLParam(r, "name")
+	target, err := h.pickStackHost(r, name)
 	if err != nil {
+		// A stack created for an offline host but never deployed runs
+		// nowhere; that is an empty status, not an outage.
+		if h.Deployments != nil {
+			if d, gerr := h.Deployments.Get(r.Context(), name); gerr == nil && (d == nil || d.HostID == "") {
+				writeJSON(w, http.StatusOK, []any{})
+				return
+			}
+		}
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	name := chi.URLParam(r, "name")
 	// A stack that was never deployed runs nowhere. StackScope lets this
 	// probe through for it, so a caller limited to other hosts gets the
 	// empty status instead of a 403 for the default host.

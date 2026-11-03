@@ -327,7 +327,7 @@ paths:
         `.dockmesh.meta.json`; without that, deploys the base compose.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
-        - $ref: "#/components/parameters/HostQuery"
+        - $ref: "#/components/parameters/StackHostQuery"
         - in: query
           name: environment
           required: false
@@ -343,7 +343,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "409": {$ref: "#/components/responses/StackDeployConflict"}
         "422":
           description: Compose validation failed — see message.
           content:
@@ -394,7 +394,7 @@ paths:
   /stacks/{name}/deployments/{id}/rollback:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
-      - $ref: "#/components/parameters/HostQuery"
+      - $ref: "#/components/parameters/StackHostQuery"
       - in: path
         name: id
         required: true
@@ -426,7 +426,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "409": {$ref: "#/components/responses/StackDeployConflict"}
         "422":
           description: |
             The entry's compose snapshot was cleared because it held `.env`
@@ -582,12 +582,13 @@ paths:
       summary: Stop a deployed stack (docker compose down without -v)
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
-        - $ref: "#/components/parameters/HostQuery"
+        - $ref: "#/components/parameters/StackHostQuery"
       responses:
         "204": {description: Stopped.}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackOnOtherHost"}
   /stacks/{name}/status:
     get:
       operationId: stacks.status
@@ -600,7 +601,7 @@ paths:
         not include the requested host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
-        - $ref: "#/components/parameters/HostQuery"
+        - $ref: "#/components/parameters/StackHostQuery"
       responses:
         "200":
           description: One row per service.
@@ -625,7 +626,7 @@ paths:
       summary: Replica count per service
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
-        - $ref: "#/components/parameters/HostQuery"
+        - $ref: "#/components/parameters/StackHostQuery"
       responses:
         "200":
           description: Scale snapshot per service.
@@ -645,7 +646,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
       - $ref: "#/components/parameters/ServicePath"
-      - $ref: "#/components/parameters/HostQuery"
+      - $ref: "#/components/parameters/StackHostQuery"
     get:
       operationId: stacks.scale_check
       tags: [stacks]
@@ -694,6 +695,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackOnOtherHost"}
         "422":
           description: Scale blocked by a safety check (singleton port/volume).
           content:
@@ -703,7 +705,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
       - $ref: "#/components/parameters/ServicePath"
-      - $ref: "#/components/parameters/HostQuery"
+      - $ref: "#/components/parameters/StackHostQuery"
     post:
       operationId: stacks.rolling_update
       tags: [stacks]
@@ -734,6 +736,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackOnOtherHost"}
         "500":
           description: Rollout paused or failed. When the engine produced a partial result it is returned inside `result`.
           content:
