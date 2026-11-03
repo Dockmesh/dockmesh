@@ -25,3 +25,15 @@ func TestRemoteHostResolvesSessionPerCall(t *testing.T) {
 		t.Fatalf("offline agent exec: got %v", err)
 	}
 }
+
+// An agent without the volume frames gets a clear refusal instead of a
+// request it can't answer.
+func TestRemoteVolumeManageNeedsCapability(t *testing.T) {
+	h := NewRemote("a1", "edge-1", &fakeLive{ag: &agents.ConnectedAgent{ID: "a1", Hello: agents.HelloPayload{Capabilities: []string{agents.CapContainerFiles}}}})
+	if _, err := h.CreateVolume(context.Background(), "data", "", nil); !errors.Is(err, ErrAgentNoVolumeManage) {
+		t.Errorf("create on an old agent: %v", err)
+	}
+	if err := h.RemoveVolume(context.Background(), "data", true); !errors.Is(err, ErrAgentNoVolumeManage) {
+		t.Errorf("remove on an old agent: %v", err)
+	}
+}

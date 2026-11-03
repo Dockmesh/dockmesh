@@ -44,7 +44,7 @@ Dockmesh's own volumes can only be browsed, backed up and restored into by an ad
 
 ## Creating a volume
 
-**Create volume** asks for a **Name**, a **Driver** (default `local`) and, with several hosts, a **Host**. The volume is always created on the server's host; the host choice is not used. Stacks normally create their volumes on deploy, so you rarely need this.
+**Create volume** asks for a **Name**, a **Driver** (default `local`) and, with several hosts, a **Host**, and creates the volume on that host. An agent older than the server can't create or delete volumes and answers with a hint to update it. Stacks normally create their volumes on deploy, so you rarely need this.
 
 ## Restoring data into a volume
 
@@ -60,7 +60,7 @@ The volume pages have no restore action. Restore a volume or stack backup from *
 
 What a prune removes is decided by Docker. On Docker Engine 23 and later, a prune without filters removes only unused **anonymous** volumes; named volumes stay. On older engines it removes every unused volume, named or not. Check your engine version (`docker version`) before you rely on either behaviour.
 
-> **Warning:** Creating, deleting and pruning volumes always act on the server's host, even when an agent host is selected. Deleting a volume listed for an agent host removes the volume of the same name on the server's host, if there is one.
+Creating and deleting act on the volume's host. **Prune orphan** and **System cleanup…** always act on the server's host only, also when an agent host or **All hosts** is selected.
 
 There is no undo. Take a backup of volumes whose data matters first; see [Backups](../operations/backups.md). Stack migration refuses stacks with named volumes; see [Migration and drain](./migration-and-drain.md).
 
@@ -69,7 +69,8 @@ There is no undo. Take a backup of volumes whose data matters first; see [Backup
 | Action | Needs |
 |---|---|
 | List and inspect | **Images, volumes, networks & registries**: View |
-| Create, delete and prune | **Images, volumes, networks & registries**: Manage on an assignment that covers the server's host |
+| Create and delete | **Images, volumes, networks & registries**: Manage on an assignment that covers the volume's host |
+| Prune | **Images, volumes, networks & registries**: Manage on an assignment that covers the server's host |
 | Browse and read files | The extra **Browse and read files in containers and volumes** on an assignment that covers the volume's host (everything, the host or one of its tags); an assignment on a single stack is not enough |
 
 See [Permissions](../concepts/permissions.md).

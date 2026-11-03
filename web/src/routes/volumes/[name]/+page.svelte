@@ -211,7 +211,7 @@
       confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
-      await api.volumes.remove(name, true);
+      await api.volumes.remove(name, true, hostId);
       toast.success(m.volumes_deleted(), name);
       goto('/resources?tab=volumes');
     } catch (err) {

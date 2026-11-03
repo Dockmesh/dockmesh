@@ -2265,8 +2265,13 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/volumes${qs}`, { method: 'POST', body: JSON.stringify({ name, driver }) });
     },
-    remove: (name: string, force = false) =>
-      request<void>(`/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    remove: (name: string, force = false, host = 'local') => {
+      const qs = new URLSearchParams();
+      if (force) qs.set('force', 'true');
+      if (host && host !== 'local') qs.set('host', host);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return request<void>(`/volumes/${encodeURIComponent(name)}${suffix}`, { method: 'DELETE' });
+    },
     prune: () => request<any>('/volumes/prune', { method: 'POST' }),
     // P.11.8 — volume content browsing. Admin-only; every call is audited.
     browse: (name: string, path = '', host = 'local') => {

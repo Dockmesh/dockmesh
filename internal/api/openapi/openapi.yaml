@@ -8018,7 +8018,12 @@ paths:
     post:
       operationId: volumes.create
       tags: [volumes]
-      summary: Create a volume on the central daemon
+      summary: Create a volume on a host
+      description: |
+        `host` picks the host (default the server's own). Agents older than
+        this server answer 503 and need an update.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
       requestBody:
         required: true
         content:
@@ -8041,6 +8046,11 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Host offline, or its agent can't create volumes yet.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /volumes/prune:
     post:
       operationId: volumes.prune
@@ -8082,7 +8092,7 @@ paths:
     delete:
       operationId: volumes.remove
       tags: [volumes]
-      summary: Remove a volume (must be unused unless forced)
+      summary: Remove a volume on the host given by `host` (must be unused unless forced)
       parameters:
         - name: force
           in: query

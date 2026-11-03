@@ -22,7 +22,7 @@ Users whose access is limited to some hosts or stacks only see networks on those
 
 ## Network details
 
-Click a network to open its page. The page always looks the network up on the server host, so for a network on an agent host it fails to load.
+Click a network to open its page; it looks the network up on the host the row belongs to.
 
 The tabs:
 

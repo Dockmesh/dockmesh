@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +21,9 @@ import (
 func imageErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
+	}
+	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrAgentNoVolumeManage) {
+		return http.StatusServiceUnavailable
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

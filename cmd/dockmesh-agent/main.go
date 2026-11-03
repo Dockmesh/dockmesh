@@ -1021,6 +1021,20 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		vol, err := cli.VolumeInspect(ctx, req.ID)
 		respond(conn, f.ID, vol, err)
 
+	case agents.FrameReqVolumeCreate:
+		var req agents.VolumeCreateReq
+		_ = json.Unmarshal(f.Payload, &req)
+		if req.Driver == "" {
+			req.Driver = "local"
+		}
+		vol, err := cli.VolumeCreate(ctx, volume.CreateOptions{Name: req.Name, Driver: req.Driver, Labels: req.Labels})
+		respond(conn, f.ID, vol, err)
+
+	case agents.FrameReqVolumeRemove:
+		var req agents.VolumeRemoveReq
+		_ = json.Unmarshal(f.Payload, &req)
+		respond(conn, f.ID, nil, cli.VolumeRemove(ctx, req.Name, req.Force))
+
 	case agents.FrameReqVolumeList:
 		list, err := cli.VolumeList(ctx, volume.ListOptions{})
 		if err != nil {

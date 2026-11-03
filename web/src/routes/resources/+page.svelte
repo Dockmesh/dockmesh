@@ -473,6 +473,16 @@
       volCreating = false;
     }
   }
+  // Rows of a single-host list carry no host_id; they belong to the host
+  // the list was loaded for.
+  function rowHost(r: { host_id?: string }): string {
+    return r.host_id ?? (hosts.isAll ? 'local' : hosts.id || 'local');
+  }
+  function hostQuery(r: { host_id?: string }): string {
+    const h = rowHost(r);
+    return h !== 'local' ? `?host=${encodeURIComponent(h)}` : '';
+  }
+
   async function deleteVolume(v: VolumeRow) {
     if (!(await confirm.ask({
       title: m.resources_delete_volume_title(),
@@ -481,7 +491,7 @@
       confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
-      await api.volumes.remove(v.Name, true);
+      await api.volumes.remove(v.Name, true, rowHost(v));
       toast.success(m.resources_deleted(), v.Name);
       await loadVolumes();
     } catch (err) {
@@ -498,7 +508,7 @@
     let ok = 0, fail = 0;
     for (const v of volumes) {
       if (!volumeSelected.has(vKey(v))) continue;
-      try { await api.volumes.remove(v.Name, true); ok++; } catch { fail++; }
+      try { await api.volumes.remove(v.Name, true, rowHost(v)); ok++; } catch { fail++; }
     }
     toast.success(fail ? m.resources_deleted_n_failed({ ok, fail }) : m.resources_deleted_n({ ok }));
     volumeSelected = new Set();
@@ -1143,7 +1153,7 @@
           <div class="res-row" style="grid-template-columns: {grid}; opacity: {isSystem(n) ? '0.7' : '1'};">
             <span></span>
             <div class="res-col-tag">
-              <a href={`/networks/${n.Id}`} class="res-col-tag-line res-col-tag-link">
+              <a href={`/networks/${n.Id}${hostQuery(n)}`} class="res-col-tag-line res-col-tag-link">
                 <span class="res-name-text" title={n.Name}>{n.Name}</span>
                 {#if isSystem(n)}<span class="dm-pill dm-pill-neutral res-mini-pill">{m.resources_system()}</span>{/if}
               </a>

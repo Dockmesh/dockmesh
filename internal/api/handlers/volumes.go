@@ -103,13 +103,14 @@ func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "")
 		return
 	}
 	var req volumeRequest
@@ -117,25 +118,26 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
-	vol, err := h.Docker.CreateVolume(r.Context(), req.Name, req.Driver, req.Labels)
+	vol, err := target.CreateVolume(r.Context(), req.Name, req.Driver, req.Labels)
 	if err != nil {
 		// Reuse the image-error classifier — docker returns similar
 		// "plugin not found" strings for volume driver lookup failures.
 		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
-	h.audit(r, audit.ActionVolumeCreate, req.Name, nil)
+	h.audit(r, audit.ActionVolumeCreate, req.Name, map[string]string{"host": target.ID()})
 	writeJSON(w, http.StatusCreated, vol)
 }
 
 func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "")
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -143,11 +145,11 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
-	if err := h.Docker.RemoveVolume(r.Context(), name, force); err != nil {
+	if err := target.RemoveVolume(r.Context(), name, force); err != nil {
 		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
-	h.audit(r, audit.ActionVolumeRemove, name, nil)
+	h.audit(r, audit.ActionVolumeRemove, name, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }
 

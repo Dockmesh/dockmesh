@@ -400,6 +400,38 @@ func (h *RemoteHost) InspectVolume(ctx context.Context, name string) (volume.Vol
 	return out, nil
 }
 
+// ErrAgentNoVolumeManage is returned for volume create and remove on an
+// agent that predates those frames.
+var ErrAgentNoVolumeManage = errors.New("the agent on this host is too old to create or remove volumes; update it from the Hosts page")
+
+func (h *RemoteHost) volumeManage(ctx context.Context, frameType string, req any) ([]byte, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapVolumeManage) {
+		return nil, ErrAgentNoVolumeManage
+	}
+	return h.request(ctx, frameType, req)
+}
+
+func (h *RemoteHost) CreateVolume(ctx context.Context, name, driver string, labels map[string]string) (volume.Volume, error) {
+	data, err := h.volumeManage(ctx, agents.FrameReqVolumeCreate, agents.VolumeCreateReq{Name: name, Driver: driver, Labels: labels})
+	if err != nil {
+		return volume.Volume{}, err
+	}
+	var out volume.Volume
+	if err := json.Unmarshal(data, &out); err != nil {
+		return volume.Volume{}, fmt.Errorf("decode volume create: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) RemoveVolume(ctx context.Context, name string, force bool) error {
+	_, err := h.volumeManage(ctx, agents.FrameReqVolumeRemove, agents.VolumeRemoveReq{Name: name, Force: force})
+	return err
+}
+
 // VolumeBrowseEntries / VolumeReadFile proxy to the agent via the
 // browse frames. The agent runs the same BrowseVolumeOnHost /
 // ReadVolumeFileOnHost helpers against its own docker daemon.
