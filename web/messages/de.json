@@ -4419,7 +4419,7 @@
   "setup_h3_title": "Unter welchem Benutzer soll Dockmesh laufen?",
   "setup_h4_sub": "Die Anmeldung für das Dashboard. Single Sign-on und weitere Benutzer lassen sich später hinzufügen.",
   "setup_h4_title": "Ersten Admin anlegen",
-  "setup_h5_sub": "Agents auf anderen Hosts verbinden sich zu dieser URL zurück. Weiterleitungen von Identitätsanbietern und Einladungslinks verwenden sie ebenfalls, sofern DOCKMESH_BASE_URL nicht gesetzt ist.",
+  "setup_h5_sub": "Agents auf anderen Hosts verbinden sich mit dieser URL. Weiterleitungen von Identitätsanbietern und Einladungslinks verwenden sie ebenfalls, sofern DOCKMESH_BASE_URL nicht gesetzt ist.",
   "setup_h5_title": "Unter welcher Adresse ist dieser Server erreichbar?",
   "setup_h6_sub": "Noch wurde nichts geschrieben. Die Installation legt bei Bedarf den Benutzer an, schreibt die env-Datei, befüllt die Datenbank und startet den Dienst.",
   "setup_h6_title": "Prüfen und installieren",

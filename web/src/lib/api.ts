@@ -916,6 +916,11 @@ export interface FanOutResponse<T> {
   unreachable_hosts: Array<{ host_id: string; host_name: string; reason: string }>;
 }
 
+// "?host=<id>" for a host other than the server's own, else "".
+function hostQs(host: string): string {
+  return host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+}
+
 // isFanOut narrows a list response returned by one of the ?host=all
 // endpoints. Single-host responses return a bare array; the FanOutResponse
 // shape is the wrapper object. Pages that call the list with either mode
@@ -926,11 +931,6 @@ export interface FanOutResponse<T> {
 // `any[] | FanOutResponse<any>` via `isFanOut<Container>` leaves the
 // else branch as `any[] | FanOutResponse<any>` instead of `any[]`.
 // The non-generic form narrows cleanly.
-// "?host=<id>" for a host other than the server's own, else "".
-function hostQs(host: string): string {
-  return host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
-}
-
 export function isFanOut(r: unknown): r is FanOutResponse<any> {
   return typeof r === 'object' && r !== null && 'items' in r && 'unreachable_hosts' in r;
 }

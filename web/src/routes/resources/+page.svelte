@@ -197,7 +197,7 @@
       body: m.resources_prune_images_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    const { done, failed } = await onPruneHosts((h) => api.images.prune(h));
+    const { done, failed } = await pruneOnHosts((h) => api.images.prune(h));
     if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
     else toast.success(m.resources_pruned(), m.resources_reclaimed({ size: fmtBytes(done.reduce((s, r) => s + (r.SpaceReclaimed ?? 0), 0)) }));
     await loadImages();
@@ -492,7 +492,7 @@
       .filter((h) => h.kind !== 'all' && (h.id === 'local' || h.status === 'online'))
       .map((h) => h.id);
   }
-  async function onPruneHosts<T>(fn: (host: string) => Promise<T>): Promise<{ done: T[]; failed: string[] }> {
+  async function pruneOnHosts<T>(fn: (host: string) => Promise<T>): Promise<{ done: T[]; failed: string[] }> {
     const done: T[] = [];
     const failed: string[] = [];
     for (const id of pruneHosts()) {
@@ -544,7 +544,7 @@
       body: m.resources_prune_volumes_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    const { done, failed } = await onPruneHosts((h) => api.volumes.prune(h));
+    const { done, failed } = await pruneOnHosts((h) => api.volumes.prune(h));
     if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
     else toast.success(m.resources_pruned(), m.resources_volumes_removed({ n: done.reduce((s, r) => s + (r?.VolumesDeleted?.length ?? 0), 0) }));
     await loadVolumes();
@@ -682,7 +682,7 @@
       body: m.resources_prune_networks_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    const { failed } = await onPruneHosts((h) => api.networks.prune(h));
+    const { failed } = await pruneOnHosts((h) => api.networks.prune(h));
     if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
     else toast.success(m.resources_pruned());
     await loadNetworks();
@@ -729,19 +729,19 @@
     let totalReclaimed = 0;
     let imagesPruned = 0, volumesPruned = 0, networksPruned = 0;
     const failures: string[] = [];
-    const img = await onPruneHosts((h) => api.images.prune(h));
+    const img = await pruneOnHosts((h) => api.images.prune(h));
     for (const r of img.done) {
       imagesPruned += r.ImagesDeleted?.length ?? 0;
       totalReclaimed += r.SpaceReclaimed ?? 0;
     }
     failures.push(...img.failed.map((f) => `${m.resources_cleanup_images_lc()}: ${f}`));
-    const vol = await onPruneHosts((h) => api.volumes.prune(h));
+    const vol = await pruneOnHosts((h) => api.volumes.prune(h));
     for (const r of vol.done) {
       volumesPruned += r?.VolumesDeleted?.length ?? 0;
       totalReclaimed += r?.SpaceReclaimed ?? 0;
     }
     failures.push(...vol.failed.map((f) => `${m.resources_cleanup_volumes_lc()}: ${f}`));
-    const net = await onPruneHosts((h) => api.networks.prune(h));
+    const net = await pruneOnHosts((h) => api.networks.prune(h));
     for (const r of net.done) networksPruned += r?.NetworksDeleted?.length ?? 0;
     failures.push(...net.failed.map((f) => `${m.resources_cleanup_networks_lc()}: ${f}`));
     cleanupBusy = false;
