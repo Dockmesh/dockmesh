@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -355,7 +356,7 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 			}
 			return fmt.Errorf("image pull %s: %w", svc.Image, err)
 		}
-		err = readPullStream(rc, []string{auth})
+		err = readPullStream(rc, operations.RegistryAuthSecrets(auth))
 		rc.Close()
 		if err != nil {
 			pullSpan.SetStatus(codes.Error, err.Error())

@@ -222,7 +222,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 
 	op := operations.FromContext(ctx)
 	authBlob := s.resolveImageAuth(ctx, ref)
-	secrets := authSecrets(authBlob)
+	secrets := operations.RegistryAuthSecrets(authBlob)
 	op.AddSecrets(secrets...)
 	op.StepStart(StepPull, "")
 	op.Logf("info", "pulling %s", ref)

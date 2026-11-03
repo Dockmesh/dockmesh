@@ -105,6 +105,12 @@ func openInVolume(mountpoint, sub string) (*os.Root, string, *os.File, error) {
 	if err != nil {
 		return nil, "", nil, err
 	}
+	// Opening a FIFO blocks until a writer appears, so special files are
+	// refused before the open.
+	if fi, err := root.Stat(rel); err == nil && !fi.IsDir() && !fi.Mode().IsRegular() {
+		root.Close()
+		return nil, "", nil, ErrVolumeNotFile
+	}
 	f, err := root.Open(rel)
 	if err != nil {
 		root.Close()

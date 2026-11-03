@@ -123,3 +123,25 @@ func EnvValues(env string) []string {
 	}
 	return out
 }
+
+// RegistryAuthSecrets returns the credential values inside a base64 registry
+// auth blob, so they can be masked from output and errors.
+func RegistryAuthSecrets(blob string) []string {
+	if blob == "" {
+		return nil
+	}
+	raw, err := base64.URLEncoding.DecodeString(blob)
+	if err != nil {
+		if raw, err = base64.StdEncoding.DecodeString(blob); err != nil {
+			return []string{blob}
+		}
+	}
+	var a struct {
+		Password      string `json:"password"`
+		Auth          string `json:"auth"`
+		IdentityToken string `json:"identitytoken"`
+		RegistryToken string `json:"registrytoken"`
+	}
+	_ = json.Unmarshal(raw, &a)
+	return []string{blob, a.Password, a.Auth, a.IdentityToken, a.RegistryToken}
+}

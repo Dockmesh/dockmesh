@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -26,6 +27,7 @@ func TestOpenVolumeFileOnHost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "shadow"), []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	haveFIFO := syscall.Mkfifo(filepath.Join(mount, "pipe"), 0o600) == nil
 	haveLinks := os.Symlink(filepath.Join(outside, "shadow"), filepath.Join(mount, "hostfile")) == nil
 
 	rc, err := OpenVolumeFileOnHost(context.Background(), nil, "v", mount, "/big.bin")
@@ -45,16 +47,18 @@ func TestOpenVolumeFileOnHost(t *testing.T) {
 		sub      string
 		want     error
 		needLink bool
+		needFIFO bool
 	}{
 		{sub: "dir", want: ErrVolumeNotFile},
+		{sub: "pipe", want: ErrVolumeNotFile, needFIFO: true},
 		{sub: "missing", want: fs.ErrNotExist},
 		{sub: "../../etc/passwd", want: ErrVolumePathEscape},
 		{sub: "hostfile", want: ErrVolumePathEscape, needLink: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.sub, func(t *testing.T) {
-			if tt.needLink && !haveLinks {
-				t.Skip("symlinks not available")
+			if (tt.needLink && !haveLinks) || (tt.needFIFO && !haveFIFO) {
+				t.Skip("not available on this filesystem")
 			}
 			rc, err := OpenVolumeFileOnHost(context.Background(), nil, "v", mount, tt.sub)
 			if err == nil {
