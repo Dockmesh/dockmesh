@@ -108,7 +108,7 @@
       confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
-      await api.networks.remove(id);
+      await api.networks.remove(id, hostId);
       toast.success(m.networks_deleted(), inspect.Name);
       goto('/resources?tab=networks');
     } catch (err) {

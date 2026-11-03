@@ -926,6 +926,11 @@ export interface FanOutResponse<T> {
 // `any[] | FanOutResponse<any>` via `isFanOut<Container>` leaves the
 // else branch as `any[] | FanOutResponse<any>` instead of `any[]`.
 // The non-generic form narrows cleanly.
+// "?host=<id>" for a host other than the server's own, else "".
+function hostQs(host: string): string {
+  return host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+}
+
 export function isFanOut(r: unknown): r is FanOutResponse<any> {
   return typeof r === 'object' && r !== null && 'items' in r && 'unreachable_hosts' in r;
 }
@@ -2215,9 +2220,15 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
     },
-    remove: (id: string, force = false) =>
-      request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
-    prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' }),
+    remove: (id: string, force = false, host = 'local') => {
+      const qs = new URLSearchParams();
+      if (force) qs.set('force', 'true');
+      if (host && host !== 'local') qs.set('host', host);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return request<any>(`/images/${encodeURIComponent(id)}${suffix}`, { method: 'DELETE' });
+    },
+    prune: (host = 'local') =>
+      request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>(`/images/prune${hostQs(host)}`, { method: 'POST' }),
     scan: (id: string) =>
       request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`, { method: 'POST' }),
     getScan: (id: string) =>
@@ -2245,10 +2256,11 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/networks/${id}${qs}`);
     },
-    create: (name: string, driver?: string) =>
-      request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
-    remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' }),
-    prune: () => request<any>('/networks/prune', { method: 'POST' }),
+    create: (name: string, driver?: string, host = 'local') =>
+      request<{ Id: string }>(`/networks${hostQs(host)}`, { method: 'POST', body: JSON.stringify({ name, driver }) }),
+    remove: (id: string, host = 'local') =>
+      request<void>(`/networks/${encodeURIComponent(id)}${hostQs(host)}`, { method: 'DELETE' }),
+    prune: (host = 'local') => request<any>(`/networks/prune${hostQs(host)}`, { method: 'POST' }),
     topology: () => request<Topology>('/networks/topology')
   },
 
@@ -2272,7 +2284,7 @@ export const api = {
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
       return request<void>(`/volumes/${encodeURIComponent(name)}${suffix}`, { method: 'DELETE' });
     },
-    prune: () => request<any>('/volumes/prune', { method: 'POST' }),
+    prune: (host = 'local') => request<any>(`/volumes/prune${hostQs(host)}`, { method: 'POST' }),
     // P.11.8 — volume content browsing. Admin-only; every call is audited.
     browse: (name: string, path = '', host = 'local') => {
       const qs = new URLSearchParams();

@@ -63,6 +63,8 @@
   let scanCache = $state<Map<string, ScanReport>>(new Map());
   let scanAllBusy = $state(false);
 
+  function iKey(img: ImageSummary): string { return `${img.host_id ?? 'local'}/${img.Id}`; }
+
   function imageRef(img: ImageSummary): string {
     return img.RepoTags?.[0] && img.RepoTags[0] !== '<none>:<none>' ? img.RepoTags[0] : img.Id;
   }
@@ -179,11 +181,12 @@
 
   function toggleImageAll() {
     if (imageSelected.size === visibleImages.length) imageSelected = new Set();
-    else imageSelected = new Set(visibleImages.map((i) => i.Id));
+    else imageSelected = new Set(visibleImages.map(iKey));
   }
-  function toggleImageOne(id: string) {
+  function toggleImageOne(img: ImageSummary) {
+    const k = iKey(img);
     const n = new Set(imageSelected);
-    if (n.has(id)) n.delete(id); else n.add(id);
+    if (n.has(k)) n.delete(k); else n.add(k);
     imageSelected = n;
   }
 
@@ -194,15 +197,12 @@
       body: m.resources_prune_images_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    try {
-      const r = await api.images.prune();
-      toast.success(m.resources_pruned(), m.resources_reclaimed({ size: fmtBytes(r.SpaceReclaimed) }));
-      await loadImages();
-    } catch (err) {
-      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
-    }
+    const { done, failed } = await onPruneHosts((h) => api.images.prune(h));
+    if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
+    else toast.success(m.resources_pruned(), m.resources_reclaimed({ size: fmtBytes(done.reduce((s, r) => s + (r.SpaceReclaimed ?? 0), 0)) }));
+    await loadImages();
   }
-  async function removeImage(id: string) {
+  async function removeImage(img: ImageSummary) {
     if (!(await confirm.ask({
       title: m.resources_remove_image_title(),
       message: m.resources_remove_image_message(),
@@ -210,7 +210,7 @@
       confirmLabel: m.common_remove(), danger: true
     }))) return;
     try {
-      await api.images.remove(id, true);
+      await api.images.remove(img.Id, true, rowHost(img));
       toast.success(m.resources_removed());
       await loadImages();
     } catch (err) {
@@ -225,8 +225,9 @@
       confirmLabel: m.common_remove(), danger: true
     }))) return;
     let ok = 0, fail = 0;
-    for (const id of imageSelected) {
-      try { await api.images.remove(id, true); ok++; } catch { fail++; }
+    for (const img of images) {
+      if (!imageSelected.has(iKey(img))) continue;
+      try { await api.images.remove(img.Id, true, rowHost(img)); ok++; } catch { fail++; }
     }
     toast.success(fail ? m.resources_removed_n_failed({ ok, fail }) : m.resources_removed_n({ ok }));
     imageSelected = new Set();
@@ -483,6 +484,28 @@
     return h !== 'local' ? `?host=${encodeURIComponent(h)}` : '';
   }
 
+  // A prune acts on the selected host; under All hosts on every reachable
+  // host in the lens, one after the other.
+  function pruneHosts(): string[] {
+    if (!isAll) return [hosts.id || 'local'];
+    return hosts.available
+      .filter((h) => h.kind !== 'all' && (h.id === 'local' || h.status === 'online'))
+      .map((h) => h.id);
+  }
+  async function onPruneHosts<T>(fn: (host: string) => Promise<T>): Promise<{ done: T[]; failed: string[] }> {
+    const done: T[] = [];
+    const failed: string[] = [];
+    for (const id of pruneHosts()) {
+      try {
+        done.push(await fn(id));
+      } catch (err) {
+        const name = hosts.available.find((h) => h.id === id)?.name ?? id;
+        failed.push(`${name}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
+      }
+    }
+    return { done, failed };
+  }
+
   async function deleteVolume(v: VolumeRow) {
     if (!(await confirm.ask({
       title: m.resources_delete_volume_title(),
@@ -521,14 +544,10 @@
       body: m.resources_prune_volumes_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    try {
-      const r: any = await api.volumes.prune();
-      const n = r?.VolumesDeleted?.length ?? 0;
-      toast.success(m.resources_pruned(), m.resources_volumes_removed({ n }));
-      await loadVolumes();
-    } catch (err) {
-      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
-    }
+    const { done, failed } = await onPruneHosts((h) => api.volumes.prune(h));
+    if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
+    else toast.success(m.resources_pruned(), m.resources_volumes_removed({ n: done.reduce((s, r) => s + (r?.VolumesDeleted?.length ?? 0), 0) }));
+    await loadVolumes();
   }
 
   // ===================================================================
@@ -624,12 +643,13 @@
   let netCreateOpen = $state(false);
   let newNetName = $state('');
   let newNetDriver = $state('bridge');
+  let newNetHost = $state('local');
   let netCreating = $state(false);
   async function createNetwork(e: Event) {
     e.preventDefault();
     netCreating = true;
     try {
-      await api.networks.create(newNetName, newNetDriver);
+      await api.networks.create(newNetName, newNetDriver, newNetHost);
       toast.success(m.resources_network_created(), newNetName);
       netCreateOpen = false;
       newNetName = '';
@@ -648,7 +668,7 @@
       confirmLabel: m.common_delete(), danger: true
     }))) return;
     try {
-      await api.networks.remove(n.Id);
+      await api.networks.remove(n.Id, rowHost(n));
       toast.success(m.resources_deleted(), n.Name);
       await loadNetworks();
     } catch (err) {
@@ -662,13 +682,10 @@
       body: m.resources_prune_networks_body(),
       confirmLabel: m.resources_prune(), danger: true
     }))) return;
-    try {
-      await api.networks.prune();
-      toast.success(m.resources_pruned());
-      await loadNetworks();
-    } catch (err) {
-      toast.error(m.resources_prune_failed(), err instanceof ApiError ? err.message : undefined);
-    }
+    const { failed } = await onPruneHosts((h) => api.networks.prune(h));
+    if (failed.length) toast.error(m.resources_prune_failed(), failed.join(' · '));
+    else toast.success(m.resources_pruned());
+    await loadNetworks();
   }
   function networkDriverPill(d: string): 'success' | 'warning' | 'default' {
     if (d === 'overlay') return 'success';
@@ -711,27 +728,22 @@
     cleanupBusy = true;
     let totalReclaimed = 0;
     let imagesPruned = 0, volumesPruned = 0, networksPruned = 0;
-    let failures: string[] = [];
-    try {
-      const r = await api.images.prune();
-      imagesPruned = r.ImagesDeleted?.length ?? 0;
+    const failures: string[] = [];
+    const img = await onPruneHosts((h) => api.images.prune(h));
+    for (const r of img.done) {
+      imagesPruned += r.ImagesDeleted?.length ?? 0;
       totalReclaimed += r.SpaceReclaimed ?? 0;
-    } catch (err) {
-      failures.push(`${m.resources_cleanup_images_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
     }
-    try {
-      const r: any = await api.volumes.prune();
-      volumesPruned = r?.VolumesDeleted?.length ?? 0;
+    failures.push(...img.failed.map((f) => `${m.resources_cleanup_images_lc()}: ${f}`));
+    const vol = await onPruneHosts((h) => api.volumes.prune(h));
+    for (const r of vol.done) {
+      volumesPruned += r?.VolumesDeleted?.length ?? 0;
       totalReclaimed += r?.SpaceReclaimed ?? 0;
-    } catch (err) {
-      failures.push(`${m.resources_cleanup_volumes_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
     }
-    try {
-      const r: any = await api.networks.prune();
-      networksPruned = r?.NetworksDeleted?.length ?? 0;
-    } catch (err) {
-      failures.push(`${m.resources_cleanup_networks_lc()}: ${err instanceof ApiError ? err.message : m.resources_failed_lc()}`);
-    }
+    failures.push(...vol.failed.map((f) => `${m.resources_cleanup_volumes_lc()}: ${f}`));
+    const net = await onPruneHosts((h) => api.networks.prune(h));
+    for (const r of net.done) networksPruned += r?.NetworksDeleted?.length ?? 0;
+    failures.push(...net.failed.map((f) => `${m.resources_cleanup_networks_lc()}: ${f}`));
     cleanupBusy = false;
     cleanupOpen = false;
     if (failures.length > 0) {
@@ -884,7 +896,7 @@
           {@const rt = imageRepoTag(img)}
           {@const cve = scanCache.get(imageRef(img))}
           <div class="res-row" style="grid-template-columns: {grid};">
-            <input type="checkbox" disabled={!canImageDelete} checked={imageSelected.has(img.Id)} onchange={() => toggleImageOne(img.Id)} />
+            <input type="checkbox" disabled={!canImageDelete} checked={imageSelected.has(iKey(img))} onchange={() => toggleImageOne(img)} />
             <div class="res-col-tag">
               {#if rt.repo}
                 <a href={`/images/${encodeURIComponent(img.Id)}${img.host_id && img.host_id !== 'local' ? `?host=${encodeURIComponent(img.host_id)}` : ''}`} class="res-col-tag-line res-col-tag-link">
@@ -931,7 +943,7 @@
             <span class="res-cell-mono">{img.host_name ?? img.host_id ?? m.resources_local_lc()}</span>
             <span>
               {#if canImageDelete}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => removeImage(img.Id)} title={m.common_remove()}>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs res-row-danger" onclick={() => removeImage(img)} title={m.common_remove()}>
                   <Trash2 size={11} strokeWidth={1.5} />
                 </button>
               {/if}
@@ -1113,7 +1125,7 @@
         </button>
       {/if}
       {#if canNetCreate}
-        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { netCreateOpen = true; newNetName = ''; newNetDriver = 'bridge'; }}>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { netCreateOpen = true; newNetName = ''; newNetDriver = 'bridge'; newNetHost = hosts.id && !hosts.isAll ? hosts.id : 'local'; }}>
           <Plus size={12} strokeWidth={1.5} /> {m.resources_create_network()}
         </button>
       {/if}
@@ -1428,6 +1440,16 @@
         <option value="ipvlan">ipvlan</option>
       </select>
     </div>
+    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+      <div>
+        <label for="net-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
+        <select id="net-host" bind:value={newNetHost} class="dm-input text-sm w-full">
+          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+            <option value={h.id}>{h.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
   </form>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (netCreateOpen = false)}>{m.common_cancel()}</Button>
