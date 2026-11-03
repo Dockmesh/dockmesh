@@ -221,7 +221,8 @@ func requestTimeout(frameType string) time.Duration {
 	case FrameReqAgentUpgrade:
 		return 11 * time.Minute
 	case FrameReqContainerStop, FrameReqContainerRestart, FrameReqContainerRemove,
-		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqStackCheckScale,
+		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqVolumePrune, FrameReqNetworkPrune,
+		FrameReqStackCheckScale,
 		FrameReqContainerFilesList, FrameReqContainerFilesWrite, FrameReqContainerFilesDelete:
 		return 3 * time.Minute
 	default:

@@ -187,7 +187,7 @@
       confirmLabel: m.common_remove(), danger: true
     }))) return;
     try {
-      await api.images.remove(id, true);
+      await api.images.remove(id, true, hostId);
       toast.success(m.images_removed());
       goto('/resources?tab=images');
     } catch (err) {

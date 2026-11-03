@@ -326,7 +326,7 @@ func TestStartLoginRequestsConfiguredNameID(t *testing.T) {
 				testIdPMetadata, tt.format); err != nil {
 				t.Fatal(err)
 			}
-			s := &Service{db: database, baseURL: "https://dm.example.com"}
+			s := &Service{db: database, baseURL: func() string { return "https://dm.example.com" }}
 			redirect, pending, err := s.StartLogin(context.Background(), "corp", "relay")
 			if err != nil {
 				t.Fatal(err)

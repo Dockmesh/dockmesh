@@ -61,6 +61,9 @@ type FanOutResult[T any] struct {
 // Host value owns its own live reference to the underlying agent stream
 // or docker client.
 func (r *Registry) PickAll(ctx context.Context) []Host {
+	if r.fixed != nil {
+		return append([]Host(nil), r.fixed...)
+	}
 	out := []Host{r.local}
 	if r.agents == nil {
 		return out

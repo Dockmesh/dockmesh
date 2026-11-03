@@ -15,10 +15,14 @@ func (h *Handlers) cookiesSecure(r *http.Request) bool {
 	if clientip.Secure(r) {
 		return true
 	}
-	if h.Settings == nil {
-		return false
+	var base string
+	switch {
+	case h.PublicURLs != nil:
+		base = h.PublicURLs().BaseURL
+	case h.Settings != nil:
+		base = h.Settings.Get(settings.KeyBaseURL, "")
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(h.Settings.Get(settings.KeyBaseURL, ""))), "https://")
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(base)), "https://")
 }
 
 // setStateCookie sets (maxAge > 0) or clears (maxAge < 0) an SSO state

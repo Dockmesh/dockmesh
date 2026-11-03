@@ -259,21 +259,25 @@ func mapBrowseStatus(err error) int {
 }
 
 func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	scopeReq := h.hostScopeReq("local")
-	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
-		return
-	}
-	report, err := h.Docker.PruneVolumes(r.Context())
+	target, err := h.pickHost(r)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionVolumePrune, "", map[string]uint64{"space_reclaimed": report.SpaceReclaimed})
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host "+target.ID())
+		return
+	}
+	report, err := target.PruneVolumes(r.Context())
+	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionVolumePrune, "", map[string]any{
+		"space_reclaimed": report.SpaceReclaimed,
+		"host":            target.ID(),
+	})
 	writeJSON(w, http.StatusOK, report)
 }
 

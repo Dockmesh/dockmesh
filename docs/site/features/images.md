@@ -48,7 +48,7 @@ Click an image to open its page. The tabs are:
 | **Prune dangling** | Images tab | Removes dangling images only. Tagged images that no container uses are kept. |
 | **System cleanup…** | page header | Prunes dangling images, unused volumes and unused networks in one go. See [Volumes](./volumes.md#removing-and-pruning) before you use it. |
 
-Removing and pruning from the UI, **System cleanup…** included, always act on the server host, even when an agent host is selected (the cleanup dialog names the selected host, but the server host is cleaned). The API accepts `?host=<id>` on `DELETE /api/v1/images/{id}` and `POST /api/v1/images/prune` if you need to do this on an agent.
+Removing acts on the image's host. Pruning, **System cleanup…** included, acts on the selected host; under **All hosts** it runs on every reachable host in view, one after the other. The API takes `?host=<id>` on `DELETE /api/v1/images/{id}` and `POST /api/v1/images/prune`.
 
 There is no scheduled prune. Call `POST /api/v1/images/prune` from cron with an [API token](./api-tokens.md) if you want one.
 

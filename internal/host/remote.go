@@ -432,6 +432,62 @@ func (h *RemoteHost) RemoveVolume(ctx context.Context, name string, force bool) 
 	return err
 }
 
+// ErrAgentNoResourceManage is returned for volume prune and network
+// create, remove and prune on an agent that predates those frames.
+var ErrAgentNoResourceManage = errors.New("the agent on this host is too old to prune volumes or manage networks; update it from the Hosts page")
+
+func (h *RemoteHost) resourceManage(ctx context.Context, frameType string, req any) ([]byte, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapResourceManage) {
+		return nil, ErrAgentNoResourceManage
+	}
+	return h.request(ctx, frameType, req)
+}
+
+func (h *RemoteHost) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
+	data, err := h.resourceManage(ctx, agents.FrameReqVolumePrune, nil)
+	if err != nil {
+		return volume.PruneReport{}, err
+	}
+	var out volume.PruneReport
+	if err := json.Unmarshal(data, &out); err != nil {
+		return volume.PruneReport{}, fmt.Errorf("decode volume prune: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) CreateNetwork(ctx context.Context, name, driver string, labels map[string]string) (network.CreateResponse, error) {
+	data, err := h.resourceManage(ctx, agents.FrameReqNetworkCreate, agents.NetworkCreateReq{Name: name, Driver: driver, Labels: labels})
+	if err != nil {
+		return network.CreateResponse{}, err
+	}
+	var out network.CreateResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return network.CreateResponse{}, fmt.Errorf("decode network create: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) RemoveNetwork(ctx context.Context, id string) error {
+	_, err := h.resourceManage(ctx, agents.FrameReqNetworkRemove, agents.ResourceIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) PruneNetworks(ctx context.Context) (network.PruneReport, error) {
+	data, err := h.resourceManage(ctx, agents.FrameReqNetworkPrune, nil)
+	if err != nil {
+		return network.PruneReport{}, err
+	}
+	var out network.PruneReport
+	if err := json.Unmarshal(data, &out); err != nil {
+		return network.PruneReport{}, fmt.Errorf("decode network prune: %w", err)
+	}
+	return out, nil
+}
+
 // VolumeBrowseEntries / VolumeReadFile proxy to the agent via the
 // browse frames. The agent runs the same BrowseVolumeOnHost /
 // ReadVolumeFileOnHost helpers against its own docker daemon.

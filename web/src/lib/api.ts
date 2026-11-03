@@ -916,6 +916,11 @@ export interface FanOutResponse<T> {
   unreachable_hosts: Array<{ host_id: string; host_name: string; reason: string }>;
 }
 
+// "?host=<id>" for a host other than the server's own, else "".
+function hostQs(host: string): string {
+  return host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+}
+
 // isFanOut narrows a list response returned by one of the ?host=all
 // endpoints. Single-host responses return a bare array; the FanOutResponse
 // shape is the wrapper object. Pages that call the list with either mode
@@ -1676,7 +1681,8 @@ export const api = {
       enabled: boolean;
       raw?: any;
     }>>('/auth/providers'),
-    callbackBase: () => request<{ base_url: string; from_env: boolean }>('/auth/callback-base'),
+    callbackBase: () =>
+      request<{ base_url: string; from_env: boolean; source: 'env' | 'setting' | 'default' }>('/auth/callback-base'),
     login: (username: string, password: string) =>
       request<{
         access_token?: string;
@@ -2215,9 +2221,15 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
     },
-    remove: (id: string, force = false) =>
-      request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
-    prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' }),
+    remove: (id: string, force = false, host = 'local') => {
+      const qs = new URLSearchParams();
+      if (force) qs.set('force', 'true');
+      if (host && host !== 'local') qs.set('host', host);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return request<any>(`/images/${encodeURIComponent(id)}${suffix}`, { method: 'DELETE' });
+    },
+    prune: (host = 'local') =>
+      request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>(`/images/prune${hostQs(host)}`, { method: 'POST' }),
     scan: (id: string) =>
       request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`, { method: 'POST' }),
     getScan: (id: string) =>
@@ -2245,10 +2257,11 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/networks/${id}${qs}`);
     },
-    create: (name: string, driver?: string) =>
-      request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
-    remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' }),
-    prune: () => request<any>('/networks/prune', { method: 'POST' }),
+    create: (name: string, driver?: string, host = 'local') =>
+      request<{ Id: string }>(`/networks${hostQs(host)}`, { method: 'POST', body: JSON.stringify({ name, driver }) }),
+    remove: (id: string, host = 'local') =>
+      request<void>(`/networks/${encodeURIComponent(id)}${hostQs(host)}`, { method: 'DELETE' }),
+    prune: (host = 'local') => request<any>(`/networks/prune${hostQs(host)}`, { method: 'POST' }),
     topology: () => request<Topology>('/networks/topology')
   },
 
@@ -2272,7 +2285,7 @@ export const api = {
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
       return request<void>(`/volumes/${encodeURIComponent(name)}${suffix}`, { method: 'DELETE' });
     },
-    prune: () => request<any>('/volumes/prune', { method: 'POST' }),
+    prune: (host = 'local') => request<any>(`/volumes/prune${hostQs(host)}`, { method: 'POST' }),
     // P.11.8 — volume content browsing. Admin-only; every call is audited.
     browse: (name: string, path = '', host = 'local') => {
       const qs = new URLSearchParams();

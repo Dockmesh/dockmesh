@@ -34,7 +34,7 @@ The **Topology** page in the sidebar draws the networks and containers of the se
 
 ## Creating a network
 
-**Create network** asks for a **Name** and a **Driver** (`bridge`, `overlay`, `macvlan` or `ipvlan`). `overlay` only works on a Docker engine in Swarm mode. The network is created on the server host with default IPAM settings; subnet, gateway and the internal flag can't be set here. If you need the internal or attachable flag, declare the network in a stack's `compose.yaml`:
+**Create network** asks for a **Name** and a **Driver** (`bridge`, `overlay`, `macvlan` or `ipvlan`). `overlay` only works on a Docker engine in Swarm mode. When more than one host exists, the dialog also asks for the **Host**. The network is created with default IPAM settings; subnet, gateway and the internal flag can't be set here. If you need the internal or attachable flag, declare the network in a stack's `compose.yaml`:
 
 ```yaml
 networks:
@@ -52,7 +52,7 @@ Dockmesh ignores the top-level `ipam` key in compose files (see [Compose fields 
 | **Prune empty** | Removes all networks without attached containers. `bridge`, `host` and `none` are kept. |
 | **System cleanup…** | Prunes dangling images, unused volumes and unused networks together. |
 
-Creating, deleting and pruning networks always act on the server host, even when a remote host is selected, and need the permission on the server host.
+Deleting acts on the network's host. **Prune empty** and **System cleanup…** act on the selected host; under **All hosts** they run on every reachable host in view, one after the other. Each action needs the permission on the host it acts on. An agent that is older than the server refuses these actions until you update it from the **Hosts** page.
 
 Stopping a stack leaves its networks in place, so a stopped stack whose containers were removed has an empty network that **Prune empty** removes. That is harmless: the next deploy creates it again.
 

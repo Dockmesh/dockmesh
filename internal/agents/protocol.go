@@ -49,10 +49,14 @@ const (
 	FrameReqImagePrune     = "req.images.prune"
 	FrameReqNetworkList    = "req.networks.list"
 	FrameReqNetworkInspect = "req.networks.inspect"
+	FrameReqNetworkCreate  = "req.networks.create"
+	FrameReqNetworkRemove  = "req.networks.remove"
+	FrameReqNetworkPrune   = "req.networks.prune"
 	FrameReqVolumeList     = "req.volumes.list"
 	FrameReqVolumeInspect  = "req.volumes.inspect"
 	FrameReqVolumeCreate   = "req.volumes.create"
 	FrameReqVolumeRemove   = "req.volumes.remove"
+	FrameReqVolumePrune    = "req.volumes.prune"
 	// Volume content browsing (P.11.8). Read-only: list one directory
 	// level or read a single file capped at the caller's maxBytes.
 	// The stream frame for large-file download is deferred — the UI
@@ -141,7 +145,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 3
+const ProtocolVersion = 4
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -165,6 +169,9 @@ const (
 	CapContainerFiles = "container_files"
 	// CapVolumeManage, agent: answers req.volumes.create and req.volumes.remove.
 	CapVolumeManage = "volumes.manage"
+	// CapResourceManage, agent: answers req.volumes.prune and the
+	// req.networks.create/remove/prune frames.
+	CapResourceManage = "resources.manage"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -268,6 +275,12 @@ type VolumeCreateReq struct {
 type VolumeRemoveReq struct {
 	Name  string `json:"name"`
 	Force bool   `json:"force,omitempty"`
+}
+
+type NetworkCreateReq struct {
+	Name   string            `json:"name"`
+	Driver string            `json:"driver,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // StackDeployReq carries the full compose project payload to the agent.

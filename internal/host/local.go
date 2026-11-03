@@ -339,6 +339,34 @@ func (h *LocalHost) RemoveVolume(ctx context.Context, name string, force bool) e
 	return h.cli.RemoveVolume(ctx, name, force)
 }
 
+func (h *LocalHost) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return volume.PruneReport{}, ErrNoDocker
+	}
+	return h.cli.PruneVolumes(ctx)
+}
+
+func (h *LocalHost) CreateNetwork(ctx context.Context, name, driver string, labels map[string]string) (network.CreateResponse, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return network.CreateResponse{}, ErrNoDocker
+	}
+	return h.cli.CreateNetwork(ctx, name, driver, labels)
+}
+
+func (h *LocalHost) RemoveNetwork(ctx context.Context, id string) error {
+	if h.cli == nil || !h.cli.Connected() {
+		return ErrNoDocker
+	}
+	return h.cli.RemoveNetwork(ctx, id)
+}
+
+func (h *LocalHost) PruneNetworks(ctx context.Context) (network.PruneReport, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return network.PruneReport{}, ErrNoDocker
+	}
+	return h.cli.PruneNetworks(ctx)
+}
+
 // VolumeBrowseEntries lists a directory inside a local volume.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {

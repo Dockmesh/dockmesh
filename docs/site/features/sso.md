@@ -16,7 +16,7 @@ Every provider has a slug (used in its URLs), a display name, a **Default role**
 
 ## Callback URLs
 
-The URLs Dockmesh gives to providers are built from `DOCKMESH_BASE_URL` in `dockmesh.env`. Set it to the public URL users open in their browser, or redirects go to `http://localhost:8080`. The **Base URL** field under **Settings → General** doesn't change these URLs; set the environment variable and restart.
+The URLs Dockmesh gives to providers are built from the **Base URL** under **Settings → General**, the address the setup wizard asks for. `DOCKMESH_BASE_URL` in `dockmesh.env` overrides it. With neither, redirects go to `http://localhost:8080`. A changed Base URL applies to the next sign-in without a restart; update the URLs registered at your providers to match.
 
 | Kind | Register at the provider |
 |---|---|
@@ -25,7 +25,7 @@ The URLs Dockmesh gives to providers are built from `DOCKMESH_BASE_URL` in `dock
 | SAML | ACS `<base>/api/v1/auth/saml/<slug>/acs`, SP metadata and entity ID `<base>/api/v1/auth/saml/<slug>/metadata` |
 | LDAP | none. Dockmesh binds to the directory itself |
 
-The **Callback URLs** box on the Authentication page and the provider dialog (**Callback URL**, **ACS URL (read-only)**) show these URLs with the base the server uses. While `DOCKMESH_BASE_URL` is unset, the box warns that providers send users back to `http://localhost:8080`.
+The **Callback URLs** box on the Authentication page and the provider dialog (**Callback URL**, **ACS URL (read-only)**) show these URLs with the base the server uses. While neither is set, the box warns that providers send users back to `http://localhost:8080`.
 
 ## Configuration fields
 

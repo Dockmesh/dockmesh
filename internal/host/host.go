@@ -67,10 +67,14 @@ type Host interface {
 	PruneImages(ctx context.Context) (image.PruneReport, error)
 	ListNetworks(ctx context.Context) ([]network.Inspect, error)
 	InspectNetwork(ctx context.Context, id string) (network.Inspect, error)
+	CreateNetwork(ctx context.Context, name, driver string, labels map[string]string) (network.CreateResponse, error)
+	RemoveNetwork(ctx context.Context, id string) error
+	PruneNetworks(ctx context.Context) (network.PruneReport, error)
 	ListVolumes(ctx context.Context) ([]any, error)
 	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
 	CreateVolume(ctx context.Context, name, driver string, labels map[string]string) (volume.Volume, error)
 	RemoveVolume(ctx context.Context, name string, force bool) error
+	PruneVolumes(ctx context.Context) (volume.PruneReport, error)
 
 	// VolumeBrowseEntries lists one directory level inside a docker
 	// volume. subpath is relative to the volume root; "" or "/" means

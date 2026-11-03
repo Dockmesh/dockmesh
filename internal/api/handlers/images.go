@@ -22,7 +22,8 @@ func imageErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
 	}
-	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrAgentNoVolumeManage) {
+	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) ||
+		errors.Is(err, host.ErrAgentNoVolumeManage) || errors.Is(err, host.ErrAgentNoResourceManage) {
 		return http.StatusServiceUnavailable
 	}
 	msg := strings.ToLower(err.Error())
