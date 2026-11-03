@@ -78,7 +78,7 @@ Everything is included in the single binary. There is no paid tier.
 
 **Security**
 - Custom RBAC roles with granular permissions
-- SSO via OIDC (Azure AD, Google, Keycloak, Okta, Authentik, Dex), SAML, OAuth2 and LDAP
+- SSO via OIDC (Keycloak, Authelia, Authentik, Azure AD, Google, GitLab), SAML (Azure AD, AD FS, Okta), OAuth2 (GitHub, Gitea) and LDAP
 - TOTP 2FA + single-use recovery codes
 - SHA-256 hash-chained audit log
 - age-encrypted stack `.env` files at rest

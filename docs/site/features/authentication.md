@@ -3,7 +3,7 @@ title: Authentication
 description: Local sign-in, password policy, lockout and rate limits, sessions, two-factor authentication, trusted proxies and invites in Dockmesh.
 ---
 
-Dockmesh has its own user accounts with passwords, and can also sign users in through [SSO providers](./sso.md). The instance-wide settings described here are under **Settings → Authentication** (needs Settings & audit: Manage on everything). Each user manages their own password, 2FA and sessions on the **Account** page, from the user menu at the bottom of the sidebar.
+Dockmesh has its own user accounts with passwords, and can also sign users in through [SSO providers](./sso.md). The instance-wide settings described here are under **Settings → Authentication** (needs Settings & audit: Manage on everything). Each user manages their own password, 2FA and sessions on the **My account** page, from the user menu at the bottom of the sidebar.
 
 ## Local sign-in
 
@@ -59,13 +59,13 @@ Revoked and expired sessions are deleted after 30 days.
 
 The web UI refreshes its access token in the background. Each refresh token is single-use. Using one twice revokes the whole session, which protects against stolen refresh tokens. Browser tabs of the same Dockmesh share one refresh, so several open tabs don't sign you out, and a short network outage during a refresh keeps you signed in and retries. Every request checks that the session still exists and reads the user's current assignments, so revoking a session or changing access takes effect immediately.
 
-Under **Sessions** on the **Account** page you see your sessions with browser, IP and last activity, and can revoke any of them. Changing your own password revokes your other sessions. An admin password reset revokes all of the user's sessions. The **Sign out everywhere** button on the Account page is disabled; use `POST /api/v1/sessions/revoke-all` instead.
+Under **Sessions** on the **My account** page you see your sessions with browser, IP and last activity, and can revoke any of them. Changing your own password revokes your other sessions. An admin password reset revokes all of the user's sessions. The **Sign out everywhere** button on the Account page is disabled; use `POST /api/v1/sessions/revoke-all` instead.
 
 Admins see another user's sessions on that user's **Sessions & 2FA** tab under **Users & roles** and can end one or all of them. See [Permissions](../concepts/permissions.md#scopes) for who may.
 
 ## Two-factor authentication
 
-Users turn on TOTP under **Security** on the **Account** page:
+Users turn on TOTP under **Security** on the **My account** page:
 
 1. Click **Enable 2FA** and scan the QR code with an authenticator app, or paste the secret.
 2. Enter a code to confirm.

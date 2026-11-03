@@ -45,6 +45,42 @@ On top of the levels, a role can hold **extras**. No level includes them:
 
 Built-in roles can't be changed. **Duplicate** one, or click **New role**, to make a custom role.
 
+### Permission keys
+
+Other pages, API error messages and `dmctl whoami -o json` name single permissions by key. Each key belongs to the lowest level or extra that grants it:
+
+| Key | Granted by |
+|---|---|
+| `stacks.view`, `templates.view` | Stacks: View |
+| `containers.logs` | Stacks: View or Containers: View |
+| `stacks.operate` | Stacks: Operate |
+| `containers.update` | Stacks: Operate or Containers: Operate |
+| `stacks.deploy`, `stacks.update` | Stacks: Deploy |
+| `stacks.create`, `stacks.delete`, `stacks.migrate`, `stacks.adopt`, `stacks.git`, `templates.create`, `templates.update`, `templates.delete` | Stacks: Manage |
+| `containers.view` | Containers: View |
+| `containers.delete`, `containers.upgrade` | Containers: Manage |
+| `images.view`, `volumes.view`, `networks.view`, `registries.view` | Images, volumes, networks & registries: View |
+| `images.create`, `images.delete`, `images.scan`, `volumes.create`, `volumes.delete`, `networks.create`, `networks.delete`, `registries.create`, `registries.update`, `registries.delete` | Images, volumes, networks & registries: Manage |
+| `hosts.view` | Hosts: View |
+| `hosts.create`, `hosts.update`, `hosts.delete`, `hosts.tag` | Hosts: Manage |
+| `proxy.view` | Proxy: View |
+| `proxy.create`, `proxy.update`, `proxy.delete` | Proxy: Manage |
+| `backups.view` | Backups: View |
+| `backups.run`, `backups.restore` | Backups: Operate |
+| `backups.create`, `backups.update`, `backups.delete` | Backups: Manage |
+| `alerts.view`, `alerts.history` | Alerts: View |
+| `alerts.create`, `alerts.update`, `alerts.delete` | Alerts: Manage |
+| `users.view`, `roles.view` | Users & roles: View |
+| `users.create`, `users.update`, `users.delete`, `roles.create`, `roles.update`, `roles.delete`, `tokens.manage_others` | Users & roles: Manage |
+| `audit.view`, `metrics.view` | Settings & audit: View |
+| `audit.export`, `audit.write`, `system.update`, `system.upgrade` | Settings & audit: Manage |
+| `containers.exec` | extra **Open a terminal in containers** |
+| `containers.files`, `volumes.browse` | extra **Browse and read files in containers and volumes** |
+| `containers.env` | extra **See environment values (inspect, .env)** |
+| `backups.download` | extra **Download backup archives** |
+| `backups.key_export` | extra **Export the backup encryption key** |
+| `tokens.view`, `tokens.create`, `tokens.delete`, `system.view` | every signed-in user (own tokens, server status) |
+
 ## Scopes
 
 | Scope | Covers |

@@ -180,7 +180,7 @@ There is no general rate limit. These limits count failed attempts; a successful
 |---|---|---|
 | Password login, per client address | 100 failures in 15 minutes, then blocked for 15 minutes | `429` |
 | Password and two-factor sign-in, per account | 10 failures in 15 minutes, then blocked for 15 minutes | `429` |
-| Lockout policy, per account | 5 wrong passwords lock the account for 15 minutes; both numbers are set on **Settings → Authentication** (0 turns the lockout off) | `423` |
+| Lockout policy, per account | 5 wrong passwords or 2FA codes in a row lock the account for 15 minutes; both numbers are set on **Settings → Authentication** (0 turns the lockout off) | `423` |
 | `POST /auth/mfa`, per client address | 20 failures in 15 minutes | `429` |
 | LDAP sign-in | 10 failures per address and 10 per account in 15 minutes | `429` |
 | Invite acceptance | 10 failures per address and 5 per invite in 15 minutes | `429` |

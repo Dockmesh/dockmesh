@@ -125,10 +125,10 @@ If the CA files were missing, Dockmesh creates a new CA on first start and the a
 - `sudo -u dockmesh dockmesh ca rotate --reissue-all-agents` issues a new CA, sets every agent to pending with a fresh token, and prints one install command per agent. Run each command on its host.
 - Per host: **Revoke…** the host under **Hosts**, add it again with **Add host**, and run the new install command on the agent host. The installer removes the old certificates there before enrolling.
 
-Agent certificates are valid for 365 days. An agent of this release renews its certificate on its own in the last 30 days; admins get a notice when a certificate is 14 days from expiry and has not been renewed.
+Agent certificates are valid for 365 days. An agent of v0.5.0 or later renews its certificate on its own in the last 30 days; admins get a notice when a certificate is 14 days from expiry and has not been renewed.
 
 ## Other failures
 
 - **Single stack broken**: stop the stack, restore its last good stack run with **Replace**, deploy. Replace makes the volumes match the backup and leaves them untouched if the restore fails; take a fresh backup of the current state first if you might want it back.
-- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs the agent of this release. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
+- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs an agent of the same release as the server. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
 - **Database damaged**: stop the server, then run `sqlite3 dockmesh.db "PRAGMA integrity_check;"`. If it reports errors, restore the database from a system backup as above.

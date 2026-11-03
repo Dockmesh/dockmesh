@@ -49,7 +49,7 @@ dmctl prompts for the password (hidden) and, if the account has two-factor authe
 | `logout` | none | Clear the saved tokens, keep the server URL |
 | `whoami` | none | Print the current identity |
 
-`whoami` prints ID, email (or username) and a ROLE column. The server no longer returns a single role, so ROLE shows `<nil>`; `dmctl whoami -o json` shows the identity with its `assignments` and `permissions`. For an API token, the identity is `api-token` with the token's `api_token_id`.
+`whoami` prints ID, email (or username) and a ROLE column. The server doesn't return a single role, so ROLE shows `<nil>`; `dmctl whoami -o json` shows the identity with its `assignments` and `permissions`. For an API token, the identity is `api-token` with the token's `api_token_id`.
 
 ## Configuration
 

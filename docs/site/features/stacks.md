@@ -110,7 +110,7 @@ Manual deploys are recorded only when they succeed. Git auto-deploys are recorde
 - An entry deployed with an environment override applies that override again; the override file must still exist.
 - The rollback deploys on the host the stack page works on, not necessarily the host the entry was deployed on.
 - If the redeploy fails, `compose.yaml` has already been overwritten. Fix it, or roll forward.
-- Entries of override deploys made before this release lost their compose snapshot, because it held `.env` values. They can't be rolled back to.
+- Entries of override deploys made before v0.5.0 lost their compose snapshot, because it held `.env` values. They can't be rolled back to.
 
 ## Environment overrides
 

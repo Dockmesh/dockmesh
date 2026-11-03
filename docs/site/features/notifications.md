@@ -31,7 +31,7 @@ The generic webhook POSTs JSON with `title`, `body`, `level`, `container`, `metr
 
 ### Language
 
-Each channel has a **Language** (English or German) for the messages it sends; channels without one send in English. Email is sent per recipient: an address that belongs to a Dockmesh user gets the mail in the language that user picked under **Account**, every other address gets the channel's language. Recipients with different languages get separate mails.
+Each channel has a **Language** (English or German) for the messages it sends; channels without one send in English. Email is sent per recipient: an address that belongs to a Dockmesh user gets the mail in the language that user picked under **My account**, every other address gets the channel's language. Recipients with different languages get separate mails.
 
 ### Testing and delivery
 

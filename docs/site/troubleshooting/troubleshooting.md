@@ -293,7 +293,7 @@ To point an agent at a new address, edit `DOCKMESH_AGENT_URL` in `/etc/dockmesh-
 
 ### "Agent certificate expires soon" or "Agent certificate expired"
 
-**Cause:** agent client certificates are valid for 365 days. Agents of this version renew theirs over the live connection once it has less than 30 days left, and keep their host ID. Admins get the warning **Agent certificate expires soon: <name>** 14 days before expiry if that didn't happen (an old agent, or one that was offline), and the critical notice **Agent certificate expired: <name>** once an offline agent's certificate has run out. The agent log says `client certificate expired: re-issue the enrollment token on the host page and re-run the installer on this host`.
+**Cause:** agent client certificates are valid for 365 days. Agents of v0.5.0 or later renew theirs over the live connection once it has less than 30 days left, and keep their host ID. Admins get the warning **Agent certificate expires soon: <name>** 14 days before expiry if that didn't happen (an old agent, or one that was offline), and the critical notice **Agent certificate expired: <name>** once an offline agent's certificate has run out. The agent log says `client certificate expired: re-issue the enrollment token on the host page and re-run the installer on this host`.
 
 **Fix:** while the agent is still online, upgrade it so it renews by itself. Once it has expired, open the host page → **Maintenance** → **Re-issue enrollment token** → **Re-issue…**, and run the new install command on the agent host. The host keeps its ID, stacks, tags and backup jobs; the old certificate stops working once the agent presents the new one.
 
@@ -412,7 +412,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 | `volume <name> is used by running containers (...); stop them before replacing its contents` | **Replace** needs the volume unused. |
 | `this backup has no recorded checksum, so it can only be merged, not replace the volume's contents` | Older backups can only be restored with **Merge**. |
 | `not enough free space in the volume for a replace restore ...` | **Replace** keeps old and new contents side by side until the swap. |
-| `the agent on this host is too old to restore volumes; upgrade it from the Hosts page` | **Replace** onto an agent host needs the agent of this release. |
+| `the agent on this host is too old to restore volumes; upgrade it from the Hosts page` | **Replace** onto an agent host needs an agent of the same release as the server. |
 | `another restore is in progress` | Only one restore may write a volume or stack at a time, and at most two run at once. |
 | `run has no restorable archive (failed, still running, or removed by retention)` | Pick another run. |
 | `archive does not match what the backup run wrote` / `backup archive failed verification, nothing was restored` | The archive on the target is damaged or was replaced. |

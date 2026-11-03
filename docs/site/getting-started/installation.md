@@ -68,11 +68,11 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.4.2`. |
+| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.0`. |
 | `DOCKMESH_CHANNEL` | `stable` | `testing` also considers pre-releases when resolving "latest". |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
-| `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` | Data root. Must match the data root of an earlier install the script finds. |
+| `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` (full rule in [Environment variables](../reference/environment-variables.md)) | Data root. Must match the data root of an earlier install the script finds. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
 | `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
@@ -157,7 +157,7 @@ Because `init` creates the admin itself, the server starts without setup mode an
 Each release on [GitHub](https://github.com/dockmesh/dockmesh/releases) has `dockmesh_linux_amd64.tar.gz`, `dockmesh_linux_arm64.tar.gz`, `dockmesh_darwin_amd64.tar.gz`, `dockmesh_darwin_arm64.tar.gz` and a `checksums.txt`. Each archive contains `dockmesh`, `dmctl`, `install-agent.sh`, `LICENSE`, `README.md` and the agent: the Linux archives `dockmesh-agent-linux-amd64` and `dockmesh-agent-linux-arm64`, the macOS archives a single `dockmesh-agent`.
 
 ```bash
-VER=v0.4.2
+VER=v0.5.0
 ARCH=amd64   # or arm64
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/dockmesh_linux_$ARCH.tar.gz
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt
