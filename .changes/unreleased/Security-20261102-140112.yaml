@@ -1,3 +1,0 @@
-kind: Security
-body: Backup target credentials (SMB, SFTP and WebDAV passwords, S3 secret keys, SFTP private keys) are now stored encrypted with the server's secrets key. Before, the database and every system backup held them in plaintext.
-time: 2026-11-02T14:01:12.1057227+01:00

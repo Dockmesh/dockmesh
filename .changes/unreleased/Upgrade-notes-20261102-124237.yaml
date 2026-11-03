@@ -1,3 +1,0 @@
-kind: Upgrade notes
-body: '[scope-auth, admins] API tokens created with a token before this release have no parent on record and keep working as before. Stacks created before this release have no host until they are deployed; users limited to some hosts need an admin to deploy them or to give them a stack assignment. Backup jobs with hooks into Dockmesh''s own containers keep running; review them under Backups.'
-time: 2026-11-02T12:42:37.8598907+01:00

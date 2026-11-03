@@ -1,3 +1,0 @@
-kind: Security
-body: Creating a stack from a git repository refuses a name that already belongs to a stack, instead of replacing that stack's files from the repository; template deploys and adoption also refuse existing and reserved names, and a compose project that runs Dockmesh itself can only be adopted and changed by an admin.
-time: 2026-11-02T12:58:02.2643631+01:00

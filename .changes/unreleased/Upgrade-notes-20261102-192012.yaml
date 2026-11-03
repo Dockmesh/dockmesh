@@ -1,3 +1,0 @@
-kind: Upgrade notes
-body: "[audit-backup-actions, admins] Backup runs and restores are now audited as backup.run and backup.restore; update audit webhooks or SIEM filters that matched stack.deploy or container.rollback for backups."
-time: 2026-11-02T19:20:12Z

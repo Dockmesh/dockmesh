@@ -1,3 +1,0 @@
-kind: Security
-body: Stack migrations refuse compose.yaml or .env files changed outside Dockmesh until you confirm them, like a deploy does, and the target gets the global variables and the default environment override.
-time: 2026-11-02T17:58:30.8045237+01:00

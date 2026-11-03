@@ -1,3 +1,0 @@
-kind: Upgrade notes
-body: '[downgrade, admins] Going back to v0.4.2 by putting only the old binary back is not supported after this upgrade; v0.4.2 does not start on the migrated database. To roll back, restore the previous binary together with the database snapshot written before the migration (`dockmesh.db.pre-migrate-*.bak` next to the database), as described under Upgrade, Rolling back.'
-time: 2026-11-03T11:38:38.4321508+01:00

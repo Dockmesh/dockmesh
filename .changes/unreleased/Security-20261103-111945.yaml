@@ -1,3 +1,0 @@
-kind: Security
-body: '`install.sh` installs a pinned Grype release and checks its SHA-256 before installing it, instead of running Anchore''s install script from their main branch as root.'
-time: 2026-11-03T11:19:45.5863309+01:00

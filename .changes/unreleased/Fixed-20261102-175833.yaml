@@ -1,3 +1,0 @@
-kind: Fixed
-body: Updating a standalone container takes the new image's default environment, command, entrypoint, working directory, user, labels and healthcheck instead of keeping the old image's; values set on the container itself are kept.
-time: 2026-11-02T17:58:33.6452776+01:00

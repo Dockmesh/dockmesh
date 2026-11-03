@@ -1,3 +1,0 @@
-kind: Fixed
-body: "The Prometheus gauges dockmesh_backup_last_run_timestamp_seconds and dockmesh_backup_last_duration_seconds are filled again."
-time: 2026-11-02T19:20:07Z

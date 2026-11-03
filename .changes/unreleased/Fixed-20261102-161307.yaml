@@ -1,3 +1,0 @@
-kind: Fixed
-body: systemctl stop and restart of dockmesh-agent return in seconds instead of hanging until systemd kills the agent after 90 s
-time: 2026-11-02T16:13:07.3883499+01:00

@@ -1,3 +1,0 @@
-kind: Security
-body: OAuth2 and LDAP accounts are keyed by the provider's immutable user id (the userinfo `sub` or `id`, `objectGUID` or `entryUUID`) instead of the username field or the DN, so a renamed GitHub-style login or a moved directory entry that someone else takes over no longer signs into the old account. New **Subject field** (OAuth2) and **Subject attribute** (LDAP) options choose another id.
-time: 2026-11-02T15:15:20.6084474+01:00

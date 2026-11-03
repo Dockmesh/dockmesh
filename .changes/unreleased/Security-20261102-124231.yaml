@@ -1,3 +1,0 @@
-kind: Security
-body: Dockmesh's own containers (the server when it runs in a container, the reverse proxy, agents and helpers) can only be stopped, removed, updated or opened in a terminal by an admin, and backup hooks can't run in them; the file browser is closed for them. The proxy's config and certificate volumes and an agent's volume can only be browsed or backed up by an admin, since they hold TLS private keys and proxy credentials.
-time: 2026-11-02T12:42:31.5314086+01:00
