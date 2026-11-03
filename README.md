@@ -26,12 +26,14 @@ no "community edition", no feature gates, no per-node pricing.
 
 ```bash
 curl -fsSL https://get.dockmesh.dev | sudo bash
-sudo dockmesh init
 ```
 
-That pulls the latest release binary to `/usr/local/bin/dockmesh` and walks
-you through first-run setup: data directory, admin user, listen port,
-optional systemd unit. Two minutes, then browse to `http://<host>:8080`.
+That pulls the latest release binary (amd64 or arm64) to
+`/usr/local/bin/dockmesh`, verifies its checksum, starts the service and
+prints the setup wizard URL, `http://<host>:8080/setup`. The wizard asks
+for the data directory, service user, admin account and public URL.
+For a setup without a browser, install with `DOCKMESH_NO_BOOTSTRAP=1`
+and run `sudo dockmesh init` instead.
 
 **Requirements on the host:** Docker Engine (Linux) or Docker Desktop (macOS) with the daemon running, `curl` + `tar` + `sha256sum`, `sudo` access, and ports `8080` + `8443` free. The installer creates the `dockmesh` service user, systemd unit (or launchd plist on macOS), and all state dirs — see [the full requirements matrix](https://dockmesh.dev/docs/installation/#requirements) for distro-specific install hints.
 
@@ -43,7 +45,7 @@ Prefer Docker? See [Docker Compose](#docker-compose) below.
   <img src=".github/platforms.svg" alt="Platform support matrix" width="880"/>
 </p>
 
-Server + agent run natively on both Linux (systemd, `/var/lib/dockmesh`) and macOS (launchd, `/usr/local/var/dockmesh`) as of v0.1.5. The install script detects the host OS and sets up the right service manager; one-line install works identically on either. The `dmctl` CLI is additionally built for Windows so Windows users can drive a dockmesh server from their workstation. Native Windows server/agent support is on the roadmap.
+The server runs natively on Linux (systemd, `/var/lib/dockmesh`) and macOS (launchd, `/usr/local/var/dockmesh`), on amd64 and arm64. The install script detects the host OS and sets up the right service manager. The one-line agent installer enrolls Linux hosts with systemd (amd64 or arm64). The `dmctl` CLI is additionally built for Windows so Windows users can drive a dockmesh server from their workstation; the server and agent do not run on Windows.
 
 ## Features
 
@@ -68,18 +70,18 @@ Everything is included in the single binary. There is no paid tier.
 - Per-host picker + `all` mode fan-out views
 - Deploy stacks to any host from the same UI
 - Stack migration across hosts (preflight check + volume transfer)
-- Host-tag RBAC scopes (per-team isolation)
-- Fleet-wide agent auto-upgrade on server version change
+- Role assignments scoped to hosts, host tags or stacks (per-team isolation)
+- Agent upgrades pushed from the server (manual, staged or automatic)
 
 </td></tr>
 <tr><td>
 
 **Security**
 - Custom RBAC roles with granular permissions
-- OIDC SSO — Azure AD, Google, Keycloak, Okta, Authentik, Dex
+- SSO via OIDC (Azure AD, Google, Keycloak, Okta, Authentik, Dex), SAML, OAuth2 and LDAP
 - TOTP 2FA + single-use recovery codes
 - SHA-256 hash-chained audit log
-- age-encrypted stack `.env` files (zero plaintext on disk)
+- age-encrypted stack `.env` files at rest
 - In-place age key rotation (no service restart)
 
 </td><td>
@@ -88,8 +90,8 @@ Everything is included in the single binary. There is no paid tier.
 - Live CPU / memory / disk per host with smoothed metrics
 - Live container stats + log streaming with auto-reconnect
 - Container exec over WebSocket
-- Alert rules (CPU/memory thresholds, configurable durations)
-- Webhooks + notification channels (Slack, Discord, email)
+- Alert rules for CPU/memory thresholds and for events: restart loops, OOM kills, offline hosts, full disks, failed backups, expiring certificates
+- Notification channels: Slack, Discord, Teams, email, ntfy, Gotify, Pushover, PagerDuty, webhooks
 - Prometheus `/metrics` endpoint
 
 </td></tr>
@@ -101,8 +103,11 @@ Everything is included in the single binary. There is no paid tier.
   (PostgreSQL / MySQL / MariaDB / Redis / MongoDB)
 - Local, SMB (NAS), SFTP, WebDAV, or S3 targets
 - Encrypted with age — the same key the stack `.env` uses
-- One-click restore + verify-by-run (extract to /tmp, sanity-check,
-  discard — never touches the live install)
+- Restore of volumes, stacks or the whole system from the UI; the
+  archive is checked against its recorded checksum before anything is
+  overwritten
+- Verify reads an archive and checks its contents without touching the
+  live install
 
 </td><td>
 
@@ -113,6 +118,7 @@ Everything is included in the single binary. There is no paid tier.
 - Private registry credentials (age-encrypted at rest)
 - `dmctl` CLI for CI/CD + scripted deploys
 - `dockmesh import compose-dir` adopts existing compose directories as stacks
+- Web UI in English and German, chosen per user
 
 </td></tr>
 </table>
@@ -124,18 +130,18 @@ hero shots.
 
 | | |
 | :-: | :-: |
-| ![Dashboard](.github/shots/01-dashboard.png) | ![Stack detail with Git source](.github/shots/04-stack-detail-githubRepo.png) |
+| ![Dashboard](docs/site/assets/screenshots/introduction-dashboard.png) | ![Stack detail with Git source](docs/site/assets/screenshots/git-sources-stack.png) |
 | Dashboard with live fleet overview | Stack detail with GitOps auto-sync |
-| ![Container logs](.github/shots/08-container-logs.png) | ![Backups](.github/shots/16-backups-runs.png) |
+| ![Container logs](docs/site/assets/screenshots/containers-logs.png) | ![Backups](docs/site/assets/screenshots/backups-runs.png) |
 | Live container logs with filtering | Scheduled encrypted backups |
 
 ## Architecture
 
 <p align="center">
-  <img src=".github/architecture.svg" alt="dockmesh architecture" width="880"/>
+  <img src="docs/site/assets/architecture.svg" alt="dockmesh architecture: browser and dmctl talk to the server on port 8080; agents dial out over mTLS on port 8443" width="880"/>
 </p>
 
-- **Single binary**. Go, with the SvelteKit UI embedded via `go:embed`. The optional reverse proxy runs Caddy as a separate `dockmesh-proxy` container, which Dockmesh pulls (`caddy:2`) when you enable the proxy and configures through Caddy's admin API. CVE scanning uses Grype, a separate binary that `scripts/install.sh` installs unless `DOCKMESH_NO_SCANNER=1` is set.
+- **Single binary**. Go, with the SvelteKit UI embedded via `go:embed`. The optional reverse proxy runs Caddy as a separate `dockmesh-proxy` container, which Dockmesh pulls (a pinned, tested Caddy version) when you enable the proxy and configures through Caddy's admin API. CVE scanning uses Grype, a separate binary that `scripts/install.sh` installs unless `DOCKMESH_NO_SCANNER=1` is set.
 - **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
 - **Outbound-only agents**. Remote hosts open a WebSocket to the server — no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
 - **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use dockmesh.
@@ -146,13 +152,13 @@ hero shots.
 
 ```bash
 curl -fsSL https://get.dockmesh.dev | sudo bash
-sudo dockmesh init
-sudo systemctl enable --now dockmesh
 ```
+
+Then finish the setup wizard at `http://<host>:8080/setup`.
 
 ### Docker Compose
 
-No container image is published yet. Build it from a checkout with the
+No container image is published. Build it from a checkout with the
 bundled `docker-compose.yml`:
 
 ```bash
@@ -160,24 +166,27 @@ git clone https://github.com/dockmesh/dockmesh && cd dockmesh
 docker compose up -d --build
 ```
 
-The UI is then on port 8080. The container needs the Docker socket
-mounted, as in the compose file.
+The UI is then on port 8080, and the generated `admin` password is
+printed once in `docker compose logs dockmesh`. The container needs the
+Docker socket mounted, as in the compose file.
 
 ### Install an agent on a remote host
 
-From the UI: `Agents → New agent`, copy the one-line enroll command to the
-remote host. The installer handles the systemd unit and first handshake.
+From the UI: `Hosts → Add host`, copy the one-line enroll command to the
+remote host (Linux with systemd, amd64 or arm64). The installer handles
+the systemd unit and first handshake.
 
 ## Quick start
 
-After `dockmesh init`:
+After the setup wizard:
 
-1. **Log in** at `http://<host>:8080` with the generated admin password
-2. **Create a stack**: `Stacks → New` → paste a compose.yaml → `Deploy`
-3. **(Optional) Enroll a second host**: `Agents → New agent` → run the
+1. **Log in** at `http://<host>:8080` with the admin account you created
+2. **Create a stack**: `Stacks → New stack` → paste a compose.yaml → `Create & deploy`
+3. **(Optional) Enroll a second host**: `Hosts → Add host` → run the
    install one-liner on the remote host
-4. **(Optional) Set up backups**: `Backups → New job` → pick a target (SMB / S3 / SFTP / local) → pick sources → save
-5. **(Optional) Turn on the reverse proxy**: `Proxy → Enable` → add a route. Dockmesh starts the Caddy container, which requests the certificates
+4. **(Optional) Set up backups**: `Backups → New backup job` → pick a source → pick a target (SMB / S3 / SFTP / WebDAV / local) → save
+5. **(Optional) Turn on the reverse proxy**: `Reverse proxy → Enable proxy` → `New site`. Dockmesh starts the Caddy container, which requests the certificates
+6. **(Optional) Switch the language**: user menu → `My account` → `Language` (English or German)
 
 ## Documentation
 

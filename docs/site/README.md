@@ -35,7 +35,11 @@ is planned.
 
 - Links between pages are relative paths to the `.md` file, for example
   `../operations/backups.md#restore`. No absolute links to the docs site.
-- Images go in `docs/site/assets/` and are linked relatively.
+- Images go in `docs/site/assets/` and are linked relatively. Screenshots of
+  the UI live only in `docs/site/assets/screenshots/`, named
+  `<page>-<what>.png`; the repository README links the same files, so a
+  screenshot is replaced in one place. Diagrams are SVG and follow the
+  reader's light or dark preference (`prefers-color-scheme`).
 - Plain Markdown only. Notes are blockquotes starting with `**Note:**` or
   `**Warning:**`; no site-specific components.
 

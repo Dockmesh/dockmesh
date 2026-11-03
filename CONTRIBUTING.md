@@ -150,6 +150,9 @@ don't open a PR.
   OpenAPI source of its tag in `api/openapi/` in the same commit and run
   `make openapi` to rebuild the bundled spec. CI enforces both via
   `TestOpenAPIDriftAgainstRoutes` and `TestCommittedBundleIsCurrent`.
+- If users can see the change (a setting, default, flag, UI label or
+  limitation), update the pages under `docs/site/` in the same PR and run
+  `go run ./scripts/docscheck`.
 - UI changes: run a manual smoke pass before requesting review. Type
   checks and unit tests verify code correctness, not feature correctness.
 

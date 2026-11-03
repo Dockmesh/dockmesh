@@ -6,8 +6,7 @@
       "items": [
         { "title": "Introduction", "path": "getting-started/introduction.md" },
         { "title": "Installation", "path": "getting-started/installation.md" },
-        { "title": "First steps", "path": "getting-started/first-steps.md" },
-        { "title": "Upgrading", "path": "getting-started/upgrading.md" }
+        { "title": "First steps", "path": "getting-started/first-steps.md" }
       ]
     },
     {

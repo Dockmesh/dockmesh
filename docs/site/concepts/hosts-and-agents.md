@@ -8,59 +8,57 @@ A host is a Docker engine that Dockmesh manages. There are two kinds:
 - **The local host** is the Docker engine on the machine running the `dockmesh` server. Its host ID is `local`. The server talks to it directly through the Docker SDK.
 - **Remote hosts** run `dockmesh-agent`, which connects out to the server and carries out Docker operations locally. Each remote host has its own ID, assigned when you add it.
 
-All hosts appear on the **Hosts** page and in the host switcher at the top of the UI.
+All hosts appear on the **Hosts** page. The host filter in the top bar limits every page to one host; **Set as lens** on a host's page does the same.
 
 ## The agent model
 
-The agent only makes outbound connections. Remote hosts need no open inbound ports; they need to reach the server's public URL (`DOCKMESH_BASE_URL`, which should be `https://` behind your TLS proxy) for enrollment and agent upgrades (the new binary is downloaded from `/install/` without a checksum check), and the agent port (default `8443`) for the permanent connection.
+The agent only makes outbound connections. Remote hosts need no open inbound ports. They need to reach two addresses on the server:
+
+- The **base URL**, while you install the agent. The install script and the agent binary are downloaded from it.
+- The **agent URL** (`wss://<server>:8443/connect` by default), always. Enrollment, the permanent connection, certificate renewal and agent upgrades all go through the server's agent port.
+
+Both URLs are set under **Settings → General** (**Base URL** and **Agent public URL**). `DOCKMESH_BASE_URL` and `DOCKMESH_AGENT_PUBLIC_URL` in `dockmesh.env` win over the fields. An empty agent URL is derived from the base URL's host and the agent port. See [Multi-host](../features/multi-host.md#before-you-add-the-first-agent).
 
 ### Adding a host
 
-1. On **Hosts**, click **Add host** and enter a name. The server creates a pending host record and a one-time enrollment token. It stores only a hash of the token.
+1. On **Hosts**, click **Add host**, enter a name and click **Generate install command**. The server creates a pending host and a one-time enrollment token. It stores only a hash of the token. The token is valid for 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes this).
 2. The dialog shows an install command:
 
    ```bash
-   curl -fsSL https://<server>/install/agent.sh?token=<token> | sudo bash
+   curl -fsSL '<base-url>/install/agent.sh?token=<token>&ca=<fingerprint>' | sudo bash
    ```
 
-   The server builds this URL from `DOCKMESH_BASE_URL`, so set that to an address the remote host can reach.
-3. Run the command on the remote host as root. The script requires Linux with systemd, installs Docker through `get.docker.com` if it is missing (unless you pass `--skip-docker`), creates a `dockmesh-agent` system user in the `docker` group (unless you pass `--as-root`), downloads the agent binary from the server, writes `/etc/dockmesh-agent/agent.env` and starts the `dockmesh-agent` systemd service. To pass flags, use `| sudo bash -s -- --as-root`.
-4. On first start the agent calls `POST /api/v1/agents/enroll` with the token. The server generates a key pair and a client certificate signed by its internal CA (ECDSA P-256, valid 365 days, the host ID as Common Name) and returns them with the CA certificate. The agent saves `agent.crt`, `agent.key`, `ca.crt` and `agent.url` in its data directory (`/var/lib/dockmesh`). The token cannot be used again.
-
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-Enrollment tokens do not expire until they are used. During enrollment the agent does not verify the server's TLS certificate; it trusts whatever CA the enrollment response contains. Enroll over a network you trust, and don't leave unused tokens lying around. The one-line installer always downloads the `linux-amd64` agent binary; on arm64 hosts, replace `/var/lib/dockmesh/bin/dockmesh-agent` with the `dockmesh-agent` binary from the linux-arm64 release tarball and restart the service. The installer is Linux-only.
+   The `ca` value is the fingerprint of the server's agent CA. The server refuses to hand out the script if its CA has changed since the command was created.
+3. Run the command on the remote host as root. The script has the token, both URLs, the agent CA and the SHA-256 checksums of the agent binaries filled in. It picks the `amd64` or `arm64` binary for the host, checks its checksum, and sets up a systemd service. See [What the installer does](../features/multi-host.md#what-the-installer-does).
+4. On first start the agent sends the token to `https://<agent URL host>:<port>/enroll` on the agent port. It only trusts the agent CA the install script wrote, after checking its fingerprint (`DOCKMESH_CA_FINGERPRINT`), so it can't be redirected to another server. The server generates a key pair and a client certificate signed by its CA (ECDSA P-256, valid 365 days, the host ID as Common Name) and returns them. The token can't be used again.
 
 ### The connection
 
-After enrollment the agent dials the URL in `agent.url`, which is `DOCKMESH_AGENT_PUBLIC_URL` if set, otherwise `wss://<host of DOCKMESH_BASE_URL>:<agent port>/connect`. The `/connect` endpoint requires a client certificate signed by the server's CA (mutual TLS, TLS 1.2 or later). The server looks the certificate up by fingerprint and rejects unknown ones.
+After enrollment the agent dials the agent URL. The `/connect` endpoint requires a client certificate signed by the server's CA (mutual TLS, TLS 1.2 or later). The server looks the certificate up by fingerprint and rejects unknown ones.
 
-Messages are JSON frames over a single WebSocket: the server sends requests (list containers, deploy a stack, start a log stream) and the agent replies. The agent sends a heartbeat every 15 seconds; the server pings every 30 seconds and marks the host offline after 60 seconds of silence. When the connection drops, the agent reconnects with exponential backoff from 1 to 60 seconds.
+Messages are JSON frames over a single WebSocket: the server sends requests (list containers, deploy a stack, start a log stream) and the agent replies. The agent sends a heartbeat every 15 seconds and the server pings every 30 seconds. The server marks a host offline after 60 seconds without a frame; the agent gives up on a silent server after 90 seconds. The agent then reconnects at once, and after that waits 1 second, doubling up to 60 seconds with some random jitter.
 
-Add extra hostnames or IPs to the server's agent certificate with `DOCKMESH_AGENT_SANS` (comma-separated) when agents reach the server under a name other than the one in `DOCKMESH_BASE_URL`.
-
-<!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
-Each request to an agent times out after 30 seconds. That includes deploys, so a deploy that has to pull large images on a remote host can report a timeout even though the agent keeps working. Pre-pull big images on the host, or deploy again once the pull has finished.
+Requests to an agent have time limits by type: 15 minutes for deploys and scaling, 30 minutes for commands run in a container (backup hooks, for example), 3 minutes for stopping, removing and file operations, and 30 seconds for everything else. When a request is cancelled or times out, the server tells the agent to stop it.
 
 ### Certificates, revocation and re-enrollment
 
-<!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
-Client certificates are valid for 365 days and are not renewed automatically. Before a certificate expires, revoke the host and add it again.
+Client certificates are valid for 365 days. An online agent asks for a new one over its existing connection once less than 30 days are left; the host keeps its ID. The host page shows when the certificate expires. Admins get a notice for an agent whose certificate expires within 14 days, and a critical one for an offline agent whose certificate has expired.
 
-**Revoke** (in the host's row menu or on the host detail page) deletes the host record. The agent's certificate is rejected on its next connection. A connection that is already open is not cut immediately, so stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). Containers on that host keep running; Dockmesh just stops managing them.
+**Re-issue…** on the host's **Maintenance** tab (needs `hosts.create`) creates a new enrollment token for the same host. Running the new install command on the host re-enrolls it under the same ID, so its stacks, tags and backup jobs stay. The old certificate keeps working until the host enrolls with the new token. Use this for an expired or suspect certificate, or after reinstalling the host.
 
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-**Re-issue token** on the host detail page creates a new token, but the server only accepts enrollment for hosts that are still pending. For a host that has already enrolled, revoke it and add it again instead. Running the new install command on the host removes the old certificate files before enrolling.
+**Revoke…** in the host's row menu or on the **Maintenance** tab (needs `hosts.delete`) deletes the host from Dockmesh, after you type its name. An open connection is closed and the certificate is no longer accepted. Containers on that host keep running; Dockmesh just stops managing them. Stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). To bring the host back, add it again; it gets a new ID.
 
-`dockmesh ca rotate` replaces the CA and server certificate and resets every agent to pending with a new token, so every host has to be enrolled again.
+`dockmesh ca rotate` replaces the CA and the server certificate and resets every agent to pending with a new token, so every host has to be enrolled again.
 
 ### Agent upgrades
 
-<!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-The upgrade mode decides what happens to agents whose version differs from the server's: `auto`, `staged` (a percentage of agents per wave) or `manual`. The default is `manual`, where you click **Upgrade now** on the host detail page. The **Agent upgrade policy** panel on the Hosts page shows the mode and how many agents are behind; changing the mode is done through the API (`PUT /api/v1/agents/upgrade-policy`). The agent downloads the new binary from the server without a checksum check. See [Upgrade](../operations/upgrade.md#upgrading-agents).
+When an agent runs a different build than the server, the Hosts page marks it and offers an upgrade. The agent downloads the new binary from the agent port and checks it against the SHA-256 checksum the server sends before it replaces itself. The upgrade mode decides whether this happens on its own: `manual` (default), `auto` or `staged`. Agents that speak an older protocol than the server show **agent update recommended**; features they don't support are skipped or fail with a message. See [Agent upgrades](../features/multi-host.md#agent-upgrades).
 
 ## What works on remote hosts
 
-Most day-to-day features work on every host: container lists and lifecycle, logs, exec, live stats, image, volume and network lists and inspect, stack deploy, stop and scale, host metrics, drains, stack migration and the container file browser (it needs an agent of the same release as the server).
+Most features work on every host: container lists and lifecycle, logs, exec, live stats and metrics history, the container file browser, image, volume and network lists and inspect, image remove and prune, volume browsing, stack deploy, stop and scale, alert rules, backups and restores of volumes and stacks, git-source auto-deploys (they run on the host the stack is deployed on), drains and stack migration. Private registry credentials are sent to agents for the images they deploy; see [Registries](../features/registries.md).
+
+Some features need an agent of the same release as the server, for example the file browser, metrics history and restores in replace mode. Older agents ask to be upgraded.
 
 These work on the local host only:
 
@@ -68,34 +66,28 @@ These work on the local host only:
 |---|---|
 | Rolling updates | Returns an error. |
 | Stack cleanup (preview and delete of leftover resources) | Returns an error. |
-| Image pull, volume and network create, remove and prune | Always run on the local host, whatever host is selected. |
-| Container metrics history | Only live stats; no stored history. |
-| Alerts | Rules evaluate local containers only. |
+| Image pull; volume and network create, remove and prune | Always run on the local host, whatever host is selected. |
 | Vulnerability scanning | Scans images on the local host only. |
-| Image update detection and one-click update | Watches local containers only. |
+| Image update detection and one-click update | Covers local containers only. |
+| Auto-scaling rules | Scale on the local host only. |
 | Live deploy progress | Not reported; you see the result when the deploy finishes. |
-| Git-source auto-deploy and auto-scaling rules | Run against the local host only. |
-| Private registry credentials | Not sent to agents; pulls on remote hosts are anonymous. Pre-pull private images on the host (`docker login` and `docker pull`); see [Registries](../features/registries.md). |
 
-Volume browsing on a remote host works only when the agent runs as root (`--as-root`). Volume backups of remote volumes stream through the server; restores write to the local host. See [Backups](../operations/backups.md).
-
-<!-- update after: fs: contain paths in volume browse, restore and git sources -->
-Stack migration moves the stack definition and redeploys it on the target host, but it does not copy volume data: the target starts with empty volumes. See [Migration and drain](../features/migration-and-drain.md).
+Stack migration moves the stack definition and redeploys it on the target host. Stacks with named volumes are refused, because their data isn't copied. See [Migration and drain](../features/migration-and-drain.md).
 
 ## Host tags
 
-A host can carry up to 20 tags. Tags are lowercase letters, digits and hyphens, start with a letter or digit, and are at most 32 characters (`prod`, `eu-west`, `team-web`). Edit them with **Edit tags** in the host's row menu or on the **Tags** tab of the host detail page; this needs `hosts.tag`. The local host can be tagged too.
+A host can carry up to 20 tags. Tags are lowercase letters, digits and hyphens, start with a letter or digit, and are at most 32 characters (`prod`, `eu-west`, `team-web`). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu or on the **Tags** tab of the host page; changing them needs `hosts.tag`. The local host can be tagged too.
 
 Tags are used for:
 
-- **Searching** on the Hosts page.
+- **Filtering** on the Hosts page and in the host filter (`#tag`).
 - **Scoping access.** An assignment on a host tag covers every host carrying the tag. See [Permissions](./permissions.md#scopes).
-
-Leave the **Scope (host tags)** field on saved registry credentials empty: Dockmesh never passes host tags when it looks up credentials, so a credential with any scope tag is never used.
+- **Registry credentials.** A credential with scope tags is used only on hosts that carry one of them; a credential without scope tags is used on every host.
+- **Alert rules**, which can be limited to a host tag.
 
 ## Querying all hosts at once
 
-Pick **All hosts** in the host switcher, or pass `?host=all` to the API, to aggregate lists across every online host. This works for containers, images, volumes, networks and host metrics. The server queries all hosts in parallel with a 3-second limit per host and returns whatever arrived; hosts that failed or timed out are listed in the response's `unreachable_hosts` field. Without a `host` parameter the API uses the local host.
+Pick **All hosts** in the host filter, or pass `?host=all` to the API, to aggregate lists across every online host. This works for containers, images, volumes, networks and host metrics. The server queries all hosts in parallel with a 3-second limit per host and returns whatever arrived; hosts that failed or timed out are listed in the response's `unreachable_hosts` field. Without a `host` parameter the API uses the local host.
 
 ## Related
 
