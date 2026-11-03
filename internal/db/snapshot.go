@@ -119,7 +119,10 @@ func mainDBFile(db *sql.DB) (string, error) {
 }
 
 // listSnapshots returns the finished snapshots of dbPath, oldest first.
-func listSnapshots(dbPath string) ([]string, error) {
+func listSnapshots(dbPath string) ([]string, error) { return listMatching(dbPath, isFinishedSnapshot) }
+
+// listMatching returns the files next to dbPath whose names match, sorted.
+func listMatching(dbPath string, match func(dbBase, name string) bool) ([]string, error) {
 	dir, base := filepath.Split(dbPath)
 	if dir == "" {
 		dir = "."
@@ -130,7 +133,7 @@ func listSnapshots(dbPath string) ([]string, error) {
 	}
 	var snaps []string
 	for _, e := range entries {
-		if e.Type().IsRegular() && isFinishedSnapshot(base, e.Name()) {
+		if e.Type().IsRegular() && match(base, e.Name()) {
 			snaps = append(snaps, filepath.Join(dir, e.Name()))
 		}
 	}
@@ -145,22 +148,7 @@ func Snapshots(db *sql.DB) ([]string, error) {
 	if err != nil || path == "" {
 		return nil, err
 	}
-	dir, base := filepath.Split(path)
-	if dir == "" {
-		dir = "."
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var snaps []string
-	for _, e := range entries {
-		if e.Type().IsRegular() && IsSnapshotName(base, e.Name()) {
-			snaps = append(snaps, filepath.Join(dir, e.Name()))
-		}
-	}
-	sort.Strings(snaps)
-	return snaps, nil
+	return listMatching(path, IsSnapshotName)
 }
 
 // IsUnfinishedSnapshot reports whether path is a snapshot whose copy never

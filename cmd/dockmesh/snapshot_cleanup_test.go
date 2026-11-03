@@ -56,16 +56,15 @@ func TestRemovePlaintextSnapshots(t *testing.T) {
 		snapEdit    []string
 		liveEdit    string
 		unfinished  bool
-		wantGone    bool
 		wantRemoved bool
 		wantKept    bool
 	}{
-		{"upgrade from before the encryption", true, []string{preSeal, plainCfg}, "", false, true, true, false},
-		{"snapshot with a plaintext credential", true, []string{plainCfg}, "", false, true, true, false},
-		{"sealed snapshot stays as restore point", true, nil, "", false, false, false, false},
-		{"unfinished copy is removed", true, nil, "", true, true, true, false},
-		{"failed seal check keeps it", true, []string{preSeal}, plainCfg, false, false, false, true},
-		{"encryption off leaves it alone", false, []string{preSeal}, "", false, false, false, false},
+		{"upgrade from before the encryption", true, []string{preSeal, plainCfg}, "", false, true, false},
+		{"snapshot with a plaintext credential", true, []string{plainCfg}, "", false, true, false},
+		{"sealed snapshot stays as restore point", true, nil, "", false, false, false},
+		{"unfinished copy is removed", true, nil, "", true, true, false},
+		{"failed seal check keeps it", true, []string{preSeal}, plainCfg, false, false, true},
+		{"encryption off leaves it alone", false, []string{preSeal}, "", false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,8 +104,8 @@ func TestRemovePlaintextSnapshots(t *testing.T) {
 			}
 
 			_, statErr := os.Stat(snap)
-			if gone := os.IsNotExist(statErr); gone != tt.wantGone {
-				t.Errorf("snapshot gone = %v, want %v", gone, tt.wantGone)
+			if gone := os.IsNotExist(statErr); gone != tt.wantRemoved {
+				t.Errorf("snapshot gone = %v, want %v", gone, tt.wantRemoved)
 			}
 			open := openNotices(t, n)
 			if _, ok := open[snapshotRemovedNoticeKey]; ok != tt.wantRemoved {
@@ -123,7 +122,7 @@ func TestRemovePlaintextSnapshots(t *testing.T) {
 }
 
 // Once the admin deletes a kept snapshot, the next start resolves the
-// notice; a later start after a successful removal raises nothing new.
+// notice.
 func TestRemovePlaintextSnapshotsResolves(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

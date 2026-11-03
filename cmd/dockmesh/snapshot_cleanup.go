@@ -129,11 +129,11 @@ func removedNotice(paths []string) notices.RaiseInput {
 		Key:      snapshotRemovedNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "Pre-upgrade database backup removed",
-		Body: "The copy of the database taken before the upgrade held backup credentials and secret " +
+		Title:    "Pre-upgrade database copies removed",
+		Body: "The copies of the database taken before the upgrade held backup credentials and secret " +
 			"variables in plaintext. The upgrade checks passed and every stored secret is encrypted, so " +
-			"it was deleted:" + notices.Bullets(snapshotNames(paths)) +
-			"Rolling back to the previous version with that copy is no longer possible; restore a " +
+			"these copies were deleted:" + notices.Bullets(snapshotNames(paths)) +
+			"Rolling back to the previous version with them is no longer possible; restore a " +
 			"system backup instead.",
 		Link: "/backups",
 	}
@@ -144,8 +144,8 @@ func keptNotice(paths []string, reason string) notices.RaiseInput {
 		Key:      snapshotKeptNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "Pre-upgrade database backup still holds plaintext secrets",
-		Body: fmt.Sprintf("These copies of the database next to it hold backup credentials and secret "+
+		Title:    "Pre-upgrade database copies still hold plaintext secrets",
+		Body: fmt.Sprintf("These copies of the database, next to the database file, hold backup credentials and secret "+
 			"variables in plaintext:%s%s They were kept as the way back to the previous version. Once "+
 			"Dockmesh works as expected, delete them on the server.", notices.Bullets(snapshotNames(paths)), reason),
 	}

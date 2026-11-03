@@ -48,16 +48,20 @@ func Verify(ctx context.Context, db *sql.DB, sec *secrets.Service) error {
 	return errors.Join(errs...)
 }
 
-func verifyValue(table, raw string, sec *secrets.Service) error {
+func isPlain(table, raw string) bool {
 	if table == "global_env" {
-		if !secrets.IsSealed(raw) {
-			return errors.New("stored in plaintext")
-		}
+		return !secrets.IsSealed(raw)
+	}
+	return targets.HasPlainCredentials(raw)
+}
+
+func verifyValue(table, raw string, sec *secrets.Service) error {
+	if isPlain(table, raw) {
+		return errors.New("stored in plaintext")
+	}
+	if table == "global_env" {
 		_, err := sec.OpenString(raw)
 		return err
-	}
-	if targets.HasPlainCredentials(raw) {
-		return errors.New("credentials stored in plaintext")
 	}
 	if !targets.HasCredentials(raw) {
 		return nil
@@ -84,7 +88,7 @@ func HoldsPlaintext(ctx context.Context, db *sql.DB) (bool, error) {
 			return false, err
 		}
 		for _, raw := range rows {
-			if c.table == "global_env" && !secrets.IsSealed(raw) || c.table != "global_env" && targets.HasPlainCredentials(raw) {
+			if isPlain(c.table, raw) {
 				return true, nil
 			}
 		}
