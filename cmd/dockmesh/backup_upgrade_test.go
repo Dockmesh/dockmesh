@@ -93,7 +93,7 @@ func TestPrepareJobTargetsRepairsBeforeMigrating(t *testing.T) {
 		t.Fatal(err)
 	}
 	repaired := 0
-	if err := prepareJobTargets(ctx, st, svc, ts, n, func(backup.Job, string) { repaired++ }); err != nil {
+	if err := prepareJobTargets(ctx, database, st, svc, ts, n, func(backup.Job, string) { repaired++ }); err != nil {
 		t.Fatal(err)
 	}
 	jobs, err := svc.ListJobs(ctx)

@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -153,7 +155,7 @@ const jobRepairDoneSetting = "backups.job_repair_done"
 // targets to saved targets and encrypts credentials still stored in
 // plaintext. The order matters: the migration copies whatever secret the
 // job holds, so it must see the repaired one.
-func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
+func prepareJobTargets(ctx context.Context, database *sql.DB, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
 	repairErr := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair)
 	moved, err := svc.MigrateInlineTargets(ctx)
 	if moved > 0 {
@@ -162,6 +164,19 @@ func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Serv
 	sealed, sealErr := svc.EncryptStoredTargetSecrets(ctx)
 	if sealed > 0 {
 		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
+	}
+	// The plaintext these steps replaced is still in the file's free space.
+	// Background writers are running here, so the attempt is capped: an
+	// interrupted VACUUM rolls back, and the mark makes the next start
+	// compact before they run.
+	if moved+sealed > 0 {
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if merr := db.MarkCompactPending(ctx, database); merr != nil {
+			slog.Warn("backup: marking the database for compaction", "err", merr)
+		} else if cerr := db.CompactIfPending(cctx, database); cerr != nil {
+			slog.Warn("backup: database not compacted yet, retrying on the next start", "err", cerr)
+		}
 	}
 	return errors.Join(repairErr, err, sealErr)
 }
