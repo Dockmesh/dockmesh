@@ -30,7 +30,7 @@ Every endpoint outside the [public set](#public-endpoints) needs `Authorization:
 
 Each request is checked against the user's **current** assignments. An API token acts with its owner's current access, narrowed to the token's restriction when it has one. See [API tokens](../features/api-tokens.md) and [Permissions](../concepts/permissions.md).
 
-### Password login
+### Password sign-in
 
 ```bash
 curl -s -X POST https://dockmesh.example.com/api/v1/auth/login \

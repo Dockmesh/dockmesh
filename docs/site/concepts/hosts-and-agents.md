@@ -38,7 +38,7 @@ After enrollment the agent dials the agent URL. The `/connect` endpoint requires
 
 Messages are JSON frames over a single WebSocket: the server sends requests (list containers, deploy a stack, start a log stream) and the agent replies. The agent sends a heartbeat every 15 seconds and the server pings every 30 seconds. The server marks a host offline after 60 seconds without a frame; the agent gives up on a silent server after 90 seconds. The agent then reconnects at once, and after that waits 1 second, doubling up to 60 seconds with some random jitter.
 
-Requests to an agent have time limits by type: 15 minutes for deploys and scaling, 30 minutes for commands run in a container (backup hooks, for example), 11 minutes for agent upgrades, 3 minutes for stopping, restarting and removing containers, stopping stacks, removing and pruning images, and listing, writing and deleting container files, and 30 seconds for everything else. When a request is cancelled or times out, the server tells the agent to stop it.
+Requests to an agent have time limits by type: 15 minutes for deploys and scaling, 30 minutes for commands run in a container (backup hooks, for example), 11 minutes for agent upgrades, 3 minutes for container stop/restart/remove, stack stop, image remove/prune and container file operations, and 30 seconds for everything else. When a request is cancelled or times out, the server tells the agent to stop it.
 
 ### Certificates, revocation and re-enrollment
 

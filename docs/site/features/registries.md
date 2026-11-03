@@ -20,7 +20,7 @@ Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Ha
 
 Use tokens with read-only scope: on GitHub a token with `read:packages`, on Docker Hub a personal access token, on Harbor a robot account. AWS ECR tokens expire after 12 hours (`aws ecr get-login-password`) and must be replaced by hand; Dockmesh has no ECR integration.
 
-**Test login** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the server host's Docker engine and records the result. The page counts failing tests and marks credentials as stale when the entry was last saved or tested more than 90 days ago; a test resets the count as well.
+**Test login** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the server host's Docker engine and records the result. The page counts failing tests and marks credentials as stale when the entry was last saved or tested more than 90 days ago, so a test also clears the stale mark.
 
 ## How credentials are matched
 

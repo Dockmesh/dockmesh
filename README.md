@@ -17,9 +17,10 @@
 
 dockmesh is a lightweight Docker fleet-management platform. One Go binary,
 one SvelteKit UI, outbound-only agents on every other host. Stacks live on
-disk as plain `compose.yaml` files: the filesystem is the source of truth,
-the database holds runtime state such as deployments, users and history. RBAC, SSO, audit log, encrypted backups, CVE
-scanning, and multi-host orchestration ship free in the single binary.
+disk as plain `compose.yaml` files: the filesystem is the source of truth;
+the database holds runtime state such as deployments, users and history.
+RBAC, SSO, audit log, encrypted backups, CVE scanning, and multi-host
+orchestration ship free in the single binary.
 No "community edition", no feature gates, no per-node pricing.
 
 ## One-line install

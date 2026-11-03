@@ -130,5 +130,5 @@ Agent certificates are valid for 365 days. An agent of v0.5.0 or later renews it
 ## Other failures
 
 - **Single stack broken**: stop the stack, restore its last good stack run with **Replace**, deploy. Replace makes the volumes match the backup and leaves them untouched if the restore fails; take a fresh backup of the current state first if you might want it back.
-- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs an agent of the same release as the server. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
+- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs an up-to-date agent. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
 - **Database damaged**: stop the server, then run `sqlite3 dockmesh.db "PRAGMA integrity_check;"`. If it reports errors, restore the database from a system backup as above.

@@ -73,7 +73,7 @@ See [Ports](../reference/ports.md).
 sudo systemctl restart dockmesh
 ```
 
-### The login page appears instead of the setup wizard
+### The sign-in page appears instead of the setup wizard
 
 **Cause:** the wizard at `/setup` is only active while the database has no admin account. `install.sh` sets `DOCKMESH_SETUP_FORCE=true` so the server waits for the wizard. Without that flag (for example after `dockmesh init`), the first start creates a user named `admin` with a random password and prints it once to the console. The log shows `bootstrap admin created, the password was printed to the console once`.
 
@@ -317,7 +317,7 @@ sudo systemctl restart dockmesh-agent
 
 ### "agent update recommended"
 
-**Cause:** the agent speaks an older protocol than the server. Some features, such as metrics history, container events, the container file browser or replace restores, need the agent of the same release.
+**Cause:** the agent speaks an older protocol than the server. Some features, such as the container file browser, metrics history or replace restores, need an up-to-date agent.
 
 **Fix:** open the host page → **Maintenance** → **Upgrade agent** → **Upgrade now**. If the agent already runs the server's build, the server answers `this host's agent already runs the same build as the server; there is nothing to upgrade`. See [Upgrade](../operations/upgrade.md).
 
@@ -395,7 +395,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 
 **Cause:** local targets may only write below the directories in the `backups.local_roots` setting, by default `/srv/backups` and `<data directory>/backups`.
 
-**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs `system.upgrade` on everything in addition to `system.update`. If the server runs under the unit `dockmesh init` writes (`ProtectSystem=strict`), the path also has to be in `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.
+**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs Settings & audit: Manage on everything (`system.upgrade` and `system.update`). If the server runs under the unit `dockmesh init` writes (`ProtectSystem=strict`), the path also has to be in `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.
 
 ### "this job is already running"
 
@@ -412,7 +412,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 | `volume <name> is used by running containers (...); stop them before replacing its contents` | **Replace** needs the volume unused. |
 | `this backup has no recorded checksum, so it can only be merged, not replace the volume's contents` | Older backups can only be restored with **Merge**. |
 | `not enough free space in the volume for a replace restore ...` | **Replace** keeps old and new contents side by side until the swap. |
-| `the agent on this host is too old to restore volumes; upgrade it from the Hosts page` | **Replace** onto an agent host needs an agent of the same release as the server. |
+| `the agent on this host is too old to restore volumes; upgrade it from the Hosts page` | **Replace** onto an agent host needs an up-to-date agent. |
 | `another restore is in progress` | Only one restore may write a volume or stack at a time, and at most two run at once. |
 | `run has no restorable archive (failed, still running, or removed by retention)` | Pick another run. |
 | `archive does not match what the backup run wrote` / `backup archive failed verification, nothing was restored` | The archive on the target is damaged or was replaced. |

@@ -53,7 +53,7 @@ Passwords, S3 secret keys and SFTP private keys are stored encrypted with the se
 
 Archives are written to `jobs/<job id>-<job name>/<UTC timestamp>-r<run id>.tar.gz`, with `.age` appended when the run is encrypted. The job name is lowercased and every character other than `a-z`, `0-9` and `-` becomes `-`. Archives that older versions wrote to `jobs/<job name>/` stay where they are and are still restored and pruned from there.
 
-### Local, S3, SFTP, SMB and WebDAV targets
+### Target types: local, S3, SFTP, SMB, WebDAV
 
 What to know about each type:
 
