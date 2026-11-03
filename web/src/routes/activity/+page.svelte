@@ -166,7 +166,7 @@
           {@const t = attentionText(a)}
           <div class="dm-tr" role="row" style="grid-template-columns: {ATT_COLS}">
             <span role="cell"><StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} /></span>
-            <span role="cell" class="dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span class="dm-dim"> — {t.detail}</span>{/if}</span>
+            <span role="cell" class="dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span class="dm-dim">&nbsp;— {t.detail}</span>{/if}</span>
             <span role="cell" class="dm-dim dm-trunc">{a.object.host_id ? hostName(a.object.host_id) : '—'}</span>
             <span role="cell" class="dm-num dm-dim" title={a.since ? fmtDateTime(a.since) : ''}>{a.since ? fmtAgo(a.since) : '—'}</span>
             <span role="cell" class="dm-tr-menu">{#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}</span>

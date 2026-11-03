@@ -304,7 +304,7 @@
             {@const t = attentionText(a)}
             <div class="attn">
               <StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} />
-              <div class="t dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span> — {t.detail}</span>{/if}</div>
+              <div class="t dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span>&nbsp;— {t.detail}</span>{/if}</div>
               {#if a.since}<span class="dm-num dm-dim" title={fmtDateTime(a.since)}>{fmtAgo(a.since)}</span>{/if}
               {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}
             </div>
