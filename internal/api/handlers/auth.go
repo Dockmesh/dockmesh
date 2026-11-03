@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
