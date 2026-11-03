@@ -77,11 +77,11 @@ sudo systemctl restart dockmesh
 
 Before it serves requests, the server brings the database up to date:
 
-1. **Snapshot.** If migrations are pending on an existing database, it first writes a copy of the database next to it: `dockmesh.db.pre-migrate-<UTC time>.bak` (for example `/var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak`), with the owner and mode of the database. It keeps the newest three snapshots and deletes older ones. If a migration fails on every start, the snapshot from before the first attempt is reused instead of being rotated out. If the snapshot cannot be written (for example the disk is full), no migration runs and the server exits; free space next to the database, or set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` in `dockmesh.env` to migrate without a snapshot.
+1. **Snapshot.** If migrations are pending on an existing database, it first writes a copy of the database next to it: `dockmesh.db.pre-migrate-<UTC time>.bak` (for example `/var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak`), owned like the database and readable only by its owner (mode 600). It keeps the newest three snapshots and deletes older ones. If a migration fails on every start, the snapshot from before the first attempt is reused instead of being rotated out. If the snapshot cannot be written (for example the disk is full), no migration runs and the server exits; free space next to the database, or set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` in `dockmesh.env` to migrate without a snapshot.
 2. **Migrations.** The migrations ship inside the binary. Each pending one runs in its own transaction and is recorded in the `schema_migrations` table only when it succeeds, so a failed migration leaves the database as it was and is retried on the next start. If one fails, the server logs `db migrate failed` and exits, and systemd keeps restarting it. In that case roll back.
 3. **Notices.** Some changes need a person to act, for example reviewing access after a permission change. The server checks for these conditions and raises a notice for the users concerned (often admins only). A notice disappears by itself once the condition is fixed.
 
-Notices about something that stopped working show as a banner at the top of the UI, with a link to the page where you fix it. **Hide for 24 h** moves such a notice to **Needs attention** for a day; it comes back while the problem lasts. All other notices are listed under **Needs attention** on the **Overview** page and on the **Activity** page. Critical notices that are not in the banner cannot be hidden. Steps the server cannot check are listed only in the release's **Upgrade notes**.
+Notices about something that stopped working show as a banner at the top of the UI, with a link to the page where you fix it. **Hide for 24 h** moves such a notice to **Needs attention** for a day; it comes back while the problem lasts. Other warning and critical notices are listed under **Needs attention** on the **Overview** page and on the **Activity** page. Info notices, which only announce a change, appear in the notification feed on the **Activity** page. Critical notices that are not in the banner cannot be hidden. Steps the server cannot check are listed only in the release's **Upgrade notes**.
 
 Snapshots are not included in system backups. They can hold values that newer versions store encrypted, so delete them once you are sure you won't roll back.
 
@@ -106,15 +106,14 @@ sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
 sudo systemctl restart dockmesh
 ```
 
-The older binary does not check the schema version. It starts on a database that the newer version has already migrated, and whether it then works depends on what the migrations changed. For a clean rollback, put the pre-migration snapshot back as well. Changes made after the upgrade are lost.
+The older binary does not check the schema version. It starts on a database that the newer version has already migrated, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.2 it does not start (`setup state init failed ... no such column: role`), so restore the snapshot as well. For a clean rollback, put the pre-migration snapshot back as well. Changes made after the upgrade are lost.
 
 ```bash
 sudo systemctl stop dockmesh
 sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
-cd /var/lib/dockmesh/data
-ls dockmesh.db.pre-migrate-*.bak
-sudo rm -f dockmesh.db-wal dockmesh.db-shm
-sudo cp -p dockmesh.db.pre-migrate-20261103T091500.000Z.bak dockmesh.db
+sudo sh -c 'ls /var/lib/dockmesh/data/dockmesh.db.pre-migrate-*.bak'
+sudo rm -f /var/lib/dockmesh/data/dockmesh.db-wal /var/lib/dockmesh/data/dockmesh.db-shm
+sudo cp -p /var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak /var/lib/dockmesh/data/dockmesh.db
 sudo systemctl start dockmesh
 ```
 

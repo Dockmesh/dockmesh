@@ -34,7 +34,7 @@ The script:
 3. Installs the binaries and agent assets (table below).
 4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group.
-6. Creates the data root with `data/` and `stacks/` inside, owned by `dockmesh:docker`, mode 750.
+6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
 7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
 8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
 

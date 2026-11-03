@@ -156,7 +156,7 @@ DNS-01 challenges and wildcard certificates can't be configured, and you can't u
 
 ## Certificates and activity
 
-The **Certificates** tab lists the HTTPS sites with issuer, days until expiry and a status: **valid**, **renew soon** (less than 14 days left, which means a renewal hasn't worked yet), **not served** (the name may not point to this server yet, or Caddy is still getting the certificate) or **site off**. Dockmesh reads the certificate by opening a TLS connection to each site on port 443, a few at a time in the background, and reuses the result for 15 minutes. Caddy renews certificates about 30 days before they expire.
+The **Certificates** tab lists the HTTPS sites with issuer, days until expiry and a status: **valid**, **renew soon** (less than 14 days left, which means a renewal hasn't worked yet), **not served** (the name may not point to this server yet, or Caddy is still getting the certificate) or **site off**. Dockmesh reads the certificate by opening a TLS connection to each site on port 443, a few at a time in the background, and reuses the result for 15 minutes. The server looks the name up in its own DNS, so a site whose name only resolves on your clients (a hosts-file entry, a local DNS the server doesn't use) stays **not served** although Caddy serves it. Caddy renews certificates about 30 days before they expire.
 
 Expiring certificates also show up elsewhere:
 

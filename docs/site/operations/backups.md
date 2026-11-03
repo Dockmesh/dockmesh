@@ -167,7 +167,7 @@ The server exports `dockmesh_backup_last_run_timestamp_seconds` and `dockmesh_ba
 
 Click **Restore…** in a run's row menu or on the run's page, or **Restore last run…** in a job's menu. The dialog asks for:
 
-- **Volume name** or **Stack name**: where to restore. It defaults to the source; a volume is created if it doesn't exist.
+- **Volume name** or **Stack name**: where to restore. It defaults to a copy named `<source>-restored`; enter the source name to restore over the original. A volume is created if it doesn't exist.
 - **Host**: defaults to the host the backup was taken on, marked "(backed up here)". You can pick another host you may restore on.
 - **Existing data**: **Replace** (the default) or **Merge**.
 - The target name, typed to confirm.

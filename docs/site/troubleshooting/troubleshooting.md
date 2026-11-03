@@ -89,7 +89,7 @@ If an admin already exists and `DOCKMESH_SETUP_FORCE=true` is still in the env f
 
 **Cause:** passwords are stored as argon2id hashes and can't be recovered.
 
-**Fix:** set a new one on the server. The **Forgot password?** link on the sign-in page shows the command too, as `sudo dockmesh admin reset-password --user <username>`.
+**Fix:** set a new one on the server. The **Forgot password?** link on the sign-in page shows the command too, as `sudo dockmesh admin reset-password --user <username>`. Run it as the service user as below, so the database files keep their owner.
 
 ```bash
 sudo -u dockmesh dockmesh admin reset-password --user admin

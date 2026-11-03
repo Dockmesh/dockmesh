@@ -25,7 +25,7 @@ The URLs Dockmesh gives to providers are built from `DOCKMESH_BASE_URL` in `dock
 | SAML | ACS `<base>/api/v1/auth/saml/<slug>/acs`, SP metadata and entity ID `<base>/api/v1/auth/saml/<slug>/metadata` |
 | LDAP | none. Dockmesh binds to the directory itself |
 
-The provider dialog shows the exact URL as **Callback URL** or **ACS URL (read-only)**.
+The provider dialog shows the URL as **Callback URL** or **ACS URL (read-only)**. The dialog builds it from the **Base URL** setting, while the server uses `DOCKMESH_BASE_URL`, so check that both name the same address.
 
 ## Configuration fields
 
@@ -89,7 +89,7 @@ What to do as an admin:
 
 These are starting points. Field names on the provider side differ between versions.
 
-**Keycloak (OIDC):** Create a confidential OpenID Connect client in your realm and add `<base>/api/v1/auth/oidc/<slug>/callback` as a valid redirect URI. In Dockmesh, pick the Keycloak template and set **Issuer URL** to `https://<keycloak-host>/realms/<realm>`, plus the client ID and secret. For groups, add a group-membership mapper that writes a `groups` claim into the ID token, and set **Group claim** to `groups`.
+**Keycloak (OIDC):** Create a confidential OpenID Connect client in your realm and add `<base>/api/v1/auth/oidc/<slug>/callback` as a valid redirect URI. In Dockmesh, pick the Keycloak template and set **Issuer URL** to `https://<keycloak-host>/realms/<realm>`, plus the client ID and secret. For groups, add a group-membership mapper that writes a `groups` claim into the ID token (on the client's dedicated scope), and set **Group claim** to `groups`. The template puts `groups` into **Scopes**; Keycloak rejects the sign-in with `invalid_scope` unless the realm has a client scope named `groups` assigned to the client, so create that client scope or remove `groups` from **Scopes**.
 
 **Authelia (OIDC):** Register a client in Authelia's `identity_providers.oidc.clients` with the Dockmesh callback as a redirect URI and the `openid`, `email`, `profile` and `groups` scopes. In Dockmesh, pick the Authelia template and set **Issuer URL** to Authelia's base URL. The template already requests the `groups` scope, and **Group claim** defaults to `groups`.
 
