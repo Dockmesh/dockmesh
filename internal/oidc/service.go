@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/rbac"
 
@@ -196,8 +197,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if in.Slug == "" || in.IssuerURL == "" || in.ClientID == "" || in.ClientSecret == "" {
 		return nil, errors.New("slug, issuer_url, client_id, client_secret required")
 	}
+	in.Scopes = strings.Join(splitScopes(in.Scopes), " ")
 	if in.Scopes == "" {
-		in.Scopes = "openid,profile,email"
+		in.Scopes = "openid profile email"
 	}
 	if in.DefaultRole == "" {
 		in.DefaultRole = "viewer"
@@ -245,6 +247,7 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 // issuer, so a new issuer unlinks the provider's accounts; the count is
 // returned.
 func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, int64, error) {
+	in.Scopes = strings.Join(splitScopes(in.Scopes), " ")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, 0, err
@@ -651,14 +654,10 @@ func (s *Service) decryptSecret(stored string) (string, error) {
 // Utility funcs
 // -----------------------------------------------------------------------------
 
+// splitScopes accepts scopes separated by spaces, as OAuth 2.0 writes
+// them, or by commas.
 func splitScopes(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 }
 
 func strClaim(m map[string]any, key string) string {
