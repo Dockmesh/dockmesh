@@ -37,6 +37,15 @@ func withPermissions(u *auth.User, access *rbac.Access) {
 	}
 }
 
+// writeLogin answers every sign-in and refresh with the caller's current
+// permissions, so the UI is gated the same whichever way the user signed in.
+func writeLogin(w http.ResponseWriter, status int, res *auth.LoginResult) {
+	if res != nil && res.User != nil {
+		withPermissions(res.User, middleware.UserAccess(res.User.ID))
+	}
+	writeJSON(w, status, res)
+}
+
 type createUserRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`

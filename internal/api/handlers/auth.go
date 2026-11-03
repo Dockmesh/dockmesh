@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -90,11 +89,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if h.Audit != nil && res.User != nil {
 		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
 	}
-	// Permissions let the frontend gate the UI without a /me round trip.
-	if res.User != nil {
-		withPermissions(res.User, middleware.UserAccess(res.User.ID))
-	}
-	writeJSON(w, http.StatusOK, res)
+	writeLogin(w, http.StatusOK, res)
 }
 
 const (
@@ -234,7 +229,7 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "refresh failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeLogin(w, http.StatusOK, res)
 }
 
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
