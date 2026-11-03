@@ -72,13 +72,95 @@ func TestRewrittenSecretsLeaveNoTrace(t *testing.T) {
 			if err := d.QueryRowContext(ctx, `SELECT cfg FROM creds WHERE id = 1`).Scan(&cfg); err != nil || cfg != sealed {
 				t.Fatalf("row = %q, %v", cfg, err)
 			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
+			found := false
+			for _, p := range []string{path, path + "-wal"} {
+				data, err := os.ReadFile(p)
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				found = found || bytes.Contains(data, []byte(secret))
 			}
-			if gone := !bytes.Contains(raw, []byte(secret)); gone != tt.wantGone {
-				t.Fatalf("secret gone from the file = %v, want %v", gone, tt.wantGone)
+			if found == tt.wantGone {
+				t.Fatalf("secret gone from the database files = %v, want %v", !found, tt.wantGone)
 			}
 		})
+	}
+}
+
+// A reader holding the WAL blocks the truncating checkpoint. SQLite still
+// answers OK for that, so Compact must report it instead of claiming the
+// file is clean.
+func TestCompactReportsBlockedCheckpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the busy timeout")
+	}
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.ExecContext(ctx, `CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('x')`); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	conn, err := reader.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var v string
+	if _, err := conn.ExecContext(ctx, `BEGIN`); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRowContext(ctx, `SELECT v FROM t`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compact(ctx, d); err == nil {
+		t.Fatal("Compact succeeded while a reader held the WAL")
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compact(ctx, d); err != nil {
+		t.Fatalf("Compact after the reader finished: %v", err)
+	}
+}
+
+func TestCompactIfPendingClearsTheMarkOnlyOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	d, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.ExecContext(ctx, `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME)`); err != nil {
+		t.Fatal(err)
+	}
+	pending := func() bool {
+		var n int
+		if err := d.QueryRowContext(ctx, `SELECT count(*) FROM settings WHERE key = ?`, compactPendingKey).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n > 0
+	}
+	if err := CompactIfPending(ctx, d); err != nil || pending() {
+		t.Fatalf("without a mark: err %v, pending %v", err, pending())
+	}
+	if err := MarkCompactPending(ctx, d); err != nil || !pending() {
+		t.Fatalf("mark: err %v, pending %v", err, pending())
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := CompactIfPending(cancelled, d); err == nil || !pending() {
+		t.Fatalf("failed compaction: err %v, pending %v", err, pending())
+	}
+	if err := CompactIfPending(ctx, d); err != nil || pending() {
+		t.Fatalf("compaction: err %v, pending %v", err, pending())
 	}
 }

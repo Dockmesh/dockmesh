@@ -165,10 +165,13 @@ func prepareJobTargets(ctx context.Context, database *sql.DB, st *settings.Store
 		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
 	}
 	// The plaintext these steps replaced is still in the file's free space.
-	// A failed compaction only leaves it there, so it doesn't fail the step.
+	// Background writers can block the compaction here; the mark makes the
+	// next start compact before they run.
 	if moved+sealed > 0 {
-		if cerr := db.Compact(ctx, database); cerr != nil {
-			slog.Warn("backup: compacting the database after encrypting credentials", "err", cerr)
+		if merr := db.MarkCompactPending(ctx, database); merr != nil {
+			slog.Warn("backup: marking the database for compaction", "err", merr)
+		} else if cerr := db.CompactIfPending(ctx, database); cerr != nil {
+			slog.Warn("backup: database not compacted yet, retrying on the next start", "err", cerr)
 		}
 	}
 	return errors.Join(repairErr, err, sealErr)

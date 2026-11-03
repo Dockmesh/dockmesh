@@ -334,6 +334,9 @@ func main() {
 		slog.Error("db migrate failed", "err", err)
 		os.Exit(1)
 	}
+	if err := db.CompactIfPending(context.Background(), database); err != nil {
+		slog.Warn("db compaction failed, retrying on the next start", "err", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
