@@ -87,7 +87,7 @@ The endpoint is:
 POST https://<your-dockmesh>/api/v1/stacks/<stack>/git/webhook
 ```
 
-It needs no Dockmesh login. Add it as a push webhook in your Git host with the same secret you entered in Dockmesh; the URL is also shown in the edit dialog under **Webhook URL**.
+It needs no Dockmesh sign-in. Add it as a push webhook in your Git host with the same secret you entered in Dockmesh; the URL is also shown in the edit dialog under **Webhook URL**.
 
 | Git host | How the secret is checked |
 |---|---|
@@ -106,7 +106,7 @@ Deleting a stack also deletes its git source and the local clone, so a later com
 ## Limits
 
 - One git source per stack, one branch per source.
-- The repository's other files reach the stack directory on the server only. Deploys on an agent host send just `compose.yaml` and `.env`, so relative bind mounts like `./config:/etc/app` resolve to the stack directory on the agent, where those files don't exist.
+- The repository's other files reach the stack directory on the server only. Deploys on an agent host send only `compose.yaml` and `.env`, so relative bind mounts like `./config:/etc/app` resolve to the stack directory on the agent, where those files don't exist.
 
 ## Permissions
 

@@ -3,7 +3,7 @@ title: Single sign-on
 description: Sign users in through OIDC, OAuth2, SAML or LDAP providers, map groups to roles on scopes, and the security behaviour you need to plan for.
 ---
 
-Dockmesh supports four kinds of external identity providers. All of them are free and can be used side by side. Add them under **Settings → Authentication** in the **Identity providers** section with **Add provider** (needs Settings & audit: Manage on everything). Pick a kind and, where offered, a template. Enabled providers show up as buttons or forms on `/login`.
+Dockmesh supports four kinds of external identity providers for single sign-on (SSO). All of them are free and can be used side by side. Add them under **Settings → Authentication** in the **Identity providers** section with **Add provider** (needs Settings & audit: Manage on everything). Pick a kind and, where offered, a template. Enabled providers show up as buttons or forms on `/login`.
 
 | Kind | Typical providers | Templates in the dialog |
 |---|---|---|
@@ -29,13 +29,13 @@ The provider dialog shows the exact URL as **Callback URL** or **ACS URL (read-o
 
 ## Configuration fields
 
-**OIDC:** **Issuer URL** (Dockmesh fetches `/.well-known/openid-configuration` from it), **Client ID**, **Client secret**, **Scopes** (must include `openid`; the default is `openid profile email`; add the scope that carries groups if needed), **Group claim**. The login uses the authorization code flow with PKCE and a nonce. The ID token must contain an `email` claim. The username comes from `preferred_username`, then `name`, then the part of the e-mail before `@`. The account is keyed by the issuer's `sub`.
+**OIDC:** **Issuer URL** (Dockmesh fetches `/.well-known/openid-configuration` from it), **Client ID**, **Client secret**, **Scopes** (must include `openid`; the default is `openid profile email`; add the scope that carries groups if needed), **Group claim**. The sign-in uses the authorization code flow with PKCE and a nonce. The ID token must contain an `email` claim. The username comes from `preferred_username`, then `name`, then the part of the email before `@`. The account is keyed by the issuer's `sub`.
 
-**OAuth2:** **Authorization URL**, **Token URL**, **Userinfo URL**, **Client ID**, **Client secret**, **Scopes**, **Subject field**, **Username field**, **Email field**, **Groups field** (all fields of the userinfo JSON). The subject field is the immutable user id the Dockmesh account is keyed by; leave it empty to use `sub`, or `id` when there is no `sub` (GitHub, GitLab and Gitea send `id`). Never use a login name or e-mail there: those can be renamed and later taken by someone else. The provider must return an e-mail address in the userinfo response. With GitHub that means the user needs a public e-mail, or the login fails.
+**OAuth2:** **Authorization URL**, **Token URL**, **Userinfo URL**, **Client ID**, **Client secret**, **Scopes**, **Subject field**, **Username field**, **Email field**, **Groups field** (all fields of the userinfo JSON). The subject field is the immutable user id the Dockmesh account is keyed by; leave it empty to use `sub`, or `id` when there is no `sub` (GitHub, GitLab and Gitea send `id`). Never use a login name or email there: those can be renamed and later taken by someone else. The provider must return an email address in the userinfo response. With GitHub that means the user needs a public email, or the sign-in fails.
 
 **SAML:** **IdP metadata XML** (paste the IdP's `<EntityDescriptor>`), **NameID format**, an optional **Subject attribute (optional)**, and the **Username attribute** (default `NameID`), **Email attribute** (default `email`) and **Groups attribute** (default `groups`). Dockmesh generates its own service-provider key and certificate and publishes them in the SP metadata; the SP entity ID is the SP metadata URL. The dialog also shows a **Metadata URL** tab and fields for an SP entity ID and signing and encryption certificates, but these values aren't saved: only pasted metadata XML is used.
 
-The account is keyed by the NameID, or by the subject attribute when one is set. The Azure AD template sets it to `http://schemas.microsoft.com/identity/claims/objectidentifier`. **NameID format** offers `persistent` (default), `unspecified` and `emailAddress`, and Dockmesh asks the IdP for that format. A persistent NameID or an attribute that never changes is the safe choice: an `emailAddress` NameID changes when the user's e-mail does, and the account then no longer matches. An assertion must carry exactly one value of the subject attribute.
+The account is keyed by the NameID, or by the subject attribute when one is set. The Azure AD template sets it to `http://schemas.microsoft.com/identity/claims/objectidentifier`. **NameID format** offers `persistent` (default), `unspecified` and `emailAddress`, and Dockmesh asks the IdP for that format. A persistent NameID or an attribute that never changes is the safe choice: an `emailAddress` NameID changes when the user's email does, and the account then no longer matches. An assertion must carry exactly one value of the subject attribute.
 
 The IdP answers with a cross-site POST. With an IdP on another domain, Dockmesh has to be reached over HTTPS: the state cookie then goes out with `SameSite=None; Secure`. Over plain HTTP only an IdP on the same site works, and the dialog shows a warning.
 
@@ -49,7 +49,7 @@ Each provider has a **Group → role mappings** list (**SAML attribute → role 
 
 At every sign-in Dockmesh replaces the account's identity provider assignments with the ones its groups give now. Assignments you added by hand stay. To stop sign-ins from changing an account's access, use **Stop updating from groups** on the user's **Overview** tab under **Users & roles**.
 
-The groups come from the **Group claim** (OIDC), the **Groups field** (OAuth2), the **Groups attribute** (SAML) or the **Group membership attribute** (LDAP). LDAP mappings match the full DN or just the group's CN, so `Admins` matches `cn=Admins,ou=groups,…`; the other kinds compare exactly.
+The groups come from the **Group claim** (OIDC), the **Groups field** (OAuth2), the **Groups attribute** (SAML) or the **Group membership attribute** (LDAP). LDAP mappings match the full DN or only the group's CN, so `Admins` matches `cn=Admins,ou=groups,…`; the other kinds compare exactly.
 
 Saving a provider needs that you could grant its default role and every mapping yourself. If a sign-in would remove the last admin assignment on everything, Dockmesh keeps it and tells admins in a notice. See [Permissions](../concepts/permissions.md#identity-providers).
 
@@ -57,17 +57,17 @@ Saving a provider needs that you could grant its default role and every mapping 
 
 Each SSO account is linked to one provider and one subject: the OIDC `sub`, the SAML NameID or subject attribute, the OAuth2 subject field, or the LDAP subject attribute. A sign-in enters the account whose provider and subject match. When none does:
 
-- If a local account already uses the e-mail, it is linked only when the provider has **Link to existing accounts with the same verified email** on, the provider marks the address as verified, and the account has no second factor, no role that manages users or settings, and no other provider link. Otherwise the sign-in is refused. The option exists for OIDC and OAuth2. OIDC counts an address as verified when the ID token has `email_verified: true`; OAuth2 only when the **Email field** is `email` and the userinfo has `email_verified: true`, which GitHub doesn't send. SAML and LDAP addresses never count as verified.
+- If a local account already uses the email, it is linked only when the provider has **Link to existing accounts with the same verified email** on, the provider marks the address as verified, and the account has no second factor, no role that manages users or settings, and no other provider link. Otherwise the sign-in is refused. The option exists for OIDC and OAuth2. OIDC counts an address as verified when the ID token has `email_verified: true`; OAuth2 only when the **Email field** is `email` and the userinfo has `email_verified: true`, which GitHub doesn't send. SAML and LDAP addresses never count as verified.
 - Otherwise a new account is created when **Auto-create accounts on first SSO sign-in** (under **Sessions & sign-in flow**) is on, and the sign-in is refused when it is off.
 
 Links are bound to the identity provider they came from, because the same subject at another provider is another person:
 
 - **Deleting a provider** unlinks its accounts. They stay as local accounts without a usable password, so a new provider with the same slug can't sign into them.
-- **Pointing a provider at another identity provider** unlinks its accounts when you save: a different OIDC issuer, SAML metadata of another IdP entity, a different OAuth2 userinfo URL or subject field, or a different LDAP host, port or subject attribute. The provider dialog warns before you save. To re-attach the users, enable linking by verified e-mail or remove the old accounts and let them be created again.
+- **Pointing a provider at another identity provider** unlinks its accounts when you save: a different OIDC issuer, SAML metadata of another IdP entity, a different OAuth2 userinfo URL or subject field, or a different LDAP host, port or subject attribute. The provider dialog warns before you save. To re-attach the users, enable linking by verified email or remove the old accounts and let them be created again.
 
 ### Re-keying after the upgrade to v0.5.0
 
-Before v0.5.0, OAuth2 accounts were keyed by the username field (for example the GitHub `login`) and LDAP accounts by their DN. Both can be renamed and reused, so the upgrade moves these accounts to the immutable id. An account moves at its next sign-in that presents its old key, within 30 days of the upgrade. When the old key came from a field other than the new subject (a login name, a DN), the e-mail at the provider also has to match the account, so someone who took over a renamed login doesn't get the old account. On that path, accounts with two-factor authentication or a role that manages users or settings are never moved, and neither is a sign-in whose provider marks the e-mail as unverified.
+Before v0.5.0, OAuth2 accounts were keyed by the username field (for example the GitHub `login`) and LDAP accounts by their DN. Both can be renamed and reused, so the upgrade moves these accounts to the immutable id. An account moves at its next sign-in that presents its old key, within 30 days of the upgrade. When the old key came from a field other than the new subject (a login name, a DN), the email at the provider also has to match the account, so someone who took over a renamed login doesn't get the old account. On that path, accounts with two-factor authentication or a role that manages users or settings are never moved, and neither is a sign-in whose provider marks the email as unverified.
 
 Until then the **Authentication** page and a notice list the accounts that haven't moved yet. **End re-keying** stops waiting for them. Accounts that didn't move in time, accounts excluded above, and accounts whose user was renamed or moved before signing in again can no longer sign in through their provider; remove them and let them be created again. SAML accounts got the same one-time re-key with v0.4.2.
 
@@ -79,10 +79,10 @@ The state cookies used during the redirect are `HttpOnly` and get the `Secure` f
 
 What to do as an admin:
 
-- Only connect providers where users can't change their own e-mail address, or where every address is verified.
+- Only connect providers where users can't change their own email address, or where every address is verified.
 - Enforce MFA at the provider, since Dockmesh won't ask for it.
 - For LDAP, rely on your directory's lockout policy as well.
-- Don't use the same e-mail on a local admin account and on a provider account that someone else could control.
+- Don't use the same email on a local admin account and on a provider account that someone else could control.
 - Check the group mappings and the default role before enabling a provider. Mapping a broad group to Admin on everything grants admin to everyone in it at their next sign-in.
 
 ## Provider recipes

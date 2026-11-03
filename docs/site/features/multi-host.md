@@ -155,7 +155,7 @@ See also [Upgrade](../operations/upgrade.md#upgrading-agents).
 
 ## Remove a host
 
-Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running. Dockmesh just stops tracking them. Afterwards, on the host:
+Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running; Dockmesh stops tracking them. Afterwards, on the host:
 
 ```bash
 sudo systemctl disable --now dockmesh-agent

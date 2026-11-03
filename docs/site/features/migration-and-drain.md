@@ -36,10 +36,10 @@ The target gets the same deploy as a manual one: global environment variables an
 | `source_metrics` | The source host's CPU and memory can be read |
 | `target_capacity` | Free memory on the target is at least 1.2× the memory in use on the source host |
 | `target_disk` | Free disk on the target is at least 1.1× the disk in use on the source host |
-| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never actually compared |
+| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never compared |
 | `images` | The stack's compose file can be read and parsed. Images missing on the target are listed but don't fail the check |
 
-The capacity and disk checks compare against the whole source host, not just the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
+The capacity and disk checks compare against the whole source host, not only the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
 
 ### Phases
 
@@ -87,7 +87,7 @@ A drain migrates every stack deployed on a host to the other online hosts.
 2. Review the plan: each stack with its proposed target.
 3. Click **Begin drain**. The button is only enabled when the plan has room for every stack.
 
-The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not just this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
+The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
 
 ### How the plan is made
 

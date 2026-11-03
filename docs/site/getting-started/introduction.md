@@ -22,7 +22,7 @@ The web UI is available in English and German; each user picks the language, see
 |---|---|---|
 | `dockmesh` | the server host | The server: HTTP API, embedded web UI, SQLite database, scheduler. Talks to the local Docker engine through the Docker API. Also carries admin subcommands (`init`, `doctor`, `admin`, `db`, `restore`, ...). |
 | `dockmesh-agent` | each remote host | Connects out to the server over a mutually authenticated TLS WebSocket and carries out Docker operations on its host. Remote hosts need no open inbound ports. |
-| `dmctl` | your workstation or CI | Command-line client for the REST API: log in, list and deploy stacks, follow logs, run backups. See [dmctl](../reference/dmctl.md). |
+| `dmctl` | your workstation or CI | Command-line client for the REST API: sign in, list and deploy stacks, follow logs, run backups. See [dmctl](../reference/dmctl.md). |
 
 Each release archive contains all three. The web UI is compiled into `dockmesh`, so there is no separate frontend to deploy.
 

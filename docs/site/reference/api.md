@@ -57,7 +57,7 @@ curl -s -X POST https://dockmesh.example.com/api/v1/auth/logout \
   -H 'Content-Type: application/json' -d '{"refresh_token":"..."}'
 ```
 
-A login starts a session. Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and ends the whole session (`401`, code `token_reuse_detected`), so never refresh the same token from two processes. With the defaults on **Settings → Authentication**, a session ends after 60 minutes without a refresh, and each refresh extends it to 24 hours from then, so a client that keeps refreshing stays signed in. A user has at most 20 active sessions by default. Logout returns `204`.
+A sign-in starts a session. Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and ends the whole session (`401`, code `token_reuse_detected`), so never refresh the same token from two processes. With the defaults on **Settings → Authentication**, a session ends after 60 minutes without a refresh, and each refresh extends it to 24 hours from then, so a client that keeps refreshing stays signed in. A user has at most 20 active sessions by default. Logout returns `204`.
 
 `GET /api/v1/sessions` lists your own sessions, `DELETE /api/v1/sessions/{family_id}` ends one and `POST /api/v1/sessions/revoke-all` ends all of them.
 
@@ -197,4 +197,4 @@ These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/re
 
 ## dmctl
 
-[dmctl](./dmctl.md) wraps the common calls (login with refresh, stacks, containers, logs, exec, backups, alerts, enrollment) and is the quickest way to script against the API without handling tokens yourself.
+[dmctl](./dmctl.md) wraps the common calls (sign-in with refresh, stacks, containers, logs, exec, backups, alerts, enrollment) and is the quickest way to script against the API without handling tokens yourself.

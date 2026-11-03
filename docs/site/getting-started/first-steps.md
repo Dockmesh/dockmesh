@@ -3,7 +3,7 @@ title: First steps
 description: Sign in, find your way around, deploy a first stack, look at its containers and logs, invite a user, add a host and set up a backup.
 ---
 
-This page walks through a fresh install from first login to a backed-up stack. It assumes the server is running on `http://<host>:8080` (see [Installation](./installation.md)).
+This page walks through a fresh install from first sign-in to a backed-up stack. It assumes the server is running on `http://<host>:8080` (see [Installation](./installation.md)).
 
 ## Sign in
 
@@ -11,7 +11,7 @@ How you get the first admin account depends on how you installed:
 
 | Install method | First admin |
 |---|---|
-| Installer script | You created it in the setup wizard at `/setup`. Its last step shows the login URL and your username. |
+| Installer script | You created it in the setup wizard at `/setup`. Its last step shows the **Login URL** and your username. |
 | `dockmesh init` | `init` printed the username and, if you left the password empty, the generated password. |
 | From source or in Docker | The server created `admin` on first start and printed the password once, after the line `Bootstrap admin created`: in the terminal you started `./dockmesh` from, or in `docker compose logs dockmesh`. |
 

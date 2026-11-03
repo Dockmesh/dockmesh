@@ -8,7 +8,7 @@ A host is a Docker engine that Dockmesh manages. There are two kinds:
 - **The local host** is the Docker engine on the machine running the `dockmesh` server. Its host ID is `local`. The server talks to it directly through the Docker SDK.
 - **Remote hosts** run `dockmesh-agent`, which connects out to the server and carries out Docker operations locally. Each remote host has its own ID, assigned when you add it.
 
-All hosts appear on the **Hosts** page. The host filter in the top bar limits every page to one host; **Set as lens** on a host's page does the same.
+All hosts appear on the **Hosts** page. The host filter in the top bar limits every page to one host; **Set as lens** on a host's page does the same. A remote host whose agent isn't connected shows as offline; see [The host shows offline](../troubleshooting/troubleshooting.md#the-host-shows-offline).
 
 ## The agent model
 
@@ -46,7 +46,7 @@ Client certificates are valid for 365 days. An online agent asks for a new one o
 
 **Re-issue…** on the host's **Maintenance** tab (needs `hosts.create`) creates a new enrollment token for the same host. Running the new install command on the host re-enrolls it under the same ID, so its stacks, tags and backup jobs stay. The old certificate keeps working until the host enrolls with the new token. Use this for an expired or suspect certificate, or after reinstalling the host.
 
-**Revoke…** in the host's row menu or on the **Maintenance** tab (needs `hosts.delete`) deletes the host from Dockmesh, after you type its name. An open connection is closed and the certificate is no longer accepted. Containers on that host keep running; Dockmesh just stops managing them. Stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). To bring the host back, add it again; it gets a new ID.
+**Revoke…** in the host's row menu or on the **Maintenance** tab (needs `hosts.delete`) deletes the host from Dockmesh, after you type its name. An open connection is closed and the certificate is no longer accepted. Containers on that host keep running; Dockmesh stops managing them. Stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). To bring the host back, add it again; it gets a new ID.
 
 `dockmesh ca rotate` replaces the CA and the server certificate and resets every agent to pending with a new token, so every host has to be enrolled again.
 

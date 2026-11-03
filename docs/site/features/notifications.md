@@ -1,13 +1,13 @@
 ---
 title: Notifications
-description: Alert channels for external services, the in-app notification feed and Activity page, and notices.
+description: Notification channels for external services, the in-app notification feed and Activity page, and notices.
 ---
 
 Dockmesh has three separate ways of telling you something:
 
 | Mechanism | Where it shows | What feeds it |
 |---|---|---|
-| Channels | Slack, email, ntfy and other external services | [Alert rules](./alerts.md) only |
+| Notification channels | Slack, email, ntfy and other external services | [Alert rules](./alerts.md) only |
 | Notification feed | The bell in the top bar and **Activity** → **Notifications** | Alerts, failed backups, scans, image updates, agents going offline, migrations and more |
 | Notices | A banner at the top of the app, or **Activity** | Conditions that need someone to act |
 

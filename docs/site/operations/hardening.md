@@ -62,7 +62,7 @@ The managed proxy container `dockmesh-proxy` uses host networking, and its admin
 
 ## Setup wizard
 
-The setup wizard is open only while no admin user exists, for 30 minutes after each server start; `DOCKMESH_SETUP_FORCE=true` never reopens it once an admin exists. The wizard's endpoints need no login; they refuse cross-site browser requests. Its URL test makes the server fetch the URL you enter, but refuses loopback, link-local and multicast addresses and private addresses of other machines; only this server's own private addresses on ports 80, 443 and its HTTP port are allowed. Finish setup right after installing, from a trusted network, and keep port 8080 closed to everyone else until then. Afterwards, check that `DOCKMESH_SETUP_FORCE` is gone from `dockmesh.env`. The wizard removes it, but reports a warning if it can't.
+The setup wizard is open only while no admin user exists, for 30 minutes after each server start; `DOCKMESH_SETUP_FORCE=true` never reopens it once an admin exists. The wizard's endpoints need no sign-in; they refuse cross-site browser requests. Its URL test makes the server fetch the URL you enter, but refuses loopback, link-local and multicast addresses and private addresses of other machines; only this server's own private addresses on ports 80, 443 and its HTTP port are allowed. Finish setup right after installing, from a trusted network, and keep port 8080 closed to everyone else until then. Afterwards, check that `DOCKMESH_SETUP_FORCE` is gone from `dockmesh.env`. The wizard removes it, but reports a warning if it can't.
 
 ## Users and roles
 

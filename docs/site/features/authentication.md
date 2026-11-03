@@ -20,7 +20,11 @@ Under **Local password policy**:
 | **Lockout · max attempts** | 5 (0 turns the lockout off) |
 | **Lockout · duration (min)** | 15 |
 
-The policy applies when a password is set or changed. An admin can set a new password for a user with **Reset password…** on the user's **Sessions & 2FA** tab, or with `dockmesh admin reset-password`.
+The policy applies when a password is set or changed.
+
+### Reset a password
+
+An admin can set a new password for a user with **Reset password…** on the user's **Sessions & 2FA** tab, or with `dockmesh admin reset-password`. If you forgot the password of the only admin, see [Forgot the admin password](../troubleshooting/troubleshooting.md#forgot-the-admin-password).
 
 ## Lockout and rate limits
 
@@ -85,7 +89,7 @@ Password rotation and reuse rules, remember-me, requiring 2FA for admins, turnin
 
 ## Invites
 
-On **Users & roles**, **Invite** creates one-time links for a list of e-mail addresses, all with one role on one scope. The e-mail addresses are only a label; Dockmesh doesn't send e-mail. Copy each link and pass it on. The recipient opens `/invite/<token>`, picks a username and password, and gets the role on the scope from the invite.
+On **Users & roles**, **Invite** creates one-time links for a list of email addresses, all with one role on one scope. The email addresses are only a label; Dockmesh doesn't send email. Copy each link and pass it on. The recipient opens `/invite/<token>`, picks a username and password, and gets the role on the scope from the invite.
 
 The dialog offers 1, 3 (default) or 7 days until the link expires. The API (`POST /api/v1/invites`) uses 24 hours without `ttl_hours` and caps it at 7 days. Creating invites needs Users & roles: Manage on everything, and you can only invite with a role and scope you could assign yourself. Open invites are listed on the **Invites** tab, where you can revoke them.
 
