@@ -3,20 +3,22 @@ title: Networks
 description: List and inspect Docker networks, see which containers are attached, and create, remove or prune networks.
 ---
 
-The **Networks** tab on the **Resources** page lists the Docker networks on the host selected in the host switcher, or on every host with **All hosts**. Stacks create their own project networks on deploy (named `<stack>_<key>` unless the compose file sets a `name`), so you mostly use this tab to look things up.
+The **Networks** tab on the **Resources** page lists the Docker networks on the host selected in the host switcher, or on every host with **All hosts**. Stacks create their own project networks on deploy (named `<stack>_<key>` unless the compose file sets a `name`), so you mostly use this tab to look things up. `/networks` redirects to this tab.
 
 ## The list
 
 | Column | Shows |
 |---|---|
-| name | Network name |
-| driver / scope | For example `bridge` / `local` |
-| subnet | From the IPAM configuration |
-| flags | Internal, attachable |
-| containers | Number of attached containers |
-| created | Creation time |
+| Name | Network name and the stack it belongs to |
+| Driver / scope | For example `bridge` / `local` |
+| Subnet | From the IPAM configuration |
+| Flags | Internal, attachable |
+| Containers | Number of attached containers, stopped ones included |
+| Created | Creation time |
 
-The pills **user**, **internal**, **attachable** and **empty** filter the list. Docker's built-in networks `bridge`, `host` and `none` are hidden until you tick **show system networks**; they are then sorted first.
+**Show** filters the list to **user**, **internal**, **attachable** or **empty** networks. Docker's built-in networks `bridge`, `host` and `none` are hidden until you tick **show system networks**; they are then sorted first. With **All hosts**, hosts that don't answer within three seconds are left out and counted as unreachable.
+
+Users whose access is limited to some hosts or stacks only see networks on those hosts and the project networks of those stacks.
 
 ## Network details
 
@@ -24,13 +26,13 @@ Click a network to open its page:
 
 - **Overview**: name, ID, driver, scope, creation time, the internal, attachable and IPv6 flags, labels and driver options.
 - **Containers**: attached containers with their IP and MAC addresses.
-- **IPAM**: subnets, gateways and IP ranges.
+- **IPAM**: subnets, gateways, IP ranges and auxiliary addresses.
 
-The **Topology** page in the sidebar draws hosts, networks and containers as a graph, if you prefer a picture.
+The **Topology** page in the sidebar draws hosts, networks and containers as a graph, limited to what your access covers.
 
 ## Creating a network
 
-**Create network** asks for a **Name** and a **Driver** (`bridge`, `overlay`, `macvlan` or `ipvlan`). `overlay` only works on a Docker engine in Swarm mode. The network is created on the local host with default IPAM settings; subnet, gateway and the internal flag cannot be set here. If you need those, declare the network in a stack's `compose.yaml`:
+**Create network** asks for a **Name** and a **Driver** (`bridge`, `overlay`, `macvlan` or `ipvlan`). `overlay` only works on a Docker engine in Swarm mode. The network is created on the server host with default IPAM settings; subnet, gateway and the internal flag can't be set here. If you need the internal or attachable flag, declare the network in a stack's `compose.yaml`:
 
 ```yaml
 networks:
@@ -44,18 +46,18 @@ Dockmesh ignores the top-level `ipam` key in compose files (see [Compose fields 
 
 | Action | Effect |
 |---|---|
-| Delete (row or detail page) | Removes the network. Docker refuses while containers are attached. |
+| Delete (row, or **Delete network** on the detail page) | Removes the network. Docker refuses while containers are attached. Not offered for `bridge`, `host` and `none`. |
 | **Prune empty** | Removes all networks without attached containers. `bridge`, `host` and `none` are kept. |
 | **System cleanup…** | Prunes dangling images, unused volumes and unused networks together. |
 
-Creating, deleting and pruning networks always act on the local host, even when a remote host is selected.
+Creating, deleting and pruning networks always act on the server host, even when a remote host is selected, and need the permission on the server host.
 
-Stopping a stack leaves its networks in place, so a stack that is stopped has an empty network that **Prune empty** removes. That is harmless: the next deploy creates it again.
+Stopping a stack leaves its networks in place, so a stopped stack whose containers were removed has an empty network that **Prune empty** removes. That is harmless: the next deploy creates it again.
 
 ## Permissions
 
 | Action | Permission |
 |---|---|
-| List, inspect, topology | `networks.view` |
-| Create | `networks.create` |
-| Delete and prune | `networks.delete` |
+| List, inspect, topology | `networks.view` (Images, volumes, networks & registries: View) |
+| Create | `networks.create` (Manage) |
+| Delete and prune | `networks.delete` (Manage) |
