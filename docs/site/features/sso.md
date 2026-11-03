@@ -45,7 +45,7 @@ Client secrets and the LDAP bind password are stored encrypted when secrets encr
 
 ## Roles from groups
 
-Each provider has a **Group → role mappings** list. Every mapping gives members of a group a role on a scope (**Role applies on**: everything, a host, a host tag or a stack). A user in several mapped groups gets all of those assignments. With no matching group, the user gets the provider's **Default role** on everything.
+Each provider has a **Group → role mappings** list (**SAML attribute → role mappings** for SAML). Every mapping gives members of a group a role on a scope (**Role applies on**: everything, a host, a host tag or a stack). A user in several mapped groups gets all of those assignments. With no matching group, the user gets the provider's **Default role** on everything.
 
 At every sign-in Dockmesh replaces the account's identity provider assignments with the ones its groups give now. Assignments you added by hand stay. To stop sign-ins from changing an account's access, use **Stop updating from groups** on the user's **Overview** tab under **Users & roles**.
 
@@ -91,7 +91,7 @@ These are starting points. Field names on the provider side differ between versi
 
 **Keycloak (OIDC):** Create a confidential OpenID Connect client in your realm and add `<base>/api/v1/auth/oidc/<slug>/callback` as a valid redirect URI. In Dockmesh, pick the Keycloak template and set **Issuer URL** to `https://<keycloak-host>/realms/<realm>`, plus the client ID and secret. For groups, add a group-membership mapper that writes a `groups` claim into the ID token, and set **Group claim** to `groups`.
 
-**Authelia (OIDC):** Register a client in Authelia's `identity_providers.oidc.clients` with the Dockmesh callback as a redirect URI and the `openid`, `email`, `profile` and `groups` scopes. In Dockmesh, pick the Authelia template, set **Issuer URL** to Authelia's base URL, add `groups` to **Scopes** and set **Group claim** to `groups`.
+**Authelia (OIDC):** Register a client in Authelia's `identity_providers.oidc.clients` with the Dockmesh callback as a redirect URI and the `openid`, `email`, `profile` and `groups` scopes. In Dockmesh, pick the Authelia template and set **Issuer URL** to Authelia's base URL. The template already requests the `groups` scope, and **Group claim** defaults to `groups`.
 
 **Authentik (OIDC):** Create an OAuth2/OpenID provider and an application for it, with the Dockmesh callback as redirect URI. Use the Generic OIDC template with the issuer URL Authentik shows for the provider (it ends in `/application/o/<application-slug>/`). Authentik's default scope mappings include `email` and a `groups` claim in the profile scope.
 

@@ -26,7 +26,7 @@ Users whose assignment is limited to a stack see the volumes of that stack's Com
 
 ## Volume details
 
-Click a volume to open its page. **Overview** shows driver, mountpoint, scope, creation time, labels and options; **Containers** lists the containers that mount it, with the mount path and mode; **Files** is the volume browser. **Delete** in the header removes the volume (see [Removing and pruning](#removing-and-pruning)).
+Click a volume to open its page. **Overview** shows driver, mountpoint, scope, creation time, labels and options; **Containers** lists the containers that mount it, with the mount path and mode; **Files** is the volume browser. **Delete volume** in the header removes the volume (see [Removing and pruning](#removing-and-pruning)).
 
 ## Browsing files
 

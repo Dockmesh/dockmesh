@@ -76,7 +76,7 @@ dmctl stacks deploy web
 | `--server` | from env/config | Server URL |
 | `--token` | from env/config | Bearer token (API token or access token) |
 | `--host` | server host | Host ID for stack and container commands, sent as `?host=` |
-| `--insecure` | `false` | Skip TLS certificate verification. Saved in the config file, so every later command skips it too. Only for test servers with self-signed certificates |
+| `--insecure` | `false` | Skip TLS certificate verification. Given to `login`, it is saved in the config file, so every later command skips it too; a later `login` without it turns it off again. Only for test servers with self-signed certificates |
 | `-o`, `--output` | `table` | `table`, `json` or `yaml` |
 | `-h`, `--help` | | Help for any command |
 | `-v`, `--version` | | Print the version (root command only) |

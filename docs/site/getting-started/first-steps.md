@@ -13,7 +13,7 @@ How you get the first admin account depends on how you installed:
 |---|---|
 | Installer script | You created it in the setup wizard at `/setup`. Its last step shows the login URL and your username. |
 | `dockmesh init` | `init` printed the username and, if you left the password empty, the generated password. |
-| From source or in Docker | The server created `admin` on first start and printed the password once, after the line `Bootstrap admin created` (`journalctl -u dockmesh`, or `docker compose logs dockmesh`). |
+| From source or in Docker | The server created `admin` on first start and printed the password once, after the line `Bootstrap admin created`: in the terminal you started `./dockmesh` from, or in `docker compose logs dockmesh`. |
 
 If you lose the admin password, reset it on the server:
 
@@ -35,7 +35,7 @@ The sidebar groups the pages:
 | Operations | **Updates**, **Backups**, **Reverse proxy**, **Alerts** |
 | Admin | **Users & roles**, **Audit log**, **Settings** |
 
-You only see the pages your role allows. **Settings** has its own sub-navigation: **General**, **Updates**, **Encryption key**, **Authentication**, **Registries** and **Global environment**. The host filter in the top bar limits every page to one host or tag; **Ctrl+K** (**⌘K** on macOS) searches pages, stacks, containers, hosts and settings. The top bar also has the running-operations indicator, the notification bell and the light/dark switch.
+You only see the pages your role allows. **Settings** has its own sub-navigation: **General**, **Updates**, **Encryption key**, **Authentication**, **Registries** and **Global environment**. The host filter in the top bar limits every page to one host (typing `#tag` in it narrows the host list to hosts with that tag); **Ctrl+K** (**⌘K** on macOS) searches pages, stacks, containers, hosts and settings. The top bar also has the running-operations indicator, the notification bell and the light/dark switch.
 
 Your own settings are under the user menu at the bottom of the sidebar → **My account**. Turn on two-factor authentication for the admin account there (**Enable 2FA**); see [Authentication](../features/authentication.md).
 
@@ -47,7 +47,7 @@ The web UI is available in English and German. Each user sets it under **My acco
 
 1. Open **Stacks** in the sidebar and click **New stack**.
 2. Enter a **Name**. Names are lowercase letters, digits and hyphens, 2 to 63 characters, and must start and end with a letter or digit.
-3. Paste a compose file into the **Compose editor**, for example:
+3. With **Compose editor** selected, paste a compose file into the `compose.yaml` field, for example:
 
    ```yaml
    services:
@@ -57,7 +57,7 @@ The web UI is available in English and German. Each user sets it under **My acco
          - "8081:80"
    ```
 
-4. Optionally add `.env` content. It is stored next to the compose file (encrypted at rest by default).
+4. Optionally add `.env` content. It is stored next to the compose file, encrypted at rest as `.env.age` by default.
 5. With more than one host connected, pick the **Host**. Click **Create** to save the stack without starting it, or **Create & deploy** to start it right away.
 
 The stack is now a directory `<stacks root>/<name>/` with a `compose.yaml` in it; on an installer setup that is `/var/lib/dockmesh/stacks/<name>/`. The UI reads and writes that file, so you can also edit it on disk.

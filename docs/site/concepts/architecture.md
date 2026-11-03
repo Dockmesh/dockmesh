@@ -51,7 +51,7 @@ Live logs, exec shells, container stats and the event feed run over WebSockets u
 
 ## How a deploy flows
 
-1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, and merges global environment variables. Stacks it depends on that aren't running on the target host yet are deployed first, in dependency order. If an environment override is active, the merged compose file is interpolated with the stack's `.env` only, so global variables do not apply.
+1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, and merges global environment variables. Stacks it depends on that aren't running on the target host yet are deployed first, in dependency order. If an environment override is active, it is merged into `compose.yaml` first, interpolated with the same environment (global variables plus the stack's `.env`).
 2. The server sends the compose text and environment to the target: the local host, or the agent on a remote host.
 3. On the target, Dockmesh writes both into a temporary staging directory, parses them with the Compose library, and reconciles with the Docker SDK: networks, then volumes, then image pulls, then each service in alphabetical order (remove the old container, create, start, wait for health).
 4. The server records which host the stack is on and adds a deploy-history entry. For remote hosts it also pushes a copy of the stack files to the agent.

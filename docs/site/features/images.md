@@ -18,7 +18,7 @@ The summary row shows the total number of images, dangling ones, the space a pru
 | **Vulnerabilities** | Counts per severity from the last scan, or a scan button |
 | **Host** | Host that holds the image |
 
-Filter with the search box (repository, tag or ID) and **Show**: **all**, **used**, **unused**, **dangling** and **CVE** (images with findings).
+Filter with the search box (repository, tag or ID) and **Show**: **all**, **used**, **unused**, **dangling** and **CVE** (images whose last scan found critical or high vulnerabilities).
 
 Scanning is described in [Vulnerability scanning](./vulnerability-scanning.md).
 
@@ -35,8 +35,8 @@ Click an image to open its page. The tabs are:
 - **Overview**: ID, tags, digests, architecture, creation time, author, size, and from the image config the command, entrypoint, working directory, user, exposed ports, environment and labels.
 - **Vulnerabilities**: the scan report, with **Scan now** or **Re-scan** (needs `images.scan`).
 - **Layers**: the layer list.
-- **History**: the build history (`docker history`).
-- **Containers**: containers using this image.
+- **History**: meant for the build history, but it always shows **No history**, because the image data Dockmesh loads does not include it. Use `docker history` on the host.
+- **Containers**: containers using this image, running or stopped.
 
 **Re-pull** pulls the same `repository:tag` again on the server host, which fetches a newer image if the tag has moved. Running containers keep the old image until they are recreated; see [Image updates](./image-updates.md) for updating them.
 
@@ -48,7 +48,7 @@ Click an image to open its page. The tabs are:
 | **Prune dangling** | Images tab | Removes dangling images only. Tagged images that no container uses are kept. |
 | **System cleanup…** | page header | Prunes dangling images, unused volumes and unused networks in one go. See [Volumes](./volumes.md#removing-and-pruning) before you use it. |
 
-Removing and pruning from the UI always act on the server host, even when an agent host is selected. The API accepts `?host=<id>` on `DELETE /api/v1/images/{id}` and `POST /api/v1/images/prune` if you need to do this on an agent.
+Removing and pruning from the UI, **System cleanup…** included, always act on the server host, even when an agent host is selected and although the cleanup dialog speaks of the selected host. The API accepts `?host=<id>` on `DELETE /api/v1/images/{id}` and `POST /api/v1/images/prune` if you need to do this on an agent.
 
 There is no scheduled prune. Call `POST /api/v1/images/prune` from cron with an [API token](./api-tokens.md) if you want one.
 

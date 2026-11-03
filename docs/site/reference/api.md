@@ -156,7 +156,7 @@ Handlers answer errors with a JSON body and a matching status:
 { "error": "stack not found", "code": "stack_not_found" }
 ```
 
-`error` is an English message for humans. `code` is stable: messages without runtime detail have their own code (for example `out_of_scope` when none of your assignments allows the action on that resource), all others get a generic code per status (`http_bad_request`, `http_unauthorized`, `http_forbidden`, `http_not_found`, `http_conflict`, `http_too_large`, `http_unprocessable`, `http_too_many_requests`, `http_bad_gateway`, `http_unavailable`, `http_timeout`, `http_internal`). Match on the status and `code`, never on the text, and ignore JSON fields you don't know; some errors add fields, such as `files` when stack files were changed outside Dockmesh.
+`error` is an English message for humans. `code` is stable: messages without runtime detail have their own code (for example `out_of_scope` when none of your assignments allows the action on that resource), all others get a generic code per status (`http_bad_request`, `http_unauthorized`, `http_forbidden`, `http_not_found`, `http_conflict`, `http_too_large`, `http_unprocessable`, `http_too_many_requests`, `http_bad_gateway`, `http_unavailable`, `http_timeout`, `http_internal`, and `http_error` for any other status). Match on the status and `code`, never on the text, and ignore JSON fields you don't know; some errors add fields, such as `files` when stack files were changed outside Dockmesh.
 
 Some responses differ:
 

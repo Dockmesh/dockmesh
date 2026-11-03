@@ -183,7 +183,7 @@ make build VERSION=v0.0.0-local
 
 `make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. If one of the default env files (`/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env`, `/usr/local/var/dockmesh/dockmesh.env`) exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded instead. On first start it creates a user `admin` with a random password and prints both once to stderr, after the line `Bootstrap admin created`. The password is not written to the structured log.
 
-For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests and `svelte-check`.
+For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 
 ## Run in Docker
 

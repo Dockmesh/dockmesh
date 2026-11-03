@@ -25,6 +25,7 @@ Things to know:
 - Replicas are built from the base `compose.yaml` and the stack's `.env`, without the stack's environment override and without global environment variables.
 - The replica count is not saved anywhere. A stack **Deploy** only recreates replica 1; the other replicas keep running with their previous configuration until you scale again. Scale down to 1 before a deploy that changes the service, then scale up again.
 - `deploy.replicas` in `compose.yaml` is ignored.
+- Scaling up waits for each new replica to pass its health check (or, without one, to keep running for a short grace period) before it creates the next one, as a deploy does.
 - Scaling and rolling updates are refused while the stack's containers still bind-mount a temporary staging directory from an earlier version. Deploy the stack once to move that data into the stack directory.
 
 ## Rolling updates
@@ -35,7 +36,7 @@ Things to know:
 |---|---|
 | **Order** | **stop-first**: stop the old container, then start the new one. **start-first**: start the new one next to the old one, then stop the old one. |
 | **Parallelism** | How many containers to replace before the next delay. Containers in one batch are still replaced one after the other. 1 is the safest. |
-| **On failure** | **pause**: stop at the first failed replica. **continue**: replace the rest anyway. **rollback**: restart the old replicas and abort. |
+| **On failure** | **pause**: stop at the first failed replica. **continue**: replace the rest anyway. **rollback**: recreate the replicas replaced so far from the image they ran before, then stop. When the image reference is unchanged (same tag), nothing is rolled back. |
 
 The dialog always sends its own **Order**, **Parallelism** and **On failure** values (preset to **stop-first**, 1, **pause**), so from the UI only the delay comes from `deploy.update_config`. API calls that leave fields out fall back to `deploy.update_config` on the service, then to those defaults. Each new container must pass its health check, as in a normal deploy. **start-first** is refused for services with `container_name` or a fixed host port, because two containers would collide. Rolling updates don't pull images either.
 
@@ -80,7 +81,7 @@ Before you rely on it, note the limits:
 - The current replica count is kept in memory and starts at 1 after a server restart, whatever is actually running.
 - When no metrics are available for the service, the average counts as 0, which can trigger a scale-down. A container without a memory limit counts as 0 % memory.
 - Both thresholds are compared against the `scale_up` metric; the `metric` of `scale_down` is not used. Only the first 20 replicas are included in the average.
-- The same scaling restrictions apply (`container_name`, fixed host ports, no image pull, no global variables).
+- The same scaling restrictions apply (`container_name`, fixed host ports, no image pull, no global variables). The database warning does not: database-like images are scaled without asking.
 
 ## API
 

@@ -21,7 +21,7 @@ A role picks one level per area. Levels are cumulative: Deploy includes Operate 
 | Backups | None, View, Operate, Manage | View: jobs, runs and targets. Operate: run jobs now, restore a run. Manage: create and edit jobs and targets |
 | Alerts | None, View, Manage | View: rules and alert history. Manage: rules and notification channels |
 | Users & roles | None, View, Manage | View: users, roles and assignments. Manage: invite, edit and remove users, edit roles and assignments, revoke other users' API tokens |
-| Settings & audit | None, View, Manage | View: the audit log, the Prometheus `/metrics` scrape. Manage: instance settings, sign-in and identity providers, audit retention and webhook, update checks, rotating the encryption key, restoring a system backup |
+| Settings & audit | None, View, Manage | View: the audit log, the Prometheus `/metrics` scrape. Manage: instance settings, sign-in and identity providers, audit retention, export and webhook, update checks, rotating the encryption key, restoring a system backup |
 
 On top of the levels, a role can hold **extras**. No level includes them:
 

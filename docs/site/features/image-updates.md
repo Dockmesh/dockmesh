@@ -14,7 +14,7 @@ Update checks and updates only cover the server host, the one Dockmesh runs on. 
 - Images built or loaded locally have no registry digest and show "no registry digest (image built or loaded locally)" instead of a result.
 - Results are stored in the database, so a restart neither forgets them nor announces the same update again.
 
-When an image changes from up to date to update available, Dockmesh posts an `image.update` bell notification to users with `images.view` on the server host, and the update shows up as information under **Needs attention** (see [Monitoring](./monitoring.md#needs-attention)). The containers list marks the image with **update**. The current results are available from `GET /api/v1/images/updates`.
+When a check finds a newer image for a tag, Dockmesh posts an `image.update` bell notification to users with `images.view` on the server host, once per new upstream digest. The update also shows up as information under **Needs attention** (see [Monitoring](./monitoring.md#needs-attention)). The containers list marks the image with **update**. The current results are available from `GET /api/v1/images/updates`.
 
 ## The Updates page
 

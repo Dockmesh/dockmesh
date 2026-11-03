@@ -7,9 +7,9 @@ An upgrade replaces the `dockmesh` binary and restarts the service. On the first
 
 ## Find out what changed
 
-Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, users who can see system information (`system.view`) get an **Update available** banner with a **Release notes** link, and a notification appears in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
+Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, every signed-in user gets an **Update available** banner with a **Release notes** link, and users with Settings & audit: Manage on everything get a notification in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
 
-**Settings** → **Updates** (needs `system.update`) shows the running and the latest version and the command to run, with a copy button. There you can turn **Automatic update checks** off (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately (needs `system.upgrade`). The check never downloads or installs anything.
+**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version and the command to run, with a copy button. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
 
 Read the release notes before you upgrade. They are generated from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 
@@ -20,7 +20,7 @@ Read the release notes before you upgrade. They are generated from [`CHANGELOG.m
 | **Upgrade notes** | Things someone has to do after the upgrade, marked for everyone or for admins only |
 | "Direct upgrades are supported from X.Y.Z or later" | Older installs must first upgrade to that version. Neither the installer nor the server checks this, so check it yourself |
 
-The release notes of the running version are also compiled into the binary. `GET /api/v1/system/whats-new` returns them, together with the notes of a newer release if one was found (the latter only for callers with `system.view`). The web UI does not show them; use the [releases page](https://github.com/dockmesh/dockmesh/releases) instead.
+The release notes of the running version are also compiled into the binary. `GET /api/v1/system/whats-new` returns them, together with the notes of a newer release if one was found. The web UI does not show them; use the [releases page](https://github.com/dockmesh/dockmesh/releases) instead.
 
 ## 1. Back up
 
@@ -49,9 +49,9 @@ When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade
 3. It copies the old binary to `/usr/local/bin/dockmesh.bak`, installs the new `dockmesh` and `dmctl`, and refreshes `install-agent.sh` and the agent binaries under `/usr/local/share/dockmesh/`. Linux archives carry the agent for both `amd64` and `arm64`, so the server can enroll and upgrade agents of either architecture.
 4. It installs `grype` if it is missing, unless `DOCKMESH_NO_SCANNER=1`.
 5. If the service still runs as root, it moves it to the `dockmesh` user: it chowns the data root to `dockmesh:dockmesh` (mode 700) and adds `User=dockmesh` and `Group=docker` to the unit.
-6. It restarts `dockmesh.service` and checks that the service runs the new binary and reports the new version.
+6. It restarts `dockmesh.service`, checks that the service came up with a new process started from the new binary, and that the installed binary reports the new version.
 
-`dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.4.2`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.4.2 bash`.
+Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.4.2`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.4.2 bash`.
 
 > **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary and runs a fresh install into `/usr/local/bin`: it keeps `dockmesh.env` and the data, but rewrites the systemd unit to start the new copy, leaves the old binary where it is and makes no `.bak`.
 
@@ -142,7 +142,7 @@ Three upgrade modes exist. The default is `manual`:
 
 In `auto` and `staged` mode the server tries each agent at most three times per new agent build, at least five minutes apart. **Upgrade agent** always goes through. Upgrading an agent that already runs the server's build is refused with an explanation.
 
-The **Hosts** page shows the mode and, outside `manual`, a **Run policy now** button, but cannot change the mode. Use the API, with `hosts.update`:
+The **Hosts** page shows the mode and, outside `manual`, a **Run policy now** button, but cannot change the mode. Use the API (needs Hosts: Manage):
 
 ```bash
 curl -X PUT -H "Authorization: Bearer dmt_xxxxxxxx" -H "Content-Type: application/json" \
@@ -152,7 +152,7 @@ curl -X PUT -H "Authorization: Bearer dmt_xxxxxxxx" -H "Content-Type: applicatio
 
 `POST /api/v1/agents/upgrade-policy/run` runs a check right away.
 
-During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin`). The agent downloads that file from the server's agent listener over its mTLS connection, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there.
+During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin` on installs made by `install.sh`, `./bin` when the variable is unset). The agent downloads that file from the server's agent listener over its mTLS connection, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there.
 
 ### Upgrade an agent by hand
 

@@ -89,7 +89,7 @@ If an admin already exists and `DOCKMESH_SETUP_FORCE=true` is still in the env f
 
 **Cause:** passwords are stored as argon2id hashes and can't be recovered.
 
-**Fix:** set a new one on the server. The **Forgot password?** link on the sign-in page shows the same command.
+**Fix:** set a new one on the server. The **Forgot password?** link on the sign-in page shows the command too, as `sudo dockmesh admin reset-password --user <username>`.
 
 ```bash
 sudo -u dockmesh dockmesh admin reset-password --user admin
@@ -122,7 +122,7 @@ sudo -u dockmesh dockmesh admin unlock --user admin
 
 ### "Your session expired. Sign in again to continue."
 
-**Cause:** the refresh token expired or was revoked, for example by an admin ending your sessions (**Sign out everywhere** on your user page under **Users**), a password reset, or the idle timeout on **Settings → Authentication**. Open tabs share one session renewal, so several tabs don't sign each other out.
+**Cause:** the refresh token expired or was revoked, for example by an admin ending your sessions (**Sign out everywhere** on the user's page under **Users & roles**), a password reset, or the idle timeout on **Settings → Authentication**. Open tabs share one session renewal, so several tabs don't sign each other out.
 
 **Fix:** sign in again.
 
@@ -252,7 +252,7 @@ sudo journalctl -u dockmesh-agent -n 100
 sudo DOCKMESH_DATA_DIR=/var/lib/dockmesh-agent dockmesh-agent status
 ```
 
-`dockmesh-agent status` prints whether the agent is enrolled, when its certificate expires (`EXPIRED`, or `expiring soon` within 14 days), the server URL it dials, and whether a TLS connection to that address can be opened. It doesn't check the certificate name, so `reachability: ok` only proves the port is open.
+`dockmesh-agent status` prints whether the agent is enrolled, when its certificate expires (`EXPIRED`, or `expiring soon` within 14 days), the server URL it dials, and whether a TLS connection to that address can be opened. It skips certificate verification, so `reachability:  ok (tls handshake succeeded)` only proves that a TLS listener answers on that address.
 
 The agent connects to the **agent URL** (`wss://<host>:8443/connect` by default) and enrolls at `https://<host>:8443/enroll`, so port 8443 must be reachable from the agent host, directly and not through a proxy that terminates TLS. The agent URL is set under **Settings → General → Agent public URL**; when it is empty it is derived from **Base URL** on port 8443, and `DOCKMESH_AGENT_PUBLIC_URL` in the server's env file wins over both. **Check connection** next to the field, and in the **Add host** dialog, dials the agent URL from the server and reports name resolution, port and certificate. Remote hosts must reach the same address. See [Multi-host](../features/multi-host.md) and [Ports](../reference/ports.md).
 
@@ -317,7 +317,7 @@ sudo systemctl restart dockmesh-agent
 
 ### "agent update recommended"
 
-**Cause:** the agent speaks an older protocol than the server. Some features, such as charts history, container events or replace restores, need the agent of the same release.
+**Cause:** the agent speaks an older protocol than the server. Some features, such as metrics history, container events, the container file browser or replace restores, need the agent of the same release.
 
 **Fix:** open the host page → **Maintenance** → **Upgrade agent** → **Upgrade now**. If the agent already runs the server's build, the server answers `this host's agent already runs the same build as the server; there is nothing to upgrade`. See [Upgrade](../operations/upgrade.md).
 
@@ -395,7 +395,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 
 **Cause:** local targets may only write below the directories in the `backups.local_roots` setting, by default `/srv/backups` and `<data directory>/backups`.
 
-**Fix:** use a path below one of them. Changing the list needs the `system.upgrade` permission and is done with `PUT /api/v1/settings`. If the server runs under the unit `dockmesh init` writes (`ProtectSystem=strict`), the path also has to be in `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.
+**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs `system.upgrade` on everything in addition to `system.update`. If the server runs under the unit `dockmesh init` writes (`ProtectSystem=strict`), the path also has to be in `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.
 
 ### "this job is already running"
 

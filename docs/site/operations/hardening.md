@@ -29,7 +29,7 @@ proxy_set_header X-Forwarded-Proto $scheme;
 
 `X-Forwarded-Proto: https` makes Dockmesh set `Secure` on its cookies and send HSTS. Dockmesh sends `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` itself.
 
-**Sign-in limits.** Dockmesh limits failed password and 2FA attempts per username and per client address, and the account lockout counts wrong 2FA codes too (see [Authentication](../features/authentication.md#lockout-and-rate-limits)). The counters live in memory and reset on restart. For an extra limit at the proxy, for nginx:
+**Sign-in limits.** Dockmesh limits failed password and 2FA attempts per username and per client address, and the account lockout counts wrong 2FA codes too (see [Authentication](../features/authentication.md#lockout-and-rate-limits)). The per-address counters live in memory and reset on restart. For an extra limit at the proxy, for nginx:
 
 ```nginx
 # in the http block
@@ -49,10 +49,10 @@ location ~ ^/api/v1/auth/(login|mfa)$ {
 | 443 (your proxy) | Web UI, API, agent installer | Users, CI, agent hosts |
 | 8080 | Dockmesh HTTP | Loopback only |
 | 8443 | Agent enrollment and mTLS connections (`DOCKMESH_AGENT_LISTEN`) | Agent hosts only |
-
-The HTTP port also accepts enrollment at `POST /api/v1/agents/enroll` and returns the agent's key and certificate in the response. Reach it only through TLS (your proxy on 443), never over plain HTTP across a network.
 | 80, 443 | Managed Caddy proxy, only when enabled | As your published apps require |
 | 2019 | Caddy admin API | Never; bound to `127.0.0.1` |
+
+The HTTP port also accepts enrollment at `POST /api/v1/agents/enroll` and returns the agent's key and certificate in the response. Reach it only through TLS (your proxy on 443), never over plain HTTP across a network.
 
 The agent listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`. If you don't use remote agents, block 8443 in the firewall. Agent hosts need no inbound ports at all. See [Ports](../reference/ports.md).
 

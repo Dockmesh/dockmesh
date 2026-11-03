@@ -22,7 +22,7 @@ Click **New stack**. The **Create stack** dialog asks for a name (2 to 63 charac
 - **Compose editor**: paste a `compose.yaml` and, optionally, the contents of a `.env` file.
 - **From git repository**: clone the compose file from a repository. The fields are described in [Git sources](./git-sources.md).
 
-On a server with more than one host, **Host** picks the host the stack is for. Until the stack is deployed it belongs to that host: users whose access is limited to that host (or one of its tags) can read, edit and deploy it. A user limited to some hosts has to pick one of them. A stack name that someone's stack assignment names is reserved; only an admin, or a user whose own assignment names it, can create a stack with it. A name that already belongs to a stack is refused, also for git sources.
+On a server with more than one host, **Host** picks the host the stack is for. Until the stack is deployed it belongs to that host: users whose access is limited to that host (or one of its tags) can read, edit and deploy it. A user limited to some hosts has to pick one of them. A stack name that someone's stack assignment names is reserved; only a user whose create permission is not limited to hosts or tags (for example an admin), or whose own assignment names it, can create a stack with it. A name that already belongs to a stack is refused, also for git sources.
 
 | Button | What it does |
 |---|---|

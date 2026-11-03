@@ -91,7 +91,7 @@ Restores the database, stacks directory and data directory from a system backup 
 | `--force` | `false` | Restore over a database that already has users |
 | `--dry-run` | `false` | Count files and bytes, write nothing |
 
-The checks always run and their results are printed. System backups can also be restored from the UI and from the setup wizard of a fresh install. See [Disaster recovery](../operations/disaster-recovery.md).
+Without `--dry-run` the checks always run and their results are printed. System backups can also be restored from the UI and from the setup wizard of a fresh install. See [Disaster recovery](../operations/disaster-recovery.md).
 
 ## doctor
 
@@ -190,7 +190,7 @@ To take over projects that are already running without restarting them, use `dmc
 dockmesh config show
 ```
 
-Prints the effective paths, URLs and toggles after environment and env-file loading, with the JWT secret redacted. Useful when you need to know which `dockmesh.env` a command actually picked up.
+Prints the effective paths, URLs and toggles after environment and env-file loading, with the JWT secret redacted. It does not name the env file it loaded; compare `DBPath` with your data root to see whether the right `dockmesh.env` was picked up.
 
 ## secrets rotate
 

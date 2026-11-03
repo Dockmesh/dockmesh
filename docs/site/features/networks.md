@@ -9,7 +9,7 @@ The **Networks** tab on the **Resources** page lists the Docker networks on the 
 
 | Column | Shows |
 |---|---|
-| Name | Network name and the stack it belongs to |
+| Name | Network name, below it the stack it belongs to or the short ID |
 | Driver / scope | For example `bridge` / `local` |
 | Subnet | From the IPAM configuration |
 | Flags | Internal, attachable |
@@ -22,13 +22,15 @@ Users whose access is limited to some hosts or stacks only see networks on those
 
 ## Network details
 
-Click a network to open its page:
+Click a network to open its page. The page always looks the network up on the server host, so for a network on an agent host it fails to load.
+
+The tabs:
 
 - **Overview**: name, ID, driver, scope, creation time, the internal, attachable and IPv6 flags, labels and driver options.
-- **Containers**: attached containers with their IP and MAC addresses.
+- **Containers**: attached containers with their IPv4, IPv6 and MAC addresses.
 - **IPAM**: subnets, gateways, IP ranges and auxiliary addresses.
 
-The **Topology** page in the sidebar draws hosts, networks and containers as a graph, limited to what your access covers.
+The **Topology** page in the sidebar draws the networks and containers of the server host as a graph, limited to what your access covers. Agent hosts are not included.
 
 ## Creating a network
 

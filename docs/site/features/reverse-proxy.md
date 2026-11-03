@@ -31,7 +31,7 @@ Click **Enable proxy** on the **Reverse proxy** page. Dockmesh pulls the Caddy i
 
 To turn it off, open the actions menu next to **New site** and choose **Stop the proxy…**. This stops and removes the container and stores `proxy_enabled=false`. Sites stay saved, and both volumes are kept, so issued certificates survive.
 
-Enabling needs `proxy.create`, stopping needs `proxy.delete` (`POST /api/v1/proxy/enable`, `POST /api/v1/proxy/disable`). `DOCKMESH_PROXY_ENABLED=true` in the server environment also turns the proxy on; at startup it wins over a stored `false`, so remove it from the environment if you want to keep the proxy off.
+Enabling needs `proxy.create`, stopping needs `proxy.delete` (`POST /api/v1/proxy/enable`, `POST /api/v1/proxy/disable`). `DOCKMESH_PROXY_ENABLED=true` in the server environment turns the proxy on only as long as `proxy_enabled` has never been stored. Once you enable or stop the proxy on the page, the stored choice wins over the variable.
 
 ## Sites
 
