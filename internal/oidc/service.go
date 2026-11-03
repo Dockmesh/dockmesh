@@ -102,7 +102,7 @@ type Service struct {
 	db      *sql.DB
 	auth    *auth.Service
 	secrets *secrets.Service
-	baseURL string
+	baseURL func() string
 
 	mu    sync.Mutex
 	cache map[int64]*cachedProvider
@@ -120,7 +120,7 @@ func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, 
 		db:      db,
 		auth:    authSvc,
 		secrets: secretsSvc,
-		baseURL: baseURL,
+		baseURL: func() string { return baseURL },
 		cache:   make(map[int64]*cachedProvider),
 	}
 }
@@ -615,8 +615,12 @@ func (s *Service) jitProvision(ctx context.Context, cfg *Provider, subject strin
 	})
 }
 
+// SetBaseURL makes the service read its public base URL from fn on every
+// use, so a Base URL changed in settings applies without a restart.
+func (s *Service) SetBaseURL(fn func() string) { s.baseURL = fn }
+
 func (s *Service) redirectURL(slug string) string {
-	base := strings.TrimRight(s.baseURL, "/")
+	base := strings.TrimRight(s.baseURL(), "/")
 	if base == "" {
 		base = "http://localhost:8080"
 	}

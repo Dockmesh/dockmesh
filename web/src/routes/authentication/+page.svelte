@@ -294,15 +294,15 @@
     copyWithToast(s, m.common_copied());
   }
 
-  // The server builds callback URLs from DOCKMESH_BASE_URL, not from the
-  // browser's address or the Base URL setting; show what it really sends.
+  // The server builds callback URLs from DOCKMESH_BASE_URL or the Base URL
+  // setting, never from the browser's address; show what it really sends.
   let callbackBase = $state('');
-  let callbackFromEnv = $state(true);
+  let callbackUnset = $state(false);
   async function loadCallbackBase() {
     try {
       const res = await api.auth.callbackBase();
       callbackBase = res.base_url;
-      callbackFromEnv = res.from_env;
+      callbackUnset = res.source === 'default';
     } catch {
       /* the box stays without a base and the dialogs show the path only */
     }
@@ -462,7 +462,7 @@
               </button>
             </div>
           {/each}
-          {#if callbackBase && !callbackFromEnv}
+          {#if callbackBase && callbackUnset}
             <p class="auth-callback-warn" role="status">{m.authn_callback_no_env({ url: callbackBase })}</p>
           {/if}
           <p class="auth-callback-blurb">

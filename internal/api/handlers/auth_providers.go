@@ -3,11 +3,14 @@ package handlers
 import (
 	"net/http"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
 type ssoBaseView struct {
 	BaseURL string `json:"base_url"`
 	FromEnv bool   `json:"from_env"`
+	Source  string `json:"source"`
 }
 
 // SSOCallbackBase returns the base URL the OIDC, OAuth2 and SAML services
@@ -16,9 +19,10 @@ type ssoBaseView struct {
 //
 //	GET /api/v1/auth/callback-base
 func (h *Handlers) SSOCallbackBase(w http.ResponseWriter, r *http.Request) {
-	out := ssoBaseView{BaseURL: "http://localhost:8080"}
-	if c := h.RestoreConfig; c != nil && c.BaseURL != "" {
-		out = ssoBaseView{BaseURL: strings.TrimRight(c.BaseURL, "/"), FromEnv: c.BaseURLFromEnv}
+	out := ssoBaseView{BaseURL: "http://localhost:8080", Source: agents.SourceDefault}
+	if h.PublicURLs != nil {
+		e := h.PublicURLs()
+		out = ssoBaseView{BaseURL: strings.TrimRight(e.BaseURL, "/"), FromEnv: e.BaseSource == agents.SourceEnv, Source: e.BaseSource}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

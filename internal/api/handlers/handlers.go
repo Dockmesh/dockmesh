@@ -115,7 +115,10 @@ type Handlers struct {
 	RestoreConfig  *config.Config
 	RequestRestart func()
 	FinishSetup    func() error
-	setupRuns      sync.Map // runID → *setup.Runner; populated when SetupCommit fires
+	// PublicURLs resolves the base URL users reach the server at and
+	// where it came from; SSO callbacks and invite links use it.
+	PublicURLs func() agents.Endpoints
+	setupRuns  sync.Map // runID → *setup.Runner; populated when SetupCommit fires
 
 	// ClientIPs resolves client addresses behind trusted proxies; the
 	// router mounts its middleware.
@@ -189,6 +192,7 @@ type Deps struct {
 	RestoreConfig  *config.Config
 	RequestRestart func()
 	FinishSetup    func() error
+	PublicURLs     func() agents.Endpoints
 }
 
 func New(d Deps) *Handlers {
@@ -246,6 +250,7 @@ func New(d Deps) *Handlers {
 		RestoreConfig:  d.RestoreConfig,
 		RequestRestart: d.RequestRestart,
 		FinishSetup:    d.FinishSetup,
+		PublicURLs:     d.PublicURLs,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
 		mfaLimiter:        ratelimit.New(20, 15*time.Minute, 15*time.Minute),

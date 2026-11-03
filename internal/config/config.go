@@ -25,11 +25,9 @@ type Config struct {
 	ProxyEnabled      bool
 	ProxyImage        string
 	BaseURL           string
-	// BaseURLFromEnv is false when BaseURL is the localhost fallback.
-	BaseURLFromEnv bool
-	AgentListen    string
-	AgentPublicURL string
-	AgentSANs      string
+	AgentListen       string
+	AgentPublicURL    string
+	AgentSANs         string
 	// AgentEnrollTokenTTL is how long a host enrollment token stays
 	// valid (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, Go duration). Zero keeps
 	// the agents package default.
@@ -74,10 +72,9 @@ func Load() (*Config, error) {
 		// Proxy is opt-in: many users already run Traefik or NPM.
 		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
 		ProxyImage:   envOr("DOCKMESH_PROXY_IMAGE", ""),
-		// BaseURL is used to build the OIDC redirect URL. Providers must
-		// have <baseURL>/api/v1/auth/oidc/{slug}/callback whitelisted.
-		BaseURL:        envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
-		BaseURLFromEnv: os.Getenv("DOCKMESH_BASE_URL") != "",
+		// BaseURL is the fallback when neither DOCKMESH_BASE_URL nor the
+		// Base URL setting gives the public address.
+		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
 		// Remote-agent mTLS listener (concept §3.1). Empty = disabled.
 		// AgentPublicURL is the wss:// URL printed in the install hint;
 		// must be reachable by the agent host. AgentSANs adds extra

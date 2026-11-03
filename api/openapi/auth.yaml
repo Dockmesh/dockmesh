@@ -568,9 +568,10 @@ paths:
       summary: Base URL of the SSO callback, ACS and metadata URLs
       description: |
         The base URL the OIDC, OAuth2 and SAML providers' redirect, ACS and
-        metadata URLs are built from: `DOCKMESH_BASE_URL`, or
-        `http://localhost:8080` when it is unset (`from_env` false). The
-        Base URL setting is not used for these URLs.
+        metadata URLs and invite links are built from: `DOCKMESH_BASE_URL`,
+        else the Base URL setting, else `http://localhost:8080`. `source`
+        says which one applies; `from_env` is true when it is the env var.
+        The request's own address is never used.
       responses:
         "200":
           description: Callback base.
@@ -578,10 +579,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [base_url, from_env]
+                required: [base_url, from_env, source]
                 properties:
                   base_url: {type: string, example: "https://dockmesh.example.com"}
                   from_env: {type: boolean}
+                  source: {type: string, enum: [env, setting, default]}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
   /ws/ticket:

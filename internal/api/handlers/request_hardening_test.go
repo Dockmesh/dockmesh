@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/pquerna/otp/totp"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/invites"
@@ -311,4 +312,33 @@ func chiRouterFor(method, pattern string, fn http.HandlerFunc) http.Handler {
 	r := chi.NewRouter()
 	r.Method(method, pattern, fn)
 	return r
+}
+
+func TestSSOCallbackBaseSource(t *testing.T) {
+	cases := []struct {
+		name string
+		e    agents.Endpoints
+		want ssoBaseView
+	}{
+		{"env", agents.Endpoints{BaseURL: "https://env.example.com", BaseSource: agents.SourceEnv},
+			ssoBaseView{BaseURL: "https://env.example.com", FromEnv: true, Source: "env"}},
+		{"setting", agents.Endpoints{BaseURL: "https://dm.lan/", BaseSource: agents.SourceSetting},
+			ssoBaseView{BaseURL: "https://dm.lan", Source: "setting"}},
+		{"default", agents.Endpoints{BaseURL: "http://localhost:8080", BaseSource: agents.SourceDefault},
+			ssoBaseView{BaseURL: "http://localhost:8080", Source: "default"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := &Handlers{PublicURLs: func() agents.Endpoints { return c.e }}
+			rr := httptest.NewRecorder()
+			h.SSOCallbackBase(rr, httptest.NewRequest(http.MethodGet, "/auth/callback-base", nil))
+			var got ssoBaseView
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
 }

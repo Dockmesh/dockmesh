@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -62,13 +63,13 @@ type Invite struct {
 // into the auth/users service after validating the token.
 type Service struct {
 	db      *sql.DB
-	baseURL string
+	baseURL func() string
 
 	stop chan struct{}
 }
 
 func New(db *sql.DB, baseURL string) *Service {
-	return &Service{db: db, baseURL: baseURL, stop: make(chan struct{})}
+	return &Service{db: db, baseURL: func() string { return baseURL }, stop: make(chan struct{})}
 }
 
 // Start kicks off the cleanup goroutine. Safe to call once.
@@ -262,11 +263,16 @@ func (s *Service) cleanup(ctx context.Context) error {
 }
 
 func (s *Service) acceptURL(token string) string {
-	if s.baseURL == "" {
+	base := strings.TrimRight(s.baseURL(), "/")
+	if base == "" {
 		return "/invite/" + token
 	}
-	return s.baseURL + "/invite/" + token
+	return base + "/invite/" + token
 }
+
+// SetBaseURL makes the service read its public base URL from fn on every
+// use, so a Base URL changed in settings applies without a restart.
+func (s *Service) SetBaseURL(fn func() string) { s.baseURL = fn }
 
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))

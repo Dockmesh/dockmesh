@@ -135,7 +135,7 @@ func (s *Service) buildSP(ctx context.Context, p *Provider) (*crewjam.ServicePro
 		}
 	}
 
-	base := strings.TrimRight(s.baseURL, "/")
+	base := strings.TrimRight(s.baseURL(), "/")
 	if base == "" {
 		base = "http://localhost:8080"
 	}

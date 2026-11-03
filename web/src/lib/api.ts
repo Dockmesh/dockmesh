@@ -1681,7 +1681,8 @@ export const api = {
       enabled: boolean;
       raw?: any;
     }>>('/auth/providers'),
-    callbackBase: () => request<{ base_url: string; from_env: boolean }>('/auth/callback-base'),
+    callbackBase: () =>
+      request<{ base_url: string; from_env: boolean; source: 'env' | 'setting' | 'default' }>('/auth/callback-base'),
     login: (username: string, password: string) =>
       request<{
         access_token?: string;

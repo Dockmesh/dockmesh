@@ -96,3 +96,16 @@ func TestScopesAcceptSpacesAndCommas(t *testing.T) {
 		})
 	}
 }
+
+func TestRedirectURLFollowsTheBaseURL(t *testing.T) {
+	s := NewService(nil, nil, nil, "http://localhost:8080")
+	base := "https://dm.lan/"
+	s.SetBaseURL(func() string { return base })
+	if got := s.redirectURL("kc"); got != "https://dm.lan/api/v1/auth/oidc/kc/callback" {
+		t.Fatalf("redirect URL %q", got)
+	}
+	base = "https://dockmesh.example.com"
+	if got := s.redirectURL("kc"); got != "https://dockmesh.example.com/api/v1/auth/oidc/kc/callback" {
+		t.Fatalf("after a change: %q", got)
+	}
+}

@@ -626,6 +626,12 @@ func main() {
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
 	}
+	// Sign-in callbacks and invite links use the same base URL as the
+	// agent installer: DOCKMESH_BASE_URL, else the Base URL setting.
+	publicBaseURL := func() string { return agentEndpoints(cfg, settingsStore).BaseURL }
+	oidcSvc.SetBaseURL(publicBaseURL)
+	samlSvc.SetBaseURL(publicBaseURL)
+	oauth2Svc.SetBaseURL(publicBaseURL)
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, "")
 	agentsSvc.SetEndpointResolver(func() agents.Endpoints {
 		return agentEndpoints(cfg, settingsStore)
@@ -840,6 +846,7 @@ func main() {
 	// Generates one-time tokens an admin shares via Slack/email/etc.
 	// Cleanup goroutine deletes used + expired rows after 30 days.
 	invitesSvc := invites.New(database, cfg.BaseURL)
+	invitesSvc.SetBaseURL(publicBaseURL)
 	invitesSvc.Start(ctx)
 	defer invitesSvc.Stop()
 	if err := templatesSvc.SeedBuiltins(ctx); err != nil {
@@ -1084,6 +1091,7 @@ func main() {
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
 		RestoreConfig:  cfg,
+		PublicURLs:     func() agents.Endpoints { return agentEndpoints(cfg, settingsStore) },
 		RequestRestart: requestRestart,
 		FinishSetup: func() error {
 			envPath := serverEnvFile(cfg.DBPath)
