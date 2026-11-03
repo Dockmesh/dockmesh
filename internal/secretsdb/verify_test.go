@@ -41,7 +41,6 @@ func sealedDB(t *testing.T) (*sql.DB, *secrets.Service) {
 }
 
 func TestVerifyAndHoldsPlaintext(t *testing.T) {
-	ctx := context.Background()
 	tests := []struct {
 		name       string
 		change     string
@@ -59,6 +58,7 @@ func TestVerifyAndHoldsPlaintext(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			database, sec := sealedDB(t)
+			ctx := context.Background()
 			if tt.change != "" {
 				if _, err := database.Exec(`INSERT INTO backup_jobs (name, target_type, target_config, sources) VALUES ('j', 'sftp', '{"host":"h"}', '[]')`); err != nil {
 					t.Fatal(err)
