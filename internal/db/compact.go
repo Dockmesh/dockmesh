@@ -52,6 +52,9 @@ func CompactIfPending(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	var pages, pageSize int64
+	_ = db.QueryRowContext(ctx, `SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()`).Scan(&pages, &pageSize)
+	slog.Info("compacting database, this can take a while", "size_mb", pages*pageSize>>20)
 	start := time.Now()
 	if err := Compact(ctx, db); err != nil {
 		return fmt.Errorf("compact database: %w", err)

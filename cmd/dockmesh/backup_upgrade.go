@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -165,12 +166,15 @@ func prepareJobTargets(ctx context.Context, database *sql.DB, st *settings.Store
 		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
 	}
 	// The plaintext these steps replaced is still in the file's free space.
-	// Background writers can block the compaction here; the mark makes the
-	// next start compact before they run.
+	// Background writers are running here, so the attempt is capped: an
+	// interrupted VACUUM rolls back, and the mark makes the next start
+	// compact before they run.
 	if moved+sealed > 0 {
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
 		if merr := db.MarkCompactPending(ctx, database); merr != nil {
 			slog.Warn("backup: marking the database for compaction", "err", merr)
-		} else if cerr := db.CompactIfPending(ctx, database); cerr != nil {
+		} else if cerr := db.CompactIfPending(cctx, database); cerr != nil {
 			slog.Warn("backup: database not compacted yet, retrying on the next start", "err", cerr)
 		}
 	}
