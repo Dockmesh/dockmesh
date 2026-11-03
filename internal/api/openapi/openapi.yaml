@@ -9388,14 +9388,27 @@ components:
           type: string
           enum: [host_offline, agent_outdated, container_restarting, container_unhealthy, container_exited, backup_failed, alert_firing, image_update, cert_expiring, notice]
         severity: {type: string, enum: [critical, warning, info]}
-        title: {type: string}
-        detail: {type: string, description: One line of context.}
+        title: {type: string, description: English text; clients that translate render title_key instead.}
+        detail: {type: string, description: "One line of context, in English. Without detail_key it is runtime text (an error, an alert message)."}
+        title_key:
+          type: string
+          description: Message key for the title, rendered with params in the reader's language.
+          enum: [host_offline, agent_outdated, agents_outdated, container_restarting, container_unhealthy, container_exited, backup_failed, alert_firing, image_update, cert_expired, cert_expires_today, cert_expires_days]
+        detail_key:
+          type: string
+          description: Message key for the detail, rendered with params.
+          enum: [host_offline_detail, agent_outdated_detail, agents_outdated_detail, container_detail, backup_failed_detail, image_used_by_count, image_used_by_one, image_used_by_more, cert_detail]
+        params:
+          type: object
+          description: "Values for the message keys, e.g. {name}, {count}, {host}, {days}, {valid_to} (UTC date), {issuer}. An empty agent or issuer means unknown."
+          additionalProperties:
+            oneOf: [{type: string}, {type: integer}]
         link: {type: string, description: "In-app path, e.g. /hosts/abc or /containers/123?host=abc."}
         object:
           type: object
           required: [type, id]
           properties:
-            type: {type: string, enum: [host, container, mount, backup_job, image, proxy_route, domain, notice]}
+            type: {type: string, enum: [host, hosts, container, mount, backup_job, image, proxy_route, domain, notice]}
             id: {type: string}
             name: {type: string}
             host_id: {type: string}

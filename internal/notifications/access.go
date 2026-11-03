@@ -28,7 +28,7 @@ type RBACAccess struct {
 
 // CanReceive requires the user to hold in.Perm on the host or stack the
 // event names; an unscoped event needs the permission on everything. An
-// event without a permission reaches nobody.
+// event without a permission reaches nobody; Emit refuses those first.
 func (a *RBACAccess) CanReceive(ctx context.Context, userID string, in EmitInput) bool {
 	if in.Perm == "" || a.Access == nil {
 		return false

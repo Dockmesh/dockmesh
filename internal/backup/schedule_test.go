@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // blockingHost holds the volume stream open until release is closed.
@@ -352,5 +354,56 @@ func TestInlineTargetMigrationKeepsSystemJobApart(t *testing.T) {
 	}
 	if ids["web"] == 0 || ids["web"] == ids["sys"] {
 		t.Fatalf("system job shares a target with another job: %v", ids)
+	}
+}
+
+type recordingAccess struct{ got []notifications.EmitInput }
+
+func (r *recordingAccess) CanReceive(_ context.Context, _ string, in notifications.EmitInput) bool {
+	r.got = append(r.got, in)
+	return true
+}
+
+type oneUser struct{}
+
+func (oneUser) ListActiveUserIDs(context.Context) ([]string, error) { return []string{"u1"}, nil }
+
+// A scheduled fire skipped because the job still runs reaches the job's
+// backup viewers, scoped to its host.
+func TestSkippedRunNotifiesJobAudience(t *testing.T) {
+	svc, _, root := newExecTest(t, false)
+	ctx := context.Background()
+	if _, err := svc.store.db.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	access := &recordingAccess{}
+	n := notifications.NewService(svc.store.db)
+	n.SetUserDirectory(oneUser{})
+	n.SetAccessChecker(access)
+	svc.SetNotifier(n)
+	job, err := svc.CreateJob(ctx, volumeJob("busy", root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !svc.claim(job.ID) {
+		t.Fatal("claim")
+	}
+	defer svc.release(job.ID)
+
+	svc.runScheduled(job.ID, job.Name)
+
+	if len(access.got) != 1 {
+		t.Fatalf("emitted %d notifications, want 1", len(access.got))
+	}
+	in := access.got[0]
+	if in.Perm != rbac.PermBackupsView || in.HostID != "fake" || in.Unscoped || in.Kind != notifications.KindBackupFail {
+		t.Errorf("addressed as perm %q host %q unscoped %v kind %q", in.Perm, in.HostID, in.Unscoped, in.Kind)
+	}
+	list, err := n.List(ctx, "u1", false, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Title != "Backup skipped: busy" {
+		t.Errorf("bell = %+v", list)
 	}
 }

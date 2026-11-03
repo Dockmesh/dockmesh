@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,14 +17,29 @@ const compactPendingKey = "db.compact_pending"
 
 // Compact rewrites the database file and truncates the WAL. Rows written
 // before secure_delete was on leave their old content in page slack;
-// rebuilding the file drops it. A checkpoint blocked by a reader reports
-// success in SQLite, so its result row is checked.
+// rebuilding the file drops it. The pass runs with secure_delete fully on,
+// so pages it frees are zeroed too. A checkpoint blocked by a reader
+// reports success in SQLite, so its result row is checked.
 func Compact(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA secure_delete = ON`); err != nil {
+		return err
+	}
+	// The connection goes back to the pool, which expects FAST.
+	defer func() {
+		if _, err := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA secure_delete = FAST`); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, `VACUUM`); err != nil {
 		return err
 	}
 	var busy, logFrames, done int
-	if err := db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &done); err != nil {
+	if err := conn.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &done); err != nil {
 		return err
 	}
 	if busy != 0 {

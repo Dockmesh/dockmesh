@@ -83,7 +83,7 @@ Before it serves requests, the server brings the database up to date:
 
 Notices about something that stopped working show as a banner at the top of the UI, with a link to the page where you fix it. **Hide for 24 h** moves such a notice to **Needs attention** for a day; it comes back while the problem lasts. Other warning and critical notices are listed under **Needs attention** on the **Overview** page and on the **Activity** page. Info notices, which only announce a change, appear in the notification feed on the **Activity** page. Critical notices that are not in the banner cannot be hidden. Steps the server cannot check are listed only in the release's **Upgrade notes**.
 
-Snapshots are not included in system backups. They can hold values that newer versions store encrypted, so delete them once you are sure you won't roll back.
+Snapshots are not included in system backups. A snapshot from before v0.5.0 holds backup credentials and secret variables in plaintext. With secrets encryption on, the server deletes such snapshots on the first start once every migration is applied, the database passes SQLite's integrity check and every stored secret is encrypted and readable with the current key. It then compacts the database so the old values don't stay in its free space either. An info notice **Pre-upgrade database copies removed** lists the deleted files; from then on the only way back to v0.4.x is a system backup made on v0.4.x. If a check fails, the snapshot is kept and the warning notice **Pre-upgrade database copies still hold plaintext secrets** says why; delete it once Dockmesh works. Snapshots of a database that already stores its secrets encrypted are kept as restore points.
 
 ## 3. Verify
 

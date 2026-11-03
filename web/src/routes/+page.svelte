@@ -12,7 +12,7 @@
   import { Skeleton, StatBar, StatusChip, Segmented, LiveIndicator, EmptyState } from '$lib/components/ui';
   import { notices } from '$lib/stores/notices.svelte';
   import { withoutBanner } from '$lib/notices';
-  import { sortAttention } from '$lib/attention';
+  import { attentionText, sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { stackInLens } from '$lib/lens';
   import { auditSentence, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
@@ -301,9 +301,10 @@
             <h3>{m.overview_needs_attention()} <span class="dm-dim dm-num">{attnSorted.length}</span></h3>
           </div>
           {#each attnSorted.slice(0, ATTN_LIMIT) as a (a.id)}
+            {@const t = attentionText(a)}
             <div class="attn">
               <StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} />
-              <div class="t dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
+              <div class="t dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span>&nbsp;— {t.detail}</span>{/if}</div>
               {#if a.since}<span class="dm-num dm-dim" title={fmtDateTime(a.since)}>{fmtAgo(a.since)}</span>{/if}
               {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}
             </div>

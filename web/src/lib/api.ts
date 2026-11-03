@@ -1517,6 +1517,9 @@ export interface AttentionItem {
   severity: 'critical' | 'warning' | 'info';
   title: string;
   detail?: string;
+  title_key?: string;
+  detail_key?: string;
+  params?: Record<string, string | number>;
   link: string;
   object: { type: string; id: string; name?: string; host_id?: string };
   since?: string;
@@ -1712,6 +1715,8 @@ export const api = {
       request<Session[]>('/sessions' + (includeRevoked ? '?include_revoked=1' : '')),
     revokeSession: (familyId: string) =>
       request<void>(`/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' }),
+    // Ends this session too, so its local tokens are dropped.
+    revokeAllSessions: () => request<void>('/sessions/revoke-all', { method: 'POST' }).then(() => auth.clear()),
     getPolicy: () => request<PasswordPolicy>('/auth/policy'),
     setPolicy: (p: PasswordPolicy) =>
       request<PasswordPolicy>('/auth/policy', {

@@ -5,7 +5,6 @@ package secretsdb
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -26,11 +25,7 @@ func Reseal(ctx context.Context, db *sql.DB, oldSvc, newSvc *secrets.Service) (i
 	defer func() { _ = tx.Rollback() }()
 
 	n := 0
-	for _, c := range []struct{ table, column, where string }{
-		{"backup_targets", "config_json", ""},
-		{"backup_jobs", "target_config", ""},
-		{"global_env", "value", " WHERE encrypted = 1"},
-	} {
+	for _, c := range sealedColumns {
 		rows, err := readColumn(ctx, tx, c.table, c.column, c.where)
 		if err != nil {
 			return 0, err
@@ -75,22 +70,4 @@ func reseal(table, raw string, oldSvc, newSvc *secrets.Service) (string, error) 
 		return "", err
 	}
 	return targets.SealConfig(newSvc, cfg)
-}
-
-func readColumn(ctx context.Context, tx *sql.Tx, table, column, where string) (map[int64]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, `+column+` FROM `+table+where) // #nosec G202 -- fixed table and column names
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", table, err)
-	}
-	defer rows.Close()
-	out := map[int64]string{}
-	for rows.Next() {
-		var id int64
-		var v sql.NullString
-		if err := rows.Scan(&id, &v); err != nil {
-			return nil, err
-		}
-		out[id] = v.String
-	}
-	return out, rows.Err()
 }

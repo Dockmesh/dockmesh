@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: '[plaintext-snapshot, admins] The first start removes pre-upgrade database copies (dockmesh.db.pre-migrate-*.bak) that hold plaintext secrets, including those left by earlier v0.4.x upgrades, once the checks after the upgrade pass. Rolling back to v0.4.x is then only possible from a system backup. If a check fails, the copy is kept and a notice says why; delete it once Dockmesh works. Without secrets encryption nothing is removed'
+time: 2026-11-03T21:19:09.720991986Z

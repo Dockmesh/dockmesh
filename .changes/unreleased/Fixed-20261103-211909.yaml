@@ -1,0 +1,3 @@
+kind: Fixed
+body: After an upgrade from a version that stored backup credentials and secret variables in plaintext, the database copy taken before the upgrade is deleted once the checks after the upgrade pass and every stored secret is encrypted, and the database file is compacted with its free space zeroed; admins get a notice either way
+time: 2026-11-03T21:19:09.318806134Z

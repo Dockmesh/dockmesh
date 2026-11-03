@@ -104,6 +104,7 @@
   "account_show_inactive": "Show {n} expired or revoked",
   "account_sign_out_everywhere": "Sign out everywhere",
   "account_sign_out_everywhere_blurb": "Revokes every session including this one. You'll need to sign in again.",
+  "account_sign_out_everywhere_title": "Sign out everywhere?",
   "account_strength_fair": "fair",
   "account_strength_good": "good",
   "account_strength_strong": "strong",
@@ -674,6 +675,56 @@
   "apierr_webhook_rejected": "webhook rejected",
   "apierr_ws_ticket_perm_required": "?for=<perm> required (one of containers.view, containers.logs, containers.exec, system.view)",
   "apierr_you_can_only_change_your_own_avatar": "you can only change your own avatar",
+  "attn_agent_outdated": "{name} runs a different agent build",
+  "attn_agent_outdated_detail": "Agent {agent}, server {server}.",
+  "attn_agents_outdated": "{count} agents run a different build",
+  "attn_agents_outdated_detail": "{names}. Server {server}.",
+  "attn_alert_firing": "{name} is firing",
+  "attn_backup_failed": "Backup {name} failed",
+  "attn_backup_failed_detail": "The last run failed.",
+  "attn_cert_detail": "Valid until {date}, issued by {issuer}.",
+  "attn_cert_expired": "Certificate for {host} has expired",
+  "attn_cert_expires_days": [
+    {
+      "declarations": [
+        "input days",
+        "local daysPlural = days: plural"
+      ],
+      "selectors": [
+        "daysPlural"
+      ],
+      "match": {
+        "daysPlural=one": "Certificate for {host} expires in {days} day",
+        "daysPlural=*": "Certificate for {host} expires in {days} days"
+      }
+    }
+  ],
+  "attn_cert_expires_today": "Certificate for {host} expires today",
+  "attn_container_detail": "{status} on {host}.",
+  "attn_container_exited": "{name} exited with an error",
+  "attn_container_restarting": "{name} keeps restarting",
+  "attn_container_unhealthy": "{name} is unhealthy",
+  "attn_host_offline": "{name} is offline",
+  "attn_host_offline_detail": "The agent is not connected.",
+  "attn_image_update": "Update available for {image}",
+  "attn_image_used_by_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Used by {count} container.",
+        "countPlural=*": "Used by {count} containers."
+      }
+    }
+  ],
+  "attn_image_used_by_more": "Used by {name} and {count} more.",
+  "attn_image_used_by_one": "Used by {name}.",
+  "attn_unknown": "unknown",
   "audit_act_agent_create": "added host",
   "audit_act_agent_delete": "removed host",
   "audit_act_agent_rotate_token": "issued a new token for",

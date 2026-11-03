@@ -111,16 +111,11 @@ func (h *Handlers) RevokeAllMySessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	res, err := h.DB.ExecContext(r.Context(), `
-		UPDATE sessions
-		   SET revoked_at = CURRENT_TIMESTAMP
-		 WHERE user_id = ? AND revoked_at IS NULL`,
-		uid)
+	n, err := h.Auth.RevokeUserSessions(r.Context(), uid, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	n, _ := res.RowsAffected()
 	h.audit(r, "auth.session_revoke_all", uid, map[string]any{"count": n})
 	w.WriteHeader(http.StatusNoContent)
 }

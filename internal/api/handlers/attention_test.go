@@ -271,3 +271,73 @@ func TestGroupAgentBuilds(t *testing.T) {
 		})
 	}
 }
+
+// Every item carries a message key the UI renders in the user's language,
+// with the names it needs as params; runtime details keep no key.
+func TestAttentionMessageKeys(t *testing.T) {
+	e := newAttentionEnv(t)
+	e.user("boss", "admin")
+	rr := e.do(http.MethodGet, "/attention", e.login("boss").AccessToken, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("attention: %d %s", rr.Code, rr.Body)
+	}
+	var items []AttentionItem
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]AttentionItem{}
+	for _, it := range items {
+		if it.TitleKey == "" {
+			t.Errorf("%s has no title key", it.ID)
+		}
+		byID[it.ID] = it
+	}
+	tests := []struct {
+		id, titleKey, detailKey string
+		params                  map[string]any
+	}{
+		{"container_restarting:local:c2", "container_restarting", "container_detail",
+			map[string]any{"name": "db-1", "status": "Restarting (1) 5 seconds ago", "host": "Local"}},
+		{"container_unhealthy:local:c1", "container_unhealthy", "container_detail",
+			map[string]any{"name": "web-1", "status": "Up 2 hours (unhealthy)", "host": "Local"}},
+		{"backup_failed:1", "backup_failed", "", map[string]any{"name": "db-nightly"}},
+		{"alert_firing:903:edge", "alert_firing", "", map[string]any{"name": "Host offline"}},
+		{"cert_expiring:1", "cert_expires_days", "cert_detail",
+			map[string]any{"host": "app.example.com", "days": float64(5), "valid_to": byID["cert_expiring:1"].Params["valid_to"], "issuer": ""}},
+	}
+	for _, tt := range tests {
+		it, ok := byID[tt.id]
+		if !ok {
+			t.Errorf("%s missing", tt.id)
+			continue
+		}
+		if it.TitleKey != tt.titleKey || it.DetailKey != tt.detailKey {
+			t.Errorf("%s keys = %q/%q, want %q/%q", tt.id, it.TitleKey, it.DetailKey, tt.titleKey, tt.detailKey)
+		}
+		if !reflect.DeepEqual(it.Params, tt.params) {
+			t.Errorf("%s params = %v, want %v", tt.id, it.Params, tt.params)
+		}
+	}
+}
+
+func TestAttentionImageUpdateKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		users     []string
+		showNames bool
+		detailKey string
+		params    map[string]any
+	}{
+		{"names hidden", []string{"a", "b"}, false, "image_used_by_count", map[string]any{"image": "nginx:1", "count": 2}},
+		{"one user", []string{"a"}, true, "image_used_by_one", map[string]any{"image": "nginx:1", "name": "a"}},
+		{"several users", []string{"a", "b", "c"}, true, "image_used_by_more", map[string]any{"image": "nginx:1", "name": "a", "count": 2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := imageUpdateItem("nginx:1", tt.users, tt.showNames)
+			if it.TitleKey != "image_update" || it.DetailKey != tt.detailKey || !reflect.DeepEqual(it.Params, tt.params) {
+				t.Errorf("got %q/%q %v", it.TitleKey, it.DetailKey, it.Params)
+			}
+		})
+	}
+}

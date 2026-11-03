@@ -10,7 +10,7 @@
   import { operations } from '$lib/stores/operations.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { withoutBanner } from '$lib/notices';
-  import { sortAttention } from '$lib/attention';
+  import { attentionText, sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
   import { buildFeed, CATEGORY_LABEL, type FeedCategory, type FeedEntry } from '$lib/activity';
   import { Tabs, Segmented, StatusChip, Menu, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
@@ -163,9 +163,10 @@
           <span role="columnheader">{m.activity_col_severity()}</span><span role="columnheader">{m.activity_col_problem()}</span><span role="columnheader">{m.common_host()}</span><span role="columnheader">{m.activity_col_since()}</span><span role="columnheader"></span>
         </div>
         {#each attShown as a (a.id)}
+          {@const t = attentionText(a)}
           <div class="dm-tr" role="row" style="grid-template-columns: {ATT_COLS}">
             <span role="cell"><StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} /></span>
-            <span role="cell" class="dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span class="dm-dim"> — {a.detail}</span>{/if}</span>
+            <span role="cell" class="dm-trunc" title={t.detail ? `${t.title} — ${t.detail}` : t.title}><b>{t.title}</b>{#if t.detail}<span class="dm-dim">&nbsp;— {t.detail}</span>{/if}</span>
             <span role="cell" class="dm-dim dm-trunc">{a.object.host_id ? hostName(a.object.host_id) : '—'}</span>
             <span role="cell" class="dm-num dm-dim" title={a.since ? fmtDateTime(a.since) : ''}>{a.since ? fmtAgo(a.since) : '—'}</span>
             <span role="cell" class="dm-tr-menu">{#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}</span>
