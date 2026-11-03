@@ -47,7 +47,7 @@ The stack's **Settings** tab shows the repository, branch and path, whether it d
 
 ### Paths stay inside the repository
 
-The clone is read through a directory handle that cannot leave it. A **Path in repo** that leads outside the repository is rejected, and a symlink in the repository that points outside the clone is skipped with a warning in the server log. Symlinks inside the clone are copied as the files they point to. The stack directory is written the same way, so a symlink that a container left in a bind-mounted part of the stack directory can't redirect the copy elsewhere.
+The clone is read through a directory handle that cannot leave it. A **Path in repo** that leads outside the repository is rejected, and a symlink in the repository that points outside the clone is skipped with a warning in the server log. Symlinks to files inside the clone are copied as the files they point to. The stack directory is written the same way, so a symlink that a container left in a bind-mounted part of the stack directory can't redirect the copy elsewhere.
 
 The repository still decides what runs: its compose file, and any build context or config file it ships, end up on the host. Only connect repositories whose push access you control.
 
@@ -74,7 +74,7 @@ With **Auto-deploy on new commits** on, every sync that pulls a new commit deplo
 
 - It runs on the host the stack is deployed on. A stack that was never deployed is deployed on the host it was created for, or on the server host if it has none.
 - Every image is pulled again, also on agent hosts, so a new image pushed under the same tag is picked up.
-- Global environment variables and the stack's default environment override are applied. The override is only used if a manual deploy already used the same override file; deploy once by hand after you add or change an override.
+- Global environment variables and the stack's default environment override are applied. If the override file was added or changed since the last manual deploy, the auto-deploy fails with `environment override changed since the last manual deploy`; deploy once by hand after you add or change an override.
 - The deployment record and the stack's **History** are updated (marked as a git deploy, with the commit SHA), and the result is sent to the notification bell.
 
 A failed auto-deploy does not fail the sync: the new files are in place, and the error is in the notification and in **History**.
@@ -87,7 +87,7 @@ The endpoint is:
 POST https://<your-dockmesh>/api/v1/stacks/<stack>/git/webhook
 ```
 
-It needs no Dockmesh login. Add it as a push webhook in your Git host with the same secret you entered in Dockmesh; the URL is also shown in the edit dialog under **Webhook URL**.
+It needs no Dockmesh sign-in. Add it as a push webhook in your Git host with the same secret you entered in Dockmesh; the URL is also shown in the edit dialog under **Webhook URL**.
 
 | Git host | How the secret is checked |
 |---|---|
@@ -97,7 +97,7 @@ It needs no Dockmesh login. Add it as a push webhook in your Git host with the s
 
 The webhook only works when the source has a webhook secret. Without one, and for an unknown stack or a wrong signature, the endpoint answers `401` with `webhook rejected`, so it does not reveal which stacks exist. While any source has no secret, admins see the notice **Git webhooks disabled: no webhook secret**, and the stack page shows **Git webhook disabled**. Polling and **Sync now** keep working without a secret.
 
-A valid request returns `202` (`{"status":"sync queued"}`) and the sync runs in the background, for up to 10 minutes. Deliveries that arrive while a sync of the same stack runs are combined into one more sync afterwards, so replayed deliveries can't pile up syncs or deploys. The request body is read up to 1 MiB. If pushes do not show up, check the last sync error on the stack page and in the server log.
+A valid request returns `202` (`{"status":"sync queued"}`) and the sync runs in the background, for up to 10 minutes. Deliveries that arrive while a webhook sync of the same stack runs are combined into one more sync afterwards, so replayed deliveries can't pile up syncs or deploys. The request body is read up to 1 MiB. If pushes do not show up, check the last sync error on the stack page and in the server log.
 
 ## Deleting a stack
 
@@ -106,7 +106,7 @@ Deleting a stack also deletes its git source and the local clone, so a later com
 ## Limits
 
 - One git source per stack, one branch per source.
-- The repository's other files reach the stack directory on the server only. Deploys on an agent host send just `compose.yaml` and `.env`, so relative bind mounts like `./config:/etc/app` resolve to the stack directory on the agent, where those files don't exist.
+- The repository's other files reach the stack directory on the server only. Deploys on an agent host send only `compose.yaml` and `.env`, so relative bind mounts like `./config:/etc/app` resolve to the stack directory on the agent, where those files don't exist.
 
 ## Permissions
 

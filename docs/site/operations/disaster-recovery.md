@@ -3,7 +3,7 @@ title: Disaster recovery
 description: What to keep safe, how to export the age key, and how to rebuild a Dockmesh server from a system backup.
 ---
 
-When the Dockmesh server goes down, containers keep running: on the local host Docker runs them without Dockmesh, and remote agents keep retrying the connection until a server is back. What you lose is the management layer and its state. This page covers what you need to bring that back.
+When the Dockmesh server goes down, containers keep running: on the local host Docker runs them without Dockmesh, and remote agents keep retrying the connection until a server is back. What you lose is the management layer and its state. This page covers what you need to bring that back. To restore a single stack or volume from a backup, see [Backups](./backups.md#restore).
 
 ## What to keep safe
 
@@ -50,7 +50,7 @@ On the server itself, `sudo cat /var/lib/dockmesh/data/secrets.age-key` shows th
 
 There are three ways to restore a system backup. All of them unpack the archive next to the live files, run the restore checks, and swap the restored files in before the database is opened. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`; the **Backups** page lists them to admins with a **Delete** button.
 
-- **Setup wizard** of a fresh install: **Restore from a backup instead**, upload the system backup and, for an encrypted backup, the key file you exported. Dockmesh restarts, closes the setup wizard and opens the login page. This is the quickest way to rebuild a server.
+- **Setup wizard** of a fresh install: **Restore from a backup instead**, upload the system backup and, for an encrypted backup, the key file you exported. Dockmesh restarts, closes the setup wizard and opens the sign-in page. This is the quickest way to rebuild a server.
 - **Backups** page of a running server (admins): **Restore system…** on a system run, or **Restore system from file…** on the **Runs** tab. See [Restoring the whole system](./backups.md#restoring-the-whole-system).
 - **Command line**, with the server stopped: `dockmesh restore`, below.
 
@@ -61,7 +61,7 @@ There are three ways to restore a system backup. All of them unpack the archive 
 | `--force` | Restore over a database that already has users |
 | `--dry-run` | Only walk the archive and print `would restore N files, M bytes` |
 
-Like other subcommands, `restore` reads `/var/lib/dockmesh/dockmesh.env` (then `/data/dockmesh.env`) when `DOCKMESH_DB_PATH` is not set in the environment. Pass `--env-file <path>` for any other location.
+Like other subcommands, `restore` loads the first of `/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env` and `/usr/local/var/dockmesh/dockmesh.env` that exists when `DOCKMESH_DB_PATH` is not set in the environment (see [dockmesh commands](../reference/dockmesh-cli.md#how-commands-find-their-configuration)). Pass `--env-file <path>` for any other location.
 
 ### 1. Install Dockmesh on the new machine
 
@@ -130,5 +130,5 @@ Agent certificates are valid for 365 days. An agent of v0.5.0 or later renews it
 ## Other failures
 
 - **Single stack broken**: stop the stack, restore its last good stack run with **Replace**, deploy. Replace makes the volumes match the backup and leaves them untouched if the restore fails; take a fresh backup of the current state first if you might want it back.
-- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs an agent of the same release as the server. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
+- **Remote host lost**: restore the stack runs of that host onto another host by picking it under **Host** in the restore dialog, then deploy the stacks there. Restoring onto an agent host with **Replace** needs an up-to-date agent. [Stack migration](../features/migration-and-drain.md) is no help here: it needs the source host and refuses stacks with named volumes.
 - **Database damaged**: stop the server, then run `sqlite3 dockmesh.db "PRAGMA integrity_check;"`. If it reports errors, restore the database from a system backup as above.

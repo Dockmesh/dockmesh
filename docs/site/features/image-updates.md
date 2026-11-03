@@ -14,14 +14,14 @@ Update checks and updates only cover the server host, the one Dockmesh runs on. 
 - Images built or loaded locally have no registry digest and show "no registry digest (image built or loaded locally)" instead of a result.
 - Results are stored in the database, so a restart neither forgets them nor announces the same update again.
 
-When an image changes from up to date to update available, Dockmesh posts an `image.update` bell notification to users with `images.view` on the server host, and the update shows up as information under **Needs attention** (see [Monitoring](./monitoring.md#needs-attention)). The containers list marks the image with **update**. The current results are available from `GET /api/v1/images/updates`.
+When a check finds a newer image for a tag, Dockmesh posts an `image.update` bell notification to users with `images.view` on the server host, once per new upstream digest. The update also shows up as information under **Needs attention** (see [Monitoring](./monitoring.md#needs-attention)). The containers list marks the image with **update**. The current results are available from `GET /api/v1/images/updates`.
 
 ## The Updates page
 
 **Updates** in the sidebar has two parts:
 
 - **Apps**: the app images on the server host that have a newer image, with stack, update kind (**major**, **minor**, **patch**, when the tag is a release version) and when it was checked, plus the containers updated recently.
-- **System**: the Dockmesh server version, the Caddy version of the [reverse proxy](./reverse-proxy.md#caddy-version) (the version tested with this Dockmesh release) and the agent versions, which follow the agent upgrade policy.
+- **System**: the Dockmesh server version, the Caddy version of the [reverse proxy](./reverse-proxy.md#caddy-version) (the version Dockmesh is tested with) and the agent versions, which follow the agent upgrade policy.
 
 Click **Update** on a row, or select several rows and click **Update selected**. Selected updates are queued and run one after another on the server, each as its own operation; you can leave the page while they run. The API for several containers is `POST /api/v1/containers/updates` with `{"container_ids": ["…"]}` (up to 100), which returns `202` with the queued operations. Every container is checked like a single update first, and each one is authorised again when its turn comes.
 

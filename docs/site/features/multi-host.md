@@ -20,7 +20,7 @@ The server's environment file (`dockmesh.env`) can set the same values. These va
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOCKMESH_BASE_URL` | none (Settings) | Base URL. Without it, the **Base URL** field is used. |
+| `DOCKMESH_BASE_URL` | none (Settings) | Base URL. Without it, the **Base URL** field is used; with neither, `http://localhost:8080`. |
 | `DOCKMESH_AGENT_PUBLIC_URL` | none (Settings) | `wss://` URL agents dial. Without it, the **Agent public URL** field is used, or the URL derived from the base URL. |
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Address of the mTLS agent listener on the server. |
 | `DOCKMESH_AGENT_SANS` | empty | Extra host names and IPs for the agent listener's certificate, comma-separated. The agent URL's host is added automatically. |
@@ -123,13 +123,13 @@ The command prints one install command per host. Run each on its host. The insta
 
 ## Host tags
 
-Tags are lowercase labels (letters, digits and hyphens, up to 32 characters, at most 20 per host). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu on **Hosts**, or on the **Tags** tab of the host page. Changing tags needs `hosts.tag`.
+Tags are lowercase labels (letters, digits and hyphens, starting with a letter or digit, up to 32 characters, at most 20 per host). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu on **Hosts**, or on the **Tags** tab of the host page. Changing tags needs `hosts.tag`.
 
 Tags limit access (an assignment on a host tag covers every host with that tag, see [Permissions](../concepts/permissions.md)), registry credentials and alert rules to the hosts that carry them.
 
 ## Agent upgrades
 
-When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` over its mTLS connection to the agent port, checks it against the SHA-256 the server sends, replaces itself and reconnects.
+When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` from the agent listener over HTTPS with its client certificate, checks it against the SHA-256 the server sends, replaces itself and reconnects.
 
 Agents that speak an older protocol than the server show **agent update recommended** on the host page.
 
@@ -155,7 +155,7 @@ See also [Upgrade](../operations/upgrade.md#upgrading-agents).
 
 ## Remove a host
 
-Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running. Dockmesh just stops tracking them. Afterwards, on the host:
+Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running; Dockmesh stops tracking them. Afterwards, on the host:
 
 ```bash
 sudo systemctl disable --now dockmesh-agent

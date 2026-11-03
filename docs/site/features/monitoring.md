@@ -96,13 +96,12 @@ Set `DOCKMESH_METRICS_AUTH=false` in the server environment to serve `/metrics` 
 | `dockmesh_audit_entries_total` | counter | `action` |
 | `dockmesh_alerts_fired_total` | counter | `severity`, `rule` |
 | `dockmesh_hosts_total` | gauge | `status` (`local` for the server, then the agents by status) |
-| `dockmesh_stacks_total` | gauge | `host` (`none` for stacks not deployed anywhere) |
 | `dockmesh_agent_last_seen_seconds` | gauge | `agent` (name), `host` (agent ID) |
 | `dockmesh_backup_last_run_timestamp_seconds` | gauge | `job` |
 | `dockmesh_backup_last_duration_seconds` | gauge | `job` |
 | Go runtime (`go_*`) and process (`process_*`) metrics | | |
 
-The counters start at zero when the server starts; the gauges are refreshed every 30 seconds. The backup gauges describe each job's newest successful run (with or without warnings). `dockmesh_containers_total`, `dockmesh_deploy_duration_seconds` and `dockmesh_agent_rtt_seconds` are registered but have no values, so they don't show up in a scrape.
+The counters start at zero when the server starts; the gauges are refreshed every 30 seconds. The backup gauges describe each job's newest successful run (with or without warnings). `dockmesh_stacks_total`, `dockmesh_containers_total`, `dockmesh_deploy_duration_seconds` and `dockmesh_agent_rtt_seconds` are registered but have no values, so they don't show up in a scrape.
 
 Two useful alerts:
 

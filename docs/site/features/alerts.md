@@ -3,7 +3,7 @@ title: Alerts
 description: Alert rules on container metrics and events, hosts, disks, backups and certificates, with scoping, grouping, cooldown and mute.
 ---
 
-Alert rules watch containers, hosts, disks, backups and proxy certificates and notify [channels](./notifications.md) when something happens. They're configured under **Alerts** in the sidebar, which has the tabs **Rules**, **Channels** and **History**.
+Alert rules watch containers, hosts, disks, backups and proxy certificates and notify [notification channels](./notifications.md) when something happens. They're configured under **Alerts** in the sidebar, which has the tabs **Rules**, **Channels** and **History**.
 
 ## Rule types
 

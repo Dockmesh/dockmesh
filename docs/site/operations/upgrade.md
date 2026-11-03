@@ -7,9 +7,9 @@ An upgrade replaces the `dockmesh` binary and restarts the service. On the first
 
 ## Find out what changed
 
-Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, users who can see system information (`system.view`) get an **Update available** banner with a **Release notes** link, and a notification appears in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
+Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, every signed-in user gets an **Update available** banner with a **Release notes** link, and users with Settings & audit: Manage on everything get a notification in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
 
-**Settings** → **Updates** (needs `system.update`) shows the running and the latest version and the command to run, with a copy button. There you can turn **Automatic update checks** off (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately (needs `system.upgrade`). The check never downloads or installs anything.
+**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version and the command to run, with a copy button. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
 
 Read the release notes before you upgrade. They are generated from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 
@@ -20,7 +20,7 @@ Read the release notes before you upgrade. They are generated from [`CHANGELOG.m
 | **Upgrade notes** | Things someone has to do after the upgrade, marked for everyone or for admins only |
 | "Direct upgrades are supported from X.Y.Z or later" | Older installs must first upgrade to that version. Neither the installer nor the server checks this, so check it yourself |
 
-The release notes of the running version are also compiled into the binary. `GET /api/v1/system/whats-new` returns them, together with the notes of a newer release if one was found (the latter only for callers with `system.view`). The web UI does not show them; use the [releases page](https://github.com/dockmesh/dockmesh/releases) instead.
+The release notes of the running version are also compiled into the binary. `GET /api/v1/system/whats-new` returns them, together with the notes of a newer release if one was found. The web UI does not show them; use the [releases page](https://github.com/dockmesh/dockmesh/releases) instead.
 
 ## 1. Back up
 
@@ -49,9 +49,9 @@ When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade
 3. It copies the old binary to `/usr/local/bin/dockmesh.bak`, installs the new `dockmesh` and `dmctl`, and refreshes `install-agent.sh` and the agent binaries under `/usr/local/share/dockmesh/`. Linux archives carry the agent for both `amd64` and `arm64`, so the server can enroll and upgrade agents of either architecture.
 4. It installs `grype` if it is missing, unless `DOCKMESH_NO_SCANNER=1`.
 5. If the service still runs as root, it moves it to the `dockmesh` user: it chowns the data root to `dockmesh:dockmesh` (mode 700) and adds `User=dockmesh` and `Group=docker` to the unit.
-6. It restarts `dockmesh.service` and checks that the service runs the new binary and reports the new version.
+6. It restarts `dockmesh.service`, checks that the service came up with a new process started from the new binary, and that the installed binary reports the new version.
 
-`dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.4.2`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.4.2 bash`.
+Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.4.2`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.4.2 bash`.
 
 > **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary and runs a fresh install into `/usr/local/bin`: it keeps `dockmesh.env` and the data, but rewrites the systemd unit to start the new copy, leaves the old binary where it is and makes no `.bak`.
 
@@ -77,11 +77,11 @@ sudo systemctl restart dockmesh
 
 Before it serves requests, the server brings the database up to date:
 
-1. **Snapshot.** If migrations are pending on an existing database, it first writes a copy of the database next to it: `dockmesh.db.pre-migrate-<UTC time>.bak` (for example `/var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak`), with the owner and mode of the database. It keeps the newest three snapshots and deletes older ones. If a migration fails on every start, the snapshot from before the first attempt is reused instead of being rotated out. If the snapshot cannot be written (for example the disk is full), no migration runs and the server exits; free space next to the database, or set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` in `dockmesh.env` to migrate without a snapshot.
+1. **Snapshot.** If migrations are pending on an existing database, it first writes a copy of the database next to it: `dockmesh.db.pre-migrate-<UTC time>.bak` (for example `/var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak`), owned like the database and readable only by its owner (mode 600). It keeps the newest three snapshots and deletes older ones. If a migration fails on every start, the snapshot from before the first attempt is reused instead of being rotated out. If the snapshot cannot be written (for example the disk is full), no migration runs and the server exits; free space next to the database, or set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` in `dockmesh.env` to migrate without a snapshot.
 2. **Migrations.** The migrations ship inside the binary. Each pending one runs in its own transaction and is recorded in the `schema_migrations` table only when it succeeds, so a failed migration leaves the database as it was and is retried on the next start. If one fails, the server logs `db migrate failed` and exits, and systemd keeps restarting it. In that case roll back.
 3. **Notices.** Some changes need a person to act, for example reviewing access after a permission change. The server checks for these conditions and raises a notice for the users concerned (often admins only). A notice disappears by itself once the condition is fixed.
 
-Notices about something that stopped working show as a banner at the top of the UI, with a link to the page where you fix it. **Hide for 24 h** moves such a notice to **Needs attention** for a day; it comes back while the problem lasts. All other notices are listed under **Needs attention** on the **Overview** page and on the **Activity** page. Critical notices that are not in the banner cannot be hidden. Steps the server cannot check are listed only in the release's **Upgrade notes**.
+Notices about something that stopped working show as a banner at the top of the UI, with a link to the page where you fix it. **Hide for 24 h** moves such a notice to **Needs attention** for a day; it comes back while the problem lasts. Other warning and critical notices are listed under **Needs attention** on the **Overview** page and on the **Activity** page. Info notices, which only announce a change, appear in the notification feed on the **Activity** page. Critical notices that are not in the banner cannot be hidden. Steps the server cannot check are listed only in the release's **Upgrade notes**.
 
 Snapshots are not included in system backups. They can hold values that newer versions store encrypted, so delete them once you are sure you won't roll back.
 
@@ -106,15 +106,14 @@ sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
 sudo systemctl restart dockmesh
 ```
 
-The older binary does not check the schema version. It starts on a database that the newer version has already migrated, and whether it then works depends on what the migrations changed. For a clean rollback, put the pre-migration snapshot back as well. Changes made after the upgrade are lost.
+The older binary does not check the schema version. It starts on a database that the newer version has already migrated, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.2 it does not start (`setup state init failed ... no such column: role`), so restore the snapshot as well. For a clean rollback, put the pre-migration snapshot back as well. Changes made after the upgrade are lost.
 
 ```bash
 sudo systemctl stop dockmesh
 sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
-cd /var/lib/dockmesh/data
-ls dockmesh.db.pre-migrate-*.bak
-sudo rm -f dockmesh.db-wal dockmesh.db-shm
-sudo cp -p dockmesh.db.pre-migrate-20261103T091500.000Z.bak dockmesh.db
+sudo sh -c 'ls /var/lib/dockmesh/data/dockmesh.db.pre-migrate-*.bak'
+sudo rm -f /var/lib/dockmesh/data/dockmesh.db-wal /var/lib/dockmesh/data/dockmesh.db-shm
+sudo cp -p /var/lib/dockmesh/data/dockmesh.db.pre-migrate-20261103T091500.000Z.bak /var/lib/dockmesh/data/dockmesh.db
 sudo systemctl start dockmesh
 ```
 
@@ -142,7 +141,7 @@ Three upgrade modes exist. The default is `manual`:
 
 In `auto` and `staged` mode the server tries each agent at most three times per new agent build, at least five minutes apart. **Upgrade agent** always goes through. Upgrading an agent that already runs the server's build is refused with an explanation.
 
-The **Hosts** page shows the mode and, outside `manual`, a **Run policy now** button, but cannot change the mode. Use the API, with `hosts.update`:
+The **Hosts** page shows the mode and, outside `manual`, a **Run policy now** button, but cannot change the mode. Use the API (needs Hosts: Manage):
 
 ```bash
 curl -X PUT -H "Authorization: Bearer dmt_xxxxxxxx" -H "Content-Type: application/json" \
@@ -152,7 +151,7 @@ curl -X PUT -H "Authorization: Bearer dmt_xxxxxxxx" -H "Content-Type: applicatio
 
 `POST /api/v1/agents/upgrade-policy/run` runs a check right away.
 
-During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin`). The agent downloads that file from the server's agent listener over its mTLS connection, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there.
+During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin` on installs made by `install.sh`, `./bin` when the variable is unset). The agent downloads that file from the server's agent listener over HTTPS with its client certificate, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there.
 
 ### Upgrade an agent by hand
 

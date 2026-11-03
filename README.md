@@ -17,10 +17,11 @@
 
 dockmesh is a lightweight Docker fleet-management platform. One Go binary,
 one SvelteKit UI, outbound-only agents on every other host. Stacks live on
-disk as plain `compose.yaml` files — the filesystem is the source of truth,
-the DB just indexes it. RBAC, SSO, audit log, encrypted backups, CVE
-scanning, and multi-host orchestration ship free in the single binary —
-no "community edition", no feature gates, no per-node pricing.
+disk as plain `compose.yaml` files: the filesystem is the source of truth;
+the database holds runtime state such as deployments, users and history.
+RBAC, SSO, audit log, encrypted backups, CVE scanning, and multi-host
+orchestration ship free in the single binary.
+No "community edition", no feature gates, no per-node pricing.
 
 ## One-line install
 
@@ -35,7 +36,7 @@ for the data directory, service user, admin account and public URL.
 For a setup without a browser, install with `DOCKMESH_NO_BOOTSTRAP=1`
 and run `sudo dockmesh init` instead.
 
-**Requirements on the host:** Docker Engine (Linux) or Docker Desktop (macOS) with the daemon running, `curl` + `tar` + `sha256sum`, `sudo` access, and ports `8080` + `8443` free. The installer creates the `dockmesh` service user, systemd unit (or launchd plist on macOS), and all state dirs — see [the full requirements matrix](https://dockmesh.dev/docs/installation/#requirements) for distro-specific install hints.
+**Requirements on the host:** Docker Engine (Linux) or Docker Desktop (macOS) with the daemon running, `curl` + `tar` + `sha256sum`, `sudo` access, and ports `8080` + `8443` free. The installer creates the `dockmesh` service user (Linux), the systemd unit (or launchd plist on macOS) and the data directories, and prints a distro-specific install command for any missing tool. See [the requirements](https://dockmesh.dev/docs/getting-started/installation/#requirements).
 
 Prefer Docker? See [Docker Compose](#docker-compose) below.
 
@@ -60,7 +61,7 @@ Everything is included in the single binary. There is no paid tier.
 - Rollback history (snapshot compose + resolved images per deploy)
 - Stack dependencies (base-stacks deploy first, refuse delete on deps)
 - Env overrides + global env vars injected at deploy time
-- Git source: auto-pull + auto-deploy on push or webhook
+- Git source: auto-pull + auto-deploy on a poll interval or webhook
 - Templates gallery (one-click deploys)
 
 </td><td>
@@ -69,7 +70,7 @@ Everything is included in the single binary. There is no paid tier.
 - Outbound-only mTLS agents (no inbound ports on remote hosts)
 - Per-host picker + `all` mode fan-out views
 - Deploy stacks to any host from the same UI
-- Stack migration across hosts (preflight check + volume transfer)
+- Stack migration across hosts with a preflight check (stacks with named volumes are refused; their data is not copied)
 - Role assignments scoped to hosts, host tags or stacks (per-team isolation)
 - Agent upgrades pushed from the server (manual, staged or automatic)
 
@@ -78,7 +79,7 @@ Everything is included in the single binary. There is no paid tier.
 
 **Security**
 - Custom RBAC roles with granular permissions
-- SSO via OIDC (Keycloak, Authelia, Authentik, Azure AD, Google, GitLab), SAML (Azure AD, AD FS, Okta), OAuth2 (GitHub, Gitea) and LDAP
+- SSO via OIDC (presets for Keycloak, Authelia, Azure AD, Google, GitLab), SAML (Azure AD, AD FS, Okta, Authentik), OAuth2 (GitHub, GitLab, Google) and LDAP, plus generic providers of each kind
 - TOTP 2FA + single-use recovery codes
 - SHA-256 hash-chained audit log
 - age-encrypted stack `.env` files at rest
@@ -102,7 +103,7 @@ Everything is included in the single binary. There is no paid tier.
 - Pre/post hooks for application-consistent DB dumps
   (PostgreSQL / MySQL / MariaDB / Redis / MongoDB)
 - Local, SMB (NAS), SFTP, WebDAV, or S3 targets
-- Encrypted with age — the same key the stack `.env` uses
+- Encrypted with age, with the same key the stack `.env` uses
 - Restore of volumes, stacks or the whole system from the UI; the
   archive is checked against its recorded checksum before anything is
   overwritten
@@ -113,7 +114,7 @@ Everything is included in the single binary. There is no paid tier.
 
 **Networking & Extras**
 - Optional reverse proxy with automatic HTTPS (Caddy in a managed `dockmesh-proxy` container)
-- Per-host port-conflict detection at deploy time
+- Clear deploy error when a host port is already in use
 - CVE scanning with Grype (image-level + fix-in column)
 - Private registry credentials (age-encrypted at rest)
 - `dmctl` CLI for CI/CD + scripted deploys
@@ -143,7 +144,7 @@ hero shots.
 
 - **Single binary**. Go, with the SvelteKit UI embedded via `go:embed`. The optional reverse proxy runs Caddy as a separate `dockmesh-proxy` container, which Dockmesh pulls (a pinned, tested Caddy version) when you enable the proxy and configures through Caddy's admin API. CVE scanning uses Grype, a separate binary that `scripts/install.sh` installs unless `DOCKMESH_NO_SCANNER=1` is set.
 - **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
-- **Outbound-only agents**. Remote hosts open a WebSocket to the server — no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
+- **Outbound-only agents**. Remote hosts open a WebSocket to the server: no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
 - **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use dockmesh.
 
 ## Install options
@@ -172,7 +173,7 @@ Docker socket mounted, as in the compose file.
 
 ### Install an agent on a remote host
 
-From the UI: `Hosts → Add host`, copy the one-line enroll command to the
+From the UI: **Hosts → Add host**, copy the one-line enroll command to the
 remote host (Linux with systemd, amd64 or arm64). The installer handles
 the systemd unit and first handshake.
 
@@ -180,27 +181,27 @@ the systemd unit and first handshake.
 
 After the setup wizard:
 
-1. **Log in** at `http://<host>:8080` with the admin account you created
-2. **Create a stack**: `Stacks → New stack` → paste a compose.yaml → `Create & deploy`
-3. **(Optional) Enroll a second host**: `Hosts → Add host` → run the
+1. **Sign in** at `http://<host>:8080` with the admin account you created
+2. **Create a stack**: **Stacks → New stack**, paste a compose.yaml, **Create & deploy**
+3. **(Optional) Enroll a second host**: **Hosts → Add host**, run the
    install one-liner on the remote host
-4. **(Optional) Set up backups**: `Backups → New backup job` → pick a source → pick a target (SMB / S3 / SFTP / WebDAV / local) → save
-5. **(Optional) Turn on the reverse proxy**: `Reverse proxy → Enable proxy` → `New site`. Dockmesh starts the Caddy container, which requests the certificates
-6. **(Optional) Switch the language**: user menu → `My account` → `Language` (English or German)
+4. **(Optional) Set up backups**: **Backups → New backup job**, pick a source and a target (SMB / S3 / SFTP / WebDAV / local), save
+5. **(Optional) Turn on the reverse proxy**: **Reverse proxy → Enable proxy**, then **New site**. Dockmesh starts the Caddy container, which requests the certificates
+6. **(Optional) Switch the language**: user menu → **My account** → **Language** (English or German)
 
 ## Documentation
 
-- [Installation](https://dockmesh.dev/docs/installation/)
-- [Quick start](https://dockmesh.dev/docs/quickstart/)
+- [Installation](https://dockmesh.dev/docs/getting-started/installation/)
+- [First steps](https://dockmesh.dev/docs/getting-started/first-steps/)
 - [Multi-host setup](https://dockmesh.dev/docs/features/multi-host/)
-- [Backups & DR](https://dockmesh.dev/docs/features/backups/)
-- [RBAC & SSO](https://dockmesh.dev/docs/security/)
-- [Disaster recovery playbook](https://dockmesh.dev/docs/operations/disaster-recovery/)
+- [Backups and restore](https://dockmesh.dev/docs/operations/backups/)
+- [Permissions](https://dockmesh.dev/docs/concepts/permissions/) and [single sign-on](https://dockmesh.dev/docs/features/sso/)
+- [Disaster recovery](https://dockmesh.dev/docs/operations/disaster-recovery/)
 
 ## Community & support
 
 - **Issues & bug reports**: [github.com/dockmesh/dockmesh/issues](https://github.com/dockmesh/dockmesh/issues)
-- **Feature requests**: same — use the "enhancement" label
+- **Feature requests**: same place, with the "enhancement" label
 - **Website**: [dockmesh.dev](https://dockmesh.dev)
 
 ## Development
@@ -212,7 +213,7 @@ make dev
 # Build single binary with embedded UI
 make build
 
-# Run unit tests and svelte-check
+# Run Go and web unit tests and svelte-check
 make test
 ```
 

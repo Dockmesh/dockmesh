@@ -1,11 +1,13 @@
 ---
-title: Backups
+title: Backups and restore
 description: Back up volumes, stacks and the Dockmesh server itself to local disk, S3, SFTP, SMB or WebDAV, and restore them.
 ---
 
 Dockmesh runs backup jobs on a cron schedule and writes each run as one gzipped tar archive to a backup target. Archives can be encrypted with the server's age key. Everything lives under **Backups** in the sidebar, which has three tabs: **Jobs**, **Runs** and **Targets**.
 
 Dockmesh backs up nothing by default. Create at least one job for the server itself (see [Disaster recovery](./disaster-recovery.md)) and one per stack or volume that holds data you care about.
+
+To keep archives off the server, write them to an S3 bucket or another remote target (see [Targets](#targets)). To get data back from a run, see [Restore](#restore).
 
 ## Sources
 
@@ -50,6 +52,8 @@ The target wizard has three steps (**Type**, **Connection**, **Test**). **Run te
 Passwords, S3 secret keys and SFTP private keys are stored encrypted with the server's secrets key and are never shown again after saving. Leave a secret field empty when editing to keep the stored value.
 
 Archives are written to `jobs/<job id>-<job name>/<UTC timestamp>-r<run id>.tar.gz`, with `.age` appended when the run is encrypted. The job name is lowercased and every character other than `a-z`, `0-9` and `-` becomes `-`. Archives that older versions wrote to `jobs/<job name>/` stay where they are and are still restored and pruned from there.
+
+### Target types: local, S3, SFTP, SMB, WebDAV
 
 What to know about each type:
 
@@ -163,12 +167,12 @@ The server exports `dockmesh_backup_last_run_timestamp_seconds` and `dockmesh_ba
 
 Click **Restore…** in a run's row menu or on the run's page, or **Restore last run…** in a job's menu. The dialog asks for:
 
-- **Volume name** or **Stack name**: where to restore. It defaults to the source; a volume is created if it doesn't exist.
+- **Volume name** or **Stack name**: where to restore. It defaults to a copy named `<source>-restored`; enter the source name to restore over the original. A volume is created if it doesn't exist.
 - **Host**: defaults to the host the backup was taken on, marked "(backed up here)". You can pick another host you may restore on.
 - **Existing data**: **Replace** (the default) or **Merge**.
 - The target name, typed to confirm.
 
-**Merge** writes the archive's files over what is there and keeps everything else. **Replace** makes the volume match the backup: it extracts the archive into a staging directory inside the volume and swaps the old contents out only after it extracted completely, so a broken connection to the agent, a failing extraction or too little free space leaves the volume as it was. Replace needs free space for the old and new contents side by side, a run with a recorded checksum (older runs can only be merged), the agent of this release on agent hosts, and no running container using the volume. Dockmesh does not stop containers for you: stop the stack first and deploy it afterwards.
+**Merge** writes the archive's files over what is there and keeps everything else. **Replace** makes the volume match the backup: it extracts the archive into a staging directory inside the volume and swaps the old contents out only after it extracted completely, so a broken connection to the agent, a failing extraction or too little free space leaves the volume as it was. Replace needs free space for the old and new contents side by side, a run with a recorded checksum (older runs can only be merged), an up-to-date agent on agent hosts, and no running container using the volume. Dockmesh does not stop containers for you: stop the stack first and deploy it afterwards.
 
 Every restore downloads the archive once, checks it against the recorded checksum, verifies it completely and restores from that same copy, so a damaged or swapped archive never overwrites anything. Only one restore at a time may write a given volume or stack, and at most two restores run at once. A restore shows its steps in the progress dialog and can be cancelled while it downloads or verifies the archive; nothing has been written then. Once it writes, it runs to the end.
 

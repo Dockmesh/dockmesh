@@ -30,7 +30,7 @@ Every endpoint outside the [public set](#public-endpoints) needs `Authorization:
 
 Each request is checked against the user's **current** assignments. An API token acts with its owner's current access, narrowed to the token's restriction when it has one. See [API tokens](../features/api-tokens.md) and [Permissions](../concepts/permissions.md).
 
-### Password login
+### Password sign-in
 
 ```bash
 curl -s -X POST https://dockmesh.example.com/api/v1/auth/login \
@@ -57,7 +57,7 @@ curl -s -X POST https://dockmesh.example.com/api/v1/auth/logout \
   -H 'Content-Type: application/json' -d '{"refresh_token":"..."}'
 ```
 
-A login starts a session. Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and ends the whole session (`401`, code `token_reuse_detected`), so never refresh the same token from two processes. With the defaults on **Settings → Authentication**, a session ends after 60 minutes without a refresh, and each refresh extends it to 24 hours from then, so a client that keeps refreshing stays signed in. A user has at most 20 active sessions by default. Logout returns `204`.
+A sign-in starts a session. Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and ends the whole session (`401`, code `token_reuse_detected`), so never refresh the same token from two processes. With the defaults on **Settings → Authentication**, a session ends after 60 minutes without a refresh, and each refresh extends it to 24 hours from then, so a client that keeps refreshing stays signed in. A user has at most 20 active sessions by default. Logout returns `204`.
 
 `GET /api/v1/sessions` lists your own sessions, `DELETE /api/v1/sessions/{family_id}` ends one and `POST /api/v1/sessions/revoke-all` ends all of them.
 
@@ -156,7 +156,7 @@ Handlers answer errors with a JSON body and a matching status:
 { "error": "stack not found", "code": "stack_not_found" }
 ```
 
-`error` is an English message for humans. `code` is stable: messages without runtime detail have their own code (for example `out_of_scope` when none of your assignments allows the action on that resource), all others get a generic code per status (`http_bad_request`, `http_unauthorized`, `http_forbidden`, `http_not_found`, `http_conflict`, `http_too_large`, `http_unprocessable`, `http_too_many_requests`, `http_bad_gateway`, `http_unavailable`, `http_timeout`, `http_internal`). Match on the status and `code`, never on the text, and ignore JSON fields you don't know; some errors add fields, such as `files` when stack files were changed outside Dockmesh.
+`error` is an English message for humans. `code` is stable: messages without runtime detail have their own code (for example `out_of_scope` when none of your assignments allows the action on that resource), all others get a generic code per status (`http_bad_request`, `http_unauthorized`, `http_forbidden`, `http_not_found`, `http_conflict`, `http_too_large`, `http_unprocessable`, `http_too_many_requests`, `http_bad_gateway`, `http_unavailable`, `http_timeout`, `http_internal`, and `http_error` for any other status). Match on the status and `code`, never on the text, and ignore JSON fields you don't know; some errors add fields, such as `files` when stack files were changed outside Dockmesh.
 
 Some responses differ:
 
@@ -197,4 +197,4 @@ These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/re
 
 ## dmctl
 
-[dmctl](./dmctl.md) wraps the common calls (login with refresh, stacks, containers, logs, exec, backups, alerts, enrollment) and is the quickest way to script against the API without handling tokens yourself.
+[dmctl](./dmctl.md) wraps the common calls (sign-in with refresh, stacks, containers, logs, exec, backups, alerts, enrollment) and is the quickest way to script against the API without handling tokens yourself.

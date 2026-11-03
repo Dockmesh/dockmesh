@@ -51,9 +51,8 @@ These are not touched by `uninstall.sh`. Remove them by hand if you want a clean
 **Stacks.** Containers, networks and volumes of your stacks keep running. To remove a stack, run `docker compose down` in its directory before deleting the data root (add `-v` to delete its volumes as well). Dockmesh labels containers with the stack name as the Compose project name. If secrets encryption was on, the stack's variables are in `.env.age`, which Docker Compose cannot read. Decrypt the file with the age key when the compose file needs those variables:
 
 ```bash
-cd /var/lib/dockmesh/stacks/<name>
-sudo age -d -i ../../data/secrets.age-key -o .env .env.age
-sudo docker compose -p <name> down
+sudo age -d -i /var/lib/dockmesh/data/secrets.age-key \n  -o /var/lib/dockmesh/stacks/<name>/.env /var/lib/dockmesh/stacks/<name>/.env.age
+sudo docker compose -f /var/lib/dockmesh/stacks/<name>/compose.yaml -p <name> down
 ```
 
 **Reverse proxy.** If the proxy was enabled, the `dockmesh-proxy` container (restart policy `unless-stopped`) keeps running and keeps serving its last configuration on ports 80 and 443. Remove it together with its certificate and config volumes:

@@ -32,9 +32,9 @@ The script:
 1. Checks the OS, the architecture (`amd64` or `arm64`, from `uname -m`; anything else aborts), required tools, Docker, and whether ports 8080 and 8443 are free.
 2. Looks up the latest release on GitHub, downloads `dockmesh_<os>_<arch>.tar.gz` and verifies it against the release's `checksums.txt`. It aborts on a mismatch and when no checksum is published for the archive.
 3. Installs the binaries and agent assets (table below).
-4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works; image scans are just unavailable.
+4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group.
-6. Creates the data root with `data/` and `stacks/` inside, owned by `dockmesh:docker`, mode 750.
+6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
 7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
 8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
 
@@ -115,7 +115,7 @@ The wizard has seven steps. Nothing is written until you confirm on the review s
 4. **Admin** creates the first administrator: username, password (at least 8 characters), optional email.
 5. **URL** asks for the public URL users and agents use to reach the server. It defaults to the address in your browser; enter the `https://` address of your reverse proxy instead of accepting a plain `http://<host>:8080`. **Test connection** checks that the server can reach the address; it only connects to public addresses and to this host's own private addresses on ports 80, 443 and the port the wizard is served on.
 6. **Review** shows your answers. **Install** starts the installation.
-7. **Done** streams the progress of the installation and says whether it finished or failed, then shows the login URL and your sign-in.
+7. **Done** streams the progress of the installation and says whether it finished or failed, then shows the **Login URL** and your username.
 
 On install the server creates the admin account, stores the public URL as the **Base URL** setting together with an **Agent public URL** on the same host and the agent port (`wss://<host>:8443/connect`), and removes `DOCKMESH_SETUP_FORCE` from `dockmesh.env`. Sign in afterwards at the URL shown.
 
@@ -150,7 +150,7 @@ It asks for the data root, HTTP listen address, admin username and password (lea
 | `--base-url` | `http://<hostname>:<port>` | Public base URL. |
 | `--service` | `true` | Install and start a systemd unit (launchd on macOS). `--service=false` to skip. |
 
-Because `init` creates the admin itself, the server starts without setup mode and you go straight to the login page. Re-running `init` is safe for the account: an existing admin keeps its password (reset it with `sudo -u dockmesh dockmesh admin reset-password --user admin`). It does write `dockmesh.env` again.
+Because `init` creates the admin itself, the server starts without setup mode and you go straight to the sign-in page. Re-running `init` is safe for the account: an existing admin keeps its password (reset it with `sudo -u dockmesh dockmesh admin reset-password --user admin`). It does write `dockmesh.env` again.
 
 ## Manual install from a release archive
 
@@ -183,7 +183,7 @@ make build VERSION=v0.0.0-local
 
 `make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. If one of the default env files (`/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env`, `/usr/local/var/dockmesh/dockmesh.env`) exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded instead. On first start it creates a user `admin` with a random password and prints both once to stderr, after the line `Bootstrap admin created`. The password is not written to the structured log.
 
-For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests and `svelte-check`.
+For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 
 ## Run in Docker
 

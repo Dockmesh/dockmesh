@@ -57,14 +57,14 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_SECRETS_ENCRYPT_ENV` | `true` | Encrypt stack `.env` files as `.env.age`. With `false`, `.env` is stored in plaintext and values meant for encrypted DB columns are stored in plaintext as well |
 | `DOCKMESH_SCANNER_ENABLED` | `true` | Use Grype for image scans. Scanning also needs the binary to be present |
 | `DOCKMESH_SCANNER_BINARY` | `grype` | Name or path of the Grype binary, looked up in `PATH` |
-| `DOCKMESH_PROXY_ENABLED` | `false` | `true` turns the reverse proxy on at every start. See the note below |
+| `DOCKMESH_PROXY_ENABLED` | `false` | `true` turns the reverse proxy on while the `proxy_enabled` setting has never been saved. See the note below |
 | `DOCKMESH_PROXY_IMAGE` | `caddy:2.11.7` pinned by digest | Caddy image for the `dockmesh-proxy` container. While it is set, the Caddy version can't be switched from the UI or API |
 | `DOCKMESH_METRICS_AUTH` | `true` | Require a bearer token with `metrics.view` on `/metrics`. `false` makes it public |
 | `DOCKMESH_SETUP_FORCE` | `false` | Start in setup mode and skip creating the bootstrap admin. `install.sh` sets it; the web wizard removes it from `dockmesh.env` when it finishes |
 | `DOCKMESH_UPDATE_ROLLBACK_KEEP` | `3` | How many rollback tags per image container updates keep. Must be a positive number, or the server doesn't start |
 | `DOCKMESH_SKIP_PREMIGRATE_BACKUP` | unset | `1` or `true` skips the database copy (`<db>.pre-migrate-<time>.bak`) taken before schema migrations, for example when the disk is too full for it |
 
-> **Note:** Whether the reverse proxy starts follows the `proxy_enabled` setting, which the enable and disable buttons on the **Reverse proxy** page save. When that setting is `false` or empty and `DOCKMESH_PROXY_ENABLED` is set, the server copies the variable into the setting at startup, so `DOCKMESH_PROXY_ENABLED=true` turns the proxy back on at every start, also after you disabled it in the UI. See [Reverse proxy](../features/reverse-proxy.md).
+> **Note:** Whether the reverse proxy starts follows the `proxy_enabled` setting, which the enable and disable buttons on the **Reverse proxy** page save. `DOCKMESH_PROXY_ENABLED=true` only counts while that setting has never been saved. Once you enable or stop the proxy on the page, the saved choice wins over the variable. See [Reverse proxy](../features/reverse-proxy.md).
 
 ### Logging and tracing
 
@@ -85,6 +85,10 @@ Tracing does not start: initialisation fails with a resource schema conflict, wh
 
 The server connects to Docker with the standard Docker client variables (`DOCKER_HOST`, `DOCKER_API_VERSION`, `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`). Without them it uses `/var/run/docker.sock`.
 
+### Time zone
+
+The server runs in the time zone of its process (`TZ`, otherwise the system zone). Backup schedules use it unless the `backups.timezone` setting names another zone; see [Backups](../operations/backups.md#schedules-and-time-zone).
+
 ## Agent
 
 Written by `install-agent.sh` to `/etc/dockmesh-agent/agent.env`.
@@ -95,7 +99,7 @@ Written by `install-agent.sh` to `/etc/dockmesh-agent/agent.env`.
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint on the agent port (`https://<host>:8443/enroll`), required on first start |
 | `DOCKMESH_TOKEN` | none | One-time enrollment token, required on first start. It stays in `agent.env` after enrollment |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 fingerprint of the server's agent CA. Required for enrollment over `https://`; the CA the server returns must match it |
-| `DOCKMESH_ENROLL_CA_FILE` | none | PEM file with the agent CA, trusted for the enrollment request |
+| `DOCKMESH_ENROLL_CA_FILE` | none | PEM file with the agent CA, trusted for the enrollment request. Required for enrollment over `https://`; it must match `DOCKMESH_CA_FINGERPRINT` |
 | `DOCKMESH_AGENT_URL` | saved at enrollment | `wss://` URL of the server's agent listener. Overrides the saved one |
 | `DOCKMESH_INSECURE_ENROLL` | unset | `true` allows enrollment over plain `http://`, like the `--insecure-enroll` flag. For isolated labs only |
 
@@ -150,6 +154,6 @@ These keys live in the `settings` table and are edited in the UI or with `PUT /a
 | `agent_public_url` | **Settings → General → Agent public URL** | `DOCKMESH_AGENT_PUBLIC_URL` wins |
 | `trusted_proxies` | **Settings → General → Trusted proxies** | `DOCKMESH_TRUSTED_PROXIES` is used while the setting is empty |
 | `scanner_enabled` | **Settings → General → Vulnerability scanner** | Only changes what the system health view reports; whether scans run is decided by `DOCKMESH_SCANNER_ENABLED` |
-| `proxy_enabled` | **Reverse proxy** page, enable and disable | `DOCKMESH_PROXY_ENABLED=true` sets it to `true` at every start |
+| `proxy_enabled` | **Reverse proxy** page, enable and disable | `DOCKMESH_PROXY_ENABLED=true` counts as `true` until the setting is saved |
 
 The release check against GitHub is set under **Settings → Updates** (`update_check_enabled`, `update_check_interval_minutes`); it has no environment variable.

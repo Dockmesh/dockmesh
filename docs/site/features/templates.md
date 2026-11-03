@@ -44,7 +44,7 @@ Things to know:
 **New template** (needs `templates.create`) opens a form with **Name**, **Slug** (filled in from the name; lowercase letters, digits, `-` and `_`), **Description** and two tabs:
 
 - **compose.yaml**: the compose text with placeholders.
-- **Parameters**: one row per placeholder found in the compose text, with a **Label in the deploy dialog** (shown under the field, which itself is named after the placeholder), a **Default** and whether it is a **Secret**. Labels and defaults set here win over the ones in the compose text.
+- **Parameters**: one row per placeholder found in the compose text, with a **Label in the deploy dialog** (shown under the field, which itself is named after the placeholder), a **Default**, and a **Secret** column that shows whether the placeholder has the `secret` flag. Labels and defaults set here win over the ones in the compose text.
 
 **Create template** saves it. Custom templates have **Edit…** and **Delete…** in their row menu (`templates.update`, `templates.delete`). The compose text must be valid YAML.
 
@@ -59,7 +59,7 @@ Placeholders use this syntax:
 | `{{name\|enum:a,b,c}}` | Only allow one of the listed values (shown as a drop-down). |
 | `{{name\|pattern:^[a-z]+$}}` | Validate the value against a regular expression. |
 
-Flags can be combined, for example `{{port|default:8080|pattern:^[0-9]+$}}`. Because `|` separates flags, a pattern can't contain `|`. Every placeholder in the compose text becomes a parameter. Where a parameter declaration sets a default, secret, enum or pattern, it overrides the inline flag; inline flags fill in what the declaration leaves empty. The form edits labels and defaults; `required`, `enum` and `pattern` are set inline or through the API (`parameters` in `POST /api/v1/templates`), which also takes an `env` text with placeholders.
+Flags can be combined, for example `{{port|default:8080|pattern:^[0-9]+$}}`. Because `|` separates flags, a pattern can't contain `|`. Every placeholder in the compose text becomes a parameter. Where a parameter declaration sets a default, secret, enum or pattern, it overrides the inline flag; inline `default`, `enum` and `pattern` fill in what the declaration leaves empty. Inline `required` and `secret` only apply to undeclared placeholders. On a declared parameter (a label or default in the form declares it), inline `required` is ignored, and a blank inline `secret` refuses the deploy with `secret parameter "<name>" not provided`. The form edits labels and defaults; `required`, `enum` and `pattern` are set inline or through the API (`parameters` in `POST /api/v1/templates`), which also takes an `env` text with placeholders.
 
 Example:
 
@@ -95,4 +95,4 @@ There is no import of exported YAML files. To copy a template to another server,
 |---|---|
 | List and view templates, export | `templates.view` (Stacks: View) |
 | Deploy a template | `stacks.deploy` (Stacks: Deploy) on the target host, plus the right to create a stack there |
-| Create, edit, delete custom templates | `templates.create`, `templates.update`, `templates.delete` (Stacks: Manage) |
+| Create, edit, delete custom templates | `templates.create`, `templates.update`, `templates.delete` (Stacks: Manage, only through an assignment on everything) |

@@ -36,10 +36,10 @@ The target gets the same deploy as a manual one: global environment variables an
 | `source_metrics` | The source host's CPU and memory can be read |
 | `target_capacity` | Free memory on the target is at least 1.2× the memory in use on the source host |
 | `target_disk` | Free disk on the target is at least 1.1× the disk in use on the source host |
-| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never actually compared |
+| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never compared |
 | `images` | The stack's compose file can be read and parsed. Images missing on the target are listed but don't fail the check |
 
-The capacity and disk checks compare against the whole source host, not just the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
+The capacity and disk checks compare against the whole source host, not only the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
 
 ### Phases
 
@@ -85,18 +85,18 @@ A drain migrates every stack deployed on a host to the other online hosts.
 
 1. Open the host and click **Drain…** in the header, or **Plan drain…** on the **Maintenance** tab.
 2. Review the plan: each stack with its proposed target.
-3. Click **Begin drain**. The button is only enabled when every stack in the plan has a target.
+3. Click **Begin drain**. The button is only enabled when the plan has room for every stack.
 
-The host must be online, and the local host can't be drained. Draining needs `hosts.update` on every host, not just this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
+The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
 
 ### How the plan is made
 
-Each stack is assumed to need 500 MB, whatever it actually uses. Stacks are assigned one by one to the online host with the most free disk, and that host's free space is reduced by 500 MB each time. A stack has no target if the chosen host has less than 550 MB free. The plan doesn't look at named volumes, and you can't pick targets per stack.
+Each stack is assumed to need 500 MB, whatever it actually uses. The candidates are the other online hosts whose disk usage can be read, the server included. Stacks are assigned one by one to the candidate with the most free disk, and that host's free space is reduced by 500 MB each time. A stack doesn't fit if the chosen host has less than 550 MB free. The plan doesn't look at named volumes, and you can't pick targets per stack.
 
 ### What happens during a drain
 
-- Stacks migrate one at a time, in plan order. When a drain is started through the API with a plan that has stacks without a target, those stacks are skipped.
-- If a migration fails or can't start, the drain pauses and waits. Resume or abort it with `POST /api/v1/hosts/{id}/drain/{drain_id}/resume` or `/abort`; `/pause` pauses it before the next stack. There are no buttons for pause, resume or abort in the UI.
+- Starting the drain makes the plan again on the server. Stacks migrate one at a time, in that order; stacks that don't fit in it are skipped (the API starts a drain even then).
+- If a migration fails or can't start, the drain pauses and waits. Resuming continues with the next stack; the failed one isn't tried again. Resume or abort it with `POST /api/v1/hosts/{id}/drain/{drain_id}/resume` or `/abort`; `/pause` pauses it before the next stack. There are no buttons for pause, resume or abort in the UI.
 - A drain doesn't mark the host as unschedulable. You can still deploy to it during and after the drain.
 - Stacks aren't moved back afterwards. Migrate them back one by one if you want them on the original host.
 - Drains don't survive a server restart.

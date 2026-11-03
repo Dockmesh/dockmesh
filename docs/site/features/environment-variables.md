@@ -39,7 +39,7 @@ Deleting a variable that stacks still reference is not blocked, and those stacks
 
 ### Secret global variables
 
-A variable marked secret is stored encrypted with the server's secrets key, and its value is never returned by the API: the list shows **Hidden**, and editing it with the value field left empty keeps the stored value. A secret can't be turned back into a plain variable; delete it and create it again. Variables that were marked encrypted by an older version and still held plaintext are encrypted at the first start of this version.
+A variable marked secret is stored encrypted with the server's secrets key, and its value is never returned by the API: the list shows **Hidden**, and editing it with the value field left empty keeps the stored value. A secret can't be turned back into a plain variable; delete it and create it again. Variables marked secret whose value is still stored in plaintext (written by an older version) are encrypted at the next start of the server.
 
 If the stored value can't be decrypted (a different secrets key, or encryption turned off), the list shows **Can't decrypt** and every deploy that applies global variables fails until you enter the value again.
 
@@ -66,7 +66,7 @@ Where global variables do not apply, a `${VAR}` that only exists globally resolv
 
 | What | Who sees the values |
 |---|---|
-| A stack's `.env` (API, **Environment** tab, `dmctl stacks get`) | Users with `stacks.deploy` on that stack, or with the **See environment values** extra (`containers.env`) on it. Everyone else with `stacks.view` sees the stack, but `.env` is hidden. |
+| A stack's `.env` (API, **Environment** tab, `dmctl stacks get`) | Users with `stacks.deploy` on that stack, or with the **See environment values (inspect, .env)** extra (`containers.env`) on it. Everyone else with `stacks.view` sees the stack, but `.env` is hidden. |
 | Plain global variables | Users with `system.update`, which only an assignment on everything grants. |
 | Secret global variables | Nobody through the API; the value only reaches deploys. |
 

@@ -16,11 +16,11 @@ Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Ha
 | **Registry URL** | Host only, for example `ghcr.io` or `registry.example.com:5000`. Scheme and trailing slash are removed, and the host is lower-cased. Each URL can be saved once. |
 | **Username** | |
 | **Password / token** | Stored encrypted and never returned by the API. When editing, leave it blank to keep the stored value. |
-| **Scope (host tags)** | Empty: the credential is used on every host. With tags: only on hosts that carry at least one of them. Tags are lowercase letters, digits and hyphens, 1 to 32 characters. |
+| **Scope (host tags)** | Empty: the credential is used on every host. With tags: only on hosts that carry at least one of them. In the form, a tag is 1 to 32 lowercase letters, digits and hyphens and starts with a letter or digit. |
 
 Use tokens with read-only scope: on GitHub a token with `read:packages`, on Docker Hub a personal access token, on Harbor a robot account. AWS ECR tokens expire after 12 hours (`aws ecr get-login-password`) and must be replaced by hand; Dockmesh has no ECR integration.
 
-**Test login** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the server host's Docker engine and records the result. The page counts failing tests and marks credentials as stale when they were last changed more than 90 days ago.
+**Test login** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the server host's Docker engine and records the result. The page counts failing tests and marks credentials as stale when the entry was last saved or tested more than 90 days ago, so a test also clears the stale mark.
 
 ## How credentials are matched
 
@@ -34,7 +34,7 @@ When Dockmesh pulls an image, it takes the registry host from the image referenc
 
 The registry URL you saved must equal that host exactly. For Docker Hub, save the URL as `docker.io`, not `index.docker.io` or `registry-1.docker.io`. Entries without a stored password are not used.
 
-Then the scope is checked against the tags of the host the pull runs on: the server host uses its own tags (`local`), an agent host the tags it carries under **Hosts**. A credential whose tags the host doesn't carry is skipped and the pull is anonymous.
+Then the scope is checked against the tags of the host the pull runs on: the server host (host ID `local`) and agent hosts use the tags they carry under **Hosts**. A credential whose tags the host doesn't carry is skipped and the pull is anonymous.
 
 ## Where credentials are used
 
@@ -46,8 +46,9 @@ On the server host:
 
 On agent hosts, Dockmesh works out the images of the stack and sends the matching credentials with the request, for:
 
-- stack deploys, rollbacks, template deploys and git auto-deploys;
-- scaling a service and the scale check before it.
+- stack deploys, rollbacks, dependency deploys, template deploys and git auto-deploys.
+
+Scale requests carry them as well, but scaling never pulls an image (see [Scaling](./scaling.md)).
 
 The agent uses them for that request only and does not store them. A `docker login` on the agent host makes no difference, because the agent talks to the Docker API directly and does not read the Docker CLI's stored logins.
 
@@ -70,7 +71,7 @@ Deleting a registry makes later pulls from it anonymous again. Images already on
 | Edit and test | `registries.update` (Manage) |
 | Delete | `registries.delete` (Manage) |
 
-Registry credentials are instance-wide: only an assignment on everything grants these permissions. The page shows the list and the forms only to users with `registries.update`.
+Adding, editing, testing and deleting are instance-wide: only an assignment on everything grants `registries.create`, `registries.update` and `registries.delete`. `registries.view` also comes from an assignment limited to hosts or tags, and lets the API list the registries (URLs, usernames and scope tags, no passwords). The page shows the list and the forms only to users with `registries.update`.
 
 ## API
 

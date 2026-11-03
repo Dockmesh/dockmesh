@@ -3,7 +3,7 @@ title: Reverse proxy
 description: The optional Caddy container Dockmesh manages on the server host, how to turn it on, sites, site options, Caddyfile import, Caddy versions and certificates.
 ---
 
-Dockmesh can run a Caddy reverse proxy for you. It isn't built into the binary: when the proxy is enabled, Dockmesh runs Caddy as a Docker container on the server host and configures it through Caddy's admin API. The proxy is off by default. If you already run Traefik, nginx or another proxy, keep it off.
+Dockmesh can run a Caddy reverse proxy for you. It isn't built into the binary: when the proxy is enabled, Dockmesh runs Caddy as a Docker container on the server host and configures it through Caddy's admin API. Caddy serves your sites over HTTPS with certificates it obtains itself (see [TLS modes](#tls-modes)). The proxy is off by default. If you already run Traefik, nginx or another proxy, keep it off.
 
 Everything below happens on **Reverse proxy** in the sidebar, which has the tabs **Sites**, **Certificates**, **Activity** and **Caddy**.
 
@@ -31,7 +31,7 @@ Click **Enable proxy** on the **Reverse proxy** page. Dockmesh pulls the Caddy i
 
 To turn it off, open the actions menu next to **New site** and choose **Stop the proxy…**. This stops and removes the container and stores `proxy_enabled=false`. Sites stay saved, and both volumes are kept, so issued certificates survive.
 
-Enabling needs `proxy.create`, stopping needs `proxy.delete` (`POST /api/v1/proxy/enable`, `POST /api/v1/proxy/disable`). `DOCKMESH_PROXY_ENABLED=true` in the server environment also turns the proxy on; at startup it wins over a stored `false`, so remove it from the environment if you want to keep the proxy off.
+Enabling needs `proxy.create`, stopping needs `proxy.delete` (`POST /api/v1/proxy/enable`, `POST /api/v1/proxy/disable`). `DOCKMESH_PROXY_ENABLED=true` in the server environment turns the proxy on only as long as `proxy_enabled` has never been stored. Once you enable or stop the proxy on the page, the stored choice wins over the variable.
 
 ## Sites
 
@@ -156,7 +156,7 @@ DNS-01 challenges and wildcard certificates can't be configured, and you can't u
 
 ## Certificates and activity
 
-The **Certificates** tab lists the HTTPS sites with issuer, days until expiry and a status: **valid**, **renew soon** (less than 14 days left, which means a renewal hasn't worked yet), **not served** (the name may not point to this server yet, or Caddy is still getting the certificate) or **site off**. Dockmesh reads the certificate by opening a TLS connection to each site on port 443, a few at a time in the background, and reuses the result for 15 minutes. Caddy renews certificates about 30 days before they expire.
+The **Certificates** tab lists the HTTPS sites with issuer, days until expiry and a status: **valid**, **renew soon** (less than 14 days left, which means a renewal hasn't worked yet), **not served** (the name may not point to this server yet, or Caddy is still getting the certificate) or **site off**. Dockmesh reads the certificate by opening a TLS connection to each site on port 443, a few at a time in the background, and reuses the result for 15 minutes. The server looks the name up in its own DNS, so a site whose name only resolves on your clients (a hosts-file entry, a local DNS the server doesn't use) stays **not served** although Caddy serves it. Caddy renews certificates about 30 days before they expire.
 
 Expiring certificates also show up elsewhere:
 
