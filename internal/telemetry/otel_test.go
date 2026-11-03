@@ -39,7 +39,7 @@ func TestInitStartsProvider(t *testing.T) {
 	}
 	attrs := map[attribute.Key]string{}
 	for _, kv := range ro.Resource().Attributes() {
-		attrs[kv.Key] = kv.Value.Emit()
+		attrs[kv.Key] = kv.Value.String()
 	}
 	if attrs["service.name"] != "dockmesh" || attrs["service.version"] != "test" {
 		t.Fatalf("resource attributes %v", attrs)

@@ -73,13 +73,8 @@ func openFileViaHelper(ctx context.Context, cli *client.Client, volumeName, sub 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-		if pullErr != nil {
-			return nil, fmt.Errorf("volume helper: pull %s: %w", helperImage, pullErr)
-		}
-		_, _ = io.Copy(io.Discard, rc)
-		rc.Close()
+	if err := ensureBrowseHelperImage(ctx, cli); err != nil {
+		return nil, err
 	}
 	cfg, hostCfg := helperContainerConfig(volumeName, downloadFileScript(target))
 	cfg.AttachStdout, cfg.AttachStderr = true, true
@@ -123,6 +118,18 @@ func openFileViaHelper(ctx context.Context, cli *client.Client, volumeName, sub 
 		}
 	}()
 	return pr, nil
+}
+
+func ensureBrowseHelperImage(ctx context.Context, cli *client.Client) error {
+	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
+		return nil
+	}
+	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("volume helper: pull %s: %w", helperImage, err)
+	}
+	_, _ = io.Copy(io.Discard, rc)
+	return rc.Close()
 }
 
 type cappedBuffer struct {

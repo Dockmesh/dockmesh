@@ -184,7 +184,7 @@
     if (!fileResult || fileResult.binary) return '';
     try { return atob(fileResult.content); } catch { return ''; }
   });
-  async function downloadBlob() {
+  async function downloadFile() {
     if (!fileResult || !selectedFile) return;
     if (fileResult.truncated) {
       try {
@@ -486,7 +486,7 @@
                 {fmtBytes(fileResult.size)}{fileResult.truncated ? ` · ${m.volumes_truncated_preview()}` : ''}{fileResult.binary ? ` · ${m.volumes_binary()}` : ''}
               </p>
             </div>
-            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={downloadBlob}>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={downloadFile}>
               <Download size={12} strokeWidth={1.5} /> {m.common_download()}
             </button>
           </div>
