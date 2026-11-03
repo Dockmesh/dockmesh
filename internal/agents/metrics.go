@@ -261,7 +261,9 @@ func (s *Service) deleteHistory(ctx context.Context, id string) {
 	s.intakeMu.Lock()
 	delete(s.intakes, id)
 	s.intakeMu.Unlock()
+	s.historyDeletes.Add(1)
 	go func() {
+		defer s.historyDeletes.Done()
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metricsDeleteMax)
 		defer cancel()
 		tx, err := s.db.BeginTx(ctx, nil)
