@@ -20,6 +20,7 @@ frontend-build: frontend-install
 	cd web && npm run build
 	rm -rf cmd/dockmesh/web_dist
 	cp -r web/build cmd/dockmesh/web_dist
+	touch cmd/dockmesh/web_dist/.gitkeep
 
 backend-build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dockmesh ./cmd/dockmesh
