@@ -134,6 +134,13 @@ components:
       schema:
         type: string
         default: local
+    StackHostQuery:
+      name: host
+      in: query
+      description: "Host to act on. Defaults to the stack's own host: where it is deployed, or the host it was created for; `local` for a stack with neither. Naming another host while the stack is deployed, stopped or migrating elsewhere is refused with 409 `stack_on_other_host`; Migrate moves a stack."
+      required: false
+      schema:
+        type: string
     HostIDPath:
       name: id
       in: path
@@ -204,6 +211,33 @@ components:
               error: {type: string}
               code: {type: string, enum: [modified_outside]}
               stack: {type: string}
+              files:
+                type: array
+                items: {type: string}
+    StackOnOtherHost:
+      description: The stack is deployed, stopped or migrating on another host. `host_id` is set only when the caller may see that host.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code, stack]
+            properties:
+              error: {type: string}
+              code: {type: string, enum: [stack_on_other_host]}
+              stack: {type: string}
+              host_id: {type: string}
+    StackDeployConflict:
+      description: compose.yaml or .env changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code]
+            properties:
+              error: {type: string}
+              code: {type: string, enum: [modified_outside, stack_on_other_host]}
+              stack: {type: string}
+              host_id: {type: string}
               files:
                 type: array
                 items: {type: string}

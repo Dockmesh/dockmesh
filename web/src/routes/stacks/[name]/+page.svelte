@@ -27,12 +27,12 @@
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
-  // The stack detail page always operates on a specific host, never "all".
-  // If the global picker is on "all", we resolve to the deployment's host
-  // (from the list response) or fall back to "local".
-  let deploymentHostId = $state<string>('local');
+  // The stack's own host (deployment, or the host it was created for). It
+  // wins over the host picker: acting on another host would start a
+  // second copy of the stack there.
+  let homeHostId = $state<string | null>(null);
   let everDeployed = $state(true);
-  const stackHost = $derived(isAllHosts(hosts.id) ? deploymentHostId : hosts.id);
+  const stackHost = $derived(homeHostId ?? (isAllHosts(hosts.id) ? 'local' : hosts.id));
   const isRemote = $derived(stackHost !== 'local');
 
   const name = $derived(page.params.name);
@@ -1273,16 +1273,13 @@
       } else {
         latestBackupRun = null;
       }
-      // Resolve deployment host for all-mode routing.
       try {
         const stackList = await api.stacks.list();
         const entry = stackList.find(s => s.name === name);
         const hostOfStack = entry?.deployment?.host_id || entry?.target_host;
         everDeployed = !!entry?.deployment;
-        if (hostOfStack) {
-          deploymentHostId = hostOfStack;
-        }
-      } catch { /* ignore — fallback to local */ }
+        homeHostId = hostOfStack || null;
+      } catch { /* ignore — fall back to the picker host */ }
       try {
         services = await api.stacks.status(name, stackHost);
       } catch {

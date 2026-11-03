@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deploying, stopping, scaling or rolling back a stack from its page while the host picker showed another host, or through the API without `host`, ran it on that other host (usually the server) and started a second copy with empty volumes. These actions now go to the stack's own host, and the API refuses another host with 409 `stack_on_other_host`; Migrate moves a stack.
+time: 2026-11-03T14:57:15.4236989+01:00
