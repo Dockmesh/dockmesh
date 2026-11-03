@@ -193,6 +193,21 @@ func projectMetrics(samples []promSample, now time.Time) *MetricsSnapshot {
 		PerHost:       []HostMetric{},
 	}
 	perHost := map[string]*HostMetric{}
+	hostMetric := func(s promSample) *HostMetric {
+		host := s.Labels["host"]
+		if host == "" {
+			host = s.Labels["server"]
+		}
+		if host == "" {
+			return nil
+		}
+		hm, ok := perHost[host]
+		if !ok {
+			hm = &HostMetric{Host: host, StatusBuckets: map[string]uint64{}}
+			perHost[host] = hm
+		}
+		return hm
+	}
 	// Latency buckets — we collect histogram bucket boundaries to
 	// compute p95 at the end.
 	allBuckets := map[float64]uint64{}
@@ -203,25 +218,21 @@ func projectMetrics(samples []promSample, now time.Time) *MetricsSnapshot {
 		case "caddy_http_requests_total":
 			n := uint64(s.Value)
 			snap.TotalReqs += n
-			code := s.Labels["code"]
-			if code != "" {
-				bucket := code[:1] + "xx"
-				snap.StatusBuckets[bucket] += n
-			}
-			host := s.Labels["host"]
-			if host == "" {
-				host = s.Labels["server"]
-			}
-			if host != "" {
-				hm, ok := perHost[host]
-				if !ok {
-					hm = &HostMetric{Host: host, StatusBuckets: map[string]uint64{}}
-					perHost[host] = hm
-				}
+			if hm := hostMetric(s); hm != nil {
 				hm.Reqs += n
-				if code != "" {
-					hm.StatusBuckets[code[:1]+"xx"] += n
-				}
+			}
+		case "caddy_http_request_duration_seconds_count":
+			// Caddy puts the status code on the duration histogram, not on
+			// requests_total.
+			code := s.Labels["code"]
+			if code == "" {
+				continue
+			}
+			n := uint64(s.Value)
+			bucket := code[:1] + "xx"
+			snap.StatusBuckets[bucket] += n
+			if hm := hostMetric(s); hm != nil {
+				hm.StatusBuckets[bucket] += n
 			}
 		case "caddy_http_request_duration_seconds_bucket":
 			le, err := strconv.ParseFloat(s.Labels["le"], 64)
