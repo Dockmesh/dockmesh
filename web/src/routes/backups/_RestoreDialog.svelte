@@ -62,6 +62,8 @@
     busy = true;
     const r = run;
     const ref = opRef.backupRun(r.id);
+    // An earlier restore of the same run may still be in the time window.
+    const earlier = await operations.known(ref, 'backup.restore');
     const since = Date.now();
     let report: BackupRestoreReport | undefined;
     let error: unknown;
@@ -72,8 +74,8 @@
       (rep) => (report = rep),
       (e) => (error = e)
     );
-    let op = await Promise.race([operations.find(ref, 'backup.restore', since, 6000), req.then(() => undefined)]);
-    if (!op) op = await operations.find(ref, 'backup.restore', since, 1000);
+    let op = await Promise.race([operations.find(ref, 'backup.restore', since, 6000, earlier), req.then(() => undefined)]);
+    if (!op) op = await operations.find(ref, 'backup.restore', since, 1000, earlier);
     if (op) {
       busy = false;
       onclose();
