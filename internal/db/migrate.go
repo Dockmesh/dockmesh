@@ -97,6 +97,32 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 // other's order.
 func Migrate(db *sql.DB) error { return migrate(db, migrationFS(), "") }
 
+// CheckMigrated is the post-migration check: every embedded migration is
+// applied and SQLite finds the file intact.
+func CheckMigrated(ctx context.Context, db *sql.DB) error {
+	all, err := loadMigrations(migrationFS())
+	if err != nil {
+		return err
+	}
+	applied, err := appliedMigrations(db)
+	if err != nil {
+		return err
+	}
+	for _, m := range all {
+		if !applied[m.name] {
+			return fmt.Errorf("migration %s is not applied", m.name)
+		}
+	}
+	var res string
+	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check(1)`).Scan(&res); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("integrity check: %s", res)
+	}
+	return nil
+}
+
 // migrateUpTo applies migrations up to and including last ("" = all), so
 // tests can seed data in an older schema before running the rest.
 func migrateUpTo(db *sql.DB, last string) error { return migrate(db, migrationFS(), last) }

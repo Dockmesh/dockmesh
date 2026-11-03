@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -334,5 +335,54 @@ func TestSnapshotSkipsInMemory(t *testing.T) {
 	}
 	if got := snapshotFiles(t, "."); len(got) != 0 {
 		t.Errorf("in-memory database produced snapshots: %v", got)
+	}
+}
+
+func TestSnapshotsListsFinishedAndUnfinished(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Open(filepath.Join(dir, "dockmesh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	writeFiles(t, dir,
+		"dockmesh.db.pre-migrate-20261029T101500.000Z.bak",
+		"dockmesh.db.pre-migrate-20261030T101500.000Z.bak.tmp",
+		"other.db.pre-migrate-20261029T101500.000Z.bak",
+		"dockmesh.db.bak")
+	got, err := Snapshots(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(dir, "dockmesh.db.pre-migrate-20261029T101500.000Z.bak"),
+		filepath.Join(dir, "dockmesh.db.pre-migrate-20261030T101500.000Z.bak.tmp"),
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("Snapshots = %v, want %v", got, want)
+	}
+	if IsUnfinishedSnapshot(got[0]) || !IsUnfinishedSnapshot(got[1]) {
+		t.Errorf("unfinished: %v %v", IsUnfinishedSnapshot(got[0]), IsUnfinishedSnapshot(got[1]))
+	}
+}
+
+func TestCheckMigrated(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "dockmesh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := Migrate(d); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := CheckMigrated(ctx, d); err != nil {
+		t.Fatalf("fully migrated: %v", err)
+	}
+	if _, err := d.Exec(`DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckMigrated(ctx, d); err == nil {
+		t.Error("a missing migration passed the check")
 	}
 }

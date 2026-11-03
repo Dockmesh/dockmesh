@@ -164,3 +164,24 @@ func TestCompactIfPendingClearsTheMarkOnlyOnSuccess(t *testing.T) {
 		t.Fatalf("compaction: err %v, pending %v", err, pending())
 	}
 }
+
+// The pass runs with secure_delete fully on and hands the connection back
+// to the pool with FAST again.
+func TestCompactRestoresSecureDeleteFast(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	d.SetMaxOpenConns(1)
+	if err := Compact(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	var mode int
+	if err := d.QueryRow(`PRAGMA secure_delete`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 2 {
+		t.Errorf("secure_delete after Compact = %d, want 2 (FAST)", mode)
+	}
+}

@@ -902,6 +902,10 @@ func main() {
 			auditSvc.Write(ctx, "", audit.ActionBackupJobRepaired, j.Name, map[string]any{"job_id": j.ID, "target": target})
 		})
 	})
+	// After the repair above, which seals the last plaintext credentials.
+	noticesSvc.Register("db.plaintext-snapshots", func(ctx context.Context, n *notices.Service) error {
+		return removePlaintextSnapshots(ctx, database, secretsSvc, n)
+	})
 	updateWatcher.SetNotifier(notifSvc)
 	updateWatcher.Start(ctx)
 	agentsSvc.SetNotifier(notifSvc)

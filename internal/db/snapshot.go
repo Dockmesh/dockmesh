@@ -138,10 +138,44 @@ func listSnapshots(dbPath string) ([]string, error) {
 	return snaps, nil
 }
 
+// Snapshots returns the pre-migration snapshots of db's file, finished
+// and unfinished, oldest first.
+func Snapshots(db *sql.DB) ([]string, error) {
+	path, err := mainDBFile(db)
+	if err != nil || path == "" {
+		return nil, err
+	}
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var snaps []string
+	for _, e := range entries {
+		if e.Type().IsRegular() && IsSnapshotName(base, e.Name()) {
+			snaps = append(snaps, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(snaps)
+	return snaps, nil
+}
+
+// IsUnfinishedSnapshot reports whether path is a snapshot whose copy never
+// completed.
+func IsUnfinishedSnapshot(path string) bool { return strings.HasSuffix(path, tmpSuffix) }
+
+// OpenSnapshot opens a snapshot file read-only.
+func OpenSnapshot(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", "file:"+path+"?mode=ro")
+}
+
 // snapshotState returns the migrationState of the snapshot at path, or ""
 // when it cannot be read.
 func snapshotState(path string) string {
-	snap, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	snap, err := OpenSnapshot(path)
 	if err != nil {
 		return ""
 	}

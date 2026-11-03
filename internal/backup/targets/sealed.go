@@ -103,6 +103,21 @@ func HasCredentials(raw string) bool {
 	return false
 }
 
+// HasPlainCredentials reports whether a stored config holds a credential
+// that is not encrypted.
+func HasPlainCredentials(raw string) bool {
+	var m map[string]any
+	if !decodes([]byte(raw), &m) {
+		return false
+	}
+	for _, k := range secretFields {
+		if v, ok := m[k].(string); ok && v != "" && !secrets.IsSealed(v) {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrCredentialsUnreadable refuses saving a target whose stored
 // credentials can't be decrypted without entering them again: keeping the
 // blank would replace a value that a restored key could still open.
