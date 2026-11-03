@@ -1,0 +1,3 @@
+kind: Fixed
+body: Pruning volumes, images and networks, System cleanup, removing an image and creating or deleting a network act on the selected host instead of always on the server; under All hosts a prune runs on each reachable host
+time: 2026-11-03T20:19:19.767302959Z

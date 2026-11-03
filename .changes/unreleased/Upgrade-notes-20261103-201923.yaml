@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: Agents need the update offered on the Hosts page before volumes can be pruned or networks managed on them; until then those actions report that the agent is too old
+time: 2026-11-03T20:19:23.549101728Z

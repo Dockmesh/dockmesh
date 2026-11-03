@@ -119,11 +119,7 @@ The wizard has seven steps. Nothing is written until you confirm on the review s
 
 On install the server creates the admin account, stores the public URL as the **Base URL** setting together with an **Agent public URL** on the same host and the agent port (`wss://<host>:8443/connect`), and removes `DOCKMESH_SETUP_FORCE` from `dockmesh.env`. Sign in afterwards at the URL shown.
 
-Agent install commands use these two settings; change both under **Settings** → **General** without restarting the server. `DOCKMESH_BASE_URL` and `DOCKMESH_AGENT_PUBLIC_URL` in `dockmesh.env` win over the settings when set. Single sign-on redirect URLs and invite links are built from `DOCKMESH_BASE_URL` only, so if you use either, also add the public address to `dockmesh.env` and restart the service:
-
-```bash
-DOCKMESH_BASE_URL=https://dockmesh.example.com
-```
+Agent install commands, single sign-on redirect URLs and invite links use these settings; change them under **Settings** → **General** without restarting the server. `DOCKMESH_BASE_URL` and `DOCKMESH_AGENT_PUBLIC_URL` in `dockmesh.env` win over the settings when set.
 
 Port 8080 is plain HTTP. Before you use Dockmesh beyond a trusted LAN, put a TLS reverse proxy in front and keep 8080 off the network; see [Security hardening](../operations/hardening.md) and [Ports](../reference/ports.md).
 

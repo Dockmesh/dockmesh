@@ -60,7 +60,7 @@ The volume pages have no restore action. Restore a volume or stack backup from *
 
 What a prune removes is decided by Docker. On Docker Engine 23 and later, a prune without filters removes only unused **anonymous** volumes; named volumes stay. On older engines it removes every unused volume, named or not. Check your engine version (`docker version`) before you rely on either behaviour.
 
-Creating and deleting act on the volume's host. **Prune orphan** and **System cleanup…** always act on the server's host only, also when an agent host or **All hosts** is selected.
+Creating and deleting act on the volume's host. **Prune orphan** and **System cleanup…** act on the selected host; under **All hosts** they run on every reachable host in view, one after the other. An agent that is older than the server refuses these actions until you update it from the **Hosts** page.
 
 There is no undo. Take a backup of volumes whose data matters first; see [Backups](../operations/backups.md). Stack migration refuses stacks with named volumes; see [Migration and drain](./migration-and-drain.md).
 
@@ -70,7 +70,7 @@ There is no undo. Take a backup of volumes whose data matters first; see [Backup
 |---|---|
 | List and inspect | **Images, volumes, networks & registries**: View |
 | Create and delete | **Images, volumes, networks & registries**: Manage on an assignment that covers the volume's host |
-| Prune | **Images, volumes, networks & registries**: Manage on an assignment that covers the server's host |
+| Prune | **Images, volumes, networks & registries**: Manage on an assignment that covers the host being pruned |
 | Browse and read files | The extra **Browse and read files in containers and volumes** on an assignment that covers the volume's host (everything, the host or one of its tags); an assignment on a single stack is not enough |
 
 See [Permissions](../concepts/permissions.md).

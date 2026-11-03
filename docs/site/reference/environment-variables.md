@@ -21,7 +21,7 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 | Variable | Default | Meaning |
 |---|---|---|
 | `DOCKMESH_HTTP_ADDR` | `:8080` | Listen address for the web UI, REST API, `/metrics` and `/install/*`. Plain HTTP |
-| `DOCKMESH_BASE_URL` | `http://localhost:8080` | Public URL of the server. SSO callback URLs and invite links are built from it. For agent install commands it wins over **Base URL** under **Settings → General** |
+| `DOCKMESH_BASE_URL` | `http://localhost:8080` | Public URL of the server. Wins over **Base URL** under **Settings → General** for SSO callback URLs, invite links and agent install commands |
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Listen address of the agent listener. It always runs; an empty value falls back to the default |
 | `DOCKMESH_AGENT_PUBLIC_URL` | unset | `wss://` URL agents enroll at and connect to. Wins over **Agent public URL** under **Settings → General**. With neither set: `wss://<host of the base URL>:<port of DOCKMESH_AGENT_LISTEN>/connect` |
 | `DOCKMESH_AGENT_SANS` | empty | Comma-separated extra host names and IPs for the agent listener certificate. `localhost`, `127.0.0.1`, `::1` and the agent URL's host are always included |
@@ -150,7 +150,7 @@ These keys live in the `settings` table and are edited in the UI or with `PUT /a
 
 | Key | Where in the UI | Environment variable |
 |---|---|---|
-| `base_url` | **Settings → General → Base URL** | `DOCKMESH_BASE_URL` wins for agent install commands |
+| `base_url` | **Settings → General → Base URL** | `DOCKMESH_BASE_URL` wins |
 | `agent_public_url` | **Settings → General → Agent public URL** | `DOCKMESH_AGENT_PUBLIC_URL` wins |
 | `trusted_proxies` | **Settings → General → Trusted proxies** | `DOCKMESH_TRUSTED_PROXIES` is used while the setting is empty |
 | `scanner_enabled` | **Settings → General → Vulnerability scanner** | Only changes what the system health view reports; whether scans run is decided by `DOCKMESH_SCANNER_ENABLED` |
