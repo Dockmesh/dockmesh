@@ -167,7 +167,7 @@ docker compose up -d --build
 ```
 
 The UI is then on port 8080, and the generated `admin` password is
-printed once in `docker compose logs dockmesh`. The container needs the
+printed in `docker compose logs dockmesh` (it stays in that log, so change it after the first sign-in). The container needs the
 Docker socket mounted, as in the compose file.
 
 ### Install an agent on a remote host

@@ -77,7 +77,7 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
-| `DOCKMESH_SKIP_CHECKSUM` | unset | `1` installs without checking the archive against `checksums.txt`. |
+| `DOCKMESH_SKIP_CHECKSUM` | unset | `1` installs without checking the archive against `checksums.txt`. The binary runs as root, so skip the check only for a build you verified yourself. |
 | `NO_COLOR` | unset | Disables colored output. |
 
 ### The env file

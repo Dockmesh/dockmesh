@@ -22,6 +22,8 @@ Defaults are in parentheses; "generated" means a random value is created when yo
 
 The Redis template inserts `password` into the `redis-server` command line exactly as entered. To turn on authentication, enter `--requirepass <password>`, not the password alone.
 
+> **Warning:** with the password left empty, Redis runs without authentication and the template publishes its port on every interface of the host. Docker's port rules bypass host firewalls such as ufw, so the port is reachable from any network that reaches the host. Set a password, or edit the stack's `compose.yaml` after deploying to bind the port to `127.0.0.1` or remove it. The password is stored in `compose.yaml` and is visible in the container's command line.
+
 ## Deploying a template
 
 Click **Deploy** in a template's row. The dialog asks for:

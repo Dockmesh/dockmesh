@@ -40,7 +40,7 @@ A target is where archives go. Targets are saved objects: create them under **Ba
 | Type | Wizard label | Config fields | Defaults |
 |---|---|---|---|
 | `local` | **Local directory** | `path` | see below |
-| `s3` | **S3 / object store** | `endpoint`, `bucket`, `region`, `access_key`, `secret_key`, `prefix`, `use_ssl`, `ca_cert` | region `us-east-1`, `use_ssl` off |
+| `s3` | **S3 / object store** | `endpoint`, `bucket`, `region`, `access_key`, `secret_key`, `prefix`, `use_ssl`, `ca_cert` | region `us-east-1`, `use_ssl` off; turn it on for anything but a local MinIO, otherwise credentials and data travel unencrypted |
 | `sftp` | **SFTP over SSH** | `host`, `port`, `username`, `password`, `private_key`, `path` | port 22, path `/backups` |
 | `smb` | **SMB / NAS share** | `host`, `port`, `share`, `username`, `domain`, `password`, `path` | port 445, path `backups` |
 | `webdav` | **WebDAV** | `url`, `username`, `password`, `path`, `ca_cert` | path `/backups` |

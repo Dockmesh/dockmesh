@@ -49,6 +49,8 @@ location ~ ^/api/v1/auth/(login|mfa)$ {
 | 443 (your proxy) | Web UI, API, agent installer | Users, CI, agent hosts |
 | 8080 | Dockmesh HTTP | Loopback only |
 | 8443 | Agent enrollment and mTLS connections (`DOCKMESH_AGENT_LISTEN`) | Agent hosts only |
+
+The HTTP port also accepts enrollment at `POST /api/v1/agents/enroll` and returns the agent's key and certificate in the response. Reach it only through TLS (your proxy on 443), never over plain HTTP across a network.
 | 80, 443 | Managed Caddy proxy, only when enabled | As your published apps require |
 | 2019 | Caddy admin API | Never; bound to `127.0.0.1` |
 

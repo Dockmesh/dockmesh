@@ -22,7 +22,7 @@ Release tarballs exist for `linux_amd64`, `linux_arm64`, `darwin_amd64` and `dar
 
 ## Log in
 
-`dmctl login <server>` stores the server URL and credentials in the config file and checks them against `GET /api/v1/me`. If you leave out the scheme, dmctl uses `http://` for `localhost`, `127.0.0.1`, `::1`, `*.local`, `*.lan`, `*.internal` and `10.*`, `172.*`, `192.168.*` addresses, and `https://` for everything else.
+`dmctl login <server>` stores the server URL and credentials in the config file and checks them against `GET /api/v1/me`. If you leave out the scheme, dmctl uses `http://` for `localhost`, `127.0.0.1`, `::1`, `*.local`, `*.lan`, `*.internal` and `10.*`, `172.*`, `192.168.*` addresses, and `https://` for everything else. The `172.*` rule also matches public addresses outside the private `172.16.0.0/12` range, so always type the scheme for a server reached over the internet.
 
 With an API token (best for CI and scripts):
 
@@ -76,7 +76,7 @@ dmctl stacks deploy web
 | `--server` | from env/config | Server URL |
 | `--token` | from env/config | Bearer token (API token or access token) |
 | `--host` | server host | Host ID for stack and container commands, sent as `?host=` |
-| `--insecure` | `false` | Skip TLS certificate verification. Only for test servers with self-signed certificates |
+| `--insecure` | `false` | Skip TLS certificate verification. Saved in the config file, so every later command skips it too. Only for test servers with self-signed certificates |
 | `-o`, `--output` | `table` | `table`, `json` or `yaml` |
 | `-h`, `--help` | | Help for any command |
 | `-v`, `--version` | | Print the version (root command only) |

@@ -73,7 +73,7 @@ Operations are kept for 7 days. Credentials are masked before anything is stored
 
 The server serves Prometheus metrics at `/metrics` on its HTTP port (not under `/api/v1`).
 
-By default the endpoint needs a bearer token with the `metrics.view` permission on everything. Create an [API token](./api-tokens.md) restricted to a role with only **Settings & audit: View**, and give it to Prometheus:
+By default the endpoint needs a bearer token with the `metrics.view` permission on everything. Create an [API token](./api-tokens.md) restricted to a role with only **Settings & audit: View**, and give it to Prometheus. That level also reads the whole audit log, so protect the token like one with audit access:
 
 ```yaml
 scrape_configs:
