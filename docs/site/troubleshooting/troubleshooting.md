@@ -122,7 +122,7 @@ sudo -u dockmesh dockmesh admin unlock --user admin
 
 ### "Your session expired. Sign in again to continue."
 
-**Cause:** the refresh token expired or was revoked, for example by **Sign out everywhere**, an admin ending the session, a password reset, or the idle timeout on **Settings → Authentication**. Open tabs share one session renewal, so several tabs don't sign each other out.
+**Cause:** the refresh token expired or was revoked, for example by an admin ending your sessions (**Sign out everywhere** on your user page under **Users**), a password reset, or the idle timeout on **Settings → Authentication**. Open tabs share one session renewal, so several tabs don't sign each other out.
 
 **Fix:** sign in again.
 
