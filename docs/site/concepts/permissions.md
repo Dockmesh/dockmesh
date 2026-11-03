@@ -21,7 +21,7 @@ A role picks one level per area. Levels are cumulative: Deploy includes Operate 
 | Backups | None, View, Operate, Manage | View: jobs, runs and targets. Operate: run jobs now, restore a run. Manage: create and edit jobs and targets |
 | Alerts | None, View, Manage | View: rules and alert history. Manage: rules and notification channels |
 | Users & roles | None, View, Manage | View: users, roles and assignments. Manage: invite, edit and remove users, edit roles and assignments, revoke other users' API tokens |
-| Settings & audit | None, View, Manage | View: the audit log, the Prometheus `/metrics` scrape. Manage: instance settings, sign-in and identity providers, audit retention, export and webhook, update checks, rotating the encryption key, restoring a system backup |
+| Settings & audit | None, Metrics, View, Manage | Metrics: the Prometheus `/metrics` scrape. View: also the audit log. Manage: instance settings, sign-in and identity providers, audit retention, export and webhook, update checks, rotating the encryption key, restoring a system backup |
 
 On top of the levels, a role can hold **extras**. No level includes them:
 
@@ -72,7 +72,8 @@ Other pages, API error messages and `dmctl whoami -o json` name single permissio
 | `alerts.create`, `alerts.update`, `alerts.delete` | Alerts: Manage |
 | `users.view`, `roles.view` | Users & roles: View |
 | `users.create`, `users.update`, `users.delete`, `roles.create`, `roles.update`, `roles.delete`, `tokens.manage_others` | Users & roles: Manage |
-| `audit.view`, `metrics.view` | Settings & audit: View |
+| `metrics.view` | Settings & audit: Metrics |
+| `audit.view` | Settings & audit: View |
 | `audit.export`, `audit.write`, `system.update`, `system.upgrade` | Settings & audit: Manage |
 | `containers.exec` | extra **Open a terminal in containers** |
 | `containers.files`, `volumes.browse` | extra **Browse and read files in containers and volumes** |

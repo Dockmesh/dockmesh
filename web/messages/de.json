@@ -3863,6 +3863,7 @@
   "rbac_invite_edit_and_remove_users": "Benutzer einladen, bearbeiten und entfernen",
   "rbac_list_registries": "Registrys auflisten",
   "rbac_manage": "Verwalten",
+  "rbac_metrics": "Metriken",
   "rbac_migrate_to_another_host": "Auf einen anderen Host migrieren",
   "rbac_none": "Keine",
   "rbac_open_a_terminal_in_containers": "Terminal in Containern öffnen",

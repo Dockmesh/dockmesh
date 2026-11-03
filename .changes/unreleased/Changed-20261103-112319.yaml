@@ -1,0 +1,3 @@
+kind: Changed
+body: 'Settings & audit has a new **Metrics** level below View that grants only the Prometheus `/metrics` scrape, so a scrape token no longer needs access to the audit log. Roles with Settings & audit: View keep the scrape.'
+time: 2026-11-03T11:23:19.674886+01:00

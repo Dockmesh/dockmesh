@@ -58,7 +58,7 @@ The agent listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `
 
 The managed proxy container `dockmesh-proxy` uses host networking, and its admin API on `127.0.0.1:2019` has no authentication. It refuses requests from browsers on other sites, and proxy routes can't forward to it, but any process on the server, and any container started with host networking, can change the proxy configuration. Don't run untrusted workloads with `network_mode: host` on the server.
 
-**Metrics.** `/metrics` requires a bearer token with Settings & audit: View on everything. Keep `DOCKMESH_METRICS_AUTH` at its default (`true`) unless the endpoint is only reachable from your monitoring network.
+**Metrics.** `/metrics` requires a bearer token with Settings & audit: Metrics (or higher) on everything; a role with only the Metrics level can't read the audit log. Keep `DOCKMESH_METRICS_AUTH` at its default (`true`) unless the endpoint is only reachable from your monitoring network.
 
 ## Setup wizard
 

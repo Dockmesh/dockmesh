@@ -3863,6 +3863,7 @@
   "rbac_invite_edit_and_remove_users": "Invite, edit and remove users",
   "rbac_list_registries": "List registries",
   "rbac_manage": "Manage",
+  "rbac_metrics": "Metrics",
   "rbac_migrate_to_another_host": "Migrate to another host",
   "rbac_none": "None",
   "rbac_open_a_terminal_in_containers": "Open a terminal in containers",
