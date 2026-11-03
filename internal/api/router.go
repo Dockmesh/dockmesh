@@ -538,6 +538,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermVolumesBrowse))
 				r.Get("/volumes/{name}/browse", h.BrowseVolume)
 				r.Get("/volumes/{name}/browse/file", h.ReadVolumeFile)
+				r.Get("/volumes/{name}/browse/download", h.DownloadVolumeFile)
 			})
 
 			// -------------------------- DISASTER RECOVERY --------------------

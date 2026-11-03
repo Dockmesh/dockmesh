@@ -602,6 +602,8 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		err = runEventsStream(conn, cli, reg)
 	case "container_file":
 		err = runContainerFileStream(conn, cli, open, reg)
+	case "volume_file":
+		err = runVolumeFileStream(conn, cli, open, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}
@@ -722,7 +724,7 @@ func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
 	_ = writeFrame(conn, agents.Frame{Type: agents.FrameStreamClose, Payload: payload})
 }
 
-const helperImage = "busybox:latest"
+const helperImage = host.VolumeTarHelperImage
 
 // helperTimeout bounds cleanup and exit-status calls that must still run
 // after the stream's context is gone.
@@ -734,7 +736,7 @@ func ensureHelperImage(ctx context.Context, cli *client.Client) error {
 	}
 	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 	if err != nil {
-		return fmt.Errorf("pull busybox: %w", err)
+		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
 	_, _ = io.Copy(io.Discard, rc)
 	return rc.Close()

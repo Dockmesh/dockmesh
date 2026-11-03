@@ -2303,6 +2303,12 @@ export const api = {
       const qs = new URLSearchParams({ path });
       if (host && host !== 'local') qs.set('host', host);
       return request<VolumeFileResult>(`/volumes/${encodeURIComponent(name)}/browse/file?${qs.toString()}`);
+    },
+    downloadFile: (name: string, path: string, host = 'local') => {
+      const qs = new URLSearchParams({ path });
+      if (host && host !== 'local') qs.set('host', host);
+      const filename = path.split('/').filter(Boolean).pop() || 'file';
+      return saveDownload(`/volumes/${encodeURIComponent(name)}/browse/download?${qs.toString()}`, filename);
     }
   },
 

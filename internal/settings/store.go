@@ -40,8 +40,9 @@ func NewStore(db *sql.DB) *Store {
 }
 
 // Load populates the cache from the DB. Called once at startup.
-// For each key, if the DB value is empty, check the corresponding
-// env var so existing .env-based installs migrate seamlessly.
+// A key whose DB value is empty takes its env var, which is then
+// saved, so the env var only sets the default and a value saved
+// later (proxy disabled in the UI) wins on every following start.
 func (s *Store) Load(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM settings`)
 	if err != nil {
@@ -55,8 +56,7 @@ func (s *Store) Load(ctx context.Context) error {
 		if err := rows.Scan(&k, &v); err != nil {
 			return err
 		}
-		// If DB value is empty, try env var as migration path.
-		if v == "" || v == "false" {
+		if v == "" {
 			if envVal := envForKey(k); envVal != "" {
 				v = envVal
 				// Persist so next boot uses DB value.

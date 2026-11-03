@@ -205,7 +205,7 @@ func TestImportCaddyfile(t *testing.T) {
 		t.Fatalf("import with proxy off: err = %v", err)
 	}
 	s.enabled.Store(true)
-	if _, err := s.CreateRoute(ctx, RouteSpec{Host: "nas.home.lab", Upstream: "10.0.0.1:80", TLSMode: "auto"}); err != nil && !strings.Contains(err.Error(), "caddy") {
+	if _, err := s.CreateRoute(ctx, RouteSpec{Host: "nas.home.lab", Upstream: "10.0.0.1:80", TLSMode: "auto"}); err != nil && !errors.Is(err, errNotManagedCaddy) {
 		t.Fatal(err)
 	}
 

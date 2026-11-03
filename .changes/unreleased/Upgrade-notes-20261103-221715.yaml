@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: '[proxy-recreated, admins] The managed dockmesh-proxy container is recreated once on the first start after the upgrade, a few seconds without proxy traffic; sites and certificates are kept'
+time: 2026-11-03T22:17:15.41124713Z

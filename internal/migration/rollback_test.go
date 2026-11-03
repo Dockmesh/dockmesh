@@ -140,11 +140,15 @@ func (e *migrationEnv) migrate(t *testing.T) *Migration {
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
+		// Check isActive before reading the record: the run stores its final
+		// status before leaving the active set, so a record read first could
+		// be a failure a rollback is about to replace.
+		running := e.svc.isActive(m.ID)
 		got, err := e.svc.Store().Get(context.Background(), m.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.IsTerminal() && !e.svc.isActive(m.ID) {
+		if !running && got.IsTerminal() {
 			return got
 		}
 		time.Sleep(20 * time.Millisecond)

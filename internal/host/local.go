@@ -383,6 +383,21 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	return BrowseVolumeOnHost(ctx, h.cli.Raw(), name, mp, subpath)
 }
 
+func (h *LocalHost) VolumeDownloadFile(ctx context.Context, name, subpath string) (io.ReadCloser, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	vol, err := h.cli.InspectVolume(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	mp, err := ExtractMountpoint(vol.Mountpoint)
+	if err != nil {
+		return nil, err
+	}
+	return OpenVolumeFileOnHost(ctx, h.cli.Raw(), name, mp, subpath)
+}
+
 func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker

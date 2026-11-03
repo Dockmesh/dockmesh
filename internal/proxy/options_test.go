@@ -91,8 +91,8 @@ func TestBuildConfigGolden(t *testing.T) {
 	}
 }
 
-// A route stored before options existed must produce byte-for-byte the
-// config Dockmesh pushed before, so an upgrade doesn't reload Caddy.
+// A route stored before options existed must produce the same config as
+// one without options.
 func TestBuildConfigDefaultsMatchLegacyOutput(t *testing.T) {
 	stored, err := decodeOptions([]byte(`{}`))
 	if err != nil {
@@ -107,7 +107,7 @@ func TestBuildConfigDefaultsMatchLegacyOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	const legacy = `{"admin":{"listen":"127.0.0.1:2019","origins":["127.0.0.1:2019","localhost:2019"],"enforce_origin":true},` +
-		`"apps":{"http":{"servers":{` +
+		`"apps":{"http":{"metrics":{"per_host":true},"servers":{` +
 		`"dockmesh":{"listen":[":443"],"routes":[{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.5:8080"}]}],"terminal":true}]},` +
 		`"dockmesh_http":{"listen":[":80"],"routes":[{"match":[{"host":["b.lan"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.6:80"}]}],"terminal":true}]}}},` +
 		`"tls":{"automation":{"policies":[{"subjects":["a.example.com"],"issuers":[{"module":"acme"}]}]}}}}`

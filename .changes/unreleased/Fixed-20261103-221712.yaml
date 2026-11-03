@@ -1,0 +1,3 @@
+kind: Fixed
+body: Stopping the reverse proxy in the UI sticks when DOCKMESH_PROXY_ENABLED=true is set; the variable only sets the default before a choice is saved and no longer turns the proxy back on at every start. Affected v0.5.0 and earlier
+time: 2026-11-03T22:17:12.613181206Z

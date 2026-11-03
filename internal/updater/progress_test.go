@@ -34,7 +34,7 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 	events, unsub := ops.Subscribe()
 	defer unsub()
 	op := ops.Start(context.Background(), operations.Spec{Kind: "image.update", Target: "web", Steps: UpdateSteps})
-	op.AddSecrets(authSecrets(auth)...)
+	op.AddSecrets(operations.RegistryAuthSecrets(auth)...)
 	op.StepStart(StepPull, "")
 	stream := strings.Join([]string{
 		`{"status":"Pulling from library/nginx","id":"1.27"}`,
@@ -46,7 +46,7 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 		`{"status":"Digest: sha256:abc"}`,
 		`{"status":"Status: Downloaded newer image for nginx:1.27, auth ` + auth + `"}`,
 	}, "\n")
-	err := drainPull(strings.NewReader(stream), op, authSecrets(auth))
+	err := drainPull(strings.NewReader(stream), op, operations.RegistryAuthSecrets(auth))
 	if err == nil || strings.Contains(err.Error(), pw) || !strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("pull error %v: want the stream's error with the password masked", err)
 	}

@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"path"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -22,9 +25,35 @@ import (
 )
 
 // bootstrapConfig is the minimal Caddy config we seed into the config
-// volume before first start. It only enables the admin API; the real
-// config is pushed via /load once the API is reachable.
-var bootstrapConfig = []byte(`{"admin":{"listen":"` + adminAddr + `"}}`)
+// volume before first start. It only enables the admin API, tagged with
+// the container's admin ID; the real config is pushed via /load once the
+// API answers to that ID.
+func bootstrapConfig(adminID string) ([]byte, error) {
+	return json.Marshal(caddyConfig{Admin: &caddyAdmin{ID: adminID, Listen: adminAddr}})
+}
+
+// adminIDLabel carries a random ID per container that Caddy's admin
+// config is tagged with, so config (with DNS or basic-auth credentials)
+// is not pushed to an unrelated program holding 127.0.0.1:2019. It does
+// not authenticate: the admin API is open to every local process.
+const adminIDLabel = "dockmesh.proxy.admin_id"
+
+func newAdminID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "dockmesh-admin-" + hex.EncodeToString(b), nil
+}
+
+func validAdminID(id string) bool {
+	rest, ok := strings.CutPrefix(id, "dockmesh-admin-")
+	if !ok || len(rest) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(rest)
+	return err == nil
+}
 
 // ProxyContainerName is the fixed name we use for the managed Caddy
 // container so repeated enable/disable cycles don't leave orphans.
@@ -94,9 +123,11 @@ func (s *Service) enableLocked(ctx context.Context) error {
 		return fmt.Errorf("image inspect: %w", err)
 	}
 
+	var adminID string
 	existing, err := cli.ContainerInspect(ctx, ProxyContainerName)
 	switch {
 	case err == nil && imageID != "" && matchesSpec(&existing, img, imageID):
+		adminID = existing.Config.Labels[adminIDLabel]
 		if existing.State == nil || !existing.State.Running {
 			if err := cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
 				return fmt.Errorf("container start: %w", err)
@@ -104,21 +135,21 @@ func (s *Service) enableLocked(ctx context.Context) error {
 		}
 	case err == nil:
 		slog.Info("proxy: replacing container that doesn't match the managed spec", "container", existing.ID[:12])
-		if err := s.createProxy(ctx, img, &existing); err != nil {
+		if adminID, err = s.createProxy(ctx, img, &existing); err != nil {
 			return err
 		}
 	case cerrdefs.IsNotFound(err):
-		if err := s.createProxy(ctx, img, nil); err != nil {
+		if adminID, err = s.createProxy(ctx, img, nil); err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("inspect proxy container: %w", err)
 	}
 
-	// Host networking means 127.0.0.1:2019 is Caddy's.
-	if err := ensureAdmin(ctx); err != nil {
+	if err := ensureAdmin(ctx, adminID); err != nil {
 		return err
 	}
+	s.adminID.Store(&adminID)
 	s.enabled.Store(true)
 	return s.SyncFromDB(ctx)
 }
@@ -133,6 +164,7 @@ func matchesSpec(c *container.InspectResponse, img, imageID string) bool {
 	h := c.HostConfig
 	return c.Config.Labels[specLabel] == specHashFor(img) &&
 		c.Config.Labels["dockmesh.component"] == "proxy" &&
+		validAdminID(c.Config.Labels[adminIDLabel]) &&
 		c.Image == imageID &&
 		reflect.DeepEqual([]string(c.Config.Cmd), proxyCmd) &&
 		len(c.Config.Entrypoint) == 0 &&
@@ -148,20 +180,20 @@ func matchesSpec(c *container.InspectResponse, img, imageID string) bool {
 }
 
 // createProxy pulls img if needed, removes old (when set) and
-// creates + starts a fresh container.
-func (s *Service) createProxy(ctx context.Context, img string, old *container.InspectResponse) error {
+// creates + starts a fresh container. It returns the container's admin ID.
+func (s *Service) createProxy(ctx context.Context, img string, old *container.InspectResponse) (string, error) {
 	cli := s.docker.Raw()
 	if _, err := cli.ImageInspect(ctx, img); err != nil {
 		if !cerrdefs.IsNotFound(err) {
-			return fmt.Errorf("image inspect: %w", err)
+			return "", fmt.Errorf("image inspect: %w", err)
 		}
 		rc, err := cli.ImagePull(ctx, img, image.PullOptions{})
 		if err != nil {
-			return fmt.Errorf("image pull %s: %w", img, err)
+			return "", fmt.Errorf("image pull %s: %w", img, err)
 		}
 		if _, err := io.Copy(io.Discard, rc); err != nil {
 			rc.Close()
-			return fmt.Errorf("image pull read: %w", err)
+			return "", fmt.Errorf("image pull read: %w", err)
 		}
 		rc.Close()
 	}
@@ -169,10 +201,18 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 	if old != nil {
 		_ = cli.ContainerStop(ctx, old.ID, container.StopOptions{})
 		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			return fmt.Errorf("remove outdated proxy container: %w", err)
+			return "", fmt.Errorf("remove outdated proxy container: %w", err)
 		}
 	}
 
+	adminID, err := newAdminID()
+	if err != nil {
+		return "", err
+	}
+	bootstrap, err := bootstrapConfig(adminID)
+	if err != nil {
+		return "", err
+	}
 	cfg := &container.Config{
 		Image: img,
 		Cmd:   proxyCmd,
@@ -180,6 +220,7 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 			"dockmesh.managed":   "true",
 			"dockmesh.component": "proxy",
 			specLabel:            specHashFor(img),
+			adminIDLabel:         adminID,
 		},
 	}
 	hostCfg := &container.HostConfig{
@@ -189,7 +230,7 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 	}
 	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, &dnetwork.NetworkingConfig{}, nil, ProxyContainerName)
 	if err != nil {
-		return fmt.Errorf("container create: %w", err)
+		return "", fmt.Errorf("container create: %w", err)
 	}
 
 	// Seed the bootstrap config, and overwrite any autosave a replaced
@@ -197,19 +238,19 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 	// config before the first push. Copied after Create and before
 	// Start so there's no race with the Caddy process reading them.
 	tarStream, err := tarFiles(map[string][]byte{
-		"caddy.json":          bootstrapConfig,
-		"caddy/autosave.json": bootstrapConfig,
+		"caddy.json":          bootstrap,
+		"caddy/autosave.json": bootstrap,
 	})
 	if err != nil {
-		return fmt.Errorf("build bootstrap tar: %w", err)
+		return "", fmt.Errorf("build bootstrap tar: %w", err)
 	}
 	if err := cli.CopyToContainer(ctx, resp.ID, "/config", tarStream, container.CopyToContainerOptions{}); err != nil {
-		return fmt.Errorf("seed bootstrap config: %w", err)
+		return "", fmt.Errorf("seed bootstrap config: %w", err)
 	}
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("container start: %w", err)
+		return "", fmt.Errorf("container start: %w", err)
 	}
-	return nil
+	return adminID, nil
 }
 
 // StartWatchdog re-pushes the routes whenever Caddy runs a different
@@ -286,6 +327,7 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 		return err
 	}
 	s.enabled.Store(false)
+	s.adminID.Store(nil)
 	return nil
 }
 
@@ -336,7 +378,7 @@ func (s *Service) GetStatus(ctx context.Context) *Status {
 	st.Running = info.State != nil && info.State.Running
 	if st.Running {
 		ok, server := adminStatus(ctx)
-		st.AdminOK = ok
+		st.AdminOK = ok && info.Config != nil && verifyAdmin(ctx, info.Config.Labels[adminIDLabel]) == nil
 		if server != "" {
 			st.Version = server
 		}

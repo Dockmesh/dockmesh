@@ -40,10 +40,44 @@ func adminRequest(ctx context.Context, method, path string, body io.Reader) (*ht
 	return req, nil
 }
 
-// pushConfig POSTs the config to Caddy's admin API /load endpoint.
-// Caddy replaces its entire running config atomically and saves it, so
-// a restarted container (`--resume`) comes back with the same routes.
+// errNotManagedCaddy means something answers on the admin address but
+// not to the managed container's admin ID.
+var errNotManagedCaddy = errors.New("the admin API on " + adminAddr + " is not the Caddy container Dockmesh manages; is another process using the port?")
+
+// verifyAdmin checks that the admin API answers to id, which only the
+// managed container's config carries.
+func verifyAdmin(ctx context.Context, id string) error {
+	if !validAdminID(id) {
+		return errNotManagedCaddy
+	}
+	req, err := adminRequest(ctx, http.MethodGet, "/id/"+id, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("caddy admin unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return errNotManagedCaddy
+	}
+	return nil
+}
+
+// pushConfig POSTs the config to Caddy's admin API /load endpoint after
+// checking it reaches the managed Caddy. Caddy replaces its entire
+// running config atomically and saves it, so a restarted container
+// (`--resume`) comes back with the same routes.
 func pushConfig(ctx context.Context, cfg *caddyConfig) error {
+	if cfg.Admin == nil {
+		return errNotManagedCaddy
+	}
+	if err := verifyAdmin(ctx, cfg.Admin.ID); err != nil {
+		return err
+	}
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -116,13 +150,18 @@ func adminStatus(ctx context.Context) (bool, string) {
 	return true, resp.Header.Get("Server")
 }
 
-// ensureAdmin waits up to ~15s for the admin API to come up. Used right
-// after starting the caddy container.
-func ensureAdmin(ctx context.Context) error {
+// ensureAdmin waits up to ~15s for the managed Caddy's admin API to
+// answer to id. Used right after starting the caddy container.
+func ensureAdmin(ctx context.Context, id string) error {
 	deadline := time.Now().Add(15 * time.Second)
+	lastErr := errors.New("caddy admin API did not become ready")
 	for time.Now().Before(deadline) {
-		if ok, _ := adminStatus(ctx); ok {
+		err := verifyAdmin(ctx, id)
+		if err == nil {
 			return nil
+		}
+		if errors.Is(err, errNotManagedCaddy) {
+			lastErr = err
 		}
 		select {
 		case <-ctx.Done():
@@ -130,5 +169,5 @@ func ensureAdmin(ctx context.Context) error {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	return errors.New("caddy admin API did not become ready")
+	return lastErr
 }

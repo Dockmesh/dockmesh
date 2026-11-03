@@ -45,10 +45,11 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		return nil, fmt.Errorf("otlp grpc exporter: %w", err)
 	}
 
+	// Schemaless, as resource.Default() carries the SDK's own semconv
+	// schema URL and Merge refuses two different ones.
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
+		resource.NewSchemaless(
 			semconv.ServiceName(cfg.ServiceName),
 			semconv.ServiceVersion(cfg.ServiceVersion),
 		),

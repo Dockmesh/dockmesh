@@ -184,8 +184,16 @@
     if (!fileResult || fileResult.binary) return '';
     try { return atob(fileResult.content); } catch { return ''; }
   });
-  function downloadBlob() {
+  async function downloadFile() {
     if (!fileResult || !selectedFile) return;
+    if (fileResult.truncated) {
+      try {
+        await api.volumes.downloadFile(name, selectedFile, hostId);
+      } catch (err) {
+        toast.error(m.volumes_download_failed(), err instanceof ApiError ? err.message : undefined);
+      }
+      return;
+    }
     const bytes = Uint8Array.from(atob(fileResult.content), (c) => c.charCodeAt(0));
     const blob = new Blob([bytes]);
     const url = URL.createObjectURL(blob);
@@ -478,7 +486,7 @@
                 {fmtBytes(fileResult.size)}{fileResult.truncated ? ` · ${m.volumes_truncated_preview()}` : ''}{fileResult.binary ? ` · ${m.volumes_binary()}` : ''}
               </p>
             </div>
-            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={downloadBlob}>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={downloadFile}>
               <Download size={12} strokeWidth={1.5} /> {m.common_download()}
             </button>
           </div>

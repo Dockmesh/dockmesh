@@ -96,8 +96,11 @@ type Service struct {
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex
 	intakes     map[string]*metricsIntake
-	enrollTTL   time.Duration
-	now         func() time.Time
+	// historyDeletes tracks the background deletes of a removed agent's
+	// metrics history.
+	historyDeletes sync.WaitGroup
+	enrollTTL      time.Duration
+	now            func() time.Time
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id

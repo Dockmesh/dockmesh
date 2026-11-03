@@ -19,7 +19,7 @@ func managedContainer(s *Service, imageID string) *container.InspectResponse {
 		},
 		Config: &container.Config{
 			Cmd:    append([]string(nil), proxyCmd...),
-			Labels: map[string]string{specLabel: s.specHash(), "dockmesh.component": "proxy"},
+			Labels: map[string]string{specLabel: s.specHash(), "dockmesh.component": "proxy", adminIDLabel: "dockmesh-admin-0123456789abcdef0123456789abcdef"},
 		},
 	}
 }
@@ -42,6 +42,8 @@ func TestMatchesSpec(t *testing.T) {
 		{"cmd", func(c *container.InspectResponse) { c.Config.Cmd = []string{"caddy", "run"} }},
 		{"bridge", func(c *container.InspectResponse) { c.HostConfig.NetworkMode = "bridge" }},
 		{"no label", func(c *container.InspectResponse) { delete(c.Config.Labels, specLabel) }},
+		{"no admin id", func(c *container.InspectResponse) { delete(c.Config.Labels, adminIDLabel) }},
+		{"bad admin id", func(c *container.InspectResponse) { c.Config.Labels[adminIDLabel] = "dockmesh-admin-x" }},
 	}
 	for _, tt := range tamper {
 		c := managedContainer(s, img)

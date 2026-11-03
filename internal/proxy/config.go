@@ -10,6 +10,7 @@ type caddyConfig struct {
 }
 
 type caddyAdmin struct {
+	ID            string   `json:"@id,omitempty"`
 	Listen        string   `json:"listen"`
 	Origins       []string `json:"origins,omitempty"`
 	EnforceOrigin bool     `json:"enforce_origin,omitempty"`
@@ -21,7 +22,14 @@ type caddyApps struct {
 }
 
 type caddyHTTP struct {
+	Metrics *caddyHTTPMetrics      `json:"metrics,omitempty"`
 	Servers map[string]caddyServer `json:"servers"`
+}
+
+// caddyHTTPMetrics turns on Caddy's HTTP metrics, which are off unless
+// configured; per_host adds the host label the per-site figures use.
+type caddyHTTPMetrics struct {
+	PerHost bool `json:"per_host"`
 }
 
 type caddyServer struct {
@@ -199,7 +207,7 @@ func buildConfig(routes []Route, g Settings) (*caddyConfig, []string) {
 func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
 		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
-		Apps:  caddyApps{HTTP: caddyHTTP{Servers: map[string]caddyServer{}}},
+		Apps:  caddyApps{HTTP: caddyHTTP{Metrics: &caddyHTTPMetrics{PerHost: true}, Servers: map[string]caddyServer{}}},
 	}
 
 	// A www redirect never takes a name that is a site of its own.

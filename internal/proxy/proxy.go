@@ -92,9 +92,11 @@ type noticeSetter interface {
 }
 
 type Service struct {
-	db       *sql.DB
-	docker   *docker.Client
-	enabled  atomic.Bool
+	db      *sql.DB
+	docker  *docker.Client
+	enabled atomic.Bool
+	// adminID is the running container's admin ID (see adminIDLabel).
+	adminID  atomic.Pointer[string]
 	notices  noticeSetter
 	settings SettingsStore
 
@@ -171,6 +173,9 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 		return nil, err
 	}
 	cfg, blocked := buildConfig(routes, s.ProxySettings())
+	if id := s.adminID.Load(); id != nil {
+		cfg.Admin.ID = *id
+	}
 	if s.notices != nil {
 		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{
 			Key:      noticeKeyBlocked,

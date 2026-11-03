@@ -8178,8 +8178,8 @@ paths:
       summary: Read a single file inside a volume, capped at 1 MiB
       description: |
         Returns up to 1 MiB of content. `truncated: true` signals the file
-        is larger — the UI then offers a download link instead of an inline
-        preview. `binary: true` is set when a NUL byte is found in the
+        is larger — the UI then offers `browse/download` instead of an
+        inline preview. `binary: true` is set when a NUL byte is found in the
         first 8 KiB (same heuristic git uses).
       parameters:
         - name: name
@@ -8209,6 +8209,51 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /volumes/{name}/browse/download:
+    get:
+      operationId: volumes.browse_download
+      tags: [volumes]
+      summary: Download a whole file inside a volume
+      description: |
+        Streams the file as `application/octet-stream` with
+        `Content-Disposition: attachment`, without the 1 MiB cap of
+        `browse/file`. On agent hosts the content is streamed from the
+        agent. Requires `volumes.browse`; audited like a file read.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Raw file bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: |
+            `path` is missing, leaves the volume root (`..` or a symlink
+            pointing outside the volume), is too long, or is not a regular file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            Volume driver doesn't expose a host-filesystem mountpoint, or the
+            agent is too old to download volume files.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

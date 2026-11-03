@@ -1,0 +1,3 @@
+kind: Fixed
+body: A deploy whose image pull fails part-way, for example on a registry rate limit, stops with the registry's error instead of failing later with No such image; with a cached copy it deploys that copy. Affected v0.5.0 and earlier
+time: 2026-11-03T22:06:11.57298632Z

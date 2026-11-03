@@ -16,7 +16,9 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
-const helperImage = "alpine:3.24"
+// helperImage mounts volumes with data, so it is pinned to the multi-arch
+// index digest; it matches the host package's browse helper.
+const helperImage = "alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
 
 // tarVolume runs agents.VolumeExportScript inside an alpine helper that
 // mounts the named volume read-only and streams the gzipped archive on

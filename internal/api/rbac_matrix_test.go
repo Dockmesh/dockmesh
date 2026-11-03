@@ -221,6 +221,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/volumes/prune", rbac.PermVolumesDelete},
 	{"GET", "/api/v1/volumes/{name}/browse", rbac.PermVolumesBrowse},
 	{"GET", "/api/v1/volumes/{name}/browse/file", rbac.PermVolumesBrowse},
+	{"GET", "/api/v1/volumes/{name}/browse/download", rbac.PermVolumesBrowse},
 	{"POST", "/api/v1/restore/verify", rbac.PermBackupsRestore},
 	{"POST", "/api/v1/backups/runs/{id}/verify", rbac.PermBackupsRestore},
 	{"GET", "/api/v1/users", rbac.PermUsersView},

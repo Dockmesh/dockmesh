@@ -33,7 +33,11 @@ func newTestService(t *testing.T) (*Service, *pki.Manager) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewService(database, mgr, "http://dockmesh.test:8080", "wss://dockmesh.test:8443/connect"), mgr
+	svc := NewService(database, mgr, "http://dockmesh.test:8080", "wss://dockmesh.test:8443/connect")
+	// Runs before the database closes and the temp dir is removed, so a
+	// history delete started by Delete can't write into it afterwards.
+	t.Cleanup(svc.historyDeletes.Wait)
+	return svc, mgr
 }
 
 // serveListenerTLS serves h with exactly cfg, the way the agent listener

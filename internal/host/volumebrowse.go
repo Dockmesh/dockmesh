@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/safepath"
@@ -105,7 +106,10 @@ func openInVolume(mountpoint, sub string) (*os.Root, string, *os.File, error) {
 	if err != nil {
 		return nil, "", nil, err
 	}
-	f, err := root.Open(rel)
+	// O_NONBLOCK: a FIFO swapped in by a container would otherwise block
+	// the open until a writer appears. Callers refuse non-regular files
+	// after it; regular files and directories read the same.
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		root.Close()
 		if safepath.IsRootEscape(err) {

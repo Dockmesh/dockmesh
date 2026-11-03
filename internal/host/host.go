@@ -82,9 +82,11 @@ type Host interface {
 	VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error)
 	// VolumeReadFile reads a single regular file inside the volume,
 	// capped at maxBytes. Returns truncated=true when the file is
-	// larger than the cap so the UI can offer a download link
-	// (stream support is a follow-up).
+	// larger than the cap so the UI can offer VolumeDownloadFile.
 	VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error)
+	// VolumeDownloadFile streams a whole regular file inside the volume.
+	// A refused path can surface as the reader's first error.
+	VolumeDownloadFile(ctx context.Context, name, subpath string) (io.ReadCloser, error)
 
 	// VolumeTar opens a tar.gz stream of the whole volume (used by
 	// backup jobs that target this host). Caller Close()s when done.

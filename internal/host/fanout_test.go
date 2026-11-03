@@ -83,6 +83,9 @@ func (f *fakeHost) VolumeBrowseEntries(context.Context, string, string) ([]Volum
 func (f *fakeHost) VolumeReadFile(context.Context, string, string, int64) (*VolumeFileResult, error) {
 	panic("no")
 }
+func (f *fakeHost) VolumeDownloadFile(context.Context, string, string) (io.ReadCloser, error) {
+	panic("no")
+}
 func (f *fakeHost) VolumeTar(context.Context, string) (io.ReadCloser, error) {
 	panic("no")
 }
