@@ -234,27 +234,16 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// EnrollAgent is the public endpoint the agent binary calls during its
-// first boot to swap a one-time token for a client cert. There is NO
-// JWT / Bearer auth on this route — the token IS the auth.
+// EnrollAgent answers the old enrollment route on the HTTP port. Agents
+// enroll on the agent listener, where the pinned agents CA protects the
+// token and the issued key; this route would hand them out over whatever
+// the HTTP port is reachable by, plain HTTP included.
 func (h *Handlers) EnrollAgent(w http.ResponseWriter, r *http.Request) {
-	if h.Agents == nil {
-		writeError(w, http.StatusServiceUnavailable, "agents not configured")
-		return
+	msg := "enrollment moved to the agent port: run the install command from the Hosts page"
+	if h.Agents != nil {
+		if u := h.Agents.EnrollURL(); u != "" {
+			msg += " (enrolls at " + u + ")"
+		}
 	}
-	var req agents.EnrollRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	resp, err := h.Agents.Enroll(r.Context(), req)
-	if errors.Is(err, agents.ErrInvalidToken) {
-		writeError(w, http.StatusUnauthorized, "invalid token")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeError(w, http.StatusGone, msg)
 }

@@ -52,7 +52,7 @@ location ~ ^/api/v1/auth/(login|mfa)$ {
 | 80, 443 | Managed Caddy proxy, only when enabled | As your published apps require |
 | 2019 | Caddy admin API | Never; bound to `127.0.0.1` |
 
-The HTTP port also accepts enrollment at `POST /api/v1/agents/enroll` and returns the agent's key and certificate in the response. Reach it only through TLS (your proxy on 443), never over plain HTTP across a network.
+Agents enroll only on the agent listener, over TLS checked against the agents CA. The old route `POST /api/v1/agents/enroll` on the HTTP port answers `410 Gone` and names the enrollment URL to use.
 
 The agent listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`. If you don't use remote agents, block 8443 in the firewall. Agent hosts need no inbound ports at all. See [Ports](../reference/ports.md).
 

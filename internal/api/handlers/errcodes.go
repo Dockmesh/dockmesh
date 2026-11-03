@@ -54,6 +54,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"docker unavailable — cannot test", "docker_unavailable_cannot_test"},
 	{"drain service unavailable", "drain_service_unavailable"},
 	{"draining a host moves its stacks to other hosts and needs Hosts: Manage on everything", "drain_needs_hosts_manage"},
+	{"the agent upgrade policy applies to every host and needs Hosts: Manage on everything", "upgrade_policy_needs_hosts_manage"},
 	{"email taken", "email_taken"},
 	{"enroll first", "enroll_first"},
 	{"exporting the backup key needs the key export extra on everything", "key_export_needs_extra"},

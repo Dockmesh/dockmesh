@@ -205,12 +205,6 @@
     }
   }
 
-  async function copyEnrollURL() {
-    // The install URL is not stored after creation; a fresh token comes
-    // from the host's Maintenance tab.
-    await copyWithToast(`${window.location.origin}/api/v1/agents/enroll`, m.hosts_enroll_url_copied());
-  }
-
   async function runPolicy() {
     try {
       upgradePolicy = await api.agents.runUpgradePolicy();
@@ -303,7 +297,6 @@
       if (needsUpgrade(r)) {
         items.push({ label: upgradingId === r.id ? m.hosts_upgrading() : m.hosts_upgrade_agent(), disabled: upgradingId === r.id, onclick: () => upgradeHost(r.id, r.name) });
       }
-      items.push({ label: m.hosts_copy_enroll_url(), onclick: copyEnrollURL });
       items.push({ separator: true }, { label: m.hosts_revoke_ellipsis(), danger: true, onclick: () => revokeHost(r) });
     }
     return items;
