@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -356,13 +355,18 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 			}
 			return fmt.Errorf("image pull %s: %w", svc.Image, err)
 		}
-		if _, err := io.Copy(io.Discard, rc); err != nil {
-			rc.Close()
+		err = readPullStream(rc, []string{auth})
+		rc.Close()
+		if err != nil {
 			pullSpan.SetStatus(codes.Error, err.Error())
 			pullSpan.End()
-			return fmt.Errorf("image pull read %s: %w", svc.Image, err)
+			if !localMissing {
+				slog.Warn("image pull failed, using cached copy",
+					"image", svc.Image, "err", err)
+				continue
+			}
+			return fmt.Errorf("image pull %s: %w", svc.Image, err)
 		}
-		rc.Close()
 		pullSpan.End()
 	}
 	return nil
