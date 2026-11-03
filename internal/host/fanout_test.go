@@ -120,7 +120,13 @@ func (f *fakeHost) InspectVolume(context.Context, string) (volume.Volume, error)
 func (f *fakeHost) CreateVolume(context.Context, string, string, map[string]string) (volume.Volume, error) {
 	panic("no")
 }
-func (f *fakeHost) RemoveVolume(context.Context, string, bool) error { panic("no") }
+func (f *fakeHost) RemoveVolume(context.Context, string, bool) error         { panic("no") }
+func (f *fakeHost) PruneVolumes(context.Context) (volume.PruneReport, error) { panic("no") }
+func (f *fakeHost) CreateNetwork(context.Context, string, string, map[string]string) (network.CreateResponse, error) {
+	panic("no")
+}
+func (f *fakeHost) RemoveNetwork(context.Context, string) error                { panic("no") }
+func (f *fakeHost) PruneNetworks(context.Context) (network.PruneReport, error) { panic("no") }
 func (f *fakeHost) DeployStack(context.Context, string, string, string) (*compose.DeployResult, error) {
 	panic("no")
 }

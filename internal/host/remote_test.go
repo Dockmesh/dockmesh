@@ -37,3 +37,20 @@ func TestRemoteVolumeManageNeedsCapability(t *testing.T) {
 		t.Errorf("remove on an old agent: %v", err)
 	}
 }
+
+func TestRemoteResourceManageNeedsCapability(t *testing.T) {
+	h := NewRemote("a1", "edge-1", &fakeLive{ag: &agents.ConnectedAgent{ID: "a1", Hello: agents.HelloPayload{Capabilities: []string{agents.CapVolumeManage}}}})
+	ctx := context.Background()
+	if _, err := h.PruneVolumes(ctx); !errors.Is(err, ErrAgentNoResourceManage) {
+		t.Errorf("volume prune on an old agent: %v", err)
+	}
+	if _, err := h.CreateNetwork(ctx, "net", "", nil); !errors.Is(err, ErrAgentNoResourceManage) {
+		t.Errorf("network create on an old agent: %v", err)
+	}
+	if err := h.RemoveNetwork(ctx, "net"); !errors.Is(err, ErrAgentNoResourceManage) {
+		t.Errorf("network remove on an old agent: %v", err)
+	}
+	if _, err := h.PruneNetworks(ctx); !errors.Is(err, ErrAgentNoResourceManage) {
+		t.Errorf("network prune on an old agent: %v", err)
+	}
+}

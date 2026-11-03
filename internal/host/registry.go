@@ -16,6 +16,8 @@ type Registry struct {
 
 	afterDeploy DeployHook
 	auth        RegistryAuth
+
+	fixed []Host
 }
 
 // RegistryAuth maps the images a request pulls on a host to their
@@ -35,6 +37,13 @@ func NewRegistry(dockerCli *docker.Client, agentSvc *agents.Service) *Registry {
 	}
 }
 
+// NewFixedRegistry serves exactly the given hosts instead of the local
+// daemon and the live agents, so tests can see which host a request
+// reached. A host with ID "local" answers for an empty id.
+func NewFixedRegistry(hosts ...Host) *Registry {
+	return &Registry{fixed: hosts}
+}
+
 // Local returns the shared LocalHost so callers (e.g. main.go's
 // git-source auto-deploy) can reuse the same instance that
 // handlers.pickHost hands out, which keeps the auth resolver and any
@@ -45,6 +54,17 @@ func (r *Registry) Local() *LocalHost { return r.local }
 // returns the local docker. Anything else is looked up against the
 // agents service.
 func (r *Registry) Pick(id string) (Host, error) {
+	if r.fixed != nil {
+		if id == "" {
+			id = "local"
+		}
+		for _, h := range r.fixed {
+			if h.ID() == id {
+				return h, nil
+			}
+		}
+		return nil, ErrUnknownHost
+	}
 	if id == "" || id == "local" {
 		return r.local, nil
 	}

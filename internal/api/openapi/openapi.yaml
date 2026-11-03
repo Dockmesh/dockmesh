@@ -4241,7 +4241,12 @@ paths:
     post:
       operationId: networks.create
       tags: [networks]
-      summary: Create a network on the central daemon
+      summary: Create a network on a host
+      description: |
+        `host` picks the host (default the server's own). Agents older than
+        this server answer 503 and need an update.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
       requestBody:
         required: true
         content:
@@ -4264,11 +4269,14 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/HostUnavailable"}
   /networks/prune:
     post:
       operationId: networks.prune
       tags: [networks]
-      summary: Remove unused networks
+      summary: Remove unused networks on the host given by `host`
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
       responses:
         "200":
           description: Prune report.
@@ -4282,6 +4290,7 @@ paths:
                     items: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/HostUnavailable"}
   /networks/topology:
     get:
       operationId: networks.topology
@@ -4334,7 +4343,7 @@ paths:
     delete:
       operationId: networks.remove
       tags: [networks]
-      summary: Remove a network
+      summary: Remove a network on the host given by `host`
       responses:
         "204": {description: Removed.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -4345,6 +4354,7 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/HostUnavailable"}
   /oidc/providers:
     get:
       operationId: oidc.list_providers
@@ -8058,7 +8068,9 @@ paths:
     post:
       operationId: volumes.prune
       tags: [volumes]
-      summary: Remove unused volumes
+      summary: Remove unused volumes on the host given by `host`
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
       responses:
         "200":
           description: Prune report.
@@ -8073,6 +8085,7 @@ paths:
                     items: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/HostUnavailable"}
   /volumes/{name}:
     parameters:
       - name: name
@@ -10351,6 +10364,12 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: The operation conflicts with existing state (e.g. duplicate name, built-in rule deletion).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    HostUnavailable:
+      description: The host is offline, has no Docker, or its agent is too old for this call and needs an update.
       content:
         application/json:
           schema:

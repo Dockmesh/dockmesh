@@ -271,3 +271,9 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    HostUnavailable:
+      description: The host is offline, has no Docker, or its agent is too old for this call and needs an update.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

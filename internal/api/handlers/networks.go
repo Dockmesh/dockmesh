@@ -174,13 +174,14 @@ func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host "+target.ID())
 		return
 	}
 	var req networkRequest
@@ -188,49 +189,51 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
-	resp, err := h.Docker.CreateNetwork(r.Context(), req.Name, req.Driver, req.Labels)
+	resp, err := target.CreateNetwork(r.Context(), req.Name, req.Driver, req.Labels)
 	if err != nil {
 		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
-	h.audit(r, audit.ActionNetworkCreate, req.Name, nil)
+	h.audit(r, audit.ActionNetworkCreate, req.Name, map[string]string{"host": target.ID()})
 	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host "+target.ID())
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := h.Docker.RemoveNetwork(r.Context(), id); err != nil {
+	if err := target.RemoveNetwork(r.Context(), id); err != nil {
 		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
-	h.audit(r, audit.ActionNetworkRemove, id, nil)
+	h.audit(r, audit.ActionNetworkRemove, id, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handlers) PruneNetworks(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	scopeReq := h.hostScopeReq("local")
-	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
-		return
-	}
-	report, err := h.Docker.PruneNetworks(r.Context())
+	target, err := h.pickHost(r)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionNetworkRemove, "", map[string]any{"pruned": len(report.NetworksDeleted)})
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host "+target.ID())
+		return
+	}
+	report, err := target.PruneNetworks(r.Context())
+	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionNetworkRemove, "", map[string]any{"pruned": len(report.NetworksDeleted), "host": target.ID()})
 	writeJSON(w, http.StatusOK, report)
 }

@@ -1015,6 +1015,28 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		net, err := cli.NetworkInspect(ctx, req.ID, network.InspectOptions{})
 		respond(conn, f.ID, net, err)
 
+	case agents.FrameReqNetworkCreate:
+		var req agents.NetworkCreateReq
+		_ = json.Unmarshal(f.Payload, &req)
+		if req.Driver == "" {
+			req.Driver = "bridge"
+		}
+		resp, err := cli.NetworkCreate(ctx, req.Name, network.CreateOptions{Driver: req.Driver, Labels: req.Labels})
+		respond(conn, f.ID, resp, err)
+
+	case agents.FrameReqNetworkRemove:
+		var req agents.ResourceIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		respond(conn, f.ID, nil, cli.NetworkRemove(ctx, req.ID))
+
+	case agents.FrameReqNetworkPrune:
+		report, err := cli.NetworksPrune(ctx, filters.Args{})
+		respond(conn, f.ID, report, err)
+
+	case agents.FrameReqVolumePrune:
+		report, err := cli.VolumesPrune(ctx, filters.NewArgs())
+		respond(conn, f.ID, report, err)
+
 	case agents.FrameReqVolumeInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
