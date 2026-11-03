@@ -205,7 +205,9 @@ paths:
         every evaluation (60s tick). `staged` upgrades N% of drifted
         agents per tick so an incompatible binary can't take down
         the whole fleet at once. `manual` (default) only upgrades
-        when the admin hits the per-agent Upgrade button.
+        when the admin hits the per-agent Upgrade button. Needs
+        `hosts.update` on everything; a grant on some hosts or tags is
+        refused with 403.
       requestBody:
         required: true
         content:
@@ -225,6 +227,7 @@ paths:
       operationId: agents.upgrade_policy_run
       tags: [agents]
       summary: Force one evaluation pass now (no waiting for the 60s tick)
+      description: Needs `hosts.update` on everything, like changing the policy.
       responses:
         "200":
           description: Evaluation completed; snapshot reflects any just-dispatched upgrades.

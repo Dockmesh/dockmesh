@@ -143,7 +143,7 @@ The upgrade policy decides whether the server upgrades agents on its own. It's e
 
 In `auto` and `staged` mode, the server stops trying an agent after three attempts with the same binary that didn't leave it up to date, at least 5 minutes apart. The upgrade buttons always try.
 
-While agents are behind, the Hosts page shows how many, the mode and the last evaluation, and **Run policy now** outside `manual` mode. There is no UI to change the mode. Use the API:
+While agents are behind, the Hosts page shows how many, the mode and the last evaluation, and **Run policy now** outside `manual` mode. There is no UI to change the mode. Use the API; changing the mode and **Run policy now** need Hosts: Manage on everything, a grant on some hosts or tags isn't enough:
 
 ```bash
 curl -X PUT https://dockmesh.example.com/api/v1/agents/upgrade-policy \

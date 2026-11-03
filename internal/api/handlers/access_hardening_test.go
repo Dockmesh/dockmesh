@@ -65,3 +65,40 @@ func TestDrainNeedsHostsOnEverything(t *testing.T) {
 		t.Errorf("host-scoped drain plan: %d %s", rr.Code, rr.Body)
 	}
 }
+
+// The upgrade policy upgrades agents on every host, so Hosts: Manage on a
+// host or a tag is not enough to change or run it.
+func TestUpgradePolicyNeedsHostsOnEverything(t *testing.T) {
+	e := newScopeEnv(t)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
+		r.Put("/agents/upgrade-policy", e.h.UpdateAgentUpgradePolicy)
+		r.Post("/agents/upgrade-policy/run", e.h.RunAgentUpgradeEvaluation)
+	})
+	tests := []struct {
+		user  string
+		scope rbac.Scope
+		want  int
+	}{
+		{"on-host", rbac.Scope{Type: rbac.ScopeHost, Host: "local"}, http.StatusForbidden},
+		{"on-tag", rbac.Scope{Type: rbac.ScopeHostTag, Value: "dev"}, http.StatusForbidden},
+		// Passes the check; no upgrade controller is wired in this env.
+		{"everywhere", rbac.Global, http.StatusServiceUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.user, func(t *testing.T) {
+			e.roleScopes["host-admin"] = []rbac.Scope{tt.scope}
+			e.user(tt.user, "host-admin")
+			tok := e.login(tt.user).AccessToken
+			for _, call := range []struct{ method, path string }{
+				{http.MethodPut, "/agents/upgrade-policy"},
+				{http.MethodPost, "/agents/upgrade-policy/run"},
+			} {
+				if rr := e.do(call.method, call.path, tok, map[string]string{"mode": "auto"}); rr.Code != tt.want {
+					t.Errorf("%s %s: %d %s, want %d", call.method, call.path, rr.Code, rr.Body, tt.want)
+				}
+			}
+		})
+	}
+}
