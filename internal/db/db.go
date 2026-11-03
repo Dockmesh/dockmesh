@@ -27,8 +27,10 @@ func Open(path string) (*sql.DB, error) {
 	// SQLITE_BUSY before the timeout applied. _txlock=immediate takes the
 	// write lock at BEGIN, where busy_timeout waits for it: a deferred
 	// transaction that reads first fails at once with SQLITE_BUSY when
-	// another writer commits before its first write.
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate", path)
+	// another writer commits before its first write. secure_delete(FAST)
+	// zeroes the old content of rewritten rows, so a credential that is
+	// changed or encrypted in place doesn't stay readable in the file.
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=secure_delete(FAST)&_txlock=immediate", path)
 	db, err := otelsql.Open("sqlite", dsn, otelsql.WithAttributes(
 		semconv.DBSystemSqlite,
 	), otelsql.WithSpanOptions(otelsql.SpanOptions{

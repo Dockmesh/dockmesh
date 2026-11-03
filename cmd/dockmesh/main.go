@@ -888,7 +888,7 @@ func main() {
 	backupSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotices(noticesSvc)
 	noticesSvc.Register(backup.RepairNoticeKey, func(ctx context.Context, n *notices.Service) error {
-		return prepareJobTargets(ctx, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
+		return prepareJobTargets(ctx, database, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
 			auditSvc.Write(ctx, "", audit.ActionBackupJobRepaired, j.Name, map[string]any{"job_id": j.ID, "target": target})
 		})
 	})

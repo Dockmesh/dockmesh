@@ -12,6 +12,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -153,7 +154,7 @@ const jobRepairDoneSetting = "backups.job_repair_done"
 // targets to saved targets and encrypts credentials still stored in
 // plaintext. The order matters: the migration copies whatever secret the
 // job holds, so it must see the repaired one.
-func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
+func prepareJobTargets(ctx context.Context, database *sql.DB, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
 	repairErr := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair)
 	moved, err := svc.MigrateInlineTargets(ctx)
 	if moved > 0 {
@@ -162,6 +163,13 @@ func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Serv
 	sealed, sealErr := svc.EncryptStoredTargetSecrets(ctx)
 	if sealed > 0 {
 		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
+	}
+	// The plaintext these steps replaced is still in the file's free space.
+	// A failed compaction only leaves it there, so it doesn't fail the step.
+	if moved+sealed > 0 {
+		if cerr := db.Compact(ctx, database); cerr != nil {
+			slog.Warn("backup: compacting the database after encrypting credentials", "err", cerr)
+		}
 	}
 	return errors.Join(repairErr, err, sealErr)
 }
