@@ -1,247 +1,96 @@
 <p align="center">
-  <img src=".github/banner.svg" alt="dockmesh" width="880" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/logo-dark.svg">
+    <img src=".github/logo-light.svg" alt="Dockmesh" width="200">
+  </picture>
+</p>
+
+<h1 align="center">Dockmesh</h1>
+
+<p align="center">
+  Manage Docker Compose stacks on all your hosts from one web UI.<br>
+  One binary, outbound-only agents, free and open source.
 </p>
 
 <p align="center">
-  <b>The single-binary Docker fleet manager. 100% open source. No paywalls.</b>
+  <a href="https://github.com/Dockmesh/dockmesh/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Dockmesh/dockmesh?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square"></a>
+  <a href="https://dockmesh.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-dockmesh.dev-0e7490?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/dockmesh/dockmesh/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/dockmesh/dockmesh?style=flat-square&color=04d1eb"></a>
-  <a href="https://github.com/dockmesh/dockmesh/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/dockmesh/dockmesh/release.yml?style=flat-square"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square"></a>
-  <a href="https://dockmesh.dev"><img alt="Website" src="https://img.shields.io/badge/website-dockmesh.dev-04d1eb?style=flat-square"></a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/shots/overview-dark.png">
+    <img src=".github/shots/overview-light.png" alt="Dockmesh overview: hosts, stacks, items that need attention and recent changes" width="900">
+  </picture>
 </p>
 
----
+## What it is
 
-dockmesh is a lightweight Docker fleet-management platform. One Go binary,
-one SvelteKit UI, outbound-only agents on every other host. Stacks live on
-disk as plain `compose.yaml` files: the filesystem is the source of truth;
-the database holds runtime state such as deployments, users and history.
-RBAC, SSO, audit log, encrypted backups, CVE scanning, and multi-host
-orchestration ship free in the single binary.
-No "community edition", no feature gates, no per-node pricing.
+Dockmesh is a web UI for Docker hosts that run Compose stacks. The server is a single Go binary with the UI
+built in; every other host runs a small agent that connects out to the server, so remote hosts need no open port.
+Stacks stay plain `compose.yaml` files on disk — you can still edit them, version them with git or run
+`docker compose` by hand.
 
-## One-line install
-
-```bash
-curl -fsSL https://get.dockmesh.dev | sudo bash
-```
-
-That pulls the latest release binary (amd64 or arm64) to
-`/usr/local/bin/dockmesh`, verifies its checksum, starts the service and
-prints the setup wizard URL, `http://<host>:8080/setup`. The wizard asks
-for the data directory, service user, admin account and public URL.
-For a setup without a browser, install with `DOCKMESH_NO_BOOTSTRAP=1`
-and run `sudo dockmesh init` instead.
-
-**Requirements on the host:** Docker Engine (Linux) or Docker Desktop (macOS) with the daemon running, `curl` + `tar` + `sha256sum`, `sudo` access, and ports `8080` + `8443` free. The installer creates the `dockmesh` service user (Linux), the systemd unit (or launchd plist on macOS) and the data directories, and prints a distro-specific install command for any missing tool. See [the requirements](https://dockmesh.dev/docs/getting-started/installation/#requirements).
-
-Prefer Docker? See [Docker Compose](#docker-compose) below.
-
-## Platform support
-
-<p align="center">
-  <img src=".github/platforms.svg" alt="Platform support matrix" width="880"/>
-</p>
-
-The server runs natively on Linux (systemd, `/var/lib/dockmesh`) and macOS (launchd, `/usr/local/var/dockmesh`), on amd64 and arm64. The install script detects the host OS and sets up the right service manager. The one-line agent installer enrolls Linux hosts with systemd (amd64 or arm64). The `dmctl` CLI is additionally built for Windows so Windows users can drive a dockmesh server from their workstation; the server and agent do not run on Windows.
+It is built for homelabs and small teams with a handful to a few dozen hosts. It does not manage Kubernetes.
 
 ## Features
 
-Everything is included in the single binary. There is no paid tier.
+- **Stacks** — deploy, update and roll back compose stacks; git sources with auto-deploy; templates; move a stack to another host
+- **Hosts** — one view across all hosts; agents over mTLS with outbound connections only; drain a host; agent upgrades from the UI
+- **Updates** — see which images have a newer version, update one or many, roll back to the previous image
+- **Backups** — scheduled, age-encrypted backups of volumes, stacks and Dockmesh itself to local disk, SMB, SFTP, WebDAV or S3; read back and verified after every run; restore from the UI
+- **Reverse proxy** — optional Caddy with automatic HTTPS, per-site options, import of an existing Caddyfile
+- **Alerts** — CPU, memory and disk thresholds, container restarts, OOM kills, offline hosts and expiring certificates, sent to email, Discord, Slack or webhooks
+- **Access** — roles per area with host, tag or stack scope; SSO with OIDC, SAML, LDAP and OAuth2; 2FA; hash-chained audit log
+- **Security scans** — image vulnerability scans with Grype
 
-<table>
-<tr><td>
+Everything is in the open source release. There is no paid edition.
 
-**Container & Stack management**
-- Compose-first: stacks are `stacks/<name>/compose.yaml`
-- Deploy / stop / restart / scale / rolling update
-- Rollback history (snapshot compose + resolved images per deploy)
-- Stack dependencies (base-stacks deploy first, refuse delete on deps)
-- Env overrides + global env vars injected at deploy time
-- Git source: auto-pull + auto-deploy on a poll interval or webhook
-- Templates gallery (one-click deploys)
+## Install
 
-</td><td>
-
-**Multi-host fleet**
-- Outbound-only mTLS agents (no inbound ports on remote hosts)
-- Per-host picker + `all` mode fan-out views
-- Deploy stacks to any host from the same UI
-- Stack migration across hosts with a preflight check (stacks with named volumes are refused; their data is not copied)
-- Role assignments scoped to hosts, host tags or stacks (per-team isolation)
-- Agent upgrades pushed from the server (manual, staged or automatic)
-
-</td></tr>
-<tr><td>
-
-**Security**
-- Custom RBAC roles with granular permissions
-- SSO via OIDC (presets for Keycloak, Authelia, Azure AD, Google, GitLab), SAML (Azure AD, AD FS, Okta, Authentik), OAuth2 (GitHub, GitLab, Google) and LDAP, plus generic providers of each kind
-- TOTP 2FA + single-use recovery codes
-- SHA-256 hash-chained audit log
-- age-encrypted stack `.env` files at rest
-- In-place age key rotation (no service restart)
-
-</td><td>
-
-**Observability**
-- Live CPU / memory / disk per host with smoothed metrics
-- Live container stats + log streaming with auto-reconnect
-- Container exec over WebSocket
-- Alert rules for CPU/memory thresholds and for events: restart loops, OOM kills, offline hosts, full disks, failed backups, expiring certificates
-- Notification channels: Slack, Discord, Teams, email, ntfy, Gotify, Pushover, PagerDuty, webhooks
-- Prometheus `/metrics` endpoint
-
-</td></tr>
-<tr><td>
-
-**Backups & DR**
-- Scheduled backups of volumes, stacks, or whole system
-- Pre/post hooks for application-consistent DB dumps
-  (PostgreSQL / MySQL / MariaDB / Redis / MongoDB)
-- Local, SMB (NAS), SFTP, WebDAV, or S3 targets
-- Encrypted with age, with the same key the stack `.env` uses
-- Restore of volumes, stacks or the whole system from the UI; the
-  archive is checked against its recorded checksum before anything is
-  overwritten
-- Verify reads an archive and checks its contents without touching the
-  live install
-
-</td><td>
-
-**Networking & Extras**
-- Optional reverse proxy with automatic HTTPS (Caddy in a managed `dockmesh-proxy` container)
-- Clear deploy error when a host port is already in use
-- CVE scanning with Grype (image-level + fix-in column)
-- Private registry credentials (age-encrypted at rest)
-- `dmctl` CLI for CI/CD + scripted deploys
-- `dockmesh import compose-dir` adopts existing compose directories as stacks
-- Web UI in English and German, chosen per user
-
-</td></tr>
-</table>
-
-## Screenshots
-
-See [dockmesh.dev](https://dockmesh.dev) for the live marketing carousel with all
-hero shots.
-
-| | |
-| :-: | :-: |
-| ![Dashboard](docs/site/assets/screenshots/introduction-dashboard.png) | ![Stack detail with Git source](docs/site/assets/screenshots/git-sources-stack.png) |
-| Dashboard with live fleet overview | Stack detail with GitOps auto-sync |
-| ![Container logs](docs/site/assets/screenshots/containers-logs.png) | ![Backups](docs/site/assets/screenshots/backups-runs.png) |
-| Live container logs with filtering | Scheduled encrypted backups |
-
-## Architecture
-
-<p align="center">
-  <img src="docs/site/assets/architecture.svg" alt="dockmesh architecture: browser and dmctl talk to the server on port 8080; agents dial out over mTLS on port 8443" width="880"/>
-</p>
-
-- **Single binary**. Go, with the SvelteKit UI embedded via `go:embed`. The optional reverse proxy runs Caddy as a separate `dockmesh-proxy` container, which Dockmesh pulls (a pinned, tested Caddy version) when you enable the proxy and configures through Caddy's admin API. CVE scanning uses Grype, a separate binary that `scripts/install.sh` installs unless `DOCKMESH_NO_SCANNER=1` is set.
-- **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
-- **Outbound-only agents**. Remote hosts open a WebSocket to the server: no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
-- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use dockmesh.
-
-## Install options
-
-### Bare-metal / VM (recommended)
+On a Linux host with Docker Engine running:
 
 ```bash
 curl -fsSL https://get.dockmesh.dev | sudo bash
 ```
 
-Then finish the setup wizard at `http://<host>:8080/setup`.
+The installer puts the binary in `/usr/local/bin`, creates a service user and a systemd unit and starts Dockmesh.
+Open `http://<host>:8080/setup` to create the admin account and finish the setup.
 
-### Docker Compose
+Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host.
 
-No container image is published. Build it from a checkout with the
-bundled `docker-compose.yml`:
+Requirements, macOS, Docker Compose and offline installs: [installation guide](https://dockmesh.dev/docs/installation/).
 
-```bash
-git clone https://github.com/dockmesh/dockmesh && cd dockmesh
-docker compose up -d --build
-```
+## Upgrade
 
-The UI is then on port 8080, and the generated `admin` password is
-printed in `docker compose logs dockmesh` (it stays in that log, so change it after the first sign-in). The container needs the
-Docker socket mounted, as in the compose file.
+Dockmesh shows new releases in the UI. Run the installer again or use the in-app update; database changes are
+applied on start, and agents can be upgraded from **Hosts**. Read the [changelog](CHANGELOG.md) before a minor
+release.
 
-### Install an agent on a remote host
+## How it works
 
-From the UI: **Hosts → Add host**, copy the one-line enroll command to the
-remote host (Linux with systemd, amd64 or arm64). The installer handles
-the systemd unit and first handshake.
+- **Server:** Go with the SvelteKit UI embedded, SQLite for state. Stacks live in `stacks/<name>/compose.yaml`.
+- **Agents:** connect to the server over a WebSocket with mTLS client certificates; each one can be revoked.
+- **Proxy and scanner:** Caddy runs in a separate `dockmesh-proxy` container when you enable it; Grype is a separate binary.
 
-## Quick start
+## Project status
 
-After the setup wizard:
+Dockmesh is before 1.0. Each release is tested on real machines (server and agents, upgrades, every backup target,
+SSO providers) before it is tagged; see the [changelog](CHANGELOG.md). Breaking changes are listed there with
+upgrade notes.
 
-1. **Sign in** at `http://<host>:8080` with the admin account you created
-2. **Create a stack**: **Stacks → New stack**, paste a compose.yaml, **Create & deploy**
-3. **(Optional) Enroll a second host**: **Hosts → Add host**, run the
-   install one-liner on the remote host
-4. **(Optional) Set up backups**: **Backups → New backup job**, pick a source and a target (SMB / S3 / SFTP / WebDAV / local), save
-5. **(Optional) Turn on the reverse proxy**: **Reverse proxy → Enable proxy**, then **New site**. Dockmesh starts the Caddy container, which requests the certificates
-6. **(Optional) Switch the language**: user menu → **My account** → **Language** (English or German)
+## Community
 
-## Documentation
+- Questions and ideas: [Discussions](https://github.com/Dockmesh/dockmesh/discussions)
+- Bugs and feature requests: [Issues](https://github.com/Dockmesh/dockmesh/issues) (👍 an existing issue instead of opening a duplicate)
+- Security problems: never in public issues, see [SECURITY.md](SECURITY.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 
-- [Installation](https://dockmesh.dev/docs/getting-started/installation/)
-- [First steps](https://dockmesh.dev/docs/getting-started/first-steps/)
-- [Multi-host setup](https://dockmesh.dev/docs/features/multi-host/)
-- [Backups and restore](https://dockmesh.dev/docs/operations/backups/)
-- [Permissions](https://dockmesh.dev/docs/concepts/permissions/) and [single sign-on](https://dockmesh.dev/docs/features/sso/)
-- [Disaster recovery](https://dockmesh.dev/docs/operations/disaster-recovery/)
+## A note on AI
 
-## Community & support
-
-- **Issues & bug reports**: [github.com/dockmesh/dockmesh/issues](https://github.com/dockmesh/dockmesh/issues)
-- **Feature requests**: same place, with the "enhancement" label
-- **Website**: [dockmesh.dev](https://dockmesh.dev)
-
-## Development
-
-```bash
-# Frontend + backend in watch mode
-make dev
-
-# Build single binary with embedded UI
-make build
-
-# Run Go and web unit tests and svelte-check
-make test
-```
-
-Tech stack: Go, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite.
-Caddy (reverse proxy container) and Grype (scanner binary) are separate
-components, not part of the Dockmesh binary.
-
-### A note on AI
-
-Spec, architecture, and design decisions are mine. Implementation is
-done with Claude Code as a coding assistant — each change reviewed,
-tested, and dogfooded on my own homelab before it hits a release tag.
-Flagging this up-front rather than hiding it.
+Parts of the code are written with AI assistance. Every change is reviewed and tested before it ships.
 
 ## License
 
-dockmesh is released under the **GNU Affero General Public License v3.0**
-(AGPL-3.0-only). See [LICENSE](LICENSE).
-
-The AGPL is chosen deliberately: modifications made available as a network
-service must be contributed back. That keeps the project sustainable and
-prevents SaaS-loophole exploitation.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). By contributing you agree that
-your work is licensed under AGPL-3.0.
-
-## Security
-
-Never report vulnerabilities in public issues. See [SECURITY.md](SECURITY.md).
+[AGPL-3.0-only](LICENSE). If you offer a modified Dockmesh as a network service, you have to publish your changes.
