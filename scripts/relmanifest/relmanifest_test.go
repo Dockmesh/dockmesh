@@ -110,7 +110,6 @@ func TestParseErrors(t *testing.T) {
 		{"unknown subsection", "## [Unreleased]\n### Removed\n- x\n", "unknown subsection"},
 		{"prose under subsection", "## [Unreleased]\n### Added\nsome prose\n", "expected a \"- \" bullet"},
 		{"upgrade note without id", "## [Unreleased]\n### Upgrade notes\n- Just do it.\n", "must be"},
-		{"old bracket upgrade note", "## [Unreleased]\n### Upgrade notes\n- [x, all] Do it.\n", "must be"},
 		{"unknown audience label", "## [Unreleased]\n### Upgrade notes\n- **Users:** Do it. <!-- x -->\n", "must be"},
 		{"duplicate action", "## [Unreleased]\n### Upgrade notes\n- A. <!-- x -->\n- **Admins:** B. <!-- x -->\n", "duplicate upgrade action"},
 		{"duplicate section", "## [Unreleased]\n## [Unreleased]\n", "duplicate section"},

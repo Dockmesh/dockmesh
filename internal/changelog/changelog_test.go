@@ -76,3 +76,14 @@ func TestActionBulletRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestParseOldActionForm(t *testing.T) {
+	sections, err := Parse("## [Unreleased]\n### Upgrade notes\n- [re-login, all] Sign in again.\n- [sftp, admins] Re-save.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Action{{ID: "re-login", Audience: "all", Text: "Sign in again."}, {ID: "sftp", Audience: "admins", Text: "Re-save."}}
+	if got := sections[0].Actions; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsed %+v, want %+v", got, want)
+	}
+}

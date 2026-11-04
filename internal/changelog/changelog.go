@@ -49,6 +49,7 @@ var (
 	advisoryBullet   = regexp.MustCompile(`^(GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}) \((critical|high|moderate|low)\): (.+)$`)
 	actionBullet     = regexp.MustCompile(`^(?:\*\*([A-Za-z]+):\*\* )?(.+) <!-- ([a-z0-9][a-z0-9-]*) -->$`)
 	actionID         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	oldActionBullet  = regexp.MustCompile(`^\[([a-z0-9][a-z0-9-]*), (all|admins)\] (.+)$`)
 )
 
 // audienceLabels names the audiences narrower than "all"; an upgrade note
@@ -85,7 +86,12 @@ func NewAction(id, audience, text string) (Action, error) {
 	return Action{ID: id, Audience: audience, Text: text}, nil
 }
 
+// parseAction also reads the "[id, audience] text" form the changelog used
+// up to 0.5.1, since checks parse the base branch's CHANGELOG.md as well.
 func parseAction(b string) (Action, bool) {
+	if m := oldActionBullet.FindStringSubmatch(b); m != nil {
+		return Action{ID: m[1], Audience: m[2], Text: m[3]}, true
+	}
 	m := actionBullet.FindStringSubmatch(b)
 	if m == nil {
 		return Action{}, false
