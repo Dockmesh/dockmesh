@@ -63,7 +63,13 @@ go run github.com/miniscruff/changie@v1.26.0 new --kind Fixed --body "What chang
 ```
 
 Kinds are `Added`, `Changed`, `Fixed`, `Security` and `Upgrade notes`; the
-body is one line. The fragment lands in `.changes/unreleased/`; commit it
+body is one line. An upgrade note also needs an id, a short kebab-case name
+that never changes, and who has to act (`all` or `admins`):
+
+```bash
+go run github.com/miniscruff/changie@v1.26.0 new --kind "Upgrade notes" --body "Re-save each SFTP backup target." \
+  --custom Id=sftp-host-key --custom Audience=admins
+``` The fragment lands in `.changes/unreleased/`; commit it
 with your change. Don't edit `CHANGELOG.md`, it is generated at release
 time (see `RELEASING.md`). The `changelog` check fails without a fragment.
 Changes users won't notice (CI, refactoring, tests) get the `no-changelog`

@@ -17,7 +17,7 @@ Read the release notes before you upgrade. They are generated from [`CHANGELOG.m
 |---|---|
 | Severity in the release header | `security` (upgrade as soon as possible), `recommended` or `normal` |
 | **Highlights** | Three or four lines on what changed most; every minor release has them |
-| **Upgrade notes** | Things someone has to do after the upgrade, marked for everyone or for admins only |
+| **Upgrade notes** | Things someone has to do after the upgrade; notes only admins have to act on are marked **Admins** |
 | "Direct upgrades are supported from X.Y.Z or later" | Older installs must first upgrade to that version. Neither the installer nor the server checks this, so check it yourself |
 
 The release notes of the running version are also compiled into the binary. `GET /api/v1/system/whats-new` returns them, together with the notes of a newer release if one was found. The web UI does not show them; use the [releases page](https://github.com/dockmesh/dockmesh/releases) instead.

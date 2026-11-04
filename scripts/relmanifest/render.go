@@ -48,11 +48,7 @@ func RenderNotes(s *changelog.Section) string {
 	if len(s.Actions) > 0 {
 		b.WriteString("### Upgrade notes\n\n")
 		for _, a := range s.Actions {
-			who := "Everyone"
-			if a.Audience == "admins" {
-				who = "Admins"
-			}
-			fmt.Fprintf(&b, "- **%s:** %s\n", who, a.Text)
+			b.WriteString("- " + changelog.FormatAction(a) + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -99,7 +95,7 @@ func RenderBody(s *changelog.Section) string {
 	if len(s.Actions) > 0 {
 		b.WriteString("## After upgrading, check\n\n")
 		for _, a := range s.Actions {
-			b.WriteString("- " + a.Text + "\n")
+			b.WriteString("- " + changelog.FormatAction(a) + "\n")
 		}
 		b.WriteString("\n")
 	}

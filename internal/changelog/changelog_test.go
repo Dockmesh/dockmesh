@@ -51,3 +51,28 @@ func TestHighlights(t *testing.T) {
 		t.Error("manifest lists must be non-nil")
 	}
 }
+
+func TestActionBulletRoundTrip(t *testing.T) {
+	tests := []struct {
+		name   string
+		action Action
+		bullet string
+	}{
+		{"everyone has no label", Action{ID: "re-login", Audience: "all", Text: "Sign in again."}, "Sign in again. <!-- re-login -->"},
+		{"admins are labelled", Action{ID: "sftp-host-key", Audience: "admins", Text: "Re-save each target."}, "**Admins:** Re-save each target. <!-- sftp-host-key -->"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ActionBullet(tt.action); got != tt.bullet {
+				t.Fatalf("ActionBullet = %q, want %q", got, tt.bullet)
+			}
+			sections, err := Parse("## [Unreleased]\n### Upgrade notes\n- " + tt.bullet + "\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sections[0].Actions; len(got) != 1 || got[0] != tt.action {
+				t.Fatalf("parsed %+v, want %+v", got, tt.action)
+			}
+		})
+	}
+}

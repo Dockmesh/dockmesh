@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/changelog"
@@ -147,8 +148,27 @@ func runCheck(args []string, stdout io.Writer) error {
 }
 
 type fragment struct {
-	Kind string `yaml:"kind"`
-	Body string `yaml:"body"`
+	Kind   string            `yaml:"kind"`
+	Body   string            `yaml:"body"`
+	Custom map[string]string `yaml:"custom"`
+}
+
+var oldActionPrefix = regexp.MustCompile(`^\[[a-z0-9-]+, (all|admins)\] `)
+
+// bullet is the fragment as changie renders it into CHANGELOG.md, without
+// the leading "- ".
+func (f fragment) bullet(body string) (string, error) {
+	if f.Kind != "Upgrade notes" {
+		return body, nil
+	}
+	if oldActionPrefix.MatchString(body) {
+		return "", errors.New("put the id and audience in the Id and Audience fields, not in the body")
+	}
+	a, err := changelog.NewAction(f.Custom["Id"], f.Custom["Audience"], body)
+	if err != nil {
+		return "", err
+	}
+	return changelog.ActionBullet(a), nil
 }
 
 // checkFragments parses each fragment in dir as its own bullet, then all of
@@ -182,11 +202,15 @@ func checkFragments(dir string) (map[string]bool, error) {
 		case strings.ContainsAny(body, "\r\n"):
 			return nil, fmt.Errorf("%s: body must be one line", e.Name())
 		}
-		if _, err := changelog.Parse("## [Unreleased]\n### " + f.Kind + "\n- " + body + "\n"); err != nil {
+		line, err := f.bullet(body)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		if _, err := changelog.Parse("## [Unreleased]\n### " + f.Kind + "\n- " + line + "\n"); err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		names[e.Name()] = true
-		byKind[f.Kind] = append(byKind[f.Kind], body)
+		byKind[f.Kind] = append(byKind[f.Kind], line)
 	}
 	var all strings.Builder
 	all.WriteString("## [Unreleased]\n")

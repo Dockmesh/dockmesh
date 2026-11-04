@@ -38,8 +38,8 @@ Minimum upgrade from: 0.3.0
   per purpose.
 
 ### Upgrade notes
-- [re-login, all] Sign in again after the upgrade.
-- [sftp-host-key, admins] Re-save each SFTP backup target.
+- Sign in again after the upgrade. <!-- re-login -->
+- **Admins:** Re-save each SFTP backup target. <!-- sftp-host-key -->
 
 ### Added
 - Release manifest.
@@ -109,9 +109,10 @@ func TestParseErrors(t *testing.T) {
 		{"bad date", "## [1.0.0] - 2026-1-1 [normal]\n", "malformed version header"},
 		{"unknown subsection", "## [Unreleased]\n### Removed\n- x\n", "unknown subsection"},
 		{"prose under subsection", "## [Unreleased]\n### Added\nsome prose\n", "expected a \"- \" bullet"},
-		{"untagged upgrade note", "## [Unreleased]\n### Upgrade notes\n- Just do it.\n", "must start with"},
-		{"bad audience", "## [Unreleased]\n### Upgrade notes\n- [x, users] Do it.\n", "must start with"},
-		{"duplicate action", "## [Unreleased]\n### Upgrade notes\n- [x, all] A.\n- [x, admins] B.\n", "duplicate upgrade action"},
+		{"upgrade note without id", "## [Unreleased]\n### Upgrade notes\n- Just do it.\n", "must be"},
+		{"old bracket upgrade note", "## [Unreleased]\n### Upgrade notes\n- [x, all] Do it.\n", "must be"},
+		{"unknown audience label", "## [Unreleased]\n### Upgrade notes\n- **Users:** Do it. <!-- x -->\n", "must be"},
+		{"duplicate action", "## [Unreleased]\n### Upgrade notes\n- A. <!-- x -->\n- **Admins:** B. <!-- x -->\n", "duplicate upgrade action"},
 		{"duplicate section", "## [Unreleased]\n## [Unreleased]\n", "duplicate section"},
 	}
 	for _, tt := range tests {
@@ -157,7 +158,7 @@ Everyone has to sign in again.
 
 ### Upgrade notes
 
-- **Everyone:** Sign in again after the upgrade.
+- Sign in again after the upgrade.
 - **Admins:** Re-save each SFTP backup target.
 
 ### Added
@@ -186,8 +187,8 @@ Fixes two issues.
 - GHSA-3xq8-c4fv-9m7w (high): Another one.
 
 ### Upgrade notes
-- [re-login, all] Sign in again once.
-- [sftp, admins] Re-save each SFTP target.
+- Sign in again once. <!-- re-login -->
+- **Admins:** Re-save each SFTP target. <!-- sftp -->
 
 ### Fixed
 - Long list entry that stays out of the body.
@@ -203,7 +204,7 @@ Fixes two issues.
 		"sudo systemctl restart dockmesh",
 		"rebuild it from the v0.4.0 tag",
 		"`dockmesh version` is 0.4.0",
-		"- Sign in again once.\n- Re-save each SFTP target.\n",
+		"- Sign in again once.\n- **Admins:** Re-save each SFTP target.\n",
 		"- [GHSA-2xq8-c4fv-9m7w](https://github.com/Dockmesh/dockmesh/security/advisories/GHSA-2xq8-c4fv-9m7w) (critical): MFA could be disabled.",
 		"blob/v0.4.0/CHANGELOG.md#040---2026-10-29-security)",
 	} {
@@ -375,10 +376,12 @@ func TestCheckCommand(t *testing.T) {
 		{name: "empty body", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Fixed\nbody: ''\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "a.yaml: body is empty"},
 		{name: "multi-line body", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Fixed\nbody: |\n  one\n  two\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "a.yaml: body must be one line"},
 		{name: "invalid fragment fails even when not changed", base: base, head: base, frags: map[string]string{"a.yaml": added, "b.yaml": "kind: Fixed\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "b.yaml: body is empty"},
-		{name: "upgrade note without id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: Sign in again.\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "must start with"},
-		{name: "upgrade note with id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: '[re-login, all] Sign in again.'\n"}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "upgrade note without id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: Sign in again.\ncustom:\n  Audience: all\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: `id "" must be lower-case kebab-case`},
+		{name: "upgrade note with bad audience", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: Sign in again.\ncustom:\n  Id: re-login\n  Audience: users\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: `audience "users" must be all or admins`},
+		{name: "upgrade note with id in the body", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: '[re-login, all] Sign in again.'\ncustom:\n  Id: re-login\n  Audience: all\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "Id and Audience fields"},
+		{name: "upgrade note with id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: Sign in again.\ncustom:\n  Id: re-login\n  Audience: all\n"}, changed: ".changes/unreleased/a.yaml\n"},
 		{name: "duplicate upgrade ids across fragments", base: base, head: base,
-			frags:   map[string]string{"a.yaml": "kind: Upgrade notes\nbody: '[re-login, all] One.'\n", "b.yaml": "kind: Upgrade notes\nbody: '[re-login, admins] Two.'\n"},
+			frags:   map[string]string{"a.yaml": "kind: Upgrade notes\nbody: One.\ncustom:\n  Id: re-login\n  Audience: all\n", "b.yaml": "kind: Upgrade notes\nbody: Two.\ncustom:\n  Id: re-login\n  Audience: admins\n"},
 			changed: ".changes/unreleased/b.yaml\n", wantErr: `duplicate upgrade action id "re-login"`},
 		{name: "minor release cut with highlights", base: base, head: cut("0.4.0", 3)},
 		{name: "minor release cut with four highlights", base: base, head: cut("0.4.0", 4)},

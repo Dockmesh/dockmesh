@@ -23,9 +23,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   A minor release (`X.Y.0`) must have them; patch releases may leave them out.
 - A Security bullet of the form `- GHSA-xxxx-xxxx-xxxx (critical|high|moderate|low): Title`
   is published as an advisory.
-- Every Upgrade notes bullet is something a person has to do after upgrading and starts with
-  `[id, audience]`, where `id` is a short kebab-case name that stays fixed and audience is
-  `all` or `admins`: `- [re-login, all] Sign in again after the upgrade.`
+- Every Upgrade notes bullet is something a person has to do after upgrading. A note only
+  admins have to act on starts with `**Admins:** `; a note for everyone has no label. It ends
+  with its id, a short kebab-case name that stays fixed, in an HTML comment:
+  `- **Admins:** Re-save each SFTP backup target. <!-- sftp-host-key -->`.
 
 ## [Unreleased]
 
