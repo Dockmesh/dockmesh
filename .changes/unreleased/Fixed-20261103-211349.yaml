@@ -1,3 +1,0 @@
-kind: Fixed
-body: Needs attention on the overview and under Activity is shown in the user's language; the items were always English. The API keeps the English title and detail and adds title_key, detail_key and params
-time: 2026-11-03T21:13:49.853635842Z

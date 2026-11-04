@@ -51,7 +51,7 @@ When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade
 5. If the service still runs as root, it moves it to the `dockmesh` user: it chowns the data root to `dockmesh:dockmesh` (mode 700) and adds `User=dockmesh` and `Group=docker` to the unit.
 6. It restarts `dockmesh.service`, checks that the service came up with a new process started from the new binary, and that the installed binary reports the new version.
 
-Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.5.0`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.5.0 bash`.
+Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.5.1`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.5.1 bash`.
 
 > **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary and runs a fresh install into `/usr/local/bin`: it keeps `dockmesh.env` and the data, but rewrites the systemd unit to start the new copy, leaves the old binary where it is and makes no `.bak`.
 
@@ -60,7 +60,7 @@ Without systemd, the script replaces the binary but cannot restart the server; r
 To upgrade by hand, for example on an air-gapped host:
 
 ```bash
-TAG=v0.5.0
+TAG=v0.5.1
 ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
@@ -102,6 +102,8 @@ Some releases sign everyone out once, for example when the session format change
 Putting only the previous binary back is not a supported downgrade. Migrations only go forward, and the older binary does not check the schema version: it starts on the migrated database, and whether it then works depends on what the migrations changed. From v0.5.0 back to v0.4.2 it does not start at all (`setup state init failed ... no such column: role`).
 
 The way back is the previous binary together with the pre-migration snapshot the upgrade wrote. Changes made after the upgrade are lost.
+
+A snapshot from v0.4.x is deleted on the first start once the upgrade checks pass, because it holds secrets in plaintext (see What happens on the first start). Going back to v0.4.x after that needs the backup from step 1 or a system backup made on v0.4.x.
 
 ```bash
 sudo systemctl stop dockmesh
@@ -153,7 +155,7 @@ During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linu
 On the agent host, take the agent binary from the release archive. Linux archives contain both architectures:
 
 ```bash
-TAG=v0.5.0
+TAG=v0.5.1
 ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"

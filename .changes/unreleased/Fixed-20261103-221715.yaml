@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'Per-site requests, errors and latency on the Reverse proxy page fill again: the pushed Caddy config turns on Caddy''s HTTP metrics per host. Affected v0.5.0 and earlier'
-time: 2026-11-03T22:17:15.13369499Z

@@ -1,3 +1,0 @@
-kind: Security
-body: 'Changing the Base URL now also needs Users & roles: Manage, since invite links and SSO callbacks use it; each change is audited with the old and new address and the invite dialog shows the host the links point to. Released v0.5.0 is not affected.'
-time: 2026-11-04T08:29:27.272437129Z

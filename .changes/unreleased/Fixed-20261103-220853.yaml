@@ -1,3 +1,0 @@
-kind: Fixed
-body: OpenTelemetry tracing starts again when DOCKMESH_OTEL_ENDPOINT is set; it failed at startup with a conflicting schema URL and sent no traces. Affected v0.5.0 and earlier
-time: 2026-11-03T22:08:53.154781303Z
