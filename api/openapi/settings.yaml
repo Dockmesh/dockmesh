@@ -36,6 +36,12 @@ paths:
 
         The audit webhook keys are rejected with 400; configure them via
         `PUT /audit/webhook`. The response omits them like `GET /settings`.
+
+        Invite links and SSO callback URLs are built from `base_url`, so
+        changing it also needs `users.create` on everything; without it the
+        request is refused with 403 and nothing is saved. Sending the current
+        value back unchanged is allowed. Every change writes a
+        `settings.base_url_update` audit entry with the old and new value.
       requestBody:
         required: true
         content:

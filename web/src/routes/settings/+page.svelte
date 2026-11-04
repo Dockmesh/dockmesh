@@ -99,8 +99,10 @@
           aria-label={m.settings_base_url()}
           placeholder="https://dockmesh.example.com"
           value={form.get('base_url')}
+          disabled={!allowed('users.create')}
           oninput={(e) => form.set('base_url', e.currentTarget.value)}
         />
+        {#if !allowed('users.create')}<p class="dm-sub">{m.settings_base_url_needs_users()}</p>{/if}
       </div>
     </div>
 

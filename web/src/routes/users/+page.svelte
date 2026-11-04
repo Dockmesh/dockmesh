@@ -145,6 +145,13 @@
   let iTTL = $state(72);
   let iBusy = $state(false);
   let iLinks = $state<Array<{ email: string; url: string }>>([]);
+  const linkHost = $derived.by(() => {
+    try {
+      return iLinks.length ? new URL(iLinks[0].url).host : '';
+    } catch {
+      return '';
+    }
+  });
 
   function openInvite() {
     iEmails = ''; iRole = 'viewer'; iScope = { type: 'global' }; iTTL = 72; iLinks = [];
@@ -316,6 +323,7 @@
   {#if iLinks.length}
     <div class="form">
       <p class="dm-sub">{m.users_share_links()}</p>
+      {#if linkHost}<p class="dm-sub">{m.users_links_point_to_before()} <strong class="dm-mono">{linkHost}</strong>{m.users_links_point_to_after()}</p>{/if}
       {#each iLinks as l (l.url)}
         <div class="dm-field">
           <span class="lbl">{l.email}</span>

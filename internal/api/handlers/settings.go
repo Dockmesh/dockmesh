@@ -82,6 +82,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, e.Key+" is managed via /proxy/settings and /proxy/version")
 			return
 		}
+		// Invite links and sign-in callbacks are built from the base URL, so
+		// pointing it elsewhere is as powerful as handing out invites.
+		if e.Key == settings.KeyBaseURL && h.Settings.Get(e.Key, "") != e.Value && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermUsersCreate) {
+			writeError(w, http.StatusForbidden, "changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it")
+			return
+		}
 		if e.Key == settings.KeyBaseURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
 			if err := agents.ValidateBaseURL(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "base URL "+err.Error())
@@ -128,6 +134,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if prev == e.Value {
 			continue
+		}
+		if e.Key == settings.KeyBaseURL {
+			h.audit(r, "settings.base_url_update", "", map[string]any{"before": prev, "after": e.Value})
 		}
 		h.applySettingSideEffect(r, e.Key, e.Value)
 	}

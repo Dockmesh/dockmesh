@@ -56,7 +56,7 @@ func TestSettingsHideAuditWebhookKeys(t *testing.T) {
 		wantCode int
 	}{
 		{"list", http.MethodGet, "", http.StatusOK},
-		{"update other key", http.MethodPut, `[{"key":"base_url","value":"https://x.example.com"}]`, http.StatusOK},
+		{"update other key", http.MethodPut, `[{"key":"scanner_enabled","value":"false"}]`, http.StatusOK},
 		{"write webhook secret", http.MethodPut, `[{"key":"audit.webhook_hmac_secret","value":"evil"}]`, http.StatusBadRequest},
 		{"write webhook url", http.MethodPut, `[{"key":"audit.webhook_url","value":"https://evil.example.com"}]`, http.StatusBadRequest},
 	}

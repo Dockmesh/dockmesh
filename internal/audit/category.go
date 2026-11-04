@@ -161,6 +161,7 @@ var categories = map[string]string{
 	"audit.webhook_configure":   CategorySystem,
 	"audit.webhook_test":        CategorySystem,
 	"secrets.rotate":            CategorySystem,
+	"settings.base_url_update":  CategorySystem,
 	"system.update_check":       CategorySystem,
 	"system.restore_stage":      CategorySystem,
 	"system.restore_apply":      CategorySystem,

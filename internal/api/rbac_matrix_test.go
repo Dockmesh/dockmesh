@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -375,6 +376,12 @@ var routeGates = []struct {
 
 func newMatrixEnv(t *testing.T) (*auth.Service, *rbac.Store, *handlers.Handlers) {
 	t.Helper()
+	return newMatrixEnvWith(t, nil)
+}
+
+// newMatrixEnvWith lets a test add dependencies that need the database.
+func newMatrixEnvWith(t *testing.T, extra func(*sql.DB, *handlers.Deps)) (*auth.Service, *rbac.Store, *handlers.Handlers) {
+	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -401,7 +408,11 @@ func newMatrixEnv(t *testing.T) (*auth.Service, *rbac.Store, *handlers.Handlers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.New(handlers.Deps{Auth: authSvc, Roles: roles, Stacks: mgr, Deployments: stacks.NewDeploymentStore(database)})
+	deps := handlers.Deps{Auth: authSvc, Roles: roles, Stacks: mgr, Deployments: stacks.NewDeploymentStore(database)}
+	if extra != nil {
+		extra(database, &deps)
+	}
+	h := handlers.New(deps)
 	return authSvc, roles, h
 }
 
