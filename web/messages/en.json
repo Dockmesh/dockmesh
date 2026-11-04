@@ -505,6 +505,7 @@
   "apierr_backup_targets_unavailable": "backup targets unavailable",
   "apierr_backups_not_configured": "backups not configured",
   "apierr_backups_unavailable": "backups unavailable",
+  "apierr_base_url_needs_users_create": "Changing the Base URL also needs the users.create permission, because invite links and sign-in callbacks use it",
   "apierr_caddyfile_required": "caddyfile required",
   "apierr_cannot_delete_yourself": "cannot delete yourself",
   "apierr_code_required": "code required",

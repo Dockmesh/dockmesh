@@ -276,12 +276,12 @@ func TestTrustedProxiesSetting(t *testing.T) {
 	e.h.proxyNotice = &proxyNotice{notices: e.h.Notices}
 
 	rr := post(t, e.h.UpdateSettings, "/settings", "127.0.0.1:1",
-		[]map[string]string{{"key": "base_url", "value": "https://x"}, {"key": settings.KeyTrustedProxies, "value": "10.0.0.0/8, nope"}})
+		[]map[string]string{{"key": settings.KeyScannerEnabled, "value": "false"}, {"key": settings.KeyTrustedProxies, "value": "10.0.0.0/8, nope"}})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid list: %d, want 400", rr.Code)
 	}
-	if got := e.h.Settings.Get(settings.KeyBaseURL, ""); got != "" {
-		t.Fatalf("a rejected request saved base_url = %q", got)
+	if got := e.h.Settings.Stored(settings.KeyScannerEnabled); got != "" {
+		t.Fatalf("a rejected request saved scanner_enabled = %q", got)
 	}
 
 	e.h.proxyNotice.observe("198.51.100.1")

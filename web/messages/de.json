@@ -505,6 +505,7 @@
   "apierr_backup_targets_unavailable": "Backup-Ziele nicht verfügbar",
   "apierr_backups_not_configured": "Backups nicht konfiguriert",
   "apierr_backups_unavailable": "Backups nicht verfügbar",
+  "apierr_base_url_needs_users_create": "Zum Ändern der Basis-URL ist zusätzlich die Berechtigung users.create nötig, weil Einladungslinks und Anmelde-Callbacks sie verwenden",
   "apierr_caddyfile_required": "Caddyfile erforderlich",
   "apierr_cannot_delete_yourself": "Das eigene Konto kann nicht gelöscht werden",
   "apierr_code_required": "Code erforderlich",
