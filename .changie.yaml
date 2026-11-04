@@ -23,4 +23,16 @@ kinds:
   - label: Changed
   - label: Fixed
   - label: Security
+  # The id names the note in release-manifest.json and stays fixed; it is
+  # kept in an HTML comment so rendered markdown doesn't show it.
   - label: Upgrade notes
+    changeFormat: '- {{if eq .Custom.Audience "admins"}}**Admins:** {{end}}{{.Body}} <!-- {{.Custom.Id}} -->'
+    additionalChoices:
+      - key: Id
+        label: Id (short kebab-case name, e.g. re-login)
+        type: string
+        minLength: 1
+      - key: Audience
+        label: Who has to act
+        type: enum
+        enumOptions: [all, admins]

@@ -23,9 +23,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   A minor release (`X.Y.0`) must have them; patch releases may leave them out.
 - A Security bullet of the form `- GHSA-xxxx-xxxx-xxxx (critical|high|moderate|low): Title`
   is published as an advisory.
-- Every Upgrade notes bullet is something a person has to do after upgrading and starts with
-  `[id, audience]`, where `id` is a short kebab-case name that stays fixed and audience is
-  `all` or `admins`: `- [re-login, all] Sign in again after the upgrade.`
+- Every Upgrade notes bullet is something a person has to do after upgrading. A note only
+  admins have to act on starts with `**Admins:** `; a note for everyone has no label. It ends
+  with its id, a short kebab-case name that stays fixed, in an HTML comment:
+  `- **Admins:** Re-save each SFTP backup target. <!-- sftp-host-key -->`.
 
 ## [Unreleased]
 
@@ -60,11 +61,11 @@ Dockmesh 0.5.1 is a patch release. Prunes, network and image actions and System 
 
 ### Upgrade notes
 
-- [update-agents, admins] Update your agents from the Hosts page after the server. Pruning volumes or networks, creating or deleting networks and downloading a whole file from a volume on an agent host need this version; older agents refuse these with a message to update and keep running everything else
-- [plaintext-snapshot, admins] The first start removes pre-upgrade database copies (dockmesh.db.pre-migrate-*.bak) that hold plaintext secrets, including those left by earlier v0.4.x upgrades, once the checks after the upgrade pass. Rolling back to v0.4.x is then only possible from a system backup. If a check fails, the copy is kept and a notice says why; delete it once Dockmesh works. Without secrets encryption nothing is removed
-- [proxy-recreated, admins] The managed dockmesh-proxy container is recreated once on the first start after the upgrade, a few seconds without proxy traffic; sites and certificates are kept
-- [proxy-env-default, admins] DOCKMESH_PROXY_ENABLED only sets the default until the proxy is turned on or off in the UI; after that the saved choice wins at every start. To force the proxy on or off, use the Reverse proxy page
-- [base-url-permission, admins] Changing the Base URL in Settings now needs Users & roles: Manage as well as Settings & audit: Manage. Custom roles with only Settings & audit: Manage see the field read-only; give them Users & roles: Manage if they should change it
+- **Admins:** Update your agents from the Hosts page after the server. Pruning volumes or networks, creating or deleting networks and downloading a whole file from a volume on an agent host need this version; older agents refuse these with a message to update and keep running everything else <!-- update-agents -->
+- **Admins:** The first start removes pre-upgrade database copies (dockmesh.db.pre-migrate-*.bak) that hold plaintext secrets, including those left by earlier v0.4.x upgrades, once the checks after the upgrade pass. Rolling back to v0.4.x is then only possible from a system backup. If a check fails, the copy is kept and a notice says why; delete it once Dockmesh works. Without secrets encryption nothing is removed <!-- plaintext-snapshot -->
+- **Admins:** The managed dockmesh-proxy container is recreated once on the first start after the upgrade, a few seconds without proxy traffic; sites and certificates are kept <!-- proxy-recreated -->
+- **Admins:** DOCKMESH_PROXY_ENABLED only sets the default until the proxy is turned on or off in the UI; after that the saved choice wins at every start. To force the proxy on or off, use the Reverse proxy page <!-- proxy-env-default -->
+- **Admins:** Changing the Base URL in Settings now needs Users & roles: Manage as well as Settings & audit: Manage. Custom roles with only Settings & audit: Manage see the field read-only; give them Users & roles: Manage if they should change it <!-- base-url-permission -->
 ## [0.5.0] - 2026-11-03 [security]
 
 Dockmesh 0.5.0 brings a redesigned web UI with a German translation, roles per area that can be limited to hosts, host tags or stacks, live progress and cancel for long operations, and safer backups with credentials encrypted at rest. It also fixes several scope leaks in earlier releases; see the Security section and the linked advisory. Read the upgrade notes before upgrading: access is migrated to the new role model, and going back needs the database snapshot written before the migration.
@@ -275,24 +276,24 @@ Dockmesh 0.5.0 brings a redesigned web UI with a German translation, roles per a
 
 ### Upgrade notes
 
-- [review-access, admins] Users, roles, scopes, tokens and invites migrate automatically and never gain access; where the old setup can't be expressed exactly, access is narrowed and an admin notice lists every account, role and token that changed. Review it under Users & roles
-- [builtin-roles, admins] The built-in roles follow the new definitions: Operator no longer deploys, Deployer no longer deletes stacks or opens terminals, Viewer can read logs; DOCKMESH_RBAC_V2_ENFORCE is gone. The admin notice after the upgrade lists everything each role lost
-- [update-agents, admins] Container metrics are moved to a layout keyed by host on the first start, keeping every sample. Update agents to record history on their hosts; until then their charts show live values.
-- [proxy-forward-auth-query, admins] API responses no longer include the query of a proxy site's forward-auth URL, also for users who can edit the proxy. Clients that send the URL back without a query keep the stored one; nothing else changes for existing sites.
-- [restore-replace-agent, admins] Restores with mode replace onto a host behind an agent need the agent of this version; an older agent is refused with a message to upgrade it from the Hosts page. Merge restores keep working with older agents.
-- [cpu-unit, admins] Existing CPU alert and autoscaling rules are labelled "% of one core" and behave as before; edit a rule to switch it to "% of host". API clients that create alert rules or write scaling rules without `cpu_unit` get "% of host".
-- [scope-auth, admins] API tokens created with a token before this release have no parent on record and keep working as before. Stacks created before this release have no host until they are deployed; users limited to some hosts need an admin to deploy them or to give them a stack assignment. Backup jobs with hooks into Dockmesh's own containers keep running; review them under Backups.
-- [secrets-at-rest, admins] On the first start, stored backup target credentials and secret global variables are encrypted automatically. Deploy history entries of environment-override deploys made before this version lose their compose snapshot, because it held .env values; they can no longer be rolled back to. Stacks whose compose.yaml an earlier rollback filled with .env values get a notice. The database snapshot taken before the upgrade (*.pre-migrate-*.bak next to the database) still holds the old plaintext values; delete it once the upgrade works.
-- [sso-rekey, admins] Existing OAuth2 and LDAP accounts move to their immutable id at their next sign-in within 30 days of the upgrade, as long as the login name or DN is still the one they were linked with; when that key isn't the new id (a GitHub `login`, a DN), the e-mail at the provider has to match the account too, and accounts with two-factor authentication or a role that manages users or settings are then left for an admin to recreate. Users renamed or moved before signing in again, and accounts not signed in within the 30 days, can't sign in through their provider any more and have to be recreated. The Authentication page and an admin notice list the accounts still waiting, with **End re-keying** to stop. Links left behind by providers deleted on earlier versions are removed.
-- [agent-url-setting, admins] Without DOCKMESH_AGENT_PUBLIC_URL in dockmesh.env, install commands now use the agent URL from Settings, or the base URL's host on port 8443, and the agent certificate gets that name added on the first start. Existing names and IPs stay, so enrolled agents keep connecting.
-- [agent-registry-auth, admins] Registry credentials now also reach agent hosts for the images they deploy; a registry without scope tags applies to every host, so add scope tags to registries that must stay off some hosts. Agents need this version to use the credentials; older agents keep pulling anonymously.
-- [git-poll-zero, admins] Git sources saved with poll interval 0 before this version were stored as 300 seconds; set 0 again to turn polling off.
-- [git-override-confirm, admins] Git auto-deploys and migrations now apply the stack's default environment override, but only one a manual deploy used with the same file; deploy a stack with an override once by hand to confirm it.
-- [audit-backup-actions, admins] Backup runs and restores are now audited as backup.run and backup.restore; update audit webhooks or SIEM filters that matched stack.deploy or container.rollback for backups.
-- [audit-job-host-actions, admins] Backup job changes, adding or removing hosts, agent upgrades and host drains are now audited as backup.job_create/update/delete, agent.create/delete/upgrade and host.drain/drain_abort instead of stack actions. Audit webhook filters that relied on stack.* for these need backup.*, agent.* or host.* added.
-- [ui-language, all] Browsers set to German now show the UI in German. To keep English, choose English under Account → Language; the choice is saved per user. Alert channels keep sending in English until a language is set on the channel.
-- [downgrade, admins] Going back to v0.4.2 by putting only the old binary back is not supported after this upgrade; v0.4.2 does not start on the migrated database. To roll back, restore the previous binary together with the database snapshot written before the migration (`dockmesh.db.pre-migrate-*.bak` next to the database), as described under Upgrade, Rolling back.
-- [upgrade-agents, admins] Upgrade agents after the server, from the Hosts page or with the agent upgrade policy. Older agents keep running, but replace restores, host-side volume changes, registry credentials and metrics history on their hosts need this version.
+- **Admins:** Users, roles, scopes, tokens and invites migrate automatically and never gain access; where the old setup can't be expressed exactly, access is narrowed and an admin notice lists every account, role and token that changed. Review it under Users & roles <!-- review-access -->
+- **Admins:** The built-in roles follow the new definitions: Operator no longer deploys, Deployer no longer deletes stacks or opens terminals, Viewer can read logs; DOCKMESH_RBAC_V2_ENFORCE is gone. The admin notice after the upgrade lists everything each role lost <!-- builtin-roles -->
+- **Admins:** Container metrics are moved to a layout keyed by host on the first start, keeping every sample. Update agents to record history on their hosts; until then their charts show live values. <!-- update-agents -->
+- **Admins:** API responses no longer include the query of a proxy site's forward-auth URL, also for users who can edit the proxy. Clients that send the URL back without a query keep the stored one; nothing else changes for existing sites. <!-- proxy-forward-auth-query -->
+- **Admins:** Restores with mode replace onto a host behind an agent need the agent of this version; an older agent is refused with a message to upgrade it from the Hosts page. Merge restores keep working with older agents. <!-- restore-replace-agent -->
+- **Admins:** Existing CPU alert and autoscaling rules are labelled "% of one core" and behave as before; edit a rule to switch it to "% of host". API clients that create alert rules or write scaling rules without `cpu_unit` get "% of host". <!-- cpu-unit -->
+- **Admins:** API tokens created with a token before this release have no parent on record and keep working as before. Stacks created before this release have no host until they are deployed; users limited to some hosts need an admin to deploy them or to give them a stack assignment. Backup jobs with hooks into Dockmesh's own containers keep running; review them under Backups. <!-- scope-auth -->
+- **Admins:** On the first start, stored backup target credentials and secret global variables are encrypted automatically. Deploy history entries of environment-override deploys made before this version lose their compose snapshot, because it held .env values; they can no longer be rolled back to. Stacks whose compose.yaml an earlier rollback filled with .env values get a notice. The database snapshot taken before the upgrade (*.pre-migrate-*.bak next to the database) still holds the old plaintext values; delete it once the upgrade works. <!-- secrets-at-rest -->
+- **Admins:** Existing OAuth2 and LDAP accounts move to their immutable id at their next sign-in within 30 days of the upgrade, as long as the login name or DN is still the one they were linked with; when that key isn't the new id (a GitHub `login`, a DN), the e-mail at the provider has to match the account too, and accounts with two-factor authentication or a role that manages users or settings are then left for an admin to recreate. Users renamed or moved before signing in again, and accounts not signed in within the 30 days, can't sign in through their provider any more and have to be recreated. The Authentication page and an admin notice list the accounts still waiting, with **End re-keying** to stop. Links left behind by providers deleted on earlier versions are removed. <!-- sso-rekey -->
+- **Admins:** Without DOCKMESH_AGENT_PUBLIC_URL in dockmesh.env, install commands now use the agent URL from Settings, or the base URL's host on port 8443, and the agent certificate gets that name added on the first start. Existing names and IPs stay, so enrolled agents keep connecting. <!-- agent-url-setting -->
+- **Admins:** Registry credentials now also reach agent hosts for the images they deploy; a registry without scope tags applies to every host, so add scope tags to registries that must stay off some hosts. Agents need this version to use the credentials; older agents keep pulling anonymously. <!-- agent-registry-auth -->
+- **Admins:** Git sources saved with poll interval 0 before this version were stored as 300 seconds; set 0 again to turn polling off. <!-- git-poll-zero -->
+- **Admins:** Git auto-deploys and migrations now apply the stack's default environment override, but only one a manual deploy used with the same file; deploy a stack with an override once by hand to confirm it. <!-- git-override-confirm -->
+- **Admins:** Backup runs and restores are now audited as backup.run and backup.restore; update audit webhooks or SIEM filters that matched stack.deploy or container.rollback for backups. <!-- audit-backup-actions -->
+- **Admins:** Backup job changes, adding or removing hosts, agent upgrades and host drains are now audited as backup.job_create/update/delete, agent.create/delete/upgrade and host.drain/drain_abort instead of stack actions. Audit webhook filters that relied on stack.* for these need backup.*, agent.* or host.* added. <!-- audit-job-host-actions -->
+- Browsers set to German now show the UI in German. To keep English, choose English under Account → Language; the choice is saved per user. Alert channels keep sending in English until a language is set on the channel. <!-- ui-language -->
+- **Admins:** Going back to v0.4.2 by putting only the old binary back is not supported after this upgrade; v0.4.2 does not start on the migrated database. To roll back, restore the previous binary together with the database snapshot written before the migration (`dockmesh.db.pre-migrate-*.bak` next to the database), as described under Upgrade, Rolling back. <!-- downgrade -->
+- **Admins:** Upgrade agents after the server, from the Hosts page or with the agent upgrade policy. Older agents keep running, but replace restores, host-side volume changes, registry credentials and metrics history on their hosts need this version. <!-- upgrade-agents -->
 ## [0.4.2] - 2026-10-30 [recommended]
 
 Fixes the backup target wizard (Continue stayed disabled in 0.4.1), the reverse proxy turning
@@ -339,7 +340,7 @@ SFTP, S3 and WebDAV servers.
 
 ### Upgrade notes
 
-- [move-to-new-address, admins] Only needed if you restore Dockmesh onto a server with a different
+- **Admins:** Only needed if you restore Dockmesh onto a server with a different
   address. (1) Install Dockmesh on the new host and run `dockmesh restore --from <backup.tar.gz>`.
   (2) Run `dockmesh ca reissue-server --add-san <new-ip> [--add-san <new-name>]`; skip this when
   agents connect by a name the certificate already covers and you only update DNS. (3) Set
@@ -347,7 +348,7 @@ SFTP, S3 and WebDAV servers.
   the old address) in `dockmesh.env` and restart Dockmesh. (4) On each agent set
   `DOCKMESH_AGENT_URL=wss://<new-address>:8443/connect` in `/etc/dockmesh-agent/agent.env` and
   restart `dockmesh-agent`; agents keep their certificates, no new token is needed. (5) Check that
-  every agent shows online.
+  every agent shows online. <!-- move-to-new-address -->
 
 ## [0.4.1] - 2026-10-30 [security]
 
@@ -464,8 +465,8 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
 
 ### Upgrade notes
 
-- [update-agents, admins] Update your agents from the Hosts page. Volume browsing on agent hosts
-  only works with the 0.4.1 agent.
+- **Admins:** Update your agents from the Hosts page. Volume browsing on agent hosts
+  only works with the 0.4.1 agent. <!-- update-agents -->
 
 ## [0.4.0] - 2026-10-29 [security]
 
@@ -702,34 +703,34 @@ see Upgrade notes.
   through symlinks in the data directory.
 
 ### Upgrade notes
-- [agent-upgrade, admins] Hosts that are already enrolled keep working and do not need to be
+- **Admins:** Hosts that are already enrolled keep working and do not need to be
   re-enrolled. Upgrade each agent once from its host page (or use automatic upgrades) so it
   verifies future upgrades; the upgrade from an older agent is still downloaded the old,
   unverified way. For a fully verified path, re-issue the host's token on its host page and run
   the new install command on the host: the installer checks the binary's SHA-256, pins the
-  agent CA, and the host keeps its ID, stacks and backup jobs.
-- [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
-  sign-in page says why.
-- [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
+  agent CA, and the host keeps its ID, stacks and backup jobs. <!-- agent-upgrade -->
+- Everyone is signed out once by the upgrade and has to sign in again. The
+  sign-in page says why. <!-- re-login -->
+- **Admins:** API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
-  user who should own it, then revoke the old one. A notice stays up until none are left.
-- [trusted-proxies, admins] If Dockmesh runs behind a reverse proxy on another machine or in
+  user who should own it, then revoke the old one. A notice stays up until none are left. <!-- legacy-api-tokens -->
+- **Admins:** If Dockmesh runs behind a reverse proxy on another machine or in
   a container, add the proxy's address under Settings → System → Trusted proxies. Until
   then every user appears with the proxy's address in sessions and the audit log, and they
   share one per-address login limit of 100 failures in 15 minutes. Dockmesh shows a notice
-  when it sees such a proxy.
-- [custom-role-permissions, admins] Custom roles that could restore backups keep downloading
+  when it sees such a proxy. <!-- trusted-proxies -->
+- **Admins:** Custom roles that could restore backups keep downloading
   archives; other custom roles lose archive downloads and container file access, and lose
   system backups and the backup key unless they are admins. A notice lists the affected
-  roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
-- [sso-email-linking, admins] Someone who has a local account and signs in through SSO for the
+  roles; grant "Download backups" or "Shell into container" under Users → Roles where intended. <!-- custom-role-permissions -->
+- **Admins:** Someone who has a local account and signs in through SSO for the
   first time now gets "an account with this email already exists". Turn on "link to existing
   accounts" for that provider (OIDC/OAuth2 with verified emails), or remove the local account.
   Accounts with two-factor authentication or the Admin role are never linked this way. Accounts
   that already signed in through SSO keep working as long as the provider sends the same
   subject; users whose LDAP DN or OAuth2 login changed need their old account removed or
-  relinked by an admin.
-- [saml-subject, admins] SAML accounts are now keyed by a stable subject. New providers ask
+  relinked by an admin. <!-- sso-email-linking -->
+- **Admins:** SAML accounts are now keyed by a stable subject. New providers ask
   for a persistent NameID; existing providers keep their NameID format. Check it under
   Authentication before your users sign in again (persistent is recommended, and with
   emailAddress a changed email breaks the login) or set a subject attribute: the first sign-in
@@ -742,37 +743,37 @@ see Upgrade notes.
   waiting; under Authentication you can end re-keying for all of them early
   (`auth.saml_rekey_end`), which closes the window in which another user of the identity
   provider with the same email could take such an account. With an identity provider on
-  another domain, Dockmesh must be reached over HTTPS.
-- [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email
+  another domain, Dockmesh must be reached over HTTPS. <!-- saml-subject -->
+- **Admins:** Earlier versions linked SSO logins to accounts by email
   alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
-  that each belongs to the right person.
-- [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
+  that each belongs to the right person. <!-- sso-linked-accounts-review -->
+- **Admins:** Host Admins no longer change system settings, SSO or
   global environment variables, and no longer see or download system backups. Give the Admin
-  role to anyone who still needs that.
-- [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
+  role to anyone who still needs that. <!-- host-admin-system-settings -->
+- **Admins:** Backup jobs whose names differ only in case or
   punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
   their retention can delete each other's backups. A notice lists the affected jobs; rename
-  one job of each group under Backups. The notice goes away once no names collide.
-- [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
+  one job of each group under Backups. The notice goes away once no names collide. <!-- backup-job-name-collision -->
+- **Admins:** Make sure the database directory has room for a full copy
   of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
   next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps
   the newest three; system backups leave these copies out. If the copy cannot be written, Dockmesh does not start and does not change
   the database; set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` to upgrade without it. To roll back,
   stop the service, copy the `.bak` file over the database file, delete the database's
-  `-wal` and `-shm` files if present, and start the previous version.
-- [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
+  `-wal` and `-shm` files if present, and start the previous version. <!-- premigrate-snapshot -->
+- **Admins:** Redeploy every stack that uses a relative bind mount
   (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.
-  On a remote host, upgrade the agent first: an older agent keeps the temporary mount.
-- [git-webhook-secret, admins] Git webhooks for stacks without a webhook secret are disabled;
+  On a remote host, upgrade the agent first: an older agent keeps the temporary mount. <!-- redeploy-relative-bind-mounts -->
+- **Admins:** Git webhooks for stacks without a webhook secret are disabled;
   polling and manual sync keep working. A notice lists the affected stacks. To keep using a
   webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
-  webhook settings of your git provider.
-- [stack-files-outside-changes, admins] Dockmesh now remembers the `compose.yaml` and `.env`
+  webhook settings of your git provider. <!-- git-webhook-secret -->
+- **Admins:** Dockmesh now remembers the `compose.yaml` and `.env`
   it last wrote for each stack, taking the files as they are at a stack's first deploy or
   check after the upgrade. If you edit stack files on the server by hand, or a container
   changes them, the stack page says "modified outside Dockmesh" and the next deploy asks you
-  to confirm the new content. Git syncs of such a stack wait until you confirm.
-- [setup-force-flag, admins] If a notice says the setup flag was ignored, delete the
+  to confirm the new content. Git syncs of such a stack wait until you confirm. <!-- stack-files-outside-changes -->
+- **Admins:** If a notice says the setup flag was ignored, delete the
   `DOCKMESH_SETUP_FORCE=true` line from the env file it names (by default
-  `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart.
+  `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart. <!-- setup-force-flag -->
 

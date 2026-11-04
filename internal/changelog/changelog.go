@@ -47,8 +47,69 @@ var (
 	minUpgradeLine   = regexp.MustCompile(`^Minimum upgrade from: (\d+\.\d+\.\d+)$`)
 	linkRefLine      = regexp.MustCompile(`^\[[^\]]+\]: \S+$`)
 	advisoryBullet   = regexp.MustCompile(`^(GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}) \((critical|high|moderate|low)\): (.+)$`)
-	actionBullet     = regexp.MustCompile(`^\[([a-z0-9][a-z0-9-]*), (all|admins)\] (.+)$`)
+	actionBullet     = regexp.MustCompile(`^(?:\*\*([A-Za-z]+):\*\* )?(.+) <!-- ([a-z0-9][a-z0-9-]*) -->$`)
+	actionID         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	oldActionBullet  = regexp.MustCompile(`^\[([a-z0-9][a-z0-9-]*), (all|admins)\] (.+)$`)
 )
+
+// audienceLabels names the audiences narrower than "all"; an upgrade note
+// for everyone carries no label.
+var audienceLabels = map[string]string{"admins": "Admins"}
+
+// AudienceLabel is the label an upgrade note for audience starts with, or ""
+// for everyone.
+func AudienceLabel(audience string) string { return audienceLabels[audience] }
+
+// FormatAction is a's text as it appears in CHANGELOG.md and the release
+// notes: the audience label, if any, then the text.
+func FormatAction(a Action) string {
+	if l := AudienceLabel(a.Audience); l != "" {
+		return "**" + l + ":** " + a.Text
+	}
+	return a.Text
+}
+
+// ActionBullet is a's CHANGELOG.md bullet without the leading "- "; the id
+// sits in an HTML comment so rendered markdown doesn't show it.
+func ActionBullet(a Action) string { return FormatAction(a) + " <!-- " + a.ID + " -->" }
+
+// NewAction validates the fields an upgrade-note fragment stores.
+func NewAction(id, audience, text string) (Action, error) {
+	switch {
+	case !actionID.MatchString(id):
+		return Action{}, fmt.Errorf("upgrade note id %q must be lower-case kebab-case", id)
+	case audience != "all" && AudienceLabel(audience) == "":
+		return Action{}, fmt.Errorf("upgrade note audience %q must be all or admins", audience)
+	case strings.TrimSpace(text) == "":
+		return Action{}, fmt.Errorf("upgrade note %q has no text", id)
+	}
+	return Action{ID: id, Audience: audience, Text: text}, nil
+}
+
+// parseAction also reads the "[id, audience] text" form the changelog used
+// up to 0.5.1, since checks parse the base branch's CHANGELOG.md as well.
+func parseAction(b string) (Action, bool) {
+	if m := oldActionBullet.FindStringSubmatch(b); m != nil {
+		return Action{ID: m[1], Audience: m[2], Text: m[3]}, true
+	}
+	m := actionBullet.FindStringSubmatch(b)
+	if m == nil {
+		return Action{}, false
+	}
+	audience := "all"
+	if m[1] != "" {
+		audience = ""
+		for a, l := range audienceLabels {
+			if l == m[1] {
+				audience = a
+			}
+		}
+		if audience == "" {
+			return Action{}, false
+		}
+	}
+	return Action{ID: m[3], Audience: audience, Text: m[2]}, true
+}
 
 var subsections = map[string]bool{
 	"Highlights": true, "Added": true, "Changed": true, "Fixed": true, "Security": true, "Upgrade notes": true,
@@ -184,16 +245,16 @@ func (s *Section) add(sub string, bullets []string) error {
 				s.Security = append(s.Security, b)
 			}
 		case "Upgrade notes":
-			m := actionBullet.FindStringSubmatch(b)
-			if m == nil {
-				return fmt.Errorf("[%s] upgrade note %q must start with \"[id, all|admins] \"", s.Version, b)
+			act, ok := parseAction(b)
+			if !ok {
+				return fmt.Errorf("[%s] upgrade note %q must be \"[**Admins:** ]text <!-- id -->\"", s.Version, b)
 			}
 			for _, a := range s.Actions {
-				if a.ID == m[1] {
-					return fmt.Errorf("[%s] duplicate upgrade action id %q", s.Version, m[1])
+				if a.ID == act.ID {
+					return fmt.Errorf("[%s] duplicate upgrade action id %q", s.Version, act.ID)
 				}
 			}
-			s.Actions = append(s.Actions, Action{ID: m[1], Audience: m[2], Text: m[3]})
+			s.Actions = append(s.Actions, act)
 		}
 	}
 	return nil
