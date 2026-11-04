@@ -103,6 +103,8 @@ Putting only the previous binary back is not a supported downgrade. Migrations o
 
 The way back is the previous binary together with the pre-migration snapshot the upgrade wrote. Changes made after the upgrade are lost.
 
+A snapshot from v0.4.x is deleted on the first start once the upgrade checks pass, because it holds secrets in plaintext (see What happens on the first start). Going back to v0.4.x after that needs the backup from step 1 or a system backup made on v0.4.x.
+
 ```bash
 sudo systemctl stop dockmesh
 sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh
