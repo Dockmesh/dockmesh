@@ -84,14 +84,16 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		// Invite links and sign-in callbacks are built from the base URL, so
 		// pointing it elsewhere is as powerful as handing out invites.
-		if e.Key == settings.KeyBaseURL && h.Settings.Get(e.Key, "") != e.Value && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermUsersCreate) {
-			writeError(w, http.StatusForbidden, "changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it")
-			return
-		}
-		if e.Key == settings.KeyBaseURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
-			if err := agents.ValidateBaseURL(e.Value); err != nil {
-				writeError(w, http.StatusBadRequest, "base URL "+err.Error())
+		if e.Key == settings.KeyBaseURL && h.Settings.Stored(e.Key) != e.Value {
+			if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermUsersCreate) {
+				writeError(w, http.StatusForbidden, "changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it")
 				return
+			}
+			if e.Value != "" {
+				if err := agents.ValidateBaseURL(e.Value); err != nil {
+					writeError(w, http.StatusBadRequest, "base URL "+err.Error())
+					return
+				}
 			}
 		}
 		if e.Key == settings.KeyAgentPublicURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
@@ -128,6 +130,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		prev := h.Settings.Get(e.Key, "")
+		if e.Key == settings.KeyBaseURL {
+			prev = h.Settings.Stored(e.Key)
+		}
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
