@@ -1,3 +1,0 @@
-kind: Upgrade notes
-body: '[update-agents, admins] Update your agents from the Hosts page to prune volumes or manage networks on them; older agents refuse those actions with a request to update'
-time: 2026-11-03T20:19:23.549101728Z

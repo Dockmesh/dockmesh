@@ -1,3 +1,0 @@
-kind: Fixed
-body: Download in a volume's file preview saves the whole file instead of only the first 1 MiB shown; on agent hosts this needs the updated agent. Affected v0.5.0 and earlier
-time: 2026-11-03T22:32:59.355617584Z

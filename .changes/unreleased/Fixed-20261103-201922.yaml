@@ -1,3 +1,0 @@
-kind: Fixed
-body: Single sign-on callback URLs and invite links use the Base URL from the setup wizard and Settings; DOCKMESH_BASE_URL still overrides it
-time: 2026-11-03T20:19:22.283815812Z

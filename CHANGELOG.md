@@ -32,6 +32,39 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 Entries for the next release are the fragments in `.changes/unreleased/`; `changie batch`
 moves them into a release section.
 
+## [0.5.1] - 2026-11-04 [recommended]
+
+Dockmesh 0.5.1 is a patch release. Prunes, network and image actions and System cleanup now act on the host you selected instead of the server, Needs attention is shown in German, and the database copy taken before an upgrade from 0.4.x is removed once it is no longer needed, since it still held plaintext secrets. It also fixes deploys after a failed image pull, per-site proxy metrics, whole-file volume downloads and several smaller issues. Update your agents after the server and read the upgrade notes.
+
+
+### Fixed
+
+- Pruning volumes, images and networks, System cleanup, removing an image and creating or deleting a network act on the selected host instead of always on the server; under All hosts a prune runs on each reachable host
+- The Stacks page shows the Adopt existing count under All hosts again; the discovery call no longer fails there
+- Single sign-on callback URLs and invite links use the Base URL from the setup wizard and Settings; DOCKMESH_BASE_URL still overrides it
+- Sign out everywhere under My account works again: after a confirmation it ends all of your own sessions, including this one
+- The notification for a scheduled backup run that was skipped because the previous run was still going reaches the job's backup viewers again; it was sent to nobody
+- Needs attention on the overview and under Activity is shown in the user's language; the items were always English. The API keeps the English title and detail and adds title_key, detail_key and params
+- After an upgrade from a version that stored backup credentials and secret variables in plaintext, the database copy taken before the upgrade is deleted once the checks after the upgrade pass and every stored secret is encrypted, and the database file is compacted with its free space zeroed; admins get a notice either way
+- A deploy whose image pull fails part-way, for example on a registry rate limit, stops with the registry's error instead of failing later with No such image; with a cached copy it deploys that copy. Affected v0.5.0 and earlier
+- The helper containers that read volumes for backups and restores, on the server and on agents, run images pinned by digest instead of the plain alpine and busybox:latest tags. Affected v0.5.0 and earlier
+- OpenTelemetry tracing starts again when DOCKMESH_OTEL_ENDPOINT is set; it failed at startup with a conflicting schema URL and sent no traces. Affected v0.5.0 and earlier
+- Stopping the reverse proxy in the UI sticks when DOCKMESH_PROXY_ENABLED=true is set; the variable only sets the default before a choice is saved and no longer turns the proxy back on at every start. Affected v0.5.0 and earlier
+- Dockmesh only pushes the proxy config, including DNS and basic-auth credentials, to the Caddy container it manages; another process listening on 127.0.0.1:2019 is refused with an error. Affected v0.5.0 and earlier
+- Per-site requests, errors and latency on the Reverse proxy page fill again: the pushed Caddy config turns on Caddy's HTTP metrics per host. Affected v0.5.0 and earlier
+- Download in a volume's file preview saves the whole file instead of only the first 1 MiB shown; on agent hosts this needs the updated agent. Affected v0.5.0 and earlier
+
+### Security
+
+- Changing the Base URL now also needs Users & roles: Manage, since invite links and SSO callbacks use it; each change is audited with the old and new address and the invite dialog shows the host the links point to. Released v0.5.0 is not affected.
+
+### Upgrade notes
+
+- [update-agents, admins] Update your agents from the Hosts page after the server. Pruning volumes or networks, creating or deleting networks and downloading a whole file from a volume on an agent host need this version; older agents refuse these with a message to update and keep running everything else
+- [plaintext-snapshot, admins] The first start removes pre-upgrade database copies (dockmesh.db.pre-migrate-*.bak) that hold plaintext secrets, including those left by earlier v0.4.x upgrades, once the checks after the upgrade pass. Rolling back to v0.4.x is then only possible from a system backup. If a check fails, the copy is kept and a notice says why; delete it once Dockmesh works. Without secrets encryption nothing is removed
+- [proxy-recreated, admins] The managed dockmesh-proxy container is recreated once on the first start after the upgrade, a few seconds without proxy traffic; sites and certificates are kept
+- [proxy-env-default, admins] DOCKMESH_PROXY_ENABLED only sets the default until the proxy is turned on or off in the UI; after that the saved choice wins at every start. To force the proxy on or off, use the Reverse proxy page
+- [base-url-users-create, admins] Changing the Base URL in Settings now needs Users & roles: Manage as well as Settings. Custom roles with only Settings see the field read-only; give them Users & roles: Manage if they should change it
 ## [0.5.0] - 2026-11-03 [security]
 
 Dockmesh 0.5.0 brings a redesigned web UI with a German translation, roles per area that can be limited to hosts, host tags or stacks, live progress and cancel for long operations, and safer backups with credentials encrypted at rest. It also fixes several scope leaks in earlier releases; see the Security section and the linked advisory. Read the upgrade notes before upgrading: access is migrated to the new role model, and going back needs the database snapshot written before the migration.
