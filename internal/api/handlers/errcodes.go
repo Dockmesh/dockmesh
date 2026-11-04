@@ -33,6 +33,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"backups unavailable", "backups_unavailable"},
 	{"caddyfile required", "caddyfile_required"},
 	{"cannot delete yourself", "cannot_delete_yourself"},
+	{"changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it", "base_url_needs_users_create"},
 	{"choose the host this stack is for: you can only create stacks on some hosts", "stack_host_required"},
 	{"code required", "code_required"},
 	{"command required", "command_required"},

@@ -84,6 +84,14 @@ func (s *Store) Get(key, def string) string {
 	return def
 }
 
+// Stored returns the saved value of key without the env var fallback,
+// i.e. what GET /settings shows and the settings page sends back.
+func (s *Store) Stored(key string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cache[key]
+}
+
 // GetBool is a convenience for boolean settings.
 func (s *Store) GetBool(key string, def bool) bool {
 	v := s.Get(key, "")

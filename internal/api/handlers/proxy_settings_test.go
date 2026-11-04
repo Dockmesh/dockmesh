@@ -45,7 +45,7 @@ func TestProxySettingsEndpoints(t *testing.T) {
 		t.Fatalf("generic change of a proxy key: %d", rr.Code)
 	}
 	rr = post(t, e.h.UpdateSettings, "/settings", "127.0.0.1:1",
-		[]map[string]string{{"key": proxy.KeyACMECA, "value": "zerossl"}, {"key": settings.KeyBaseURL, "value": "https://x"}})
+		[]map[string]string{{"key": proxy.KeyACMECA, "value": "zerossl"}, {"key": settings.KeyScannerEnabled, "value": "false"}})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("unchanged proxy key: %d %s", rr.Code, rr.Body)
 	}
