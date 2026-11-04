@@ -58,3 +58,14 @@ In a release PR (title `release: vX.Y.Z`, label `no-changelog`):
 After the release PR is merged, tag the merge commit (`git tag vX.Y.Z && git push origin vX.Y.Z`).
 The release workflow renders the notes and `release-manifest.json` from the tag's section with
 `scripts/relmanifest` and fails before building if the section is missing.
+
+Once the release is published, the workflow triggers the website's `release-sync` workflow, which
+syncs the docs from the tag and puts the new version on dockmesh.dev. If that trigger fails, the
+release still succeeds and the run shows a warning. Run the sync by hand then:
+
+```bash
+gh workflow run release-sync.yml -R Dockmesh/website -f tag=vX.Y.Z
+```
+
+The trigger uses the `WEBSITE_DISPATCH_TOKEN` secret, a fine-grained token limited to
+`Dockmesh/website` with Contents read and write. It expires after a year; renew it before then.

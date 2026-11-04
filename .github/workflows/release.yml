@@ -212,6 +212,7 @@ jobs:
           cat checksums.txt
 
       - name: publish GitHub Release
+        id: publish
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.v.outputs.version }}
@@ -248,3 +249,19 @@ jobs:
               "https://get.dockmesh.dev/uninstall",
               "https://get.dockmesh.dev/uninstall.sh"
             ]}'
+
+      # The release is out at this point; a missing token or a failed call
+      # only leaves the website behind, so it warns instead of failing.
+      - name: trigger website sync
+        if: always() && steps.publish.outcome == 'success' && !contains(steps.v.outputs.version, '-')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          TAG: ${{ steps.v.outputs.version }}
+        run: |
+          if [ -n "$GH_TOKEN" ] && gh api repos/Dockmesh/website/dispatches \
+               -f event_type=app-release -f "client_payload[tag]=$TAG"; then
+            echo "website sync triggered for $TAG"
+          else
+            echo "::warning::website sync not triggered; run: gh workflow run release-sync.yml -R Dockmesh/website -f tag=$TAG"
+          fi
