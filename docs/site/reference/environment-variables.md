@@ -55,7 +55,7 @@ Relative defaults resolve against the server's working directory. The installers
 | Variable | Default | Meaning |
 |---|---|---|
 | `DOCKMESH_SECRETS_ENCRYPT_ENV` | `true` | Encrypt stack `.env` files as `.env.age`. With `false`, `.env` is stored in plaintext and values meant for encrypted DB columns are stored in plaintext as well |
-| `DOCKMESH_SCANNER_ENABLED` | `true` | Use Grype for image scans. Scanning also needs the binary to be present |
+| `DOCKMESH_SCANNER_ENABLED` | `true` | Default for **Scan images with Grype** under **Settings → General**; a value saved there wins. Scanning also needs the binary to be present |
 | `DOCKMESH_SCANNER_BINARY` | `grype` | Name or path of the Grype binary, looked up in `PATH` |
 | `DOCKMESH_PROXY_ENABLED` | `false` | `true` turns the reverse proxy on while the `proxy_enabled` setting has never been saved. See the note below |
 | `DOCKMESH_PROXY_IMAGE` | `caddy:2.11.7` pinned by digest | Caddy image for the `dockmesh-proxy` container. While it is set, the Caddy version can't be switched from the UI or API |
@@ -153,7 +153,7 @@ These keys live in the `settings` table and are edited in the UI or with `PUT /a
 | `base_url` | **Settings → General → Base URL** | `DOCKMESH_BASE_URL` wins |
 | `agent_public_url` | **Settings → General → Agent public URL** | `DOCKMESH_AGENT_PUBLIC_URL` wins |
 | `trusted_proxies` | **Settings → General → Trusted proxies** | `DOCKMESH_TRUSTED_PROXIES` is used while the setting is empty |
-| `scanner_enabled` | **Settings → General → Vulnerability scanner** | Only changes what the system health view reports; whether scans run is decided by `DOCKMESH_SCANNER_ENABLED` |
+| `scanner_enabled` | **Settings → General → Vulnerability scanner** | Turns image scanning on or off without a restart. `DOCKMESH_SCANNER_ENABLED` only sets the default |
 | `proxy_enabled` | **Reverse proxy** page, enable and disable | `DOCKMESH_PROXY_ENABLED=true` counts as `true` until the setting is saved |
 
 The release check against GitHub is set under **Settings → Updates** (`update_check_enabled`, `update_check_interval_minutes`); it has no environment variable.

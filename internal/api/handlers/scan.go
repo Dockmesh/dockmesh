@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scanner"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -50,11 +51,38 @@ func scanOn(ctx context.Context, s scanner.Scanner, target host.Host, ref string
 	return s.ScanArchive(ctx, archive, ref)
 }
 
+func (h *Handlers) scannerEnabled() bool {
+	return h.Settings == nil || h.Settings.GetBool(settings.KeyScannerEnabled, true)
+}
+
+// scannerHealth reports what a scan would do right now. A missing binary
+// is "off", not a warning: installs made with DOCKMESH_NO_SCANNER=1 have
+// none on purpose.
+func (h *Handlers) scannerHealth() HealthCheck {
+	c := HealthCheck{Name: "scanner", Label: "CVE scanner", LinkTo: "/images", Status: "off"}
+	switch {
+	case !h.scannerEnabled():
+		c.Detail = "disabled"
+	case h.Scanner == nil:
+		c.Detail = "not configured"
+	case h.Scanner.Ready() != nil:
+		c.Detail = "enabled, but the Grype binary was not found"
+	default:
+		c.Status = "ok"
+		c.Detail = "Grype ready"
+	}
+	return c
+}
+
 // ScanImage runs the scanner against an image on the host named by ?host=
 // and stores the result.
 func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 	if h.Scanner == nil || h.ScanStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
+		return
+	}
+	if !h.scannerEnabled() {
+		writeError(w, http.StatusServiceUnavailable, "image scanning is turned off under Settings → General")
 		return
 	}
 	if err := h.Scanner.Ready(); err != nil {
