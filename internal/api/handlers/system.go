@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -237,6 +238,9 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		case !st.AdminOK:
 			c.Status = "warn"
 			c.Detail = "admin API unreachable"
+		case len(st.ForeignPorts) > 0:
+			c.Status = "warn"
+			c.Detail = "another program is listening on port " + proxy.PortList(st.ForeignPorts)
 		default:
 			c.Status = "ok"
 			c.Detail = "Caddy " + st.Version

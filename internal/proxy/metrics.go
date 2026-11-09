@@ -1,7 +1,7 @@
 // Caddy Prometheus-metrics scraper. Caddy exposes /metrics on its
 // admin endpoint when admin.config.metrics is configured (or the
 // server has a `metrics` directive). We don't try to install a metrics
-// scraper inside Caddy itself — we just hit /metrics on 127.0.0.1:2019
+// scraper inside Caddy itself — we just hit /metrics on its admin socket
 // and project the counters we care about (request rate, status-code
 // distribution, p95 latency) into a per-host snapshot the UI can render.
 package proxy
@@ -84,12 +84,7 @@ func (s *Service) Metrics(ctx context.Context) (*MetricsSnapshot, error) {
 }
 
 func (s *Service) scrapeCaddy(ctx context.Context) ([]promSample, error) {
-	req, err := adminRequest(ctx, http.MethodGet, "/metrics", nil)
-	if err != nil {
-		return nil, err
-	}
-	cli := &http.Client{Timeout: 3 * time.Second}
-	resp, err := cli.Do(req)
+	resp, err := adminDo(ctx, http.MethodGet, "/metrics", nil, 3*time.Second)
 	if err != nil {
 		return nil, err
 	}

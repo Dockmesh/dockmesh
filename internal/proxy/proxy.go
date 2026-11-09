@@ -2,12 +2,11 @@
 // as a managed container keeps its large dependency graph out of the
 // Dockmesh binary.
 //
-// Caddy runs on the host network so routes can reach localhost ports;
-// its admin API therefore listens on 127.0.0.1:2019 of the host. Caddy
-// checks Host and Origin on every admin request, which stops browsers
-// and DNS rebinding, but any process on the host and any container with
-// `network_mode: host` can still reach the API. Caddy offers no other
-// authentication for its local admin endpoint short of a unix socket.
+// Caddy runs on the host network so routes can reach localhost ports,
+// so a TCP admin endpoint would be open to every process on the host and
+// to every container with `network_mode: host`. Its admin API therefore
+// listens on a unix socket in a directory only Dockmesh's user can enter
+// and only the proxy container has mounted.
 package proxy
 
 import (
@@ -73,6 +72,8 @@ type Status struct {
 	AdminOK   bool   `json:"admin_ok"`
 	Version   string `json:"version,omitempty"`
 	Container string `json:"container,omitempty"`
+	// ForeignPorts lists the proxy ports another program is listening on.
+	ForeignPorts []int `json:"foreign_ports,omitempty"`
 }
 
 var (
@@ -96,9 +97,18 @@ type Service struct {
 	docker  *docker.Client
 	enabled atomic.Bool
 	// adminID is the running container's admin ID (see adminIDLabel).
-	adminID  atomic.Pointer[string]
-	notices  noticeSetter
-	settings SettingsStore
+	adminID atomic.Pointer[string]
+	// adminSocketDir is the host directory holding the admin socket.
+	adminSocketDir string
+	// legacyAdmin is set while a container whose admin API could not be
+	// moved to the socket keeps running on TCP.
+	legacyAdmin atomic.Bool
+	// foreignPorts is what GetStatus reports; foreignSeen is the previous
+	// watchdog reading, only touched by the watchdog.
+	foreignPorts atomic.Pointer[[]int]
+	foreignSeen  []int
+	notices      noticeSetter
+	settings     SettingsStore
 
 	// image is the Caddy image to run; imageOverride is set when it
 	// comes from DOCKMESH_PROXY_IMAGE.
@@ -109,6 +119,12 @@ type Service struct {
 	shouldRun func() bool
 	// startProxy replaces startAndVerify in tests.
 	startProxy func(ctx context.Context) error
+	// pullImage replaces ensureImage in tests.
+	pullImage func(ctx context.Context, img string) error
+	// imageID replaces the image lookup of isOldManagedContainer in tests.
+	imageID func(ctx context.Context, ref string) string
+	// inContainer reports whether Dockmesh itself runs in a container.
+	inContainer func() bool
 
 	// lifecycle serialises EnableProxy/DisableProxy, version switches
 	// and settings saves; mu guards config pushes and metrics.
@@ -175,6 +191,9 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 	cfg, blocked := buildConfig(routes, s.ProxySettings())
 	if id := s.adminID.Load(); id != nil {
 		cfg.Admin.ID = *id
+	}
+	if s.legacyAdmin.Load() {
+		cfg.Admin.Listen, cfg.Admin.Origins = legacyAdminAddr, legacyAdminOrigins
 	}
 	if s.notices != nil {
 		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{

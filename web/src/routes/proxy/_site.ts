@@ -54,6 +54,7 @@ export interface ProxyStatus {
   admin_ok: boolean;
   version?: string;
   container?: string;
+  foreign_ports?: number[];
 }
 
 export interface ACMEEvent {

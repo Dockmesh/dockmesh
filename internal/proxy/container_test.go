@@ -14,7 +14,7 @@ func managedContainer(s *Service, imageID string) *container.InspectResponse {
 			Image: imageID,
 			HostConfig: &container.HostConfig{
 				NetworkMode: proxyNetworkMode,
-				Binds:       append([]string(nil), proxyBinds...),
+				Binds:       s.proxyBinds(),
 			},
 		},
 		Config: &container.Config{
@@ -26,8 +26,9 @@ func managedContainer(s *Service, imageID string) *container.InspectResponse {
 
 func TestMatchesSpec(t *testing.T) {
 	s := NewService(nil, nil, false)
+	s.SetAdminSocketDir(t.TempDir())
 	const img = "sha256:caddy"
-	if !matchesSpec(managedContainer(s, img), s.currentImage(), img) {
+	if !s.matchesSpec(managedContainer(s, img), s.currentImage(), img) {
 		t.Fatal("managed container rejected")
 	}
 	tamper := []struct {
@@ -37,6 +38,7 @@ func TestMatchesSpec(t *testing.T) {
 		{"other image", func(c *container.InspectResponse) { c.Image = "sha256:evil" }},
 		{"privileged", func(c *container.InspectResponse) { c.HostConfig.Privileged = true }},
 		{"cap add", func(c *container.InspectResponse) { c.HostConfig.CapAdd = []string{"SYS_ADMIN"} }},
+		{"no socket bind", func(c *container.InspectResponse) { c.HostConfig.Binds = append([]string(nil), proxyVolumes...) }},
 		{"extra bind", func(c *container.InspectResponse) { c.HostConfig.Binds = append(c.HostConfig.Binds, "/:/host") }},
 		{"entrypoint", func(c *container.InspectResponse) { c.Config.Entrypoint = []string{"/evil"} }},
 		{"cmd", func(c *container.InspectResponse) { c.Config.Cmd = []string{"caddy", "run"} }},
@@ -48,7 +50,7 @@ func TestMatchesSpec(t *testing.T) {
 	for _, tt := range tamper {
 		c := managedContainer(s, img)
 		tt.mod(c)
-		if matchesSpec(c, s.currentImage(), img) {
+		if s.matchesSpec(c, s.currentImage(), img) {
 			t.Errorf("%s: tampered container kept", tt.name)
 		}
 	}

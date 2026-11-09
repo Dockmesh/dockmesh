@@ -170,12 +170,7 @@ func screenCaddyfile(text string) error {
 // adaptCaddyfile runs the text through Caddy's /adapt admin endpoint,
 // which only converts and does not touch the running config.
 func adaptCaddyfile(ctx context.Context, text string) (map[string]any, []string, error) {
-	req, err := adminRequest(ctx, http.MethodPost, "/adapt", strings.NewReader(text))
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Content-Type", "text/caddyfile")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := adminDoType(ctx, http.MethodPost, "/adapt", strings.NewReader(text), "text/caddyfile", 15*time.Second)
 	if err != nil {
 		return nil, nil, fmt.Errorf("caddy admin unreachable: %w", err)
 	}

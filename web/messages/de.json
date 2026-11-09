@@ -3607,6 +3607,8 @@
   "proxy_not_served_yet": "Noch nicht ausgeliefert. Der Name zeigt eventuell nicht hierher, oder Caddy holt das Zertifikat noch.",
   "proxy_notice_not_running": "Caddy ist aktiviert, läuft aber nicht",
   "proxy_notice_not_running_hint": "Starten, um die gespeicherten Sites wieder auszuliefern.",
+  "proxy_notice_foreign_ports": "Ein anderes Programm lauscht auf Port {ports}",
+  "proxy_notice_foreign_ports_hint": "Anfragen können bei diesem Programm statt bei deinen Sites landen. Finde es mit sudo ss -ltnp 'sport = :{port}' und beende es oder lege es auf einen anderen Port.",
   "proxy_notice_off": "Der Reverse-Proxy ist aus",
   "proxy_notice_off_hint": "Beim Aktivieren wird das Caddy-Image bei Bedarf gepullt, ein verwalteter Container auf den Ports 80 und 443 gestartet und jede gespeicherte Site angewendet.",
   "proxy_oe_access_log": "Access-Log",

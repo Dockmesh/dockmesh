@@ -1,0 +1,3 @@
+kind: Fixed
+body: A second Caddy on the server can no longer receive Dockmesh's proxy config, and another program listening on port 80 or 443 is now shown on the Reverse Proxy page and in the notification bell. Affects v0.5.1 and earlier
+time: 2026-11-09T10:16:16.570101863Z

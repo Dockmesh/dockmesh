@@ -27,6 +27,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/moby/docker-image-spec v1.3.1
+	github.com/opencontainers/image-spec v1.1.1
 	github.com/pkg/sftp v1.13.12
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.25.0
@@ -40,6 +41,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.61.0
@@ -100,7 +102,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pandatix/go-abnf v0.5.4 // indirect
 	github.com/philhofer/fwd v1.2.1 // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
@@ -130,7 +131,6 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e // indirect

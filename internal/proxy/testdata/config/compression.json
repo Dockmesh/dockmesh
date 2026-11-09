@@ -1,9 +1,8 @@
 {
   "admin": {
-    "listen": "127.0.0.1:2019",
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
     "origins": [
-      "127.0.0.1:2019",
-      "localhost:2019"
+      "dockmesh-proxy"
     ],
     "enforce_origin": true
   },

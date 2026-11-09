@@ -24,6 +24,7 @@ const KeyEnabled = "proxy_enabled"
 // container and pushes the stored routes. envDefault is the fallback when
 // the setting was never saved.
 func (s *Service) Reconcile(ctx context.Context, st SettingsStore, envDefault bool) (bool, error) {
+	s.detectTCPAdmin(ctx)
 	if !s.wanted(ctx, st, envDefault) {
 		return false, nil
 	}
@@ -50,6 +51,18 @@ func (s *Service) wanted(ctx context.Context, st SettingsStore, envDefault bool)
 		slog.Info("proxy: managed container found with routes, treating the proxy as enabled")
 	}
 	return true
+}
+
+// detectTCPAdmin points Dockmesh at the TCP admin API while the container
+// from an older version still has it, so the boot decision can ask it.
+func (s *Service) detectTCPAdmin(ctx context.Context) {
+	if s.docker == nil {
+		return
+	}
+	info, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName)
+	if err == nil && s.isOldManagedContainer(ctx, &info) {
+		s.useLegacyAdmin()
+	}
 }
 
 func (s *Service) state(ctx context.Context) (exists, running bool) {
@@ -82,11 +95,7 @@ func (s *Service) inUse(ctx context.Context) bool {
 }
 
 func caddyHasRoutes(ctx context.Context) bool {
-	req, err := adminRequest(ctx, http.MethodGet, "/config/apps/http/servers", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	resp, err := adminDo(ctx, http.MethodGet, "/config/apps/http/servers", nil, 2*time.Second)
 	if err != nil {
 		return false
 	}
