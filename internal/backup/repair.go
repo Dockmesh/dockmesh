@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -51,7 +52,8 @@ func (s *Service) RepairJobSecrets(ctx context.Context, ts *targets.TargetStore,
 	if err != nil {
 		return err
 	}
-	var repaired, missing []string
+	var repaired []i18n.Text
+	var missing []string
 	for _, j := range jobs {
 		if j.TargetID > 0 {
 			continue
@@ -85,7 +87,7 @@ func (s *Service) RepairJobSecrets(ctx context.Context, ts *targets.TargetStore,
 		if onRepair != nil {
 			onRepair(j, match[0].Name)
 		}
-		repaired = append(repaired, fmt.Sprintf("%q (target %q)", j.Name, match[0].Name))
+		repaired = append(repaired, i18n.Msg("notice.backup_repaired.item", fmt.Sprintf("%q", j.Name), fmt.Sprintf("%q", match[0].Name)))
 	}
 	if n == nil {
 		return nil
@@ -95,11 +97,9 @@ func (s *Service) RepairJobSecrets(ctx context.Context, ts *targets.TargetStore,
 			Key:      repairedNoticeKey,
 			Audience: notices.Admins(),
 			Severity: notices.SevInfo,
-			Title:    "Backup job passwords restored",
-			Body: "These jobs were saved without a password or key (a 0.4.0 problem with jobs made " +
-				"from a saved target). They took it from the matching saved target:" +
-				notices.Bullets(repaired),
-			Link: "/backups",
+			Title:    i18n.Msg("notice.backup_repaired.title"),
+			Body:     i18n.Msg("notice.backup_repaired.body", notices.Bullets(repaired)),
+			Link:     "/backups",
 		}); err != nil {
 			return err
 		}
@@ -109,11 +109,9 @@ func (s *Service) RepairJobSecrets(ctx context.Context, ts *targets.TargetStore,
 		Key:      missingNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "Re-enter the password in these backup jobs",
-		Body: "These jobs have no password or key stored and no single saved target to take it " +
-			"from, so their runs fail to sign in:" + notices.Bullets(missing) +
-			"Open each job and enter the password again.",
-		Link: "/backups",
+		Title:    i18n.Msg("notice.backup_missing.title"),
+		Body:     i18n.Msg("notice.backup_missing.body", notices.Bullets(missing)),
+		Link:     "/backups",
 	})
 }
 
@@ -129,7 +127,7 @@ func setRefreshedNotice(ctx context.Context, n *notices.Service, active bool, in
 		return err
 	}
 	for _, o := range open {
-		if o.Key == in.Key && o.Body != in.Body {
+		if o.Key == in.Key && o.Body != in.Body.In(i18n.Default) {
 			if err := n.Resolve(ctx, in.Key); err != nil {
 				return err
 			}

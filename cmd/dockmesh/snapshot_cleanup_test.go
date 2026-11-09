@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
@@ -140,7 +141,7 @@ func TestRemovePlaintextSnapshotsResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := notices.NewService(database)
-	if err := n.Raise(ctx, keptNotice([]string{"x"}, "Test.")); err != nil {
+	if err := n.Raise(ctx, keptNotice([]string{"x"}, i18n.Msg("Test."))); err != nil {
 		t.Fatal(err)
 	}
 	if err := removePlaintextSnapshots(ctx, database, sec, n); err != nil {

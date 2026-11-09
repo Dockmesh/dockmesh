@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -178,10 +179,9 @@ func (h *Handlers) raiseLastAdminNotice(ctx context.Context, userID string) {
 	}
 	if err := h.Notices.Raise(ctx, notices.RaiseInput{
 		Key: lastAdminNoticeKey, Audience: notices.Admins(), Severity: notices.SevWarning,
-		Title: "Identity provider sign-in would have removed the last admin",
-		Body: "The groups of " + name + " no longer map to the Admin role, but no other account holds Admin on everything. " +
-			"Dockmesh kept the Admin assignment so the instance stays manageable. Give another account the Admin role or fix the group mapping, then remove it.",
-		Link: "/users",
+		Title: i18n.Msg("notice.idp_last_admin.title"),
+		Body:  i18n.Msg("notice.idp_last_admin.body", name),
+		Link:  "/users",
 	}); err != nil {
 		slog.Warn("raise last-admin notice", "err", err)
 	}

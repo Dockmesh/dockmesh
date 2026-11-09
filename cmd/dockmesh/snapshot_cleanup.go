@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/secretsdb"
@@ -43,7 +43,7 @@ func removePlaintextSnapshots(ctx context.Context, database *sql.DB, sec *secret
 	}
 	if err := errors.Join(db.CheckMigrated(ctx, database), secretsdb.Verify(ctx, database, sec)); err != nil {
 		slog.Warn("upgrade checks failed, keeping the pre-upgrade database snapshot", "snapshots", plain, "err", err)
-		return n.Raise(ctx, keptNotice(plain, "The checks after the upgrade failed: "+firstErrorLine(err)+"."))
+		return n.Raise(ctx, keptNotice(plain, i18n.Msg("notice.snapshot_kept.checks_failed", firstErrorLine(err))))
 	}
 	var removed, left []string
 	for _, p := range plain {
@@ -62,7 +62,7 @@ func removePlaintextSnapshots(ctx context.Context, database *sql.DB, sec *secret
 		}
 	}
 	if len(left) > 0 {
-		return n.Raise(ctx, keptNotice(left, "Dockmesh could not delete them."))
+		return n.Raise(ctx, keptNotice(left, i18n.Msg("notice.snapshot_kept.delete_failed")))
 	}
 	return n.Resolve(ctx, snapshotKeptNoticeKey)
 }
@@ -129,25 +129,19 @@ func removedNotice(paths []string) notices.RaiseInput {
 		Key:      snapshotRemovedNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "Pre-upgrade database copies removed",
-		Body: "The copies of the database taken before the upgrade held backup credentials and secret " +
-			"variables in plaintext. The upgrade checks passed and every stored secret is encrypted, so " +
-			"these copies were deleted:" + notices.Bullets(snapshotNames(paths)) +
-			"Rolling back to the previous version with them is no longer possible; restore a " +
-			"system backup instead.",
-		Link: "/backups",
+		Title:    i18n.Msg("notice.snapshot_removed.title"),
+		Body:     i18n.Msg("notice.snapshot_removed.body", notices.Bullets(snapshotNames(paths))),
+		Link:     "/backups",
 	}
 }
 
-func keptNotice(paths []string, reason string) notices.RaiseInput {
+func keptNotice(paths []string, reason i18n.Text) notices.RaiseInput {
 	return notices.RaiseInput{
 		Key:      snapshotKeptNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "Pre-upgrade database copies still hold plaintext secrets",
-		Body: fmt.Sprintf("These copies of the database, next to the database file, hold backup credentials and secret "+
-			"variables in plaintext:%s%s They were kept as the way back to the previous version. Once "+
-			"Dockmesh works as expected, delete them on the server.", notices.Bullets(snapshotNames(paths)), reason),
+		Title:    i18n.Msg("notice.snapshot_kept.title"),
+		Body:     i18n.Msg("notice.snapshot_kept.body", notices.Bullets(snapshotNames(paths)), reason),
 	}
 }
 

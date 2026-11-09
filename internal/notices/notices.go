@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -71,11 +72,13 @@ type Notice struct {
 	Dismissed   bool       `json:"dismissed"`
 	HiddenUntil *time.Time `json:"hidden_until,omitempty"`
 
-	audience Audience
+	audience  Audience
+	titleI18n string
+	bodyI18n  string
 }
 
-// RaiseInput describes a notice. Body is plain text: the UI keeps its line
-// breaks and shows lines starting with "- " as a list (see Bullets). Link
+// RaiseInput describes a notice. Body renders to plain text: the UI keeps
+// its line breaks and shows lines starting with "- " as a list (see Bullets). Link
 // is an in-app path ("/stacks/foo") the UI turns into a button.
 //
 // Blocking marks a critical notice about something that no longer works
@@ -84,29 +87,27 @@ type RaiseInput struct {
 	Key      string
 	Audience Audience
 	Severity Severity
-	Title    string
-	Body     string
+	Title    i18n.Text
+	Body     i18n.Text
 	Link     string
 	Blocking bool
 }
 
-// Bullets formats items as list lines for a notice body, each on its own
-// line so it can sit between two sentences of the body.
-func Bullets(items []string) string {
-	var b strings.Builder
+// Bullets makes items a list argument for a notice text.
+func Bullets[T string | i18n.Text](items []T) i18n.Bullets {
+	out := make(i18n.Bullets, 0, len(items))
 	for _, it := range items {
-		b.WriteString("\n- ")
-		b.WriteString(it)
+		out = append(out, it)
 	}
-	b.WriteString("\n")
-	return b.String()
+	return out
 }
 
 // Viewer is the reading user. Allowed answers permission checks for the
-// viewer's current access.
+// viewer's current access; Lang is the language notices are rendered in.
 type Viewer struct {
 	UserID  string
 	Allowed func(perm string) bool
+	Lang    string
 }
 
 var (
@@ -143,7 +144,7 @@ func (in RaiseInput) validate() error {
 	if strings.TrimSpace(in.Key) == "" {
 		return errors.New("notice key is required")
 	}
-	if strings.TrimSpace(in.Title) == "" {
+	if strings.TrimSpace(in.Title.Key) == "" {
 		return errors.New("notice title is required")
 	}
 	switch in.Severity {
@@ -208,6 +209,8 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 	if err != nil {
 		return err
 	}
+	title, body := in.Title.In(i18n.Default), in.Body.In(i18n.Default)
+	titleI18n, bodyI18n := in.Title.Encode(), in.Body.Encode()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -218,10 +221,10 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 	// upgrades later fails at once with SQLITE_BUSY when another writer
 	// committed in between, without waiting for busy_timeout.
 	res, err := tx.ExecContext(ctx, `
-		UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
+		UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, title_i18n = ?, body_i18n = ?, link = ?,
 		       blocking = ?, created_at = CURRENT_TIMESTAMP, resolved_at = NULL
 		 WHERE key = ? AND resolved_at IS NOT NULL`,
-		string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Blocking, in.Key)
+		string(in.Audience.Kind), value, string(in.Severity), title, body, titleI18n, bodyI18n, in.Link, in.Blocking, in.Key)
 	if err != nil {
 		return err
 	}
@@ -236,10 +239,10 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 		}
 	} else {
 		res, err = tx.ExecContext(ctx, `
-			INSERT INTO notices (key, audience, audience_value, severity, title, body, link, blocking)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO notices (key, audience, audience_value, severity, title, body, title_i18n, body_i18n, link, blocking)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(key) DO NOTHING`,
-			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Blocking)
+			in.Key, string(in.Audience.Kind), value, string(in.Severity), title, body, titleI18n, bodyI18n, in.Link, in.Blocking)
 		if err != nil {
 			return err
 		}
@@ -280,10 +283,11 @@ func (s *Service) Set(ctx context.Context, active bool, in RaiseInput) error {
 	return s.Resolve(ctx, in.Key)
 }
 
-// Open returns every unresolved notice, without audience filtering.
+// Open returns every unresolved notice in English, without audience
+// filtering.
 func (s *Service) Open(ctx context.Context) ([]Notice, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, key, audience, audience_value, severity, title, body, link, blocking, created_at
+		SELECT id, key, audience, audience_value, severity, title, body, title_i18n, body_i18n, link, blocking, created_at
 		  FROM notices WHERE resolved_at IS NULL
 		 ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC, id DESC`)
 	if err != nil {
@@ -294,7 +298,7 @@ func (s *Service) Open(ctx context.Context) ([]Notice, error) {
 	for rows.Next() {
 		var n Notice
 		var kind, value, sev string
-		if err := rows.Scan(&n.ID, &n.Key, &kind, &value, &sev, &n.Title, &n.Body, &n.Link, &n.Blocking, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Key, &kind, &value, &sev, &n.Title, &n.Body, &n.titleI18n, &n.bodyI18n, &n.Link, &n.Blocking, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		n.Severity = Severity(sev)
@@ -356,6 +360,8 @@ func (s *Service) ForViewer(ctx context.Context, v Viewer) ([]Notice, error) {
 		if !n.audience.includes(v) {
 			continue
 		}
+		n.Title = i18n.Stored(n.titleI18n, v.Lang, n.Title)
+		n.Body = i18n.Stored(n.bodyI18n, v.Lang, n.Body)
 		if until, ok := dismissed[n.ID]; ok {
 			switch {
 			case !n.Blocking:

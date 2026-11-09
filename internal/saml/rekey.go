@@ -2,8 +2,8 @@ package saml
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -73,29 +73,27 @@ func (s *Service) SyncRekeyNotice(ctx context.Context, n *notices.Service) error
 	}
 	names := p.Accounts
 	if len(names) > maxListedRekeys {
-		names = append(names[:maxListedRekeys:maxListedRekeys], fmt.Sprintf("and %d more", len(p.Accounts)-maxListedRekeys))
+		names = names[:maxListedRekeys]
 	}
-	intro := fmt.Sprintf("These %d accounts were created through SAML before the upgrade and have not signed in since. "+
-		"Each takes", len(p.Accounts))
-	if len(p.Accounts) == 1 {
-		intro = "This account was created through SAML before the upgrade and has not signed in since. It takes"
+	list := notices.Bullets(names)
+	if more := len(p.Accounts) - len(names); more > 0 {
+		list = append(list, i18n.Msg("notice.and_more", more))
 	}
 	until := p.Until
 	if len(until) > 10 {
 		until = until[:10]
 	}
-	body := intro + fmt.Sprintf(" its new subject at its next sign-in with a matching email, until %s:", until) +
-		notices.Bullets(names) +
-		"Until then, a user of the same identity provider who has one of these emails can sign in to that " +
-		"account. End re-keying when the remaining accounts are no longer needed; an admin then has to " +
-		"remove and recreate them."
+	body := i18n.Msg("notice.saml_rekey.body", len(p.Accounts), until, list)
+	if len(p.Accounts) == 1 {
+		body = i18n.Msg("notice.saml_rekey.body_one", until, list)
+	}
 	// An open notice keeps its text on Raise, so reopen it when the list changed.
 	open, err := n.Open(ctx)
 	if err != nil {
 		return err
 	}
 	for _, o := range open {
-		if o.Key == RekeyNoticeKey && o.Body != body {
+		if o.Key == RekeyNoticeKey && o.Body != body.In(i18n.Default) {
 			if err := n.Resolve(ctx, RekeyNoticeKey); err != nil {
 				return err
 			}
@@ -105,7 +103,7 @@ func (s *Service) SyncRekeyNotice(ctx context.Context, n *notices.Service) error
 		Key:      RekeyNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "SAML accounts not re-keyed yet",
+		Title:    i18n.Msg("notice.saml_rekey.title"),
 		Body:     body,
 		Link:     "/authentication",
 	})

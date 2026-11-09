@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages.js';
+import { getLocale } from '$lib/paraglide/runtime.js';
 import { apiErrorText } from './apiErrors';
 import { rbacText } from './rbacText';
 import { auth } from './stores/auth.svelte';
@@ -2618,7 +2619,7 @@ export const api = {
       request<AlertRule>(`/alerts/rules/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteRule: (id: number) => request<void>(`/alerts/rules/${id}`, { method: 'DELETE' }),
 
-    history: (limit = 100) => request<AlertHistoryEntry[]>(`/alerts/history?limit=${limit}`)
+    history: (limit = 100) => request<AlertHistoryEntry[]>(`/alerts/history?limit=${limit}&lang=${getLocale()}`)
   },
 
   notifications: {
@@ -2640,7 +2641,7 @@ export const api = {
   },
 
   notices: {
-    list: () => request<Notice[]>('/notices'),
+    list: () => request<Notice[]>(`/notices?lang=${getLocale()}`),
     dismiss: (id: number) =>
       request<void>(`/notices/${id}/dismiss`, { method: 'POST' })
   },
@@ -2833,7 +2834,7 @@ export const api = {
   },
 
   attention: {
-    list: () => request<AttentionItem[]>('/attention')
+    list: () => request<AttentionItem[]>(`/attention?lang=${getLocale()}`)
   },
 
   operations: {

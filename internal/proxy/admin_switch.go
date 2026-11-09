@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -372,10 +373,8 @@ func (s *Service) setAdminSwitchNotice(ctx context.Context, cause error) {
 	}
 	in := notices.RaiseInput{Key: noticeKeyAdminSwitch, Audience: notices.Admins(), Severity: notices.SevWarning, Link: "/proxy"}
 	if cause != nil {
-		in.Title = "The proxy could not be moved to its admin socket"
-		in.Body = "Dockmesh could not switch the reverse proxy to the private admin socket: " + cause.Error() +
-			". Sites stay on the old container if it could be kept running, but its admin API on " + legacyAdminAddr + " stays open to local processes. " +
-			"Fix the cause and restart the Dockmesh service; the switch is retried on every start."
+		in.Title = i18n.Msg("notice.proxy_admin_switch.title")
+		in.Body = i18n.Msg("notice.proxy_admin_switch.body", cause.Error(), legacyAdminAddr)
 	}
 	if err := s.notices.Set(context.WithoutCancel(ctx), cause != nil, in); err != nil {
 		slog.Warn("proxy: update admin socket notice failed", "err", err)

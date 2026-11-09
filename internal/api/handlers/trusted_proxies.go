@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -32,14 +32,9 @@ func (p *proxyNotice) observe(peer string) {
 			Key:      noticeKeyUntrustedProxy,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    "Dockmesh seems to run behind a proxy: configure trusted proxies",
-			Body: fmt.Sprintf("A request from %s carried X-Forwarded-For or X-Real-IP headers, but %s is not a trusted proxy, "+
-				"so Dockmesh ignored them. If Dockmesh runs behind a reverse proxy, every user currently shares the proxy's "+
-				"address for rate limits, sessions and the audit log: add the proxy's address under Settings → System → "+
-				"Trusted proxies (or set DOCKMESH_TRUSTED_PROXIES). Check that %s really is your proxy first; anyone can "+
-				"send these headers, and trusting a stranger's address lets them fake their client address.",
-				peer, peer, peer),
-			Link: "/settings",
+			Title:    i18n.Msg("notice.untrusted_proxy.title"),
+			Body:     i18n.Msg("notice.untrusted_proxy.body", peer),
+			Link:     "/settings",
 		})
 		if err != nil {
 			p.raised.Store(false)

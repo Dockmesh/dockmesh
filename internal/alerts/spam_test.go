@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -296,7 +297,7 @@ func TestHistoryLimitAppliesToTheGivenHosts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := s.History(context.Background(), 2, []string{"mine"})
+	got, err := s.History(context.Background(), 2, []string{"mine"}, "en")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,5 +363,54 @@ func TestDieHistoryKeepsOnlyTheThreshold(t *testing.T) {
 	}
 	if ts, _ := s.dies.get(k); len(ts) != 3 {
 		t.Fatalf("kept %d dies, want 3", len(ts))
+	}
+}
+
+func TestHistoryAndFiringFollowTheLanguage(t *testing.T) {
+	s, database := newEvalService(t)
+	r := eventRule(t, s, RuleInput{Kind: KindUnhealthy})
+	ctx := context.Background()
+	s.fireRule(ctx, r, target{hostID: "local", name: "web"}, i18n.Msg("alert.container_unhealthy", i18n.Msg("alert.container_name", "web")), 0, time.Now())
+	if _, err := database.Exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, host_id)
+		VALUES (?, 'r', 'old', 'fired', 'Stored message', 'local')`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		lang, want string
+	}{
+		{"", "Container web is unhealthy"},
+		{"de", "Container web ist ungesund"},
+	}
+	for _, tt := range tests {
+		t.Run("lang "+tt.lang, func(t *testing.T) {
+			hist, err := s.History(ctx, 10, nil, tt.lang)
+			if err != nil {
+				t.Fatal(err)
+			}
+			byTarget := map[string]string{}
+			for _, e := range hist {
+				byTarget[e.ContainerName] = e.Message
+			}
+			if byTarget["web"] != tt.want {
+				t.Errorf("history = %q, want %q", byTarget["web"], tt.want)
+			}
+			if byTarget["old"] != "Stored message" {
+				t.Errorf("row without a key = %q", byTarget["old"])
+			}
+			firing, err := s.Firing(ctx, tt.lang)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var msg string
+			for _, f := range firing {
+				if f.Target == "web" {
+					msg = f.Message
+				}
+			}
+			if msg != tt.want {
+				t.Errorf("firing = %q, want %q", msg, tt.want)
+			}
+		})
 	}
 }

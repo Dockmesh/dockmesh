@@ -18,6 +18,7 @@ func (h *Handlers) noticeViewer(r *http.Request) notices.Viewer {
 		Allowed: func(perm string) bool {
 			return middleware.AccessOf(ctx).AllowsGlobally(rbac.Perm(perm))
 		},
+		Lang: r.URL.Query().Get("lang"),
 	}
 }
 
