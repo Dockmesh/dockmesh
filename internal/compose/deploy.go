@@ -356,7 +356,7 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 			}
 			return fmt.Errorf("image pull %s: %w", svc.Image, err)
 		}
-		err = readPullStream(rc, operations.RegistryAuthSecrets(auth))
+		err = docker.ReadPullStream(rc, operations.RegistryAuthSecrets(auth))
 		rc.Close()
 		if err != nil {
 			pullSpan.SetStatus(codes.Error, err.Error())

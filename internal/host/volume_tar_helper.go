@@ -9,14 +9,13 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 // VolumeTarHelperImage mounts volumes with data, so it is pinned to the
 // multi-arch index digest like the browse helper.
-const VolumeTarHelperImage = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
+const VolumeTarHelperImage = docker.BusyboxHelperImage
 
 // tarVolumeHelper spawns a busybox container that tars the named volume
 // to stdout. The returned ReadCloser streams the .tar.gz bytes and
@@ -29,12 +28,9 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 	cli := dc.Raw()
 	// ensure helper image present
 	if _, err := cli.ImageInspect(ctx, VolumeTarHelperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, VolumeTarHelperImage, image.PullOptions{})
-		if pullErr != nil {
+		if pullErr := docker.PullAnonymous(ctx, cli, VolumeTarHelperImage); pullErr != nil {
 			return nil, fmt.Errorf("pull %s: %w", VolumeTarHelperImage, pullErr)
 		}
-		_, _ = io.Copy(io.Discard, rc)
-		_ = rc.Close()
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        VolumeTarHelperImage,

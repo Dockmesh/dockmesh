@@ -9,37 +9,7 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/client"
-
-	"github.com/dockmesh/dockmesh/internal/operations"
 )
-
-func TestReadPullStream(t *testing.T) {
-	cases := []struct {
-		name    string
-		stream  string
-		wantErr string
-	}{
-		{"ok", `{"status":"Pulling from library/web","id":"latest"}` + "\n" + `{"status":"Digest: sha256:abc"}` + "\n", ""},
-		{"rate limit", `{"status":"Pulling from library/web","id":"latest"}` + "\n" + `{"errorDetail":{"message":"toomanyrequests"},"error":"toomanyrequests: rate limit"}` + "\n" + `{"error":"second"}` + "\n", "toomanyrequests: rate limit"},
-		{"masked", `{"error":"denied for c2VjcmV0"}` + "\n", "denied for " + operations.Masked},
-		{"garbage after error", `{"error":"boom"}` + "\nnot json", "boom"},
-		{"empty", "", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := readPullStream(strings.NewReader(tc.stream), []string{"c2VjcmV0"})
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("err = %v, want nil", err)
-				}
-				return
-			}
-			if err == nil || err.Error() != tc.wantErr {
-				t.Fatalf("err = %v, want %q", err, tc.wantErr)
-			}
-		})
-	}
-}
 
 // A pull that fails inside the stream (HTTP 200) fails the deploy when no
 // local copy exists, and falls back to the cached image when one does.

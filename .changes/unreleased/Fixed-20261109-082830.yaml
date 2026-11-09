@@ -1,0 +1,3 @@
+kind: Fixed
+body: Starting the proxy, backups, volume browsing and bind-mount copies stop with the registry's error when an image can't be pulled, on the server and on agents, instead of failing later with No such image
+time: 2026-11-09T08:28:30.177920913Z

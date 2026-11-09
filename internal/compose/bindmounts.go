@@ -16,8 +16,8 @@ import (
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -233,7 +233,7 @@ func emptyOrMissing(dir string) bool {
 	return err == nil && len(entries) == 0
 }
 
-const bindCopyHelperImage = "busybox:1.38"
+const bindCopyHelperImage = docker.BusyboxHelperImage
 
 // copyBindData streams path out of the old container into a helper
 // container that has dest bind-mounted. The Docker daemon extracts as root
@@ -241,12 +241,9 @@ const bindCopyHelperImage = "busybox:1.38"
 // the helper's mount namespace keeps the archive inside dest.
 func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath, dest string) (int, error) {
 	if _, err := cli.ImageInspect(ctx, bindCopyHelperImage); err != nil {
-		rc, err := cli.ImagePull(ctx, bindCopyHelperImage, image.PullOptions{})
-		if err != nil {
+		if err := docker.PullAnonymous(ctx, cli, bindCopyHelperImage); err != nil {
 			return 0, fmt.Errorf("pull helper image: %w", err)
 		}
-		_, _ = io.Copy(io.Discard, rc)
-		rc.Close()
 	}
 	helper, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:  bindCopyHelperImage,
