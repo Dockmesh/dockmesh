@@ -19,7 +19,7 @@ func TestStagedMountBody(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stagedMountBody(tt.mount)
+			got := stagedMountBody(tt.mount).In("en")
 			if has := strings.Contains(got, "Upgrade the agent first (Hosts → edge-1 → Upgrade agent)"); has != tt.wantUpgrade {
 				t.Errorf("upgrade hint = %v, want %v: %q", has, tt.wantUpgrade, got)
 			}

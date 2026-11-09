@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -23,7 +24,7 @@ func (s *Service) SyncNameCollisionNotice(ctx context.Context, n *notices.Servic
 		return err
 	}
 	body := nameCollisions(jobs)
-	if body == "" {
+	if body.Key == "" {
 		return n.Resolve(ctx, nameCollisionNoticeKey)
 	}
 	// An open notice keeps its text on Raise, so reopen it when the list
@@ -33,7 +34,7 @@ func (s *Service) SyncNameCollisionNotice(ctx context.Context, n *notices.Servic
 		return err
 	}
 	for _, o := range open {
-		if o.Key == nameCollisionNoticeKey && o.Body != body {
+		if o.Key == nameCollisionNoticeKey && o.Body != body.In(i18n.Default) {
 			if err := n.Resolve(ctx, nameCollisionNoticeKey); err != nil {
 				return err
 			}
@@ -43,40 +44,39 @@ func (s *Service) SyncNameCollisionNotice(ctx context.Context, n *notices.Servic
 		Key:      nameCollisionNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "Backup jobs share an archive folder",
+		Title:    i18n.Msg("notice.backup_collision.title"),
 		Body:     body,
 		Link:     "/backups",
 	})
 }
 
 // nameCollisions describes every job whose archive folder is shared or
-// reserved, or returns "" when there are none.
-func nameCollisions(jobs []Job) string {
+// reserved, or returns an empty Text when there are none.
+func nameCollisions(jobs []Job) i18n.Text {
 	byDir := map[string][]string{}
 	for _, j := range jobs {
 		dir := sanitize(j.Name)
 		byDir[dir] = append(byDir[dir], fmt.Sprintf("%q", j.Name))
 	}
-	var lines []string
+	var lines []i18n.Text
 	for dir, names := range byDir {
 		sort.Strings(names)
 		switch {
 		case dir == "":
-			lines = append(lines, "Without a letter or digit, these use the folder of every job: "+strings.Join(names, ", ")+".")
+			lines = append(lines, i18n.Msg("notice.backup_collision.no_name", strings.Join(names, ", ")))
 		case len(names) > 1:
-			lines = append(lines, "Same folder: "+strings.Join(names, ", ")+".")
+			lines = append(lines, i18n.Msg("notice.backup_collision.same", strings.Join(names, ", ")))
 		}
 	}
 	sys := sanitize(DefaultSystemJobName)
 	for _, j := range jobs {
 		if sanitize(j.Name) == sys && !HasSystemSource(j.Sources) {
-			lines = append(lines, fmt.Sprintf("%q is not a system backup but uses the system backup folder.", j.Name))
+			lines = append(lines, i18n.Msg("notice.backup_collision.system", fmt.Sprintf("%q", j.Name)))
 		}
 	}
 	if len(lines) == 0 {
-		return ""
+		return i18n.Text{}
 	}
-	sort.Strings(lines)
-	return "These backup jobs write to the same archive folder:" + notices.Bullets(lines) +
-		"Rename one of them; until then their retention can delete each other's archives."
+	sort.Slice(lines, func(a, b int) bool { return lines[a].In(i18n.Default) < lines[b].In(i18n.Default) })
+	return i18n.Msg("notice.backup_collision.body", notices.Bullets(lines))
 }

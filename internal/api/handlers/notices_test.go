@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/go-chi/chi/v5"
 )
@@ -25,10 +26,10 @@ func TestNoticesHandlers(t *testing.T) {
 	}
 	svc := notices.NewService(database)
 	ctx := context.Background()
-	if err := svc.Raise(ctx, notices.RaiseInput{Key: "all", Audience: notices.All(), Severity: notices.SevWarning, Title: "for everyone"}); err != nil {
+	if err := svc.Raise(ctx, notices.RaiseInput{Key: "all", Audience: notices.All(), Severity: notices.SevWarning, Title: i18n.Msg("for everyone")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Raise(ctx, notices.RaiseInput{Key: "adm", Audience: notices.Admins(), Severity: notices.SevCritical, Title: "admins"}); err != nil {
+	if err := svc.Raise(ctx, notices.RaiseInput{Key: "adm", Audience: notices.Admins(), Severity: notices.SevCritical, Title: i18n.Msg("admins")}); err != nil {
 		t.Fatal(err)
 	}
 

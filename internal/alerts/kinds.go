@@ -283,10 +283,9 @@ func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 		Key:      unsupportedNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "Some agents are too old for container event alerts",
-		Body: "Update the agent on " + joined + ". Until then, alerts for restart loops, OOM kills, " +
-			"unhealthy containers and unexpected stops don't cover these hosts.",
-		Link: "/agents",
+		Title:    i18n.Msg("notice.agents_no_events.title"),
+		Body:     i18n.Msg("notice.agents_no_events.body", joined),
+		Link:     "/agents",
 	}); err != nil {
 		slog.Warn("alerts: raise notice", "err", err)
 	}

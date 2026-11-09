@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -347,7 +348,7 @@ func TestAttentionImageUpdateKeys(t *testing.T) {
 func TestAttentionHidesDismissedNotices(t *testing.T) {
 	e := newAttentionEnv(t)
 	ctx := context.Background()
-	if err := e.h.Notices.Raise(ctx, notices.RaiseInput{Key: "dismiss-me", Audience: notices.All(), Severity: notices.SevWarning, Title: "act on this"}); err != nil {
+	if err := e.h.Notices.Raise(ctx, notices.RaiseInput{Key: "dismiss-me", Audience: notices.All(), Severity: notices.SevWarning, Title: i18n.Msg("act on this")}); err != nil {
 		t.Fatal(err)
 	}
 	u := e.user("ann", "admin")

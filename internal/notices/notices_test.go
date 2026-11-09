@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
@@ -54,10 +56,10 @@ func TestAudience(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
 	for _, in := range []RaiseInput{
-		{Key: "all", Audience: All(), Severity: SevInfo, Title: "everyone"},
-		{Key: "admins", Audience: Admins(), Severity: SevWarning, Title: "admins only"},
-		{Key: "users", Audience: Users("u-view"), Severity: SevInfo, Title: "just the viewer"},
-		{Key: "perm", Audience: WithPermission("stacks.deploy"), Severity: SevInfo, Title: "deployers"},
+		{Key: "all", Audience: All(), Severity: SevInfo, Title: i18n.Msg("everyone")},
+		{Key: "admins", Audience: Admins(), Severity: SevWarning, Title: i18n.Msg("admins only")},
+		{Key: "users", Audience: Users("u-view"), Severity: SevInfo, Title: i18n.Msg("just the viewer")},
+		{Key: "perm", Audience: WithPermission("stacks.deploy"), Severity: SevInfo, Title: i18n.Msg("deployers")},
 	} {
 		if err := s.Raise(ctx, in); err != nil {
 			t.Fatalf("raise %s: %v", in.Key, err)
@@ -100,7 +102,7 @@ func TestAudience(t *testing.T) {
 func TestRaiseIsIdempotentAndReopens(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
-	in := RaiseInput{Key: "k", Audience: All(), Severity: SevWarning, Title: "first"}
+	in := RaiseInput{Key: "k", Audience: All(), Severity: SevWarning, Title: i18n.Msg("first")}
 	if err := s.Raise(ctx, in); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +110,7 @@ func TestRaiseIsIdempotentAndReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	in.Title = "second"
+	in.Title = i18n.Msg("second")
 	if err := s.Raise(ctx, in); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +169,7 @@ func TestRaiseWhileOtherWritersCommit(t *testing.T) {
 		raisers.Add(1)
 		go func() {
 			defer raisers.Done()
-			errs <- s.Raise(ctx, RaiseInput{Key: fmt.Sprintf("k-%d", i), Audience: All(), Severity: SevInfo, Title: "t"})
+			errs <- s.Raise(ctx, RaiseInput{Key: fmt.Sprintf("k-%d", i), Audience: All(), Severity: SevInfo, Title: i18n.Msg("t")})
 		}()
 	}
 	raisers.Wait()
@@ -184,13 +186,13 @@ func TestRaiseWhileOtherWritersCommit(t *testing.T) {
 func TestDismiss(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
-	if err := s.Raise(ctx, RaiseInput{Key: "warn", Audience: All(), Severity: SevWarning, Title: "w"}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "warn", Audience: All(), Severity: SevWarning, Title: i18n.Msg("w")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Raise(ctx, RaiseInput{Key: "crit", Audience: All(), Severity: SevCritical, Title: "c"}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "crit", Audience: All(), Severity: SevCritical, Title: i18n.Msg("c")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Raise(ctx, RaiseInput{Key: "adm", Audience: Admins(), Severity: SevInfo, Title: "a"}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "adm", Audience: Admins(), Severity: SevInfo, Title: i18n.Msg("a")}); err != nil {
 		t.Fatal(err)
 	}
 	ids := map[string]int64{}
@@ -240,13 +242,13 @@ func TestDismiss(t *testing.T) {
 
 func TestRaiseValidation(t *testing.T) {
 	s, _ := newTestService(t)
-	ok := RaiseInput{Key: "k", Audience: All(), Severity: SevInfo, Title: "t", Link: "/stacks/x"}
+	ok := RaiseInput{Key: "k", Audience: All(), Severity: SevInfo, Title: i18n.Msg("t"), Link: "/stacks/x"}
 	tests := []struct {
 		name string
 		mod  func(*RaiseInput)
 	}{
 		{"no key", func(in *RaiseInput) { in.Key = " " }},
-		{"no title", func(in *RaiseInput) { in.Title = "" }},
+		{"no title", func(in *RaiseInput) { in.Title = i18n.Text{} }},
 		{"bad severity", func(in *RaiseInput) { in.Severity = "error" }},
 		{"bad audience", func(in *RaiseInput) { in.Audience = Audience{Kind: "everyone"} }},
 		{"users without ids", func(in *RaiseInput) { in.Audience = Users() }},
@@ -278,7 +280,7 @@ func TestRunChecks(t *testing.T) {
 	s.Register("broken", func(context.Context, *Service) error { ran++; return errors.New("boom") })
 	s.Register("cond", func(ctx context.Context, s *Service) error {
 		ran++
-		return s.Set(ctx, condition, RaiseInput{Key: "cond", Audience: Admins(), Severity: SevWarning, Title: "c"})
+		return s.Set(ctx, condition, RaiseInput{Key: "cond", Audience: Admins(), Severity: SevWarning, Title: i18n.Msg("c")})
 	})
 
 	s.RunChecks(ctx)
@@ -298,7 +300,7 @@ func TestRunChecks(t *testing.T) {
 func TestDeletedUserDismissalsGo(t *testing.T) {
 	s, database := newTestService(t)
 	ctx := context.Background()
-	if err := s.Raise(ctx, RaiseInput{Key: "k", Audience: All(), Severity: SevInfo, Title: "t"}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "k", Audience: All(), Severity: SevInfo, Title: i18n.Msg("t")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Dismiss(ctx, viewer, mustOpen(t, s)[0].ID); err != nil {
@@ -331,12 +333,12 @@ func TestBullets(t *testing.T) {
 		items []string
 		want  string
 	}{
-		{name: "two items", items: []string{"web", "db"}, want: "Stacks:\n- web\n- db\nFix them."},
-		{name: "one item", items: []string{"web"}, want: "Stacks:\n- web\nFix them."},
+		{name: "two items", items: []string{"web", "db"}, want: ":\n- web\n- db\nOpen each job"},
+		{name: "one item", items: []string{"web"}, want: ":\n- web\nOpen each job"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := "Stacks:" + Bullets(tt.items) + "Fix them."; got != tt.want {
+			if got := i18n.Msg("notice.backup_missing.body", Bullets(tt.items)).In("en"); !strings.Contains(got, tt.want) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
@@ -359,7 +361,7 @@ func TestRefreshRunsOnlyWhileOpen(t *testing.T) {
 		t.Fatalf("refresh ran %d times with no open notice", calls)
 	}
 
-	if err := s.Raise(ctx, RaiseInput{Key: "timed", Audience: Admins(), Severity: SevInfo, Title: "ends soon"}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "timed", Audience: Admins(), Severity: SevInfo, Title: i18n.Msg("ends soon")}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ForViewer(ctx, admin)
@@ -376,7 +378,7 @@ func TestBlockingHidesForADay(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	if err := s.Raise(ctx, RaiseInput{Key: "block", Audience: All(), Severity: SevCritical, Title: "b", Blocking: true}); err != nil {
+	if err := s.Raise(ctx, RaiseInput{Key: "block", Audience: All(), Severity: SevCritical, Title: i18n.Msg("b"), Blocking: true}); err != nil {
 		t.Fatal(err)
 	}
 	n := mustOpen(t, s)[0]
@@ -415,8 +417,56 @@ func TestBlockingHidesForADay(t *testing.T) {
 
 func TestBlockingNeedsCritical(t *testing.T) {
 	s, _ := newTestService(t)
-	err := s.Raise(context.Background(), RaiseInput{Key: "w", Audience: All(), Severity: SevWarning, Title: "w", Blocking: true})
+	err := s.Raise(context.Background(), RaiseInput{Key: "w", Audience: All(), Severity: SevWarning, Title: i18n.Msg("w"), Blocking: true})
 	if err == nil {
 		t.Fatal("warning notice accepted as blocking")
+	}
+}
+
+func TestViewerSeesNoticeInOwnLanguage(t *testing.T) {
+	s, database := newTestService(t)
+	ctx := context.Background()
+	in := RaiseInput{Key: "k", Audience: All(), Severity: SevWarning,
+		Title: i18n.Msg("notice.agent_cert_expired.title", "dm-agent1"),
+		Body:  i18n.Msg("notice.backup_missing.body", Bullets([]string{"nightly"}))}
+	if err := s.Raise(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO notices (key, audience, severity, title, body) VALUES ('old', 'all', 'info', 'Stored title', 'Stored body')`); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		lang, wantTitle, wantBody string
+	}{
+		{"", "Agent certificate expired: dm-agent1", "fail to sign in:\n- nightly\nOpen each job"},
+		{"en", "Agent certificate expired: dm-agent1", "fail to sign in:\n- nightly\nOpen each job"},
+		{"de", "Agent-Zertifikat abgelaufen: dm-agent1", "schlägt daher fehl:\n- nightly\nJeden Job"},
+		{"xx", "Agent certificate expired: dm-agent1", "fail to sign in:\n- nightly\nOpen each job"},
+	}
+	for _, tt := range tests {
+		t.Run("lang "+tt.lang, func(t *testing.T) {
+			got, err := s.ForViewer(ctx, Viewer{Allowed: func(string) bool { return true }, Lang: tt.lang})
+			if err != nil {
+				t.Fatal(err)
+			}
+			byKey := map[string]Notice{}
+			for _, n := range got {
+				byKey[n.Key] = n
+			}
+			if n := byKey["k"]; n.Title != tt.wantTitle || !strings.Contains(n.Body, tt.wantBody) {
+				t.Errorf("notice = %q / %q", n.Title, n.Body)
+			}
+			if n := byKey["old"]; n.Title != "Stored title" || n.Body != "Stored body" {
+				t.Errorf("row without a key = %q / %q", n.Title, n.Body)
+			}
+		})
+	}
+
+	open := mustOpen(t, s)
+	for _, n := range open {
+		if n.Key == "k" && (n.Title != "Agent certificate expired: dm-agent1" || !strings.Contains(n.Body, "Open each job")) {
+			t.Errorf("Open must stay English, got %q", n.Title)
+		}
 	}
 }

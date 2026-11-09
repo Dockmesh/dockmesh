@@ -310,7 +310,7 @@ func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	entries, err := h.Alerts.History(r.Context(), limit, hosts)
+	entries, err := h.Alerts.History(r.Context(), limit, hosts, r.URL.Query().Get("lang"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

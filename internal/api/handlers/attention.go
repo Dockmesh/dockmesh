@@ -367,7 +367,7 @@ func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow, covered
 	if h.Alerts == nil {
 		return nil
 	}
-	firing, err := h.Alerts.Firing(r.Context())
+	firing, err := h.Alerts.Firing(r.Context(), r.URL.Query().Get("lang"))
 	if err != nil {
 		slog.Warn("attention: firing alerts", "err", err)
 		return nil

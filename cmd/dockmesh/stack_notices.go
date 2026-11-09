@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -32,7 +33,7 @@ func syncStagedMountNotices(ctx context.Context, n *notices.Service, reg *host.R
 			Key:      key,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    fmt.Sprintf("Redeploy stack %s on %s", m.Stack, m.HostName),
+			Title:    i18n.Msg("notice.staged_mount.title", m.Stack, m.HostName),
 			Body:     stagedMountBody(m),
 			Link:     "/stacks/" + m.Stack,
 		}); err != nil {
@@ -55,17 +56,11 @@ func syncStagedMountNotices(ctx context.Context, n *notices.Service, reg *host.R
 
 // stagedMountBody puts the agent upgrade first on agent hosts: an older
 // agent stages the redeploy in a temporary directory again.
-func stagedMountBody(m host.StagedMount) string {
-	body := "This stack uses a relative bind mount (./path) and was deployed by an earlier " +
-		"version that pointed it at a temporary directory. "
+func stagedMountBody(m host.StagedMount) i18n.Text {
 	if m.HostID != "" && m.HostID != "local" {
-		body += fmt.Sprintf("Upgrade the agent first (Hosts → %s → Upgrade agent) and redeploy "+
-			"the stack afterwards: ", m.HostName)
-	} else {
-		body += "Redeploy it: "
+		return i18n.Msg("notice.staged_mount.body_agent", m.HostName)
 	}
-	return body + "the mount then uses the stack directory, and files the container wrote are " +
-		"copied there if it is empty."
+	return i18n.Msg("notice.staged_mount.body_local")
 }
 
 // reportBindCopies raises a notice when data couldn't be moved out of an
@@ -83,11 +78,9 @@ func reportBindCopies(ctx context.Context, n *notices.Service, hostID, stack str
 		Audience: notices.Admins(),
 		Severity: notices.SevCritical,
 		Blocking: true,
-		Title:    "Data from an old bind mount of " + stack + " was not copied",
-		Body: "The redeploy could not copy files the old container wrote into its temporary bind " +
-			"mount:" + notices.Bullets(failed) + "The old container is gone; check the " +
-			"server log and restore the data from a backup if needed.",
-		Link: "/stacks/" + stack,
+		Title:    i18n.Msg("notice.bind_copy.title", stack),
+		Body:     i18n.Msg("notice.bind_copy.body", notices.Bullets(failed)),
+		Link:     "/stacks/" + stack,
 	})
 	if err != nil {
 		slog.Warn("bind copy notice", "stack", stack, "err", err)

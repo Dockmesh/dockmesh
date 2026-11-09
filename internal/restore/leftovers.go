@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
@@ -149,17 +150,16 @@ func SyncLeftoverNotice(ctx context.Context, cfg *config.Config, n *notices.Serv
 	if err != nil {
 		return err
 	}
-	var b strings.Builder
-	b.WriteString("A system restore kept the files it replaced. They include the old database and secret key. Delete them on the Backups page once the restored install works.\n")
+	items := make([]string, 0, len(list))
 	for _, l := range list {
-		fmt.Fprintf(&b, "- %s (%s, %s)\n", l.Path, l.RestoredAt.Format("2006-01-02 15:04 UTC"), operations.HumanBytes(l.Bytes))
+		items = append(items, fmt.Sprintf("%s (%s, %s)", l.Path, l.RestoredAt.Format("2006-01-02 15:04 UTC"), operations.HumanBytes(l.Bytes)))
 	}
 	return n.Set(ctx, len(list) > 0, notices.RaiseInput{
 		Key:      LeftoverNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "Files from before the system restore are kept",
-		Body:     strings.TrimSpace(b.String()),
+		Title:    i18n.Msg("notice.restore_leftovers.title"),
+		Body:     i18n.Msg("notice.restore_leftovers.body", notices.Bullets(items)),
 		Link:     "/backups",
 	})
 }

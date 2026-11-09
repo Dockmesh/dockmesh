@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -71,10 +72,9 @@ func (tf TOFU) Handle(ctx context.Context, ev HostKeyEvent) error {
 			Key:      RecordedNoticeKey(tf.ID),
 			Audience: notices.Admins(),
 			Severity: notices.SevInfo,
-			Title:    "SFTP host key recorded for " + tf.Label,
-			Body: fmt.Sprintf("The first connection recorded the server's host key %s. From now on "+
-				"connections to a server that presents a different key are refused.", ev.Fingerprint),
-			Link: tf.Link,
+			Title:    i18n.Msg("notice.sftp_recorded.title", tf.Label),
+			Body:     i18n.Msg("notice.sftp_recorded.body", ev.Fingerprint),
+			Link:     tf.Link,
 		})
 	case "matched":
 		if tf.Notices != nil {
@@ -89,11 +89,9 @@ func (tf TOFU) Handle(ctx context.Context, ev HostKeyEvent) error {
 			Audience: notices.Admins(),
 			Severity: notices.SevCritical,
 			Blocking: true,
-			Title:    "SFTP host key changed for " + tf.Label,
-			Body: fmt.Sprintf("The server used to present %s and now presents %s, so connections are "+
-				"refused. If the server was reinstalled or its key rotated on purpose, accept the new "+
-				"key; otherwise someone may be intercepting the connection.", ev.OldFingerprint, ev.Fingerprint),
-			Link: tf.Link,
+			Title:    i18n.Msg("notice.sftp_changed.title", tf.Label),
+			Body:     i18n.Msg("notice.sftp_changed.body", ev.OldFingerprint, ev.Fingerprint),
+			Link:     tf.Link,
 		})
 	}
 	if notice != nil {

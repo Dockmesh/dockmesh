@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -31,18 +32,17 @@ func NewForBoot(ctx context.Context, db *sql.DB, force bool) (st *State, forceIg
 // at this start and resolves it otherwise. envFile is the env file the
 // server was started with, empty when unknown.
 func ForceNoticeCheck(forceIgnored bool, envFile string) notices.Check {
-	where := envFile
-	if where == "" {
-		where = "the server's env file (by default " + DefaultEnvFile + ")"
+	var where any = envFile
+	if envFile == "" {
+		where = i18n.Msg("notice.setup_force.default_env", DefaultEnvFile)
 	}
 	return func(ctx context.Context, n *notices.Service) error {
 		return n.Set(ctx, forceIgnored, notices.RaiseInput{
 			Key:      ForceIgnoredNoticeKey,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    "Setup flag ignored",
-			Body: "DOCKMESH_SETUP_FORCE=true is set, but an admin account already exists, so the " +
-				"setup wizard stays closed. Remove the line from " + where + " and restart Dockmesh.",
+			Title:    i18n.Msg("notice.setup_force.title"),
+			Body:     i18n.Msg("notice.setup_force.body", where),
 		})
 	}
 }

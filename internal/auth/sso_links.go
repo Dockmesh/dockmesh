@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -235,29 +236,27 @@ func (s *Service) SyncSSORekeyNotice(ctx context.Context, n *notices.Service) er
 	}
 	names := p.Accounts
 	if len(names) > maxListedSSORekeys {
-		names = append(names[:maxListedSSORekeys:maxListedSSORekeys], fmt.Sprintf("and %d more", len(p.Accounts)-maxListedSSORekeys))
+		names = names[:maxListedSSORekeys]
+	}
+	list := notices.Bullets(names)
+	if more := len(p.Accounts) - len(names); more > 0 {
+		list = append(list, i18n.Msg("notice.and_more", more))
 	}
 	until := p.Until
 	if len(until) > 10 {
 		until = until[:10]
 	}
-	intro := fmt.Sprintf("These %d accounts signed in through OAuth2 or LDAP before the upgrade and have not signed in since. "+
-		"Each moves to its provider's immutable user id at its next sign-in, until %s:", len(p.Accounts), until)
+	body := i18n.Msg("notice.sso_rekey.body", len(p.Accounts), until, list)
 	if len(p.Accounts) == 1 {
-		intro = fmt.Sprintf("This account signed in through OAuth2 or LDAP before the upgrade and has not signed in since. "+
-			"It moves to its provider's immutable user id at its next sign-in, until %s:", until)
+		body = i18n.Msg("notice.sso_rekey.body_one", until, list)
 	}
-	body := intro + notices.Bullets(names) +
-		"A sign-in whose old key is a login name or DN also needs the account's email, and then never moves an account with two-factor authentication or one that manages users or settings. " +
-		"After that date, or when you end re-keying, these accounts can no longer sign in through their provider; " +
-		"an admin then has to remove and recreate them."
 	// An open notice keeps its text on Raise, so reopen it when the list changed.
 	open, err := n.Open(ctx)
 	if err != nil {
 		return err
 	}
 	for _, o := range open {
-		if o.Key == SSORekeyNoticeKey && o.Body != body {
+		if o.Key == SSORekeyNoticeKey && o.Body != body.In(i18n.Default) {
 			if err := n.Resolve(ctx, SSORekeyNoticeKey); err != nil {
 				return err
 			}
@@ -267,7 +266,7 @@ func (s *Service) SyncSSORekeyNotice(ctx context.Context, n *notices.Service) er
 		Key:      SSORekeyNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "OAuth2 and LDAP accounts not re-keyed yet",
+		Title:    i18n.Msg("notice.sso_rekey.title"),
 		Body:     body,
 		Link:     "/authentication",
 	})
