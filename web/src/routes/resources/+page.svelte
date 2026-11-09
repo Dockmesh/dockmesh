@@ -40,6 +40,7 @@
 
   // ───────── Common state
   const isAll = $derived(hosts.isAll);
+  const realHosts = $derived(hosts.available.filter((h) => h.kind !== 'all'));
 
   // ===================================================================
   //  Images
@@ -59,11 +60,13 @@
   let imageSearch = $state('');
   let imageFilter = $state<'all' | 'used' | 'unused' | 'dangling' | 'vulnerable'>('all');
   let imageSelected = $state<Set<string>>(new Set());
-  // Latest scan report per image ref (RepoTags[0], or the id when dangling).
+  // Latest scan report per host and image ref (see scanKey).
   let scanCache = $state<Map<string, ScanReport>>(new Map());
   let scanAllBusy = $state(false);
 
   function iKey(img: ImageSummary): string { return `${img.host_id ?? 'local'}/${img.Id}`; }
+  // A report belongs to one host: the same tag can be other content elsewhere.
+  function scanKey(img: ImageSummary): string { return `${rowHost(img)}/${imageRef(img)}`; }
 
   function imageRef(img: ImageSummary): string {
     return img.RepoTags?.[0] && img.RepoTags[0] !== '<none>:<none>' ? img.RepoTags[0] : img.Id;
@@ -111,13 +114,13 @@
   async function backfillScanCache() {
     const next = new Map(scanCache);
     await Promise.all(images.map(async (img) => {
-      const ref = imageRef(img);
-      if (next.has(ref)) return;
+      const key = scanKey(img);
+      if (next.has(key)) return;
       try {
-        const rep = normalizeScanReport(await api.images.getScan(img.Id));
-        if (rep) next.set(ref, rep);
+        const rep = normalizeScanReport(await api.images.getScan(img.Id, rowHost(img)));
+        if (rep) next.set(key, rep);
       } catch {
-        /* 404 / no cache — render as "not scanned" */
+        /* host unreachable or image gone — render as "not scanned" */
       }
     }));
     scanCache = next;
@@ -136,7 +139,7 @@
   }
 
   function isVulnerable(img: ImageSummary): boolean {
-    const rep = scanCache.get(imageRef(img));
+    const rep = scanCache.get(scanKey(img));
     if (!rep) return false;
     return rep.summary.critical > 0 || rep.summary.high > 0;
   }
@@ -238,6 +241,7 @@
   let pullOpen = $state(false);
   let pullImageRef = $state('');
   let pullBusy = $state(false);
+  let pullHost = $state('local');
   let hubResults = $state<Array<{ repo_name: string; short_description: string; star_count: number; is_official: boolean }>>([]);
   let hubTimer: ReturnType<typeof setTimeout> | null = null;
   function onPullInput() {
@@ -258,7 +262,7 @@
     if (!pullImageRef.trim()) return;
     pullBusy = true;
     try {
-      await api.images.pull(pullImageRef.trim());
+      await api.images.pull(pullImageRef.trim(), isAll ? pullHost : hosts.id || 'local');
       toast.success(m.resources_pulled(), pullImageRef);
       pullOpen = false;
       pullImageRef = '';
@@ -285,12 +289,12 @@
     scanReport = null;
     scanFilter = 'all';
     try {
-      const rep = normalizeScanReport(await api.images.scan(ref))!;
+      const rep = normalizeScanReport(await api.images.scan(ref, rowHost(img)))!;
       scanReport = rep;
       // Feed the in-page cache so the row's CVE cell flips from
       // "not scanned" to severity badges without a page reload.
       const next = new Map(scanCache);
-      next.set(ref, rep);
+      next.set(scanKey(img), rep);
       scanCache = next;
       toast.success(m.resources_scan_complete(), m.resources_n_findings({ n: rep.vulnerabilities.length }));
     } catch (err) {
@@ -311,12 +315,12 @@
     let scanned = 0, failed = 0;
     try {
       for (const img of images) {
-        const ref = imageRef(img);
-        if (scanCache.has(ref)) continue;
+        const key = scanKey(img);
+        if (scanCache.has(key)) continue;
         try {
-          const rep = normalizeScanReport(await api.images.scan(ref))!;
+          const rep = normalizeScanReport(await api.images.scan(imageRef(img), rowHost(img)))!;
           const next = new Map(scanCache);
-          next.set(ref, rep);
+          next.set(key, rep);
           scanCache = next;
           scanned++;
         } catch {
@@ -851,7 +855,7 @@
         </button>
       {/if}
       {#if canImageCreate}
-        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { pullOpen = true; pullImageRef = ''; hubResults = []; }}>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { pullOpen = true; pullImageRef = ''; pullHost = realHosts[0]?.id ?? 'local'; hubResults = []; }}>
           <Download size={12} strokeWidth={1.5} /> {m.resources_pull_image()}
         </button>
       {/if}
@@ -894,7 +898,7 @@
         </div>
         {#each visibleImages as img (img.Id + (img.host_id ?? ''))}
           {@const rt = imageRepoTag(img)}
-          {@const cve = scanCache.get(imageRef(img))}
+          {@const cve = scanCache.get(scanKey(img))}
           <div class="res-row" style="grid-template-columns: {grid};">
             <input type="checkbox" disabled={!canImageDelete} checked={imageSelected.has(iKey(img))} onchange={() => toggleImageOne(img)} />
             <div class="res-col-tag">
@@ -1265,6 +1269,16 @@
     <p class="text-xs text-[var(--fg-muted)]">
       {m.resources_pull_hint()}
     </p>
+    {#if isAll && realHosts.length > 1}
+      <div>
+        <label for="resource-pull-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
+        <select id="resource-pull-host" bind:value={pullHost} class="dm-input text-sm w-full" disabled={pullBusy}>
+          {#each realHosts as h (h.id)}
+            <option value={h.id}>{h.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
   </div>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (pullOpen = false)}>{m.common_cancel()}</Button>
@@ -1353,11 +1367,11 @@
       <label for="vol-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.resources_col_driver()}</label>
       <Input id="vol-driver" bind:value={newVolDriver} placeholder="local" />
     </div>
-    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if realHosts.length > 1}
       <div>
         <label for="vol-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="vol-host" bind:value={newVolHost} class="dm-input text-sm w-full">
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each realHosts as h (h.id)}
             <option value={h.id}>{h.name}</option>
           {/each}
         </select>
@@ -1440,11 +1454,11 @@
         <option value="ipvlan">ipvlan</option>
       </select>
     </div>
-    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if realHosts.length > 1}
       <div>
         <label for="net-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="net-host" bind:value={newNetHost} class="dm-input text-sm w-full">
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each realHosts as h (h.id)}
             <option value={h.id}>{h.name}</option>
           {/each}
         </select>

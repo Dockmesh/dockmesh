@@ -15,9 +15,19 @@ type Store struct {
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
-// Save upserts the report for rep.Image. Existing rows for the same
-// image_ref are replaced so we always hold the latest result.
-func (s *Store) Save(ctx context.Context, rep *Report) error {
+// storeKey is the image_ref a host's report is filed under. The same tag
+// can be different content on two hosts. The server keeps the bare
+// reference; '|' can't occur in a reference, so agent keys can't collide.
+func storeKey(hostID, ref string) string {
+	if hostID == "" || hostID == "local" {
+		return ref
+	}
+	return hostID + "|" + ref
+}
+
+// Save upserts the report for rep.Image on hostID. Existing rows for the
+// same key are replaced so we always hold the latest result.
+func (s *Store) Save(ctx context.Context, hostID string, rep *Report) error {
 	if rep == nil || rep.Image == "" {
 		return errors.New("empty report")
 	}
@@ -42,7 +52,7 @@ func (s *Store) Save(ctx context.Context, rep *Report) error {
 			unknown_sev = excluded.unknown_sev,
 			scanned_at = excluded.scanned_at
 	`,
-		rep.Image, rep.Scanner, rep.ScannerVersion, string(b),
+		storeKey(hostID, rep.Image), rep.Scanner, rep.ScannerVersion, string(b),
 		rep.Summary.Critical, rep.Summary.High, rep.Summary.Medium,
 		rep.Summary.Low, rep.Summary.Negligible, rep.Summary.Unknown,
 		rep.ScannedAt,
@@ -50,8 +60,9 @@ func (s *Store) Save(ctx context.Context, rep *Report) error {
 	return err
 }
 
-// Get returns the cached report for an image ref, or nil if there is none.
-func (s *Store) Get(ctx context.Context, imageRef string) (*Report, error) {
+// Get returns the cached report for an image ref on hostID, or nil if
+// there is none.
+func (s *Store) Get(ctx context.Context, hostID, imageRef string) (*Report, error) {
 	var (
 		rep        Report
 		findings   string
@@ -63,7 +74,7 @@ func (s *Store) Get(ctx context.Context, imageRef string) (*Report, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT scanner, scanner_version, findings_json,
 			critical, high, medium, low, negligible, unknown_sev, scanned_at
-		FROM scan_results WHERE image_ref = ?`, imageRef).
+		FROM scan_results WHERE image_ref = ?`, storeKey(hostID, imageRef)).
 		Scan(&scanner, &scannerVer, &findings,
 			&sum.Critical, &sum.High, &sum.Medium,
 			&sum.Low, &sum.Negligible, &sum.Unknown,

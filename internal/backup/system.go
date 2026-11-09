@@ -13,6 +13,7 @@ import (
 
 	dmdb "github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/restore"
+	"github.com/dockmesh/dockmesh/internal/scanner"
 )
 
 // DefaultSystemJobName is the well-known name of the auto-created daily
@@ -145,12 +146,15 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 	liveDB, _ := filepath.Abs(paths.DBPath)
 	liveDir, liveBase := filepath.Split(liveDB)
 	dataAbs, _ := filepath.Abs(paths.DataDir)
-	// Earlier backups, a staged or replaced restore and the database
-	// snapshots must not end up inside a system backup.
+	// Earlier backups, a staged or replaced restore, image archives being
+	// scanned and the database snapshots must not end up inside a system
+	// backup.
 	excluded := map[string]bool{
-		filepath.Join(dataAbs, "backups"):             true,
-		filepath.Join(dataAbs, restore.StagingDir):    true,
-		filepath.Join(dataAbs, restore.PreRestoreDir): true,
+		filepath.Join(dataAbs, "backups"):              true,
+		filepath.Join(dataAbs, restore.StagingDir):     true,
+		filepath.Join(dataAbs, restore.PreRestoreDir):  true,
+		filepath.Join(dataAbs, scanner.ArchiveDirName): true,
+		filepath.Join(dataAbs, scanner.DBDirName):      true,
 	}
 	skip := func(abs string) bool {
 		switch abs {

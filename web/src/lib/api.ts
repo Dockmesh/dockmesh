@@ -1655,17 +1655,40 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const res = await authFetch(`${BASE}${path}`, { ...init, headers });
 
-  if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`;
-    let body: any;
-    try {
-      body = await res.json();
-      if (body.error) msg = body.error;
-    } catch { /* ignore */ }
-    throw new ApiError(apiErrorText(body?.code, res.status, msg), res.status, body);
-  }
+  if (!res.ok) throw await responseError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+async function responseError(res: Response): Promise<ApiError> {
+  let msg = `${res.status} ${res.statusText}`;
+  let body: any;
+  try {
+    body = await res.json();
+    if (body.error) msg = body.error;
+  } catch { /* ignore */ }
+  return new ApiError(apiErrorText(body?.code, res.status, msg), res.status, body);
+}
+
+// A pull answers 200 with ndjson progress, and reports a failure that
+// happens later as an {"error": …} line of that stream.
+async function pullImage(image: string, host: string): Promise<void> {
+  const res = await authFetch(`${BASE}/images/pull${hostQs(host)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image })
+  });
+  if (!res.ok) throw await responseError(res);
+  for (const line of (await res.text()).split('\n')) {
+    if (!line.trim()) continue;
+    let event: { error?: string };
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.error) throw new ApiError(event.error, 502, event);
+  }
 }
 
 export const api = {
@@ -2221,7 +2244,7 @@ export const api = {
       const qs = params.toString();
       return request<any[] | FanOutResponse<any>>(`/images${qs ? '?' + qs : ''}`);
     },
-    pull: (image: string) => request<any>('/images/pull', { method: 'POST', body: JSON.stringify({ image }) }),
+    pull: (image: string, host = 'local') => pullImage(image, host),
     inspect: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
@@ -2235,10 +2258,10 @@ export const api = {
     },
     prune: (host = 'local') =>
       request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>(`/images/prune${hostQs(host)}`, { method: 'POST' }),
-    scan: (id: string) =>
-      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`, { method: 'POST' }),
-    getScan: (id: string) =>
-      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`),
+    scan: (id: string, host = 'local') =>
+      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan${hostQs(host)}`, { method: 'POST' }),
+    getScan: (id: string, host = 'local') =>
+      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan${hostQs(host)}`),
     // Cached map keyed by image ref from the background update watcher.
     // Refreshed server-side every 30 min. Empty until the first poll
     // completes after boot. UI looks up a container's image here to

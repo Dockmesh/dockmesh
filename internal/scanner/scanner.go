@@ -7,6 +7,7 @@ package scanner
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -15,6 +16,10 @@ type Scanner interface {
 	// Scan runs a scan against the given image reference (e.g. "nginx:alpine"
 	// or "sha256:..."). Implementations must respect ctx for cancellation.
 	Scan(ctx context.Context, image string) (*Report, error)
+	// ScanArchive scans an image delivered as a `docker save` archive, for
+	// images that aren't in the server's Docker daemon. The report is
+	// filed under the given image reference.
+	ScanArchive(ctx context.Context, archive io.Reader, image string) (*Report, error)
 	// Ready returns nil if the scanner is usable (binary installed, DB
 	// downloaded, etc.). Called at startup and before scan attempts.
 	Ready() error

@@ -65,6 +65,10 @@ type Host interface {
 	InspectImage(ctx context.Context, id string) (image.InspectResponse, error)
 	RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error)
 	PruneImages(ctx context.Context) (image.PruneReport, error)
+	// PullImage starts a pull on this host and returns Docker's progress
+	// stream, which reports a failed pull in-band. registryAuth is the
+	// X-Registry-Auth blob for this one pull, "" for anonymous.
+	PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error)
 	ListNetworks(ctx context.Context) ([]network.Inspect, error)
 	InspectNetwork(ctx context.Context, id string) (network.Inspect, error)
 	CreateNetwork(ctx context.Context, name, driver string, labels map[string]string) (network.CreateResponse, error)
@@ -151,6 +155,13 @@ type Host interface {
 	// same and ships the result back. Used by the dashboard's all-mode
 	// System Health panel which renders one row per host. Slice P.6.
 	SystemMetrics(ctx context.Context) (system.Metrics, error)
+}
+
+// ImageExporter is a host whose images the server's scanner can't reach
+// through a local Docker daemon. ExportImage streams an image as a
+// `docker save` archive.
+type ImageExporter interface {
+	ExportImage(ctx context.Context, ref string) (io.ReadCloser, error)
 }
 
 // ExecSession is the interface the WS exec handler uses to talk to a
