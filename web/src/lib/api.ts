@@ -17,6 +17,15 @@ export interface ScanVuln {
   url?: string;
 }
 
+export interface ImageHistoryEntry {
+  id?: string;
+  created: number;
+  created_by: string;
+  tags?: string[];
+  size: number;
+  comment?: string;
+}
+
 export interface ScanReport {
   scanned?: boolean;
   image: string;
@@ -1371,15 +1380,6 @@ export interface GroupMapping {
   group: string;
   role: string;
   scope?: Scope;
-}
-
-export interface ImageHistoryEntry {
-  id?: string;
-  created: number;
-  created_by: string;
-  tags?: string[];
-  size: number;
-  comment?: string;
 }
 
 export interface SAMLProvider {

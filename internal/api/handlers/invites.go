@@ -71,16 +71,12 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	if ttl > 7*24*time.Hour {
 		ttl = 7 * 24 * time.Hour
 	}
-	createdBy := middleware.UserID(r.Context())
-	if createdBy == "" {
-		createdBy = middleware.TokenOwnerID(r.Context())
-	}
 	invite, err := h.Invites.Create(r.Context(), invites.CreateInput{
 		Role:      in.Role,
 		Scopes:    in.Scopes,
 		EmailHint: in.EmailHint,
 		TTL:       ttl,
-		CreatedBy: createdBy,
+		CreatedBy: actorID(r),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -504,7 +504,6 @@ func main() {
 	} else {
 		slog.Info("scanner ready", "engine", "grype")
 	}
-	var scannerSvc scanner.Scanner = scannerCLI
 	scanStore := scanner.NewStore(database)
 
 	// Proxy service is created with `enabled=false`; the real boot
@@ -641,11 +640,11 @@ func main() {
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
 	}
-	// Sign-in callbacks and invite links use the same base URL as the
-	// agent installer: DOCKMESH_BASE_URL, else the Base URL setting.
 	if err := seedScannerEnabled(ctx, settingsStore, cfg.ScannerEnabled); err != nil {
 		slog.Warn("scanner setting not saved", "err", err)
 	}
+	// Sign-in callbacks and invite links use the same base URL as the
+	// agent installer: DOCKMESH_BASE_URL, else the Base URL setting.
 	publicBaseURL := func() string { return agentEndpoints(cfg, settingsStore).BaseURL }
 	oidcSvc.SetBaseURL(publicBaseURL)
 	samlSvc.SetBaseURL(publicBaseURL)
@@ -1075,7 +1074,7 @@ func main() {
 		Dependencies:   depStore,
 		Compose:        composeSvc,
 		LoginLimiter:   loginLimiter,
-		Scanner:        scannerSvc,
+		Scanner:        scannerCLI,
 		ScanStore:      scanStore,
 		Proxy:          proxySvc,
 		Updater:        updaterSvc,

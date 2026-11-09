@@ -377,13 +377,14 @@ func callerRoles(me map[string]any) string {
 			continue
 		}
 		scope, _ := a["scope"].(map[string]any)
+		typ := firstString(scope, "type")
 		switch detail := strings.Trim(firstString(scope, "host")+"/"+firstString(scope, "value"), "/"); {
-		case firstString(scope, "type") == "" || firstString(scope, "type") == "global":
+		case typ == "" || typ == "global":
 			out = append(out, role)
 		case detail == "":
-			out = append(out, role+" ("+firstString(scope, "type")+")")
+			out = append(out, role+" ("+typ+")")
 		default:
-			out = append(out, role+" ("+firstString(scope, "type")+": "+detail+")")
+			out = append(out, role+" ("+typ+": "+detail+")")
 		}
 	}
 	if len(out) == 0 {

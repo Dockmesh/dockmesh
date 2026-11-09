@@ -43,7 +43,7 @@ func TestIsNewer(t *testing.T) {
 
 type oneAdmin struct{}
 
-func (oneAdmin) ListActiveUserIDs(context.Context) ([]string, error) { return []string{"admin"}, nil }
+func (oneAdmin) ListActiveUserIDs(context.Context) ([]string, error)              { return []string{"admin"}, nil }
 func (oneAdmin) CanReceive(context.Context, string, notifications.EmitInput) bool { return true }
 
 func TestNotifyAvailableOncePerVersionAcrossRestarts(t *testing.T) {

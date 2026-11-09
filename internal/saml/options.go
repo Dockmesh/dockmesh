@@ -256,8 +256,7 @@ func refuseMetadataAddress(address string) error {
 		return fmt.Errorf("bad address %q", address)
 	}
 	ip := ap.Addr().Unmap()
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
 		return fmt.Errorf("the metadata URL resolves to %s, which is not allowed", ip)
 	}
 	return nil
