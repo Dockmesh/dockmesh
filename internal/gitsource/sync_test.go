@@ -2,6 +2,7 @@ package gitsource
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -130,6 +131,43 @@ func TestTriggerSyncCoalesces(t *testing.T) {
 			}
 			if f.maxActive != 1 {
 				t.Fatalf("max concurrent syncs = %d, want 1", f.maxActive)
+			}
+		})
+	}
+}
+
+func TestFirstSyncUndoesOnlyAFailedFirstSync(t *testing.T) {
+	errSync := errors.New("clone failed")
+	tests := []struct {
+		name        string
+		sha         string
+		syncErr     error
+		wantUndo    bool
+		wantCreated bool
+	}{
+		{"success", "", nil, false, false},
+		{"failure before anything was created", "", errSync, true, false},
+		{"failure after creating the stack", "", stackCreatedError{errSync}, true, true},
+		{"failure after another sync succeeded", "abc", errSync, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newWebhookTestService(t, false)
+			ctx := context.Background()
+			if _, err := s.Configure(ctx, "web", Input{RepoURL: "https://example.com/web.git"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE stack_git_sources SET last_sync_sha = ? WHERE stack_name = 'web'`, tt.sha); err != nil {
+				t.Fatal(err)
+			}
+			s.syncFn = func(context.Context, string) (*SyncResult, error) { return &SyncResult{}, tt.syncErr }
+			undone, created := false, false
+			_, err := s.FirstSync(ctx, "web", func(c bool) { undone, created = true, c })
+			if !errors.Is(err, tt.syncErr) {
+				t.Errorf("err = %v", err)
+			}
+			if undone != tt.wantUndo || created != tt.wantCreated {
+				t.Errorf("undo = %v created = %v, want %v %v", undone, created, tt.wantUndo, tt.wantCreated)
 			}
 		})
 	}

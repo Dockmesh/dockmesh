@@ -5314,6 +5314,7 @@
   "templates_delete_title": "Vorlage „{name}“ löschen?",
   "templates_deleted": "Vorlage gelöscht",
   "templates_desc_placeholder": "Ein Satz, der in der Liste erscheint",
+  "templates_download_failed": "Download fehlgeschlagen",
   "templates_download_yaml": "YAML herunterladen",
   "templates_edit_ellipsis": "Bearbeiten…",
   "templates_edit_title": "{name} bearbeiten",

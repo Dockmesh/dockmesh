@@ -358,7 +358,45 @@ func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, erro
 	if s.syncFn != nil {
 		return s.syncFn(ctx, stackName)
 	}
-	return s.sync(ctx, stackName)
+	return s.sync(ctx, stackName, false)
+}
+
+// ErrStackAppeared ends a first sync when a stack of that name showed up
+// while the repo was being cloned; a first sync only ever creates.
+var ErrStackAppeared = errors.New("a stack of this name appeared during the first sync")
+
+// stackCreatedError marks a sync that created the stack before failing.
+type stackCreatedError struct{ error }
+
+func (e stackCreatedError) Unwrap() error { return e.error }
+
+// FirstSync runs the initial sync of a source that was just configured and
+// calls undo if it fails, telling it whether this sync created the stack.
+// Holding the stack's lock across both keeps a queued poller or webhook
+// sync from working on a source being removed. A source that has synced
+// successfully in the meantime is left alone.
+func (s *Service) FirstSync(ctx context.Context, stackName string, undo func(created bool)) (*SyncResult, error) {
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	var (
+		res *SyncResult
+		err error
+	)
+	if s.syncFn != nil {
+		res, err = s.syncFn(ctx, stackName)
+	} else {
+		res, err = s.sync(ctx, stackName, true)
+	}
+	if err == nil {
+		return res, nil
+	}
+	if src, gerr := s.Get(context.WithoutCancel(ctx), stackName); gerr == nil && src.LastSyncSHA != "" {
+		return nil, err
+	}
+	var created stackCreatedError
+	undo(errors.As(err, &created))
+	return nil, err
 }
 
 func (s *Service) stackLock(stackName string) *sync.Mutex {
@@ -407,7 +445,7 @@ func (s *Service) TriggerSync(ctx context.Context, stackName string) {
 	}()
 }
 
-func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, error) {
+func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*SyncResult, error) {
 	src, err := s.Get(ctx, stackName)
 	if err != nil {
 		return nil, err
@@ -430,6 +468,7 @@ func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, erro
 	res.NewSHA = newSHA
 	res.Changed = newSHA != src.LastSyncSHA
 
+	created := false
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
@@ -444,10 +483,11 @@ func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, erro
 				}
 			}
 		}
-		drift, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName)
+		drift, justCreated, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName, firstSync)
+		created = justCreated
 		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
-			return nil, err
+			return nil, syncFailure(err, created)
 		}
 		if len(drift.NewFromRepo)+len(drift.NewFromCompose)+len(drift.UserOnly) > 0 {
 			res.EnvDrift = &drift
@@ -467,7 +507,7 @@ func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, erro
 		       updated_at = CURRENT_TIMESTAMP
 		 WHERE stack_name = ?`, newSHA, driftJSON, stackName)
 	if err != nil {
-		return nil, fmt.Errorf("record sync success: %w", err)
+		return nil, syncFailure(fmt.Errorf("record sync success: %w", err), created)
 	}
 
 	// Auto-deploy hook: only runs when the SHA actually changed AND
@@ -483,6 +523,13 @@ func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, erro
 	}
 	res.DurationMS = time.Since(start).Milliseconds()
 	return res, nil
+}
+
+func syncFailure(err error, created bool) error {
+	if created {
+		return stackCreatedError{err}
+	}
+	return err
 }
 
 func (s *Service) recordSyncError(ctx context.Context, stackName string, err error) {
@@ -569,18 +616,17 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // references show up at the end of the file (with comments). The
 // caller persists the returned EnvDrift in stack_git_sources so the
 // UI can render a "drift detected" banner.
-func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrift, error) {
-	var drift EnvDrift
+func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string, firstSync bool) (drift EnvDrift, created bool, err error) {
 	// The repo decides what its files are, including symlinks, so the clone
 	// is only read through an os.Root: nothing outside it can be reached.
 	repo, err := os.OpenRoot(cloneDir)
 	if err != nil {
-		return drift, err
+		return drift, created, err
 	}
 	defer repo.Close()
 	src, err := readCompose(repo, pathInRepo)
 	if err != nil {
-		return drift, err
+		return drift, created, err
 	}
 	compose, envFromRepo := src.compose, src.env
 	if _, err := s.stacks.Get(stackName); err != nil {
@@ -590,9 +636,13 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 		seeded, d := mergeEnvFiles(envFromRepo, envFromRepo, string(compose))
 		drift = d
 		if _, err := s.stacks.Create(stackName, string(compose), seeded); err != nil {
-			return drift, fmt.Errorf("create stack from git: %w", err)
+			return drift, created, fmt.Errorf("create stack from git: %w", err)
 		}
+		created = true
 	} else {
+		if firstSync {
+			return drift, created, ErrStackAppeared
+		}
 		// Read the stack's CURRENT env through the stacks.Manager so
 		// the merger sees the decrypted content. Reading .env directly
 		// from disk misses the case where secrets-encryption is on
@@ -606,18 +656,18 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 		merged, d := mergeEnvFiles(stackEnv, envFromRepo, string(compose))
 		drift = d
 		if _, err := s.stacks.Update(stackName, string(compose), merged); err != nil {
-			return drift, fmt.Errorf("update stack from git: %w", err)
+			return drift, created, fmt.Errorf("update stack from git: %w", err)
 		}
 	}
 	// Mirror sibling files when path_in_repo was a directory.
 	if !src.isDir {
-		return drift, nil
+		return drift, created, nil
 	}
 	dstDir, err := s.stacks.Dir(stackName)
 	if err != nil {
-		return drift, nil // non-fatal — compose + env are already in place
+		return drift, created, nil // non-fatal — compose + env are already in place
 	}
-	return drift, copyTreeSiblings(repo, src.dir, dstDir)
+	return drift, created, copyTreeSiblings(repo, src.dir, dstDir)
 }
 
 type repoCompose struct {

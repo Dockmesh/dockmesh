@@ -2,7 +2,7 @@ slug: vaultwarden
 name: Vaultwarden
 description: Self-hosted Bitwarden-compatible password manager.
 icon_url: https://raw.githubusercontent.com/dani-garcia/vaultwarden/main/resources/vaultwarden-icon.svg
-version: "1.0"
+version: "1.1"
 author: Dockmesh
 parameters:
   - name: port
@@ -13,17 +13,20 @@ parameters:
     description: Token for the /admin page. Auto-generated if blank. Store it somewhere safe.
     secret: true
     type: secret
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: signups_allowed
     description: Allow anyone to register a new account.
     default: "false"
     enum: ["true", "false"]
+env: |
+  ADMIN_TOKEN={{admin_token|secret}}
 compose: |
   services:
     vaultwarden:
       image: vaultwarden/server:latest
       restart: unless-stopped
       environment:
-        ADMIN_TOKEN: "{{admin_token|secret}}"
+        ADMIN_TOKEN: "${ADMIN_TOKEN}"
         SIGNUPS_ALLOWED: "{{signups_allowed|default:false}}"
       volumes:
         - vw_data:/data

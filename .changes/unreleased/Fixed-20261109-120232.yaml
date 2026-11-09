@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A failed first sync of a git stack no longer keeps the git source: the stack name is free again and a later webhook can''t create and deploy the stack'
+time: 2026-11-09T12:02:32.879131467Z

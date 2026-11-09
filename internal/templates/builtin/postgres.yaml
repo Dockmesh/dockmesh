@@ -2,7 +2,7 @@ slug: postgres-16
 name: PostgreSQL 16
 description: PostgreSQL 16 with a persistent volume and exposed port.
 icon_url: https://raw.githubusercontent.com/docker-library/docs/master/postgres/logo.png
-version: "1.0"
+version: "1.1"
 author: Dockmesh
 parameters:
   - name: db_name
@@ -15,10 +15,13 @@ parameters:
     description: Superuser password. Auto-generated if blank.
     secret: true
     type: secret
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: port
     description: Host port to expose 5432 on.
     default: "5432"
     pattern: "^[0-9]{2,5}$"
+env: |
+  POSTGRES_PASSWORD={{db_password|secret}}
 compose: |
   services:
     postgres:
@@ -27,7 +30,7 @@ compose: |
       environment:
         POSTGRES_DB: "{{db_name}}"
         POSTGRES_USER: "{{db_user}}"
-        POSTGRES_PASSWORD: "{{db_password|secret}}"
+        POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       volumes:
         - postgres_data:/var/lib/postgresql/data
       ports:

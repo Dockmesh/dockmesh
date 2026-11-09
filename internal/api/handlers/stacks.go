@@ -567,48 +567,82 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	// The name check and the insert are one step: Configure is an upsert
+	// and a second request must not take over this one's source row.
+	h.gitCreateMu.Lock()
 	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
+		h.gitCreateMu.Unlock()
 		return
 	}
-	// Persist the git config first. Configure does its own validation
-	// and stores the row before sync runs so a credential error doesn't
-	// leave the user with nothing to retry against.
+	// A failed sync removes the stack, so it has to be new: the registry
+	// doesn't know directories without compose.yaml or added while running.
+	if h.Stacks.DirExists(req.Name) {
+		h.gitCreateMu.Unlock()
+		writeError(w, http.StatusConflict, "a stack named "+req.Name+" already exists")
+		return
+	}
 	src, err := h.GitSource.Configure(r.Context(), req.Name, req.Git)
 	if err != nil {
+		h.dropNewGitSource(r, req.Name)
+		h.gitCreateMu.Unlock()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.gitCreateMu.Unlock()
 	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
-		if derr := h.GitSource.Delete(r.Context(), req.Name); derr != nil {
-			slog.Warn("create stack from git: roll back", "stack", req.Name, "err", derr)
-		}
+		h.dropNewGitSource(r, req.Name)
 		return
 	}
-	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
-	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
-	h.syncGitWebhookNotice(r.Context())
+	syncRes, syncErr := h.GitSource.FirstSync(r.Context(), req.Name, func(created bool) { h.rollBackGitCreate(r, req.Name, created) })
+	if syncErr != nil {
+		h.auditDetached(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true, "sync_failed": true})
+		h.syncGitWebhookNotice(context.WithoutCancel(r.Context()))
+		// Mirrors the message into `error` so the shared frontend
+		// request() helper shows it in the toast.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"sync_ok":    false,
+			"sync_error": syncErr.Error(),
+			"error":      "Initial sync failed: " + syncErr.Error(),
+		})
+		return
+	}
+	h.auditDetached(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
+	h.syncGitWebhookNotice(context.WithoutCancel(r.Context()))
 
 	res := map[string]any{
 		"source":  src,
-		"sync_ok": syncErr == nil,
-	}
-	if syncErr != nil {
-		// Config row is saved; surface the failure loudly so the UI
-		// shows a fix-credentials banner. Same 422 contract as
-		// ConfigureGitSource — the row exists, sync didn't take.
-		// Mirror the message into `error` so the shared frontend
-		// request() helper picks it up for the toast instead of
-		// falling back to a generic "422 Unprocessable Entity".
-		res["sync_error"] = syncErr.Error()
-		res["error"] = "Initial sync failed: " + syncErr.Error()
-		writeJSON(w, http.StatusUnprocessableEntity, res)
-		return
+		"sync_ok": true,
 	}
 	res["sync"] = syncRes
 	if d, gerr := h.Stacks.Get(req.Name); gerr == nil {
 		res["stack"] = d
 	}
 	writeJSON(w, http.StatusCreated, res)
+}
+
+// dropNewGitSource removes a source row whose create was abandoned; a row
+// left behind would be synced and deployed by the poller.
+func (h *Handlers) dropNewGitSource(r *http.Request, name string) {
+	ctx := context.WithoutCancel(r.Context())
+	if err := h.GitSource.Delete(ctx, name); err != nil && !errors.Is(err, gitsource.ErrNotFound) { //nolint:contextcheck // must outlive the request
+		slog.Warn("create stack from git: roll back", "stack", name, "err", err)
+	}
+}
+
+// rollBackGitCreate frees the name after a failed initial sync, so no later
+// webhook creates and deploys the stack. Removing it may outlive the
+// request: a client that gave up mid-clone is the common way to get here.
+// The source row goes last, since it keeps the name taken until the rest
+// is gone. Stack files are removed only if this sync created them.
+func (h *Handlers) rollBackGitCreate(r *http.Request, name string, created bool) {
+	cleanup := r.WithContext(context.WithoutCancel(r.Context()))
+	h.forgetStackTarget(cleanup, name)
+	if created {
+		if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // takes no context
+			slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
+		}
+	}
+	h.dropNewGitSource(cleanup, name)
 }
 
 func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {

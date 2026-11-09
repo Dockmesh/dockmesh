@@ -385,6 +385,17 @@ func (m *Manager) Has(name string) bool {
 	return ok
 }
 
+// DirExists reports whether anything occupies the stack's directory,
+// whether or not it is a registered stack.
+func (m *Manager) DirExists(name string) bool {
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(dir)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
 func (m *Manager) Get(name string) (*Detail, error) {
 	dir, err := m.safeDir(name)
 	if err != nil {
@@ -499,17 +510,22 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(dir); err == nil {
-		return nil, ErrExists
+	if err := os.MkdirAll(m.rootAbs, 0o755); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.Mkdir(dir, 0o755); errors.Is(err, os.ErrExist) {
+		return nil, ErrExists
+	} else if err != nil {
 		return nil, err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
-	if err := m.writeFileSelf(composePath, []byte(compose), 0o644); err != nil {
-		return nil, err
+	err = m.writeFileSelf(composePath, []byte(compose), 0o644)
+	if err == nil {
+		err = m.writeEnv(dir, env)
 	}
-	if err := m.writeEnv(dir, env); err != nil {
+	if err != nil {
+		// A half-written directory would keep the name taken.
+		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 	m.mu.Lock()

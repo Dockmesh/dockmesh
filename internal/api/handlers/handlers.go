@@ -53,6 +53,8 @@ import (
 )
 
 type Handlers struct {
+	gitCreateMu sync.Mutex
+
 	DB            *sql.DB
 	Auth          *auth.Service
 	Audit         *audit.Service
