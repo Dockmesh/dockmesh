@@ -103,23 +103,3 @@ func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
 		t.Fatalf("removed = %v, report = %+v", f.removed, report)
 	}
 }
-
-func TestIsOwnVolume(t *testing.T) {
-	tests := []struct {
-		name   string
-		labels map[string]string
-		want   bool
-	}{
-		{"dockmesh-caddy-data", nil, true},
-		{"dockmesh-caddy-config", nil, true},
-		{"dockmesh-agent", nil, true},
-		{"renamed", map[string]string{LabelManaged: "true"}, true},
-		{"pgdata", nil, false},
-		{"pgdata", map[string]string{LabelManaged: "false"}, false},
-	}
-	for _, tt := range tests {
-		if got := IsOwnVolume(tt.name, tt.labels); got != tt.want {
-			t.Errorf("%s %v = %v, want %v", tt.name, tt.labels, got, tt.want)
-		}
-	}
-}

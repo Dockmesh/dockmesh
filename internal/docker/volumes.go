@@ -60,25 +60,12 @@ func (c *Client) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
 	return PruneUnusedVolumes(ctx, c.cli)
 }
 
-// LabelManaged marks resources Dockmesh created for itself.
+// LabelManaged marks resources Dockmesh created.
 const LabelManaged = "dockmesh.managed"
 
 // anonymousPruneAPI is the first Docker API whose volume prune leaves
 // named volumes alone unless asked otherwise.
 const anonymousPruneAPI = "1.42"
-
-// OwnVolumeNames are Dockmesh's own named volumes. Installs from before
-// these volumes carried a label can only be recognised by name.
-var OwnVolumeNames = map[string]bool{
-	"dockmesh-caddy-data":   true,
-	"dockmesh-caddy-config": true,
-	"dockmesh-agent":        true,
-}
-
-// IsOwnVolume reports whether a volume belongs to Dockmesh itself.
-func IsOwnVolume(name string, labels map[string]string) bool {
-	return OwnVolumeNames[name] || labels[LabelManaged] == "true"
-}
 
 var anonymousVolumeName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -113,7 +100,7 @@ func pruneAnonymousByName(ctx context.Context, cli volumePruner) (volume.PruneRe
 		return report, err
 	}
 	for _, v := range list.Volumes {
-		if v == nil || !anonymousVolumeName.MatchString(v.Name) || IsOwnVolume(v.Name, v.Labels) {
+		if v == nil || !anonymousVolumeName.MatchString(v.Name) || v.Labels[LabelManaged] == "true" {
 			continue
 		}
 		if err := cli.VolumeRemove(ctx, v.Name, false); err != nil {
@@ -123,9 +110,6 @@ func pruneAnonymousByName(ctx context.Context, cli volumePruner) (volume.PruneRe
 			return report, fmt.Errorf("remove volume %s: %w", v.Name, err)
 		}
 		report.VolumesDeleted = append(report.VolumesDeleted, v.Name)
-		if v.UsageData != nil && v.UsageData.Size > 0 {
-			report.SpaceReclaimed += uint64(v.UsageData.Size)
-		}
 	}
 	return report, nil
 }

@@ -36,7 +36,7 @@ var composeTracer = otel.Tracer("dockmesh.compose")
 const (
 	LabelProject = "com.docker.compose.project"
 	LabelService = "com.docker.compose.service"
-	LabelManaged = "dockmesh.managed"
+	LabelManaged = docker.LabelManaged
 )
 
 // Service wires a Docker client and stack manager into compose operations.

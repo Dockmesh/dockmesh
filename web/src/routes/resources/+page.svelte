@@ -1006,7 +1006,7 @@
       {/if}
       {#if canVolDelete}
         <button type="button" class="res-prune-btn" onclick={pruneVolumes} disabled={volumeCounts.prunable === 0}>
-          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_orphan()}
+          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_anonymous()}
           {#if volumeCounts.prunable > 0}<span class="dm-pill dm-pill-warning res-action-pill">{volumeCounts.prunable}</span>{/if}
         </button>
       {/if}
@@ -1412,7 +1412,7 @@
       <div class="cleanup-row">
         <div class="cleanup-row-mark"><HardDrive size={14} strokeWidth={1.5} /></div>
         <div class="cleanup-row-text">
-          <div class="cleanup-row-title">{m.resources_cleanup_orphan()}</div>
+          <div class="cleanup-row-title">{m.resources_cleanup_anonymous()}</div>
           <div class="cleanup-row-meta font-mono">
             {m.resources_targets({ count: volumeCounts.prunable })} · {m.resources_unrecoverable()}
           </div>
@@ -1437,7 +1437,7 @@
     <Button
       variant="danger"
       loading={cleanupBusy}
-      disabled={cleanupBusy || (imageCounts.dangling === 0 && volumeCounts.orphan === 0 && networkCounts.empty === 0)}
+      disabled={cleanupBusy || (imageCounts.dangling === 0 && volumeCounts.prunable === 0 && networkCounts.empty === 0)}
       onclick={runSystemCleanup}
     >
       <Trash2 class="w-4 h-4" /> {m.resources_run_cleanup()}

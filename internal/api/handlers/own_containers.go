@@ -10,7 +10,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -26,7 +25,11 @@ const ownImagePrefix = "ghcr.io/dockmesh/"
 
 // ownVolumes hold the proxy's config and ACME/TLS private keys and an
 // agent's client certificate.
-var ownVolumes = docker.OwnVolumeNames
+var ownVolumes = map[string]bool{
+	"dockmesh-caddy-data":   true,
+	"dockmesh-caddy-config": true,
+	"dockmesh-agent":        true,
+}
 
 // isOwnContainer reports whether info is one of Dockmesh's own containers
 // on hostID.
