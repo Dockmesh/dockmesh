@@ -50,7 +50,7 @@ Dockmesh ignores the top-level `ipam` key in compose files (see [Compose fields 
 |---|---|
 | Delete (row, or **Delete network** on the detail page) | Removes the network. Docker refuses while containers are attached. Not offered for `bridge`, `host` and `none`. |
 | **Prune empty** | Removes all networks without attached containers. `bridge`, `host` and `none` are kept. |
-| **System cleanup…** | Prunes dangling images, unused volumes and unused networks together. |
+| **System cleanup…** | Prunes dangling images, unused anonymous volumes and unused networks together. |
 
 Deleting acts on the network's host. **Prune empty** and **System cleanup…** act on the selected host; under **All hosts** they run on every reachable host in view, one after the other. Each action needs the permission on the host it acts on. An agent that is older than the server refuses these actions until you update it from the **Hosts** page.
 

@@ -1,8 +1,14 @@
 package docker
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/volume"
 )
 
 func TestCheckVolumeName(t *testing.T) {
@@ -30,6 +36,90 @@ func TestCheckVolumeName(t *testing.T) {
 		}
 		if err != nil && !errors.Is(err, ErrInvalidVolumeName) {
 			t.Errorf("%q: error not ErrInvalidVolumeName", tt.name)
+		}
+	}
+}
+
+type fakePruner struct {
+	api     string
+	listed  []*volume.Volume
+	removed []string
+	pruned  []filters.Args
+}
+
+func (f *fakePruner) ServerVersion(context.Context) (types.Version, error) {
+	return types.Version{APIVersion: f.api}, nil
+}
+
+func (f *fakePruner) VolumesPrune(_ context.Context, a filters.Args) (volume.PruneReport, error) {
+	f.pruned = append(f.pruned, a)
+	return volume.PruneReport{}, nil
+}
+
+func (f *fakePruner) VolumeList(context.Context, volume.ListOptions) (volume.ListResponse, error) {
+	return volume.ListResponse{Volumes: f.listed}, nil
+}
+
+func (f *fakePruner) VolumeRemove(_ context.Context, id string, _ bool) error {
+	f.removed = append(f.removed, id)
+	return nil
+}
+
+func TestPruneUnusedVolumesExcludesOwnVolumes(t *testing.T) {
+	f := &fakePruner{api: "1.43"}
+	if _, err := PruneUnusedVolumes(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pruned) != 1 {
+		t.Fatalf("prune calls = %d", len(f.pruned))
+	}
+	if !f.pruned[0].ExactMatch("label!", LabelManaged) {
+		t.Fatalf("filters = %v, want the managed label excluded", f.pruned[0])
+	}
+	if f.pruned[0].Contains("all") {
+		t.Fatal("prune must not ask for all volumes")
+	}
+}
+
+// Before API 1.42 Docker's prune also deletes named volumes.
+func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
+	anon := strings.Repeat("a", 64)
+	ownAnon := strings.Repeat("b", 64)
+	f := &fakePruner{api: "1.41", listed: []*volume.Volume{
+		{Name: anon},
+		{Name: ownAnon, Labels: map[string]string{LabelManaged: "true"}},
+		{Name: "dockmesh-caddy-data"},
+		{Name: "dockmesh-caddy-config"},
+		{Name: "stack_pgdata"},
+	}}
+	report, err := PruneUnusedVolumes(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pruned) != 0 {
+		t.Fatal("old daemon must not get Docker's prune")
+	}
+	if len(f.removed) != 1 || f.removed[0] != anon || len(report.VolumesDeleted) != 1 {
+		t.Fatalf("removed = %v, report = %+v", f.removed, report)
+	}
+}
+
+func TestIsOwnVolume(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   bool
+	}{
+		{"dockmesh-caddy-data", nil, true},
+		{"dockmesh-caddy-config", nil, true},
+		{"dockmesh-agent", nil, true},
+		{"renamed", map[string]string{LabelManaged: "true"}, true},
+		{"pgdata", nil, false},
+		{"pgdata", map[string]string{LabelManaged: "false"}, false},
+	}
+	for _, tt := range tests {
+		if got := IsOwnVolume(tt.name, tt.labels); got != tt.want {
+			t.Errorf("%s %v = %v, want %v", tt.name, tt.labels, got, tt.want)
 		}
 	}
 }

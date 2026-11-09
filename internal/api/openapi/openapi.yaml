@@ -8113,7 +8113,8 @@ paths:
     post:
       operationId: volumes.prune
       tags: [volumes]
-      summary: Remove unused volumes on the host given by `host`
+      summary: Remove unused anonymous volumes on the host given by `host`
+      description: Named volumes and Dockmesh's own volumes are kept.
       parameters:
         - $ref: "#/components/parameters/HostQuery"
       responses:

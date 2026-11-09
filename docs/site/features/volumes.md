@@ -55,8 +55,8 @@ The volume pages have no restore action. Restore a volume or stack backup from *
 | Action | Effect |
 |---|---|
 | Delete (row, detail page or several selected rows) | Force-removes the volume. Docker still refuses while a container uses it. The data is gone. |
-| **Prune orphan** | Calls Docker's volume prune for volumes no container uses. |
-| **System cleanup…** | Prunes dangling images, unused volumes and unused networks together. |
+| **Prune anonymous** | Removes anonymous volumes no container uses. Named volumes, also unused ones, and Dockmesh's own volumes are kept. The button shows how many would be removed. |
+| **System cleanup…** | Prunes dangling images, unused anonymous volumes and unused networks together. |
 
 What a prune removes is decided by Docker. On Docker Engine 23 and later, a prune without filters removes only unused **anonymous** volumes; named volumes stay. On older engines it removes every unused volume, named or not. Check your engine version (`docker version`) before you rely on either behaviour.
 

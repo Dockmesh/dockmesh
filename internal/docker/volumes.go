@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"regexp"
 
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 )
 
@@ -54,5 +57,75 @@ func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) erro
 }
 
 func (c *Client) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
-	return c.cli.VolumesPrune(ctx, filters.NewArgs())
+	return PruneUnusedVolumes(ctx, c.cli)
+}
+
+// LabelManaged marks resources Dockmesh created for itself.
+const LabelManaged = "dockmesh.managed"
+
+// anonymousPruneAPI is the first Docker API whose volume prune leaves
+// named volumes alone unless asked otherwise.
+const anonymousPruneAPI = "1.42"
+
+// OwnVolumeNames are Dockmesh's own named volumes. Installs from before
+// these volumes carried a label can only be recognised by name.
+var OwnVolumeNames = map[string]bool{
+	"dockmesh-caddy-data":   true,
+	"dockmesh-caddy-config": true,
+	"dockmesh-agent":        true,
+}
+
+// IsOwnVolume reports whether a volume belongs to Dockmesh itself.
+func IsOwnVolume(name string, labels map[string]string) bool {
+	return OwnVolumeNames[name] || labels[LabelManaged] == "true"
+}
+
+var anonymousVolumeName = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// volumePruner is the part of the Docker client PruneUnusedVolumes uses.
+type volumePruner interface {
+	ServerVersion(ctx context.Context) (types.Version, error)
+	VolumesPrune(ctx context.Context, f filters.Args) (volume.PruneReport, error)
+	VolumeList(ctx context.Context, opts volume.ListOptions) (volume.ListResponse, error)
+	VolumeRemove(ctx context.Context, id string, force bool) error
+}
+
+// PruneUnusedVolumes removes anonymous volumes no container uses and
+// keeps named volumes and Dockmesh's own.
+func PruneUnusedVolumes(ctx context.Context, cli volumePruner) (volume.PruneReport, error) {
+	v, err := cli.ServerVersion(ctx)
+	if err != nil {
+		return volume.PruneReport{}, err
+	}
+	if versions.LessThan(v.APIVersion, anonymousPruneAPI) {
+		return pruneAnonymousByName(ctx, cli)
+	}
+	return cli.VolumesPrune(ctx, filters.NewArgs(filters.Arg("label!", LabelManaged)))
+}
+
+// pruneAnonymousByName is for daemons whose prune also deletes unused
+// named volumes, including stopped stacks' data. They have no anonymous
+// label either, so the generated name is what identifies such a volume.
+func pruneAnonymousByName(ctx context.Context, cli volumePruner) (volume.PruneReport, error) {
+	report := volume.PruneReport{VolumesDeleted: []string{}}
+	list, err := cli.VolumeList(ctx, volume.ListOptions{Filters: filters.NewArgs(filters.Arg("dangling", "true"))})
+	if err != nil {
+		return report, err
+	}
+	for _, v := range list.Volumes {
+		if v == nil || !anonymousVolumeName.MatchString(v.Name) || IsOwnVolume(v.Name, v.Labels) {
+			continue
+		}
+		if err := cli.VolumeRemove(ctx, v.Name, false); err != nil {
+			if cerrdefs.IsConflict(err) || cerrdefs.IsNotFound(err) {
+				continue
+			}
+			return report, fmt.Errorf("remove volume %s: %w", v.Name, err)
+		}
+		report.VolumesDeleted = append(report.VolumesDeleted, v.Name)
+		if v.UsageData != nil && v.UsageData.Size > 0 {
+			report.SpaceReclaimed += uint64(v.UsageData.Size)
+		}
+	}
+	return report, nil
 }
