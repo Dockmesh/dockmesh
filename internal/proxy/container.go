@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"io"
 	"log/slog"
 	"path"
@@ -20,7 +21,6 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	dnetwork "github.com/docker/docker/api/types/network"
 )
 
@@ -187,15 +187,9 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 		if !cerrdefs.IsNotFound(err) {
 			return "", fmt.Errorf("image inspect: %w", err)
 		}
-		rc, err := cli.ImagePull(ctx, img, image.PullOptions{})
-		if err != nil {
+		if err := docker.PullAnonymous(ctx, cli, img); err != nil {
 			return "", fmt.Errorf("image pull %s: %w", img, err)
 		}
-		if _, err := io.Copy(io.Discard, rc); err != nil {
-			rc.Close()
-			return "", fmt.Errorf("image pull read: %w", err)
-		}
-		rc.Close()
 	}
 
 	if old != nil {

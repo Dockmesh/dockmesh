@@ -1,18 +1,21 @@
-package compose
+package docker
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
 
-// readPullStream reads an image pull stream to the end, as the pull only
+// ReadPullStream reads an image pull stream to the end, as the pull only
 // finishes once it is consumed. Docker reports a failed pull (rate limit,
 // auth, missing tag) inside the stream with an HTTP 200, so the first
 // error line becomes the returned error, with secrets masked.
-func readPullStream(r io.Reader, secrets []string) error {
+func ReadPullStream(r io.Reader, secrets []string) error {
 	var pullErr error
 	dec := json.NewDecoder(r)
 	for {
@@ -37,4 +40,15 @@ func readPullStream(r io.Reader, secrets []string) error {
 			pullErr = errors.New(operations.MaskText(m.Error, secrets))
 		}
 	}
+}
+
+// PullAnonymous pulls ref without credentials and waits until it is done,
+// for the images Dockmesh runs itself.
+func PullAnonymous(ctx context.Context, cli client.ImageAPIClient, ref string) error {
+	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	return ReadPullStream(rc, nil)
 }

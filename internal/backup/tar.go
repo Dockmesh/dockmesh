@@ -10,7 +10,6 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -242,13 +241,10 @@ func ensureHelperImage(ctx context.Context, dc *docker.Client) error {
 	} else if !cerrdefs.IsNotFound(err) {
 		return err
 	}
-	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-	if err != nil {
+	if err := docker.PullAnonymous(ctx, cli, helperImage); err != nil {
 		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
-	defer rc.Close()
-	_, err = io.Copy(io.Discard, rc)
-	return err
+	return nil
 }
 
 // stderrBuf is a tiny io.Writer that caps captured output at 4 KB so a

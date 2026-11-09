@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"io"
 	"io/fs"
 	"os"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
@@ -124,12 +124,10 @@ func ensureBrowseHelperImage(ctx context.Context, cli *client.Client) error {
 	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
 		return nil
 	}
-	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-	if err != nil {
+	if err := docker.PullAnonymous(ctx, cli, helperImage); err != nil {
 		return fmt.Errorf("volume helper: pull %s: %w", helperImage, err)
 	}
-	_, _ = io.Copy(io.Discard, rc)
-	return rc.Close()
+	return nil
 }
 
 type cappedBuffer struct {

@@ -734,12 +734,10 @@ func ensureHelperImage(ctx context.Context, cli *client.Client) error {
 	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
 		return nil
 	}
-	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-	if err != nil {
+	if err := dockerwrap.PullAnonymous(ctx, cli, helperImage); err != nil {
 		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
-	_, _ = io.Copy(io.Discard, rc)
-	return rc.Close()
+	return nil
 }
 
 // removeHelper deletes a helper container on a fresh context, so it is

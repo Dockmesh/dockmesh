@@ -6,11 +6,15 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/docker/docker/client"
 )
 
 // The download returns the whole file, not the 1 MiB preview.
@@ -82,5 +86,25 @@ func TestDownloadFileScript(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Errorf("download script lacks %q:\n%s", want, script)
 		}
+	}
+}
+
+// A helper image that can't be pulled reports the registry's error instead
+// of failing later with "No such image".
+func TestEnsureBrowseHelperImageReportsPullError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/images/create") {
+			_, _ = w.Write([]byte(`{"error":"toomanyrequests: rate limit"}` + "\n"))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.45"), client.WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBrowseHelperImage(context.Background(), cli); err == nil || !strings.Contains(err.Error(), "toomanyrequests") {
+		t.Fatalf("err = %v", err)
 	}
 }

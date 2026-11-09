@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
@@ -29,12 +28,9 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 	cli := dc.Raw()
 	// ensure helper image present
 	if _, err := cli.ImageInspect(ctx, VolumeTarHelperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, VolumeTarHelperImage, image.PullOptions{})
-		if pullErr != nil {
+		if pullErr := docker.PullAnonymous(ctx, cli, VolumeTarHelperImage); pullErr != nil {
 			return nil, fmt.Errorf("pull %s: %w", VolumeTarHelperImage, pullErr)
 		}
-		_, _ = io.Copy(io.Discard, rc)
-		_ = rc.Close()
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        VolumeTarHelperImage,
