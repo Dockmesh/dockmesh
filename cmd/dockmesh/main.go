@@ -648,6 +648,7 @@ func main() {
 	publicBaseURL := func() string { return agentEndpoints(cfg, settingsStore).BaseURL }
 	oidcSvc.SetBaseURL(publicBaseURL)
 	samlSvc.SetBaseURL(publicBaseURL)
+	samlSvc.StartMetadataRefresh(ctx)
 	oauth2Svc.SetBaseURL(publicBaseURL)
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, "")
 	agentsSvc.SetEndpointResolver(func() agents.Endpoints {
