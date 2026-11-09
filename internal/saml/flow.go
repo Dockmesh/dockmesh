@@ -3,9 +3,7 @@ package saml
 import (
 	"context"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -106,6 +104,10 @@ func parseIdPMetadata(xmlStr string) (*idpMeta, error) {
 			break
 		}
 	}
+	if certPEM == "" {
+		return nil, errors.New("metadata has no signing cert")
+	}
+
 	return &idpMeta{
 		EntityID: ed.EntityID,
 		SSOURL:   ssoURL,
@@ -121,18 +123,6 @@ func (s *Service) buildSP(ctx context.Context, p *Provider) (*crewjam.ServicePro
 	key, cert, err := s.ensureSPKey(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sp keypair: %w", err)
-	}
-	if p.encryptionKey != "" {
-		if key, err = s.decryptKey(p.encryptionKey); err != nil {
-			return nil, err
-		}
-		block, _ := pem.Decode([]byte(p.EncryptionCertPEM))
-		if block == nil {
-			return nil, errors.New("stored encryption certificate is not PEM")
-		}
-		if cert, err = x509.ParseCertificate(block.Bytes); err != nil {
-			return nil, fmt.Errorf("stored encryption certificate: %w", err)
-		}
 	}
 
 	var idpEntity crewjam.EntityDescriptor
@@ -157,12 +147,8 @@ func (s *Service) buildSP(ctx context.Context, p *Provider) (*crewjam.ServicePro
 		sloURL = u
 	}
 
-	entityID := p.SPEntityID
-	if entityID == "" {
-		entityID = metadataURL.String()
-	}
 	sp := &crewjam.ServiceProvider{
-		EntityID:    entityID,
+		EntityID:    metadataURL.String(),
 		Key:         key,
 		Certificate: cert,
 		MetadataURL: *metadataURL,
@@ -174,13 +160,6 @@ func (s *Service) buildSP(ctx context.Context, p *Provider) (*crewjam.ServicePro
 	}
 	if sloURL != nil {
 		sp.SloURL = *sloURL
-	}
-	if p.SigningCertPEM != "" {
-		body, err := certBody(p.SigningCertPEM)
-		if err != nil {
-			return nil, err
-		}
-		sp.IDPCertificate = &body
 	}
 	return sp, nil
 }

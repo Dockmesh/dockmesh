@@ -547,31 +547,7 @@ components:
         display_name: {type: string}
         idp_metadata_xml:
           type: string
-          description: |
-            IdP metadata XML. On create this or `idp_metadata_url` is required;
-            empty on update keeps the stored metadata. Saving XML without a URL
-            turns off fetching from a URL set earlier.
-        idp_metadata_url:
-          type: string
-          description: |
-            URL Dockmesh fetches the metadata from, on save and once a day. Needs
-            https, or http together with `signing_cert_pem`. Wins over
-            `idp_metadata_xml`. Loopback, link-local and cloud metadata addresses are refused.
-        sp_entity_id:
-          type: string
-          description: How the IdP knows Dockmesh. Empty uses the SP metadata URL. Omit on update to keep it.
-        signing_cert_pem:
-          type: string
-          description: |
-            PEM certificate that verifies SAML responses instead of the keys in
-            the metadata. Omit on update to keep it; empty clears it.
-        encryption_cert_pem:
-          type: string
-          description: |
-            PEM certificate and RSA private key that assertions are encrypted to,
-            published in the SP metadata instead of Dockmesh's generated pair. On
-            update the certificate alone is enough while it matches the stored
-            key. Omit on update to keep it; empty clears it.
+          description: IdP metadata XML. Required on create; empty on update keeps the stored metadata.
         nameid_format:
           type: string
           enum:

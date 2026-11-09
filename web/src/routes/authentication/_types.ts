@@ -48,7 +48,6 @@ export interface OAuth2Config extends ProviderBase {
 
 export interface SAMLConfig extends ProviderBase {
   kind: 'saml';
-  idp_source: 'url' | 'xml';
   idp_metadata_url: string;
   idp_metadata_xml: string;
   sp_entity_id: string;
@@ -291,7 +290,6 @@ export function newSAMLConfig(): SAMLConfig {
     slug: '',
     display_name: '',
     enabled: true,
-    idp_source: 'url',
     idp_metadata_url: '',
     idp_metadata_xml: '',
     sp_entity_id: '',

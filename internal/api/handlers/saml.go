@@ -300,7 +300,7 @@ func (h *Handlers) TestSAMLProvider(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	_ = ctx
-	report, terr := h.SAML.TestMetadata(prov.IdPMetadataXML, prov.SigningCertPEM != "")
+	report, terr := h.SAML.TestMetadata(prov.IdPMetadataXML)
 	if terr != nil {
 		_ = h.SAML.RecordProviderTest(r.Context(), id, false, terr.Error())
 		writeJSON(w, http.StatusOK, map[string]any{

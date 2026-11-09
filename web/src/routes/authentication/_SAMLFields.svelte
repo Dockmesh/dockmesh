@@ -1,12 +1,12 @@
 <script lang="ts">
   // SAML 2.0 form fields. Used inside _ProviderModal.svelte.
+  // Slice 1: UI complete; save button disabled by parent.
   import type { CustomRole } from '$lib/api';
   import type { SAMLConfig } from './_types';
   import { Field } from '$lib/components/editorial';
   import { Copy } from 'lucide-svelte';
   import GroupMappingList from './_GroupMappingList.svelte';
   import { m } from '$lib/paraglide/messages.js';
-  import { fmtDateTime } from '$lib/i18n';
 
   interface Props {
     config: SAMLConfig;
@@ -14,8 +14,6 @@
     roles: CustomRole[];
     callbackBase: string;
     helpText?: string;
-    fetchedAt?: string;
-    fetchError?: string;
     onCopy: (s: string) => void;
   }
 
@@ -25,10 +23,11 @@
     roles,
     callbackBase,
     helpText,
-    fetchedAt,
-    fetchError,
     onCopy,
   }: Props = $props();
+
+  type IdpSource = 'url' | 'xml';
+  let idpSource = $state<IdpSource>('url');
 
   const acsUrl = $derived(
     `${callbackBase}/api/v1/auth/saml/${config.slug || '{slug}'}/acs`,
@@ -39,6 +38,13 @@
   const metadataUrl = $derived(
     `${callbackBase}/api/v1/auth/saml/${config.slug || '{slug}'}/metadata`,
   );
+
+  // Auto-derive SP entity ID if blank.
+  $effect(() => {
+    if (!config.sp_entity_id && config.slug) {
+      config.sp_entity_id = `${callbackBase}/saml/${config.slug}`;
+    }
+  });
 </script>
 
 {#if helpText}
@@ -53,22 +59,22 @@
   <button
     type="button"
     class="saml-source-btn"
-    class:saml-source-active={config.idp_source === 'url'}
-    onclick={() => (config.idp_source = 'url')}
+    class:saml-source-active={idpSource === 'url'}
+    onclick={() => (idpSource = 'url')}
   >
     {m.authn_saml_metadata_url()}
   </button>
   <button
     type="button"
     class="saml-source-btn"
-    class:saml-source-active={config.idp_source === 'xml'}
-    onclick={() => (config.idp_source = 'xml')}
+    class:saml-source-active={idpSource === 'xml'}
+    onclick={() => (idpSource = 'xml')}
   >
     {m.authn_saml_paste_xml()}
   </button>
 </div>
 
-{#if config.idp_source === 'url'}
+{#if idpSource === 'url'}
   <Field label={m.authn_saml_idp_url()} hint={m.authn_saml_idp_url_hint()}>
     <input
       class="dm-input acc-input-mono"
@@ -76,17 +82,6 @@
       placeholder="https://idp.example/saml/metadata"
     />
   </Field>
-  {#if fetchError}
-    <div class="saml-help">
-      <span class="saml-help-icon">!</span>
-      <span class="saml-help-text">{m.authn_saml_metadata_error({ error: fetchError })}</span>
-    </div>
-  {:else if fetchedAt}
-    <div class="saml-help">
-      <span class="saml-help-icon">ⓘ</span>
-      <span class="saml-help-text">{m.authn_saml_metadata_fetched({ when: fmtDateTime(new Date(fetchedAt)) })}</span>
-    </div>
-  {/if}
 {:else}
   <Field label={m.authn_saml_idp_xml()} hint={m.authn_saml_idp_xml_hint({ tag: '<EntityDescriptor>' })}>
     <textarea
@@ -103,7 +98,7 @@
   <input
     class="dm-input acc-input-mono"
     bind:value={config.sp_entity_id}
-    placeholder={metadataUrl}
+    placeholder={`${callbackBase}/saml/${config.slug || '{slug}'}`}
   />
 </Field>
 
@@ -169,7 +164,7 @@
   <textarea
     class="dm-input acc-input-mono saml-cert"
     bind:value={config.encryption_cert}
-    rows="4"
+    rows="3"
     placeholder={'-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----'}
   ></textarea>
 </Field>
