@@ -3,6 +3,7 @@ package apitokens
 import (
 	"context"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -25,11 +26,8 @@ func (s *Service) SyncLegacyNotice(ctx context.Context, n *notices.Service) erro
 		Key:      legacyNoticeKey,
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    "API tokens without an owner",
-		Body: "Some API tokens were created before tokens were tied to a user. They still work " +
-			"with their original role, but no user's permissions limit them. Create a replacement " +
-			"while signed in as the user who should own it, then revoke the old token " +
-			"(marked \"legacy\" in the list).",
-		Link: "/tokens",
+		Title:    i18n.Msg("notice.legacy_tokens.title"),
+		Body:     i18n.Msg("notice.legacy_tokens.body"),
+		Link:     "/tokens",
 	})
 }

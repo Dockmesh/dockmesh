@@ -152,6 +152,11 @@ paths:
         audience includes the caller are returned; they disappear once the
         server resolves the condition. `dismissed` reflects the caller's own
         banner dismissal.
+      parameters:
+        - name: lang
+          in: query
+          description: Language of the texts built by the server (`en`, `de`); anything else is English. Entries stored before texts had keys keep their stored text.
+          schema: {type: string, default: en}
       responses:
         "200":
           description: Open notices, critical first.

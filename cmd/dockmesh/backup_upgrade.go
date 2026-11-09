@@ -14,6 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -101,11 +102,9 @@ func syncSeededRootsNotice(ctx context.Context, n *notices.Service, st *settings
 		Key:      "backups.local-roots-review",
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "Review allowed local backup directories",
-		Body: "Local backup targets may now only write below allowed directories. These were " +
-			"added because existing jobs use them:" + notices.Bullets(extras) + "Keep or " +
-			"remove them in the " + targets.LocalRootsSetting + " setting.",
-		Link: "/settings",
+		Title:    i18n.Msg("notice.backup_local_roots.title"),
+		Body:     i18n.Msg("notice.backup_local_roots.body", notices.Bullets(extras), targets.LocalRootsSetting),
+		Link:     "/settings",
 	})
 }
 
@@ -119,11 +118,9 @@ func raiseSystemPathNotice(ctx context.Context, n *notices.Service, from, to str
 		Key:      "backups.system-job-path",
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
-		Title:    "System backup directory changed",
-		Body: "The system backup job had the relative path " + from + ", which depended on the " +
-			"directory Dockmesh was started from. It now writes to " + to + ". Existing archives " +
-			"were not moved.",
-		Link: "/backups",
+		Title:    i18n.Msg("notice.backup_system_path.title"),
+		Body:     i18n.Msg("notice.backup_system_path.body", from, to),
+		Link:     "/backups",
 	})
 }
 
@@ -140,12 +137,9 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 		Audience: notices.Admins(),
 		Severity: notices.SevCritical,
 		Blocking: true,
-		Title:    "Encrypted backup jobs can't run",
-		Body: "Secrets encryption is turned off on this server, so these jobs, which are set to " +
-			"encrypt, fail instead of writing unencrypted archives:" + notices.Bullets(jobs) +
-			"Turn secrets encryption back on (DOCKMESH_SECRETS_ENCRYPT_ENV) or switch off " +
-			"encryption for each job.",
-		Link: "/backups",
+		Title:    i18n.Msg("notice.backup_unencryptable.title"),
+		Body:     i18n.Msg("notice.backup_unencryptable.body", notices.Bullets(jobs)),
+		Link:     "/backups",
 	})
 }
 

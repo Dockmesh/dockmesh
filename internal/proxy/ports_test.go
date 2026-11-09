@@ -91,7 +91,7 @@ func TestCheckPortsNeedsTwoReadings(t *testing.T) {
 	if got := foreign(); !reflect.DeepEqual(got, []int{80, 443}) {
 		t.Fatalf("second reading = %v", got)
 	}
-	if n := log.got[len(log.got)-1]; !n.active || n.in.Key != noticeKeyPorts || !strings.Contains(n.in.Body, "sudo ss -ltnp") {
+	if n := log.got[len(log.got)-1]; !n.active || n.in.Key != noticeKeyPorts || !strings.Contains(n.in.Body.In("en"), "sudo ss -ltnp") {
 		t.Fatalf("notice = %+v", n)
 	}
 

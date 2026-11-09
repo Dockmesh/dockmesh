@@ -20,6 +20,11 @@ paths:
         Any authenticated caller may call this. Sorted by severity, then
         newest first; items without `since` come last within their
         severity.
+      parameters:
+        - name: lang
+          in: query
+          description: Language of the alert and notice texts built by the server (`en`, `de`); anything else is English. Entries stored before texts had keys keep their stored text.
+          schema: {type: string, default: en}
       responses:
         "200":
           description: Items, most severe first.

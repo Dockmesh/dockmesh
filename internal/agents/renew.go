@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -134,11 +135,9 @@ func (s *Service) SyncCertNotices(ctx context.Context, n *notices.Service) error
 			Key:      key,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    "Agent certificate expires soon: " + a.Name,
-			Body: "The client certificate of " + a.Name + " expires on " + date + ". Current agents renew it " +
-				"automatically while online; update this agent, or re-issue its enrollment token on the host page " +
-				"and re-run the installer on that host. The host keeps its ID, stacks and backups.",
-			Link: "/hosts/" + a.ID,
+			Title:    i18n.Msg("notice.agent_cert_expiring.title", a.Name),
+			Body:     i18n.Msg("notice.agent_cert_expiring.body", a.Name, date),
+			Link:     "/hosts/" + a.ID,
 		}
 		if left <= 0 {
 			if a.Status == "online" {
@@ -146,10 +145,8 @@ func (s *Service) SyncCertNotices(ctx context.Context, n *notices.Service) error
 			}
 			in.Severity = notices.SevCritical
 			in.Blocking = true
-			in.Title = "Agent certificate expired: " + a.Name
-			in.Body = a.Name + " can no longer connect because its client certificate expired on " + date +
-				". Re-issue the enrollment token on the host page and re-run the installer on that host. " +
-				"The host keeps its ID, stacks and backups."
+			in.Title = i18n.Msg("notice.agent_cert_expired.title", a.Name)
+			in.Body = i18n.Msg("notice.agent_cert_expired.body", a.Name, date)
 		}
 		want[key] = in
 	}

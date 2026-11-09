@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
@@ -200,11 +201,9 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 			Key:      noticeKeyBlocked,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    "Some proxy routes are not served",
-			Body: "These routes have a host or upstream Dockmesh no longer accepts (for example the proxy's admin API, " +
-				"localhost, or a placeholder), so they are left out of the proxy: " + strings.Join(blocked, ", ") +
-				". Edit each one to a domain name and a host:port upstream, or delete it.",
-			Link: "/proxy",
+			Title:    i18n.Msg("notice.proxy_blocked_routes.title"),
+			Body:     i18n.Msg("notice.proxy_blocked_routes.body", strings.Join(blocked, ", ")),
+			Link:     "/proxy",
 		})
 		if err != nil {
 			slog.Warn("proxy: update blocked-upstream notice failed", "err", err)

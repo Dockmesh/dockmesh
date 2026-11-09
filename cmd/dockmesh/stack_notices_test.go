@@ -20,10 +20,10 @@ func TestStagedMountBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := stagedMountBody(tt.mount)
-			if has := strings.Contains(got, "Upgrade the agent first (Hosts → edge-1 → Upgrade agent)"); has != tt.wantUpgrade {
+			if has := strings.Contains(got.In("en"), "Upgrade the agent first (Hosts → edge-1 → Upgrade agent)"); has != tt.wantUpgrade {
 				t.Errorf("upgrade hint = %v, want %v: %q", has, tt.wantUpgrade, got)
 			}
-			if !strings.Contains(got, tt.wantRedeploy) {
+			if !strings.Contains(got.In("en"), tt.wantRedeploy) {
 				t.Errorf("missing %q: %q", tt.wantRedeploy, got)
 			}
 		})

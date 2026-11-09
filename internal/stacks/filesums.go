@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -87,11 +88,9 @@ func (m *Manager) CheckGitDeploy(ctx context.Context, name string) error {
 			Key:      GitDeployHeldNoticeKey(name),
 			Audience: notices.WithPermission(string(rbac.PermStacksDeploy)),
 			Severity: notices.SevWarning,
-			Title:    "Git deploy of " + name + " is on hold",
-			Body: "The new commit was not deployed because " + files + " of this stack changed " +
-				"outside Dockmesh. Open the stack, review the files and deploy it to confirm the changes; " +
-				"git deploys resume after that.",
-			Link: "/stacks/" + name,
+			Title:    i18n.Msg("notice.git_deploy_held.title", name),
+			Body:     i18n.Msg("notice.git_deploy_held.body", files),
+			Link:     "/stacks/" + name,
 		}); nerr != nil {
 			slog.Warn("git deploy held back notice", "stack", name, "err", nerr)
 		}

@@ -307,7 +307,7 @@ func assertKeptOld(t *testing.T, s *Service, log *noticeLog, legacy *adminAPI) {
 		t.Fatalf("legacy loads=%d body=%s", loads, body)
 	}
 	n := switchNotice(log)
-	if n == nil || !n.active || !strings.Contains(n.in.Body, "restart the Dockmesh service") {
+	if n == nil || !n.active || !strings.Contains(n.in.Body.In("en"), "restart the Dockmesh service") {
 		t.Fatalf("notice = %+v", n)
 	}
 }
@@ -348,7 +348,7 @@ func TestMoveAdminRollsBackWhenNewContainerFails(t *testing.T) {
 				t.Fatalf("old container removed: %v", f.calls)
 			}
 			assertKeptOld(t, s, log, legacy)
-			if n := switchNotice(log); strings.Contains(n.in.Body, "secret-from-caddy") {
+			if n := switchNotice(log); strings.Contains(n.in.Body.In("en"), "secret-from-caddy") {
 				t.Fatalf("notice quotes Caddy's error: %s", n.in.Body)
 			}
 		})

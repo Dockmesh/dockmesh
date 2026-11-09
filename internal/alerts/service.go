@@ -430,7 +430,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // History returns the newest entries first. hosts, when not nil, limits
 // the result to entries of those hosts, so a scoped caller gets up to
 // limit entries of their own hosts.
-func (s *Service) History(ctx context.Context, limit int, hosts []string) ([]HistoryEntry, error) {
+func (s *Service) History(ctx context.Context, limit int, hosts []string, lang string) ([]HistoryEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
@@ -452,7 +452,7 @@ func (s *Service) History(ctx context.Context, limit int, hosts []string) ([]His
 	// rule has been deleted (rule_id may dangle).
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''), COALESCE(r.kind, ''),
-		       h.host_id, h.container_name, h.status, h.message,
+		       h.host_id, h.container_name, h.status, h.message, h.message_i18n,
 		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.repeats, h.occurred_at
 		  FROM alert_history h
 		  LEFT JOIN alert_rules r ON r.id = h.rule_id`+where+`
@@ -464,12 +464,14 @@ func (s *Service) History(ctx context.Context, limit int, hosts []string) ([]His
 	for rows.Next() {
 		var e HistoryEntry
 		var notified int
+		var encoded string
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Kind,
-			&e.HostID, &e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
+			&e.HostID, &e.ContainerName, &e.Status, &e.Message, &encoded, &e.Value, &e.Threshold,
 			&notified, &e.Repeats, &e.OccurredAt); err != nil {
 			return nil, err
 		}
 		e.Notified = notified == 1
+		e.Message = i18n.Stored(encoded, lang, e.Message)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -805,9 +807,9 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, text i18n.Tex
 	}
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
-		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?)`,
-		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID)
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, message_i18n, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, t.name, msg, text.Encode(), value, r.Threshold, boolInt(notified), t.hostID)
 	var rowID int64
 	if err != nil {
 		slog.Warn("alerts: record fire", "rule", r.Name, "err", err)
@@ -908,9 +910,9 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, text i18n.
 	notified := fireNotified && !r.mutedAt(ts)
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
-		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)`,
-		r.ID, r.Name, t.name, msg, value, r.Threshold, boolInt(notified), t.hostID)
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, message_i18n, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, t.name, msg, text.Encode(), value, r.Threshold, boolInt(notified), t.hostID)
 	if err != nil {
 		slog.Warn("alerts: record resolve", "rule", r.Name, "err", err)
 	} else if id, err := res.LastInsertId(); err == nil {
@@ -1150,10 +1152,10 @@ type FiringAlert struct {
 // read from alert_history so the result survives a restart. One-shot
 // kinds are left out: they never resolve, so their last fire is history,
 // not a state.
-func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
+func (s *Service) Firing(ctx context.Context, lang string) ([]FiringAlert, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.rule_id, r.name, r.kind, COALESCE(r.severity, ''), h.host_id,
-		       h.container_name, COALESCE(h.message, ''), h.occurred_at
+		       h.container_name, COALESCE(h.message, ''), h.message_i18n, h.occurred_at
 		FROM alert_history h
 		JOIN (
 			SELECT MAX(id) AS max_id
@@ -1171,9 +1173,11 @@ func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
 	out := []FiringAlert{}
 	for rows.Next() {
 		var f FiringAlert
-		if err := rows.Scan(&f.RuleID, &f.RuleName, &f.Kind, &f.Severity, &f.HostID, &f.Target, &f.Message, &f.Since); err != nil {
+		var encoded string
+		if err := rows.Scan(&f.RuleID, &f.RuleName, &f.Kind, &f.Severity, &f.HostID, &f.Target, &f.Message, &encoded, &f.Since); err != nil {
 			return nil, fmt.Errorf("scan firing alert: %w", err)
 		}
+		f.Message = i18n.Stored(encoded, lang, f.Message)
 		out = append(out, f)
 	}
 	return out, rows.Err()
