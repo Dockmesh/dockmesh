@@ -49,6 +49,11 @@ type stackRequest struct {
 	// HostID is the host a new stack is for; scope checks use it until
 	// the stack is deployed. Ignored on update.
 	HostID string `json:"host_id,omitempty"`
+	// ComposeVersion and EnvVersion are the versions the editor loaded;
+	// update only. Force saves over a file that changed on disk.
+	ComposeVersion string `json:"compose_version,omitempty"`
+	EnvVersion     string `json:"env_version,omitempty"`
+	Force          bool   `json:"force,omitempty"`
 }
 
 // stackListEntry extends the filesystem Stack with the optional
@@ -314,11 +319,8 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
 		}
-		// .env usually holds secrets: callers who may deploy the stack
-		// edit it, others need the env extra.
-		if res := h.stackRes(r, name); !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
-			d.Env = ""
-			d.EnvHidden = true
+		if !h.canReadStackEnv(r, name) {
+			hideStackEnv(d)
 		}
 		writeJSON(w, http.StatusOK, d)
 		return
@@ -340,6 +342,20 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeStackError(w, err)
+}
+
+// canReadStackEnv reports whether the caller may see .env, which usually
+// holds secrets: callers who may deploy the stack edit it, others need the
+// env extra.
+func (h *Handlers) canReadStackEnv(r *http.Request, name string) bool {
+	res := h.stackRes(r, name)
+	return middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) || middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res)
+}
+
+// hideStackEnv removes .env and its version, a hash of the content, from d.
+func hideStackEnv(d *stacks.Detail) {
+	d.Env, d.EnvVersion = "", ""
+	d.EnvHidden = true
 }
 
 // stackHasGhostEvidence returns true when the stack record is gone from
@@ -606,12 +622,44 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "compose required")
 		return
 	}
-	d, err := h.Stacks.Update(name, req.Compose, req.Env)
+	readEnv := h.canReadStackEnv(r, name)
+	d, overwritten, err := h.Stacks.Save(name, stacks.SaveInput{
+		Compose:        req.Compose,
+		Env:            req.Env,
+		ComposeVersion: req.ComposeVersion,
+		EnvVersion:     req.EnvVersion,
+		KeepEnv:        !readEnv,
+		Force:          req.Force,
+	})
+	var conflict *stacks.ConflictError
+	if errors.As(err, &conflict) {
+		if !readEnv {
+			hideStackEnv(conflict.Current)
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   stacks.ErrModifiedOnDisk.Error(),
+			"code":    "stack_modified_on_disk",
+			"stack":   name,
+			"files":   conflict.Files,
+			"current": conflict.Current,
+		})
+		return
+	}
 	if err != nil {
 		writeStackError(w, err)
 		return
 	}
-	h.audit(r, audit.ActionStackUpdate, name, nil)
+	if req.Force {
+		h.audit(r, audit.ActionStackForceSave, name, map[string]any{"overwritten": overwritten})
+	} else {
+		h.audit(r, audit.ActionStackUpdate, name, nil)
+	}
+	if !readEnv {
+		hideStackEnv(d)
+	}
+	if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
+		slog.Warn("stack file checksums", "stack", name, "err", err)
+	}
 	writeJSON(w, http.StatusOK, d)
 }
 
