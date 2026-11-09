@@ -2061,7 +2061,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       }),
-    exportURL: (id: number) => `/api/v1/templates/${id}/export`
+    download: (id: number, slug: string): Promise<void> => saveDownload(`/templates/${id}/export`, `${slug}.yaml`)
   },
 
   hosts: {

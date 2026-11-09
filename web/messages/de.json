@@ -5302,6 +5302,7 @@
   "templates_default_for": "Standard für {name}",
   "templates_delete_body": "Bereits deployte Stacks bleiben unverändert.",
   "templates_delete_failed": "Löschen fehlgeschlagen",
+  "templates_download_failed": "Download fehlgeschlagen",
   "templates_delete_message": "Entfernt die Vorlage aus der Bibliothek.",
   "templates_delete_title": "Vorlage „{name}“ löschen?",
   "templates_deleted": "Vorlage gelöscht",

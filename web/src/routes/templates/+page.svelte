@@ -231,6 +231,14 @@
     }
   }
 
+  async function downloadTemplate(t: StackTemplate) {
+    try {
+      await api.templates.download(t.id, t.slug);
+    } catch (err) {
+      toast.error(m.templates_download_failed(), err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function deleteTemplate(t: StackTemplate) {
     if (!(await confirm.ask({
       title: m.templates_delete_title({ name: t.name }),
@@ -310,7 +318,7 @@
             <Menu
               label={m.templates_actions_for({ name: t.name })}
               items={[
-                { label: m.templates_download_yaml(), href: api.templates.exportURL(t.id) },
+                { label: m.templates_download_yaml(), onclick: () => downloadTemplate(t) },
                 ...(canUpdate && !t.builtin ? [{ label: m.templates_edit_ellipsis(), onclick: () => openEditTemplate(t) }] : []),
                 ...(canDelete && !t.builtin ? [{ separator: true }, { label: m.common_delete_ellipsis(), danger: true, onclick: () => deleteTemplate(t) }] : [])
               ]}

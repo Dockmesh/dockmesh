@@ -7283,8 +7283,8 @@ paths:
         Configures the git source and runs the initial sync, which
         creates the stack directory on disk from the repo contents.
         Returns the saved git source plus the sync result + drift report.
-        On a failed initial sync the row is still saved (HTTP 422) so the
-        caller can fix credentials and retry without re-entering everything.
+        A failed initial sync (HTTP 422) saves nothing: the git source and
+        any partly copied files are removed and the name stays free.
       requestBody:
         required: true
         content:
@@ -7305,7 +7305,7 @@ paths:
             application/json:
               schema: {type: object, additionalProperties: true}
         "422":
-          description: Row saved but initial sync failed (e.g. bad credentials).
+          description: Initial sync failed (e.g. bad credentials). Nothing was saved.
           content:
             application/json:
               schema: {type: object, additionalProperties: true}

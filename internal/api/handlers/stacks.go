@@ -564,30 +564,45 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
+	if syncErr != nil {
+		h.rollBackGitCreate(r, req.Name)
+		h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true, "sync_failed": true})
+		h.syncGitWebhookNotice(r.Context())
+		// Mirrors the message into `error` so the shared frontend
+		// request() helper shows it in the toast.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"sync_ok":    false,
+			"sync_error": syncErr.Error(),
+			"error":      "Initial sync failed: " + syncErr.Error(),
+		})
+		return
+	}
 	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
 	h.syncGitWebhookNotice(r.Context())
 
 	res := map[string]any{
 		"source":  src,
-		"sync_ok": syncErr == nil,
-	}
-	if syncErr != nil {
-		// Config row is saved; surface the failure loudly so the UI
-		// shows a fix-credentials banner. Same 422 contract as
-		// ConfigureGitSource — the row exists, sync didn't take.
-		// Mirror the message into `error` so the shared frontend
-		// request() helper picks it up for the toast instead of
-		// falling back to a generic "422 Unprocessable Entity".
-		res["sync_error"] = syncErr.Error()
-		res["error"] = "Initial sync failed: " + syncErr.Error()
-		writeJSON(w, http.StatusUnprocessableEntity, res)
-		return
+		"sync_ok": true,
 	}
 	res["sync"] = syncRes
 	if d, gerr := h.Stacks.Get(req.Name); gerr == nil {
 		res["stack"] = d
 	}
 	writeJSON(w, http.StatusCreated, res)
+}
+
+// rollBackGitCreate frees the name after a failed initial sync, so no later
+// webhook creates and deploys the stack. Removing it may outlive the
+// request: a client that gave up mid-clone is the common way to get here.
+func (h *Handlers) rollBackGitCreate(r *http.Request, name string) {
+	cleanup := r.WithContext(context.WithoutCancel(r.Context()))
+	if err := h.GitSource.Delete(cleanup.Context(), name); err != nil {
+		slog.Warn("create stack from git: roll back", "stack", name, "err", err)
+	}
+	h.forgetStackTarget(cleanup, name)
+	if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) {
+		slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
+	}
 }
 
 func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {

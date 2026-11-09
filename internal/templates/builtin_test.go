@@ -114,3 +114,68 @@ func TestRedisTemplateRejectsArgumentPasswords(t *testing.T) {
 		}
 	}
 }
+
+// Stacks: View reads compose.yaml, so generated secrets stay in .env.
+func TestBuiltinTemplatesKeepSecretsInEnv(t *testing.T) {
+	tests := []struct {
+		file    string
+		service string
+		vars    map[string]string // compose variable -> template parameter
+	}{
+		{"postgres.yaml", "postgres", map[string]string{"POSTGRES_PASSWORD": "db_password"}},
+		{"mysql.yaml", "mysql", map[string]string{"MYSQL_PASSWORD": "db_password", "MYSQL_ROOT_PASSWORD": "root_password"}},
+		{"vaultwarden.yaml", "vaultwarden", map[string]string{"ADMIN_TOKEN": "admin_token"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			values := map[string]string{}
+			for _, param := range tt.vars {
+				values[param] = "s3cret-" + param
+			}
+			compose, env := renderBuiltin(t, tt.file, values)
+			var c struct {
+				Services map[string]struct {
+					Environment map[string]string `yaml:"environment"`
+				} `yaml:"services"`
+			}
+			if err := yaml.Unmarshal([]byte(compose), &c); err != nil {
+				t.Fatal(err)
+			}
+			for v, param := range tt.vars {
+				if strings.Contains(compose, values[param]) {
+					t.Errorf("%s rendered into compose.yaml", param)
+				}
+				if got := c.Services[tt.service].Environment[v]; got != "${"+v+"}" {
+					t.Errorf("%s = %q, want a reference", v, got)
+				}
+				if !strings.Contains(env, v+"="+values[param]+"\n") {
+					t.Errorf(".env lacks %s: %q", v, env)
+				}
+			}
+		})
+	}
+}
+
+// One .env line per secret: a line break would add another variable.
+func TestBuiltinTemplateSecretsRejectLineBreaks(t *testing.T) {
+	tests := []struct{ file, param string }{
+		{"postgres.yaml", "db_password"},
+		{"mysql.yaml", "db_password"},
+		{"mysql.yaml", "root_password"},
+		{"vaultwarden.yaml", "admin_token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.file+"/"+tt.param, func(t *testing.T) {
+			rec, params := loadBuiltin(t, tt.file)
+			pw := "abc\nINJECTED=1"
+			values := map[string]string{"db_password": "ok", "root_password": "ok", "admin_token": "ok", tt.param: pw}
+			_, err := Render(rec.Env, params, values)
+			if err == nil {
+				t.Fatal("line break accepted")
+			}
+			if strings.Contains(err.Error(), pw) {
+				t.Errorf("error echoes the secret: %v", err)
+			}
+		})
+	}
+}
