@@ -39,6 +39,10 @@ type Manager struct {
 	mu     sync.RWMutex
 	stacks map[string]*Stack
 
+	// writeMu serialises Save and Update, so a save's version check and
+	// its write are one step.
+	writeMu sync.Mutex
+
 	subsMu sync.Mutex
 	subs   []chan Event
 
@@ -71,6 +75,10 @@ type Detail struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
+	// ComposeVersion and EnvVersion identify the content returned here; a
+	// save sends them back to detect a file that changed in the meantime.
+	ComposeVersion string `json:"compose_version,omitempty"`
+	EnvVersion     string `json:"env_version,omitempty"`
 	// EnvHidden is set when the caller may not read .env.
 	EnvHidden bool `json:"env_hidden,omitempty"`
 	// ModifiedOutside lists the stack files changed outside Dockmesh
@@ -393,7 +401,13 @@ func (m *Manager) Get(name string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Detail{Name: name, Compose: string(compose), Env: envStr}
+	d := &Detail{
+		Name:           name,
+		Compose:        string(compose),
+		Env:            envStr,
+		ComposeVersion: contentVersion(string(compose)),
+		EnvVersion:     contentVersion(envStr),
+	}
 	// Detect the empty/0-byte compose case the UI used to render as a
 	// blank editor. Empty whitespace counts as needs_recovery too —
 	// nobody intentionally writes a compose with only whitespace.
@@ -507,6 +521,14 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 }
 
 func (m *Manager) Update(name, compose, env string) (*Detail, error) {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	return m.update(name, compose, &env)
+}
+
+// update writes the stack files; a nil env leaves .env as it is. The
+// caller holds writeMu.
+func (m *Manager) update(name, compose string, env *string) (*Detail, error) {
 	dir, err := m.safeDir(name)
 	if err != nil {
 		return nil, err
@@ -520,8 +542,12 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 	if err := m.writeFileSelf(composePath, []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
-	if err := m.writeEnv(dir, env); err != nil {
-		return nil, err
+	d := &Detail{Name: name, Compose: compose, ComposeVersion: contentVersion(compose)}
+	if env != nil {
+		if err := m.writeEnv(dir, *env); err != nil {
+			return nil, err
+		}
+		d.Env, d.EnvVersion = *env, contentVersion(*env)
 	}
 	// Refresh the in-memory registry. If the entry was dropped by an
 	// fsnotify "removed" event before this Update (e.g. the recovery
@@ -532,7 +558,7 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 	m.stacks[name] = &Stack{Name: name, ComposePath: composePath}
 	m.mu.Unlock()
 	_ = m.watcher.Add(dir)
-	return &Detail{Name: name, Compose: compose, Env: env}, nil
+	return d, nil
 }
 
 // ReencryptAll re-encrypts every `.env.age` file under the manager root

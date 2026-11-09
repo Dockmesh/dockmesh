@@ -47,6 +47,7 @@ const (
 	ActionAPITokenRevoke     = "api_token.revoke"
 	ActionStackCreate        = "stack.create"
 	ActionStackUpdate        = "stack.update"
+	ActionStackForceSave     = "stack.force_save"
 	ActionStackDelete        = "stack.delete"
 	ActionBackupJobCreate    = "backup.job_create"
 	ActionBackupJobUpdate    = "backup.job_update"

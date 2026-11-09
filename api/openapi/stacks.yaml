@@ -145,6 +145,16 @@ paths:
       operationId: stacks.update
       tags: [stacks]
       summary: Update compose.yaml and/or .env for an existing stack
+      description: |
+        Send `compose_version` and `env_version` from `GET /stacks/{name}`
+        with every save. If a file changed on disk since then the save is
+        refused with 409 `stack_modified_on_disk` and nothing is written.
+
+        A save without versions still works but is **unsafe**: it overwrites
+        whatever is on disk, including edits made outside Dockmesh.
+
+        A caller who may not read `.env` can't change it: `env` and
+        `env_version` are ignored and the file stays as it is.
       requestBody:
         required: true
         content:
@@ -160,6 +170,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: A stack file changed on disk since the versions sent were loaded. Nothing was written.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackModifiedOnDisk"}
     delete:
       operationId: stacks.delete
       tags: [stacks]
@@ -1211,6 +1226,15 @@ components:
           description: |
             Create only: the host the stack is for. Scope checks use it
             until the stack is deployed. Ignored on update.
+        compose_version:
+          type: string
+          description: Update only. The `compose_version` the editor loaded. Omitting it skips the check for compose.yaml, which is unsafe.
+        env_version:
+          type: string
+          description: Update only. The `env_version` the editor loaded. Omitting it skips the check for .env, which is unsafe.
+        force:
+          type: boolean
+          description: Update only. Save even though a file changed on disk; recorded in the audit log as `stack.force_save`.
     StackDetail:
       type: object
       required: [name, compose]
@@ -1218,6 +1242,12 @@ components:
         name: {type: string}
         compose: {type: string}
         env: {type: string}
+        compose_version:
+          type: string
+          description: Content hash of compose.yaml; send it back with the next save.
+        env_version:
+          type: string
+          description: Content hash of the decrypted .env; send it back with the next save. Omitted when `env_hidden` is set.
         env_hidden:
           type: boolean
           description: The caller may not read .env (needs Deploy on the stack or the env extra); `env` is empty.
@@ -1228,6 +1258,18 @@ components:
         mounts_stack_dir:
           type: boolean
           description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
+    StackModifiedOnDisk:
+      type: object
+      required: [error, code, stack, files, current]
+      properties:
+        error: {type: string}
+        code: {type: string, enum: [stack_modified_on_disk]}
+        stack: {type: string}
+        files:
+          type: array
+          items: {type: string, enum: [compose.yaml, .env]}
+          description: The files that differ from the versions sent.
+        current: {$ref: "#/components/schemas/StackDetail"}
     StackDeployment:
       type: object
       description: Where and when a stack was last deployed.

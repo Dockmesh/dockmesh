@@ -118,6 +118,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'stack.create': [m.audit_act_stack_create, m.audit_sen_stack_create],
   'stack.delete': [m.audit_act_stack_delete, m.audit_sen_stack_delete],
   'stack.deploy': [m.audit_act_stack_deploy, m.audit_sen_stack_deploy],
+  'stack.force_save': [m.audit_act_stack_force_save, m.audit_sen_stack_force_save],
   'stack.git_configure': [m.audit_act_stack_git_configure, m.audit_sen_stack_git_configure],
   'stack.git_disconnect': [m.audit_act_stack_git_disconnect, m.audit_sen_stack_git_disconnect],
   'stack.git_sync': [m.audit_act_stack_git_sync, m.audit_sen_stack_git_sync],

@@ -31,10 +31,11 @@ Names must be 2 to 63 characters, match `^[a-z0-9][a-z0-9-]*[a-z0-9]$` (lowercas
 
 ### Editing files outside Dockmesh
 
-You can edit stack files with any editor, `git pull` or `rsync`. Dockmesh notices such changes in two ways:
+You can edit stack files with any editor, `git pull` or `rsync`. Dockmesh notices such changes in three ways:
 
 - **While a stack page is open**, a watcher on the stacks root and each stack directory reports changes to `compose.yaml`, `.env` and `.dockmesh.meta.json` as a banner ("… was modified outside Dockmesh") with **Reload** and **Ignore**. Dockmesh's own writes are not reported.
 - **On every deploy**, Dockmesh compares `compose.yaml`, `.env` and `.env.age` with the checksums it recorded when it last wrote them. The checksums are kept in the database, so a container that can write the stack directory can't update them. Changed files are listed on the stack page ("Modified outside Dockmesh: …"), and a deploy, rollback or migration from them asks for confirmation first (**Deploy anyway**). A git auto-deploy can't ask, so it is held back and the stack's deployers get a notice to review and deploy by hand.
+- **On every save from the editor**, Dockmesh sends the version of `compose.yaml` and `.env` the editor loaded. If either file changed on disk in the meantime, nothing is written and a dialog shows the difference between your version and the one on disk. **Use the version on disk** drops your edits and reloads, **Save mine anyway** overwrites the file and is recorded in the audit log, and **Cancel** goes back to the editor with your edits intact.
 
 Nothing is redeployed automatically. The next deploy picks up whatever is on disk.
 
