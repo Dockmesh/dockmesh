@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,7 +21,34 @@ import (
 type GrypeCLI struct {
 	Binary  string        // defaults to "grype"
 	Timeout time.Duration // per-scan timeout, default 5 min
+	// ArchiveDir holds image archives while they are scanned. Empty means
+	// the system temp directory, which may be a small tmpfs.
+	ArchiveDir string
 }
+
+// ArchiveDirName is the directory below the data dir that holds image
+// archives during a scan. System backups leave it out.
+const ArchiveDirName = "scan-tmp"
+
+// PrepareArchiveDir empties the archive directory below dataDir, as a
+// crash during a scan leaves its archive behind, and returns its path.
+func PrepareArchiveDir(dataDir string) (string, error) {
+	dir := filepath.Join(dataDir, ArchiveDirName)
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// MaxScanArchiveBytes bounds an image archive received for scanning, so a
+// host can't fill the server's disk.
+const MaxScanArchiveBytes int64 = 20 << 30
+
+// ErrArchiveTooLarge is returned for an image over MaxScanArchiveBytes.
+var ErrArchiveTooLarge = errors.New("image is too large to scan")
 
 func NewGrypeCLI(binary string) *GrypeCLI {
 	if binary == "" {
@@ -40,20 +70,49 @@ func (g *GrypeCLI) Scan(ctx context.Context, image string) (*Report, error) {
 	if image == "" {
 		return nil, errors.New("image required")
 	}
-	if g.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, g.Timeout)
-		defer cancel()
-	}
-
 	// Use the docker daemon as source so we don't re-pull via registry.
 	// Grype accepts `docker:<ref>` to force that source.
 	ref := image
 	if !strings.HasPrefix(ref, "docker:") && !strings.HasPrefix(ref, "registry:") {
 		ref = "docker:" + ref
 	}
+	return g.run(ctx, ref, image)
+}
 
-	cmd := exec.CommandContext(ctx, g.Binary, ref, "-o", "json", "--quiet")
+// ScanArchive stores the archive in ArchiveDir, as grype needs a seekable
+// file, and scans that file.
+func (g *GrypeCLI) ScanArchive(ctx context.Context, archive io.Reader, image string) (*Report, error) {
+	if image == "" {
+		return nil, errors.New("image required")
+	}
+	f, err := os.CreateTemp(g.ArchiveDir, "dockmesh-scan-*.tar")
+	if err != nil {
+		return nil, fmt.Errorf("create scan archive: %w", err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	n, err := io.Copy(f, io.LimitReader(archive, MaxScanArchiveBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("receive image archive: %w", err)
+	}
+	if n > MaxScanArchiveBytes {
+		return nil, ErrArchiveTooLarge
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("write scan archive: %w", err)
+	}
+	return g.run(ctx, "docker-archive:"+f.Name(), image)
+}
+
+// run scans source and files the report under image.
+func (g *GrypeCLI) run(ctx context.Context, source, image string) (*Report, error) {
+	if g.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, g.Timeout)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json", "--quiet")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

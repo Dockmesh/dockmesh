@@ -156,6 +156,10 @@ func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
 	return system.Metrics{}, nil
 }
 
+func (f *fakeHost) PullImage(context.Context, string, string) (io.ReadCloser, error) {
+	panic("no")
+}
+
 func TestFanOut_HappyPath(t *testing.T) {
 	hosts := []Host{
 		&fakeHost{id: "local", name: "Local", rows: []container.Summary{{ID: "a1"}, {ID: "a2"}}},

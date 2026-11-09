@@ -3573,13 +3573,20 @@ paths:
     post:
       operationId: images.pull
       tags: [images]
-      summary: Pull an image (streams progress as ndjson)
+      summary: Pull an image on a host (streams progress as ndjson)
       description: |
-        Streams Docker's pull-progress lines as `application/x-ndjson`.
-        Registry credentials from Settings → Registries (P.11.7) are
-        applied automatically based on the image reference. Only hits
-        the central server's local daemon; agent-side pulls with creds
-        are tracked as P.12.28.
+        Streams Docker's pull-progress lines as `application/x-ndjson`. The
+        pull runs on the host named by `host` (default: the server host).
+        Saved registry credentials that apply to that host are used; for
+        an agent host they are sent with this request only.
+
+        A pull that fails after it started answers 200 and ends with a line
+        of the form `{"error": "..."}`.
+      parameters:
+        - name: host
+          in: query
+          schema: {type: string}
+          description: Host id, `local` or empty for the server host.
       requestBody:
         required: true
         content:
@@ -3596,12 +3603,17 @@ paths:
             application/x-ndjson:
               schema:
                 type: string
-                description: Newline-delimited JSON — one progress frame per line.
+                description: Newline-delimited JSON — one progress frame per line, or an `error` line when the pull failed.
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "422":
+          description: The registry refused the image (not found, access denied, invalid reference).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "503":
-          description: Docker daemon unavailable.
+          description: Docker unavailable, the agent is offline, or the agent is too old and has to be updated.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -3613,8 +3625,7 @@ paths:
       description: |
         Returns the full Docker `ImageInspect` payload (RepoTags, RepoDigests,
         Config, RootFS layers, Architecture, Os, Created, Size, Labels, …).
-        Remote agents currently respond 501 — image inspect is not yet
-        carried over the agent protocol.
+        On an agent host the agent answers for its own daemon.
       parameters:
         - name: id
           in: path
@@ -3694,49 +3705,68 @@ paths:
         required: true
         schema: {type: string}
         description: Image id or name:tag.
+      - name: host
+        in: query
+        schema: {type: string}
+        description: Host id, `local` or empty for the server host.
     post:
       operationId: images.scan_start
       tags: [images]
-      summary: Kick off a Grype vulnerability scan
+      summary: Scan an image on a host with Grype
+      description: |
+        Runs during the request and returns the report. An image on an agent
+        host is sent to the server as an archive and scanned there, so the
+        agent needs no scanner. Reports are stored per host.
       responses:
-        "202":
-          description: Scan queued — poll `GET /images/{id}/scan` for results.
+        "200":
+          description: The scan report.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  status: {type: string, example: queued}
+              schema: {$ref: "#/components/schemas/ImageScanReport"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413":
+          description: The image is larger than the 20 GiB a scan accepts.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: The image does not exist on this host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "503":
-          description: Scanner is disabled (grype not installed).
+          description: Scanner disabled (grype not installed), the agent is offline, or the agent is too old and has to be updated.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
     get:
       operationId: images.scan_result
       tags: [images]
-      summary: Fetch the latest scan result for an image
+      summary: Fetch the latest scan result for an image on a host
       responses:
         "200":
-          description: "Scan summary, or just {\"scanned\": false} when the image has not been scanned yet."
+          description: "The stored report for this host, or just {\"scanned\": false} when the image has not been scanned there."
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  scanned: {type: boolean, description: Present and false only when no scan exists.}
-                  image: {type: string}
-                  scanned_at: {type: string, format: date-time}
-                  critical: {type: integer}
-                  high: {type: integer}
-                  medium: {type: integer}
-                  low: {type: integer}
-                  negligible: {type: integer}
-                  vulnerabilities:
-                    type: array
-                    items: {type: object}
+                oneOf:
+                  - $ref: "#/components/schemas/ImageScanReport"
+                  - type: object
+                    properties:
+                      scanned: {type: boolean, description: Present and false only when no scan exists.}
         "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422":
+          description: The image does not exist on this host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The scanner is not configured or the host is offline.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /system/info:
     get:
       operationId: system.info
@@ -9256,6 +9286,34 @@ components:
         tags:
           type: array
           items: {type: string}
+    ImageScanReport:
+      type: object
+      properties:
+        image: {type: string}
+        scanner: {type: string}
+        scanner_version: {type: string}
+        scanned_at: {type: string, format: date-time}
+        summary:
+          type: object
+          properties:
+            critical: {type: integer}
+            high: {type: integer}
+            medium: {type: integer}
+            low: {type: integer}
+            negligible: {type: integer}
+            unknown: {type: integer}
+        vulnerabilities:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              severity: {type: string}
+              package: {type: string}
+              version: {type: string}
+              fixed_in: {type: string}
+              type: {type: string}
+              url: {type: string}
     HostMetricsSample:
       type: object
       required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]

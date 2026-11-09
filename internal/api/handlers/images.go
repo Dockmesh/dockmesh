@@ -1,9 +1,10 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,7 +12,9 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,8 +26,12 @@ func imageErrorStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) ||
-		errors.Is(err, host.ErrAgentNoVolumeManage) || errors.Is(err, host.ErrAgentNoResourceManage) {
+		errors.Is(err, host.ErrAgentNoVolumeManage) || errors.Is(err, host.ErrAgentNoResourceManage) ||
+		errors.Is(err, host.ErrAgentNoImageTransfer) {
 		return http.StatusServiceUnavailable
+	}
+	if errors.Is(err, scanner.ErrArchiveTooLarge) {
+		return http.StatusRequestEntityTooLarge
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
@@ -108,14 +115,21 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, images)
 }
 
+// maxPullLine bounds one progress line of a pull stream; Docker's are
+// well under 1 KiB.
+const maxPullLine = 1 << 20
+
+// PullImage pulls on the host named by ?host= with the credentials that
+// apply to that host, and relays the progress as ndjson.
 func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host "+target.ID())
 		return
 	}
 	var req pullRequest
@@ -123,53 +137,55 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "image required")
 		return
 	}
-	// The pull runs on the server's own daemon, so the registries
-	// matching the local host's tags apply.
 	var registryAuth string
-	var usedRegistryName string
+	auditMeta := map[string]string{"host": target.ID()}
 	if h.Registries != nil {
-		auth, reg, err := h.Registries.ResolveForHost(r.Context(), req.Image, "local")
+		auth, reg, err := h.Registries.ResolveForHost(r.Context(), req.Image, target.ID())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "resolve registry auth: "+err.Error())
 			return
 		}
 		if reg != nil {
 			registryAuth = auth
-			usedRegistryName = reg.Name
+			auditMeta["registry"] = reg.Name
 		}
 	}
-	rc, err := h.Docker.PullImageWithAuth(r.Context(), req.Image, registryAuth)
+	secrets := operations.RegistryAuthSecrets(registryAuth)
+	rc, err := target.PullImage(r.Context(), req.Image, registryAuth)
 	if err != nil {
-		writeError(w, imageErrorStatus(err), err.Error())
+		writeError(w, imageErrorStatus(err), operations.MaskText(err.Error(), secrets))
 		return
 	}
 	defer rc.Close()
-	auditMeta := map[string]string{}
-	if usedRegistryName != "" {
-		auditMeta["registry"] = usedRegistryName
+
+	// An agent reports a pull it couldn't start as the stream's first read,
+	// which can still become a proper status code.
+	lines := bufio.NewScanner(rc)
+	lines.Buffer(make([]byte, 0, 64<<10), maxPullLine)
+	more := lines.Scan()
+	if err := lines.Err(); !more && err != nil {
+		writeError(w, imageErrorStatus(err), operations.MaskText(err.Error(), secrets))
+		return
 	}
-	if len(auditMeta) > 0 {
-		h.audit(r, audit.ActionImagePull, req.Image, auditMeta)
-	} else {
-		h.audit(r, audit.ActionImagePull, req.Image, nil)
-	}
-	// Stream the pull progress to the client as ndjson.
+	h.audit(r, audit.ActionImagePull, req.Image, auditMeta)
+
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
-	if f, ok := w.(http.Flusher); ok {
-		buf := make([]byte, 4096)
-		for {
-			n, err := rc.Read(buf)
-			if n > 0 {
-				_, _ = w.Write(buf[:n])
-				f.Flush()
-			}
-			if err != nil {
-				break
-			}
+	flusher, _ := w.(http.Flusher)
+	writeLine := func(line []byte) {
+		_, _ = w.Write(append(line, '\n'))
+		if flusher != nil {
+			flusher.Flush()
 		}
-	} else {
-		_, _ = io.Copy(w, rc)
+	}
+	for ; more; more = lines.Scan() {
+		writeLine([]byte(operations.MaskText(lines.Text(), secrets)))
+	}
+	// The status is long sent, so a stream that breaks off (agent gone)
+	// has to look like Docker's own in-stream failure.
+	if err := lines.Err(); err != nil {
+		line, _ := json.Marshal(map[string]string{"error": operations.MaskText(err.Error(), secrets)})
+		writeLine(line)
 	}
 }
 

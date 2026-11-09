@@ -1,22 +1,58 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/go-chi/chi/v5"
 )
 
-// ScanImage runs the scanner against the image and stores the result.
-func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
+// scanTransferTimeout bounds receiving an image from an agent, on top of
+// the scanner's own timeout.
+const scanTransferTimeout = 30 * time.Minute
+
+// scanRef resolves the image on target to the reference its report is
+// filed under: the first tag, or the image id for an untagged image.
+func scanRef(ctx context.Context, target host.Host, id string) (string, error) {
+	info, err := target.InspectImage(ctx, id)
+	if err != nil {
+		return "", err
 	}
+	if len(info.RepoTags) > 0 && info.RepoTags[0] != "<none>:<none>" {
+		return info.RepoTags[0], nil
+	}
+	return info.ID, nil
+}
+
+// scanOn scans an image of target. The scanner reads the server's own
+// daemon directly; from any other host the image is fetched as an archive,
+// so agents need neither grype nor its vulnerability database.
+func scanOn(ctx context.Context, s scanner.Scanner, target host.Host, ref string) (*scanner.Report, error) {
+	exporter, remote := target.(host.ImageExporter)
+	if !remote {
+		return s.Scan(ctx, ref)
+	}
+	ctx, cancel := context.WithTimeout(ctx, scanTransferTimeout)
+	defer cancel()
+	archive, err := exporter.ExportImage(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	defer archive.Close()
+	return s.ScanArchive(ctx, archive, ref)
+}
+
+// ScanImage runs the scanner against an image on the host named by ?host=
+// and stores the result.
+func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 	if h.Scanner == nil || h.ScanStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
 		return
@@ -25,33 +61,38 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq("local")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermImagesScan, scopeReq, "host local")
+		h.writeScopeDenied(w, r, rbac.PermImagesScan, scopeReq, "host "+target.ID())
 		return
 	}
 
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
-	// Resolve image id → repo:tag the scanner understands. Fall back to id.
-	ref := id
-	info, err := h.Docker.InspectImage(r.Context(), id)
-	if err == nil && len(info.RepoTags) > 0 {
-		ref = info.RepoTags[0]
+	ref, err := scanRef(r.Context(), target, id)
+	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
 	}
 
-	rep, err := h.Scanner.Scan(r.Context(), ref)
+	rep, err := scanOn(r.Context(), h.Scanner, target, ref)
 	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
+	}
+	if err := h.ScanStore.Save(r.Context(), target.ID(), rep); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.ScanStore.Save(r.Context(), rep); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.audit(r, audit.ActionImageScan, ref, map[string]int{
+	h.audit(r, audit.ActionImageScan, ref, map[string]any{
 		"critical": rep.Summary.Critical,
 		"high":     rep.Summary.High,
 		"total":    rep.Summary.Total(),
+		"host":     target.ID(),
 	})
 
 	// Bell-icon notification — only for findings that actually warrant
@@ -69,30 +110,36 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 			Body:     fmt.Sprintf("%d critical, %d high", rep.Summary.Critical, rep.Summary.High),
 			Link:     "/resources?tab=images",
 			Perm:     rbac.PermImagesView,
-			HostID:   "local",
+			HostID:   target.ID(),
 		})
 	}
 	writeJSON(w, http.StatusOK, rep)
 }
 
-// GetScan returns the cached scan result for an image, or {"scanned":false}
-// when it has never been scanned.
+// GetScan returns the cached scan result for an image on the host named by
+// ?host=, or {"scanned":false} when it has never been scanned there.
 func (h *Handlers) GetScan(w http.ResponseWriter, r *http.Request) {
 	if h.ScanStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
 		return
 	}
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesScan, scopeReq, "host "+target.ID())
 		return
 	}
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
-	ref := id
-	info, err := h.Docker.InspectImage(r.Context(), id)
-	if err == nil && len(info.RepoTags) > 0 {
-		ref = info.RepoTags[0]
+	ref, err := scanRef(r.Context(), target, id)
+	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
 	}
-	rep, err := h.ScanStore.Get(r.Context(), ref)
+	rep, err := h.ScanStore.Get(r.Context(), target.ID(), ref)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

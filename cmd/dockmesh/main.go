@@ -485,6 +485,11 @@ func main() {
 	var scannerSvc scanner.Scanner
 	if cfg.ScannerEnabled {
 		g := scanner.NewGrypeCLI(cfg.ScannerBinary)
+		if dir, err := scanner.PrepareArchiveDir(filepath.Dir(cfg.DBPath)); err != nil {
+			slog.Warn("scan archive directory unavailable, using the system temp directory", "err", err)
+		} else {
+			g.ArchiveDir = dir
+		}
 		if err := g.Ready(); err != nil {
 			slog.Warn("scanner disabled — install grype to enable CVE scans", "err", err)
 		} else {

@@ -106,7 +106,7 @@
   }
   async function loadCachedScan() {
     try {
-      scanReport = normalizeReport(await api.images.getScan(id));
+      scanReport = normalizeReport(await api.images.getScan(id, hostId));
     } catch {
       scanReport = null;
     }
@@ -114,7 +114,7 @@
   async function runScan() {
     scanBusy = true;
     try {
-      scanReport = normalizeReport(await api.images.scan(imageRef()))!;
+      scanReport = normalizeReport(await api.images.scan(imageRef(), hostId))!;
       toast.success(m.images_scan_complete(), m.images_scan_findings({ count: scanReport.vulnerabilities.length }));
     } catch (err) {
       toast.error(m.images_scan_failed(), err instanceof ApiError ? err.message : m.images_scanner_unavailable());
@@ -200,7 +200,7 @@
       return;
     }
     try {
-      await api.images.pull(`${repoTag.repo}:${repoTag.tag}`);
+      await api.images.pull(`${repoTag.repo}:${repoTag.tag}`, hostId);
       toast.success(m.images_pull_queued(), `${repoTag.repo}:${repoTag.tag}`);
       await loadInspect();
     } catch (err) {
