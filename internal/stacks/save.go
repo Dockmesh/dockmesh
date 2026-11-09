@@ -35,8 +35,8 @@ type SaveInput struct {
 	Env            string
 	ComposeVersion string
 	EnvVersion     string
-	// KeepEnv leaves .env alone, for a caller that may not read it and so
-	// can neither know its content nor be told whether it changed.
+	// KeepEnv leaves .env alone, for a caller that may not read it: the
+	// content is unknown to them and their save must not replace it.
 	KeepEnv bool
 	Force   bool
 }
@@ -118,6 +118,7 @@ func (m *Manager) findConflict(name string, in SaveInput) (*ConflictError, error
 			// A .env.age that no longer decrypts must not block the save
 			// that replaces it.
 			slog.Warn("forced stack save: read current .env", "stack", name, "err", err)
+			files = append(files, ".env")
 		}
 	}
 	if len(files) == 0 {

@@ -338,7 +338,12 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	// operator picks "Recover from running containers", "Restore from
 	// last backup", or "Remove stack record" from the recovery panel.
 	if h.stackHasGhostEvidence(r.Context(), name) {
-		writeJSON(w, http.StatusOK, h.Stacks.GetOrPlaceholder(name))
+		d := h.Stacks.GetOrPlaceholder(name)
+		// The file can reappear between the two reads, for example during a restore.
+		if d != nil && !h.canReadStackEnv(r, name) {
+			hideStackEnv(d)
+		}
+		writeJSON(w, http.StatusOK, d)
 		return
 	}
 	writeStackError(w, err)
@@ -623,6 +628,10 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	readEnv := h.canReadStackEnv(r, name)
+	outside, err := h.Stacks.ModifiedOutside(name)
+	if err != nil {
+		slog.Warn("stack file checksums", "stack", name, "err", err)
+	}
 	d, overwritten, err := h.Stacks.Save(name, stacks.SaveInput{
 		Compose:        req.Compose,
 		Env:            req.Env,
@@ -649,9 +658,12 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
-	if req.Force {
-		h.audit(r, audit.ActionStackForceSave, name, map[string]any{"overwritten": overwritten})
-	} else {
+	switch {
+	case req.Force:
+		h.audit(r, audit.ActionStackForceSave, name, map[string]any{"overwritten": overwritten, "modified_outside": outside})
+	case len(outside) > 0:
+		h.audit(r, audit.ActionStackUpdate, name, map[string]any{"modified_outside": outside})
+	default:
 		h.audit(r, audit.ActionStackUpdate, name, nil)
 	}
 	if !readEnv {

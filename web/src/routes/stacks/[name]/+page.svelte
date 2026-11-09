@@ -24,6 +24,7 @@
   import SaveConflictDialog from '../_SaveConflictDialog.svelte';
   import DiffView from '../_DiffView.svelte';
   import { diffLines } from '$lib/diffLines';
+  import { isSecretKey } from '$lib/envSecrets';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
   import { fmtDateTime, fmtNumber, fmtTime } from '$lib/i18n';
@@ -585,10 +586,6 @@
 
   function serializeEnvRows(rows: EnvRow[]): string {
     return rows.map((r) => `${r.key}=${r.value}`).join('\n') + (rows.length > 0 ? '\n' : '');
-  }
-
-  function isSecretKey(key: string): boolean {
-    return /password|secret|token|api[_-]?key|credential|access[_-]?key/i.test(key);
   }
 
   // Map .env keys to the services that actually reference them via

@@ -198,3 +198,22 @@ func TestSaveAfterSaveUsesReturnedVersions(t *testing.T) {
 		t.Errorf("env = %q, version %s", after.Env, after.EnvVersion)
 	}
 }
+
+func TestSaveForceReportsUnreadableEnv(t *testing.T) {
+	m, dir, d := saveFixture(t)
+	if err := os.WriteFile(filepath.Join(dir, ".env.age"), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SaveInput{Compose: "a: 2\n", Env: "K=2\n", ComposeVersion: d.ComposeVersion, EnvVersion: d.EnvVersion}
+	if _, _, err := m.Save("app", in); err == nil || errors.Is(err, ErrModifiedOnDisk) {
+		t.Fatalf("err = %v, want the read error", err)
+	}
+	in.Force = true
+	_, overwritten, err := m.Save("app", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overwritten) != 1 || overwritten[0] != ".env" {
+		t.Errorf("overwritten = %v", overwritten)
+	}
+}

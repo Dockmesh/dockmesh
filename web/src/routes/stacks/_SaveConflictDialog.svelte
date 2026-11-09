@@ -2,6 +2,7 @@
   import { Button, Modal } from '$lib/components/ui';
   import { diffLines } from '$lib/diffLines';
   import DiffView from './_DiffView.svelte';
+  import { maskEnvLine } from '$lib/envSecrets';
   import { m } from '$lib/paraglide/messages.js';
   import type { StackDetail } from '$lib/api';
 
@@ -19,14 +20,17 @@
   // CRLF file as changed.
   const lf = (s: string) => s.replace(/\r\n/g, '\n');
 
+  let showSecrets = $state(false);
+
   const diffs = $derived(
-    (conflict?.files ?? []).map((file) => ({
-      file,
-      lines: diffLines(
-        lf(file === '.env' ? (conflict?.current.env ?? '') : (conflict?.current.compose ?? '')),
-        lf(file === '.env' ? mine.env : mine.compose)
-      )
-    }))
+    (conflict?.files ?? []).map((file) => {
+      const isEnv = file === '.env';
+      const lines = diffLines(
+        lf(isEnv ? (conflict?.current.env ?? '') : (conflict?.current.compose ?? '')),
+        lf(isEnv ? mine.env : mine.compose)
+      );
+      return { file, lines: isEnv && !showSecrets ? lines.map((l) => ({ ...l, text: maskEnvLine(l.text) })) : lines };
+    })
   );
 </script>
 
@@ -40,7 +44,14 @@
       </p>
       {#each diffs as d (d.file)}
         <div>
-          <div class="font-mono text-xs mb-1">{d.file}</div>
+          <div class="font-mono text-xs mb-1 flex items-center justify-between">
+            <span>{d.file}</span>
+            {#if d.file === '.env'}
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showSecrets = !showSecrets)}>
+                {showSecrets ? m.stacks_d_hide_secrets() : m.stacks_d_show_secrets()}
+              </button>
+            {/if}
+          </div>
           <DiffView lines={d.lines} maxHeight="max-h-80" />
         </div>
       {/each}
