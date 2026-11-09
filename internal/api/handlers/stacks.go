@@ -575,7 +575,7 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 	syncRes, syncErr := h.GitSource.FirstSync(r.Context(), req.Name, func(created bool) { h.rollBackGitCreate(r, req.Name, created) })
 	if syncErr != nil {
 		h.auditDetached(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true, "sync_failed": true})
-		h.syncGitWebhookNotice(r.Context())
+		h.syncGitWebhookNotice(context.WithoutCancel(r.Context()))
 		// Mirrors the message into `error` so the shared frontend
 		// request() helper shows it in the toast.
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
@@ -585,8 +585,8 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
-	h.syncGitWebhookNotice(r.Context())
+	h.auditDetached(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
+	h.syncGitWebhookNotice(context.WithoutCancel(r.Context()))
 
 	res := map[string]any{
 		"source":  src,

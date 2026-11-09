@@ -505,10 +505,13 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 		return nil, err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
-	if err := m.writeFileSelf(composePath, []byte(compose), 0o644); err != nil {
-		return nil, err
+	err = m.writeFileSelf(composePath, []byte(compose), 0o644)
+	if err == nil {
+		err = m.writeEnv(dir, env)
 	}
-	if err := m.writeEnv(dir, env); err != nil {
+	if err != nil {
+		// A half-written directory would keep the name taken.
+		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 	m.mu.Lock()
