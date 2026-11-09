@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -54,7 +55,7 @@ func readListeners() (map[int]int, error) {
 	for _, p := range procNetTCP {
 		f, err := os.Open(p)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			return nil, err
@@ -137,6 +138,15 @@ func (s *Service) checkPorts(ctx context.Context, wanted bool) {
 	}
 }
 
+// PortList formats ports for a message, as "80, 443".
+func PortList(ports []int) string {
+	names := make([]string, len(ports))
+	for i, p := range ports {
+		names[i] = strconv.Itoa(p)
+	}
+	return strings.Join(names, ", ")
+}
+
 func (s *Service) setForeignPorts(ctx context.Context, ports []int) {
 	s.foreignPorts.Store(&ports)
 	if s.notices == nil {
@@ -144,11 +154,7 @@ func (s *Service) setForeignPorts(ctx context.Context, ports []int) {
 	}
 	in := notices.RaiseInput{Key: noticeKeyPorts, Audience: notices.Admins(), Severity: notices.SevWarning, Link: "/proxy"}
 	if len(ports) > 0 {
-		names := make([]string, len(ports))
-		for i, p := range ports {
-			names[i] = strconv.Itoa(p)
-		}
-		list := strings.Join(names, ", ")
+		list := PortList(ports)
 		in.Title = "Another program is listening on the proxy's ports"
 		in.Body = fmt.Sprintf("Port %s on the server is held by a program other than the proxy Dockmesh manages. "+
 			"Requests may reach that program instead of your sites, or the proxy can't start at all. "+

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -218,15 +219,6 @@ func useLegacyServer(t *testing.T, api http.Handler) {
 	legacyEP = &adminEndpoint{url: srv.URL}
 }
 
-func contains(calls []string, want string) bool {
-	for _, c := range calls {
-		if c == want {
-			return true
-		}
-	}
-	return false
-}
-
 func switchNotice(log *noticeLog) *recordedNotice {
 	for i := len(log.got) - 1; i >= 0; i-- {
 		if log.got[i].in.Key == noticeKeyAdminSwitch {
@@ -253,7 +245,7 @@ func TestMoveAdminToSocket(t *testing.T) {
 		t.Fatalf("loads=%d body=%s", loads, body)
 	}
 	for _, want := range []string{"create " + nextContainerName, "stop old", "start new", "remove old", "rename new " + ProxyContainerName} {
-		if !contains(f.calls, want) {
+		if !slices.Contains(f.calls, want) {
 			t.Errorf("missing %q in %v", want, f.calls)
 		}
 	}
@@ -325,11 +317,11 @@ func TestMoveAdminRollsBackWhenNewContainerFails(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 			for _, want := range []string{"stop old", "remove new", "copy old /config/caddy", "start old"} {
-				if !contains(f.calls, want) {
+				if !slices.Contains(f.calls, want) {
 					t.Errorf("missing %q in %v", want, f.calls)
 				}
 			}
-			if contains(f.calls, "remove old") {
+			if slices.Contains(f.calls, "remove old") {
 				t.Fatalf("old container removed: %v", f.calls)
 			}
 			assertKeptOld(t, s, log, legacy)
@@ -365,7 +357,7 @@ func TestAdoptNextContainer(t *testing.T) {
 			if err := s.adoptNextContainer(context.Background(), f); err != nil {
 				t.Fatal(err)
 			}
-			if tc.want == "" && len(f.calls) != 0 || tc.want != "" && !contains(f.calls, tc.want) {
+			if tc.want == "" && len(f.calls) != 0 || tc.want != "" && !slices.Contains(f.calls, tc.want) {
 				t.Fatalf("calls = %v, want %q", f.calls, tc.want)
 			}
 		})

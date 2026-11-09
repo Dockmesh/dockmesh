@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 
 	dmdb "github.com/dockmesh/dockmesh/internal/db"
-	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 )
 
@@ -151,11 +151,11 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 	// scanned, the database snapshots and the proxy's admin socket must
 	// not end up inside a system backup.
 	excluded := map[string]bool{
-		filepath.Join(dataAbs, "backups"):              true,
-		filepath.Join(dataAbs, restore.StagingDir):     true,
-		filepath.Join(dataAbs, restore.PreRestoreDir):  true,
-		filepath.Join(dataAbs, scanner.ArchiveDirName): true,
-		filepath.Join(dataAbs, scanner.DBDirName):      true,
+		filepath.Join(dataAbs, "backups"):                true,
+		filepath.Join(dataAbs, restore.StagingDir):       true,
+		filepath.Join(dataAbs, restore.PreRestoreDir):    true,
+		filepath.Join(dataAbs, scanner.ArchiveDirName):   true,
+		filepath.Join(dataAbs, scanner.DBDirName):        true,
 		filepath.Join(dataAbs, proxy.AdminSocketDirName): true,
 	}
 	skip := func(abs string) bool {

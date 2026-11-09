@@ -147,10 +147,8 @@ func (s *Service) adoptNextContainer(ctx context.Context, cli containerAPI) erro
 	return cli.ContainerRemove(ctx, next.ID, container.RemoveOptions{Force: true})
 }
 
-// moveAdminToSocket replaces a container whose admin API is on TCP. Only
-// one Caddy can hold :80 and :443, so the old one is stopped once
-// everything that can fail without touching it is done, and started again
-// when the new one doesn't take the config.
+// moveAdminToSocket replaces a container whose admin API is on TCP and
+// keeps the admin notice in line with the outcome.
 func (s *Service) moveAdminToSocket(ctx context.Context, cli containerAPI, img string, old *container.InspectResponse) error {
 	if err := s.tryMoveAdmin(ctx, cli, img, old); err != nil {
 		slog.Warn("proxy: moving the admin API to the unix socket failed", "err", err)
@@ -162,6 +160,9 @@ func (s *Service) moveAdminToSocket(ctx context.Context, cli containerAPI, img s
 	return nil
 }
 
+// tryMoveAdmin stops the old container only once everything that can fail
+// without touching it is done, because just one Caddy can hold :80 and
+// :443, and starts it again when the new one doesn't take the config.
 func (s *Service) tryMoveAdmin(ctx context.Context, cli containerAPI, img string, old *container.InspectResponse) error {
 	if err := s.ensureSocketDir(); err != nil {
 		return s.keepOld(ctx, old, err)
@@ -284,7 +285,7 @@ func (s *Service) setAdminSwitchNotice(ctx context.Context, cause error) {
 	if cause != nil {
 		in.Title = "The proxy could not be moved to its admin socket"
 		in.Body = "Dockmesh could not switch the reverse proxy to the private admin socket: " + cause.Error() +
-			". Sites stay on the old container if it could be kept running, but its admin API on 127.0.0.1:2019 stays open to local processes. " +
+			". Sites stay on the old container if it could be kept running, but its admin API on " + legacyAdminAddr + " stays open to local processes. " +
 			"Fix the cause and restart the Dockmesh service; the switch is retried on every start."
 	}
 	if err := s.notices.Set(context.WithoutCancel(ctx), cause != nil, in); err != nil {

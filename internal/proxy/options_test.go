@@ -106,13 +106,13 @@ func TestBuildConfigDefaultsMatchLegacyOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const legacy = `{"admin":{"listen":"unix//run/dockmesh-caddy/admin.sock|0666","origins":["dockmesh-proxy"],"enforce_origin":true},` +
+	const want = `{"admin":{"listen":"unix//run/dockmesh-caddy/admin.sock|0666","origins":["dockmesh-proxy"],"enforce_origin":true},` +
 		`"apps":{"http":{"metrics":{"per_host":true},"servers":{` +
 		`"dockmesh":{"listen":[":443"],"routes":[{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.5:8080"}]}],"terminal":true}]},` +
 		`"dockmesh_http":{"listen":[":80"],"routes":[{"match":[{"host":["b.lan"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.6:80"}]}],"terminal":true}]}}},` +
 		`"tls":{"automation":{"policies":[{"subjects":["a.example.com"],"issuers":[{"module":"acme"}]}]}}}}`
-	if string(got) != legacy {
-		t.Fatalf("defaults changed the generated config:\n got %s\nwant %s", got, legacy)
+	if string(got) != want {
+		t.Fatalf("defaults changed the generated config:\n got %s\nwant %s", got, want)
 	}
 }
 
