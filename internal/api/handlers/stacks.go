@@ -549,9 +549,6 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
 		return
 	}
-	// Persist the git config first. Configure does its own validation
-	// and stores the row before sync runs so a credential error doesn't
-	// leave the user with nothing to retry against.
 	src, err := h.GitSource.Configure(r.Context(), req.Name, req.Git)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -596,11 +593,11 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 // request: a client that gave up mid-clone is the common way to get here.
 func (h *Handlers) rollBackGitCreate(r *http.Request, name string) {
 	cleanup := r.WithContext(context.WithoutCancel(r.Context()))
-	if err := h.GitSource.Delete(cleanup.Context(), name); err != nil {
-		slog.Warn("create stack from git: roll back", "stack", name, "err", err)
+	if err := h.GitSource.Delete(cleanup.Context(), name); err != nil { //nolint:contextcheck // must outlive the request
+		slog.Warn("create stack from git: roll back failed sync", "stack", name, "err", err)
 	}
 	h.forgetStackTarget(cleanup, name)
-	if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) {
+	if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // takes no context
 		slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
 	}
 }

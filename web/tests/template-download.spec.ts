@@ -1,5 +1,6 @@
 // The YAML download needs the session token, which a plain link can't send.
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import { ADMIN, password } from './env';
 
 test('a template downloads as YAML with the session', async ({ page }) => {
@@ -16,6 +17,6 @@ test('a template downloads as YAML with the session', async ({ page }) => {
     page.getByRole('menuitem', { name: /YAML/ }).click()
   ]);
   expect(download.suggestedFilename()).toMatch(/\.yaml$/);
-  const body = await (await import('node:fs/promises')).readFile(await download.path(), 'utf8');
+  const body = await readFile(await download.path(), 'utf8');
   expect(body).toContain('compose');
 });
