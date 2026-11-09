@@ -136,6 +136,12 @@
           ? m.authn_unlink_ldap({ note: unlinkNote })
           : '';
       case 'saml':
+        if (saml.idp_source === 'url') {
+          return saml.idp_metadata_url.trim() !== '' &&
+            saml.idp_metadata_url.trim() !== (editing.idp_metadata_url ?? '').trim()
+            ? m.authn_unlink_saml()
+            : '';
+        }
         return saml.idp_metadata_xml.trim() !== '' &&
           saml.idp_metadata_xml.trim() !== (editing.idp_metadata_xml ?? '').trim()
           ? m.authn_unlink_saml()
@@ -190,11 +196,12 @@
       slug: p.slug,
       display_name: p.display_name,
       enabled: p.enabled,
-      idp_metadata_url: '',
+      idp_source: p.idp_metadata_url ? 'url' : 'xml',
+      idp_metadata_url: p.idp_metadata_url ?? '',
       idp_metadata_xml: p.idp_metadata_xml ?? '',
-      sp_entity_id: p.entity_id,
-      signing_cert: '',
-      encryption_cert: '',
+      sp_entity_id: p.sp_entity_id ?? '',
+      signing_cert: p.signing_cert_pem ?? '',
+      encryption_cert: p.encryption_cert_pem ?? '',
       nameid_format: p.nameid_format,
       subject_attribute: p.subject_attribute ?? '',
       username_attribute: p.username_attribute,
@@ -324,7 +331,9 @@
 
   const samlValid = $derived(
     commonValid &&
-    saml.idp_metadata_xml.trim().length > 0,
+    (saml.idp_source === 'url'
+      ? saml.idp_metadata_url.trim().length > 0
+      : saml.idp_metadata_xml.trim().length > 0 || (!!editing && editing.kind === 'saml' && !editing.idp_metadata_url)),
   );
 
   const ldapValid = $derived(
@@ -419,7 +428,14 @@
     const payload: SAMLProviderInput = {
       slug: saml.slug.trim(),
       display_name: saml.display_name.trim(),
-      idp_metadata_xml: saml.idp_metadata_xml.trim(),
+      idp_metadata_xml: saml.idp_source === 'xml' ? saml.idp_metadata_xml.trim() : '',
+      // An unchanged URL isn't sent: a save must not depend on the IdP being up.
+      idp_metadata_url: saml.idp_source === 'url' && !(editing?.kind === 'saml' && editing.idp_metadata_url === saml.idp_metadata_url.trim())
+        ? saml.idp_metadata_url.trim()
+        : '',
+      sp_entity_id: saml.sp_entity_id.trim(),
+      signing_cert_pem: saml.signing_cert.trim(),
+      encryption_cert_pem: saml.encryption_cert.trim(),
       nameid_format: saml.nameid_format,
       subject_attribute: saml.subject_attribute.trim(),
       username_attribute: saml.username_attribute.trim() || 'NameID',
@@ -683,6 +699,8 @@
           {roles}
           {callbackBase}
           helpText={currentHelpText}
+          fetchedAt={editing?.kind === 'saml' ? editing.metadata_fetched_at : undefined}
+          fetchError={editing?.kind === 'saml' ? editing.metadata_error : undefined}
           onCopy={copyText}
         />
       {:else if kind === 'ldap'}
