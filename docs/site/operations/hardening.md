@@ -115,8 +115,9 @@ Dockmesh sends no telemetry. Everything below is a connection the server, the ag
 | Image update checks | the registry of every image a running container on the server uses, through the server's Docker daemon, with credentials from **Registries** | every 30 minutes | Can't be turned off. Agent hosts aren't checked |
 | Update details | `hub.docker.com` (tag and description) and `api.github.com` (the project's latest release) for Docker Hub images | when you open a container's updates | Don't open it |
 | Image pulls | registries, through the Docker daemon of the host | deploys, **Pull**, image updates; helper images `alpine` and `busybox` from Docker Hub for volume backups, browsing and copies; the Caddy image when the proxy is enabled | Mirror the images and use a registry you control. Helper images are pinned by digest, so a release that changes one needs the new digest on the host before the first backup, browse or copy; a copy loaded with `docker load` may not carry its digest and then doesn't count |
+| Registry test login | the registry, through the server's Docker daemon | when you click **Test login** or **Test connection** under **Registries** | Don't test |
 | Grype vulnerability database | Anchore's servers (`grype` subprocess) | on scans: the first scan downloads the database, later scans check for a newer one | `GRYPE_DB_AUTO_UPDATE=false` in `dockmesh.env`; Grype may then refuse to scan once the database is too old |
-| Grype application update check | Anchore's servers (`grype` subprocess) | each scan | `GRYPE_CHECK_FOR_APP_UPDATE=false` in `dockmesh.env`. Dockmesh doesn't set it; Grype inherits the service's environment |
+| Grype application update check | Anchore's servers (`grype` subprocess) | never by default: Dockmesh runs Grype with `GRYPE_CHECK_FOR_APP_UPDATE=false`. Set the variable to `true` in `dockmesh.env` to get the check on each scan | Off unless you turn it on |
 | Notification channels | the channel's URL or server: webhook, ntfy, Discord, Slack, Microsoft Teams, Gotify, SMTP, `events.pagerduty.com` (PagerDuty), `api.pushover.net` (Pushover) | when an alert fires or resolves, and on test | Remove or don't create the channel |
 | Audit webhook | the URL under **Audit settings → Forwarding** | every new audit entry, and **Send test** | Switch the webhook off |
 | OIDC providers | the issuer (discovery, keys, token endpoint) | sign-in through the provider (discovery cached for 30 minutes), **Test discovery** | Disable or delete the provider |
@@ -124,7 +125,7 @@ Dockmesh sends no telemetry. Everything below is a connection the server, the ag
 | LDAP providers | the directory host and port | every LDAP sign-in, provider test | Disable or delete the provider |
 | SAML providers | none; the browser carries the redirects, and the IdP metadata is pasted | | |
 | Backup targets | S3, SFTP, SMB or WebDAV servers | backup runs, restores, target tests, audit log archiving to a target | Use local targets only |
-| Git sources | the repository URL (HTTPS or SSH) | every 300 seconds per git-backed stack by default, on webhook and on manual sync | Set the poll interval to 0; sync by webhook or by hand |
+| Git sources | the repository URL (HTTPS or SSH) | on creating or saving the source, every 300 seconds per git-backed stack by default, on webhook and on manual sync | Set the poll interval to 0; sync by webhook or by hand |
 | Certificate checks | `<site hostname>:443` for each proxy site | the reverse proxy and overview pages, alert rules for certificate expiry | Don't create proxy sites, or rules for certificate expiry |
 | Agent URL check | the configured agent URL | **Add host** and **Settings → General** check it on demand | Don't run it |
 | Setup URL test | the URL entered in the setup wizard | **Test connection** in the wizard | Don't run it |
@@ -132,7 +133,7 @@ Dockmesh sends no telemetry. Everything below is a connection the server, the ag
 
 The managed Caddy proxy, when enabled, gets certificates for sites with automatic HTTPS from the certificate authority set under the proxy settings (Let's Encrypt by default, its staging environment, or ZeroSSL) and contacts it to issue and renew them. Sites with TLS set to internal or none don't use ACME. See [Reverse proxy](../features/reverse-proxy.md#proxy-settings).
 
-The browser loads template icons from the HTTPS URLs the templates name; the Content-Security-Policy allows `https:` images for that.
+The browser loads template icons from the HTTPS URLs the templates name; the Content-Security-Policy allows `https:` images for that. The API docs at `/api/v1/docs` load Swagger UI from `cdn.jsdelivr.net` in the browser.
 
 ### Agent
 
@@ -140,7 +141,8 @@ The browser loads template icons from the HTTPS URLs the templates name; the Con
 |---|---|---|---|
 | Server connection | the agent URL (`wss://…:8443/connect`), mTLS | always; reconnects after a drop | Stop the agent |
 | Enrollment | the enroll URL on the agent port (`https://…:8443/enroll`) | first start | Not needed after enrolling |
+| Status check | the agent URL, a TLS handshake only | when you run `dockmesh-agent status` | Don't run it |
 | Self-upgrade | the agent listener's binary endpoint, mTLS | when an admin upgrades the agent | Don't upgrade from the UI |
-| Image pulls | registries, through the host's Docker daemon, with credentials the server sends for registries in scope | deploys and image updates on that host; `busybox` from Docker Hub for volume exports | Mirror the images |
+| Image pulls | registries, through the host's Docker daemon, with credentials the server sends for registries in scope | deploys, scaling and **Pull** on that host; `busybox` from Docker Hub for volume exports; `alpine` from Docker Hub for browsing a volume the agent can't read directly | Mirror the images |
 
 Backups of agent volumes stream through the agent connection; the server writes them to the backup target. The agent installer itself downloads the installer script and binary from `DOCKMESH_BASE_URL` and, when Docker is missing, runs `https://get.docker.com`. The server installer `install.sh` downloads from GitHub and installs a pinned Grype release from `github.com/anchore/grype/releases`, checked against a SHA-256 in the script, unless `DOCKMESH_NO_SCANNER=1` is set.

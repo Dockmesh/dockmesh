@@ -132,6 +132,11 @@ func grypeEnv(dbDir string) []string {
 	if _, set := os.LookupEnv("GRYPE_DB_CACHE_DIR"); !set && dbDir != "" {
 		env = append(env, "GRYPE_DB_CACHE_DIR="+dbDir)
 	}
+	// Dockmesh never shows Grype's update notice, so the check would only
+	// add a connection per scan.
+	if _, set := os.LookupEnv("GRYPE_CHECK_FOR_APP_UPDATE"); !set {
+		env = append(env, "GRYPE_CHECK_FOR_APP_UPDATE=false")
+	}
 	return env
 }
 

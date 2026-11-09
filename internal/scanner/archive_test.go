@@ -140,6 +140,35 @@ func TestGrypeEnv(t *testing.T) {
 	}
 }
 
+func TestGrypeEnvAppUpdateCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		set  string
+		want string
+		deny string
+	}{
+		{name: "off when unset", want: "GRYPE_CHECK_FOR_APP_UPDATE=false"},
+		{name: "admin turned it on", set: "true", want: "GRYPE_CHECK_FOR_APP_UPDATE=true", deny: "GRYPE_CHECK_FOR_APP_UPDATE=false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set != "" {
+				t.Setenv("GRYPE_CHECK_FOR_APP_UPDATE", tt.set)
+			} else {
+				t.Setenv("GRYPE_CHECK_FOR_APP_UPDATE", "")
+				os.Unsetenv("GRYPE_CHECK_FOR_APP_UPDATE")
+			}
+			env := grypeEnv("")
+			if !slices.Contains(env, tt.want) {
+				t.Errorf("missing %s", tt.want)
+			}
+			if tt.deny != "" && slices.Contains(env, tt.deny) {
+				t.Error("overrode the admin's setting")
+			}
+		})
+	}
+}
+
 func TestGrypeFailureNamesTheCause(t *testing.T) {
 	got := grypeFailure("[0000]  WARN update\n[0000] ERROR \x1b[31mdatabase does not exist\x1b[0m\n")
 	if got != "[0000] ERROR database does not exist" {

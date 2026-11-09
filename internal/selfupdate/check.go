@@ -1,4 +1,4 @@
-// Package selfupdate polls the Dockmesh GitHub Releases API once a day
+// Package selfupdate polls the Dockmesh GitHub Releases API every 2 hours by default
 // to find out whether a newer version has been published. Result is
 // cached in the settings table so restarts don't re-fetch; the UI reads
 // Status() to render the "Update available" banner.

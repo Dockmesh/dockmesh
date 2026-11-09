@@ -66,10 +66,10 @@ Like other subcommands, `restore` loads the first of `/var/lib/dockmesh/dockmesh
 ### 1. Install Dockmesh on the new machine
 
 ```bash
-curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.5.0 bash
+curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=vX.Y.Z bash
 ```
 
-Use the version you ran before, or newer. To restore through the setup wizard, open the server's URL now and pick **Restore from a backup instead**; then continue with step 4 to carry over `dockmesh.env`, and with step 5.
+Replace `vX.Y.Z` with the version you ran before, or a newer one. To restore through the setup wizard, open the server's URL now and pick **Restore from a backup instead**; then continue with step 4 to carry over `dockmesh.env`, and with step 5.
 
 For the command line, stop the server and don't finish the setup wizard. If you already did, you need `--force` in step 3.
 

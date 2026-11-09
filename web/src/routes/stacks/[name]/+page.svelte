@@ -2148,7 +2148,7 @@
             <h4 class="stk-bad">{m.stacks_d_delete_this()}</h4>
             <p>
               {m.stacks_d_delete_desc_before({ services: m.stacks_d_n_services({ count: services.length }) })}
-              <code>stacks/{name}/</code> {m.stacks_d_delete_desc_after()}
+              <code>stacks/{name}/</code>{m.stacks_d_delete_desc_after()}
             </p>
           </div>
           <div>

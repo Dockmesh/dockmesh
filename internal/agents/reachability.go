@@ -89,7 +89,7 @@ func (s *Service) checkReachability(ctx context.Context) Reachability {
 	}
 
 	if !listenerEnabled {
-		add("listener", CheckFail, "The agent listener is turned off (DOCKMESH_AGENT_LISTEN is empty), so no agent can connect.")
+		add("listener", CheckFail, "The agent listener is not running, so no agent can connect.")
 		return finish()
 	}
 	u, err := url.Parse(e.AgentURL)
