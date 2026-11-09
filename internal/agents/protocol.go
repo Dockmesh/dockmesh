@@ -45,6 +45,7 @@ const (
 	// Resource listings + mutations (server → agent)
 	FrameReqImageList      = "req.images.list"
 	FrameReqImageInspect   = "req.images.inspect"
+	FrameReqImageHistory   = "req.images.history"
 	FrameReqImageRemove    = "req.images.remove"
 	FrameReqImagePrune     = "req.images.prune"
 	FrameReqNetworkList    = "req.networks.list"
@@ -177,6 +178,8 @@ const (
 	// CapImageTransfer, agent: serves the "image_pull" and "image_export"
 	// stream kinds.
 	CapImageTransfer = "images.transfer"
+	// CapImageHistory, agent: answers req.images.history.
+	CapImageHistory = "images.history"
 )
 
 // Stream control ops beyond the exec "resize".

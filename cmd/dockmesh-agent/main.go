@@ -999,6 +999,12 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		info, err := cli.ImageInspect(ctx, req.ID)
 		respond(conn, f.ID, info, err)
 
+	case agents.FrameReqImageHistory:
+		var req agents.ResourceIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		history, err := cli.ImageHistory(ctx, req.ID)
+		respond(conn, f.ID, history, err)
+
 	case agents.FrameReqImageRemove:
 		var req agents.ImageRemoveReq
 		_ = json.Unmarshal(f.Payload, &req)

@@ -301,6 +301,30 @@ func (h *RemoteHost) InspectImage(ctx context.Context, id string) (image.Inspect
 	return out, nil
 }
 
+// ErrAgentNoImageHistory is returned for an agent older than the
+// req.images.history frame.
+var ErrAgentNoImageHistory = errors.New("the agent on this host is too old to show image history; update it from the Hosts page")
+
+// ImageHistory asks the agent for an image's layer history.
+func (h *RemoteHost) ImageHistory(ctx context.Context, id string) ([]image.HistoryResponseItem, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapImageHistory) {
+		return nil, ErrAgentNoImageHistory
+	}
+	data, err := h.request(ctx, agents.FrameReqImageHistory, agents.ResourceIDReq{ID: id})
+	if err != nil {
+		return nil, err
+	}
+	var out []image.HistoryResponseItem
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode image history: %w", err)
+	}
+	return out, nil
+}
+
 func (h *RemoteHost) ListNetworks(ctx context.Context) ([]network.Inspect, error) {
 	data, err := h.request(ctx, agents.FrameReqNetworkList, nil)
 	if err != nil {

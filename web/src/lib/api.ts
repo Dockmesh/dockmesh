@@ -1373,6 +1373,15 @@ export interface GroupMapping {
   scope?: Scope;
 }
 
+export interface ImageHistoryEntry {
+  id?: string;
+  created: number;
+  created_by: string;
+  tags?: string[];
+  size: number;
+  comment?: string;
+}
+
 export interface SAMLProvider {
   id: number;
   slug: string;
@@ -1381,6 +1390,12 @@ export interface SAMLProvider {
   sso_url: string;
   slo_url?: string;
   idp_metadata_xml?: string;
+  idp_metadata_url?: string;
+  metadata_fetched_at?: string;
+  metadata_error?: string;
+  sp_entity_id?: string;
+  signing_cert_pem?: string;
+  encryption_cert_pem?: string;
   idp_cert_pem?: string;
   nameid_format: string;
   subject_attribute?: string;
@@ -1403,6 +1418,10 @@ export interface SAMLProviderInput {
   slug: string;
   display_name: string;
   idp_metadata_xml: string;
+  idp_metadata_url?: string;
+  sp_entity_id?: string;
+  signing_cert_pem?: string;
+  encryption_cert_pem?: string;
   nameid_format: string;
   subject_attribute?: string;
   username_attribute: string;
@@ -2269,6 +2288,10 @@ export const api = {
     inspect: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
+    },
+    history: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<ImageHistoryEntry[]>(`/images/${encodeURIComponent(id)}/history${qs}`);
     },
     remove: (id: string, force = false, host = 'local') => {
       const qs = new URLSearchParams();

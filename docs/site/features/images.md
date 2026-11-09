@@ -35,7 +35,7 @@ Click an image to open its page. The tabs are:
 - **Overview**: ID, tags, digests, architecture, creation time, author, size, and from the image config the command, entrypoint, working directory, user, exposed ports, environment and labels.
 - **Vulnerabilities**: the scan report, with **Scan now** or **Re-scan** (needs `images.scan`).
 - **Layers**: the layer list.
-- **History**: always shows **No history**; Dockmesh does not load the build history. Use `docker history` on the host.
+- **History**: the layers the image was built from, newest first, with the command, size and date of each. On an agent host this needs the agent version that ships with this server; an older agent shows a message to update it from the Hosts page.
 - **Containers**: containers using this image, running or stopped.
 
 **Re-pull** pulls the same `repository:tag` again on the host the image is on, which fetches a newer image if the tag has moved. Running containers keep the old image until they are recreated; see [Image updates](./image-updates.md) for updating them.

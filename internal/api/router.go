@@ -232,6 +232,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/images", h.ListImages)
 				r.Get("/images/updates", h.ListImageUpdates)
 				r.Get("/images/{id}", h.InspectImage)
+				r.Get("/images/{id}/history", h.ImageHistory)
 			})
 
 			r.Group(func(r chi.Router) {

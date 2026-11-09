@@ -10,7 +10,7 @@
   import { containerStateLabel, vulnSeverityLabel } from '$lib/labels';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
+  import { api, ApiError, isFanOut, type ImageHistoryEntry, type ScanReport, type Severity } from '$lib/api';
   import { Skeleton, EmptyState, Badge } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
@@ -47,6 +47,22 @@
       }
     } finally {
       inspectLoading = false;
+    }
+  }
+
+  let history = $state<ImageHistoryEntry[]>([]);
+  let historyLoading = $state(true);
+  let historyError = $state<string | null>(null);
+  async function loadHistory() {
+    historyLoading = true;
+    historyError = null;
+    try {
+      history = await api.images.history(id, hostId);
+    } catch (err) {
+      history = [];
+      historyError = err instanceof ApiError ? err.message : m.images_load_failed_inline();
+    } finally {
+      historyLoading = false;
     }
   }
 
@@ -133,7 +149,7 @@
       : []
   );
 
-  $effect(() => { id; hostId; loadInspect(); loadCachedScan(); });
+  $effect(() => { id; hostId; loadInspect(); loadCachedScan(); loadHistory(); });
   $effect(() => {
     if (tab === 'containers' && inspect) loadUsing();
   });
@@ -165,7 +181,6 @@
   });
   const labelEntries = $derived(inspect?.Config?.Labels ? Object.entries(inspect.Config.Labels) : []);
   const layers = $derived<string[]>(inspect?.RootFS?.Layers ?? []);
-  const history = $derived<any[]>(inspect?.History ?? []);
   const canPull = $derived(allowed('images.create'));
   const canDelete = $derived(allowed('images.delete'));
   const canScan = $derived(allowed('images.scan'));
@@ -530,8 +545,12 @@
   <!--  HISTORY                                                        -->
   <!-- ============================================================== -->
   {#if tab === 'history'}
-    {#if !inspect}
+    {#if historyLoading}
       <div class="dm-card img-detail-card-pad"><Skeleton width="80%" height="5rem" /></div>
+    {:else if historyError}
+      <div class="dm-card img-detail-card-pad">
+        <EmptyState icon={ImageIcon} title={m.images_no_history()} description={historyError} />
+      </div>
     {:else if history.length === 0}
       <div class="dm-card img-detail-card-pad">
         <EmptyState icon={ImageIcon} title={m.images_no_history()} description={m.images_no_history_desc()} />

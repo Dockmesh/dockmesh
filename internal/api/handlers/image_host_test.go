@@ -35,6 +35,20 @@ func (f *imageHost) InspectImage(_ context.Context, id string) (image.InspectRes
 	return image.InspectResponse{ID: "sha256:" + f.id, RepoTags: []string{id}}, nil
 }
 
+func (f *imageHost) ImageHistory(_ context.Context, id string) ([]image.HistoryResponseItem, error) {
+	f.record("image.history " + id)
+	switch id {
+	case "absent":
+		return nil, errors.New("No such image: absent")
+	case "old-agent":
+		return nil, host.ErrAgentNoImageHistory
+	}
+	return []image.HistoryResponseItem{
+		{ID: "sha256:top", Created: 1700000100, CreatedBy: "CMD nginx", Size: 12, Comment: "top", Tags: []string{"nginx:1"}},
+		{ID: "<missing>", Created: 1700000000, CreatedBy: "ADD file", Size: 34},
+	}, nil
+}
+
 func (f *imageHost) PullImage(_ context.Context, ref, _ string) (io.ReadCloser, error) {
 	f.record("image.pull " + ref)
 	if f.pullErr != nil {
@@ -111,6 +125,7 @@ func newImageHostEnv(t *testing.T) *imageHostEnv {
 	e.router.Group(func(r chi.Router) {
 		r.Use(middleware.NewAuth(e.h.Auth))
 		r.With(middleware.RequirePerm(rbac.PermImagesCreate)).Post("/images/pull", e.h.PullImage)
+		r.With(middleware.RequirePerm(rbac.PermImagesView)).Get("/images/{id}/history", e.h.ImageHistory)
 		r.With(middleware.RequirePerm(rbac.PermImagesScan)).Post("/images/{id}/scan", e.h.ScanImage)
 		r.With(middleware.RequirePerm(rbac.PermImagesScan)).Get("/images/{id}/scan", e.h.GetScan)
 	})
@@ -188,6 +203,7 @@ func TestImageCallsFollowHostScope(t *testing.T) {
 		{"pull", http.MethodPost, "/images/pull", map[string]string{"image": "nginx:1"}},
 		{"scan", http.MethodPost, "/images/nginx:1/scan", nil},
 		{"cached scan", http.MethodGet, "/images/nginx:1/scan", nil},
+		{"history", http.MethodGet, "/images/nginx:1/history", nil},
 	}
 	for _, c := range calls {
 		t.Run(c.name, func(t *testing.T) {
@@ -292,3 +308,26 @@ func (f *brokenPullHost) PullImage(context.Context, string, string) (io.ReadClos
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("agent went away") }
+
+func TestImageHistoryEndpoint(t *testing.T) {
+	e := newImageHostEnv(t)
+	rr := e.do(http.MethodGet, hostQuery("/images/nginx:1/history", "agent-1"), e.boss, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("history: %d %s", rr.Code, rr.Body)
+	}
+	var got []imageHistoryEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].CreatedBy != "CMD nginx" || got[0].ID != "sha256:top" || got[0].Size != 12 || got[1].ID != "" {
+		t.Fatalf("history = %+v", got)
+	}
+	if !slices.Contains(e.agent.took(), "image.history nginx:1") {
+		t.Fatalf("agent not asked: %v", e.agent.took())
+	}
+	for id, want := range map[string]int{"absent": http.StatusUnprocessableEntity, "old-agent": http.StatusServiceUnavailable} {
+		if rr := e.do(http.MethodGet, hostQuery("/images/"+id+"/history", "agent-1"), e.boss, nil); rr.Code != want {
+			t.Errorf("%s: %d, want %d: %s", id, rr.Code, want, rr.Body)
+		}
+	}
+}
