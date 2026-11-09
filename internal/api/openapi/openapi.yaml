@@ -3730,6 +3730,11 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "507":
+          description: The server has too little free disk space to receive the image.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "422":
           description: The image does not exist on this host.
           content:

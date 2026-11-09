@@ -2,8 +2,11 @@ package scanner
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,7 +18,7 @@ func fakeGrype(t *testing.T) (binary, argFile, copyFile string) {
 	dir := t.TempDir()
 	argFile, copyFile = filepath.Join(dir, "arg"), filepath.Join(dir, "copy")
 	binary = filepath.Join(dir, "grype")
-	script := "#!/bin/sh\necho \"$1\" > " + argFile + "\ncp \"${1#docker-archive:}\" " + copyFile + "\necho '{\"matches\":[],\"descriptor\":{\"version\":\"1\"}}'\n"
+	script := "#!/bin/sh\necho \"$1\" > " + argFile + "\ncp \"${1#docker-archive:}\" " + copyFile + " 2>/dev/null\necho '{\"matches\":[],\"descriptor\":{\"version\":\"1\"}}'\n"
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -69,5 +72,71 @@ func TestPrepareArchiveDirClearsLeftovers(t *testing.T) {
 	}
 	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
 		t.Fatalf("archive dir: %v, %v", st, err)
+	}
+}
+
+func TestScanAlwaysUsesTheDaemonSource(t *testing.T) {
+	for _, ref := range []string{"nginx:1", "registry:2", "docker:27"} {
+		binary, argFile, _ := fakeGrype(t)
+		if _, err := NewGrypeCLI(binary).Scan(context.Background(), ref); err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		arg, _ := os.ReadFile(argFile)
+		if strings.TrimSpace(string(arg)) != "docker:"+ref {
+			t.Errorf("%s: grype source = %q", ref, arg)
+		}
+	}
+}
+
+func TestArchiveScansRunOneAtATime(t *testing.T) {
+	binary, _, _ := fakeGrype(t)
+	g := NewGrypeCLI(binary)
+	g.ArchiveDir = t.TempDir()
+	g.archiveSlot <- struct{}{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := g.ScanArchive(ctx, strings.NewReader("x"), "nginx:1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if left, _ := os.ReadDir(g.ArchiveDir); len(left) != 0 {
+		t.Fatalf("waiting scan wrote an archive: %v", left)
+	}
+}
+
+func TestCappedBuffer(t *testing.T) {
+	b := cappedBuffer{max: 4}
+	if n, err := b.Write([]byte("abcdef")); n != 6 || err != nil {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if b.String() != "abcd" || !b.truncated {
+		t.Fatalf("%q truncated=%v", b.String(), b.truncated)
+	}
+}
+
+func TestGrypeEnvDropsServerSettings(t *testing.T) {
+	t.Setenv("DOCKMESH_SECRET_TEST", "x")
+	t.Setenv("GRYPE_CHECK_FOR_APP_UPDATE", "false")
+	env := grypeEnv()
+	if slices.Contains(env, "DOCKMESH_SECRET_TEST=x") {
+		t.Fatal("server setting reached grype")
+	}
+	if !slices.Contains(env, "GRYPE_CHECK_FOR_APP_UPDATE=false") {
+		t.Fatal("grype setting was dropped")
+	}
+}
+
+func TestReservingWriterStopsWhenDiskIsLow(t *testing.T) {
+	free := diskReserveBytes
+	w := &reservingWriter{dst: io.Discard, free: func(string) (uint64, bool) { return free, true }}
+	if _, err := w.Write(make([]byte, diskCheckBytes)); err != nil {
+		t.Fatal(err)
+	}
+	free--
+	if _, err := w.Write([]byte("x")); !errors.Is(err, ErrScanDiskFull) {
+		t.Fatalf("err = %v", err)
+	}
+	unknown := &reservingWriter{free: func(string) (uint64, bool) { return 0, false }}
+	if err := unknown.check(); err != nil {
+		t.Fatalf("unknown free space must not refuse: %v", err)
 	}
 }

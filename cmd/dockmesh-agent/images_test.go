@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/gorilla/websocket"
 )
 
 type fakeImageAPI struct {
@@ -20,7 +21,6 @@ type fakeImageAPI struct {
 	err     error
 	gotRef  string
 	gotAuth string
-	saved   []string
 }
 
 func (f *fakeImageAPI) ImagePull(_ context.Context, ref string, o image.PullOptions) (io.ReadCloser, error) {
@@ -32,7 +32,7 @@ func (f *fakeImageAPI) ImagePull(_ context.Context, ref string, o image.PullOpti
 }
 
 func (f *fakeImageAPI) ImageSave(_ context.Context, refs []string, _ ...client.ImageSaveOption) (io.ReadCloser, error) {
-	f.saved = refs
+	f.gotRef = strings.Join(refs, ",")
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -41,45 +41,53 @@ func (f *fakeImageAPI) ImageSave(_ context.Context, refs []string, _ ...client.I
 
 func TestImageStreams(t *testing.T) {
 	auth := "eyJwYXNzd29yZCI6Imh1bnRlcjIifQ==" // {"password":"hunter2"}
+	pull := func(api *fakeImageAPI, open agents.StreamOpen, reg *streamReg, conn *websocket.Conn) error {
+		return runImagePullStream(conn, api, open, reg)
+	}
+	export := func(api *fakeImageAPI, open agents.StreamOpen, reg *streamReg, conn *websocket.Conn) error {
+		return runImageExportStream(conn, api, open, reg)
+	}
 	cases := []struct {
 		name     string
+		run      func(*fakeImageAPI, agents.StreamOpen, *streamReg, *websocket.Conn) error
 		params   map[string]any
 		api      fakeImageAPI
 		wantErr  string
 		wantData string
+		wantRef  string
 	}{
 		{
 			name:     "pull relays progress with the request's credential",
+			run:      pull,
+			wantRef:  "reg.test/app:1",
 			params:   map[string]any{"image": "reg.test/app:1", "registry_auth": auth},
 			api:      fakeImageAPI{body: "{\"status\":\"ok\"}\n"},
 			wantData: "{\"status\":\"ok\"}\n",
 		},
 		{
 			name:    "pull failure masks the credential",
+			run:     pull,
 			params:  map[string]any{"image": "reg.test/app:1", "registry_auth": auth},
 			api:     fakeImageAPI{err: errors.New("login failed for hunter2")},
 			wantErr: "login failed for ",
 		},
-		{name: "pull needs an image", params: map[string]any{}, wantErr: "image required"},
+		{name: "pull needs an image", run: pull, params: map[string]any{}, wantErr: "image required"},
 		{
 			name:     "export sends the archive",
+			run:      export,
+			wantRef:  "nginx:1",
 			params:   map[string]any{"image": "nginx:1"},
 			api:      fakeImageAPI{body: "tar"},
 			wantData: "tar",
 		},
-		{name: "export needs an image", params: map[string]any{}, wantErr: "image required"},
+		{name: "export needs an image", run: export, params: map[string]any{}, wantErr: "image required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, frames := wsPair(t)
 			reg := newReg(t, 16)
 			open := agents.StreamOpen{StreamID: reg.id, Params: tc.params}
-			var err error
-			if strings.HasPrefix(tc.name, "export") {
-				err = runImageExportStream(conn, &tc.api, open, reg)
-			} else {
-				err = runImagePullStream(conn, &tc.api, open, reg)
-			}
+			err := tc.run(&tc.api, open, reg, conn)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErr)
@@ -101,6 +109,9 @@ func TestImageStreams(t *testing.T) {
 			}
 			if tc.params["registry_auth"] != nil && tc.api.gotAuth != auth {
 				t.Fatalf("auth = %q", tc.api.gotAuth)
+			}
+			if tc.api.gotRef != tc.wantRef {
+				t.Fatalf("ref = %q, want %q", tc.api.gotRef, tc.wantRef)
 			}
 		})
 	}

@@ -44,15 +44,16 @@ On the server host:
 - **Pull image** on the **Resources** page;
 - image update checks and image updates (see [Image updates](./image-updates.md)), so private images show available updates too.
 
-On agent hosts, Dockmesh works out the images of the stack and sends the matching credentials with the request, for:
+On agent hosts, Dockmesh sends the credentials matching the images with the request, for:
 
-- stack deploys, rollbacks, dependency deploys, template deploys and git auto-deploys.
+- stack deploys, rollbacks, dependency deploys, template deploys and git auto-deploys, with the images of the stack;
+- **Pull image** on the **Resources** page and **Re-pull** on an image's page.
 
 Scale requests carry them as well, but scaling never pulls an image (see [Scaling](./scaling.md)).
 
 The agent uses them for that request only and does not store them. A `docker login` on the agent host makes no difference, because the agent talks to the Docker API directly and does not read the Docker CLI's stored logins.
 
-> **Note:** Agents older than the server ignore the credentials and keep pulling anonymously. Update the agent from **Hosts**. Since a registry without scope tags applies to every host, add scope tags to registries whose credentials must stay off some hosts.
+> **Note:** For stack operations, agents older than the server ignore the credentials and keep pulling anonymously; for **Pull image** they refuse. Update the agent from **Hosts**. Since a registry without scope tags applies to every host, add scope tags to registries whose credentials must stay off some hosts.
 
 A deploy only pulls images that are missing on the host, unless the service sets `pull_policy: always` or the deploy forces a fresh pull (git auto-deploys do). When such a pull fails and the image is already on the host, Dockmesh logs a warning and deploys the cached image.
 

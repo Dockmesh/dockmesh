@@ -140,12 +140,6 @@ func TestResourceCallsStayOnTheirHost(t *testing.T) {
 		{http.MethodDelete, "/networks/web", nil, "network.remove web"},
 		{http.MethodPost, "/networks/prune", nil, "network.prune"},
 	}
-	withHost := func(path, id string) string {
-		if id == "" {
-			return path
-		}
-		return path + "?host=" + id
-	}
 	reset := func() {
 		for _, hh := range []*recordingHost{local, agent} {
 			hh.mu.Lock()
@@ -166,7 +160,7 @@ func TestResourceCallsStayOnTheirHost(t *testing.T) {
 		for _, c := range calls {
 			t.Run(tg.name+"/"+c.want, func(t *testing.T) {
 				reset()
-				rr := e.do(c.method, withHost(c.path, tg.query), boss, c.body)
+				rr := e.do(c.method, hostQuery(c.path, tg.query), boss, c.body)
 				if rr.Code >= 300 {
 					t.Fatalf("status %d: %s", rr.Code, rr.Body)
 				}
@@ -183,13 +177,13 @@ func TestResourceCallsStayOnTheirHost(t *testing.T) {
 	for _, c := range calls {
 		t.Run("scoped to agent/"+c.want, func(t *testing.T) {
 			reset()
-			if rr := e.do(c.method, withHost(c.path, "local"), edge, c.body); rr.Code != http.StatusForbidden {
+			if rr := e.do(c.method, hostQuery(c.path, "local"), edge, c.body); rr.Code != http.StatusForbidden {
 				t.Fatalf("server host: status %d, want 403: %s", rr.Code, rr.Body)
 			}
 			if got := local.took(); len(got) != 0 {
 				t.Fatalf("server host was touched by an agent-scoped caller: %v", got)
 			}
-			rr := e.do(c.method, withHost(c.path, "agent-1"), edge, c.body)
+			rr := e.do(c.method, hostQuery(c.path, "agent-1"), edge, c.body)
 			if rr.Code >= 300 {
 				t.Fatalf("own host: status %d: %s", rr.Code, rr.Body)
 			}

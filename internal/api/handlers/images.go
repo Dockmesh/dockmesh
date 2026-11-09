@@ -33,6 +33,9 @@ func imageErrorStatus(err error) int {
 	if errors.Is(err, scanner.ErrArchiveTooLarge) {
 		return http.StatusRequestEntityTooLarge
 	}
+	if errors.Is(err, scanner.ErrScanDiskFull) {
+		return http.StatusInsufficientStorage
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "conflict"),

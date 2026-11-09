@@ -40,6 +40,7 @@
 
   // ───────── Common state
   const isAll = $derived(hosts.isAll);
+  const realHosts = $derived(hosts.available.filter((h) => h.kind !== 'all'));
 
   // ===================================================================
   //  Images
@@ -59,7 +60,7 @@
   let imageSearch = $state('');
   let imageFilter = $state<'all' | 'used' | 'unused' | 'dangling' | 'vulnerable'>('all');
   let imageSelected = $state<Set<string>>(new Set());
-  // Latest scan report per image ref (RepoTags[0], or the id when dangling).
+  // Latest scan report per host and image ref (see scanKey).
   let scanCache = $state<Map<string, ScanReport>>(new Map());
   let scanAllBusy = $state(false);
 
@@ -119,7 +120,7 @@
         const rep = normalizeScanReport(await api.images.getScan(img.Id, rowHost(img)));
         if (rep) next.set(key, rep);
       } catch {
-        /* 404 / no cache — render as "not scanned" */
+        /* host unreachable or image gone — render as "not scanned" */
       }
     }));
     scanCache = next;
@@ -854,7 +855,7 @@
         </button>
       {/if}
       {#if canImageCreate}
-        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { pullOpen = true; pullImageRef = ''; pullHost = hosts.available.find((h) => h.kind !== 'all')?.id ?? 'local'; hubResults = []; }}>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => { pullOpen = true; pullImageRef = ''; pullHost = realHosts[0]?.id ?? 'local'; hubResults = []; }}>
           <Download size={12} strokeWidth={1.5} /> {m.resources_pull_image()}
         </button>
       {/if}
@@ -1268,11 +1269,11 @@
     <p class="text-xs text-[var(--fg-muted)]">
       {m.resources_pull_hint()}
     </p>
-    {#if isAll && hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if isAll && realHosts.length > 1}
       <div>
         <label for="resource-pull-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="resource-pull-host" bind:value={pullHost} class="dm-input text-sm w-full" disabled={pullBusy}>
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each realHosts as h (h.id)}
             <option value={h.id}>{h.name}</option>
           {/each}
         </select>
@@ -1366,11 +1367,11 @@
       <label for="vol-driver" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.resources_col_driver()}</label>
       <Input id="vol-driver" bind:value={newVolDriver} placeholder="local" />
     </div>
-    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if realHosts.length > 1}
       <div>
         <label for="vol-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="vol-host" bind:value={newVolHost} class="dm-input text-sm w-full">
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each realHosts as h (h.id)}
             <option value={h.id}>{h.name}</option>
           {/each}
         </select>
@@ -1453,11 +1454,11 @@
         <option value="ipvlan">ipvlan</option>
       </select>
     </div>
-    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+    {#if realHosts.length > 1}
       <div>
         <label for="net-host" class="block text-xs text-[var(--fg-muted)] mb-1.5">{m.common_host()}</label>
         <select id="net-host" bind:value={newNetHost} class="dm-input text-sm w-full">
-          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+          {#each realHosts as h (h.id)}
             <option value={h.id}>{h.name}</option>
           {/each}
         </select>

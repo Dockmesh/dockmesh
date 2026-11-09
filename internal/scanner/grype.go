@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,6 +25,8 @@ type GrypeCLI struct {
 	// ArchiveDir holds image archives while they are scanned. Empty means
 	// the system temp directory, which may be a small tmpfs.
 	ArchiveDir string
+
+	archiveSlot chan struct{}
 }
 
 // ArchiveDirName is the directory below the data dir that holds image
@@ -47,14 +50,82 @@ func PrepareArchiveDir(dataDir string) (string, error) {
 // host can't fill the server's disk.
 const MaxScanArchiveBytes int64 = 20 << 30
 
-// ErrArchiveTooLarge is returned for an image over MaxScanArchiveBytes.
-var ErrArchiveTooLarge = errors.New("image is too large to scan")
+const (
+	// diskReserveBytes stays free while an archive is received: the
+	// database lives on the same disk.
+	diskReserveBytes uint64 = 1 << 30
+	// diskCheckBytes is how much is written between free-space checks.
+	diskCheckBytes int64 = 64 << 20
+
+	maxScanOutputBytes = 256 << 20
+	maxScanStderrBytes = 64 << 10
+)
+
+var (
+	// ErrArchiveTooLarge is returned for an image over MaxScanArchiveBytes.
+	ErrArchiveTooLarge = errors.New("image is too large to scan")
+	// ErrScanDiskFull is returned when an archive would leave too little
+	// free space on the server.
+	ErrScanDiskFull = errors.New("not enough free disk space on the server to scan this image")
+)
+
+// reservingWriter fails once dir has less than diskReserveBytes free.
+type reservingWriter struct {
+	dst       io.Writer
+	dir       string
+	free      func(dir string) (uint64, bool)
+	sinceLast int64
+}
+
+func (w *reservingWriter) check() error {
+	if free, ok := w.free(w.dir); ok && free < diskReserveBytes {
+		return ErrScanDiskFull
+	}
+	return nil
+}
+
+func (w *reservingWriter) Write(p []byte) (int, error) {
+	if w.sinceLast >= diskCheckBytes {
+		if err := w.check(); err != nil {
+			return 0, err
+		}
+		w.sinceLast = 0
+	}
+	n, err := w.dst.Write(p)
+	w.sinceLast += int64(n)
+	return n, err
+}
+
+// cappedBuffer keeps the first max bytes and notes that more arrived.
+type cappedBuffer struct {
+	bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); len(p) > room {
+		b.truncated = true
+		_, _ = b.Buffer.Write(p[:max(room, 0)])
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
+}
+
+// grypeEnv is the server's environment without its own settings, which
+// hold secrets. Grype parses archives from other hosts and reads only its
+// GRYPE_ variables and the usual system ones.
+func grypeEnv() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "DOCKMESH_")
+	})
+}
 
 func NewGrypeCLI(binary string) *GrypeCLI {
 	if binary == "" {
 		binary = "grype"
 	}
-	return &GrypeCLI{Binary: binary, Timeout: 5 * time.Minute}
+	return &GrypeCLI{Binary: binary, Timeout: 5 * time.Minute, archiveSlot: make(chan struct{}, 1)}
 }
 
 func (g *GrypeCLI) Name() string { return "grype" }
@@ -71,12 +142,9 @@ func (g *GrypeCLI) Scan(ctx context.Context, image string) (*Report, error) {
 		return nil, errors.New("image required")
 	}
 	// Use the docker daemon as source so we don't re-pull via registry.
-	// Grype accepts `docker:<ref>` to force that source.
-	ref := image
-	if !strings.HasPrefix(ref, "docker:") && !strings.HasPrefix(ref, "registry:") {
-		ref = "docker:" + ref
-	}
-	return g.run(ctx, ref, image)
+	// The scheme is always added: a tag can start with "docker:" or
+	// "registry:" itself.
+	return g.run(ctx, "docker:"+image, image)
 }
 
 // ScanArchive stores the archive in ArchiveDir, as grype needs a seekable
@@ -85,13 +153,24 @@ func (g *GrypeCLI) ScanArchive(ctx context.Context, archive io.Reader, image str
 	if image == "" {
 		return nil, errors.New("image required")
 	}
+	// One at a time, so that parallel scans can't add up on the disk.
+	select {
+	case g.archiveSlot <- struct{}{}:
+		defer func() { <-g.archiveSlot }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	f, err := os.CreateTemp(g.ArchiveDir, "dockmesh-scan-*.tar")
 	if err != nil {
 		return nil, fmt.Errorf("create scan archive: %w", err)
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	n, err := io.Copy(f, io.LimitReader(archive, MaxScanArchiveBytes+1))
+	dst := &reservingWriter{dst: f, dir: filepath.Dir(f.Name()), free: freeBytes}
+	if err := dst.check(); err != nil {
+		return nil, err
+	}
+	n, err := io.Copy(dst, io.LimitReader(archive, MaxScanArchiveBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("receive image archive: %w", err)
 	}
@@ -113,10 +192,15 @@ func (g *GrypeCLI) run(ctx context.Context, source, image string) (*Report, erro
 	}
 
 	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json", "--quiet")
-	var stdout, stderr bytes.Buffer
+	cmd.Env = grypeEnv()
+	stdout := cappedBuffer{max: maxScanOutputBytes}
+	stderr := cappedBuffer{max: maxScanStderrBytes}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if stdout.truncated {
+		return nil, errors.New("grype output is too large")
+	}
 	out := stdout.Bytes()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
