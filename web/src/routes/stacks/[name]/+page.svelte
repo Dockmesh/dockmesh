@@ -3,7 +3,7 @@
   import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
-  import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
+  import { api, ApiError, runRestorable, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
@@ -21,6 +21,8 @@
   import { Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, User, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
+  import SaveConflictDialog from '../_SaveConflictDialog.svelte';
+  import { diffLines } from '$lib/diffLines';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
   import { fmtDateTime, fmtNumber, fmtTime } from '$lib/i18n';
@@ -146,6 +148,11 @@
     });
   }
   let dirty = $state(false);
+  // The versions of compose.yaml and .env the editor holds; a save sends
+  // them so the server can refuse one over a file that changed on disk.
+  let composeVersion = '';
+  let envVersion = '';
+  let saveConflict = $state<{ files: string[]; current: StackDetail; deployAfter: boolean } | null>(null);
 
   type TabKey = 'overview' | 'compose' | 'environment' | 'logs' | 'history' | 'settings';
   let activeTab = $state<TabKey>('overview');
@@ -377,11 +384,10 @@
   let composeEditing = $state(false);
   function startComposeEdit() { composeEditing = true; }
   async function saveCompose() {
-    await save();
-    composeEditing = false;
+    if (await save()) composeEditing = false;
   }
   async function saveAndRedeploy() {
-    await save();
+    if (!(await save({ deployAfter: true }))) return;
     composeEditing = false;
     if (canDeploy) await deploy();
   }
@@ -705,35 +711,6 @@
     } finally {
       yamlDiffLoading = false;
     }
-  }
-
-  // LCS-based unified diff between two multi-line strings. Compose
-  // files are short enough (typically <300 lines) that the O(m·n)
-  // table is cheap. Returns context lines plus +/- markers.
-  type DiffLine = { kind: ' ' | '-' | '+'; text: string };
-  function diffLines(oldText: string, newText: string): DiffLine[] {
-    const o = oldText.split('\n');
-    const n = newText.split('\n');
-    const M = o.length, N = n.length;
-    const lcs: number[][] = Array.from({ length: M + 1 }, () => new Array(N + 1).fill(0));
-    for (let i = 0; i < M; i++) {
-      for (let j = 0; j < N; j++) {
-        if (o[i] === n[j]) lcs[i + 1][j + 1] = lcs[i][j] + 1;
-        else lcs[i + 1][j + 1] = Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-      }
-    }
-    const out: DiffLine[] = [];
-    let i = M, j = N;
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && o[i - 1] === n[j - 1]) {
-        out.push({ kind: ' ', text: o[i - 1] }); i--; j--;
-      } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
-        out.push({ kind: '+', text: n[j - 1] }); j--;
-      } else {
-        out.push({ kind: '-', text: o[i - 1] }); i--;
-      }
-    }
-    return out.reverse();
   }
 
   async function openRollbackConfirm(id: number) {
@@ -1263,6 +1240,7 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      setLoadedVersions(detail);
       envHidden = !!detail.env_hidden;
       modifiedOutside = detail.modified_outside ?? [];
       mountsStackDir = !!detail.mounts_stack_dir;
@@ -1309,18 +1287,48 @@
     });
   }
 
-  async function save() {
-    if (anyBusy) return;
+  function setLoadedVersions(d: { compose_version?: string; env_version?: string }) {
+    composeVersion = d.compose_version ?? '';
+    envVersion = d.env_version ?? '';
+  }
+
+  async function save(opts: { force?: boolean; deployAfter?: boolean } = {}): Promise<boolean> {
+    if (anyBusy) return false;
     busy = true;
     try {
-      await stackOps.run(stackHost, name, () => api.stacks.update(name, compose, env || undefined));
+      const res = await stackOps.run(stackHost, name, () =>
+        api.stacks.update(name, compose, env || undefined, { composeVersion, envVersion, force: opts.force })
+      );
+      setLoadedVersions(res);
+      modifiedOutside = res.modified_outside ?? [];
+      if (opts.force) externalChange = null;
       dirty = false;
       toast.success(m.common_saved());
+      return true;
     } catch (err) {
-      toast.error(m.stacks_d_save_failed(), err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 409 && err.body?.code === 'stack_modified_on_disk') {
+        saveConflict = { files: err.body.files ?? [], current: err.body.current, deployAfter: !!opts.deployAfter };
+      } else {
+        toast.error(m.stacks_d_save_failed(), err instanceof ApiError ? err.message : undefined);
+      }
+      return false;
     } finally {
       busy = false;
     }
+  }
+
+  async function useDiskVersion() {
+    saveConflict = null;
+    composeEditing = false;
+    await load();
+  }
+
+  async function saveMineAnyway() {
+    const deployAfter = saveConflict?.deployAfter ?? false;
+    saveConflict = null;
+    if (!(await save({ force: true }))) return;
+    composeEditing = false;
+    if (deployAfter && canDeploy) await deploy();
   }
 
   async function deploy() {
@@ -1392,6 +1400,7 @@
       const res = await api.stacks.recover(name);
       compose = res.stack.compose;
       env = res.stack.env ?? '';
+      setLoadedVersions(res.stack);
       stackStatus = 'ok';
       recoverWarnings = res.warnings ?? [];
       const cc = res.recovered_from?.container_count ?? 0;
@@ -1418,6 +1427,7 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      setLoadedVersions(detail);
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       recoverWarnings = res.warnings ?? [];
       toast.success(m.stacks_d_restored(), m.stacks_d_restored_detail({ files: res.files_restored.length, volumes: res.volumes_restored.length }));
@@ -1902,7 +1912,7 @@
           {#if envShowSecrets}<EyeOff size={13} /> {m.stacks_d_hide_secrets()}{:else}<Eye size={13} /> {m.stacks_d_show_secrets()}{/if}
         </button>
         {#if canWrite}<button type="button" class="dm-btn" onclick={envAddRow}><Plus size={13} /> {m.stacks_d_add_variable()}</button>{/if}
-        {#if dirty}<button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={anyBusy}><Save size={13} /> {m.common_save()}</button>{/if}
+        {#if dirty}<button type="button" class="dm-btn dm-btn-primary" onclick={() => save()} disabled={anyBusy}><Save size={13} /> {m.common_save()}</button>{/if}
       </div>
 
       {#if envRows.length === 0}
@@ -2614,6 +2624,14 @@
     </Button>
   {/snippet}
 </Modal>
+
+<SaveConflictDialog
+  conflict={saveConflict}
+  mine={{ compose, env }}
+  onusedisk={useDiskVersion}
+  onforce={saveMineAnyway}
+  oncancel={() => (saveConflict = null)}
+/>
 
 <DeleteStackDialog bind:open={showDelete} {name} host={stackHost} containers={services.length} ondeleted={() => goto('/stacks')} />
 
