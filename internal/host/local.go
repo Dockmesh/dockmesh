@@ -290,6 +290,13 @@ func (h *LocalHost) InspectImage(ctx context.Context, id string) (image.InspectR
 	return h.cli.InspectImage(ctx, id)
 }
 
+func (h *LocalHost) ImageHistory(ctx context.Context, id string) ([]image.HistoryResponseItem, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return h.cli.Raw().ImageHistory(ctx, id)
+}
+
 func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker

@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'CLI: dmctl whoami shows role assignments, dmctl backup jobs fills the TYPE column, dmctl login names this system''s config path and keeps a saved --insecure for the same server; shell completions know init and ca reissue-server; dockmesh config show prints the env file; dockmesh secrets rotate names the right menu'
+time: 2026-11-09T13:53:17.756365807Z

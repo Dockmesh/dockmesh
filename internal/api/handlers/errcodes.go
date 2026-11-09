@@ -157,6 +157,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"run_id or a multipart upload is required", "restore_source_required"},
 	{"saml not configured", "saml_not_configured"},
 	{"scanner not configured", "scanner_not_configured"},
+	{"image scanning is turned off under Settings → General", "scanner_disabled"},
 	{"secrets encryption is disabled on this server", "secrets_encryption_is_disabled_on_this_server"},
 	{"secrets service not configured", "secrets_service_not_configured"},
 	{"session not found", "session_not_found"},

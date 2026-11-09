@@ -597,7 +597,7 @@ func (h *Handlers) attentionNotices(r *http.Request) []AttentionItem {
 	for _, n := range list {
 		// Info notices announce a change and need no action; they are
 		// listed under Activity instead.
-		if n.Severity == notices.SevInfo {
+		if n.Severity == notices.SevInfo || n.Dismissed {
 			continue
 		}
 		id := strconv.FormatInt(n.ID, 10)

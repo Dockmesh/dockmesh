@@ -17,6 +17,15 @@ export interface ScanVuln {
   url?: string;
 }
 
+export interface ImageHistoryEntry {
+  id?: string;
+  created: number;
+  created_by: string;
+  tags?: string[];
+  size: number;
+  comment?: string;
+}
+
 export interface ScanReport {
   scanned?: boolean;
   image: string;
@@ -2269,6 +2278,10 @@ export const api = {
     inspect: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
+    },
+    history: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<ImageHistoryEntry[]>(`/images/${encodeURIComponent(id)}/history${qs}`);
     },
     remove: (id: string, force = false, host = 'local') => {
       const qs = new URLSearchParams();

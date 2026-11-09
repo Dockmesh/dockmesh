@@ -627,6 +627,7 @@
   "apierr_run_is_not_a_system_backup": "run is not a system backup",
   "apierr_run_not_found_or_already_evicted": "run not found or already evicted",
   "apierr_saml_not_configured": "saml not configured",
+  "apierr_scanner_disabled": "Image scanning is turned off under Settings → General.",
   "apierr_scanner_not_configured": "scanner not configured",
   "apierr_secrets_encryption_is_disabled_on_this_server": "secrets encryption is disabled on this server",
   "apierr_secrets_service_not_configured": "secrets service not configured",

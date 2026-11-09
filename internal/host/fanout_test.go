@@ -242,3 +242,7 @@ func TestIsAll(t *testing.T) {
 		}
 	}
 }
+
+func (f *fakeHost) ImageHistory(context.Context, string) ([]image.HistoryResponseItem, error) {
+	panic("no")
+}

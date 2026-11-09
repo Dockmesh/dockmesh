@@ -76,7 +76,7 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		Scopes:    in.Scopes,
 		EmailHint: in.EmailHint,
 		TTL:       ttl,
-		CreatedBy: middleware.UserID(r.Context()),
+		CreatedBy: actorID(r),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

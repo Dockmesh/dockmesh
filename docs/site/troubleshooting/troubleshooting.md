@@ -475,7 +475,7 @@ sudo install -m 0755 grype /usr/local/bin/grype
 sudo systemctl restart dockmesh
 ```
 
-`DOCKMESH_SCANNER_ENABLED=false` turns scanning off on purpose. The **Scan images with Grype** switch under **Settings → General** only changes how the scanner shows up in the system health check; it doesn't start or stop scanning. See [Vulnerability scanning](../features/vulnerability-scanning.md).
+Scanning can also be off on purpose: check the **Scan images with Grype** switch under **Settings → General**, which takes effect without a restart. `DOCKMESH_SCANNER_ENABLED=false` only sets its default. See [Vulnerability scanning](../features/vulnerability-scanning.md).
 
 ## Alerts
 

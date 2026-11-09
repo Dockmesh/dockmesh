@@ -63,6 +63,7 @@ type Host interface {
 	// Resource lists + mutations
 	ListImages(ctx context.Context, all bool) ([]image.Summary, error)
 	InspectImage(ctx context.Context, id string) (image.InspectResponse, error)
+	ImageHistory(ctx context.Context, id string) ([]image.HistoryResponseItem, error)
 	RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error)
 	PruneImages(ctx context.Context) (image.PruneReport, error)
 	// PullImage starts a pull on this host and returns Docker's progress

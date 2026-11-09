@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/image"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
@@ -124,5 +126,28 @@ func TestImageStreamEndsWithTheRequest(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("read still blocked after the request ended")
+	}
+}
+
+func TestRemoteImageHistory(t *testing.T) {
+	agent := func(caps []string) *RemoteHost {
+		ag, stop := agents.NewLoopback("a1", agents.HelloPayload{ProtocolVersion: agents.ProtocolVersion, Capabilities: caps},
+			func(f agents.Frame, reply func(agents.Frame)) {
+				if f.Type != agents.FrameReqImageHistory {
+					return
+				}
+				data, _ := json.Marshal([]image.HistoryResponseItem{{ID: "sha256:a", CreatedBy: "CMD x", Size: 5}})
+				payload, _ := json.Marshal(agents.ResponseEnvelope{OK: true, Data: data})
+				reply(agents.Frame{Type: agents.FrameRes, ID: f.ID, Payload: payload})
+			})
+		t.Cleanup(stop)
+		return NewRemote("a1", "edge-1", &fakeLive{ag: ag})
+	}
+	got, err := agent([]string{agents.CapImageHistory}).ImageHistory(context.Background(), "nginx:1")
+	if err != nil || len(got) != 1 || got[0].CreatedBy != "CMD x" {
+		t.Fatalf("history = %+v, %v", got, err)
+	}
+	if _, err := agent(nil).ImageHistory(context.Background(), "nginx:1"); !errors.Is(err, ErrAgentNoImageHistory) {
+		t.Fatalf("old agent: %v", err)
 	}
 }

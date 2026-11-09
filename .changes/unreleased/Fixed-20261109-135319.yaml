@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Migrations: a finished rollback is recorded as rolled back even when the database is busy at that moment'
+time: 2026-11-09T13:53:19.016934563Z

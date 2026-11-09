@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -94,6 +95,16 @@ func serverEnvFile(dbPath string) string {
 		return guess
 	}
 	return ""
+}
+
+// seedScannerEnabled saves the env default when no choice is stored yet, so
+// the settings page shows the state scans actually follow.
+func seedScannerEnabled(ctx context.Context, store *settings.Store, enabled bool) error {
+	switch store.Stored(settings.KeyScannerEnabled) {
+	case "true", "false":
+		return nil
+	}
+	return store.Set(ctx, settings.KeyScannerEnabled, strconv.FormatBool(enabled))
 }
 
 // loadEnvFileFromArgs scans os.Args for --env-file=PATH or
@@ -480,22 +491,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Vulnerability scanner — optional, logged as unavailable if the
-	// grype binary is missing so the UI can show a helpful hint.
-	var scannerSvc scanner.Scanner
-	if cfg.ScannerEnabled {
-		g := scanner.NewGrypeCLI(cfg.ScannerBinary)
-		if archiveDir, dbDir, err := scanner.PrepareDirs(filepath.Dir(cfg.DBPath)); err != nil {
-			slog.Warn("scanner directories unavailable, using grype's defaults", "err", err)
-		} else {
-			g.ArchiveDir, g.DBDir = archiveDir, dbDir
-		}
-		if err := g.Ready(); err != nil {
-			slog.Warn("scanner disabled — install grype to enable CVE scans", "err", err)
-		} else {
-			scannerSvc = g
-			slog.Info("scanner ready", "engine", "grype")
-		}
+	// Built whether or not scanning is on: the setting is read per scan and
+	// the binary can appear later, so neither needs a restart.
+	scannerCLI := scanner.NewGrypeCLI(cfg.ScannerBinary)
+	if archiveDir, dbDir, err := scanner.PrepareDirs(filepath.Dir(cfg.DBPath)); err != nil {
+		slog.Warn("scanner directories unavailable, using grype's defaults", "err", err)
+	} else {
+		scannerCLI.ArchiveDir, scannerCLI.DBDir = archiveDir, dbDir
+	}
+	if err := scannerCLI.Ready(); err != nil {
+		slog.Warn("grype not found — install it to enable CVE scans", "err", err)
+	} else {
+		slog.Info("scanner ready", "engine", "grype")
 	}
 	scanStore := scanner.NewStore(database)
 
@@ -632,6 +639,9 @@ func main() {
 	settingsStore := settings.NewStore(database)
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
+	}
+	if err := seedScannerEnabled(ctx, settingsStore, cfg.ScannerEnabled); err != nil {
+		slog.Warn("scanner setting not saved", "err", err)
 	}
 	// Sign-in callbacks and invite links use the same base URL as the
 	// agent installer: DOCKMESH_BASE_URL, else the Base URL setting.
@@ -1063,7 +1073,7 @@ func main() {
 		Dependencies:   depStore,
 		Compose:        composeSvc,
 		LoginLimiter:   loginLimiter,
-		Scanner:        scannerSvc,
+		Scanner:        scannerCLI,
 		ScanStore:      scanStore,
 		Proxy:          proxySvc,
 		Updater:        updaterSvc,

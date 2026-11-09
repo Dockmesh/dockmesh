@@ -320,18 +320,8 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, c)
 	}
 
-	// ---- scanner (Grype). Binary presence gates the feature; if disabled
-	// via settings we report "off".
 	if h.Settings != nil {
-		c := HealthCheck{Name: "scanner", Label: "CVE scanner", LinkTo: "/images"}
-		if h.Settings.GetBool("scanner_enabled", false) {
-			c.Status = "ok"
-			c.Detail = "Grype ready"
-		} else {
-			c.Status = "off"
-			c.Detail = "disabled"
-		}
-		checks = append(checks, c)
+		checks = append(checks, h.scannerHealth())
 	}
 
 	// Aggregate worst status: fail > warn > ok > off.

@@ -190,7 +190,7 @@ To take over projects that are already running without restarting them, use `dmc
 dockmesh config show
 ```
 
-Prints the effective paths, URLs and toggles after environment and env-file loading, with the JWT secret redacted. It does not name the env file it loaded; compare `DBPath` with your data root to see whether the right `dockmesh.env` was picked up.
+Prints the env file it loaded (or `none`), then the effective paths, URLs and toggles after environment and env-file loading, with the JWT secret redacted.
 
 ## secrets rotate
 

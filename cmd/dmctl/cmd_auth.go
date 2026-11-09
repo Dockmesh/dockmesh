@@ -19,7 +19,7 @@ func newLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login <server>",
 		Short: "Save server URL + credentials to dmctl's config file",
-		Long: `Records the server URL and credentials to ~/.config/dmctl/config.json (0600).
+		Long: `Records the server URL and credentials to ` + configPathForHelp() + ` (0600).
 
 Two auth modes:
 
@@ -67,6 +67,12 @@ Two auth modes:
 				}
 			}
 
+			saved, _ := loadConfig()
+			if !cmd.Flags().Changed("insecure") && keepInsecure(saved, server) {
+				flagInsecure = true
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: TLS verification stays off for this server (saved --insecure); pass --insecure=false to turn it back on")
+			}
+
 			var (
 				token        string
 				refreshToken string
@@ -88,7 +94,7 @@ Two auth modes:
 				}
 			}
 
-			cfg, _ := loadConfig()
+			cfg := saved
 			if cfg == nil {
 				cfg = &Config{}
 			}
@@ -119,6 +125,21 @@ Two auth modes:
 	cmd.Flags().StringVar(&tokenFlag, "token", "", "API token (default: read from stdin when --user is not given)")
 	cmd.Flags().StringVar(&userFlag, "user", "", "Username for interactive password login (prompts for password + MFA)")
 	return cmd
+}
+
+// keepInsecure reports whether a new login inherits the saved --insecure:
+// only for the server it was given for, so it never carries over to another.
+func keepInsecure(saved *Config, server string) bool {
+	return saved != nil && saved.Insecure && saved.Server == server
+}
+
+// configPathForHelp names this OS's config file in help text.
+func configPathForHelp() string {
+	path, err := configPath()
+	if err != nil {
+		return "dmctl's config file"
+	}
+	return path
 }
 
 // readToken pulls an API token from --token, the TTY (with hidden
@@ -323,13 +344,54 @@ func newWhoamiCmd() *cobra.Command {
 			return printResult(me, func() ([]string, [][]string) {
 				return []string{"ID", "EMAIL", "ROLE"},
 					[][]string{{
-						fmt.Sprint(me["id"]),
-						fmt.Sprint(firstString(me, "email", "username")),
-						fmt.Sprint(me["role"]),
+						callerID(me),
+						firstString(me, "email", "username"),
+						callerRoles(me),
 					}}
 			})
 		},
 	}
+}
+
+// callerID is the user id from /me, or the token id for an API token.
+func callerID(me map[string]any) string {
+	for _, k := range []string{"id", "api_token_id"} {
+		if v, ok := me[k]; ok && v != nil {
+			return fmt.Sprint(v)
+		}
+	}
+	return "-"
+}
+
+// callerRoles lists the role assignments from /me, with the scope of any
+// that isn't global. An API token has none of its own.
+func callerRoles(me map[string]any) string {
+	list, _ := me["assignments"].([]any)
+	var out []string
+	for _, item := range list {
+		a, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := firstString(a, "role")
+		if role == "" {
+			continue
+		}
+		scope, _ := a["scope"].(map[string]any)
+		typ := firstString(scope, "type")
+		switch detail := strings.Trim(firstString(scope, "host")+"/"+firstString(scope, "value"), "/"); {
+		case typ == "" || typ == "global":
+			out = append(out, role)
+		case detail == "":
+			out = append(out, role+" ("+typ+")")
+		default:
+			out = append(out, role+" ("+typ+": "+detail+")")
+		}
+	}
+	if len(out) == 0 {
+		return "-"
+	}
+	return strings.Join(out, ", ")
 }
 
 // firstString picks the first non-empty string-valued field in m.

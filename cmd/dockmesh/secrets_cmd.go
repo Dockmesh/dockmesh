@@ -89,10 +89,10 @@ func rotateSecrets() error {
 	fmt.Println("   in memory and every stack read will 500 with")
 	fmt.Println("   'decrypt: identity did not match any of the recipients'.")
 	fmt.Println("   For live rotation without restart, use the UI button:")
-	fmt.Println("     Settings → System → Rotate encryption key")
+	fmt.Println("     Settings → Encryption key → Rotate key…")
 	fmt.Println()
-	fmt.Println("reminder: external backups encrypted with the old key must")
-	fmt.Println("be re-encrypted or re-created separately — dockmesh does not")
-	fmt.Println("track them yet.")
+	fmt.Println("reminder: encrypted backups, SSO secrets, registry passwords and Git")
+	fmt.Println("credentials are not re-encrypted. They stay readable through the")
+	fmt.Println("previous keys in the .history file, so keep that file.")
 	return nil
 }

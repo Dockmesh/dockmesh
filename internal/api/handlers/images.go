@@ -27,7 +27,7 @@ func imageErrorStatus(err error) int {
 	}
 	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) ||
 		errors.Is(err, host.ErrAgentNoVolumeManage) || errors.Is(err, host.ErrAgentNoResourceManage) ||
-		errors.Is(err, host.ErrAgentNoImageTransfer) {
+		errors.Is(err, host.ErrAgentNoImageTransfer) || errors.Is(err, host.ErrAgentNoImageHistory) {
 		return http.StatusServiceUnavailable
 	}
 	if errors.Is(err, scanner.ErrArchiveTooLarge) {
@@ -217,6 +217,51 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+// imageHistoryEntry is one layer of GET /images/{id}/history, newest first.
+type imageHistoryEntry struct {
+	ID        string   `json:"id,omitempty"`
+	Created   int64    `json:"created"`
+	CreatedBy string   `json:"created_by"`
+	Tags      []string `json:"tags,omitempty"`
+	Size      int64    `json:"size"`
+	Comment   string   `json:"comment,omitempty"`
+}
+
+// ImageHistory returns the layers an image was built from.
+//
+//	GET /api/v1/images/{id}/history?host=…
+func (h *Handlers) ImageHistory(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesView, scopeReq, "host "+target.ID())
+		return
+	}
+	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
+	layers, err := target.ImageHistory(r.Context(), id)
+	if err != nil {
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
+	}
+	out := make([]imageHistoryEntry, 0, len(layers))
+	for _, l := range layers {
+		e := imageHistoryEntry{Created: l.Created, CreatedBy: l.CreatedBy, Tags: l.Tags, Size: l.Size, Comment: l.Comment}
+		// Docker reports layers built elsewhere with this placeholder.
+		if l.ID != "<missing>" {
+			e.ID = l.ID
+		}
+		out = append(out, e)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {

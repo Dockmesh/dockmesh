@@ -3617,6 +3617,42 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /images/{id}/history:
+    get:
+      operationId: images.history
+      tags: [images]
+      summary: Layer history of an image
+      description: |
+        The layers the image was built from, newest first. On an agent host
+        the agent answers for its own daemon; an agent too old for this
+        request gets a 503 asking to update it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Image id (sha256:…) or repo:tag.
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Layers, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ImageHistoryEntry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422":
+          description: No such image on this host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Host offline, no Docker, or the agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /images/{id}:
     get:
       operationId: images.inspect
@@ -9307,6 +9343,18 @@ components:
         tags:
           type: array
           items: {type: string}
+    ImageHistoryEntry:
+      type: object
+      required: [created, created_by, size]
+      properties:
+        id:
+          type: string
+          description: Layer image id; absent for layers built elsewhere.
+        created: {type: integer, format: int64, description: Unix seconds.}
+        created_by: {type: string}
+        tags: {type: array, items: {type: string}}
+        size: {type: integer, format: int64}
+        comment: {type: string}
     ImageScanReport:
       type: object
       properties:

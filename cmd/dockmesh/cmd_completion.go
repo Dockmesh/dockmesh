@@ -34,7 +34,7 @@ _dockmesh_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="serve admin db ca enroll secrets import restore config doctor completion version help"
+    local commands="serve init admin db ca enroll secrets import restore config doctor completion version help"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -44,7 +44,7 @@ _dockmesh_complete() {
     case "$prev" in
         admin)       COMPREPLY=( $(compgen -W "create reset-password unlock list-users" -- "$cur") ) ;;
         db)          COMPREPLY=( $(compgen -W "migrate backup" -- "$cur") ) ;;
-        ca)          COMPREPLY=( $(compgen -W "export rotate" -- "$cur") ) ;;
+        ca)          COMPREPLY=( $(compgen -W "export rotate reissue-server" -- "$cur") ) ;;
         enroll)      COMPREPLY=( $(compgen -W "create revoke list" -- "$cur") ) ;;
         secrets)     COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
         import)      COMPREPLY=( $(compgen -W "compose-dir" -- "$cur") ) ;;
@@ -62,6 +62,7 @@ _dockmesh() {
     local -a commands
     commands=(
         'serve:Start the HTTP + agent mTLS server'
+        'init:Set up a new install'
         'admin:Manage users'
         'db:Database operations'
         'ca:Agent PKI operations'
@@ -81,7 +82,7 @@ _dockmesh() {
     case "$words[2]" in
         admin)      _values 'admin subcommand' create reset-password unlock list-users ;;
         db)         _values 'db subcommand' migrate backup ;;
-        ca)         _values 'ca subcommand' export rotate ;;
+        ca)         _values 'ca subcommand' export rotate reissue-server ;;
         enroll)     _values 'enroll subcommand' create revoke list ;;
         secrets)    _values 'secrets subcommand' rotate ;;
         import)     _values 'import source' compose-dir ;;
@@ -96,6 +97,7 @@ const fishCompletion = `# dockmesh fish completion
 # Install: dockmesh completion fish > ~/.config/fish/completions/dockmesh.fish
 complete -c dockmesh -f
 complete -c dockmesh -n '__fish_use_subcommand' -a serve  -d 'Start the server'
+complete -c dockmesh -n '__fish_use_subcommand' -a init   -d 'Set up a new install'
 complete -c dockmesh -n '__fish_use_subcommand' -a admin  -d 'Manage users'
 complete -c dockmesh -n '__fish_use_subcommand' -a db     -d 'Database operations'
 complete -c dockmesh -n '__fish_use_subcommand' -a ca     -d 'Agent PKI operations'
@@ -110,7 +112,7 @@ complete -c dockmesh -n '__fish_use_subcommand' -a help    -d 'Show help'
 
 complete -c dockmesh -n '__fish_seen_subcommand_from admin'  -a 'create reset-password unlock list-users'
 complete -c dockmesh -n '__fish_seen_subcommand_from db'     -a 'migrate backup'
-complete -c dockmesh -n '__fish_seen_subcommand_from ca'     -a 'export rotate'
+complete -c dockmesh -n '__fish_seen_subcommand_from ca'     -a 'export rotate reissue-server'
 complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke list'
 complete -c dockmesh -n '__fish_seen_subcommand_from secrets' -a 'rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from import' -a 'compose-dir'
