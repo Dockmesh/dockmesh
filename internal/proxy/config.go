@@ -206,7 +206,7 @@ func buildConfig(routes []Route, g Settings) (*caddyConfig, []string) {
 
 func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
-		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
+		Admin: &caddyAdmin{Listen: adminListen, Origins: adminOrigins, EnforceOrigin: true},
 		Apps:  caddyApps{HTTP: caddyHTTP{Metrics: &caddyHTTPMetrics{PerHost: true}, Servers: map[string]caddyServer{}}},
 	}
 

@@ -30,8 +30,6 @@ docker:
   host: ""
 
 proxy:
-  # Caddy admin API endpoint (Phase 2).
-  admin_url: "http://localhost:2019"
   enabled: false
 
 scanner:

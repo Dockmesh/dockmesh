@@ -283,6 +283,15 @@
     </div>
   {/if}
 
+  {#if status?.enabled && status.foreign_ports?.length}
+    <div class="px-notice" role="status">
+      <div>
+        <b>{m.proxy_notice_foreign_ports({ ports: status.foreign_ports.join(', ') })}</b>
+        <p>{m.proxy_notice_foreign_ports_hint({ port: status.foreign_ports[0] })}</p>
+      </div>
+    </div>
+  {/if}
+
   <Tabs
     tabs={[
       { key: 'sites', label: m.proxy_tab_sites(), count: routes.length },

@@ -323,16 +323,16 @@ sudo systemctl restart dockmesh-agent
 
 ## Reverse proxy
 
-The proxy is a Caddy container named `dockmesh-proxy` that runs with host networking, so it binds ports 80 and 443 on the server and its admin API on `127.0.0.1:2019`. Dockmesh keeps sites in its database and pushes the full config to Caddy whenever a site changes. See [Reverse proxy](../features/reverse-proxy.md).
+The proxy is a Caddy container named `dockmesh-proxy` that runs with host networking, so it binds ports 80 and 443 on the server. Its admin API listens on a Unix socket in `<data dir>/caddy-admin/`. Dockmesh keeps sites in its database and pushes the full config to Caddy whenever a site changes. See [Reverse proxy](../features/reverse-proxy.md).
 
 ### The proxy doesn't start, or saving a site fails with "address already in use"
 
-**Cause:** another web server (nginx, Apache, another Caddy or Traefik) already holds port 80 or 443 on the server. Caddy can't bind the ports when Dockmesh pushes the config: **Enable proxy** returns a `caddy /load` error that mentions `address already in use`, and a new site ends with `caddy rejected the configuration; the server log has the details`. If something else holds port 2019, enabling fails with `caddy admin API did not become ready`.
+**Cause:** another web server (nginx, Apache, another Caddy or Traefik) already holds port 80 or 443 on the server. Caddy can't bind the ports when Dockmesh pushes the config: **Enable proxy** returns a `caddy /load` error that mentions `address already in use`, and a new site ends with `caddy rejected the configuration; the server log has the details`. A program that shares the port with the proxy doesn't cause an error; the Reverse Proxy page and the notification bell then say which port another program is listening on.
 
 **Fix:** find and stop the other service, or move it to other ports, then click **Enable proxy** again on **Reverse proxy**.
 
 ```bash
-sudo ss -ltnp | grep -E ':(80|443|2019)\b'
+sudo ss -ltnp | grep -E ':(80|443)\b'
 docker logs dockmesh-proxy --tail 50
 ```
 

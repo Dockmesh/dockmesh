@@ -14,7 +14,7 @@ Everything below happens on **Reverse proxy** in the sidebar, which has the tabs
 | Container name | `dockmesh-proxy` |
 | Image | `caddy:2.11.7`, pinned by digest (see [Caddy version](#caddy-version)) |
 | Network | host network, listens on `:80` and `:443` |
-| Admin API | `127.0.0.1:2019` on the host |
+| Admin API | Unix socket `<data dir>/caddy-admin/admin.sock`, reachable only by the Dockmesh user |
 | Restart policy | `unless-stopped` |
 | Volumes | `dockmesh-caddy-data` (certificates), `dockmesh-caddy-config` (config) |
 | Labels | `dockmesh.managed=true`, `dockmesh.component=proxy` |

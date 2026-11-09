@@ -32,6 +32,7 @@ var (
 	ErrVersionSwitchFailed   = errors.New("caddy version switch failed")
 	ErrVersionRollbackFailed = errors.New("going back to the previous version failed")
 	ErrProxyNotRunning       = errors.New("the proxy should run but isn't running yet; switch the version once it runs again")
+	ErrAdminSwitchPending    = errors.New("the proxy still runs on its old admin port; restart Dockmesh to finish moving it to the socket, then switch the version")
 
 	errSettingsUnavailable = errors.New("settings store unavailable")
 )
@@ -177,6 +178,9 @@ func (s *Service) switchLocked(ctx context.Context, target CaddyVersion) (Versio
 	if oldImage == target.Image {
 		ch.Info = s.VersionInfo()
 		return ch, nil
+	}
+	if s.legacyAdmin.Load() {
+		return ch, ErrAdminSwitchPending
 	}
 	// Without a running container the switch couldn't be checked, and the
 	// watchdog would start the new version unchecked.

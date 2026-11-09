@@ -514,6 +514,7 @@ func main() {
 
 	proxySvc := proxy.NewService(database, dockerCli, false)
 	proxySvc.SetImage(cfg.ProxyImage)
+	proxySvc.SetAdminSocketDir(filepath.Dir(cfg.DBPath))
 	updaterSvc := updater.NewService(dockerCli, database)
 	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each

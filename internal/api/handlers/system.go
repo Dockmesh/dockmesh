@@ -237,6 +237,9 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		case !st.AdminOK:
 			c.Status = "warn"
 			c.Detail = "admin API unreachable"
+		case len(st.ForeignPorts) > 0:
+			c.Status = "warn"
+			c.Detail = fmt.Sprintf("another program is listening on port %v", st.ForeignPorts)
 		default:
 			c.Status = "ok"
 			c.Detail = "Caddy " + st.Version

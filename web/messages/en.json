@@ -3607,6 +3607,8 @@
   "proxy_not_served_yet": "Not served yet. The name may not point here, or Caddy is still getting it.",
   "proxy_notice_not_running": "Caddy is enabled but not running",
   "proxy_notice_not_running_hint": "Start it to serve the saved sites again.",
+  "proxy_notice_foreign_ports": "Another program is listening on port {ports}",
+  "proxy_notice_foreign_ports_hint": "Requests may reach that program instead of your sites. Find it with sudo ss -ltnp 'sport = :{port}', then stop it or move it to another port.",
   "proxy_notice_off": "The reverse proxy is off",
   "proxy_notice_off_hint": "Enabling pulls the Caddy image if needed, starts a managed container on ports 80 and 443 and applies every saved site.",
   "proxy_oe_access_log": "Access log",

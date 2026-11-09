@@ -106,7 +106,7 @@ func TestBuildConfigDefaultsMatchLegacyOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const legacy = `{"admin":{"listen":"127.0.0.1:2019","origins":["127.0.0.1:2019","localhost:2019"],"enforce_origin":true},` +
+	const legacy = `{"admin":{"listen":"unix//run/dockmesh-caddy/admin.sock|0666","origins":["dockmesh-proxy"],"enforce_origin":true},` +
 		`"apps":{"http":{"metrics":{"per_host":true},"servers":{` +
 		`"dockmesh":{"listen":[":443"],"routes":[{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.5:8080"}]}],"terminal":true}]},` +
 		`"dockmesh_http":{"listen":[":80"],"routes":[{"match":[{"host":["b.lan"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.6:80"}]}],"terminal":true}]}}},` +
@@ -323,7 +323,7 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := json.Marshal(preview)
-	if strings.Contains(string(b), hash) || !strings.Contains(string(b), redactedHash) || strings.Contains(string(b), adminAddr) {
+	if strings.Contains(string(b), hash) || !strings.Contains(string(b), redactedHash) || strings.Contains(string(b), adminListen) {
 		t.Fatalf("preview leaks the hash or admin section: %s", b)
 	}
 	if _, err := s.SiteConfig(ctx, 999, false); !errors.Is(err, ErrRouteNotFound) {
