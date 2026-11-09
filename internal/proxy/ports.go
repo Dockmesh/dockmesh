@@ -158,7 +158,7 @@ func (s *Service) setForeignPorts(ctx context.Context, ports []int) {
 		in.Title = "Another program is listening on the proxy's ports"
 		in.Body = fmt.Sprintf("Port %s on the server is held by a program other than the proxy Dockmesh manages. "+
 			"Requests may reach that program instead of your sites, or the proxy can't start at all. "+
-			"Find it with `sudo ss -ltnp 'sport = :%d'`, then stop it or move it to another port.", list, ports[0])
+			"Find it with: sudo ss -ltnp 'sport = :%d'. Then stop it or move it to another port.", list, ports[0])
 	}
 	if err := s.notices.Set(ctx, len(ports) > 0, in); err != nil {
 		slog.Warn("proxy: update port conflict notice failed", "err", err)
