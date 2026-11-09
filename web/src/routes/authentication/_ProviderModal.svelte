@@ -424,7 +424,13 @@
     }
   }
 
+  function edited(value: string, loaded: string | undefined): string | undefined {
+    const v = value.trim();
+    return v === (loaded ?? '').trim() ? undefined : v;
+  }
+
   async function saveSAML() {
+    const samlEditing = editing?.kind === 'saml' ? editing : undefined;
     const payload: SAMLProviderInput = {
       slug: saml.slug.trim(),
       display_name: saml.display_name.trim(),
@@ -433,9 +439,10 @@
       idp_metadata_url: saml.idp_source === 'url' && !(editing?.kind === 'saml' && editing.idp_metadata_url === saml.idp_metadata_url.trim())
         ? saml.idp_metadata_url.trim()
         : '',
-      sp_entity_id: saml.sp_entity_id.trim(),
-      signing_cert_pem: saml.signing_cert.trim(),
-      encryption_cert_pem: saml.encryption_cert.trim(),
+      // Only edited fields are sent, so a stale form can't undo another admin's change.
+      sp_entity_id: edited(saml.sp_entity_id, samlEditing?.sp_entity_id),
+      signing_cert_pem: edited(saml.signing_cert, samlEditing?.signing_cert_pem),
+      encryption_cert_pem: edited(saml.encryption_cert, samlEditing?.encryption_cert_pem),
       nameid_format: saml.nameid_format,
       subject_attribute: saml.subject_attribute.trim(),
       username_attribute: saml.username_attribute.trim() || 'NameID',

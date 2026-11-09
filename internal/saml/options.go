@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -14,10 +15,13 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
+
+	crewjam "github.com/crewjam/saml"
 )
 
 const (
@@ -69,11 +73,11 @@ func (s *Service) resolveOptions(ctx context.Context, in *ProviderInput, cur *Pr
 	pinned := o.signingCert != ""
 	switch {
 	case in.IdPMetadataURL != "":
-		xml, err := s.fetchMetadata(ctx, in.IdPMetadataURL, pinned)
+		body, err := s.fetchMetadata(ctx, in.IdPMetadataURL, pinned)
 		if err != nil {
 			return nil, err
 		}
-		in.IdPMetadataXML = xml
+		in.IdPMetadataXML = body
 		o.metadataURL, o.fetchedAt, o.fetchError = in.IdPMetadataURL, time.Now().UTC(), ""
 	case in.IdPMetadataXML != "":
 		o.metadataURL, o.fetchedAt, o.fetchError = "", nil, ""
@@ -208,7 +212,8 @@ func (s *Service) encryptKey(plain string) (string, error) {
 
 func (s *Service) decryptKey(stored string) (*rsa.PrivateKey, error) {
 	plain := []byte(stored)
-	if s.secrets != nil && s.secrets.Enabled() {
+	// Stored before secrets encryption was turned on: still plain PEM.
+	if s.secrets != nil && s.secrets.Enabled() && !strings.HasPrefix(stored, "-----BEGIN") {
 		ct, err := base64.StdEncoding.DecodeString(stored)
 		if err != nil {
 			return nil, fmt.Errorf("decode encryption key: %w", err)
@@ -247,16 +252,23 @@ func checkMetadataURL(raw string, pinned bool) (*url.URL, error) {
 	return u, nil
 }
 
-// refuseMetadataAddress keeps the server's own and link-local addresses
-// (cloud instance metadata) out of reach of a URL an admin typed. Private
-// ranges stay allowed: a self-hosted IdP usually lives there.
+// cloudMetadataAddrs are instance metadata services outside link-local.
+var cloudMetadataAddrs = []netip.Addr{
+	netip.MustParseAddr("100.100.100.200"),
+	netip.MustParseAddr("168.63.129.16"),
+	netip.MustParseAddr("fd00:ec2::254"),
+}
+
+// refuseMetadataAddress keeps loopback, link-local and cloud instance
+// metadata addresses out of reach of a URL an admin typed. Private ranges
+// stay allowed: a self-hosted IdP usually lives there.
 func refuseMetadataAddress(address string) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return fmt.Errorf("bad address %q", address)
 	}
 	ip := ap.Addr().Unmap()
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() || slices.Contains(cloudMetadataAddrs, ip) {
 		return fmt.Errorf("the metadata URL resolves to %s, which is not allowed", ip)
 	}
 	return nil
@@ -269,6 +281,8 @@ func metadataHTTPClient(pinned bool) *http.Client {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = dialer.DialContext
+	// A proxy would resolve and dial the target past the address check.
+	transport.Proxy = nil
 	return &http.Client{
 		Timeout:   metadataFetchTimeout,
 		Transport: transport,
@@ -298,6 +312,11 @@ func (s *Service) fetchMetadata(ctx context.Context, raw string, pinned bool) (s
 	req.Header.Set("Accept", "application/samlmetadata+xml, application/xml, text/xml")
 	resp, err := client.Do(req)
 	if err != nil {
+		// url.Error repeats the URL, whose query may hold a token.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		return "", fmt.Errorf("fetch metadata: %w", err)
 	}
 	defer resp.Body.Close()
@@ -332,13 +351,14 @@ func (s *Service) StartMetadataRefresh(ctx context.Context) {
 }
 
 type refreshTarget struct {
-	id                     int64
-	slug, url, entity, pin string
+	id                                    int64
+	slug, url, entity, pin, sso, slo, xml string
 }
 
 func (s *Service) refreshMetadata(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, idp_metadata_url, entity_id, signing_cert_pem FROM saml_providers WHERE idp_metadata_url <> ''`)
+		`SELECT id, slug, idp_metadata_url, entity_id, signing_cert_pem, sso_url, COALESCE(slo_url, ''), idp_metadata_xml
+		   FROM saml_providers WHERE idp_metadata_url <> ''`)
 	if err != nil {
 		slog.Warn("saml: list providers for metadata refresh", "err", err)
 		return
@@ -346,7 +366,7 @@ func (s *Service) refreshMetadata(ctx context.Context) {
 	var targets []refreshTarget
 	for rows.Next() {
 		var t refreshTarget
-		if err := rows.Scan(&t.id, &t.slug, &t.url, &t.entity, &t.pin); err != nil {
+		if err := rows.Scan(&t.id, &t.slug, &t.url, &t.entity, &t.pin, &t.sso, &t.slo, &t.xml); err != nil {
 			rows.Close()
 			slog.Warn("saml: read provider for metadata refresh", "err", err)
 			return
@@ -367,11 +387,11 @@ func (s *Service) refreshMetadata(ctx context.Context) {
 // refreshProvider refuses metadata of another IdP entity: stored subjects
 // would then name other users, and only an admin's save may unlink them.
 func (s *Service) refreshProvider(ctx context.Context, t refreshTarget) error {
-	xml, err := s.fetchMetadata(ctx, t.url, t.pin != "")
+	body, err := s.fetchMetadata(ctx, t.url, t.pin != "")
 	if err != nil {
 		return err
 	}
-	meta, err := parseIdPMetadata(xml)
+	meta, err := parseIdPMetadata(body)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidMetadata, err)
 	}
@@ -381,9 +401,40 @@ func (s *Service) refreshProvider(ctx context.Context, t refreshTarget) error {
 	if meta.EntityID != t.entity {
 		return fmt.Errorf("the URL now serves entity %q instead of %q; save the provider to accept the change", meta.EntityID, t.entity)
 	}
+	// Plain http has no integrity: a pin stops forged logins, but rewritten
+	// endpoints would still send users to a phishing page.
+	if strings.HasPrefix(t.url, "http://") && (meta.SSOURL != t.sso || meta.SLOURL != t.slo) {
+		return errors.New("the sign-in endpoints changed over plain http; save the provider to accept them")
+	}
+	if !slices.Equal(signingKeys(t.xml), signingKeys(body)) {
+		slog.Warn("saml: metadata refresh changed the IdP signing keys", "provider", t.slug, "entity", t.entity)
+	}
+	// Matching the settings the fetch was based on keeps a slow refresh from
+	// overwriting an admin's save made in the meantime.
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE saml_providers SET sso_url = ?, slo_url = ?, idp_metadata_xml = ?, idp_cert_pem = ?,
 		       metadata_fetched_at = ?, metadata_error = '', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`, meta.SSOURL, nullable(meta.SLOURL), xml, meta.CertPEM, time.Now().UTC(), t.id)
+		 WHERE id = ? AND idp_metadata_url = ? AND entity_id = ? AND signing_cert_pem = ?`,
+		meta.SSOURL, nullable(meta.SLOURL), body, meta.CertPEM, time.Now().UTC(), t.id, t.url, t.entity, t.pin)
 	return err
+}
+
+// signingKeys lists every signing certificate of the first IdP descriptor,
+// sorted; crewjam trusts all of them.
+func signingKeys(xmlStr string) []string {
+	var ed crewjam.EntityDescriptor
+	if err := xml.Unmarshal([]byte(xmlStr), &ed); err != nil || len(ed.IDPSSODescriptors) == 0 {
+		return nil
+	}
+	var out []string
+	for _, kd := range ed.IDPSSODescriptors[0].KeyDescriptors {
+		if kd.Use != "" && kd.Use != "signing" {
+			continue
+		}
+		for _, c := range kd.KeyInfo.X509Data.X509Certificates {
+			out = append(out, strings.Join(strings.Fields(c.Data), ""))
+		}
+	}
+	slices.Sort(out)
+	return out
 }

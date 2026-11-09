@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +165,8 @@ func TestRefuseMetadataAddress(t *testing.T) {
 		{"[::1]:443", true},
 		{"[::ffff:127.0.0.1]:443", true},
 		{"169.254.169.254:80", true},
+		{"100.100.100.200:80", true},
+		{"[fd00:ec2::254]:80", true},
 		{"[fe80::1]:80", true},
 		{"0.0.0.0:80", true},
 		{"224.0.0.1:80", true},
@@ -335,4 +338,79 @@ func TestCheckSPEntityID(t *testing.T) {
 	if got, err := checkSPEntityID("  urn:x  "); err != nil || got != "urn:x" {
 		t.Errorf("got %q, %v", got, err)
 	}
+}
+
+func TestMetadataClientIgnoresEnvProxy(t *testing.T) {
+	if metadataHTTPClient(false).Transport.(*http.Transport).Proxy != nil {
+		t.Fatal("an env proxy would bypass the address check")
+	}
+}
+
+func TestRefreshOverHTTPKeepsSignInEndpoints(t *testing.T) {
+	s := optionsService(t)
+	md := testIdPMetadataWithCert(t)
+	var body atomic.Value
+	body.Store(md)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body.Load().(string)))
+	}))
+	defer srv.Close()
+	s.metadataClient = srv.Client()
+	cert, _ := certAndKey(t, time.Now().AddDate(1, 0, 0))
+	ctx := context.Background()
+	p, err := s.CreateProvider(ctx, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataURL: srv.URL, SigningCertPEM: ptr(cert), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.Store(strings.ReplaceAll(md, p.SSOURL, "https://phish.example/sso"))
+	s.refreshMetadata(ctx)
+	got, err := s.GetProvider(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SSOURL != p.SSOURL || !strings.Contains(got.MetadataError, "plain http") {
+		t.Fatalf("sso_url %q, metadata_error %q", got.SSOURL, got.MetadataError)
+	}
+}
+
+func TestRefreshDoesNotOverwriteAConcurrentSave(t *testing.T) {
+	s := optionsService(t)
+	var body atomic.Value
+	body.Store(testIdPMetadataWithCert(t))
+	url := metadataServer(t, s, &body)
+	ctx := context.Background()
+	p, err := s.CreateProvider(ctx, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataURL: url, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pasted := testIdPMetadataWithCert(t)
+	if _, _, err := s.UpdateProvider(ctx, p.ID, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: pasted, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	stale := refreshTarget{id: p.ID, slug: p.Slug, url: url, entity: p.EntityID, sso: p.SSOURL}
+	if err := s.refreshProvider(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetProvider(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IdPMetadataXML != pasted {
+		t.Fatal("a refresh that started before the save replaced the pasted metadata")
+	}
+}
+
+func TestFetchErrorOmitsURLQuery(t *testing.T) {
+	s := optionsService(t)
+	s.metadataClient = &http.Client{Transport: failingTransport{}}
+	_, err := s.fetchMetadata(context.Background(), "https://idp.example/md?token=SECRET", false)
+	if err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
 }

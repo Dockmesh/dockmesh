@@ -9505,7 +9505,7 @@ components:
           description: |
             URL Dockmesh fetches the metadata from, on save and once a day. Needs
             https, or http together with `signing_cert_pem`. Wins over
-            `idp_metadata_xml`. Loopback and link-local addresses are refused.
+            `idp_metadata_xml`. Loopback, link-local and cloud metadata addresses are refused.
         sp_entity_id:
           type: string
           description: How the IdP knows Dockmesh. Empty uses the SP metadata URL. Omit on update to keep it.

@@ -68,8 +68,9 @@ Two auth modes:
 			}
 
 			saved, _ := loadConfig()
-			if keepInsecure(saved, server) {
+			if !cmd.Flags().Changed("insecure") && keepInsecure(saved, server) {
 				flagInsecure = true
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: TLS verification stays off for this server (saved --insecure); pass --insecure=false to turn it back on")
 			}
 
 			var (
