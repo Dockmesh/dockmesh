@@ -1,14 +1,10 @@
 // The YAML download needs the session token, which a plain link can't send.
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { ADMIN, password } from './env';
+import { ADMIN, signIn } from './env';
 
 test('a template downloads as YAML with the session', async ({ page }) => {
-  await page.goto('/login');
-  await page.locator('#login-username').fill(ADMIN);
-  await page.locator('#login-password').fill(password());
-  await page.locator('form button[type="submit"]').click();
-  await page.waitForURL((u) => !u.pathname.startsWith('/login'));
+  await signIn(page, ADMIN);
 
   await page.goto('/templates');
   await page.locator('.tp-actions [aria-haspopup="menu"]').first().click();
