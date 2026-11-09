@@ -4738,7 +4738,7 @@
   "stacks_d_cpu_meta": "of the host · {cores} cores · {containers}",
   "stacks_d_cycle": "Cycle detected",
   "stacks_d_cycle_body": "That would create a dependency loop — pick a different edge.",
-  "stacks_d_delete_desc_after": ". Networks, volumes and images are only removed if you choose so next.",
+  "stacks_d_delete_desc_after": ". You choose next whether networks, volumes and images are removed.",
   "stacks_d_delete_desc_before": "Stops {services}, removes the containers, deletes",
   "stacks_d_delete_key": "Delete {key}",
   "stacks_d_delete_stack": "Delete stack…",

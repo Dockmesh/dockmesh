@@ -47,7 +47,7 @@ Client secrets and the LDAP bind password are stored encrypted when secrets encr
 
 Each provider has a **Group → role mappings** list (**SAML attribute → role mappings** for SAML). Every mapping gives members of a group a role on a scope (**Role applies on**: everything, a host, a host tag or a stack). A user in several mapped groups gets all of those assignments. With no matching group, the user gets the provider's **Default role** on everything.
 
-At every sign-in Dockmesh replaces the account's identity provider assignments with the ones its groups give now. Assignments you added by hand stay. To stop sign-ins from changing an account's access, use **Stop updating from groups** on the user's **Overview** tab under **Users & roles**.
+At every sign-in Dockmesh replaces the account's identity provider assignments with the ones its groups give now. Assignments you added by hand stay. To stop sign-ins from changing an account's access, use **Stop updating from groups** on the user's **Overview** tab under **Users & roles**. An account linked to a provider by verified email starts without this: it keeps its assignments and gets none from groups or the default role until you click **Update from groups at sign-in** there.
 
 The groups come from the **Group claim** (OIDC), the **Groups field** (OAuth2), the **Groups attribute** (SAML) or the **Group membership attribute** (LDAP). LDAP mappings match the full DN or only the group's CN, so `Admins` matches `cn=Admins,ou=groups,…`; the other kinds compare exactly.
 
