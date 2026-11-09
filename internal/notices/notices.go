@@ -77,8 +77,8 @@ type Notice struct {
 	bodyI18n  string
 }
 
-// RaiseInput describes a notice. Body is plain text: the UI keeps its line
-// breaks and shows lines starting with "- " as a list (see Bullets). Link
+// RaiseInput describes a notice. Body renders to plain text: the UI keeps
+// its line breaks and shows lines starting with "- " as a list (see Bullets). Link
 // is an in-app path ("/stacks/foo") the UI turns into a button.
 //
 // Blocking marks a critical notice about something that no longer works
@@ -93,8 +93,7 @@ type RaiseInput struct {
 	Blocking bool
 }
 
-// Bullets formats items as list lines for a notice body, each on its own
-// line so it can sit between two sentences of the body.
+// Bullets makes items a list argument for a notice text.
 func Bullets[T string | i18n.Text](items []T) i18n.Bullets {
 	out := make(i18n.Bullets, 0, len(items))
 	for _, it := range items {

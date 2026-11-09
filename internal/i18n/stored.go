@@ -41,6 +41,9 @@ func toStoredArg(a any) storedArg {
 			l = append(l, toStoredArg(item))
 		}
 		return storedArg{L: l}
+	case fmt.Stringer:
+		s := v.String()
+		return storedArg{S: &s}
 	}
 	rv := reflect.ValueOf(a)
 	switch rv.Kind() {

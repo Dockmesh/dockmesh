@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 var verb = regexp.MustCompile(`%[-+# 0]*[0-9]*(?:\.[0-9]+)?\[([0-9]+)\]([a-zA-Z])`)
@@ -87,6 +88,7 @@ func TestStoredRendersLikeTheOriginal(t *testing.T) {
 		{"string list", Msg("notice.backup_missing.body", Bullets{"a", "b"})},
 		{"text in list", Msg("notice.backup_repaired.body", Bullets{Msg("notice.backup_repaired.item", `"a"`, `"b"`)})},
 		{"no args", Msg("notice.legacy_tokens.title")},
+		{"stringer with an integer kind", Msg("alert.container_restarts", "web", 3, 5*time.Minute)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

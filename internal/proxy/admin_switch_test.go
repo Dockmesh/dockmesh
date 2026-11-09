@@ -349,7 +349,7 @@ func TestMoveAdminRollsBackWhenNewContainerFails(t *testing.T) {
 			}
 			assertKeptOld(t, s, log, legacy)
 			if n := switchNotice(log); strings.Contains(n.in.Body.In("en"), "secret-from-caddy") {
-				t.Fatalf("notice quotes Caddy's error: %s", n.in.Body)
+				t.Fatalf("notice quotes Caddy's error: %s", n.in.Body.In("en"))
 			}
 		})
 	}
