@@ -30,7 +30,7 @@
     }
     fetchStatus();
     // Hourly refresh — banner picks up fresh data between the backend's
-    // 24h polls without a page reload. Still cheap (one request/hour).
+    // polls (every 2h by default) without a page reload. Still cheap (one request/hour).
     const iv = setInterval(fetchStatus, 3_600_000);
     return () => clearInterval(iv);
   });

@@ -699,7 +699,7 @@ func main() {
 	sessionCleanup.Start(ctx)
 	defer sessionCleanup.Stop()
 
-	// Self-update checker: polls GitHub Releases once a day to surface
+	// Self-update checker: polls GitHub Releases every 2 hours to surface
 	// "Update available" banner in the UI. Admins can disable via the
 	// update_check_enabled setting (air-gapped installs).
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)

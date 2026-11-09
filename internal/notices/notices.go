@@ -1,6 +1,6 @@
 // Package notices holds action-required notices: conditions that need a
-// person to do something (typically after an upgrade), shown as a banner and
-// at the top of the bell drawer until the condition is gone.
+// person to do something (typically after an upgrade), shown as a banner or
+// in Needs attention until the condition is gone.
 //
 // Unlike notifications, a notice is one row per condition, keyed by a stable
 // string. Producers Raise it while the condition holds and Resolve it once it
