@@ -145,7 +145,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 4
+const ProtocolVersion = 5
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -174,6 +174,9 @@ const (
 	CapResourceManage = "resources.manage"
 	// CapVolumeFileDownload, agent: serves the "volume_file" stream kind.
 	CapVolumeFileDownload = "volume_file.download"
+	// CapImageTransfer, agent: serves the "image_pull" and "image_export"
+	// stream kinds.
+	CapImageTransfer = "images.transfer"
 )
 
 // Stream control ops beyond the exec "resize".

@@ -794,6 +794,39 @@ func (h *RemoteHost) PruneImages(ctx context.Context) (image.PruneReport, error)
 	return out, nil
 }
 
+// ErrAgentNoImageTransfer is returned for an image pull or scan on an
+// agent that predates the image stream kinds.
+var ErrAgentNoImageTransfer = errors.New("the agent on this host is too old to pull or scan images; update it from the Hosts page")
+
+// imageStream opens one of the image stream kinds. The stream ends with
+// ctx, as a blocked Read doesn't notice a cancelled request by itself.
+func (h *RemoteHost) imageStream(ctx context.Context, kind string, params map[string]any) (io.ReadCloser, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapImageTransfer) {
+		return nil, ErrAgentNoImageTransfer
+	}
+	s, err := ag.OpenStream(ctx, kind, "", params)
+	if err != nil {
+		return nil, fmt.Errorf("open %s stream: %w", kind, err)
+	}
+	context.AfterFunc(ctx, func() { _ = s.Close() }) //nolint:contextcheck // ctx is already over when this runs
+	return s, nil
+}
+
+// PullImage pulls on the agent's daemon. The credential travels with this
+// one request and the agent doesn't keep it.
+func (h *RemoteHost) PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error) {
+	return h.imageStream(ctx, "image_pull", map[string]any{"image": ref, "registry_auth": registryAuth})
+}
+
+// ExportImage streams the image as a `docker save` archive from the agent.
+func (h *RemoteHost) ExportImage(ctx context.Context, ref string) (io.ReadCloser, error) {
+	return h.imageStream(ctx, "image_export", map[string]any{"image": ref})
+}
+
 func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent,

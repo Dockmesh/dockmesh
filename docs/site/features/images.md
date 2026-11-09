@@ -26,7 +26,7 @@ Scanning is described in [Vulnerability scanning](./vulnerability-scanning.md).
 
 **Pull image** (needs `images.create`) asks for a reference such as `postgres:16-alpine` or `ghcr.io/acme/app:1.4.2`. While you type, the dialog suggests matching Docker Hub repositories; that search runs from your browser directly against `hub.docker.com`.
 
-Pulls always run on the server host, whatever host is selected. If a saved [registry](./registries.md) matches the image's registry, its credentials are used. To get an image onto an agent host, deploy a stack that uses it there.
+The pull runs on the selected host; under **All hosts** the dialog asks which one. If a saved [registry](./registries.md) applies to that host and matches the image's registry, its credentials are used. For an agent host they are sent with the pull request and not stored on the agent. An older agent refuses with a message to update it from the Hosts page. A pull that fails, for example on a registry rate limit, shows the registry's error.
 
 ## Image details
 
@@ -38,7 +38,7 @@ Click an image to open its page. The tabs are:
 - **History**: always shows **No history**; Dockmesh does not load the build history. Use `docker history` on the host.
 - **Containers**: containers using this image, running or stopped.
 
-**Re-pull** pulls the same `repository:tag` again on the server host, which fetches a newer image if the tag has moved. Running containers keep the old image until they are recreated; see [Image updates](./image-updates.md) for updating them.
+**Re-pull** pulls the same `repository:tag` again on the host the image is on, which fetches a newer image if the tag has moved. Running containers keep the old image until they are recreated; see [Image updates](./image-updates.md) for updating them.
 
 ## Removing and pruning
 
@@ -61,4 +61,4 @@ There is no scheduled prune. Call `POST /api/v1/images/prune` from cron with an 
 | Remove and prune | `images.delete` |
 | Scan | `images.scan` |
 
-Each permission is checked on the host the action targets: listing and inspecting on the host you look at, pulling and scanning on the server host, removing and pruning on the host named by `?host=` (the server host by default). In the role editor they belong to the **Images, volumes, networks & registries** area: **View** gives `images.view`, **Manage** the other three. See [Permissions](../concepts/permissions.md).
+Each permission is checked on the host the action targets: listing and inspecting on the host you look at, pulling, scanning, removing and pruning on the host named by `?host=` (the server host by default). In the role editor they belong to the **Images, volumes, networks & registries** area: **View** gives `images.view`, **Manage** the other three. See [Permissions](../concepts/permissions.md).

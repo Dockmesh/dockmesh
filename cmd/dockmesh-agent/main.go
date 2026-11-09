@@ -604,6 +604,10 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		err = runContainerFileStream(conn, cli, open, reg)
 	case "volume_file":
 		err = runVolumeFileStream(conn, cli, open, reg)
+	case "image_pull":
+		err = runImagePullStream(conn, cli, open, reg)
+	case "image_export":
+		err = runImageExportStream(conn, cli, open, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}

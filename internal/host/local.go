@@ -297,6 +297,13 @@ func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]i
 	return h.cli.RemoveImage(ctx, id, force)
 }
 
+func (h *LocalHost) PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return h.cli.PullImageWithAuth(ctx, ref, registryAuth)
+}
+
 func (h *LocalHost) PruneImages(ctx context.Context) (image.PruneReport, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return image.PruneReport{}, ErrNoDocker

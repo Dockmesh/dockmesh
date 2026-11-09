@@ -1,0 +1,3 @@
+kind: Fixed
+body: Pull image reports a registry error instead of failing on a response it couldn't read, and a pull that breaks off shows why
+time: 2026-11-09T08:25:53.464553748Z

@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Update your agents from the Hosts page after the server. Pulling and scanning images on an agent host need this version; older agents refuse with a message to update and keep running everything else
+time: 2026-11-09T08:25:54.736232894Z
+custom:
+    Audience: admins
+    Id: update-agents-images
