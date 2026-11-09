@@ -376,12 +376,24 @@ export interface StackCleanupDeleteResult {
   cleanup_error?: string;
 }
 
+export interface StackDetail {
+  name: string;
+  compose: string;
+  env?: string;
+  compose_version?: string;
+  env_version?: string;
+  env_hidden?: boolean;
+  status?: 'ok' | 'needs_recovery';
+  modified_outside?: string[];
+  mounts_stack_dir?: boolean;
+}
+
 // Result of POST /stacks/{name}/recover — the reconstructed compose
 // has already been written to disk; the response contains the new
 // stack detail (compose, env) plus a list of human-readable warnings
 // the operator should review before redeploying.
 export interface StackRecoverResult {
-  stack: { name: string; compose: string; env?: string; status?: string };
+  stack: StackDetail;
   warnings?: string[];
   recovered_from?: {
     host_id: string;
@@ -1773,7 +1785,7 @@ export const api = {
 
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
-    get: (name: string) => request<{ name: string; compose: string; env: string; env_hidden?: boolean; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
+    get: (name: string) => request<StackDetail>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string, hostId?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env, host_id: hostId }) }),
     createFromGit: (name: string, git: StackGitSourceInput, hostId?: string) =>
@@ -1781,8 +1793,17 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ name, git, host_id: hostId })
       }),
-    update: (name: string, compose: string, env?: string) =>
-      request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
+    update: (name: string, compose: string, env?: string, opts: { composeVersion?: string; envVersion?: string; force?: boolean } = {}) =>
+      request<StackDetail>(`/stacks/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          compose,
+          env,
+          compose_version: opts.composeVersion || undefined,
+          env_version: opts.envVersion || undefined,
+          force: opts.force || undefined
+        })
+      }),
     delete: (name: string, opts?: { stop?: boolean; networks?: boolean; volumes?: boolean; images?: boolean; force?: boolean }) => {
       const params = new URLSearchParams();
       if (opts?.stop) params.set('stop', 'true');

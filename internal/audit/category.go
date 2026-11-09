@@ -79,6 +79,7 @@ var categories = map[string]string{
 	ActionAssignmentRemove:          CategoryAccess,
 	ActionStackCreate:               CategoryChanges,
 	ActionStackUpdate:               CategoryChanges,
+	ActionStackForceSave:            CategoryChanges,
 	ActionStackDelete:               CategoryChanges,
 	ActionBackupJobCreate:           CategoryChanges,
 	ActionBackupJobUpdate:           CategoryChanges,
