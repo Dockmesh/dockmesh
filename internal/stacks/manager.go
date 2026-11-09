@@ -39,8 +39,8 @@ type Manager struct {
 	mu     sync.RWMutex
 	stacks map[string]*Stack
 
-	// writeMu makes a save's version check and its write one step against
-	// every other write of stack files by Dockmesh.
+	// writeMu serialises Save and Update, so a save's version check and
+	// its write are one step.
 	writeMu sync.Mutex
 
 	subsMu sync.Mutex

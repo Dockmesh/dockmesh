@@ -3,20 +3,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ADMIN, password } from './env';
+import { ADMIN, password, signIn } from './env';
 
 const root = process.env.DOCKMESH_STACKS_ROOT;
 const original = 'services:\n  web:\n    image: busybox:1\n';
 const onDisk = 'services:\n  web:\n    image: busybox:disk\n';
 const mine = 'services:\n  web:\n    image: busybox:mine\n';
-
-async function signIn(page: Page) {
-  await page.goto('/login');
-  await page.locator('#login-username').fill(ADMIN);
-  await page.locator('#login-password').fill(password());
-  await page.locator('form button[type="submit"]').click();
-  await page.waitForURL((u) => !u.pathname.startsWith('/login'));
-}
 
 async function createStack(page: Page, name: string) {
   const login = await page.request.post('/api/v1/auth/login', { data: { username: ADMIN, password: password() } });
@@ -36,15 +28,15 @@ async function editAndSave(page: Page, file: string) {
   await page.locator('.stk-toolbar').getByRole('button', { name: /^(Save|Speichern)$/ }).click();
   const dialog = page.getByTestId('save-conflict');
   await expect(dialog).toBeVisible();
-  await expect(page.getByTestId('save-conflict-diff')).toContainText('busybox:disk');
-  await expect(page.getByTestId('save-conflict-diff')).toContainText('busybox:mine');
+  await expect(page.getByTestId('diff-view')).toContainText('busybox:disk');
+  await expect(page.getByTestId('diff-view')).toContainText('busybox:mine');
   expect(readFileSync(file, 'utf8')).toBe(onDisk);
 }
 
 test('a save over a file changed on disk shows a diff and both choices work', async ({ page }, info) => {
   test.skip(!root, 'needs DOCKMESH_STACKS_ROOT');
   const name = `conflict-${info.project.name}-${Date.now()}`;
-  await signIn(page);
+  await signIn(page, ADMIN);
   await createStack(page, name);
   const file = join(root!, name, 'compose.yaml');
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, Modal } from '$lib/components/ui';
   import { diffLines } from '$lib/diffLines';
+  import DiffView from './_DiffView.svelte';
   import { m } from '$lib/paraglide/messages.js';
   import type { StackDetail } from '$lib/api';
 
@@ -40,16 +41,7 @@
       {#each diffs as d (d.file)}
         <div>
           <div class="font-mono text-xs mb-1">{d.file}</div>
-          <div class="border border-[var(--border)] rounded-md bg-[var(--surface)] text-xs font-mono overflow-auto max-h-80" data-testid="save-conflict-diff">
-            {#each d.lines as ln, i (i)}
-              <div
-                class="px-3 py-0 whitespace-pre-wrap"
-                class:diff-context={ln.kind === ' '}
-                class:diff-add={ln.kind === '+'}
-                class:diff-del={ln.kind === '-'}
-              ><span class="diff-marker">{ln.kind}</span> {ln.text}</div>
-            {/each}
-          </div>
+          <DiffView lines={d.lines} maxHeight="max-h-80" />
         </div>
       {/each}
     </div>
@@ -65,10 +57,4 @@
   .legend { margin-right: 12px; font-family: var(--font-mono, monospace); }
   .legend.add { color: var(--ok); }
   .legend.del { color: var(--bad); }
-  .diff-context { color: var(--muted); }
-  .diff-add { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--fg); }
-  .diff-del { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--fg); }
-  .diff-marker { display: inline-block; width: 12px; color: var(--subtle); user-select: none; }
-  .diff-add .diff-marker { color: var(--ok); }
-  .diff-del .diff-marker { color: var(--bad); }
 </style>

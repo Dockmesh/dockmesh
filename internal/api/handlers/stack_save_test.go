@@ -142,8 +142,6 @@ func TestSaveWithoutVersionStillWorks(t *testing.T) {
 	}
 }
 
-// A caller who may not read .env gets neither its content nor its hash,
-// and a save of compose.yaml leaves the file in place.
 func TestSaveNeverExposesOrDropsHiddenEnv(t *testing.T) {
 	e, dir, root := stackSaveEnv(t)
 	d := loadStack(t, e, "/limited/app", "")

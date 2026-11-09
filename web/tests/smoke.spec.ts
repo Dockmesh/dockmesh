@@ -1,7 +1,7 @@
 // Every page as every role: no console errors and no failing API calls,
 // in each language project.
 import { test, expect, type Page } from '@playwright/test';
-import { ADMIN, ROLE_USERS, password } from './env';
+import { ADMIN, ROLE_USERS, signIn } from './env';
 
 const OVERVIEW = { en: 'Overview', de: 'Übersicht' } as const;
 
@@ -20,14 +20,6 @@ const ROLES: RoleSpec[] = [
   { user: ROLE_USERS.operator, pages: ['/', '/activity', '/stacks', '/containers', '/hosts', '/resources', '/account', '/tokens'] },
   { user: ROLE_USERS.viewer, pages: ['/', '/activity', '/stacks', '/containers', '/account'] }
 ];
-
-async function signIn(page: Page, user: string) {
-  await page.goto('/login');
-  await page.locator('#login-username').fill(user);
-  await page.locator('#login-password').fill(password());
-  await page.locator('form button[type="submit"]').click();
-  await page.waitForURL((u) => !u.pathname.startsWith('/login'));
-}
 
 function watch(page: Page): string[] {
   const problems: string[] = [];

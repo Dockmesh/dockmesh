@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,10 @@ func (m *Manager) findConflict(name string, in SaveInput) (*ConflictError, error
 			}
 		case !in.Force:
 			return nil, err
+		default:
+			// A .env.age that no longer decrypts must not block the save
+			// that replaces it.
+			slog.Warn("forced stack save: read current .env", "stack", name, "err", err)
 		}
 	}
 	if len(files) == 0 {

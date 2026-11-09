@@ -376,10 +376,6 @@ export interface StackCleanupDeleteResult {
   cleanup_error?: string;
 }
 
-// Result of POST /stacks/{name}/recover — the reconstructed compose
-// has already been written to disk; the response contains the new
-// stack detail (compose, env) plus a list of human-readable warnings
-// the operator should review before redeploying.
 export interface StackDetail {
   name: string;
   compose: string;
@@ -392,8 +388,12 @@ export interface StackDetail {
   mounts_stack_dir?: boolean;
 }
 
+// Result of POST /stacks/{name}/recover — the reconstructed compose
+// has already been written to disk; the response contains the new
+// stack detail (compose, env) plus a list of human-readable warnings
+// the operator should review before redeploying.
 export interface StackRecoverResult {
-  stack: { name: string; compose: string; env?: string; compose_version?: string; env_version?: string; status?: string };
+  stack: StackDetail;
   warnings?: string[];
   recovered_from?: {
     host_id: string;

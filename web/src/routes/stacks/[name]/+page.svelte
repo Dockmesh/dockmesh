@@ -22,6 +22,7 @@
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
   import SaveConflictDialog from '../_SaveConflictDialog.svelte';
+  import DiffView from '../_DiffView.svelte';
   import { diffLines } from '$lib/diffLines';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
@@ -2220,17 +2221,7 @@
       {#if yamlMode === 'raw'}
         <pre class="border border-[var(--border)] rounded-md p-3 bg-[var(--surface)] text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">{yamlEntry.compose_yaml}</pre>
       {:else if yamlPrevEntry}
-        {@const lines = diffLines(yamlPrevEntry.compose_yaml ?? '', yamlEntry.compose_yaml ?? '')}
-        <div class="border border-[var(--border)] rounded-md bg-[var(--surface)] text-xs font-mono overflow-auto max-h-96">
-          {#each lines as ln}
-            <div
-              class="px-3 py-0 whitespace-pre-wrap"
-              class:diff-context={ln.kind === ' '}
-              class:diff-add={ln.kind === '+'}
-              class:diff-del={ln.kind === '-'}
-            ><span class="diff-marker">{ln.kind}</span> {ln.text}</div>
-          {/each}
-        </div>
+        <DiffView lines={diffLines(yamlPrevEntry.compose_yaml ?? '', yamlEntry.compose_yaml ?? '')} />
       {/if}
     </div>
   {/if}
@@ -2800,11 +2791,5 @@
   .stk-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 
   /* Compose diff in the deploy snapshot dialog */
-  .diff-context { color: var(--muted); }
-  .diff-add { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--fg); }
-  .diff-del { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--fg); }
-  .diff-marker { display: inline-block; width: 12px; color: var(--subtle); user-select: none; }
-  .diff-add .diff-marker { color: var(--ok); }
-  .diff-del .diff-marker { color: var(--bad); }
   .stk-upd { color: var(--accent); font-family: var(--font-sans); }
 </style>
