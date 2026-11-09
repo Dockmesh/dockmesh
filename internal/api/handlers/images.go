@@ -176,7 +176,7 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 	writeLine := func(line []byte) {
-		_, _ = w.Write(append(line, '\n'))
+		_, _ = w.Write(append(line, '\n')) //nolint:gosec // G705: ndjson progress, never rendered as HTML
 		if flusher != nil {
 			flusher.Flush()
 		}

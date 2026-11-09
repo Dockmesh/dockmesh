@@ -10,5 +10,5 @@ func freeBytes(dir string) (uint64, bool) {
 	if err := syscall.Statfs(dir, &st); err != nil {
 		return 0, false
 	}
-	return uint64(st.Bavail) * uint64(st.Bsize), true //nolint:unconvert // field types differ per OS
+	return uint64(st.Bavail) * uint64(st.Bsize), true //nolint:gosec,unconvert // block sizes are positive; field types differ per OS
 }

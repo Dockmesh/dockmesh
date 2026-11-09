@@ -812,7 +812,7 @@ func (h *RemoteHost) imageStream(ctx context.Context, kind string, params map[st
 	if err != nil {
 		return nil, fmt.Errorf("open %s stream: %w", kind, err)
 	}
-	context.AfterFunc(ctx, func() { _ = s.Close() })
+	context.AfterFunc(ctx, func() { _ = s.Close() }) //nolint:contextcheck // ctx is already over when this runs
 	return s, nil
 }
 

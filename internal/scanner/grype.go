@@ -191,7 +191,7 @@ func (g *GrypeCLI) run(ctx context.Context, source, image string) (*Report, erro
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json", "--quiet")
+	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json", "--quiet") //nolint:gosec // source always starts with a scheme, so it can't be an option
 	cmd.Env = grypeEnv()
 	stdout := cappedBuffer{max: maxScanOutputBytes}
 	stderr := cappedBuffer{max: maxScanStderrBytes}
