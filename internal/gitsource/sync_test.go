@@ -139,14 +139,16 @@ func TestTriggerSyncCoalesces(t *testing.T) {
 func TestFirstSyncUndoesOnlyAFailedFirstSync(t *testing.T) {
 	errSync := errors.New("clone failed")
 	tests := []struct {
-		name     string
-		sha      string
-		syncErr  error
-		wantUndo bool
+		name        string
+		sha         string
+		syncErr     error
+		wantUndo    bool
+		wantCreated bool
 	}{
-		{"success", "", nil, false},
-		{"failure", "", errSync, true},
-		{"failure after another sync succeeded", "abc", errSync, false},
+		{"success", "", nil, false, false},
+		{"failure before anything was created", "", errSync, true, false},
+		{"failure after creating the stack", "", stackCreatedError{errSync}, true, true},
+		{"failure after another sync succeeded", "abc", errSync, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,13 +161,13 @@ func TestFirstSyncUndoesOnlyAFailedFirstSync(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.syncFn = func(context.Context, string) (*SyncResult, error) { return &SyncResult{}, tt.syncErr }
-			undone := false
-			_, err := s.FirstSync(ctx, "web", func() { undone = true })
+			undone, created := false, false
+			_, err := s.FirstSync(ctx, "web", func(c bool) { undone, created = true, c })
 			if !errors.Is(err, tt.syncErr) {
 				t.Errorf("err = %v", err)
 			}
-			if undone != tt.wantUndo {
-				t.Errorf("undo called = %v, want %v", undone, tt.wantUndo)
+			if undone != tt.wantUndo || created != tt.wantCreated {
+				t.Errorf("undo = %v created = %v, want %v %v", undone, created, tt.wantUndo, tt.wantCreated)
 			}
 		})
 	}

@@ -102,23 +102,35 @@ func TestGitCreateRefusesDirectoryOnDisk(t *testing.T) {
 	}
 }
 
-func TestRollBackGitCreateRemovesPartialStack(t *testing.T) {
-	e, mgr := gitCreateEnv(t)
-	ctx := context.Background()
-	if _, err := mgr.Create("partial", "services: {}\n", ""); err != nil {
-		t.Fatal(err)
+func TestRollBackGitCreateRemovesOnlyWhatItCreated(t *testing.T) {
+	tests := []struct {
+		name      string
+		created   bool
+		wantStack bool
+	}{
+		{"this sync created the stack", true, false},
+		{"the stack came from elsewhere", false, true},
 	}
-	if _, err := e.h.GitSource.Configure(ctx, "partial", gitsource.Input{RepoURL: "https://example.com/p.git"}); err != nil {
-		t.Fatal(err)
-	}
-	gone, cancel := context.WithCancel(ctx)
-	cancel()
-	r := httptest.NewRequest(http.MethodPost, "/from-git", nil).WithContext(gone)
-	e.h.rollBackGitCreate(r, "partial")
-	if mgr.Has("partial") {
-		t.Error("partly copied stack kept")
-	}
-	if _, err := e.h.GitSource.Get(ctx, "partial"); !errors.Is(err, gitsource.ErrNotFound) {
-		t.Errorf("git source kept after the client went away: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, mgr := gitCreateEnv(t)
+			ctx := context.Background()
+			if _, err := mgr.Create("partial", "services: {}\n", ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.h.GitSource.Configure(ctx, "partial", gitsource.Input{RepoURL: "https://example.com/p.git"}); err != nil {
+				t.Fatal(err)
+			}
+			gone, cancel := context.WithCancel(ctx)
+			cancel()
+			r := httptest.NewRequest(http.MethodPost, "/from-git", nil).WithContext(gone)
+			e.h.rollBackGitCreate(r, "partial", tt.created)
+			if got := mgr.Has("partial"); got != tt.wantStack {
+				t.Errorf("stack present = %v, want %v", got, tt.wantStack)
+			}
+			if _, err := e.h.GitSource.Get(ctx, "partial"); !errors.Is(err, gitsource.ErrNotFound) {
+				t.Errorf("git source kept after the client went away: %v", err)
+			}
+		})
 	}
 }

@@ -496,10 +496,12 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(dir); err == nil {
-		return nil, ErrExists
+	if err := os.MkdirAll(m.rootAbs, 0o755); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.Mkdir(dir, 0o755); errors.Is(err, os.ErrExist) {
+		return nil, ErrExists
+	} else if err != nil {
 		return nil, err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
