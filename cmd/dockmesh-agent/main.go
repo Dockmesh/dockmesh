@@ -1038,7 +1038,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, report, err)
 
 	case agents.FrameReqVolumePrune:
-		report, err := cli.VolumesPrune(ctx, filters.NewArgs())
+		report, err := dockerwrap.PruneUnusedVolumes(ctx, cli)
 		respond(conn, f.ID, report, err)
 
 	case agents.FrameReqVolumeInspect:

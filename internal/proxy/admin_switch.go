@@ -16,6 +16,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	dnetwork "github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -46,6 +47,7 @@ type containerAPI interface {
 	ContainerRename(ctx context.Context, id, name string) error
 	CopyToContainer(ctx context.Context, id, dst string, content io.Reader, opts container.CopyToContainerOptions) error
 	CopyFromContainer(ctx context.Context, id, src string) (io.ReadCloser, container.PathStat, error)
+	VolumeCreate(ctx context.Context, opts volume.CreateOptions) (volume.Volume, error)
 }
 
 // SetAdminSocketDir sets the data directory the admin socket lives under.

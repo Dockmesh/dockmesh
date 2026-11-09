@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'The volume prune dialog and System cleanup now say and count what is really removed: unused anonymous volumes. Named volumes are kept. Affects v0.5.1 and earlier'
+time: 2026-11-09T10:20:22.099646424Z

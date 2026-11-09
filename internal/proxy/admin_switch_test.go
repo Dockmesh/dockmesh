@@ -20,8 +20,10 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	dnetwork "github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -102,6 +104,11 @@ func (f *fakeDocker) CopyToContainer(_ context.Context, id, dst string, content 
 func (f *fakeDocker) CopyFromContainer(_ context.Context, id, src string) (io.ReadCloser, container.PathStat, error) {
 	f.record("read " + id + " " + src)
 	return io.NopCloser(bytes.NewReader(f.autosave)), container.PathStat{}, nil
+}
+
+func (f *fakeDocker) VolumeCreate(_ context.Context, o volume.CreateOptions) (volume.Volume, error) {
+	f.record("volume " + o.Name + " " + o.Labels[docker.LabelManaged])
+	return volume.Volume{Name: o.Name}, nil
 }
 
 type recordedNotice struct {
@@ -260,7 +267,7 @@ func TestMoveAdminToSocket(t *testing.T) {
 	if loads != 1 || !strings.Contains(body, "admin.sock") || strings.Contains(body, "2019") {
 		t.Fatalf("loads=%d body=%s", loads, body)
 	}
-	for _, want := range []string{"create " + nextContainerName, "stop old", "start new", "remove old", "rename new " + ProxyContainerName} {
+	for _, want := range []string{"volume dockmesh-caddy-data true", "volume dockmesh-caddy-config true", "create " + nextContainerName, "stop old", "start new", "remove old", "rename new " + ProxyContainerName} {
 		if !slices.Contains(f.calls, want) {
 			t.Errorf("missing %q in %v", want, f.calls)
 		}

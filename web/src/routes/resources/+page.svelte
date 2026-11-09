@@ -407,6 +407,12 @@
     // shorter sha-12 form too (some drivers truncate).
     return /^[0-9a-f]{12,64}$/.test(v.Name);
   }
+  // What Docker's volume prune removes: unused anonymous volumes, without
+  // Dockmesh's own. Daemons before API 1.42 don't set the anonymous label.
+  function isPrunableVolume(v: VolumeRow): boolean {
+    if (volumeUsedBy(v) > 0 || v.Labels?.['dockmesh.managed'] === 'true') return false;
+    return v.Labels?.['com.docker.volume.anonymous'] !== undefined || /^[0-9a-f]{64}$/.test(v.Name);
+  }
   function volumeStackOwner(v: VolumeRow): string | null {
     return v.Labels?.['com.docker.compose.project'] ?? null;
   }
@@ -441,6 +447,7 @@
     used: volumes.filter((v) => volumeUsedBy(v) > 0).length,
     orphan: volumes.filter((v) => volumeUsedBy(v) === 0).length,
     anon: volumes.filter(isAnonVolume).length,
+    prunable: volumes.filter(isPrunableVolume).length,
     compose: volumes.filter((v) => !!volumeStackOwner(v)).length
   });
   const volumeDriverCount = $derived(new Set(volumes.map((v) => v.Driver)).size);
@@ -998,9 +1005,9 @@
         </button>
       {/if}
       {#if canVolDelete}
-        <button type="button" class="res-prune-btn" onclick={pruneVolumes} disabled={volumeCounts.orphan === 0}>
-          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_orphan()}
-          {#if volumeCounts.orphan > 0}<span class="dm-pill dm-pill-warning res-action-pill">{volumeCounts.orphan}</span>{/if}
+        <button type="button" class="res-prune-btn" onclick={pruneVolumes} disabled={volumeCounts.prunable === 0}>
+          <Trash2 size={12} strokeWidth={1.5} /> {m.resources_prune_anonymous()}
+          {#if volumeCounts.prunable > 0}<span class="dm-pill dm-pill-warning res-action-pill">{volumeCounts.prunable}</span>{/if}
         </button>
       {/if}
       {#if canVolCreate}
@@ -1405,9 +1412,9 @@
       <div class="cleanup-row">
         <div class="cleanup-row-mark"><HardDrive size={14} strokeWidth={1.5} /></div>
         <div class="cleanup-row-text">
-          <div class="cleanup-row-title">{m.resources_cleanup_orphan()}</div>
+          <div class="cleanup-row-title">{m.resources_cleanup_anonymous()}</div>
           <div class="cleanup-row-meta font-mono">
-            {m.resources_targets({ count: volumeCounts.orphan })} · {m.resources_unrecoverable()}
+            {m.resources_targets({ count: volumeCounts.prunable })} · {m.resources_unrecoverable()}
           </div>
         </div>
       </div>
@@ -1421,7 +1428,7 @@
         </div>
       </div>
     </div>
-    {#if imageCounts.dangling === 0 && volumeCounts.orphan === 0 && networkCounts.empty === 0}
+    {#if imageCounts.dangling === 0 && volumeCounts.prunable === 0 && networkCounts.empty === 0}
       <p class="cleanup-empty font-mono">{m.resources_nothing_to_prune()}</p>
     {/if}
   </div>
@@ -1430,7 +1437,7 @@
     <Button
       variant="danger"
       loading={cleanupBusy}
-      disabled={cleanupBusy || (imageCounts.dangling === 0 && volumeCounts.orphan === 0 && networkCounts.empty === 0)}
+      disabled={cleanupBusy || (imageCounts.dangling === 0 && volumeCounts.prunable === 0 && networkCounts.empty === 0)}
       onclick={runSystemCleanup}
     >
       <Trash2 class="w-4 h-4" /> {m.resources_run_cleanup()}

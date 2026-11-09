@@ -21,6 +21,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	dnetwork "github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
@@ -253,6 +254,22 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 	return adminID, nil
 }
 
+// labelVolumes creates the proxy's volumes with the label that keeps them
+// out of a volume prune. Docker leaves a volume that already exists as it
+// is, so one from an older install stays unlabelled.
+func labelVolumes(ctx context.Context, cli containerAPI) {
+	for _, bind := range proxyVolumes {
+		name, _, _ := strings.Cut(bind, ":")
+		_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+			Name:   name,
+			Labels: map[string]string{docker.LabelManaged: "true", "dockmesh.component": "proxy"},
+		})
+		if err != nil {
+			slog.Warn("proxy: creating a labelled volume failed", "volume", name, "err", err)
+		}
+	}
+}
+
 // createContainer creates, without starting it, a managed Caddy container
 // and returns its ID and admin ID.
 func (s *Service) createContainer(ctx context.Context, cli containerAPI, img, name string) (id, adminID string, err error) {
@@ -260,6 +277,7 @@ func (s *Service) createContainer(ctx context.Context, cli containerAPI, img, na
 	if err != nil {
 		return "", "", err
 	}
+	labelVolumes(ctx, cli)
 	cfg := &container.Config{
 		Image: img,
 		Cmd:   proxyCmd,
