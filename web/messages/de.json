@@ -627,6 +627,7 @@
   "apierr_run_is_not_a_system_backup": "Lauf ist kein System-Backup",
   "apierr_run_not_found_or_already_evicted": "Lauf nicht gefunden oder bereits verworfen",
   "apierr_saml_not_configured": "SAML nicht konfiguriert",
+  "apierr_scanner_disabled": "Die Image-Prüfung ist unter Einstellungen → Allgemein ausgeschaltet.",
   "apierr_scanner_not_configured": "Scanner nicht konfiguriert",
   "apierr_secrets_encryption_is_disabled_on_this_server": "Secret-Verschlüsselung ist auf diesem Server deaktiviert",
   "apierr_secrets_service_not_configured": "Secret-Dienst nicht konfiguriert",
