@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/docker"
 	"io"
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/docker"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
