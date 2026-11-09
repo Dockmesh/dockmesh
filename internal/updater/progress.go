@@ -41,8 +41,14 @@ func drainPull(rc io.Reader, op *operations.Op, secrets []string) error {
 	for {
 		var m pullMessage
 		if err := dec.Decode(&m); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if errors.Is(err, io.EOF) {
 				return pullErr
+			}
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				if pullErr != nil {
+					return pullErr
+				}
+				return fmt.Errorf("pull stream cut off: %w", err)
 			}
 			var se *json.SyntaxError
 			var te *json.UnmarshalTypeError

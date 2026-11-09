@@ -24,6 +24,8 @@ func TestReadPullStream(t *testing.T) {
 		{"masked", `{"error":"denied for c2VjcmV0"}` + "\n", "denied for " + operations.Masked},
 		{"garbage after error", `{"error":"boom"}` + "\nnot json", "boom"},
 		{"empty", "", ""},
+		{"cut off", `{"status":"Pulling"}` + "\n" + `{"stat`, "pull stream cut off: unexpected EOF"},
+		{"cut off after an error", `{"error":"boom"}` + "\n" + `{"stat`, "boom"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

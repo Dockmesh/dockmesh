@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/docker/docker/api/types/image"
@@ -23,8 +24,14 @@ func ReadPullStream(r io.Reader, secrets []string) error {
 			Error string `json:"error"`
 		}
 		if err := dec.Decode(&m); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if errors.Is(err, io.EOF) {
 				return pullErr
+			}
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				if pullErr != nil {
+					return pullErr
+				}
+				return fmt.Errorf("pull stream cut off: %w", err)
 			}
 			var se *json.SyntaxError
 			var te *json.UnmarshalTypeError

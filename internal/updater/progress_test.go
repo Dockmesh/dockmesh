@@ -112,6 +112,7 @@ func TestDrainPullReturnsStreamErrors(t *testing.T) {
 		{"rate limit with operation", `{"status":"Pulling from library/app"}` + "\n" + `{"errorDetail":{"message":"toomanyrequests"},"error":"toomanyrequests: rate limit"}` + "\n", "toomanyrequests: rate limit", true},
 		{"auth without operation", `{"error":"unauthorized: authentication required"}` + "\n" + `{"error":"second"}` + "\n", "unauthorized: authentication required", false},
 		{"error then garbage", `{"error":"manifest unknown"}` + "\n" + `not json` + "\n", "manifest unknown", true},
+		{"cut off", `{"status":"Pulling"}` + "\n" + `{"stat`, "pull stream cut off: unexpected EOF", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
