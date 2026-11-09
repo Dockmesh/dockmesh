@@ -183,9 +183,7 @@ func fakeAdapt(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"adapting config using caddyfile: unexpected EOF, at Caddyfile:2"}`))
 	}))
-	old := adminURL
-	adminURL = srv.URL
-	t.Cleanup(func() { adminURL = old; srv.Close() })
+	useTestAdmin(t, srv)
 }
 
 func readFixture(t *testing.T, name string) string {

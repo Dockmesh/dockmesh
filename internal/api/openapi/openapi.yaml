@@ -9536,6 +9536,10 @@ components:
         admin_ok: {type: boolean, description: Caddy's admin API answers.}
         version: {type: string, description: Server header reported by Caddy.}
         container: {type: string, description: Short container ID.}
+        foreign_ports:
+          type: array
+          items: {type: integer}
+          description: Proxy ports (80, 443) another program on the server is listening on.
     ProxyVersionInfo:
       type: object
       required: [current, image, default, available, managed]

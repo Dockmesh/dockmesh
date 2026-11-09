@@ -36,7 +36,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 	if cfg.Apps.TLS == nil || len(cfg.Apps.TLS.Automation.Policies) != 2 {
 		t.Fatalf("tls policies = %+v", cfg.Apps.TLS)
 	}
-	if !cfg.Admin.EnforceOrigin || cfg.Admin.Listen != adminAddr {
+	if !cfg.Admin.EnforceOrigin || cfg.Admin.Listen != adminListen {
 		t.Fatalf("admin = %+v", cfg.Admin)
 	}
 }

@@ -10,6 +10,14 @@ import (
 	"testing"
 )
 
+// useTestAdmin points the admin client at srv for the test.
+func useTestAdmin(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	old := adminEP.Load()
+	adminEP.Store(&adminEndpoint{url: srv.URL})
+	t.Cleanup(func() { adminEP.Store(old); srv.Close() })
+}
+
 // adminServer fakes an admin API that answers to id and counts /load calls.
 func adminServer(t *testing.T, id string) *atomic.Int32 {
 	t.Helper()
@@ -26,9 +34,7 @@ func adminServer(t *testing.T, id string) *atomic.Int32 {
 			_, _ = w.Write([]byte(`null`))
 		}
 	}))
-	old := adminURL
-	adminURL = srv.URL
-	t.Cleanup(func() { adminURL = old; srv.Close() })
+	useTestAdmin(t, srv)
 	return &loads
 }
 
@@ -78,7 +84,7 @@ func TestBootstrapConfigCarriesAdminID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"admin":{"@id":"` + id + `","listen":"` + adminAddr + `"},"apps":{"http":{"servers":null}}}`; string(b) != want {
+	if want := `{"admin":{"@id":"` + id + `","listen":"` + adminListen + `","origins":["` + adminHost + `"],"enforce_origin":true},"apps":{"http":{"servers":null}}}`; string(b) != want {
 		t.Fatalf("bootstrap = %s\nwant        %s", b, want)
 	}
 }

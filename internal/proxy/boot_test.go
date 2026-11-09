@@ -55,9 +55,7 @@ func fakeCaddy(t *testing.T, loaded bool) {
 		}
 		_, _ = w.Write([]byte(`null`))
 	}))
-	old := adminURL
-	adminURL = srv.URL
-	t.Cleanup(func() { adminURL = old; srv.Close() })
+	useTestAdmin(t, srv)
 }
 
 func TestWanted(t *testing.T) {

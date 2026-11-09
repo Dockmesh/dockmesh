@@ -50,13 +50,12 @@ location ~ ^/api/v1/auth/(login|mfa)$ {
 | 8080 | Dockmesh HTTP | Loopback only |
 | 8443 | Agent enrollment and mTLS connections (`DOCKMESH_AGENT_LISTEN`) | Agent hosts only |
 | 80, 443 | Managed Caddy proxy, only when enabled | As your published apps require |
-| 2019 | Caddy admin API | Never; bound to `127.0.0.1` |
 
 Agents enroll only on the agent listener, over TLS checked against the agents CA. The old route `POST /api/v1/agents/enroll` on the HTTP port answers `410 Gone`.
 
 The agent listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`. If you don't use remote agents, block 8443 in the firewall. Agent hosts need no inbound ports at all. See [Ports](../reference/ports.md).
 
-The managed proxy container `dockmesh-proxy` uses host networking, and its admin API on `127.0.0.1:2019` has no authentication. It refuses requests from browsers on other sites, and proxy routes can't forward to it, but any process on the server, and any container started with host networking, can change the proxy configuration. Don't run untrusted workloads with `network_mode: host` on the server.
+The managed proxy container `dockmesh-proxy` uses host networking. Its admin API listens on a Unix socket in `<data dir>/caddy-admin/` (mode `0700`, owned by the Dockmesh user), so only Dockmesh and root can reach it; proxy routes can't forward to it.
 
 **Metrics.** `/metrics` requires a bearer token with Settings & audit: Metrics (or higher) on everything; a role with only the Metrics level can't read the audit log. Keep `DOCKMESH_METRICS_AUTH` at its default (`true`) unless the endpoint is only reachable from your monitoring network.
 

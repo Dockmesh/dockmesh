@@ -104,9 +104,7 @@ func TestImportCaddyfileSnippets(t *testing.T) {
 		posted = append(posted, string(body))
 		_, _ = w.Write([]byte(`{"result":{},"warnings":[{"line":4,"message":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies"}]}`))
 	}))
-	old := adminURL
-	adminURL = srv.URL
-	t.Cleanup(func() { adminURL = old; srv.Close() })
+	useTestAdmin(t, srv)
 	s := newServiceDB(t)
 	s.enabled.Store(true)
 	ctx := context.Background()

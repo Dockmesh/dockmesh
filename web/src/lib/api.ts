@@ -2725,7 +2725,7 @@ export const api = {
 
   proxy: {
     status: () =>
-      request<{ enabled: boolean; running: boolean; admin_ok: boolean; version?: string; container?: string }>('/proxy/status'),
+      request<{ enabled: boolean; running: boolean; admin_ok: boolean; version?: string; container?: string; foreign_ports?: number[] }>('/proxy/status'),
     enable: () => request<any>('/proxy/enable', { method: 'POST' }),
     disable: () => request<void>('/proxy/disable', { method: 'POST' }),
     // tls_mode is narrowed to its three valid values so the proxy page's
