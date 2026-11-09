@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Alerts: a new or changed rule applies to container events immediately instead of at the next evaluation'
+time: 2026-11-09T13:53:21.538148247Z

@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -261,5 +262,81 @@ func TestMigrationRefusesUnconfirmedOverride(t *testing.T) {
 	}
 	if e.source.stops != 0 || len(e.target.deploys) != 0 {
 		t.Errorf("stack touched: source stops %d, target deploys %d", e.source.stops, len(e.target.deploys))
+	}
+}
+
+// busyStore is a Store on a connection that fails at once when another
+// connection holds the write lock.
+func busyStore(t *testing.T) (*Store, *sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test.db")
+	database, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO migrations (id, stack_name, source_host_id, target_host_id, status, phase, initiated_by)
+		VALUES ('m1', 'web', 'local', 'agent1', 'failed', 'rollback', 'u1')`); err != nil {
+		t.Fatal(err)
+	}
+	impatient, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { impatient.Close() })
+	return NewStore(impatient), database, "m1"
+}
+
+func TestRolledBackStatusSurvivesBusyDatabase(t *testing.T) {
+	store, database, id := busyStore(t)
+	saved := statusRetryDelays
+	statusRetryDelays = []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, time.Second}
+	t.Cleanup(func() { statusRetryDelays = saved })
+	ctx := context.Background()
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE migrations SET phase = phase WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateStatus(ctx, id, StatusRolledBack, "rollback", "done"); !isBusy(err) {
+		t.Fatalf("precondition: a plain write while locked = %v, want SQLITE_BUSY", err)
+	}
+	release := time.AfterFunc(200*time.Millisecond, func() { _ = tx.Commit() })
+	defer release.Stop()
+
+	if err := store.updateStatusRetry(ctx, id, StatusRolledBack, "rollback", "done"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	m, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Status != StatusRolledBack {
+		t.Fatalf("status = %s, want %s", m.Status, StatusRolledBack)
+	}
+}
+
+func TestUpdateStatusRetryStopsOnOtherErrors(t *testing.T) {
+	store, _, id := busyStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := store.updateStatusRetry(ctx, id, StatusRolledBack, "rollback", "done"); err == nil {
+		t.Fatal("no error on a cancelled context")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("kept retrying an error that isn't SQLITE_BUSY")
+	}
+}
+
+func TestIsBusy(t *testing.T) {
+	if isBusy(nil) || isBusy(errors.New("database is locked")) {
+		t.Fatal("isBusy matched something that is not a SQLite busy error")
 	}
 }

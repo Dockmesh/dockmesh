@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: The Scan images with Grype switch under Settings → General now controls scanning. If you turned it off earlier, scanning stops after the upgrade; turn it on to keep scanning. DOCKMESH_SCANNER_ENABLED now only sets the default for a new or unset value
+time: 2026-11-09T13:53:22.810474809Z
+custom:
+    Audience: admins
+    Id: scanner-setting-applies

@@ -97,7 +97,6 @@ type Checker struct {
 
 	mu      sync.RWMutex
 	lastErr string
-	lastNotifiedVersion string
 }
 
 // SetNotifier wires in the bell-icon notification center so a new
@@ -242,29 +241,34 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 	updateAvailable := isNewer(c.current, rel.TagName) || isDevVersion(c.current)
 	slog.Info("selfupdate: checked", "current", c.current, "latest", rel.TagName, "update_available", updateAvailable)
 
-	// Bell-icon notification — only when a new version is available
-	// AND we haven't already pinged for this exact version. Without
-	// the dedup admins would get a fresh notification every 24h until
-	// they upgrade.
-	if c.notifs != nil && updateAvailable {
-		c.mu.Lock()
-		alreadyNotified := c.lastNotifiedVersion == rel.TagName
-		if !alreadyNotified {
-			c.lastNotifiedVersion = rel.TagName
-		}
-		c.mu.Unlock()
-		if !alreadyNotified {
-			_, _ = c.notifs.Emit(ctx, notifications.EmitInput{
-				Kind:     notifications.KindSystemUpgrade,
-				Severity: notifications.SevInfo,
-				Title:    "Dockmesh " + rel.TagName + " available",
-				Body:     "Current version: " + c.current,
-				Link:     "/settings?tab=system",
-				Perm:     rbac.PermSystemUpgrade,
-			})
-		}
+	if updateAvailable {
+		c.notifyAvailable(ctx, rel.TagName)
 	}
 	return nil
+}
+
+// keyNotifiedVersion is the release admins were last told about. Stored,
+// so a restart doesn't announce the same version again.
+const keyNotifiedVersion = "update_last_notified_version"
+
+func (c *Checker) notifyAvailable(ctx context.Context, tag string) {
+	if c.notifs == nil || c.settings.Stored(keyNotifiedVersion) == tag {
+		return
+	}
+	if _, err := c.notifs.Emit(ctx, notifications.EmitInput{
+		Kind:     notifications.KindSystemUpgrade,
+		Severity: notifications.SevInfo,
+		Title:    "Dockmesh " + tag + " available",
+		Body:     "Current version: " + c.current,
+		Link:     "/settings/updates",
+		Perm:     rbac.PermSystemUpgrade,
+	}); err != nil {
+		slog.Warn("selfupdate: notification failed", "version", tag, "err", err)
+		return
+	}
+	if err := c.settings.Set(ctx, keyNotifiedVersion, tag); err != nil {
+		slog.Warn("selfupdate: notified version not saved", "version", tag, "err", err)
+	}
 }
 
 // keyManifest caches the latest release's manifest as JSON; empty when the

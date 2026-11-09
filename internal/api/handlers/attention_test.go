@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -339,5 +341,50 @@ func TestAttentionImageUpdateKeys(t *testing.T) {
 				t.Errorf("got %q/%q %v", it.TitleKey, it.DetailKey, it.Params)
 			}
 		})
+	}
+}
+
+func TestAttentionHidesDismissedNotices(t *testing.T) {
+	e := newAttentionEnv(t)
+	ctx := context.Background()
+	if err := e.h.Notices.Raise(ctx, notices.RaiseInput{Key: "dismiss-me", Audience: notices.All(), Severity: notices.SevWarning, Title: "act on this"}); err != nil {
+		t.Fatal(err)
+	}
+	u := e.user("ann", "admin")
+	token := e.login("ann").AccessToken
+	titles := func(bearer string) []string {
+		t.Helper()
+		rr := e.do(http.MethodGet, "/attention", bearer, nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("attention: %d %s", rr.Code, rr.Body)
+		}
+		var items []AttentionItem
+		if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, it := range items {
+			if it.Kind == "notice" {
+				out = append(out, it.Title)
+			}
+		}
+		return out
+	}
+	if got := titles(token); !slices.Contains(got, "act on this") {
+		t.Fatalf("notice missing before dismissal: %v", got)
+	}
+	open, err := e.h.Notices.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.h.Notices.Dismiss(ctx, notices.Viewer{UserID: u.ID}, open[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(token); slices.Contains(got, "act on this") {
+		t.Fatalf("dismissed notice still listed: %v", got)
+	}
+	e.user("bob", "admin")
+	if got := titles(e.login("bob").AccessToken); !slices.Contains(got, "act on this") {
+		t.Fatalf("another user's dismissal hid the notice: %v", got)
 	}
 }

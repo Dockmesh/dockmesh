@@ -531,7 +531,9 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool) {
 	if s.deployments != nil {
 		_ = s.deployments.Set(ctx, m.StackName, m.SourceHostID, "deployed")
 	}
-	_ = s.store.UpdateStatus(ctx, m.ID, StatusRolledBack, "rollback", "rollback complete; stack restored on source")
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", "rollback complete; stack restored on source"); err != nil {
+		slog.Error("rollback: stack restored on source, but the result could not be recorded", "migration", m.ID, "err", err)
+	}
 }
 
 // Preflight runs the pre-flight checks without starting a migration.

@@ -5,7 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var ErrNotFound = errors.New("migration not found")
@@ -44,6 +48,34 @@ func (s *Store) UpdateStatus(ctx context.Context, id, status, phase, errMsg stri
 		UPDATE migrations SET status = ?, phase = ?, error_message = ?, completed_at = ?
 		WHERE id = ?`, status, phase, errMsg, completedAt, id)
 	return err
+}
+
+// statusRetryDelays spans about a minute on top of the connection's
+// busy_timeout: long enough to outlast a burst of writes.
+var statusRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 30 * time.Second}
+
+// updateStatusRetry is UpdateStatus for a result that must not be lost
+// because the database was busy at that moment.
+func (s *Store) updateStatusRetry(ctx context.Context, id, status, phase, errMsg string) error {
+	err := s.UpdateStatus(ctx, id, status, phase, errMsg)
+	for _, delay := range statusRetryDelays {
+		if !isBusy(err) {
+			return err
+		}
+		slog.Warn("migration status write busy, retrying", "migration", id, "status", status, "in", delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		err = s.UpdateStatus(ctx, id, status, phase, errMsg)
+	}
+	return err
+}
+
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 func (s *Store) UpdateProgress(ctx context.Context, id string, p *Progress) error {

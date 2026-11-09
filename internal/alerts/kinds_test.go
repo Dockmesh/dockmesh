@@ -480,3 +480,36 @@ func TestValidateInputBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestRuleChangesApplyToEventsAtOnce(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	s := NewService(database, nil)
+	in := RuleInput{Name: "crash", Kind: KindContainerStopped, ContainerFilter: "*", Enabled: true}
+	r, err := s.Create(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	die := ContainerEvent{HostID: "local", Container: "standalone", Action: "die", ExitCode: "3", Time: time.Now()}
+	s.handleEvent(ctx, die)
+	if got := statuses(t, database, r.ID); len(got) != 1 || got[0] != "fired" {
+		t.Fatalf("new rule, event right after creating it: history %v", got)
+	}
+
+	in.Enabled = false
+	if _, err := s.Update(ctx, r.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	die.Container = "other"
+	s.handleEvent(ctx, die)
+	if got := statuses(t, database, r.ID); len(got) != 1 {
+		t.Fatalf("disabled rule still fired: history %v", got)
+	}
+}

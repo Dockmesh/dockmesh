@@ -346,7 +346,19 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	s.reloadRules(ctx)
 	return s.getRule(ctx, id)
+}
+
+// reloadRules makes a rule change apply to Docker events at once instead
+// of at the next evaluation.
+func (s *Service) reloadRules(ctx context.Context) {
+	rules, err := s.ListRules(ctx)
+	if err != nil {
+		slog.Warn("alerts list rules", "err", err)
+		return
+	}
+	s.setRules(rules)
 }
 
 func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, error) {
@@ -388,6 +400,7 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule, id); err != nil {
 		return nil, err
 	}
+	s.reloadRules(ctx)
 	return s.getRule(ctx, id)
 }
 
@@ -407,8 +420,11 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	if builtin == 1 {
 		return ErrBuiltinImmutable
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id)
-	return err
+	if _, err = s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.reloadRules(ctx)
+	return nil
 }
 
 // History returns the newest entries first. hosts, when not nil, limits
