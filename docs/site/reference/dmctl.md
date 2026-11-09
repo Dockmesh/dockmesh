@@ -49,7 +49,7 @@ dmctl prompts for the password (hidden) and, if the account has two-factor authe
 | `logout` | none | Clear the saved tokens, keep the server URL |
 | `whoami` | none | Print the current identity |
 
-`whoami` prints ID, email (or username) and a ROLE column. The server doesn't return a single role, so ROLE shows `<nil>`; `dmctl whoami -o json` shows the identity with its `assignments` and `permissions`. For an API token, the identity is `api-token` with the token's `api_token_id`.
+`whoami` prints ID, email (or username) and a ROLE column listing the identity's role assignments, with the scope of any that isn't global. `dmctl whoami -o json` shows the identity with its `assignments` and `permissions`. For an API token, the identity is `api-token` with the token's `api_token_id`.
 
 ## Configuration
 
@@ -76,7 +76,7 @@ dmctl stacks deploy web
 | `--server` | from env/config | Server URL |
 | `--token` | from env/config | Bearer token (API token or access token) |
 | `--host` | server host | Host ID for stack and container commands, sent as `?host=` |
-| `--insecure` | `false` | Skip TLS certificate verification. Given to `login`, it is saved in the config file, so every later command skips it too; a later `login` without it turns it off again. Only for test servers with self-signed certificates |
+| `--insecure` | `false` | Skip TLS certificate verification. Given to `login`, it is saved in the config file, so every later command skips it too; a later `login` to the same server keeps it, and a `login` to another server without the flag turns it off. Only for test servers with self-signed certificates |
 | `-o`, `--output` | `table` | `table`, `json` or `yaml` |
 | `-h`, `--help` | | Help for any command |
 | `-v`, `--version` | | Print the version (root command only) |
@@ -133,7 +133,7 @@ Containers keep running after adoption, but the next deploy from Dockmesh recrea
 
 `backup run` starts the job (`POST /backups/jobs/{id}/run`), which runs in the background on the server, and then waits for it: it polls `GET /backups/runs/{id}` every two seconds until the run is no longer `running`, and prints the final status, size and error. Five failed polls in a row (a server restart, for example) end the wait with an error; the run itself goes on. The command exits with status 1 when the run failed. `--no-wait` prints the run ID and returns at once. Stopping dmctl with Ctrl-C only stops the waiting; cancel the run from the UI.
 
-A job that is already running is not started a second time; the server answers `409`. The **TYPE** column of `backup jobs` stays empty, because dmctl reads a field the server does not send; use `-o json` for the full data. See [Backups](../operations/backups.md).
+A job that is already running is not started a second time; the server answers `409`. The **TYPE** column of `backup jobs` shows the job's target type; use `-o json` for the full data. See [Backups](../operations/backups.md).
 
 ## alert
 

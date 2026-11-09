@@ -20,7 +20,7 @@ func newBackupCmd() *cobra.Command {
 type backupJob struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
-	Type     string `json:"type"`
+	Type     string `json:"target_type"`
 	Schedule string `json:"schedule"`
 	Enabled  bool   `json:"enabled"`
 	TargetID int64  `json:"target_id"`

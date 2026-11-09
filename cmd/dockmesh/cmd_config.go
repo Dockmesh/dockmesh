@@ -36,6 +36,11 @@ func configShow(args []string) error {
 	}
 
 	fmt.Println("# Effective dockmesh config (secrets redacted)")
+	if loadedEnvFile != "" {
+		fmt.Printf("# Loaded env file: %s\n", loadedEnvFile)
+	} else {
+		fmt.Println("# Loaded env file: none")
+	}
 	fmt.Printf("HTTPAddr          = %q\n", cfg.HTTPAddr)
 	fmt.Printf("BaseURL           = %q\n", cfg.BaseURL)
 	fmt.Printf("DBPath            = %q\n", cfg.DBPath)
