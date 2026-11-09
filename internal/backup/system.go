@@ -154,6 +154,7 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 		filepath.Join(dataAbs, restore.StagingDir):     true,
 		filepath.Join(dataAbs, restore.PreRestoreDir):  true,
 		filepath.Join(dataAbs, scanner.ArchiveDirName): true,
+		filepath.Join(dataAbs, scanner.DBDirName):      true,
 	}
 	skip := func(abs string) bool {
 		switch abs {

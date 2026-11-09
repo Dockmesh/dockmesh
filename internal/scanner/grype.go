@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -25,25 +26,34 @@ type GrypeCLI struct {
 	// ArchiveDir holds image archives while they are scanned. Empty means
 	// the system temp directory, which may be a small tmpfs.
 	ArchiveDir string
+	// DBDir holds grype's vulnerability database. The installers create the
+	// service user without a home directory, so grype's default can't work.
+	DBDir string
 
 	archiveSlot chan struct{}
 }
 
-// ArchiveDirName is the directory below the data dir that holds image
-// archives during a scan. System backups leave it out.
-const ArchiveDirName = "scan-tmp"
+// Directories below the data dir. System backups leave them out: both can
+// be rebuilt and the database is large.
+const (
+	ArchiveDirName = "scan-tmp"
+	DBDirName      = "grype-db"
+)
 
-// PrepareArchiveDir empties the archive directory below dataDir, as a
-// crash during a scan leaves its archive behind, and returns its path.
-func PrepareArchiveDir(dataDir string) (string, error) {
-	dir := filepath.Join(dataDir, ArchiveDirName)
-	if err := os.RemoveAll(dir); err != nil {
-		return "", err
+// PrepareDirs creates the scanner's directories below dataDir and empties
+// the archive directory, as a crash during a scan leaves its archive behind.
+func PrepareDirs(dataDir string) (archiveDir, dbDir string, err error) {
+	archiveDir = filepath.Join(dataDir, ArchiveDirName)
+	dbDir = filepath.Join(dataDir, DBDirName)
+	if err := os.RemoveAll(archiveDir); err != nil {
+		return "", "", err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+	for _, dir := range []string{archiveDir, dbDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", "", err
+		}
 	}
-	return dir, nil
+	return archiveDir, dbDir, nil
 }
 
 // MaxScanArchiveBytes bounds an image archive received for scanning, so a
@@ -115,10 +125,22 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 // grypeEnv is the server's environment without its own settings, which
 // hold secrets. Grype parses archives from other hosts and reads only its
 // GRYPE_ variables and the usual system ones.
-func grypeEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+func grypeEnv(dbDir string) []string {
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "DOCKMESH_")
 	})
+	if _, set := os.LookupEnv("GRYPE_DB_CACHE_DIR"); !set && dbDir != "" {
+		env = append(env, "GRYPE_DB_CACHE_DIR="+dbDir)
+	}
+	return env
+}
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// grypeFailure is the last line grype logged, which names the cause.
+func grypeFailure(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(ansiEscape.ReplaceAllString(stderr, "")), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func NewGrypeCLI(binary string) *GrypeCLI {
@@ -191,8 +213,8 @@ func (g *GrypeCLI) run(ctx context.Context, source, image string) (*Report, erro
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json", "--quiet") //nolint:gosec // source always starts with a scheme, so it can't be an option
-	cmd.Env = grypeEnv()
+	cmd := exec.CommandContext(ctx, g.Binary, source, "-o", "json") //nolint:gosec // source always starts with a scheme, so it can't be an option
+	cmd.Env = grypeEnv(g.DBDir)
 	stdout := cappedBuffer{max: maxScanOutputBytes}
 	stderr := cappedBuffer{max: maxScanStderrBytes}
 	cmd.Stdout = &stdout
@@ -208,7 +230,7 @@ func (g *GrypeCLI) run(ctx context.Context, source, image string) (*Report, erro
 			// Only treat exit codes > 1 as real errors. Exit 1 still
 			// produces valid JSON on stdout which we parse below.
 			if ee.ExitCode() > 1 || len(out) == 0 {
-				return nil, fmt.Errorf("grype exit %d: %s", ee.ExitCode(), stderr.String())
+				return nil, fmt.Errorf("grype exit %d: %s", ee.ExitCode(), grypeFailure(stderr.String()))
 			}
 		} else {
 			return nil, fmt.Errorf("run grype: %w", err)

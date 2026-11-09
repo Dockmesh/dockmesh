@@ -54,24 +54,32 @@ func TestScanArchive(t *testing.T) {
 	}
 }
 
-func TestPrepareArchiveDirClearsLeftovers(t *testing.T) {
+func TestPrepareDirs(t *testing.T) {
 	data := t.TempDir()
 	stale := filepath.Join(data, ArchiveDirName, "dockmesh-scan-1.tar")
-	if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
-		t.Fatal(err)
+	db := filepath.Join(data, DBDirName, "vulnerability.db")
+	for _, f := range []string{stale, db} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := PrepareArchiveDir(data)
+	archiveDir, dbDir, err := PrepareDirs(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("leftover still there: %v", err)
 	}
-	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
-		t.Fatalf("archive dir: %v, %v", st, err)
+	if _, err := os.Stat(db); err != nil {
+		t.Fatalf("database was removed: %v", err)
+	}
+	for _, dir := range []string{archiveDir, dbDir} {
+		if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v, %v", dir, st, err)
+		}
 	}
 }
 
@@ -113,15 +121,29 @@ func TestCappedBuffer(t *testing.T) {
 	}
 }
 
-func TestGrypeEnvDropsServerSettings(t *testing.T) {
+func TestGrypeEnv(t *testing.T) {
 	t.Setenv("DOCKMESH_SECRET_TEST", "x")
 	t.Setenv("GRYPE_CHECK_FOR_APP_UPDATE", "false")
-	env := grypeEnv()
+	env := grypeEnv("/data/grype-db")
 	if slices.Contains(env, "DOCKMESH_SECRET_TEST=x") {
 		t.Fatal("server setting reached grype")
 	}
 	if !slices.Contains(env, "GRYPE_CHECK_FOR_APP_UPDATE=false") {
 		t.Fatal("grype setting was dropped")
+	}
+	if !slices.Contains(env, "GRYPE_DB_CACHE_DIR=/data/grype-db") {
+		t.Fatal("database directory not set")
+	}
+	t.Setenv("GRYPE_DB_CACHE_DIR", "/custom")
+	if slices.Contains(grypeEnv("/data/grype-db"), "GRYPE_DB_CACHE_DIR=/data/grype-db") {
+		t.Fatal("overrode the admin's database directory")
+	}
+}
+
+func TestGrypeFailureNamesTheCause(t *testing.T) {
+	got := grypeFailure("[0000]  WARN update\n[0000] ERROR \x1b[31mdatabase does not exist\x1b[0m\n")
+	if got != "[0000] ERROR database does not exist" {
+		t.Fatalf("got %q", got)
 	}
 }
 
