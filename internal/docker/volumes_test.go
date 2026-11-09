@@ -42,6 +42,7 @@ func TestCheckVolumeName(t *testing.T) {
 
 type fakePruner struct {
 	api     string
+	client  string
 	listed  []*volume.Volume
 	removed []string
 	pruned  []filters.Args
@@ -49,6 +50,13 @@ type fakePruner struct {
 
 func (f *fakePruner) ServerVersion(context.Context) (types.Version, error) {
 	return types.Version{APIVersion: f.api}, nil
+}
+
+func (f *fakePruner) ClientVersion() string {
+	if f.client == "" {
+		return f.api
+	}
+	return f.client
 }
 
 func (f *fakePruner) VolumesPrune(_ context.Context, a filters.Args) (volume.PruneReport, error) {
@@ -85,9 +93,11 @@ func TestPruneUnusedVolumesExcludesOwnVolumes(t *testing.T) {
 func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
 	anon := strings.Repeat("a", 64)
 	ownAnon := strings.Repeat("b", 64)
+	plugin := strings.Repeat("c", 64)
 	f := &fakePruner{api: "1.41", listed: []*volume.Volume{
-		{Name: anon},
-		{Name: ownAnon, Labels: map[string]string{LabelManaged: "true"}},
+		{Name: anon, Driver: "local"},
+		{Name: plugin, Driver: "nfs-plugin"},
+		{Name: ownAnon, Driver: "local", Labels: map[string]string{LabelManaged: "true"}},
 		{Name: "dockmesh-caddy-data"},
 		{Name: "dockmesh-caddy-config"},
 		{Name: "stack_pgdata"},
@@ -101,5 +111,17 @@ func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
 	}
 	if len(f.removed) != 1 || f.removed[0] != anon || len(report.VolumesDeleted) != 1 {
 		t.Fatalf("removed = %v, report = %+v", f.removed, report)
+	}
+}
+
+// The daemon adds all=true for a request below API 1.42, whatever it
+// supports itself.
+func TestPruneUnusedVolumesPinnedClientKeepsNamed(t *testing.T) {
+	f := &fakePruner{api: "1.43", client: "1.41", listed: []*volume.Volume{{Name: "stack_pgdata", Driver: "local"}}}
+	if _, err := PruneUnusedVolumes(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pruned) != 0 || len(f.removed) != 0 {
+		t.Fatalf("pruned = %v, removed = %v", f.pruned, f.removed)
 	}
 }

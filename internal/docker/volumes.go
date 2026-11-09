@@ -72,6 +72,7 @@ var anonymousVolumeName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // volumePruner is the part of the Docker client PruneUnusedVolumes uses.
 type volumePruner interface {
 	ServerVersion(ctx context.Context) (types.Version, error)
+	ClientVersion() string
 	VolumesPrune(ctx context.Context, f filters.Args) (volume.PruneReport, error)
 	VolumeList(ctx context.Context, opts volume.ListOptions) (volume.ListResponse, error)
 	VolumeRemove(ctx context.Context, id string, force bool) error
@@ -84,7 +85,9 @@ func PruneUnusedVolumes(ctx context.Context, cli volumePruner) (volume.PruneRepo
 	if err != nil {
 		return volume.PruneReport{}, err
 	}
-	if versions.LessThan(v.APIVersion, anonymousPruneAPI) {
+	// The daemon goes by the request's version, which DOCKER_API_VERSION
+	// can pin below what the daemon supports.
+	if versions.LessThan(v.APIVersion, anonymousPruneAPI) || versions.LessThan(cli.ClientVersion(), anonymousPruneAPI) {
 		return pruneAnonymousByName(ctx, cli)
 	}
 	return cli.VolumesPrune(ctx, filters.NewArgs(filters.Arg("label!", LabelManaged)))
@@ -101,6 +104,10 @@ func pruneAnonymousByName(ctx context.Context, cli volumePruner) (volume.PruneRe
 	}
 	for _, v := range list.Volumes {
 		if v == nil || !anonymousVolumeName.MatchString(v.Name) || v.Labels[LabelManaged] == "true" {
+			continue
+		}
+		// Docker's own prune doesn't touch plugin-backed volumes either.
+		if v.Driver != "local" || len(v.Options) > 0 {
 			continue
 		}
 		if err := cli.VolumeRemove(ctx, v.Name, false); err != nil {
