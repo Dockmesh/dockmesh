@@ -18,11 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	dnetwork "github.com/docker/docker/api/types/network"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 // bootstrapConfig is the minimal Caddy config we seed into the config

@@ -9,11 +9,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 // OpenVolumeFileOnHost opens a regular file inside the volume for a full

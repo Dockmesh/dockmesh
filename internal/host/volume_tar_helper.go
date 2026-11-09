@@ -15,7 +15,7 @@ import (
 
 // VolumeTarHelperImage mounts volumes with data, so it is pinned to the
 // multi-arch index digest like the browse helper.
-const VolumeTarHelperImage = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
+const VolumeTarHelperImage = docker.BusyboxHelperImage
 
 // tarVolumeHelper spawns a busybox container that tars the named volume
 // to stdout. The returned ReadCloser streams the .tar.gz bytes and

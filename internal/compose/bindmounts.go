@@ -13,12 +13,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -234,7 +233,7 @@ func emptyOrMissing(dir string) bool {
 	return err == nil && len(entries) == 0
 }
 
-const bindCopyHelperImage = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
+const bindCopyHelperImage = docker.BusyboxHelperImage
 
 // copyBindData streams path out of the old container into a helper
 // container that has dest bind-mounted. The Docker daemon extracts as root

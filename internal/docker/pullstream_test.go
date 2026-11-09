@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/docker/docker/client"
 
 	"github.com/dockmesh/dockmesh/internal/operations"
@@ -76,5 +77,15 @@ func TestPullAnonymous(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestBusyboxHelperPinned(t *testing.T) {
+	ref, err := reference.ParseNormalizedNamed(BusyboxHelperImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ref.(reference.Digested); !ok {
+		t.Fatalf("%s is not pinned by digest", BusyboxHelperImage)
 	}
 }
