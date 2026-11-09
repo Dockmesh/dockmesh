@@ -58,9 +58,30 @@ func (s *Service) SetAdminSocketDir(dataDir string) {
 	s.useSocketAdmin()
 }
 
-// SetInContainer records that Dockmesh itself runs in a container, where
-// the socket directory's path means something else to the Docker daemon.
-func (s *Service) SetInContainer(v bool) { s.inContainer = v }
+// SetInContainer sets the check for Dockmesh itself running in a
+// container, where the socket directory's path means something else to
+// the Docker daemon.
+func (s *Service) SetInContainer(check func() bool) { s.inContainer = check }
+
+// containerMarkers are files the container runtimes create in every
+// container; unlike asking the daemon, reading them can't fail open.
+var containerMarkers = []string{"/.dockerenv", "/run/.containerenv"}
+
+// DetectContainer returns the check for SetInContainer. selfID is the
+// daemon's answer, which may arrive only after startup.
+func DetectContainer(selfID func() string) func() bool {
+	return func() bool {
+		if selfID() != "" {
+			return true
+		}
+		for _, f := range containerMarkers {
+			if _, err := os.Stat(f); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+}
 
 func (s *Service) adminSocketPath() string {
 	return filepath.Join(s.adminSocketDir, adminSocketName)
@@ -88,7 +109,7 @@ func (s *Service) ensureSocketDir() error {
 	if dir == "" {
 		return errors.New("the admin socket directory is not set")
 	}
-	if s.inContainer {
+	if s.inContainer != nil && s.inContainer() {
 		return errors.New("the reverse proxy needs Dockmesh installed directly on the host: from inside a container the admin socket can't be shared with the proxy")
 	}
 	if strings.Contains(dir, ":") {
@@ -207,6 +228,9 @@ func (s *Service) tryMoveAdmin(ctx context.Context, cli containerAPI, img string
 		autosave = nil
 	}
 	id, adminID, err := s.createContainer(ctx, cli, img, nextContainerName)
+	if cerrdefs.IsConflict(err) {
+		err = fmt.Errorf("a container named %s is in the way; remove it: %w", nextContainerName, err)
+	}
 	if err != nil {
 		return s.keepOld(ctx, old, err)
 	}

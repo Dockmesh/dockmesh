@@ -393,9 +393,35 @@ func TestMoveAdminContinuesAfterInterruptedMove(t *testing.T) {
 func TestInContainerRefusesSocketDir(t *testing.T) {
 	s := NewService(nil, nil, false)
 	s.SetAdminSocketDir(t.TempDir())
-	s.SetInContainer(true)
+	s.SetInContainer(func() bool { return true })
 	if err := s.ensureSocketDir(); err == nil || !strings.Contains(err.Error(), "directly on the host") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDetectContainer(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	old := containerMarkers
+	containerMarkers = []string{marker}
+	t.Cleanup(func() { containerMarkers = old })
+
+	self := ""
+	check := DetectContainer(func() string { return self })
+	if check() {
+		t.Fatal("detected a container with no marker and no ID")
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !check() {
+		t.Fatal("marker file ignored while the daemon gives no answer")
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	self = "abc"
+	if !check() {
+		t.Fatal("an ID that arrives after startup is ignored")
 	}
 }
 
