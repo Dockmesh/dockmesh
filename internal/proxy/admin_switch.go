@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -56,6 +58,10 @@ func (s *Service) SetAdminSocketDir(dataDir string) {
 	s.useSocketAdmin()
 }
 
+// SetInContainer records that Dockmesh itself runs in a container, where
+// the socket directory's path means something else to the Docker daemon.
+func (s *Service) SetInContainer(v bool) { s.inContainer = v }
+
 func (s *Service) adminSocketPath() string {
 	return filepath.Join(s.adminSocketDir, adminSocketName)
 }
@@ -81,6 +87,9 @@ func (s *Service) ensureSocketDir() error {
 	dir := s.adminSocketDir
 	if dir == "" {
 		return errors.New("the admin socket directory is not set")
+	}
+	if s.inContainer {
+		return errors.New("the reverse proxy needs Dockmesh installed directly on the host: from inside a container the admin socket can't be shared with the proxy")
 	}
 	if strings.Contains(dir, ":") {
 		return fmt.Errorf("the data directory %s contains a colon, which Docker can't mount", filepath.Dir(dir))
@@ -109,21 +118,32 @@ func (s *Service) ensureSocketDir() error {
 	return nil
 }
 
-// usesTCPAdmin reports a managed container from before the admin API
-// moved to the socket.
+// usesTCPAdmin reports whether c is shaped like a managed container from
+// before the admin API moved to the socket. Labels alone wouldn't do:
+// anyone who can create a container can copy them.
 func usesTCPAdmin(c *container.InspectResponse) bool {
 	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
-	if c.Config.Labels["dockmesh.component"] != "proxy" {
+	return c.Config.Labels["dockmesh.component"] == "proxy" && hasProxyShape(c, proxyVolumes)
+}
+
+// isOldManagedContainer adds to usesTCPAdmin that the container runs a
+// Caddy image Dockmesh pins, so its admin API is trusted with the routes.
+// Anything else is replaced like any other outdated container.
+func (s *Service) isOldManagedContainer(ctx context.Context, c *container.InspectResponse) bool {
+	if !usesTCPAdmin(c) {
 		return false
 	}
-	for _, b := range c.HostConfig.Binds {
-		if strings.Contains(b, ":"+adminMountDir) {
-			return false
-		}
+	ref := c.Config.Image
+	if ref != s.currentImage() && versionOfImage(ref) == "" {
+		return false
 	}
-	return true
+	if s.imageID != nil {
+		return c.Image == s.imageID(ctx, ref)
+	}
+	inspected, err := s.docker.Raw().ImageInspect(ctx, ref)
+	return err == nil && c.Image == inspected.ID
 }
 
 // adoptNextContainer finishes or discards a move that was interrupted:
@@ -136,6 +156,10 @@ func (s *Service) adoptNextContainer(ctx context.Context, cli containerAPI) erro
 	}
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", nextContainerName, err)
+	}
+	if next.Config == nil || next.Config.Labels["dockmesh.component"] != "proxy" ||
+		next.Config.Labels[specLabel] != s.specHashFor(next.Config.Image) {
+		return nil
 	}
 	_, err = cli.ContainerInspect(ctx, ProxyContainerName)
 	if cerrdefs.IsNotFound(err) {
@@ -171,8 +195,16 @@ func (s *Service) tryMoveAdmin(ctx context.Context, cli containerAPI, img string
 		return s.keepOld(ctx, old, err)
 	}
 	autosave, err := readAutosave(ctx, cli, old.ID)
+	if err == nil && !isOldAutosave(autosave, old) {
+		err = errors.New("the saved config is not the old container's")
+	}
 	if err != nil {
-		return s.keepOld(ctx, old, fmt.Errorf("save the running config: %w", err))
+		if old.State != nil && old.State.Running {
+			return s.keepOld(ctx, old, fmt.Errorf("save the running config: %w", err))
+		}
+		// An interrupted move already replaced the file and the proxy is
+		// down, so going forward is the only way to get it serving.
+		autosave = nil
 	}
 	id, adminID, err := s.createContainer(ctx, cli, img, nextContainerName)
 	if err != nil {
@@ -242,12 +274,21 @@ func (s *Service) startOnSocket(ctx context.Context, cli containerAPI, id, admin
 	}
 	s.adminID.Store(&adminID)
 	s.enabled.Store(true)
-	return s.SyncFromDB(ctx)
+	if err := s.SyncFromDB(ctx); err != nil {
+		// Caddy's error can quote other sites' configuration, and the
+		// cause ends up in a notice.
+		slog.Warn("proxy: the new container refused the config", "err", err)
+		return ErrConfigRejected
+	}
+	return nil
 }
 
 func (s *Service) restoreOld(ctx context.Context, cli containerAPI, old *container.InspectResponse, newID string, autosave []byte) error {
 	if err := cli.ContainerRemove(ctx, newID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove the new container: %w", err)
+	}
+	if autosave == nil {
+		return errors.New("no saved config of the old container to go back to")
 	}
 	if err := cli.CopyToContainer(ctx, old.ID, "/config/caddy", bytes.NewReader(autosave), container.CopyToContainerOptions{}); err != nil {
 		return fmt.Errorf("restore the saved config: %w", err)
@@ -275,6 +316,28 @@ func readAutosave(ctx context.Context, cli containerAPI, id string) ([]byte, err
 		return nil, fmt.Errorf("%s is larger than %d bytes", autosavePath, maxAutosaveTar)
 	}
 	return b, nil
+}
+
+// isOldAutosave reports whether the tar from readAutosave holds a config
+// of the old container. The config volume is shared, so after an
+// interrupted move it can hold the new container's config, which the old
+// one couldn't start from.
+func isOldAutosave(archive []byte, old *container.InspectResponse) bool {
+	tr := tar.NewReader(bytes.NewReader(archive))
+	if _, err := tr.Next(); err != nil {
+		return false
+	}
+	var cfg struct {
+		Admin struct {
+			ID     string `json:"@id"`
+			Listen string `json:"listen"`
+		} `json:"admin"`
+	}
+	if err := json.NewDecoder(tr).Decode(&cfg); err != nil || cfg.Admin.Listen != legacyAdminAddr {
+		return false
+	}
+	id := old.Config.Labels[adminIDLabel]
+	return !validAdminID(id) || cfg.Admin.ID == id
 }
 
 func (s *Service) setAdminSwitchNotice(ctx context.Context, cause error) {

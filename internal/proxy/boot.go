@@ -60,7 +60,7 @@ func (s *Service) detectTCPAdmin(ctx context.Context) {
 		return
 	}
 	info, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName)
-	if err == nil && usesTCPAdmin(&info) {
+	if err == nil && s.isOldManagedContainer(ctx, &info) {
 		s.useLegacyAdmin()
 	}
 }

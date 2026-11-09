@@ -121,6 +121,10 @@ type Service struct {
 	startProxy func(ctx context.Context) error
 	// pullImage replaces ensureImage in tests.
 	pullImage func(ctx context.Context, img string) error
+	// imageID replaces the image lookup of isOldManagedContainer in tests.
+	imageID func(ctx context.Context, ref string) string
+	// inContainer is set when Dockmesh itself runs in a container.
+	inContainer bool
 
 	// lifecycle serialises EnableProxy/DisableProxy, version switches
 	// and settings saves; mu guards config pushes and metrics.

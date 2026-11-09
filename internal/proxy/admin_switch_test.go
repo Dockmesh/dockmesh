@@ -31,6 +31,7 @@ type fakeDocker struct {
 	mu          sync.Mutex
 	calls       []string
 	exists      map[string]bool
+	config      map[string]*container.Config
 	autosave    []byte
 	failCreate  bool
 	failStartID string
@@ -49,7 +50,7 @@ func (f *fakeDocker) ContainerInspect(_ context.Context, id string) (container.I
 	if !f.exists[id] {
 		return container.InspectResponse{}, cerrdefs.ErrNotFound
 	}
-	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id}}, nil
+	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id}, Config: f.config[id]}, nil
 }
 
 func (f *fakeDocker) ContainerCreate(_ context.Context, _ *container.Config, _ *container.HostConfig, _ *dnetwork.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
@@ -115,11 +116,21 @@ func (n *noticeLog) Set(_ context.Context, active bool, in notices.RaiseInput) e
 	return nil
 }
 
+const (
+	testAdminID  = "dockmesh-admin-0123456789abcdef0123456789abcdef"
+	autosaveJSON = `{"admin":{"@id":"` + testAdminID + `","listen":"127.0.0.1:2019"}}`
+)
+
 func autosaveTar(t *testing.T) []byte {
+	t.Helper()
+	return tarOf(t, autosaveJSON)
+}
+
+func tarOf(t *testing.T, content string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	body := []byte(`{"admin":{"listen":"127.0.0.1:2019"}}`)
+	body := []byte(content)
 	if err := tw.WriteHeader(&tar.Header{Name: "autosave.json", Mode: 0o644, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +158,7 @@ func (a *adminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.refuseLoad {
-			http.Error(w, "rejected", http.StatusBadRequest)
+			http.Error(w, "secret-from-caddy", http.StatusBadRequest)
 			return
 		}
 		a.loads++
@@ -180,12 +191,17 @@ func legacyContainer(id string) *container.InspectResponse {
 		ContainerJSONBase: &container.ContainerJSONBase{
 			ID:         id,
 			State:      &container.State{Running: true},
-			HostConfig: &container.HostConfig{Binds: append([]string(nil), proxyVolumes...)},
+			Image:      "sha256:caddy",
+			HostConfig: &container.HostConfig{NetworkMode: proxyNetworkMode, Binds: append([]string(nil), proxyVolumes...)},
 		},
-		Config: &container.Config{Labels: map[string]string{
-			"dockmesh.component": "proxy",
-			adminIDLabel:         "dockmesh-admin-0123456789abcdef0123456789abcdef",
-		}},
+		Config: &container.Config{
+			Image: DefaultProxyImage,
+			Cmd:   append([]string(nil), proxyCmd...),
+			Labels: map[string]string{
+				"dockmesh.component": "proxy",
+				adminIDLabel:         testAdminID,
+			},
+		},
 	}
 }
 
@@ -325,7 +341,89 @@ func TestMoveAdminRollsBackWhenNewContainerFails(t *testing.T) {
 				t.Fatalf("old container removed: %v", f.calls)
 			}
 			assertKeptOld(t, s, log, legacy)
+			if n := switchNotice(log); strings.Contains(n.in.Body, "secret-from-caddy") {
+				t.Fatalf("notice quotes Caddy's error: %s", n.in.Body)
+			}
 		})
+	}
+}
+
+// The config volume is shared, so after an interrupted move the autosave
+// can be the new container's; the old one could not start from it.
+func TestMoveAdminRefusesForeignAutosaveWhileOldRuns(t *testing.T) {
+	cases := map[string]string{
+		"socket listen": `{"admin":{"@id":"` + testAdminID + `","listen":"` + adminListen + `"}}`,
+		"other id":      `{"admin":{"@id":"dockmesh-admin-ffffffffffffffffffffffffffffffff","listen":"127.0.0.1:2019"}}`,
+		"garbage":       `not json`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newSwitchService(t)
+			useLegacyServer(t, &adminAPI{})
+			f := &fakeDocker{autosave: tarOf(t, body)}
+			if err := s.moveAdminToSocket(context.Background(), f, "caddy:test", legacyContainer("old")); !errors.Is(err, ErrAdminSwitchFailed) {
+				t.Fatalf("err = %v", err)
+			}
+			if slices.Contains(f.calls, "stop old") || slices.Contains(f.calls, "create "+nextContainerName) {
+				t.Fatalf("old container touched: %v", f.calls)
+			}
+		})
+	}
+}
+
+// An interrupted move left the old container stopped and the volume
+// holding the new config: the move goes on, without a way back.
+func TestMoveAdminContinuesAfterInterruptedMove(t *testing.T) {
+	s, _ := newSwitchService(t)
+	api := &adminAPI{}
+	f := &fakeDocker{
+		autosave: tarOf(t, `{"admin":{"listen":"`+adminListen+`"}}`),
+		onStart:  func(string) { serveSocket(t, s, api) },
+	}
+	old := legacyContainer("old")
+	old.State.Running = false
+	if err := s.moveAdminToSocket(context.Background(), f, "caddy:test", old); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.calls, "start new") || slices.Contains(f.calls, "start old") {
+		t.Fatalf("calls = %v", f.calls)
+	}
+}
+
+func TestInContainerRefusesSocketDir(t *testing.T) {
+	s := NewService(nil, nil, false)
+	s.SetAdminSocketDir(t.TempDir())
+	s.SetInContainer(true)
+	if err := s.ensureSocketDir(); err == nil || !strings.Contains(err.Error(), "directly on the host") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestIsOldManagedContainer(t *testing.T) {
+	s := NewService(nil, nil, false)
+	s.imageID = func(context.Context, string) string { return "sha256:caddy" }
+	ctx := context.Background()
+	if !s.isOldManagedContainer(ctx, legacyContainer("x")) {
+		t.Fatal("old managed container not recognised")
+	}
+	tamper := []struct {
+		name string
+		mod  func(*container.InspectResponse)
+	}{
+		{"unknown image", func(c *container.InspectResponse) { c.Config.Image = "evil:latest" }},
+		{"other image id", func(c *container.InspectResponse) { c.Image = "sha256:evil" }},
+		{"other command", func(c *container.InspectResponse) { c.Config.Cmd = []string{"/evil"} }},
+		{"entrypoint", func(c *container.InspectResponse) { c.Config.Entrypoint = []string{"/evil"} }},
+		{"privileged", func(c *container.InspectResponse) { c.HostConfig.Privileged = true }},
+		{"extra bind", func(c *container.InspectResponse) { c.HostConfig.Binds = append(c.HostConfig.Binds, "/:/host") }},
+		{"no label", func(c *container.InspectResponse) { delete(c.Config.Labels, "dockmesh.component") }},
+	}
+	for _, tt := range tamper {
+		c := legacyContainer("x")
+		tt.mod(c)
+		if s.isOldManagedContainer(ctx, c) {
+			t.Errorf("%s: treated as an old managed container", tt.name)
+		}
 	}
 }
 
@@ -341,19 +439,24 @@ func TestSwitchVersionWaitsForAdminMove(t *testing.T) {
 }
 
 func TestAdoptNextContainer(t *testing.T) {
+	s := NewService(nil, nil, false)
+	s.SetAdminSocketDir(t.TempDir())
+	ours := &container.Config{Image: "caddy:test", Labels: map[string]string{"dockmesh.component": "proxy", specLabel: s.specHashFor("caddy:test")}}
+	foreign := &container.Config{Image: "app:1", Labels: map[string]string{}}
 	cases := []struct {
 		name   string
 		exists map[string]bool
+		next   *container.Config
 		want   string
 	}{
-		{"nothing pending", map[string]bool{ProxyContainerName: true}, ""},
-		{"old removed before the rename", map[string]bool{nextContainerName: true}, "rename " + nextContainerName + " " + ProxyContainerName},
-		{"old still there", map[string]bool{nextContainerName: true, ProxyContainerName: true}, "remove " + nextContainerName},
+		{"nothing pending", map[string]bool{ProxyContainerName: true}, nil, ""},
+		{"old removed before the rename", map[string]bool{nextContainerName: true}, ours, "rename " + nextContainerName + " " + ProxyContainerName},
+		{"old still there", map[string]bool{nextContainerName: true, ProxyContainerName: true}, ours, "remove " + nextContainerName},
+		{"someone else's container", map[string]bool{nextContainerName: true, ProxyContainerName: true}, foreign, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeDocker{exists: tc.exists}
-			s := NewService(nil, nil, false)
+			f := &fakeDocker{exists: tc.exists, config: map[string]*container.Config{nextContainerName: tc.next}}
 			if err := s.adoptNextContainer(context.Background(), f); err != nil {
 				t.Fatal(err)
 			}

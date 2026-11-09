@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
-	"os"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -58,23 +56,13 @@ var (
 	legacyEP = &adminEndpoint{url: "http://" + legacyAdminAddr}
 )
 
-// dialSocket refuses anything but a socket at the path: the directory is
-// writable from inside the proxy container, so a compromised Caddy could
-// otherwise point Dockmesh at another file through a symlink.
-func dialSocket(ctx context.Context, path string) (net.Conn, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&fs.ModeSocket == 0 {
-		return nil, fmt.Errorf("%s is not a socket", path)
-	}
-	var d net.Dialer
-	return d.DialContext(ctx, "unix", path)
-}
-
 func (e *adminEndpoint) client(timeout time.Duration) *http.Client {
-	c := &http.Client{Timeout: timeout}
+	c := &http.Client{
+		Timeout: timeout,
+		// A compromised Caddy must not be able to send Dockmesh's requests
+		// somewhere else.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	if e.socket != "" {
 		socket := e.socket
 		c.Transport = &http.Transport{

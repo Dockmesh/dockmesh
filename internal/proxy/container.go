@@ -133,7 +133,7 @@ func (s *Service) enableLocked(ctx context.Context) error {
 		return err
 	}
 	existing, err := cli.ContainerInspect(ctx, ProxyContainerName)
-	if err == nil && usesTCPAdmin(&existing) {
+	if err == nil && s.isOldManagedContainer(ctx, &existing) {
 		return s.moveAdminToSocket(ctx, cli, img, &existing)
 	}
 	if err := s.ensureSocketDir(); err != nil {
@@ -190,15 +190,20 @@ func (s *Service) matchesSpec(c *container.InspectResponse, img, imageID string)
 	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
-	h := c.HostConfig
 	return c.Config.Labels[specLabel] == s.specHashFor(img) &&
 		c.Config.Labels["dockmesh.component"] == "proxy" &&
 		validAdminID(c.Config.Labels[adminIDLabel]) &&
 		c.Image == imageID &&
-		reflect.DeepEqual([]string(c.Config.Cmd), proxyCmd) &&
+		hasProxyShape(c, s.proxyBinds())
+}
+
+// hasProxyShape checks what the container runs and with which privileges.
+func hasProxyShape(c *container.InspectResponse, binds []string) bool {
+	h := c.HostConfig
+	return reflect.DeepEqual([]string(c.Config.Cmd), proxyCmd) &&
 		len(c.Config.Entrypoint) == 0 &&
 		string(h.NetworkMode) == proxyNetworkMode &&
-		reflect.DeepEqual(h.Binds, s.proxyBinds()) &&
+		reflect.DeepEqual(h.Binds, binds) &&
 		len(h.Mounts) == 0 &&
 		!h.Privileged &&
 		len(h.CapAdd) == 0 &&
