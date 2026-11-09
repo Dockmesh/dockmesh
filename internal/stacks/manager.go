@@ -377,6 +377,17 @@ func (m *Manager) Has(name string) bool {
 	return ok
 }
 
+// DirExists reports whether anything occupies the stack's directory,
+// whether or not it is a registered stack.
+func (m *Manager) DirExists(name string) bool {
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(dir)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
 func (m *Manager) Get(name string) (*Detail, error) {
 	dir, err := m.safeDir(name)
 	if err != nil {

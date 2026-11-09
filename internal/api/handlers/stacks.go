@@ -546,10 +546,22 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	// The name check and the insert are one step: Configure is an upsert
+	// and a second request must not take over this one's source row.
+	h.gitCreateMu.Lock()
 	if !h.requireStackCreate(w, r, rbac.PermStacksCreate, req.Name, req.HostID) {
+		h.gitCreateMu.Unlock()
+		return
+	}
+	// A failed sync removes the stack, so it has to be new: the registry
+	// doesn't know directories without compose.yaml or added while running.
+	if h.Stacks.DirExists(req.Name) {
+		h.gitCreateMu.Unlock()
+		writeError(w, http.StatusConflict, "a stack named "+req.Name+" already exists")
 		return
 	}
 	src, err := h.GitSource.Configure(r.Context(), req.Name, req.Git)
+	h.gitCreateMu.Unlock()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -560,9 +572,8 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
+	syncRes, syncErr := h.GitSource.FirstSync(r.Context(), req.Name, func() { h.rollBackGitCreate(r, req.Name) })
 	if syncErr != nil {
-		h.rollBackGitCreate(r, req.Name)
 		h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true, "sync_failed": true})
 		h.syncGitWebhookNotice(r.Context())
 		// Mirrors the message into `error` so the shared frontend
@@ -597,6 +608,9 @@ func (h *Handlers) rollBackGitCreate(r *http.Request, name string) {
 		slog.Warn("create stack from git: roll back failed sync", "stack", name, "err", err)
 	}
 	h.forgetStackTarget(cleanup, name)
+	if !h.Stacks.Has(name) {
+		return
+	}
 	if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // takes no context
 		slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
 	}

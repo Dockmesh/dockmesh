@@ -13,12 +13,12 @@ parameters:
     description: Password for the app user. Auto-generated if blank.
     secret: true
     type: secret
-    pattern: '^[^\r\n]+$'
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: root_password
     description: MySQL root password. Auto-generated if blank.
     secret: true
     type: secret
-    pattern: '^[^\r\n]+$'
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: port
     default: "3306"
     pattern: "^[0-9]{2,5}$"

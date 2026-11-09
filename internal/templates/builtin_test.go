@@ -156,8 +156,9 @@ func TestBuiltinTemplatesKeepSecretsInEnv(t *testing.T) {
 	}
 }
 
-// One .env line per secret: a line break would add another variable.
-func TestBuiltinTemplateSecretsRejectLineBreaks(t *testing.T) {
+// One .env line per secret: a line break would add another variable, and
+// deploy trims the line, which would change the password.
+func TestBuiltinTemplateSecretsRejectUnsafeValues(t *testing.T) {
 	tests := []struct{ file, param string }{
 		{"postgres.yaml", "db_password"},
 		{"mysql.yaml", "db_password"},
@@ -167,14 +168,19 @@ func TestBuiltinTemplateSecretsRejectLineBreaks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.file+"/"+tt.param, func(t *testing.T) {
 			rec, params := loadBuiltin(t, tt.file)
-			pw := "abc\nINJECTED=1"
-			values := map[string]string{"db_password": "ok", "root_password": "ok", "admin_token": "ok", tt.param: pw}
-			_, err := Render(rec.Env, params, values)
-			if err == nil {
-				t.Fatal("line break accepted")
+			for _, pw := range []string{"abc\nINJECTED=1", "trailing ", " leading", "   "} {
+				values := map[string]string{"db_password": "ok", "root_password": "ok", "admin_token": "ok", tt.param: pw}
+				_, err := Render(rec.Env, params, values)
+				if err == nil {
+					t.Fatalf("%q accepted", pw)
+				}
+				if strings.Contains(err.Error(), pw) {
+					t.Errorf("error echoes the secret: %v", err)
+				}
 			}
-			if strings.Contains(err.Error(), pw) {
-				t.Errorf("error echoes the secret: %v", err)
+			values := map[string]string{"db_password": "ok", "root_password": "ok", "admin_token": "ok", tt.param: "p@ss w$rd#1"}
+			if _, err := Render(rec.Env, params, values); err != nil {
+				t.Errorf("valid password refused: %v", err)
 			}
 		})
 	}

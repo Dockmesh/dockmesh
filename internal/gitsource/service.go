@@ -361,6 +361,29 @@ func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, erro
 	return s.sync(ctx, stackName)
 }
 
+// FirstSync runs the initial sync of a source that was just configured and
+// calls undo if it fails. Holding the stack's lock across both keeps a
+// queued poller or webhook sync from working on a source being removed. A
+// source that has synced successfully in the meantime is left alone.
+func (s *Service) FirstSync(ctx context.Context, stackName string, undo func()) (*SyncResult, error) {
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	run := s.sync
+	if s.syncFn != nil {
+		run = s.syncFn
+	}
+	res, err := run(ctx, stackName)
+	if err == nil {
+		return res, nil
+	}
+	if src, gerr := s.Get(context.WithoutCancel(ctx), stackName); gerr == nil && src.LastSyncSHA != "" {
+		return nil, err
+	}
+	undo()
+	return nil, err
+}
+
 func (s *Service) stackLock(stackName string) *sync.Mutex {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()

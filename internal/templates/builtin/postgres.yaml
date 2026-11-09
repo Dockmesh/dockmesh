@@ -15,7 +15,7 @@ parameters:
     description: Superuser password. Auto-generated if blank.
     secret: true
     type: secret
-    pattern: '^[^\r\n]+$'
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: port
     description: Host port to expose 5432 on.
     default: "5432"

@@ -13,7 +13,7 @@ parameters:
     description: Token for the /admin page. Auto-generated if blank. Store it somewhere safe.
     secret: true
     type: secret
-    pattern: '^[^\r\n]+$'
+    pattern: '^\S(?:[^\r\n]*\S)?$'
   - name: signups_allowed
     description: Allow anyone to register a new account.
     default: "false"

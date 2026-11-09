@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -55,6 +57,48 @@ func TestFailedInitialGitSyncFreesTheName(t *testing.T) {
 	}
 	if mgr.Has("web") {
 		t.Error("stack exists after the failed sync")
+	}
+}
+
+// A failed sync removes only what it created, so a name occupied on disk
+// is refused before anything happens to the directory.
+func TestGitCreateRefusesDirectoryOnDisk(t *testing.T) {
+	root := t.TempDir()
+	e, _ := gitCreateEnv(t)
+	onDisk, err := stacks.NewManager(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = onDisk.Close() })
+	e.h.Stacks = onDisk
+	e.h.GitSource = gitsource.New(e.db, nil, onDisk, t.TempDir(), nil)
+	tok := e.login("root").AccessToken
+
+	tests := []struct{ stack, file string }{
+		{"orphan-data", "precious.txt"},
+		{"disk-only", "compose.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stack, func(t *testing.T) {
+			dir := filepath.Join(root, tt.stack)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(dir, tt.file)
+			if err := os.WriteFile(file, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			body := map[string]any{"name": tt.stack, "host_id": "local", "git": map[string]any{"repo_url": "https://127.0.0.1:1/none.git"}}
+			if rr := e.do(http.MethodPost, "/from-git", tok, body); rr.Code != http.StatusConflict {
+				t.Fatalf("%d, want 409: %s", rr.Code, rr.Body)
+			}
+			if _, err := os.Stat(file); err != nil {
+				t.Errorf("file gone: %v", err)
+			}
+			if _, err := e.h.GitSource.Get(context.Background(), tt.stack); !errors.Is(err, gitsource.ErrNotFound) {
+				t.Errorf("git source saved: %v", err)
+			}
+		})
 	}
 }
 
