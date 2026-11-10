@@ -45,8 +45,8 @@ func scalingEnv(t *testing.T) (*stacks.Manager, *notices.Service, string) {
 // recorded.
 func saveMeta(t *testing.T, m *stacks.Manager, dir, content string) {
 	t.Helper()
-	if err := m.WriteFile("app", stacks.MetaFile, func() error {
-		return os.WriteFile(filepath.Join(dir, stacks.MetaFile), []byte(content), 0o644)
+	if err := m.WriteFile("app", stacks.MetaFileName, func() error {
+		return os.WriteFile(filepath.Join(dir, stacks.MetaFileName), []byte(content), 0o644)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestCheck(t *testing.T) {
 		{"rules disabled", func(t *testing.T, m *stacks.Manager, dir string) {
 			saveMeta(t, m, dir, `{"scaling":{"enabled":false,"rules":[{"service":"web","max_replicas":2}]}}`)
 		}, false, ""},
-		{"rules written outside", func(t *testing.T, _ *stacks.Manager, dir string) { outside(t, dir, stacks.MetaFile, validRules) }, false, stacks.PauseModifiedOutside},
+		{"rules written outside", func(t *testing.T, _ *stacks.Manager, dir string) { outside(t, dir, stacks.MetaFileName, validRules) }, false, stacks.PauseModifiedOutside},
 		{"compose changed outside", func(t *testing.T, m *stacks.Manager, dir string) {
 			saveMeta(t, m, dir, validRules)
 			outside(t, dir, "compose.yaml", "services: {web: {image: x, privileged: true}}\n")

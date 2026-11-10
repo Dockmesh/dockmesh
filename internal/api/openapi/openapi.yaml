@@ -2767,15 +2767,7 @@ paths:
           description: "An update of this container or its stack is already running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error: {type: string}
-                  code: {type: string, enum: [modified_outside]}
-                  stack: {type: string}
-                  files:
-                    type: array
-                    items: {type: string}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -2821,15 +2813,7 @@ paths:
           description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error: {type: string}
-                  code: {type: string, enum: [modified_outside]}
-                  stack: {type: string}
-                  files:
-                    type: array
-                    items: {type: string}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info
@@ -9080,6 +9064,17 @@ components:
         total_bytes: {type: integer, format: int64}
         free_bytes: {type: integer, format: int64}
         error: {type: string}
+    ModifiedOutsideError:
+      type: object
+      description: An error, or with `code` `modified_outside` the stack files changed outside Dockmesh (`files`).
+      required: [error]
+      properties:
+        error: {type: string}
+        code: {type: string, enum: [modified_outside]}
+        stack: {type: string}
+        files:
+          type: array
+          items: {type: string}
     HistoryReason:
       type: string
       enum: [agent_outdated, agent_offline]
@@ -10111,7 +10106,7 @@ components:
         modified_outside:
           type: array
           items: {type: string}
-          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, scale or rolling update needs `confirm_external=1`.
+          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, migration, scale, rolling update or image update built from them needs `confirm_external=1`.
         scaler_paused: {$ref: "#/components/schemas/ScalerPause"}
         mounts_stack_dir:
           type: boolean

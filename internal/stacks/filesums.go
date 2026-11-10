@@ -20,13 +20,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// MetaFile holds a stack's scaling rules, migration hooks and default
+// MetaFileName holds a stack's scaling rules, migration hooks and default
 // environment override.
-const MetaFile = ".dockmesh.meta.json"
+const MetaFileName = ".dockmesh.meta.json"
 
 // trackedFiles are the stack files a deploy reads, besides the
 // compose.<env>.yaml override files.
-var trackedFiles = []string{"compose.yaml", ".env", ".env.age", MetaFile}
+var trackedFiles = []string{"compose.yaml", ".env", ".env.age", MetaFileName}
 
 // overrideFile matches the compose.<env>.yaml override files.
 var overrideFile = regexp.MustCompile(`^compose\.[a-z0-9][a-z0-9_-]*\.yaml$`)

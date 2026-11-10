@@ -230,15 +230,7 @@ paths:
           description: "An update of this container or its stack is already running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error: {type: string}
-                  code: {type: string, enum: [modified_outside]}
-                  stack: {type: string}
-                  files:
-                    type: array
-                    items: {type: string}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -284,15 +276,7 @@ paths:
           description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error: {type: string}
-                  code: {type: string, enum: [modified_outside]}
-                  stack: {type: string}
-                  files:
-                    type: array
-                    items: {type: string}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info

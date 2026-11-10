@@ -20,7 +20,7 @@ func TestStackTargetRefusesOutsideChanges(t *testing.T) {
 	}{
 		{"unchanged", "", false},
 		{"compose.yaml", "compose.yaml", true},
-		{"meta file", stacks.MetaFile, true},
+		{"meta file", stacks.MetaFileName, true},
 		{"override file", "compose.prod.yaml", true},
 	}
 	for _, tt := range tests {

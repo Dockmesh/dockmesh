@@ -27,7 +27,7 @@ func TestScaleAndRollingUpdateRefuseOutsideChanges(t *testing.T) {
 		file, content string
 	}{
 		{"compose.yaml", "services: {web: {image: x, privileged: true}}\n"},
-		{stacks.MetaFile, `{"scaling":{"enabled":true,"rules":[{"service":"web","max_replicas":2}]}}`},
+		{stacks.MetaFileName, `{"scaling":{"enabled":true,"rules":[{"service":"web","max_replicas":2}]}}`},
 		{"compose.prod.yaml", "services: {web: {privileged: true}}\n"},
 	}
 	for _, rt := range routes {

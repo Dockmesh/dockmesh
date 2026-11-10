@@ -33,7 +33,7 @@ func TestRestoreRecordsRestoredStackFiles(t *testing.T) {
 	tw := tar.NewWriter(gz)
 	for name, body := range map[string]string{
 		"stack/compose.yaml":        "services: {}\n",
-		"stack/" + stacks.MetaFile:  `{"active_environment":"prod"}`,
+		"stack/" + stacks.MetaFileName:  `{"active_environment":"prod"}`,
 		"stack/compose.prod.yaml":   "services: {}\n",
 		"stack/data/compose.x.yaml": "x",
 	} {

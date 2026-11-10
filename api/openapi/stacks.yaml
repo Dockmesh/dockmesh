@@ -1286,7 +1286,7 @@ components:
         modified_outside:
           type: array
           items: {type: string}
-          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, scale or rolling update needs `confirm_external=1`.
+          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, migration, scale, rolling update or image update built from them needs `confirm_external=1`.
         scaler_paused: {$ref: "#/components/schemas/ScalerPause"}
         mounts_stack_dir:
           type: boolean

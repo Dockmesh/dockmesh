@@ -1,5 +1,16 @@
 components:
   schemas:
+    ModifiedOutsideError:
+      type: object
+      description: An error, or with `code` `modified_outside` the stack files changed outside Dockmesh (`files`).
+      required: [error]
+      properties:
+        error: {type: string}
+        code: {type: string, enum: [modified_outside]}
+        stack: {type: string}
+        files:
+          type: array
+          items: {type: string}
     HistoryReason:
       type: string
       enum: [agent_outdated, agent_offline]

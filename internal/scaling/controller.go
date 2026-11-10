@@ -33,7 +33,7 @@ type Controller struct {
 	mu           sync.Mutex
 	states       map[string]*ruleState // key: "stack/service"
 	paused       map[string]string     // stack → reason of its open paused notice
-	seen         map[string]bool
+	seen         map[string]bool       // stacks checked since this process started
 	stop         chan struct{}
 	wg           sync.WaitGroup
 }
@@ -114,8 +114,8 @@ func (c *Controller) tick(ctx context.Context) {
 	}
 }
 
-// hold raises the paused notice once per stack and reason; the open
-// notice is replaced when the reason changes.
+// hold raises the paused notice once per stack and pause; the open
+// notice is replaced when the pause changes.
 func (c *Controller) hold(ctx context.Context, name string, p stacks.ScalerPause) {
 	key := p.Reason + "|" + strings.Join(p.Files, ",") + "|" + p.Override + "|" + p.Error
 	c.mu.Lock()

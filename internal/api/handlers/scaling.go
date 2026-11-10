@@ -401,7 +401,7 @@ func (h *Handlers) DeleteScalingRules(w http.ResponseWriter, r *http.Request) {
 // doesn't touch, and records Dockmesh's write of it. change reports
 // whether there is anything to write.
 func (h *Handlers) updateMeta(name, dir string, change func(*scaling.MetaFile) bool) error {
-	return h.Stacks.WriteFile(name, stacks.MetaFile, func() error {
+	return h.Stacks.WriteFile(name, stacks.MetaFileName, func() error {
 		meta, err := scaling.LoadMeta(dir)
 		if err != nil {
 			return err

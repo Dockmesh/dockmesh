@@ -15,9 +15,9 @@ func TestModifiedOutsideMetaAndOverrides(t *testing.T) {
 		change func(t *testing.T, dir string)
 		want   []string
 	}{
-		{"meta file added", nil, func(t *testing.T, dir string) { writeFile(t, dir, MetaFile, `{"scaling":{}}`) }, []string{MetaFile}},
-		{"meta file changed", map[string]string{MetaFile: `{}`}, func(t *testing.T, dir string) { writeFile(t, dir, MetaFile, `{"active_environment":"x"}`) }, []string{MetaFile}},
-		{"meta file removed", map[string]string{MetaFile: `{}`}, func(t *testing.T, dir string) { removeFile(t, dir, MetaFile) }, []string{MetaFile}},
+		{"meta file added", nil, func(t *testing.T, dir string) { writeFile(t, dir, MetaFileName, `{"scaling":{}}`) }, []string{MetaFileName}},
+		{"meta file changed", map[string]string{MetaFileName: `{}`}, func(t *testing.T, dir string) { writeFile(t, dir, MetaFileName, `{"active_environment":"x"}`) }, []string{MetaFileName}},
+		{"meta file removed", map[string]string{MetaFileName: `{}`}, func(t *testing.T, dir string) { removeFile(t, dir, MetaFileName) }, []string{MetaFileName}},
 		{"override added", nil, func(t *testing.T, dir string) { writeFile(t, dir, "compose.x.yaml", "services: {}\n") }, []string{"compose.x.yaml"}},
 		{"override changed", map[string]string{"compose.prod.yaml": "a: 1\n"}, func(t *testing.T, dir string) { writeFile(t, dir, "compose.prod.yaml", "a: 2\n") }, []string{"compose.prod.yaml"}},
 		{"override removed", map[string]string{"compose.prod.yaml": "a: 1\n"}, func(t *testing.T, dir string) { removeFile(t, dir, "compose.prod.yaml") }, []string{"compose.prod.yaml"}},
@@ -66,7 +66,7 @@ func TestBackfillRecordsMissingRowsOnce(t *testing.T) {
 	if err := m.sums.set("old", backfillRow, ""); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, oldDir, MetaFile, `{"active_environment":"prod"}`)
+	writeFile(t, oldDir, MetaFileName, `{"active_environment":"prod"}`)
 	writeFile(t, oldDir, "compose.prod.yaml", "a: 1\n")
 	writeFile(t, oldDir, ".env", "CHANGED=1\n")
 	writeFile(t, newDir, "compose.x.yaml", "a: 1\n")
@@ -101,26 +101,26 @@ func TestWriteFileKeepsOutsideChange(t *testing.T) {
 	}
 	dir, _ := m.Dir("web")
 	write := func(content string) func() error {
-		return func() error { return os.WriteFile(filepath.Join(dir, MetaFile), []byte(content), 0o644) }
+		return func() error { return os.WriteFile(filepath.Join(dir, MetaFileName), []byte(content), 0o644) }
 	}
-	if err := m.WriteFile("web", MetaFile, write(`{"a":1}`)); err != nil {
+	if err := m.WriteFile("web", MetaFileName, write(`{"a":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	if changed, _ := m.ModifiedOutside("web"); len(changed) != 0 {
 		t.Fatalf("own write reported: %v", changed)
 	}
-	writeFile(t, dir, MetaFile, `{"evil":1}`)
-	if err := m.WriteFile("web", MetaFile, write(`{"a":2}`)); err != nil {
+	writeFile(t, dir, MetaFileName, `{"evil":1}`)
+	if err := m.WriteFile("web", MetaFileName, write(`{"a":2}`)); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := m.ModifiedOutside("web"); !slices.Equal(changed, []string{MetaFile}) {
+	if changed, _ := m.ModifiedOutside("web"); !slices.Equal(changed, []string{MetaFileName}) {
 		t.Errorf("write over an outside change confirmed it: %v", changed)
 	}
 	if err := m.WriteFile("web", "notes.txt", write("")); err == nil {
 		t.Error("untracked file accepted")
 	}
 	failing := errors.New("boom")
-	if err := m.WriteFile("web", MetaFile, func() error { return failing }); !errors.Is(err, failing) {
+	if err := m.WriteFile("web", MetaFileName, func() error { return failing }); !errors.Is(err, failing) {
 		t.Errorf("err = %v", err)
 	}
 }
