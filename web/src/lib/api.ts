@@ -395,7 +395,24 @@ export interface StackDetail {
   env_hidden?: boolean;
   status?: 'ok' | 'needs_recovery';
   modified_outside?: string[];
+  scaler_paused?: ScalerPause;
   mounts_stack_dir?: boolean;
+}
+
+// Why the auto-scaler leaves a stack alone.
+export interface ScalerPause {
+  reason: 'modified_outside' | 'override_unconfirmed' | 'invalid_rules';
+  files?: string[];
+  override?: string;
+  error?: string;
+}
+
+// stackQuery is the ?host= and ?confirm_external= part of a stack action.
+function stackQuery(host: string, confirmExternal: boolean): string {
+  const params = new URLSearchParams();
+  if (host && host !== 'local') params.set('host', host);
+  if (confirmExternal) params.set('confirm_external', '1');
+  return params.toString() ? '?' + params.toString() : '';
 }
 
 // Result of POST /stacks/{name}/recover — the reconstructed compose
@@ -1902,8 +1919,8 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<ScaleCheck>(`/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/scale${qs}`);
     },
-    scale: (name: string, service: string, replicas: number, force = false, host = 'local') => {
-      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+    scale: (name: string, service: string, replicas: number, force = false, host = 'local', confirmExternal = false) => {
+      const qs = stackQuery(host, confirmExternal);
       return request<ScaleResult>(
         `/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/scale${qs}`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replicas, force }) }
@@ -1915,8 +1932,8 @@ export const api = {
       parallelism?: number;
       delay_seconds?: number;
       failure_action?: 'pause' | 'continue' | 'rollback';
-    }, host = 'local') => {
-      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+    }, host = 'local', confirmExternal = false) => {
+      const qs = stackQuery(host, confirmExternal);
       return request<any>(
         `/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/rolling-update${qs}`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) }

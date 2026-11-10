@@ -26,6 +26,7 @@ Things to know:
 - The replica count is not saved anywhere. A stack **Deploy** only recreates replica 1; the other replicas keep running with their previous configuration until you scale again. Scale down to 1 before a deploy that changes the service, then scale up again.
 - `deploy.replicas` in `compose.yaml` is ignored.
 - Scaling up waits for each new replica to pass its health check (or, without one, to keep running for a short grace period) before it creates the next one, as a deploy does.
+- When stack files changed outside Dockmesh, **Scale…** and **Rolling update…** first ask **Stack files changed outside Dockmesh** and list the files, like a deploy.
 - Scaling and rolling updates are refused while the stack's containers still bind-mount a temporary staging directory from an earlier version. Deploy the stack once to move that data into the stack directory.
 
 ## Rolling updates
@@ -81,7 +82,7 @@ The auto-scaler builds new replicas from the files on disk with nobody there to 
 - the stack's default environment override was never confirmed by a manual deploy, or
 - the stored rules are invalid.
 
-Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused** notice that says why. Review the files and deploy the stack once (or save the rules again when they are invalid); auto-scaling resumes on its next evaluation.
+Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused** notice that says why, and the stack page shows the same as a banner. Review the files and deploy the stack once (or save the rules again when they are invalid); auto-scaling resumes on its next evaluation.
 
 Before you rely on it, note the limits:
 

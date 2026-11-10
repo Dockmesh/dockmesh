@@ -5963,5 +5963,13 @@
   "volumes_truncated_notice": "Only the first 1 MiB is shown. Download for the full file.",
   "volumes_truncated_preview": "truncated preview",
   "volumes_download_failed": "Download failed",
-  "volumes_utc": "UTC"
+  "volumes_utc": "UTC",
+  "stacks_override_title": "Deploy with the {env} override?",
+  "stacks_override_message": "\"{name}\" has the default environment override {env}: {file} is merged over compose.yaml for this deploy.",
+  "stacks_override_body": "If you didn't expect an override, check {file} and the default environment on the Environment tab before deploying.",
+  "stacks_override_confirm": "Deploy with {env}",
+  "stacks_d_scaler_paused_title": "Auto-scaling is paused for this stack",
+  "stacks_d_scaler_paused_files": "{files} changed outside Dockmesh. Review the files, then deploy the stack once to confirm them; auto-scaling resumes after that.",
+  "stacks_d_scaler_paused_override": "The default environment override {env} was not confirmed by a manual deploy. Deploy the stack once; auto-scaling resumes after that.",
+  "stacks_d_scaler_paused_rules": "The scaling rules are invalid ({error}). Save them again through the API."
 }

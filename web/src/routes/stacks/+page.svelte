@@ -18,6 +18,7 @@
   import { Plus, Terminal, AlertTriangle, ArrowRight, FileCode2 } from 'lucide-svelte';
   import DeleteStackDialog from './_DeleteStackDialog.svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { confirmOverride } from '$lib/deployOverride';
   import { fmtDateTime } from '$lib/i18n';
 
   const canWrite = $derived(allowed('stacks.create'));
@@ -413,6 +414,7 @@
 
   async function deployStack(name: string, host: string) {
     try {
+      if (!(await confirmOverride(name))) return;
       const res = await stackOps.run(host, name, async () => {
         try {
           return await api.stacks.deploy(name, host);

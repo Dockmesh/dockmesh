@@ -85,6 +85,8 @@ Variables are used for `${VAR}` substitution in `compose.yaml` at deploy time. H
 
 If `compose.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` or a `compose.<env>.yaml` override file changed since Dockmesh last wrote them, the deploy first asks **Stack files changed outside Dockmesh** and lists the files. **Deploy anyway** deploys them as they are and records them as reviewed.
 
+When the stack has a default environment override (Environment tab), the deploy first asks **Deploy with the &lt;env&gt; override?** and names the `compose.<env>.yaml` file it merges over `compose.yaml`. This also applies to **Deploy** in the stack list.
+
 On the server's host the header shows live progress: pulling, creating, starting, healthcheck, then `deploy ok` or `deploy failed`. Deploys on agent hosts show no phases. A deploy on an agent may take up to 15 minutes, image pulls included.
 
 Common failures are translated into readable messages, for example a host port that is already in use or a pull that failed because registry credentials are missing (see [Registries](./registries.md)).
