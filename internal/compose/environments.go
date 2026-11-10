@@ -118,3 +118,40 @@ func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, over
 	}
 	return proj, strings.TrimRight(string(out), "\n") + "\n", nil
 }
+
+// MergeEnvironmentContent is MergeEnvironment on file contents already
+// read and checked: the base and the override are merged in a staging
+// directory holding only those two files, and relative bind mounts are
+// pointed at stackDir again.
+func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envContent, overrideName string, base, overlay []byte) (string, error) {
+	if err := ValidateEnvironmentName(overrideName); err != nil {
+		return "", err
+	}
+	if overrideName == "" {
+		return "", errors.New("no environment override given")
+	}
+	if overlay == nil {
+		return "", fmt.Errorf("%w: compose.%s.yaml", ErrEnvironmentNotFound, overrideName)
+	}
+	staged, err := os.MkdirTemp("", "dockmesh-merge-"+stackName+"-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(staged)
+	if err := os.WriteFile(filepath.Join(staged, "compose.yaml"), base, 0o600); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(staged, "compose."+overrideName+".yaml"), overlay, 0o600); err != nil {
+		return "", err
+	}
+	proj, _, err := MergeEnvironment(ctx, staged, stackName, envContent, overrideName)
+	if err != nil {
+		return "", err
+	}
+	RebaseBindSources(proj, staged, stackDir)
+	out, err := proj.MarshalYAML()
+	if err != nil {
+		return "", fmt.Errorf("marshal merged yaml: %w", err)
+	}
+	return strings.TrimRight(string(out), "\n") + "\n", nil
+}

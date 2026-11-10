@@ -388,6 +388,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	tr := tar.NewReader(gz)
 
 	var composeContent, envContent string
+	var restored []string
 	entries := 0
 	for {
 		hdr, err := tr.Next()
@@ -421,6 +422,10 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				composeContent = string(buf)
 			case ".env":
 				envContent = string(buf)
+			default:
+				if hdr.Typeflag == tar.TypeReg && buf != nil {
+					restored = append(restored, rel)
+				}
 			}
 		case strings.HasPrefix(name, "volumes/") && strings.HasSuffix(name, ".tar.gz"):
 			volName := strings.TrimSuffix(strings.TrimPrefix(name, "volumes/"), ".tar.gz")
@@ -450,6 +455,11 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	// and the recorded checksums.
 	if _, err := s.stacks.Update(stackName, composeContent, envContent); err != nil {
 		return fmt.Errorf("register restored stack with manager: %w", err)
+	}
+	for _, rel := range restored {
+		if err := s.stacks.RecordFile(stackName, rel); err != nil {
+			return fmt.Errorf("record restored %s: %w", rel, err)
+		}
 	}
 	slog.Info("stack restored from backup", "stack", stackName, "files", len(report.FilesRestored),
 		"volumes", len(report.VolumesRestored), "warnings", len(report.Warnings))

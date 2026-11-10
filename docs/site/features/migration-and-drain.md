@@ -19,7 +19,7 @@ The check runs when you start the migration (the API answers `409 Conflict` and 
 2. Pick the **Target host**. Dockmesh runs the **Pre-flight checks** and shows the result.
 3. If all checks pass, click **Start migration**.
 
-You need `stacks.migrate` on the stack and the right to deploy it on the target host. If `compose.yaml` or `.env` were changed outside Dockmesh, you are asked to confirm the changes first, like a deploy does.
+You need `stacks.migrate` on the stack and the right to deploy it on the target host. If the stack files were changed outside Dockmesh, you are asked to confirm the changes first, like a deploy does.
 
 The migration runs in the background. The stack page shows the target and the current phase, the active-migration indicator in the top bar opens a list of running and recent migrations, and the host's **Migrations** tab lists the migrations involving it. A notification is posted when the migration completes or fails.
 

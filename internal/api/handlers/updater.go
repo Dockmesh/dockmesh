@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
 )
@@ -38,7 +39,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	op := h.startImageUpdateOp(dr, id, "", false)
 	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
 	op.Finish(err)
-	if errors.Is(err, updater.ErrBusy) || errors.Is(err, operations.ErrCancelled) {
+	if errors.Is(err, updater.ErrBusy) || errors.Is(err, operations.ErrCancelled) || errors.Is(err, stacks.ErrModifiedOutside) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -84,7 +85,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "already rolled back")
 		return
 	}
-	if errors.Is(err, updater.ErrRollbackImageGone) || errors.Is(err, updater.ErrBusy) {
+	if errors.Is(err, updater.ErrRollbackImageGone) || errors.Is(err, updater.ErrBusy) || errors.Is(err, stacks.ErrModifiedOutside) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -150,12 +151,16 @@ func trim(s string) string {
 
 // allowStackRebuild additionally requires stacks.deploy when the update
 // rebuilds the container from its stack's compose.yaml, since that
-// applies compose changes saved since the last deploy.
+// applies compose changes saved since the last deploy, and refuses stack
+// files changed outside Dockmesh like a deploy does.
 func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, containerID string) bool {
 	stack := h.Updater.ManagedStack(r.Context(), containerID)
-	if stack == "" || middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
+	if stack == "" {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "updating a container of stack "+stack+" needs the stacks.deploy permission")
-	return false
+	if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
+		writeError(w, http.StatusForbidden, "updating a container of stack "+stack+" needs the stacks.deploy permission")
+		return false
+	}
+	return h.checkStackFiles(w, r, stack)
 }

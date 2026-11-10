@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
@@ -33,10 +34,17 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 	if err := g.stacks.CheckGitDeploy(ctx, stackName); err != nil {
 		return nil, err
 	}
-	detail, err := g.stacks.Get(stackName)
+	snap, err := g.stacks.Snapshot(stackName)
 	if err != nil {
 		return nil, err
 	}
+	if len(snap.Changed) > 0 {
+		if err := g.stacks.CheckGitDeploy(ctx, stackName); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(snap.Changed, ", "))
+	}
+	detail := snap.Detail
 	dir, err := g.stacks.Dir(stackName)
 	if err != nil {
 		return nil, err
@@ -60,10 +68,7 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 		if err != nil {
 			return fmt.Errorf("host %s: %w", hostID, err)
 		}
-		if spec, err = deploy.Resolve(ctx, g.globals, dir, stackName, detail.Compose, detail.Env); err != nil {
-			return err
-		}
-		if err := g.stacks.CheckOverride(stackName, spec.Override); err != nil {
+		if spec, err = deploy.ResolveSnapshot(ctx, g.globals, g.stacks, dir, snap); err != nil {
 			return err
 		}
 		// Force-pull so a new push under the same tag is picked up even

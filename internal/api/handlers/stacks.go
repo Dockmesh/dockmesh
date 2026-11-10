@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	"github.com/go-chi/chi/v5"
@@ -318,6 +319,11 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
+		}
+		if v, err := scaling.Check(h.Stacks, name); err != nil {
+			slog.Warn("auto-scaling check", "stack", name, "err", err)
+		} else {
+			d.ScalerPaused = v.Pause
 		}
 		if !h.canReadStackEnv(r, name) {
 			hideStackEnv(d)
@@ -1222,29 +1228,37 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 // until the request confirms them with ?confirm_external=1, which records
 // them as reviewed.
 func (h *Handlers) checkStackFiles(w http.ResponseWriter, r *http.Request, name string) bool {
-	changed, err := h.Stacks.ModifiedOutside(name)
+	_, ok := h.verifiedStack(w, r, name)
+	return ok
+}
+
+// verifiedStack is checkStackFiles returning the stack files it checked.
+// A caller that builds containers from them must use these, not a later
+// read of the directory.
+func (h *Handlers) verifiedStack(w http.ResponseWriter, r *http.Request, name string) (*stacks.Detail, bool) {
+	snap, err := h.Stacks.Snapshot(name)
 	if err != nil {
 		writeStackError(w, err)
-		return false
+		return nil, false
 	}
-	if len(changed) == 0 {
-		return true
+	if len(snap.Changed) == 0 {
+		return snap.Detail, true
 	}
 	if r.URL.Query().Get("confirm_external") != "1" {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": stacks.ErrModifiedOutside.Error(),
 			"code":  "modified_outside",
 			"stack": name,
-			"files": changed,
+			"files": snap.Changed,
 		})
-		return false
+		return nil, false
 	}
-	if err := h.Stacks.AcceptExternal(r.Context(), name); err != nil {
+	if err := h.Stacks.AcceptSnapshot(r.Context(), snap); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return false
+		return nil, false
 	}
-	h.audit(r, "stack.accept_external_changes", name, map[string]any{"files": changed})
-	return true
+	h.audit(r, "stack.accept_external_changes", name, map[string]any{"files": snap.Changed})
+	return snap.Detail, true
 }
 
 // deployErrorStatus classifies a deploy failure into the right HTTP

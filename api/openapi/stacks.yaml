@@ -689,6 +689,9 @@ paths:
       operationId: stacks.scale_set
       tags: [stacks]
       summary: Scale a single service to N replicas
+      description: New replicas are built from the stack files on disk, so files changed outside Dockmesh are refused like a deploy until the request confirms them.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -697,7 +700,10 @@ paths:
               type: object
               required: [replicas]
               properties:
-                replicas: {type: integer, minimum: 0}
+                replicas: {type: integer, minimum: 0, maximum: 100}
+                force:
+                  type: boolean
+                  description: Scale a service that looks stateful anyway.
       responses:
         "200":
           description: Scale result.
@@ -714,7 +720,28 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackOnOtherHost"}
+        "409":
+          description: |
+            Stack files changed outside Dockmesh (`code: modified_outside`;
+            repeat with `confirm_external=1` after reviewing `files`), the
+            stack is on another host (`code: stack_on_other_host`), or the
+            service looks stateful (`warning: stateful_service`; repeat with
+            `force: true`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host]}
+                  stack: {type: string}
+                  host_id: {type: string}
+                  files:
+                    type: array
+                    items: {type: string}
+                  warning: {type: string, enum: [stateful_service]}
+                  message: {type: string}
+                  force_needed: {type: boolean}
         "422":
           description: Scale blocked by a safety check (singleton port/volume).
           content:
@@ -740,6 +767,11 @@ paths:
         return 500 with a clear message until the agent protocol carries the
         matching frame type. Run the stack on the dockmesh server host to
         use this endpoint.
+
+        Stack files changed outside Dockmesh are refused like a deploy
+        until the request confirms them.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: false
         content:
@@ -755,7 +787,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackOnOtherHost"}
+        "409": {$ref: "#/components/responses/StackDeployConflict"}
         "500":
           description: Rollout paused or failed. When the engine produced a partial result it is returned inside `result`.
           content:
@@ -1254,10 +1286,27 @@ components:
         modified_outside:
           type: array
           items: {type: string}
-          description: Stack files changed outside Dockmesh since it last wrote them; the next deploy needs `confirm_external=1`.
+          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, migration, scale, rolling update or image update built from them needs `confirm_external=1`.
+        scaler_paused: {$ref: "#/components/schemas/ScalerPause"}
         mounts_stack_dir:
           type: boolean
           description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
+    ScalerPause:
+      type: object
+      description: Set while the auto-scaler leaves the stack alone. A deploy confirms changed files or the default override; invalid rules need saving again.
+      required: [reason]
+      properties:
+        reason: {type: string, enum: [modified_outside, override_unconfirmed, invalid_rules]}
+        files:
+          type: array
+          items: {type: string}
+          description: Files changed outside Dockmesh (`modified_outside`).
+        override:
+          type: string
+          description: Default environment override no manual deploy confirmed (`override_unconfirmed`).
+        error:
+          type: string
+          description: Why the rules or the meta file don't validate (`invalid_rules`).
     StackModifiedOnDisk:
       type: object
       required: [error, code, stack, files, current]

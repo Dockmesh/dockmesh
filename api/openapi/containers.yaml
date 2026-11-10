@@ -211,8 +211,12 @@ paths:
         (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
         Because a stack container is rebuilt from compose.yaml, updating
         one also needs `stacks.deploy`.
+        Stack files changed outside Dockmesh are refused like a deploy
+        (`code: modified_outside`) until the request confirms them with
+        `confirm_external=1`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Update complete, or `updated=false` when already up to date.
@@ -223,10 +227,10 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: An update of this container or its stack is already running.
+          description: "An update of this container or its stack is already running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -243,8 +247,12 @@ paths:
         `/containers/{id}/update`. Stack containers keep their compose.yaml
         config; the stack's deploy history notes that the next deploy uses
         the image compose.yaml names again.
+        Stack files changed outside Dockmesh are refused like a deploy
+        (`code: modified_outside`) until the request confirms them with
+        `confirm_external=1`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -265,10 +273,10 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info
@@ -689,7 +697,11 @@ paths:
         pinned to the full container id. Each item is authorised again
         under the caller's current role, scope and session (or API token)
         right before it runs; an item that is no longer allowed fails with
-        "not started".
+        "not started". Stack files changed outside Dockmesh reject the
+        request with 409 `modified_outside` unless it confirms them with
+        `confirm_external=1`; an item whose files change after that fails.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -719,6 +731,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackModifiedOutside"}
         "503":
           description: The updater is not configured.
           content:

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 // ScalingConfig is the top-level scaling section inside
@@ -114,7 +116,7 @@ type MetaFile struct {
 // LoadMeta reads and parses the .dockmesh.meta.json from a stack dir.
 // Returns nil (no error) if the file doesn't exist.
 func LoadMeta(stackDir string) (*MetaFile, error) {
-	path := filepath.Join(stackDir, ".dockmesh.meta.json")
+	path := filepath.Join(stackDir, stacks.MetaFileName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -135,7 +137,14 @@ func SaveMeta(stackDir string, m *MetaFile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(stackDir, ".dockmesh.meta.json"), data, 0o644)
+	// Through a root, so a symlink a container put in place of the file
+	// can't send the write outside the stack directory.
+	root, err := os.OpenRoot(stackDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(stacks.MetaFileName, data, 0o644)
 }
 
 // LoadRules loads the scaling config for a specific stack directory.
