@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ var (
 	ErrInvalidAssertion = errors.New("invalid SAML assertion")
 	ErrEmailRequired    = errors.New("provider did not return an email attribute")
 	ErrNameIDFormat     = errors.New("nameid_format must be persistent, unspecified or emailAddress")
+	errNoSigningCert    = errors.New("metadata has no signing cert")
 	ErrRequestUsed      = errors.New("this SAML response was already used or its sign-in request expired; sign in again")
 )
 
@@ -103,13 +105,26 @@ type Provider struct {
 	UpdatedAt         time.Time      `json:"updated_at"`
 
 	AllowEmailLink bool `json:"allow_email_link"`
+
+	IdPMetadataURL    string     `json:"idp_metadata_url,omitempty"`
+	MetadataFetchedAt *time.Time `json:"metadata_fetched_at,omitempty"`
+	MetadataError     string     `json:"metadata_error,omitempty"`
+	SPEntityID        string     `json:"sp_entity_id,omitempty"`
+	SigningCertPEM    string     `json:"signing_cert_pem,omitempty"`
+	EncryptionCertPEM string     `json:"encryption_cert_pem,omitempty"`
+	encryptionKey     string
 }
 
-// ProviderInput is the create/update payload.
+// ProviderInput is the create/update payload. For the pointer fields nil
+// keeps the stored value on update and an empty string clears it.
 type ProviderInput struct {
 	Slug              string         `json:"slug"`
 	DisplayName       string         `json:"display_name"`
 	IdPMetadataXML    string         `json:"idp_metadata_xml"`
+	IdPMetadataURL    string         `json:"idp_metadata_url"`
+	SPEntityID        *string        `json:"sp_entity_id,omitempty"`
+	SigningCertPEM    *string        `json:"signing_cert_pem,omitempty"`
+	EncryptionCertPEM *string        `json:"encryption_cert_pem,omitempty"`
 	NameIDFormat      string         `json:"nameid_format"`
 	SubjectAttribute  string         `json:"subject_attribute"`
 	UsernameAttribute string         `json:"username_attribute"`
@@ -142,6 +157,9 @@ type Service struct {
 	reqMu    sync.Mutex
 	requests map[string]time.Time // AuthnRequest ID -> expiry
 	reqSwept time.Time
+
+	// metadataClient replaces the guarded fetch client in tests.
+	metadataClient *http.Client
 }
 
 func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, baseURL string) *Service {
@@ -161,7 +179,8 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 		SELECT id, slug, display_name, entity_id, sso_url, slo_url,
 		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
-		       created_at, updated_at
+		       created_at, updated_at, idp_metadata_url, metadata_fetched_at, metadata_error,
+		       sp_entity_id, signing_cert_pem, encryption_cert_pem, encryption_key
 		FROM saml_providers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -219,7 +238,8 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 		       idp_metadata_xml, idp_cert_pem,
 		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
-		       created_at, updated_at
+		       created_at, updated_at, idp_metadata_url, metadata_fetched_at, metadata_error,
+		       sp_entity_id, signing_cert_pem, encryption_cert_pem, encryption_key
 		FROM saml_providers WHERE id = ?`, id)
 	p, err := scanFullRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -245,7 +265,8 @@ func (s *Service) getProviderBySlug(ctx context.Context, slug string) (*Provider
 		       idp_metadata_xml, idp_cert_pem,
 		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
-		       created_at, updated_at
+		       created_at, updated_at, idp_metadata_url, metadata_fetched_at, metadata_error,
+		       sp_entity_id, signing_cert_pem, encryption_cert_pem, encryption_key
 		FROM saml_providers WHERE slug = ? AND enabled = 1`, slug)
 	p, err := scanFullRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -261,12 +282,19 @@ func (s *Service) getProviderBySlug(ctx context.Context, slug string) (*Provider
 }
 
 func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provider, error) {
-	if in.Slug == "" || in.IdPMetadataXML == "" {
-		return nil, errors.New("slug and idp_metadata_xml required")
+	if in.Slug == "" || (in.IdPMetadataXML == "" && in.IdPMetadataURL == "") {
+		return nil, errors.New("slug and idp_metadata_xml or idp_metadata_url required")
+	}
+	opts, err := s.resolveOptions(ctx, &in, nil)
+	if err != nil {
+		return nil, err
 	}
 	meta, err := parseIdPMetadata(in.IdPMetadataXML)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
+	}
+	if meta.CertPEM == "" && opts.signingCert == "" {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMetadata, errNoSigningCert)
 	}
 	if in.NameIDFormat, err = checkNameIDFormat(in.NameIDFormat); err != nil {
 		return nil, err
@@ -297,12 +325,16 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			(slug, display_name, entity_id, sso_url, slo_url,
 			 idp_metadata_xml, idp_cert_pem,
 			 nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
-			 enabled, is_default)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 enabled, is_default,
+			 idp_metadata_url, metadata_fetched_at, metadata_error,
+			 sp_entity_id, signing_cert_pem, encryption_cert_pem, encryption_key)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, in.Slug, in.DisplayName, meta.EntityID, meta.SSOURL, nullable(meta.SLOURL),
 		in.IdPMetadataXML, meta.CertPEM,
 		in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute, in.GroupsAttribute, in.DefaultRole,
-		boolInt(in.Enabled), boolInt(in.IsDefault))
+		boolInt(in.Enabled), boolInt(in.IsDefault),
+		opts.metadataURL, opts.fetchedAt, opts.fetchError,
+		opts.spEntityID, opts.signingCert, opts.encCert, opts.encKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, fmt.Errorf("a provider with that slug already exists")
@@ -333,6 +365,14 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		return nil, 0, err
 	}
 	var unlinked int64
+	cur, err := s.GetProvider(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
+	opts, err := s.resolveOptions(ctx, &in, cur)
+	if err != nil {
+		return nil, 0, err
+	}
 	// Re-parse metadata only if the body supplied a non-empty value; an
 	// empty string means "keep the stored XML" so admins can tweak
 	// attribute mappings without re-pasting the whole blob.
@@ -340,6 +380,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		meta, err := parseIdPMetadata(in.IdPMetadataXML)
 		if err != nil {
 			return nil, 0, fmt.Errorf("%w: %w", ErrInvalidMetadata, err)
+		}
+		if meta.CertPEM == "" && opts.signingCert == "" {
+			return nil, 0, fmt.Errorf("%w: %w", ErrInvalidMetadata, errNoSigningCert)
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -365,13 +408,18 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 				idp_metadata_xml = ?, idp_cert_pem = ?,
 				nameid_format = ?, subject_attribute = ?, username_attribute = ?, email_attribute = ?,
 				groups_attribute = ?, default_role = ?,
-				enabled = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+				enabled = ?, is_default = ?,
+				idp_metadata_url = ?, metadata_fetched_at = ?, metadata_error = ?,
+				sp_entity_id = ?, signing_cert_pem = ?, encryption_cert_pem = ?, encryption_key = ?,
+				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, meta.EntityID, meta.SSOURL, nullable(meta.SLOURL),
 			in.IdPMetadataXML, meta.CertPEM,
 			in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute,
 			in.GroupsAttribute, in.DefaultRole,
-			boolInt(in.Enabled), boolInt(in.IsDefault), id)
+			boolInt(in.Enabled), boolInt(in.IsDefault),
+			opts.metadataURL, opts.fetchedAt, opts.fetchError,
+			opts.spEntityID, opts.signingCert, opts.encCert, opts.encKey, id)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -384,11 +432,13 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 				display_name = ?, nameid_format = ?, subject_attribute = ?, username_attribute = ?,
 				email_attribute = ?, groups_attribute = ?,
 				default_role = ?, enabled = ?, is_default = ?,
+				sp_entity_id = ?, signing_cert_pem = ?, encryption_cert_pem = ?, encryption_key = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute,
 			in.EmailAttribute, in.GroupsAttribute,
-			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
+			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault),
+			opts.spEntityID, opts.signingCert, opts.encCert, opts.encKey, id)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -503,10 +553,13 @@ type TestReport struct {
 	HasCert  bool   `json:"has_cert"`
 }
 
-func (s *Service) TestMetadata(xml string) (*TestReport, error) {
+func (s *Service) TestMetadata(xml string, pinnedCert bool) (*TestReport, error) {
 	meta, err := parseIdPMetadata(xml)
 	if err != nil {
 		return nil, err
+	}
+	if meta.CertPEM == "" && !pinnedCert {
+		return nil, errNoSigningCert
 	}
 	return &TestReport{
 		EntityID: meta.EntityID,
@@ -614,15 +667,21 @@ func scanListRow(r scanner) (*Provider, error) {
 	var p Provider
 	var slo, lastTestErr sql.NullString
 	var enabled, isDefault int
-	var lastTestedAt sql.NullTime
+	var lastTestedAt, fetchedAt sql.NullTime
 	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.EntityID, &p.SSOURL, &slo,
 		&p.NameIDFormat, &p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
 		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,
+		&p.IdPMetadataURL, &fetchedAt, &p.MetadataError,
+		&p.SPEntityID, &p.SigningCertPEM, &p.EncryptionCertPEM, &p.encryptionKey,
 	); err != nil {
 		return nil, err
+	}
+	if fetchedAt.Valid {
+		t := fetchedAt.Time
+		p.MetadataFetchedAt = &t
 	}
 	if slo.Valid {
 		p.SLOURL = slo.String
@@ -648,7 +707,7 @@ func scanFullRow(r scanner) (*Provider, error) {
 	var p Provider
 	var slo, lastTestErr sql.NullString
 	var enabled, isDefault int
-	var lastTestedAt sql.NullTime
+	var lastTestedAt, fetchedAt sql.NullTime
 	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.EntityID, &p.SSOURL, &slo,
@@ -656,8 +715,14 @@ func scanFullRow(r scanner) (*Provider, error) {
 		&p.NameIDFormat, &p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
 		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,
+		&p.IdPMetadataURL, &fetchedAt, &p.MetadataError,
+		&p.SPEntityID, &p.SigningCertPEM, &p.EncryptionCertPEM, &p.encryptionKey,
 	); err != nil {
 		return nil, err
+	}
+	if fetchedAt.Valid {
+		t := fetchedAt.Time
+		p.MetadataFetchedAt = &t
 	}
 	if slo.Valid {
 		p.SLOURL = slo.String
