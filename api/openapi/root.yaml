@@ -190,7 +190,7 @@ components:
       in: query
       required: false
       schema: {type: string, enum: ["1"]}
-      description: Deploy stack files changed outside Dockmesh as they are and record them as reviewed.
+      description: Use stack files changed outside Dockmesh as they are and record them as reviewed.
     DrainIDPath:
       name: drain_id
       in: path
@@ -201,7 +201,7 @@ components:
       description: Drain run id.
   responses:
     StackModifiedOutside:
-      description: compose.yaml or .env changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
       content:
         application/json:
           schema:
@@ -227,7 +227,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: compose.yaml or .env changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
       content:
         application/json:
           schema:

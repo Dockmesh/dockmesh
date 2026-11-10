@@ -34,7 +34,7 @@ Names must be 2 to 63 characters, match `^[a-z0-9][a-z0-9-]*[a-z0-9]$` (lowercas
 You can edit stack files with any editor, `git pull` or `rsync`. Dockmesh notices such changes in three ways:
 
 - **While a stack page is open**, a watcher on the stacks root and each stack directory reports changes to `compose.yaml`, `.env` and `.dockmesh.meta.json` as a banner ("… was modified outside Dockmesh") with **Reload** and **Ignore**. Dockmesh's own writes are not reported.
-- **On every deploy**, Dockmesh compares `compose.yaml`, `.env` and `.env.age` with the checksums it recorded when it last wrote them. The checksums are kept in the database, so a container that can write the stack directory can't update them. Changed files are listed on the stack page ("Modified outside Dockmesh: …"), and a deploy, rollback or migration from them asks for confirmation first (**Deploy anyway**). A git auto-deploy can't ask, so it is held back and the stack's deployers get a notice to review and deploy by hand.
+- **Before anything is built from the stack files**, Dockmesh compares `compose.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` and every `compose.<env>.yaml` override file with the checksums it recorded when it last wrote them. A new or deleted override file counts as a change too. The checksums are kept in the database, so a container that can write the stack directory can't update them. Changed files are listed on the stack page ("Modified outside Dockmesh: …"), and a deploy, rollback, migration, scale, rolling update or image update of a stack container asks for confirmation first (**Deploy anyway**). A git auto-deploy can't ask, so it is held back and the stack's deployers get a notice to review and deploy by hand. The auto-scaler can't ask either: it leaves the stack alone and raises a notice until the files are confirmed.
 - **On every save from the editor**, Dockmesh sends the version of `compose.yaml` and `.env` the editor loaded. If either file changed on disk in the meantime, nothing is written and a dialog shows the difference between your version and the one on disk. **Use the version on disk** drops your edits and reloads, **Save mine anyway** overwrites the file and is recorded in the audit log, and **Cancel** goes back to the editor with your edits intact.
 
 Nothing is redeployed automatically. The next deploy picks up whatever is on disk.
@@ -47,7 +47,7 @@ A stack directory you create by hand while the server is running does not appear
 
 - **Deployment record:** one row per stack name with the host ID and a status (`deployed` or `stopped`). A stack that was never deployed has no record and shows as **Not deployed**; until its first deploy it belongs to the host it was created for.
 - **Deploy history:** for each deploy the base `compose.yaml`, the name of the environment override it used, and the image tag each service ran. Rollback redeploys one of these entries. The `.env` is not stored.
-- **File checksums** of `compose.yaml`, `.env` and `.env.age` as Dockmesh last wrote them.
+- **File checksums** of `compose.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` and the `compose.<env>.yaml` override files as Dockmesh last wrote them.
 - **Dependencies** between stacks, **git-source** bindings, **templates** and **global environment variables**.
 
 ### One host per stack

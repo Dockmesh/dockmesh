@@ -2748,8 +2748,12 @@ paths:
         (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
         Because a stack container is rebuilt from compose.yaml, updating
         one also needs `stacks.deploy`.
+        Stack files changed outside Dockmesh are refused like a deploy
+        (`code: modified_outside`) until the request confirms them with
+        `confirm_external=1`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Update complete, or `updated=false` when already up to date.
@@ -2760,10 +2764,18 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: An update of this container or its stack is already running.
+          description: "An update of this container or its stack is already running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [modified_outside]}
+                  stack: {type: string}
+                  files:
+                    type: array
+                    items: {type: string}
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -2780,8 +2792,12 @@ paths:
         `/containers/{id}/update`. Stack containers keep their compose.yaml
         config; the stack's deploy history notes that the next deploy uses
         the image compose.yaml names again.
+        Stack files changed outside Dockmesh are refused like a deploy
+        (`code: modified_outside`) until the request confirms them with
+        `confirm_external=1`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -2802,10 +2818,18 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, or the stack files changed outside Dockmesh (`modified_outside`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [modified_outside]}
+                  stack: {type: string}
+                  files:
+                    type: array
+                    items: {type: string}
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info
@@ -3226,7 +3250,11 @@ paths:
         pinned to the full container id. Each item is authorised again
         under the caller's current role, scope and session (or API token)
         right before it runs; an item that is no longer allowed fails with
-        "not started".
+        "not started". Stack files changed outside Dockmesh reject the
+        request with 409 `modified_outside` unless it confirms them with
+        `confirm_external=1`; an item whose files change after that fails.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -3256,6 +3284,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackModifiedOutside"}
         "503":
           description: The updater is not configured.
           content:
@@ -7073,6 +7102,9 @@ paths:
       operationId: stacks.scale_set
       tags: [stacks]
       summary: Scale a single service to N replicas
+      description: New replicas are built from the stack files on disk, so files changed outside Dockmesh are refused like a deploy until the request confirms them.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -7081,7 +7113,10 @@ paths:
               type: object
               required: [replicas]
               properties:
-                replicas: {type: integer, minimum: 0}
+                replicas: {type: integer, minimum: 0, maximum: 100}
+                force:
+                  type: boolean
+                  description: Scale a service that looks stateful anyway.
       responses:
         "200":
           description: Scale result.
@@ -7098,7 +7133,28 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackOnOtherHost"}
+        "409":
+          description: |
+            Stack files changed outside Dockmesh (`code: modified_outside`;
+            repeat with `confirm_external=1` after reviewing `files`), the
+            stack is on another host (`code: stack_on_other_host`), or the
+            service looks stateful (`warning: stateful_service`; repeat with
+            `force: true`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host]}
+                  stack: {type: string}
+                  host_id: {type: string}
+                  files:
+                    type: array
+                    items: {type: string}
+                  warning: {type: string, enum: [stateful_service]}
+                  message: {type: string}
+                  force_needed: {type: boolean}
         "422":
           description: Scale blocked by a safety check (singleton port/volume).
           content:
@@ -7124,6 +7180,11 @@ paths:
         return 500 with a clear message until the agent protocol carries the
         matching frame type. Run the stack on the dockmesh server host to
         use this endpoint.
+
+        Stack files changed outside Dockmesh are refused like a deploy
+        until the request confirms them.
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: false
         content:
@@ -7139,7 +7200,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackOnOtherHost"}
+        "409": {$ref: "#/components/responses/StackDeployConflict"}
         "500":
           description: Rollout paused or failed. When the engine produced a partial result it is returned inside `result`.
           content:
@@ -10050,10 +10111,27 @@ components:
         modified_outside:
           type: array
           items: {type: string}
-          description: Stack files changed outside Dockmesh since it last wrote them; the next deploy needs `confirm_external=1`.
+          description: Stack files (compose.yaml, .env, .dockmesh.meta.json, compose.<env>.yaml overrides) changed outside Dockmesh since it last wrote them; the next deploy, scale or rolling update needs `confirm_external=1`.
+        scaler_paused: {$ref: "#/components/schemas/ScalerPause"}
         mounts_stack_dir:
           type: boolean
           description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
+    ScalerPause:
+      type: object
+      description: Set while the auto-scaler leaves the stack alone. A deploy confirms changed files or the default override; invalid rules need saving again.
+      required: [reason]
+      properties:
+        reason: {type: string, enum: [modified_outside, override_unconfirmed, invalid_rules]}
+        files:
+          type: array
+          items: {type: string}
+          description: Files changed outside Dockmesh (`modified_outside`).
+        override:
+          type: string
+          description: Default environment override no manual deploy confirmed (`override_unconfirmed`).
+        error:
+          type: string
+          description: Why the rules or the meta file don't validate (`invalid_rules`).
     StackModifiedOnDisk:
       type: object
       required: [error, code, stack, files, current]
@@ -10551,7 +10629,7 @@ components:
       in: query
       required: false
       schema: {type: string, enum: ["1"]}
-      description: Deploy stack files changed outside Dockmesh as they are and record them as reviewed.
+      description: Use stack files changed outside Dockmesh as they are and record them as reviewed.
     DrainIDPath:
       name: drain_id
       in: path
@@ -10562,7 +10640,7 @@ components:
       description: Drain run id.
   responses:
     StackModifiedOutside:
-      description: compose.yaml or .env changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
       content:
         application/json:
           schema:
@@ -10588,7 +10666,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: compose.yaml or .env changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
       content:
         application/json:
           schema:

@@ -83,7 +83,7 @@ Variables are used for `${VAR}` substitution in `compose.yaml` at deploy time. H
 
 **Deploy** runs the stack on the host selected in the host switcher (with **All hosts** selected, on the host it is deployed on or was created for). Every deploy pulls missing images and recreates every container; the details are in [How a deploy reconciles](../concepts/stacks.md#how-a-deploy-reconciles).
 
-If `compose.yaml`, `.env` or `.env.age` changed since Dockmesh last wrote them, the deploy first asks **Stack files changed outside Dockmesh** and lists the files. **Deploy anyway** deploys them as they are and records them as reviewed.
+If `compose.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` or a `compose.<env>.yaml` override file changed since Dockmesh last wrote them, the deploy first asks **Stack files changed outside Dockmesh** and lists the files. **Deploy anyway** deploys them as they are and records them as reviewed.
 
 On the server's host the header shows live progress: pulling, creating, starting, healthcheck, then `deploy ok` or `deploy failed`. Deploys on agent hosts show no phases. A deploy on an agent may take up to 15 minutes, image pulls included.
 
