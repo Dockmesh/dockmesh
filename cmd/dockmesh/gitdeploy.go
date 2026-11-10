@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
