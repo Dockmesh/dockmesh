@@ -3,7 +3,7 @@
   import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
-  import { api, ApiError, runRestorable, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
+  import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
@@ -25,6 +25,7 @@
   import DiffView from '../_DiffView.svelte';
   import { diffLines } from '$lib/diffLines';
   import { isSecretKey } from '$lib/envSecrets';
+  import { confirmOverride } from '$lib/deployOverride';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
   import { fmtDateTime, fmtNumber, fmtTime } from '$lib/i18n';
@@ -137,8 +138,9 @@
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let modifiedOutside = $state<string[]>([]);
   let mountsStackDir = $state(false);
+  let scalerPaused = $state<ScalerPause | null>(null);
 
-  // A deploy of stack files changed outside Dockmesh needs an explicit OK.
+  // An action built from stack files changed outside Dockmesh needs an explicit OK.
   async function confirmExternalChanges(err: unknown): Promise<boolean> {
     if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
     const files: string = (err.body.files as string[] | undefined)?.join(', ') || m.stacks_ext_files_fallback();
@@ -964,11 +966,15 @@
     rollingBusy = true;
     rollingErr = null;
     try {
-      const res = await api.stacks.rollingUpdate(name, rollingTarget, {
-        order: rollingOrder,
-        parallelism: rollingParallel,
-        failure_action: rollingFailure
-      }, stackHost);
+      const opts = { order: rollingOrder, parallelism: rollingParallel, failure_action: rollingFailure };
+      let res;
+      try {
+        res = await api.stacks.rollingUpdate(name, rollingTarget, opts, stackHost);
+      } catch (err) {
+        if (!(await confirmExternalChanges(err))) throw err;
+        res = await api.stacks.rollingUpdate(name, rollingTarget, opts, stackHost, true);
+        modifiedOutside = [];
+      }
       toast.success(m.stacks_d_rolling_done(), `${m.stacks_d_rolling_detail({ service: rollingTarget, updated: res.updated, total: res.total_replicas })}${res.rolled_back ? m.stacks_d_rolled_back_suffix() : ''}`);
       showRolling = false;
       await loadReplicaCounts();
@@ -1005,7 +1011,14 @@
   async function doScale() {
     scaleBusy = true;
     try {
-      const res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, stackHost);
+      let res;
+      try {
+        res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, stackHost);
+      } catch (err) {
+        if (!(await confirmExternalChanges(err))) throw err;
+        res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, stackHost, true);
+        modifiedOutside = [];
+      }
       toast.success(m.stacks_d_scaled(), `${scaleTarget}: ${res.previous} → ${res.current}`);
       showScale = false;
       await loadReplicaCounts();
@@ -1242,6 +1255,7 @@
       envHidden = !!detail.env_hidden;
       modifiedOutside = detail.modified_outside ?? [];
       mountsStackDir = !!detail.mounts_stack_dir;
+      scalerPaused = detail.scaler_paused ?? null;
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       if (stackStatus === 'needs_recovery') {
         latestBackupRun = undefined;
@@ -1333,15 +1347,18 @@
     if (anyBusy) return;
     busy = true;
     try {
+      const environment = await confirmOverride(name);
+      if (environment === null) return;
       const res = await stackOps.run(stackHost, name, async () => {
         try {
-          return await api.stacks.deploy(name, stackHost);
+          return await api.stacks.deploy(name, stackHost, environment || undefined);
         } catch (err) {
           if (!(await confirmExternalChanges(err))) throw err;
-          return api.stacks.deploy(name, stackHost, undefined, true);
+          return api.stacks.deploy(name, stackHost, environment || undefined, true);
         }
       });
       modifiedOutside = [];
+      if (scalerPaused && scalerPaused.reason !== 'invalid_rules') scalerPaused = null;
       toast.success(m.stacks_deployed(), m.stacks_d_deployed_on({ count: res.services.length, host: hosts.selected?.name ?? m.common_local() }));
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
@@ -1670,6 +1687,24 @@
       <div class="stk-notice-t">
         <b>{m.stacks_d_modified_outside({ files: modifiedOutside.join(', ') })}</b>
         <span>{m.stacks_d_modified_outside_hint()}</span>
+      </div>
+    </div>
+  {/if}
+
+  {#if scalerPaused}
+    <div class="stk-notice warn stk-notice-row" data-testid="scaler-paused">
+      <AlertTriangle size={15} />
+      <div class="stk-notice-t">
+        <b>{m.stacks_d_scaler_paused_title()}</b>
+        <span>
+          {#if scalerPaused.reason === 'modified_outside'}
+            {m.stacks_d_scaler_paused_files({ files: (scalerPaused.files ?? []).join(', ') })}
+          {:else if scalerPaused.reason === 'override_unconfirmed'}
+            {m.stacks_d_scaler_paused_override({ env: scalerPaused.override ?? '' })}
+          {:else}
+            {m.stacks_d_scaler_paused_rules({ error: scalerPaused.error ?? '' })}
+          {/if}
+        </span>
       </div>
     </div>
   {/if}
