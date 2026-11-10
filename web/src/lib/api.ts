@@ -407,7 +407,6 @@ export interface ScalerPause {
   error?: string;
 }
 
-// stackQuery is the ?host= and ?confirm_external= part of a stack action.
 function stackQuery(host: string, confirmExternal: boolean): string {
   const params = new URLSearchParams();
   if (host && host !== 'local') params.set('host', host);
@@ -1958,10 +1957,7 @@ export const api = {
     getDeployment: (name: string, id: number) =>
       request<DeployHistoryEntry>(`/stacks/${encodeURIComponent(name)}/deployments/${id}`),
     rollback: (name: string, id: number, host = 'local', confirmExternal = false) => {
-      const params = new URLSearchParams();
-      if (host && host !== 'local') params.set('host', host);
-      if (confirmExternal) params.set('confirm_external', '1');
-      const qs = params.toString() ? '?' + params.toString() : '';
+      const qs = stackQuery(host, confirmExternal);
       return request<RollbackResult>(
         `/stacks/${encodeURIComponent(name)}/deployments/${id}/rollback${qs}`,
         { method: 'POST' }

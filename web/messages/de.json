@@ -5969,7 +5969,7 @@
   "stacks_override_body": "Falls kein Override erwartet war, vor dem Deployen {file} und die Standardumgebung im Tab Umgebung prüfen.",
   "stacks_override_confirm": "Mit {env} deployen",
   "stacks_d_scaler_paused_title": "Auto-Scaling ist für diesen Stack pausiert",
-  "stacks_d_scaler_paused_files": "{files} wurden außerhalb von Dockmesh geändert. Die Dateien prüfen und den Stack einmal deployen, um sie zu bestätigen; danach skaliert der Auto-Scaler wieder.",
+  "stacks_d_scaler_paused_files": "Außerhalb von Dockmesh geändert: {files}. Die Dateien prüfen und den Stack einmal deployen, um sie zu bestätigen; danach skaliert der Auto-Scaler wieder.",
   "stacks_d_scaler_paused_override": "Der Standard-Override {env} wurde noch nicht durch ein manuelles Deployment bestätigt. Den Stack einmal deployen; danach skaliert der Auto-Scaler wieder.",
-  "stacks_d_scaler_paused_rules": "Die Skalierungsregeln sind ungültig ({error}). Sie über die API neu speichern."
+  "stacks_d_scaler_paused_rules": "Die Skalierungsregeln sind ungültig ({error}). Die Regeln über die API erneut speichern."
 }

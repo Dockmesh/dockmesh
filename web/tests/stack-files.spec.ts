@@ -58,8 +58,8 @@ test('scaling asks before it uses stack files changed outside Dockmesh', async (
   await createStack(page, await apiToken(page), name);
   writeFileSync(join(root!, name, 'compose.yaml'), 'services:\n  web:\n    image: busybox:outside\n');
 
-  // A service without Docker (stopped, so no stats stream is opened): the status and the scale check are
-  // stubbed; the unconfirmed scale goes to the server, which refuses it.
+  // Status and the scale check are stubbed (state exited, so no stats
+  // stream opens); the unconfirmed scale reaches the server, which refuses it.
   await page.route(`**/api/v1/stacks/${name}/status*`, (route) =>
     route.fulfill({ json: [{ service: 'web', container_id: 'c0ffee', state: 'exited', status: 'Exited (0)', image: 'busybox:1' }] })
   );

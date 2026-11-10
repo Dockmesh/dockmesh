@@ -140,7 +140,7 @@
   let mountsStackDir = $state(false);
   let scalerPaused = $state<ScalerPause | null>(null);
 
-  // A deploy of stack files changed outside Dockmesh needs an explicit OK.
+  // An action built from stack files changed outside Dockmesh needs an explicit OK.
   async function confirmExternalChanges(err: unknown): Promise<boolean> {
     if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
     const files: string = (err.body.files as string[] | undefined)?.join(', ') || m.stacks_ext_files_fallback();
@@ -1347,13 +1347,14 @@
     if (anyBusy) return;
     busy = true;
     try {
-      if (!(await confirmOverride(name))) return;
+      const environment = await confirmOverride(name);
+      if (environment === null) return;
       const res = await stackOps.run(stackHost, name, async () => {
         try {
-          return await api.stacks.deploy(name, stackHost);
+          return await api.stacks.deploy(name, stackHost, environment || undefined);
         } catch (err) {
           if (!(await confirmExternalChanges(err))) throw err;
-          return api.stacks.deploy(name, stackHost, undefined, true);
+          return api.stacks.deploy(name, stackHost, environment || undefined, true);
         }
       });
       modifiedOutside = [];
