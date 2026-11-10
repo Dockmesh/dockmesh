@@ -603,6 +603,11 @@ func main() {
 		if dockerCli == nil {
 			return fmt.Errorf("docker unavailable")
 		}
+		if _, pause, err := scaling.Check(stacksMgr, stackName); err != nil {
+			return err
+		} else if pause != nil {
+			return fmt.Errorf("auto-scaling of %s is paused: %s", stackName, pause.Reason)
+		}
 		detail, err := stacksMgr.Get(stackName)
 		if err != nil {
 			return err

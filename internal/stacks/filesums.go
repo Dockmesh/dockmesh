@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -19,13 +20,25 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// trackedFiles are the stack files a deploy reads.
-var trackedFiles = []string{"compose.yaml", ".env", ".env.age"}
+// MetaFile holds a stack's scaling rules, migration hooks and default
+// environment override.
+const MetaFile = ".dockmesh.meta.json"
+
+// trackedFiles are the stack files a deploy reads, besides the
+// compose.<env>.yaml override files.
+var trackedFiles = []string{"compose.yaml", ".env", ".env.age", MetaFile}
+
+// overrideFile matches the compose.<env>.yaml override files.
+var overrideFile = regexp.MustCompile(`^compose\.[a-z0-9][a-z0-9_-]*\.yaml$`)
+
+// backfillRow marks a stack whose sums predate the tracking of the meta
+// and override files; RecordUntrackedSums fills those in once.
+const backfillRow = "@backfill"
 
 // ErrModifiedOutside refuses a deploy from stack files that changed since
 // Dockmesh last wrote them, for example through a container that mounts
 // the stack directory.
-var ErrModifiedOutside = errors.New("compose.yaml or .env changed outside Dockmesh; review the files and confirm the deploy")
+var ErrModifiedOutside = errors.New("stack files changed outside Dockmesh; review the files and confirm the deploy")
 
 // SumStore keeps the checksums of the stack files as Dockmesh last wrote
 // them. It lives in the database so a container that can write the stack
@@ -57,6 +70,11 @@ func (s *SumStore) get(stack string) (map[string]string, error) {
 		out[file] = sum
 	}
 	return out, rows.Err()
+}
+
+func (s *SumStore) deleteRow(stack, file string) error {
+	_, err := s.db.Exec(`DELETE FROM stack_file_sums WHERE stack = ? AND file = ?`, stack, file)
+	return err
 }
 
 func (s *SumStore) deleteStack(stack string) error {
@@ -161,12 +179,29 @@ func (m *Manager) recordSum(path string) {
 }
 
 func isTracked(file string) bool {
-	for _, f := range trackedFiles {
-		if f == file {
-			return true
+	return slices.Contains(trackedFiles, file) || overrideFile.MatchString(file)
+}
+
+// filesOf lists the tracked files of a stack: the fixed ones, every
+// override file on disk and every one recorded before, so a removed or
+// newly added override file counts as a change too.
+func filesOf(dir string, recorded map[string]string) ([]string, error) {
+	files := slices.Clone(trackedFiles)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() && overrideFile.MatchString(e.Name()) {
+			files = append(files, e.Name())
 		}
 	}
-	return false
+	for f := range recorded {
+		if overrideFile.MatchString(f) && !slices.Contains(files, f) {
+			files = append(files, f)
+		}
+	}
+	return files, nil
 }
 
 // ModifiedOutside lists the tracked files of a stack whose content differs
@@ -188,8 +223,12 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 	if len(recorded) == 0 {
 		return nil, m.recordSums(name)
 	}
+	files, err := filesOf(dir, recorded)
+	if err != nil {
+		return nil, err
+	}
 	var changed []string
-	for _, f := range trackedFiles {
+	for _, f := range files {
 		sum, err := fileSum(filepath.Join(dir, f))
 		if err != nil {
 			return nil, err
@@ -220,7 +259,15 @@ func (m *Manager) recordSums(name string) error {
 	if err != nil {
 		return err
 	}
-	for _, f := range trackedFiles {
+	recorded, err := m.sums.get(name)
+	if err != nil {
+		return err
+	}
+	files, err := filesOf(dir, recorded)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
 		sum, err := fileSum(filepath.Join(dir, f))
 		if err != nil {
 			return err
@@ -233,16 +280,95 @@ func (m *Manager) recordSums(name string) error {
 }
 
 // RecordUntrackedSums records the current files of every stack that has
-// no checksums yet, so stacks from before an upgrade start out trusted.
+// no checksums yet, and the files without a checksum of every stack
+// marked for the backfill, so stacks from before an upgrade start out
+// trusted.
 func (m *Manager) RecordUntrackedSums() {
 	if m.sums == nil {
 		return
 	}
 	for _, s := range m.List() {
+		if err := m.backfillSums(s.Name); err != nil {
+			slog.Warn("record stack file checksums", "stack", s.Name, "err", err)
+			continue
+		}
 		if _, err := m.ModifiedOutside(s.Name); err != nil {
 			slog.Warn("record stack file checksums", "stack", s.Name, "err", err)
 		}
 	}
+}
+
+// backfillSums records the files without a checksum as they are now, once,
+// for a stack carrying the backfill marker. Files with a checksum keep it,
+// so a change made before the upgrade is still reported.
+func (m *Manager) backfillSums(name string) error {
+	recorded, err := m.sums.get(name)
+	if err != nil {
+		return err
+	}
+	if _, ok := recorded[backfillRow]; !ok {
+		return nil
+	}
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return err
+	}
+	files, err := filesOf(dir, recorded)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if _, ok := recorded[f]; ok {
+			continue
+		}
+		sum, err := fileSum(filepath.Join(dir, f))
+		if err != nil {
+			return err
+		}
+		if err := m.sums.set(name, f, sum); err != nil {
+			return err
+		}
+	}
+	return m.sums.deleteRow(name, backfillRow)
+}
+
+// WriteFile runs write, which changes the tracked file of stack name, and
+// records the new checksum when the file held what Dockmesh last recorded.
+// A file already changed outside Dockmesh stays reported as changed, so
+// writing it does not confirm the outside change.
+func (m *Manager) WriteFile(name, file string, write func() error) error {
+	if !isTracked(file) {
+		return fmt.Errorf("%s is not a tracked stack file", file)
+	}
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return err
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	path := filepath.Join(dir, file)
+	clean := true
+	if m.sums != nil {
+		recorded, err := m.sums.get(name)
+		if err != nil {
+			return err
+		}
+		if len(recorded) > 0 {
+			before, err := fileSum(path)
+			if err != nil {
+				return err
+			}
+			clean = before == recorded[file]
+		}
+	}
+	m.markSelfWrite(path)
+	if err := write(); err != nil {
+		return err
+	}
+	if clean {
+		m.recordSum(path)
+	}
+	return nil
 }
 
 // overrideRow is the sum row holding the environment override a manual
@@ -306,5 +432,77 @@ func (m *Manager) CheckOverride(name, override string) error {
 	if recorded[overrideRow] != sum {
 		return fmt.Errorf("%w: %s", ErrOverrideUnconfirmed, override)
 	}
+	return nil
+}
+
+// Reasons the auto-scaler leaves a stack alone.
+const (
+	PauseModifiedOutside     = "modified_outside"
+	PauseOverrideUnconfirmed = "override_unconfirmed"
+	PauseInvalidRules        = "invalid_rules"
+)
+
+// ScalerPause is why the auto-scaler does not scale a stack: files changed
+// outside Dockmesh, a default override no manual deploy confirmed, or
+// scaling rules that don't validate.
+type ScalerPause struct {
+	Reason   string   `json:"reason"`
+	Files    []string `json:"files,omitempty"`
+	Override string   `json:"override,omitempty"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// ScalerHeldNoticeKey is the notice raised while the auto-scaler leaves
+// stack alone.
+func ScalerHeldNoticeKey(stack string) string { return "stacks.scaler-held:" + stack }
+
+// HoldScaler tells the stack's deployers that auto-scaling of name is
+// paused and why.
+func (m *Manager) HoldScaler(ctx context.Context, name string, p ScalerPause) {
+	if m.notices == nil {
+		return
+	}
+	var body i18n.Text
+	switch p.Reason {
+	case PauseModifiedOutside:
+		body = i18n.Msg("notice.scaler_held.files", strings.Join(p.Files, ", "))
+	case PauseOverrideUnconfirmed:
+		body = i18n.Msg("notice.scaler_held.override", p.Override)
+	default:
+		body = i18n.Msg("notice.scaler_held.rules", p.Error)
+	}
+	if err := m.notices.Raise(ctx, notices.RaiseInput{
+		Key:      ScalerHeldNoticeKey(name),
+		Audience: notices.WithPermission(string(rbac.PermStacksDeploy)),
+		Severity: notices.SevWarning,
+		Title:    i18n.Msg("notice.scaler_held.title", name),
+		Body:     body,
+		Link:     "/stacks/" + name,
+	}); err != nil {
+		slog.Warn("auto-scaling paused notice", "stack", name, "err", err)
+	}
+}
+
+// ReleaseScaler resolves the auto-scaling paused notice of name.
+func (m *Manager) ReleaseScaler(ctx context.Context, name string) {
+	if m.notices == nil {
+		return
+	}
+	if err := m.notices.Resolve(ctx, ScalerHeldNoticeKey(name)); err != nil {
+		slog.Warn("resolve auto-scaling paused notice", "stack", name, "err", err)
+	}
+}
+
+// RecordFile records the current checksum of a tracked file that
+// Dockmesh wrote itself, such as a file restored from a backup.
+func (m *Manager) RecordFile(name, file string) error {
+	if !isTracked(file) {
+		return nil
+	}
+	dir, err := m.safeDir(name)
+	if err != nil {
+		return err
+	}
+	m.recordSum(filepath.Join(dir, file))
 	return nil
 }

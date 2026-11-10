@@ -462,6 +462,13 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 	if stack == "" || service == "" || !s.stacks.Has(stack) {
 		return nil, nil
 	}
+	changed, err := s.stacks.ModifiedOutside(stack)
+	if err != nil {
+		return nil, err
+	}
+	if len(changed) > 0 {
+		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(changed, ", "))
+	}
 	dir, err := s.stacks.Dir(stack)
 	if err != nil {
 		return nil, err

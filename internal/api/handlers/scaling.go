@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -55,7 +56,9 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read canonical compose+env from the server filesystem.
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 	detail, err := h.Stacks.Get(name)
 	if err != nil {
 		writeStackError(w, err)
@@ -184,6 +187,9 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.DelaySeconds < 0 {
 		writeError(w, http.StatusBadRequest, "delay_seconds must be >= 0")
+		return
+	}
+	if !h.checkStackFiles(w, r, name) {
 		return
 	}
 
@@ -351,17 +357,10 @@ func (h *Handlers) SetScalingRules(w http.ResponseWriter, r *http.Request) {
 			cfg.Rules[i].CPUUnit = scaling.CPUUnitHost
 		}
 	}
-	// Load existing meta file to preserve other fields (migration, etc).
-	meta, err := scaling.LoadMeta(dir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if meta == nil {
-		meta = &scaling.MetaFile{}
-	}
-	meta.Scaling = &cfg
-	if err := scaling.SaveMeta(dir, meta); err != nil {
+	if err := h.updateMeta(name, dir, func(meta *scaling.MetaFile) bool {
+		meta.Scaling = &cfg
+		return true
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -383,20 +382,36 @@ func (h *Handlers) DeleteScalingRules(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
-	meta, err := scaling.LoadMeta(dir)
-	if err != nil {
+	removed := false
+	if err := h.updateMeta(name, dir, func(meta *scaling.MetaFile) bool {
+		removed = meta.Scaling != nil
+		meta.Scaling = nil
+		return removed
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if meta == nil || meta.Scaling == nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	if removed {
+		h.audit(r, audit.ActionStackUpdate, name, map[string]any{"action": "scaling-rules-deleted"})
 	}
-	meta.Scaling = nil
-	if err := scaling.SaveMeta(dir, meta); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.audit(r, audit.ActionStackUpdate, name, map[string]any{"action": "scaling-rules-deleted"})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateMeta changes the stack's meta file, keeping the fields change
+// doesn't touch, and records Dockmesh's write of it. change reports
+// whether there is anything to write.
+func (h *Handlers) updateMeta(name, dir string, change func(*scaling.MetaFile) bool) error {
+	return h.Stacks.WriteFile(name, stacks.MetaFile, func() error {
+		meta, err := scaling.LoadMeta(dir)
+		if err != nil {
+			return err
+		}
+		if meta == nil {
+			meta = &scaling.MetaFile{}
+		}
+		if !change(meta) {
+			return nil
+		}
+		return scaling.SaveMeta(dir, meta)
+	})
 }

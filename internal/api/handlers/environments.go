@@ -115,16 +115,10 @@ func (h *Handlers) SetActiveEnvironment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	meta, err := scaling.LoadMeta(dir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if meta == nil {
-		meta = &scaling.MetaFile{}
-	}
-	meta.ActiveEnvironment = req.Active
-	if err := scaling.SaveMeta(dir, meta); err != nil {
+	if err := h.updateMeta(name, dir, func(meta *scaling.MetaFile) bool {
+		meta.ActiveEnvironment = req.Active
+		return true
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

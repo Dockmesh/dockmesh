@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	"github.com/go-chi/chi/v5"
@@ -318,6 +319,9 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
+		}
+		if _, d.ScalerPaused, err = scaling.Check(h.Stacks, name); err != nil {
+			slog.Warn("auto-scaling check", "stack", name, "err", err)
 		}
 		if !h.canReadStackEnv(r, name) {
 			hideStackEnv(d)

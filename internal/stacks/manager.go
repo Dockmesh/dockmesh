@@ -84,6 +84,8 @@ type Detail struct {
 	// ModifiedOutside lists the stack files changed outside Dockmesh
 	// since it last wrote them; the next deploy needs a confirmation.
 	ModifiedOutside []string `json:"modified_outside,omitempty"`
+	// ScalerPaused is set while the auto-scaler leaves the stack alone.
+	ScalerPaused *ScalerPause `json:"scaler_paused,omitempty"`
 	// MountsStackDir is set when a service bind-mounts the stack
 	// directory itself and so can rewrite compose.yaml and .env.
 	MountsStackDir bool `json:"mounts_stack_dir,omitempty"`

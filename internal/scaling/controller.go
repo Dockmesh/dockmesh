@@ -32,6 +32,8 @@ type Controller struct {
 	pollInterval time.Duration
 	mu           sync.Mutex
 	states       map[string]*ruleState // key: "stack/service"
+	paused       map[string]string     // stack → reason of its open paused notice
+	seen         map[string]bool
 	stop         chan struct{}
 	wg           sync.WaitGroup
 }
@@ -58,6 +60,8 @@ func NewController(sm *stacks.Manager, mc *metrics.Collector, fn ScaleFunc) *Con
 		scaleFn:      fn,
 		pollInterval: 30 * time.Second,
 		states:       make(map[string]*ruleState),
+		paused:       make(map[string]string),
+		seen:         make(map[string]bool),
 		stop:         make(chan struct{}),
 	}
 }
@@ -90,23 +94,56 @@ func (c *Controller) loop(ctx context.Context) {
 }
 
 func (c *Controller) tick(ctx context.Context) {
-	stackList := c.stacks.List()
-	for _, s := range stackList {
-		dir, err := c.stacks.Dir(s.Name)
+	for _, s := range c.stacks.List() {
+		cfg, pause, err := Check(c.stacks, s.Name)
 		if err != nil {
+			slog.Debug("scaling: check stack", "stack", s.Name, "err", err)
 			continue
 		}
-		cfg, err := LoadRules(dir)
-		if err != nil {
-			slog.Debug("scaling: load rules", "stack", s.Name, "err", err)
+		if pause != nil {
+			c.hold(ctx, s.Name, *pause)
 			continue
 		}
-		if cfg == nil || !cfg.Enabled || len(cfg.Rules) == 0 {
+		c.release(ctx, s.Name)
+		if cfg == nil {
 			continue
 		}
 		for _, rule := range cfg.Rules {
 			c.evaluateRule(ctx, s.Name, rule)
 		}
+	}
+}
+
+// hold raises the paused notice once per stack and reason; the open
+// notice is replaced when the reason changes.
+func (c *Controller) hold(ctx context.Context, name string, p stacks.ScalerPause) {
+	key := p.Reason + "|" + strings.Join(p.Files, ",") + "|" + p.Override + "|" + p.Error
+	c.mu.Lock()
+	prev, held := c.paused[name]
+	c.paused[name] = key
+	c.seen[name] = true
+	c.mu.Unlock()
+	if held && prev == key {
+		return
+	}
+	slog.Warn("scaling: stack paused", "stack", name, "reason", p.Reason, "files", p.Files, "override", p.Override, "err", p.Error)
+	if held {
+		c.stacks.ReleaseScaler(ctx, name)
+	}
+	c.stacks.HoldScaler(ctx, name, p)
+}
+
+// release resolves the paused notice when the stack was held, or on the
+// first tick after a start, when a notice may be left from before.
+func (c *Controller) release(ctx context.Context, name string) {
+	c.mu.Lock()
+	_, held := c.paused[name]
+	seen := c.seen[name]
+	delete(c.paused, name)
+	c.seen[name] = true
+	c.mu.Unlock()
+	if held || !seen {
+		c.stacks.ReleaseScaler(ctx, name)
 	}
 }
 
