@@ -1,0 +1,3 @@
+kind: Fixed
+body: Replicas the auto-scaler adds use the stack directory for relative bind mounts, like a manual scale, instead of a temporary copy that is deleted right after
+time: 2026-11-10T14:08:43.224174583Z

@@ -615,6 +615,7 @@ func main() {
 		}
 		detail := v.Files.Detail
 		lh := host.NewLocal(dockerCli)
+		lh.SetStackDirResolver(stacksMgr.Dir)
 		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
 		return err
 	})
