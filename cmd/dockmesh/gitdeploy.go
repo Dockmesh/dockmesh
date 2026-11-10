@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"log/slog"
 	"time"
 
@@ -33,10 +34,17 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 	if err := g.stacks.CheckGitDeploy(ctx, stackName); err != nil {
 		return nil, err
 	}
-	detail, err := g.stacks.Get(stackName)
+	snap, err := g.stacks.Snapshot(stackName)
 	if err != nil {
 		return nil, err
 	}
+	if len(snap.Changed) > 0 {
+		if err := g.stacks.CheckGitDeploy(ctx, stackName); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(snap.Changed, ", "))
+	}
+	detail := snap.Detail
 	dir, err := g.stacks.Dir(stackName)
 	if err != nil {
 		return nil, err
