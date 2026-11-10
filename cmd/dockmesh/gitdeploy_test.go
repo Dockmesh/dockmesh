@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,5 +123,78 @@ func TestGitDeployTargetsStackHost(t *testing.T) {
 				t.Fatalf("history = %+v, want one entry on %s", entries, tt.wantHost)
 			}
 		})
+	}
+}
+
+func TestGitDeployOverrideFromCheckedFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, mgr *stacks.Manager, dir string)
+		wantErr error
+	}{
+		{"confirmed override", func(t *testing.T, mgr *stacks.Manager, _ string) {
+			if err := mgr.RecordOverride("web", "prod"); err != nil {
+				t.Fatal(err)
+			}
+		}, nil},
+		{"override never deployed by hand", func(*testing.T, *stacks.Manager, string) {}, stacks.ErrOverrideUnconfirmed},
+		{"override changed outside", func(t *testing.T, mgr *stacks.Manager, dir string) {
+			if err := mgr.RecordOverride("web", "prod"); err != nil {
+				t.Fatal(err)
+			}
+			writeGitTestFile(t, dir, "compose.prod.yaml", "services:\n  web:\n    privileged: true\n")
+		}, stacks.ErrModifiedOutside},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			if err := db.Migrate(database); err != nil {
+				t.Fatal(err)
+			}
+			mgr, err := stacks.NewManager(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mgr.Close()
+			mgr.SetSumStore(stacks.NewSumStore(database))
+			if _, err := mgr.Create("web", "services:\n  web:\n    image: nginx\n    volumes: [\"./data:/data\"]\n", ""); err != nil {
+				t.Fatal(err)
+			}
+			dir, _ := mgr.Dir("web")
+			writeGitTestFile(t, dir, "compose.prod.yaml", "services:\n  web:\n    image: nginx:prod\n")
+			writeGitTestFile(t, dir, stacks.MetaFileName, `{"active_environment":"prod"}`)
+			if err := mgr.AcceptExternal(ctx, "web"); err != nil {
+				t.Fatal(err)
+			}
+			tt.prepare(t, mgr, dir)
+			local := &gitFakeHost{id: "local"}
+			g := &gitDeployer{stacks: mgr, deployments: stacks.NewDeploymentStore(database), hosts: gitFakeHosts{"local": local}}
+			_, err = g.deploy(ctx, "web")
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) || len(local.deploys) != 0 {
+					t.Fatalf("err = %v, deploys %d; want %v and none", err, len(local.deploys), tt.wantErr)
+				}
+				return
+			}
+			if err != nil || len(local.deploys) != 1 {
+				t.Fatalf("err = %v, deploys %d", err, len(local.deploys))
+			}
+			d := local.deploys[0]
+			if !strings.Contains(d, "nginx:prod") || !strings.Contains(d, filepath.Join(dir, "data")) {
+				t.Errorf("deployed compose lacks the override or the stack-dir bind:\n%s", d)
+			}
+		})
+	}
+}
+
+func writeGitTestFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

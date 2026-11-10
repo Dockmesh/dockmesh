@@ -172,6 +172,11 @@ func readTracked(path string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, "", err
+	} else if !fi.Mode().IsRegular() {
+		return nil, unreadableSum, nil
+	}
 	b, err := io.ReadAll(io.LimitReader(f, maxTrackedSize+1))
 	if err != nil {
 		return nil, "", err
@@ -235,8 +240,15 @@ func filesOf(dir string, recorded map[string]string) ([]string, error) {
 			files = append(files, f)
 		}
 	}
+	if len(files)-len(trackedFiles) > maxOverrideFiles {
+		return nil, fmt.Errorf("%w: more than %d compose.<env>.yaml files", ErrModifiedOutside, maxOverrideFiles)
+	}
 	return files, nil
 }
+
+// maxOverrideFiles bounds how many override files a check reads. A stack
+// with more is refused as changed outside Dockmesh until some are removed.
+const maxOverrideFiles = 64
 
 // ModifiedOutside lists the tracked files of a stack whose content differs
 // from what Dockmesh last wrote. A stack without any recorded checksum

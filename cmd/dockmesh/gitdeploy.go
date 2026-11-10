@@ -68,10 +68,7 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 		if err != nil {
 			return fmt.Errorf("host %s: %w", hostID, err)
 		}
-		if spec, err = deploy.Resolve(ctx, g.globals, dir, stackName, detail.Compose, detail.Env); err != nil {
-			return err
-		}
-		if err := g.stacks.CheckOverride(stackName, spec.Override); err != nil {
+		if spec, err = deploy.ResolveSnapshot(ctx, g.globals, g.stacks, dir, snap); err != nil {
 			return err
 		}
 		// Force-pull so a new push under the same tag is picked up even

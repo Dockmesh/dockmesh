@@ -2,9 +2,11 @@ package stacks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -18,6 +20,11 @@ type Snapshot struct {
 	Detail *Detail
 	// Meta is the content of the meta file, nil when there is none.
 	Meta []byte
+	// ActiveOverride is the default environment override the meta file
+	// names, OverrideFile the content of its compose.<env>.yaml (nil when
+	// missing).
+	ActiveOverride string
+	OverrideFile   []byte
 	// Changed lists the tracked files that differ from what Dockmesh
 	// recorded.
 	Changed []string
@@ -44,18 +51,39 @@ func (m *Manager) Snapshot(name string) (*Snapshot, error) {
 	}
 	snap := &Snapshot{Name: name, sums: map[string]string{}}
 	content := map[string][]byte{}
-	for _, f := range files {
+	read := func(f string) ([]byte, error) {
 		b, sum, err := readTracked(filepath.Join(dir, f))
 		if err != nil {
 			return nil, err
 		}
-		if sum == unreadableSum && (f == "compose.yaml" || f == ".env" || f == ".env.age" || f == MetaFileName) {
+		if sum == unreadableSum && slices.Contains(trackedFiles, f) {
 			return nil, fmt.Errorf("%s of stack %s is not a regular file or too large", f, name)
 		}
 		snap.sums[f] = sum
-		content[f] = b
 		if m.sums != nil && len(recorded) > 0 && (sum != recorded[f] || sum == unreadableSum) {
 			snap.Changed = append(snap.Changed, f)
+		}
+		return b, nil
+	}
+	for _, f := range trackedFiles {
+		if content[f], err = read(f); err != nil {
+			return nil, err
+		}
+	}
+	var active struct {
+		ActiveEnvironment string `json:"active_environment"`
+	}
+	if b := content[MetaFileName]; b != nil && json.Unmarshal(b, &active) == nil && overrideName.MatchString(active.ActiveEnvironment) {
+		snap.ActiveOverride = active.ActiveEnvironment
+	}
+	// Only the active override is kept; the others are hashed and dropped.
+	for _, f := range files[len(trackedFiles):] {
+		b, err := read(f)
+		if err != nil {
+			return nil, err
+		}
+		if snap.ActiveOverride != "" && f == "compose."+snap.ActiveOverride+".yaml" {
+			snap.OverrideFile = b
 		}
 	}
 	sort.Strings(snap.Changed)
@@ -119,6 +147,25 @@ func (m *Manager) recordSnapshot(snap *Snapshot) error {
 		if err := m.sums.set(snap.Name, f, sum); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckSnapshotOverride is Manager.CheckOverride against the override content the
+// snapshot holds.
+func (m *Manager) CheckSnapshotOverride(snap *Snapshot, override string) error {
+	if m.sums == nil || override == "" {
+		return nil
+	}
+	if !overrideName.MatchString(override) {
+		return fmt.Errorf("invalid environment name %q", override)
+	}
+	recorded, err := m.sums.get(snap.Name)
+	if err != nil {
+		return err
+	}
+	if recorded[overrideRow] != override+":"+snap.sums["compose."+override+".yaml"] {
+		return fmt.Errorf("%w: %s", ErrOverrideUnconfirmed, override)
 	}
 	return nil
 }

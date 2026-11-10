@@ -8,6 +8,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 // GlobalVars lists the global environment variables; nil means none.
@@ -73,6 +74,35 @@ func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, st
 		return spec, nil
 	}
 	_, merged, err := compose.MergeEnvironment(ctx, dir, name, spec.Env, spec.Override)
+	if err != nil {
+		return Spec{}, fmt.Errorf("environment %s: %w", spec.Override, err)
+	}
+	spec.Compose = merged
+	return spec, nil
+}
+
+// ResolveSnapshot is Resolve on stack files read and checked once: the
+// override comes from the snapshot's meta file and is merged from the
+// snapshot's bytes, and it must be the one the last manual deploy
+// confirmed, so nothing is read from the stack directory a second time.
+func ResolveSnapshot(ctx context.Context, globals GlobalVars, sm *stacks.Manager, dir string, snap *stacks.Snapshot) (Spec, error) {
+	spec := Spec{Compose: snap.Detail.Compose, Env: snap.Detail.Env, Override: snap.ActiveOverride}
+	if globals != nil {
+		vars, err := globals(ctx)
+		if err != nil {
+			return Spec{}, fmt.Errorf("read global environment: %w", err)
+		}
+		if spec.Env, err = MergeGlobalEnv(vars, snap.Detail.Env); err != nil {
+			return Spec{}, err
+		}
+	}
+	if spec.Override == "" {
+		return spec, nil
+	}
+	if err := sm.CheckSnapshotOverride(snap, spec.Override); err != nil {
+		return Spec{}, err
+	}
+	merged, err := compose.MergeEnvironmentContent(ctx, dir, snap.Name, spec.Env, spec.Override, []byte(snap.Detail.Compose), snap.OverrideFile)
 	if err != nil {
 		return Spec{}, fmt.Errorf("environment %s: %w", spec.Override, err)
 	}
