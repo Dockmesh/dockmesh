@@ -1,6 +1,0 @@
-kind: Upgrade notes
-body: Stacks already deployed from the PostgreSQL, MySQL or Vaultwarden template keep their secret in compose.yaml. To move it, add the value to the stack's .env, replace it in compose.yaml with ${VAR} and redeploy. Deploy history from before the upgrade still holds the old compose.yaml, so a rollback to it brings the secret back; change the password if that matters
-time: 2026-11-09T12:02:36.677705765Z
-custom:
-    Audience: admins
-    Id: template-secrets-env

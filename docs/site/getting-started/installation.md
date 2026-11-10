@@ -68,7 +68,7 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.1`. |
+| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.2`. |
 | `DOCKMESH_CHANNEL` | `stable` | `testing` also considers pre-releases when resolving "latest". |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
@@ -153,7 +153,7 @@ Because `init` creates the admin itself, the server starts without setup mode an
 Each release on [GitHub](https://github.com/dockmesh/dockmesh/releases) has `dockmesh_linux_amd64.tar.gz`, `dockmesh_linux_arm64.tar.gz`, `dockmesh_darwin_amd64.tar.gz`, `dockmesh_darwin_arm64.tar.gz` and a `checksums.txt`. Each archive contains `dockmesh`, `dmctl`, `install-agent.sh`, `LICENSE`, `README.md` and the agent: the Linux archives `dockmesh-agent-linux-amd64` and `dockmesh-agent-linux-arm64`, the macOS archives a single `dockmesh-agent`.
 
 ```bash
-VER=v0.5.1
+VER=v0.5.2
 ARCH=amd64   # or arm64
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/dockmesh_linux_$ARCH.tar.gz
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt

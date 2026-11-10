@@ -33,6 +33,53 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 Entries for the next release are the fragments in `.changes/unreleased/`; `changie batch`
 moves them into a release section.
 
+## [0.5.2] - 2026-11-10 [security]
+
+Dockmesh 0.5.2 is a patch release. Pulling and scanning images act on the host you selected, the reverse proxy's admin API moved off TCP to a private socket, saving a stack no longer overwrites files changed on disk, and notices and alert messages follow the user's language. It also fixes the SAML provider options, the scanner switch in Settings, volume prune, template secrets and several smaller issues. Update your agents after the server and read the upgrade notes.
+
+
+### Changed
+
+- Vulnerability scans no longer check for a new Grype release each time; set GRYPE_CHECK_FOR_APP_UPDATE=true in dockmesh.env to turn the check back on
+
+### Fixed
+
+- Pulling and scanning images, including Re-pull on an image's page, act on the selected host instead of always on the server, with the registry credentials that apply to that host; each host keeps its own scan results. Agent hosts need the updated agent
+- Pull image reports a registry error instead of failing on a response it couldn't read, and a pull that breaks off shows why
+- Proxy start, backups, volume browsing and bind-mount copies stop with the registry's error when an image can't be pulled, on the server and on agents, instead of failing later with No such image
+- The helper container that copies bind-mount data of older deployments runs an image pinned by digest instead of a plain tag
+- Vulnerability scans work on installs whose service user has no home directory (the default with install.sh): Grype keeps its database in the data directory, and a failed scan shows Grype's error instead of an empty one
+- Another program listening on port 80 or 443 is now shown on the Reverse Proxy page and in the notification bell
+- Volume prune and System cleanup remove only unused anonymous volumes and never Dockmesh's own, such as the proxy's certificates, also on Docker before API 1.42, where prune used to delete unused named volumes too; the dialogs now say and count exactly that
+- Saving a stack no longer overwrites compose.yaml or .env changed on disk since the editor loaded them: the save is refused and a diff lets you use the version on disk, save yours anyway or cancel
+- A git stack whose first sync fails is removed completely: the name is free again and a later webhook no longer creates and deploys it
+- Download YAML on the Templates page no longer fails with 401
+- SAML providers: the Metadata URL, SP entity ID, signing certificate and encryption certificate fields of the dialog are now saved and used; a metadata URL is fetched on save and refreshed daily; without a pinned signing certificate the refresh accepts new signing keys from the URL, and an http URL needs a pinned certificate
+- Settings → General: Scan images with Grype now turns scanning on and off without a restart, and the system health check reports the real scanner state
+- Needs attention no longer lists notices you dismissed
+- The update notification links to Settings → Updates and no longer repeats after every restart for the same version
+- Images: the History tab shows the image's layers, on the server and on agent hosts
+- CLI: dmctl whoami shows role assignments, dmctl backup jobs fills the TYPE column, dmctl login shows the config path of this operating system and keeps a saved --insecure for the same server; shell completions include init and ca reissue-server; dockmesh config show prints the env file; dockmesh secrets rotate names the right menu
+- Stack migrations between hosts: a finished rollback is recorded as rolled back even when the database is busy at that moment
+- Invites created with an API token can be accepted; the token's owner is recorded as inviter
+- Alerts: a new or changed rule applies to container events immediately instead of at the next evaluation
+- Notice titles, notice bodies and alert messages appear in the user's language in the banner, Needs attention, Activity and the alert history; entries stored before this update keep their English text
+- UI hints now match current behaviour: the key backup button on the setup page, registry credentials on agents, stack migration downtime, why a drain can't move a stack, and what deleting a stack removes
+
+### Security
+
+- GHSA-fp9f-39v9-fm7x (high): The reverse proxy's admin API moved from 127.0.0.1:2019 to a private Unix socket, so other local processes and host-network containers can no longer read or change its config (DNS provider tokens, basic-auth hashes, every site's routing and TLS) or bind the admin port before Caddy does. Affects v0.5.1 and earlier. Installs where the move can't happen, including Dockmesh running in a container, keep the old proxy with its admin API on 127.0.0.1:2019 and show a notice; there it stays open to local processes until Dockmesh runs on the host or the proxy is turned off
+- GHSA-5mp7-pm4q-p5p4 (moderate): The PostgreSQL, MySQL and Vaultwarden templates write generated secrets to the stack's .env instead of compose.yaml, where anyone with Stacks: View could read them. Affects v0.5.1 and earlier
+
+### Upgrade notes
+
+- **Admins:** Update your agents from the Hosts page after the server. Pulling and scanning images on an agent host need this version; older agents refuse with a message to update and keep running everything else <!-- update-agents-images -->
+- **Admins:** If the reverse proxy is enabled, it is recreated once on the first start after the update, which interrupts your sites for a few seconds. If moving it to the socket fails, the old proxy keeps running and a notice says what to do <!-- proxy-admin-socket -->
+- **Admins:** The managed reverse proxy now needs Dockmesh installed directly on the host. When Dockmesh itself runs in a container, turning the proxy on is refused with a message saying so; a proxy that is already running is left as it is, with its admin API still reachable for local processes on 127.0.0.1:2019 <!-- proxy-needs-host-install -->
+- **Admins:** Stacks already deployed from the PostgreSQL, MySQL or Vaultwarden template keep their secret in compose.yaml. To move it, add the value to the stack's .env, replace it in compose.yaml with ${VAR} and redeploy. Anyone with Stacks: View on the stack, including the Viewer role, could read the secret, so change the password or token, put the new value in .env and redeploy. Deploy history from before the upgrade still holds the old compose.yaml; a rollback to it brings the old value back <!-- template-secrets-env -->
+- **Admins:** The Scan images with Grype switch under Settings → General now controls scanning. If you turned it off earlier, scanning stops after the upgrade; turn it on to keep scanning. DOCKMESH_SCANNER_ENABLED now only sets the default for a new or unset value <!-- scanner-setting-applies -->
+- **Admins:** Earlier versions didn't save the Metadata URL, SP entity ID, signing certificate and encryption certificate fields of a SAML provider. If you filled them in, enter them again in the provider dialog; a custom SP entity ID must also be registered at your identity provider, or its sign-ins fail <!-- saml-provider-fields -->
+- Scripts and API clients that save a stack with PUT /api/v1/stacks/{name} without compose_version and env_version still overwrite the files without a check. Send the versions from GET /api/v1/stacks/{name} with each save to get the conflict check; a refused save answers 409 stack_modified_on_disk <!-- stack-save-versions -->
 ## [0.5.1] - 2026-11-04 [recommended]
 
 Dockmesh 0.5.1 is a patch release. Prunes, network and image actions and System cleanup now act on the host you selected instead of the server, Needs attention follows the user's language, and the database copy taken before an upgrade from 0.4.x is removed once it is no longer needed, since it still held plaintext secrets. It also fixes deploys after a failed image pull, per-site proxy metrics, whole-file volume downloads and several smaller issues. Update your agents after the server and read the upgrade notes.

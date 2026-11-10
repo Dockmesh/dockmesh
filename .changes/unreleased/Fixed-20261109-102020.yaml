@@ -1,3 +1,0 @@
-kind: Fixed
-body: Volume prune and System cleanup never remove Dockmesh's own volumes such as the proxy's certificates, also on Docker before API 1.42, where prune used to delete unused named volumes too. Affects v0.5.1 and earlier
-time: 2026-11-09T10:20:20.818087887Z

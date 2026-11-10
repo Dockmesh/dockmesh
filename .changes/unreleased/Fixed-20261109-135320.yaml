@@ -1,3 +1,0 @@
-kind: Fixed
-body: Invites created with an API token can be accepted; the token's owner is recorded as inviter
-time: 2026-11-09T13:53:20.271048621Z

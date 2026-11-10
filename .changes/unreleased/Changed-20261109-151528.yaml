@@ -1,3 +1,0 @@
-kind: Changed
-body: Vulnerability scans no longer make Grype check for a new Grype release on every scan; set GRYPE_CHECK_FOR_APP_UPDATE=true in dockmesh.env to turn the check back on
-time: 2026-11-09T15:15:28.540640948Z
