@@ -42,7 +42,10 @@ func Check(sm *stacks.Manager, name string) (Verdict, error) {
 	var meta MetaFile
 	if err := json.Unmarshal(snap.Meta, &meta); err != nil {
 		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: "parse " + stacks.MetaFileName + ": " + err.Error()}
-		return v, nil
+		if len(snap.Changed) > 0 {
+			v.Pause = &stacks.ScalerPause{Reason: stacks.PauseModifiedOutside, Files: snap.Changed}
+		}
+		return v, nil //nolint:nilerr // a meta file that doesn't parse pauses the stack
 	}
 	if meta.Scaling == nil || !meta.Scaling.Enabled || len(meta.Scaling.Rules) == 0 {
 		return v, nil
@@ -53,7 +56,7 @@ func Check(sm *stacks.Manager, name string) (Verdict, error) {
 	}
 	if err := meta.Scaling.Validate(); err != nil {
 		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}
-		return v, nil
+		return v, nil //nolint:nilerr // invalid rules pause the stack
 	}
 	if err := sm.CheckOverride(name, meta.ActiveEnvironment); err != nil {
 		if !errors.Is(err, stacks.ErrOverrideUnconfirmed) {

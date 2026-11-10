@@ -32,10 +32,10 @@ func TestRestoreRecordsRestoredStackFiles(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for name, body := range map[string]string{
-		"stack/compose.yaml":        "services: {}\n",
-		"stack/" + stacks.MetaFileName:  `{"active_environment":"prod"}`,
-		"stack/compose.prod.yaml":   "services: {}\n",
-		"stack/data/compose.x.yaml": "x",
+		"stack/compose.yaml":           "services: {}\n",
+		"stack/" + stacks.MetaFileName: `{"active_environment":"prod"}`,
+		"stack/compose.prod.yaml":      "services: {}\n",
+		"stack/data/compose.x.yaml":    "x",
 	} {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
