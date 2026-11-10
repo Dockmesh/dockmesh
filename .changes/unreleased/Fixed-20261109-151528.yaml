@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'Several UI hints described old behaviour: the key backup button on the setup page, registry credentials on agents, stack migration downtime, why a drain can''t move a stack, and what deleting a stack removes'
-time: 2026-11-09T15:15:28.819335612Z

@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'Settings: Scan images with Grype now turns scanning on and off without a restart, and the system health check reports the real scanner state'
-time: 2026-11-09T13:53:12.704669888Z

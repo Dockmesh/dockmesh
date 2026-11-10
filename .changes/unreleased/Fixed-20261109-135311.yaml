@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'SAML providers: the Metadata URL, SP entity ID, signing certificate and encryption certificate fields of the dialog are now saved and used; a metadata URL is fetched on save and refreshed daily'
-time: 2026-11-09T13:53:11.430551667Z

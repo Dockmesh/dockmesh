@@ -1,3 +1,0 @@
-kind: Fixed
-body: Pulling and scanning images, including Re-pull on an image's page, act on the selected host instead of always on the server, with the registry credentials that apply to that host; each host keeps its own scan results. Agent hosts need the updated agent
-time: 2026-11-09T08:25:52.201734093Z

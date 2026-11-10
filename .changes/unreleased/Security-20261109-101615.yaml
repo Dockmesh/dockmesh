@@ -1,3 +1,0 @@
-kind: Security
-body: The reverse proxy's admin API moved from 127.0.0.1:2019 to a private Unix socket, so other local processes and host-network containers can no longer read its config (DNS tokens, basic-auth hashes) or take over the port. Affects v0.5.1 and earlier
-time: 2026-11-09T10:16:15.309716463Z

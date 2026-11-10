@@ -1,6 +1,0 @@
-kind: Upgrade notes
-body: If the reverse proxy is enabled, it is recreated once on the first start after the update, which interrupts your sites for a few seconds. If the switch fails, the old proxy keeps running and a notice says what to do. The managed proxy now needs Dockmesh installed directly on the host; an existing proxy of a containerised Dockmesh is left as it is
-time: 2026-11-09T10:16:17.836559915Z
-custom:
-    Audience: admins
-    Id: proxy-admin-socket

@@ -1,3 +1,0 @@
-kind: Fixed
-body: The helper container that copies bind-mount data of older deployments runs an image pinned by digest instead of a plain tag
-time: 2026-11-09T08:28:31.47630489Z
