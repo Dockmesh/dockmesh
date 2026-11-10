@@ -1,44 +1,68 @@
 package scaling
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
-// Check loads the scaling rules of stack name and returns them when the
-// auto-scaler may act on them. It returns a pause instead while the stack
-// files changed outside Dockmesh, the default override was not confirmed
-// by a manual deploy or the rules don't validate: a replica is built from
-// the files on disk with nobody there to review them. A nil config and
-// pause means the stack has no enabled rules.
-func Check(sm *stacks.Manager, name string) (*ScalingConfig, *stacks.ScalerPause, error) {
+// Verdict is what the auto-scaler may do with a stack. Rules is nil when
+// the stack has no enabled rules or Pause is set. Files holds the stack
+// files the verdict was made on; a scale builds from Files.Detail only.
+type Verdict struct {
+	Rules *ScalingConfig
+	Pause *stacks.ScalerPause
+	Files *stacks.Snapshot
+}
+
+// Check reads the stack files of name once and returns its rules when the
+// auto-scaler may act on them. It pauses the stack instead while the files
+// changed outside Dockmesh, the default override was not confirmed by a
+// manual deploy or the rules don't validate: a replica is built from the
+// files on disk with nobody there to review them.
+func Check(sm *stacks.Manager, name string) (Verdict, error) {
 	dir, err := sm.Dir(name)
 	if err != nil {
-		return nil, nil, err
+		return Verdict{}, err
 	}
-	meta, err := LoadMeta(dir)
+	if _, err := os.Lstat(filepath.Join(dir, stacks.MetaFileName)); errors.Is(err, os.ErrNotExist) {
+		return Verdict{}, nil
+	}
+	snap, err := sm.Snapshot(name)
 	if err != nil {
-		return nil, &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}, nil
+		return Verdict{}, err
 	}
-	if meta == nil || meta.Scaling == nil || !meta.Scaling.Enabled || len(meta.Scaling.Rules) == 0 {
-		return nil, nil, nil
+	v := Verdict{Files: snap}
+	if snap.Meta == nil {
+		return v, nil
 	}
-	changed, err := sm.ModifiedOutside(name)
-	if err != nil {
-		return nil, nil, err
+	var meta MetaFile
+	if err := json.Unmarshal(snap.Meta, &meta); err != nil {
+		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: "parse " + stacks.MetaFileName + ": " + err.Error()}
+		return v, nil
 	}
-	if len(changed) > 0 {
-		return nil, &stacks.ScalerPause{Reason: stacks.PauseModifiedOutside, Files: changed}, nil
+	if meta.Scaling == nil || !meta.Scaling.Enabled || len(meta.Scaling.Rules) == 0 {
+		return v, nil
+	}
+	if len(snap.Changed) > 0 {
+		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseModifiedOutside, Files: snap.Changed}
+		return v, nil
 	}
 	if err := meta.Scaling.Validate(); err != nil {
-		return nil, &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}, nil
+		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}
+		return v, nil
 	}
 	if err := sm.CheckOverride(name, meta.ActiveEnvironment); err != nil {
 		if !errors.Is(err, stacks.ErrOverrideUnconfirmed) {
-			return nil, &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}, nil
+			v.Pause = &stacks.ScalerPause{Reason: stacks.PauseInvalidRules, Error: err.Error()}
+			return v, nil
 		}
-		return nil, &stacks.ScalerPause{Reason: stacks.PauseOverrideUnconfirmed, Override: meta.ActiveEnvironment}, nil
+		v.Pause = &stacks.ScalerPause{Reason: stacks.PauseOverrideUnconfirmed, Override: meta.ActiveEnvironment}
+		return v, nil
 	}
-	return meta.Scaling, nil, nil
+	v.Rules = meta.Scaling
+	return v, nil
 }

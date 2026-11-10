@@ -137,7 +137,14 @@ func SaveMeta(stackDir string, m *MetaFile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(stackDir, stacks.MetaFileName), data, 0o644)
+	// Through a root, so a symlink a container put in place of the file
+	// can't send the write outside the stack directory.
+	root, err := os.OpenRoot(stackDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(stacks.MetaFileName, data, 0o644)
 }
 
 // LoadRules loads the scaling config for a specific stack directory.

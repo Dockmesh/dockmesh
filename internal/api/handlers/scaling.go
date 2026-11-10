@@ -56,12 +56,8 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.checkStackFiles(w, r, name) {
-		return
-	}
-	detail, err := h.Stacks.Get(name)
-	if err != nil {
-		writeStackError(w, err)
+	detail, ok := h.verifiedStack(w, r, name)
+	if !ok {
 		return
 	}
 
@@ -189,13 +185,8 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "delay_seconds must be >= 0")
 		return
 	}
-	if !h.checkStackFiles(w, r, name) {
-		return
-	}
-
-	detail, err := h.Stacks.Get(name)
-	if err != nil {
-		writeStackError(w, err)
+	detail, ok := h.verifiedStack(w, r, name)
+	if !ok {
 		return
 	}
 

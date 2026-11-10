@@ -603,15 +603,17 @@ func main() {
 		if dockerCli == nil {
 			return fmt.Errorf("docker unavailable")
 		}
-		if _, pause, err := scaling.Check(stacksMgr, stackName); err != nil {
-			return err
-		} else if pause != nil {
-			return fmt.Errorf("auto-scaling of %s is paused: %s", stackName, pause.Reason)
-		}
-		detail, err := stacksMgr.Get(stackName)
+		v, err := scaling.Check(stacksMgr, stackName)
 		if err != nil {
 			return err
 		}
+		if v.Pause != nil {
+			return fmt.Errorf("auto-scaling of %s is paused: %s", stackName, v.Pause.Reason)
+		}
+		if v.Rules == nil {
+			return fmt.Errorf("stack %s has no enabled scaling rules", stackName)
+		}
+		detail := v.Files.Detail
 		lh := host.NewLocal(dockerCli)
 		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
 		return err

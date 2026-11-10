@@ -95,20 +95,20 @@ func (c *Controller) loop(ctx context.Context) {
 
 func (c *Controller) tick(ctx context.Context) {
 	for _, s := range c.stacks.List() {
-		cfg, pause, err := Check(c.stacks, s.Name)
+		v, err := Check(c.stacks, s.Name)
 		if err != nil {
 			slog.Debug("scaling: check stack", "stack", s.Name, "err", err)
 			continue
 		}
-		if pause != nil {
-			c.hold(ctx, s.Name, *pause)
+		if v.Pause != nil {
+			c.hold(ctx, s.Name, *v.Pause)
 			continue
 		}
 		c.release(ctx, s.Name)
-		if cfg == nil {
+		if v.Rules == nil {
 			continue
 		}
-		for _, rule := range cfg.Rules {
+		for _, rule := range v.Rules.Rules {
 			c.evaluateRule(ctx, s.Name, rule)
 		}
 	}

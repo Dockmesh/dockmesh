@@ -36,6 +36,7 @@ import (
 	dnetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -462,22 +463,19 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 	if stack == "" || service == "" || !s.stacks.Has(stack) {
 		return nil, nil
 	}
-	changed, err := s.stacks.ModifiedOutside(stack)
+	snap, err := s.stacks.Snapshot(stack)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load stack %s: %w", stack, err)
 	}
-	if len(changed) > 0 {
-		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(changed, ", "))
+	if len(snap.Changed) > 0 {
+		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(snap.Changed, ", "))
 	}
 	dir, err := s.stacks.Dir(stack)
 	if err != nil {
 		return nil, err
 	}
-	detail, err := s.stacks.Get(stack)
-	if err != nil {
-		return nil, fmt.Errorf("load stack %s: %w", stack, err)
-	}
-	proj, err := compose.LoadProject(ctx, dir, stack, detail.Env)
+	detail := snap.Detail
+	proj, err := loadChecked(ctx, dir, stack, detail)
 	if err != nil {
 		return nil, fmt.Errorf("load stack %s: %w", stack, err)
 	}
@@ -489,6 +487,23 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 		return nil, fmt.Errorf("service %s in stack %s has no image", service, stack)
 	}
 	return &stackTarget{stack: stack, composeYAML: detail.Compose, proj: proj, svc: &svc}, nil
+}
+
+// loadChecked parses the checked compose file from a staging copy, as a
+// deploy does, so nothing else in the stack directory is read, and points
+// relative bind mounts at the stack directory.
+func loadChecked(ctx context.Context, stackDir, stack string, d *stacks.Detail) (*composetypes.Project, error) {
+	staged, cleanup, err := host.WriteStagingDir(stack, d.Compose, d.Env)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, staged, stack, d.Env)
+	if err != nil {
+		return nil, err
+	}
+	compose.RebaseBindSources(proj, staged, stackDir)
+	return proj, nil
 }
 
 // swapService moves every container of the stack service onto image,

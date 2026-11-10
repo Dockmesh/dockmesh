@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -142,17 +144,49 @@ func (m *Manager) resolveGitDeployHold(ctx context.Context, name string) {
 	}
 }
 
-// fileSum is the hex SHA-256 of path, or "" when it does not exist.
-func fileSum(path string) (string, error) {
-	b, err := os.ReadFile(path)
+// maxTrackedSize caps how much of a stack file is read. Larger files and
+// anything that isn't a regular file (a FIFO, a device, a directory) get a
+// checksum that never matches, so they count as changed without being read.
+const maxTrackedSize = 16 << 20
+
+const unreadableSum = "unreadable"
+
+// readTracked returns the content of path and its hex SHA-256, nil and ""
+// when it does not exist.
+func readTracked(path string) ([]byte, string, error) {
+	fi, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return "", err
+		return nil, "", err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > maxTrackedSize {
+		return nil, unreadableSum, nil
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxTrackedSize+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(b) > maxTrackedSize {
+		return nil, unreadableSum, nil
 	}
 	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:]), nil
+	return b, hex.EncodeToString(h[:]), nil
+}
+
+// fileSum is the hex SHA-256 of path, or "" when it does not exist.
+func fileSum(path string) (string, error) {
+	_, sum, err := readTracked(path)
+	return sum, err
 }
 
 // recordSum stores the checksum of a tracked file Dockmesh just wrote or
@@ -233,7 +267,7 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if sum != recorded[f] {
+		if sum != recorded[f] || sum == unreadableSum {
 			changed = append(changed, f)
 		}
 	}
@@ -358,7 +392,7 @@ func (m *Manager) WriteFile(name, file string, write func() error) error {
 			if err != nil {
 				return err
 			}
-			clean = before == recorded[file]
+			clean = before == recorded[file] && before != unreadableSum
 		}
 	}
 	m.markSelfWrite(path)

@@ -106,19 +106,22 @@ func TestCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m, _, dir := scalingEnv(t)
 			tt.setup(t, m, dir)
-			cfg, pause, err := Check(m, "app")
+			v, err := Check(m, "app")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (cfg != nil) != tt.wantRules {
-				t.Errorf("rules = %+v, want rules %v", cfg, tt.wantRules)
+			if (v.Rules != nil) != tt.wantRules {
+				t.Errorf("rules = %+v, want rules %v", v.Rules, tt.wantRules)
 			}
 			got := ""
-			if pause != nil {
-				got = pause.Reason
+			if v.Pause != nil {
+				got = v.Pause.Reason
 			}
 			if got != tt.wantReason {
-				t.Errorf("pause = %+v, want reason %q", pause, tt.wantReason)
+				t.Errorf("pause = %+v, want reason %q", v.Pause, tt.wantReason)
+			}
+			if v.Rules != nil && (v.Files == nil || v.Files.Detail.Compose != "services: {web: {image: x}}\n") {
+				t.Errorf("verdict files = %+v", v.Files)
 			}
 		})
 	}
