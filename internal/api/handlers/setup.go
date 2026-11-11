@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/google/uuid"
 )
@@ -147,7 +149,8 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		runner.Run(ctx, in, h.SetupCommit_)
 		done, err := runner.Done()
-		h.SetupState.EndCommit(done && err == nil)
+		// An account created meanwhile ends setup just like a finished install.
+		h.SetupState.EndCommit(done && (err == nil || errors.Is(err, auth.ErrAlreadySetUp)))
 		// Keep the runner around for a while so late subscribers can
 		// still read the event history. After 10 minutes drop it.
 		go func() {

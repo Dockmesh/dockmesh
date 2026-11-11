@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
@@ -144,3 +145,24 @@ const (
 	accountViewer = accountBare + `; INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'viewer', 'global')`
 	accountAdmin  = accountBare + `; INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`
 )
+
+// A runner that finds an account created after the handler's check ends
+// setup mode, so the gate stops answering 503 to the other routes.
+func TestSetupCommitLosingTheRaceEndsSetup(t *testing.T) {
+	h := &Handlers{
+		SetupState: setup.NewForced(),
+		SetupCommit_: func(context.Context, setup.CommitInput, func(string, string, string)) error {
+			return auth.ErrAlreadySetUp
+		},
+	}
+	if code := postSetup(h.SetupCommit, "/api/v1/setup/commit", setupCommitBody); code != http.StatusAccepted {
+		t.Fatalf("commit: %d", code)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for h.SetupState.Active() {
+		if time.Now().After(deadline) {
+			t.Fatal("setup still active after the install found an existing account")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

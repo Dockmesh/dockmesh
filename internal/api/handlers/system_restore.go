@@ -273,7 +273,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.SetupState.Expired() || !h.setupStillFree(w, r) {
-		_ = restore.DiscardStaged(h.RestoreConfig)
+		h.discardSetupRestore()
 		if h.SetupState.Expired() {
 			writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
 		}
@@ -282,7 +282,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.FinishSetup != nil {
 		if err := h.FinishSetup(); err != nil {
-			_ = restore.DiscardStaged(h.RestoreConfig)
+			h.discardSetupRestore()
 			writeError(w, http.StatusInternalServerError, "end setup mode: "+err.Error())
 			return
 		}
@@ -291,6 +291,14 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	done = true
 	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true, "counts": counts, "sanity": result})
 	h.RequestRestart()
+}
+
+// discardSetupRestore drops a staged setup restore that was refused; if
+// that fails it would be applied at the next start, so it is logged loudly.
+func (h *Handlers) discardSetupRestore() {
+	if err := restore.DiscardStaged(h.RestoreConfig); err != nil {
+		slog.Error("discard the refused setup restore failed; remove the staging directory before the next restart", "err", err)
+	}
 }
 
 // setupUploadTime bounds how long the setup restore may take to receive
