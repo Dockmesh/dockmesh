@@ -1,6 +1,9 @@
 // Package setup tracks whether the server is in first-run setup mode.
 //
-// Setup mode is active when no user can administer the install. While
+// Setup mode is active only while the install has no user accounts at
+// all. An install with accounts but no admin stays closed: the wizard is
+// unauthenticated, so reopening it would hand the install to whoever
+// reaches it first; `dockmesh admin create` recovers it instead. While
 // active, the HTTP layer redirects all non-setup paths so an operator
 // who just installed dockmesh and visited the dashboard URL lands on
 // the install wizard rather than the login screen. After the wizard
@@ -18,6 +21,7 @@ package setup
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"time"
 
@@ -54,26 +58,33 @@ func NewForced() *State {
 	return &State{active: true, startedAt: time.Now()}
 }
 
-// NewFromDB inspects the users table and decides whether setup mode
-// should be active. Setup is active when no user holds the permissions to
-// administer the install, whatever their role is called. The returned
-// State records "now" as the start of the wizard window.
+// NewFromDB decides whether setup mode is active: only when the users
+// table is empty. The returned State records "now" as the start of the
+// wizard window.
 func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
 	if db == nil {
-		// No DB — treat as setup-mode-on so the wizard at least loads.
 		return &State{active: true, startedAt: time.Now()}, nil
 	}
-	ok, err := AdminExists(ctx, db)
+	exists, err := UsersExist(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	return &State{active: !ok, startedAt: time.Now()}, nil
+	return &State{active: !exists, startedAt: time.Now()}, nil
+}
+
+// UsersExist reports whether the install has any user account. The wizard
+// may only change an install for which it is false.
+func UsersExist(ctx context.Context, db *sql.DB) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `SELECT 1 FROM users LIMIT 1`).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // AdminExists reports whether some account holds an admin role
-// (rbac.IsAdminPermSet). Any scope counts: an upgraded install whose
-// admins ended up on narrower scopes must not reopen the unauthenticated
-// wizard; `dockmesh admin create` recovers it.
+// (rbac.IsAdminPermSet) on any scope.
 func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
 	roles, err := rbac.LoadRoles(ctx, db)
 	if err != nil {

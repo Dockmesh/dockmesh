@@ -24,6 +24,7 @@ var (
 	ErrUserExists         = errors.New("user already exists")
 	ErrUsernameTaken      = errors.New("username already in use")
 	ErrEmailTaken         = errors.New("email already in use")
+	ErrAlreadySetUp       = errors.New("this installation already has user accounts")
 
 	// ErrSessionOutdated marks a refresh token from before per-kind token
 	// keys; the user has to sign in again and the UI says why.
@@ -185,6 +186,18 @@ func (s *Service) Bootstrap(ctx context.Context) (username, password string, cre
 // CreateUser adds a local account. A non-empty role is assigned on
 // everything; pass "" to add assignments separately.
 func (s *Service) CreateUser(ctx context.Context, username, email, password, role string) (*User, error) {
+	return s.createUser(ctx, username, email, password, role, false)
+}
+
+// CreateFirstUser is CreateUser for the setup wizard: the insert only
+// happens while the users table is empty, in the same statement, so an
+// account created meanwhile (CLI, a second wizard tab) makes it fail with
+// ErrAlreadySetUp instead of adding a second admin.
+func (s *Service) CreateFirstUser(ctx context.Context, username, email, password, role string) (*User, error) {
+	return s.createUser(ctx, username, email, password, role, true)
+}
+
+func (s *Service) createUser(ctx context.Context, username, email, password, role string, onlyFirst bool) (*User, error) {
 	if err := ValidatePassword(s.policy(), password); err != nil {
 		return nil, err
 	}
@@ -202,10 +215,13 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO users (id, username, email, password, password_changed_at)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		id, username, emailNullable, hash)
+	insert := `INSERT INTO users (id, username, email, password, password_changed_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	if onlyFirst {
+		insert = `INSERT INTO users (id, username, email, password, password_changed_at)
+		 SELECT ?, ?, ?, ?, CURRENT_TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM users)`
+	}
+	res, err := tx.ExecContext(ctx, insert, id, username, emailNullable, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
 			return nil, ErrUsernameTaken
@@ -214,6 +230,11 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 			return nil, ErrEmailTaken
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrAlreadySetUp
 	}
 	if role != "" {
 		if _, err := tx.ExecContext(ctx,

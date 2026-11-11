@@ -120,8 +120,9 @@ paths:
       description: |
         The caller must hold everything the role grants before and after
         the change, on everything (403). Built-in roles can't be changed
-        (409; duplicate them instead), nor can the last admin role on
-        everything lose admin rights (409).
+        (409; duplicate them instead), nor can a role lose admin rights
+        when that leaves no admin on everything, or no admin on any scope
+        (409).
       requestBody:
         required: true
         content:
@@ -208,7 +209,8 @@ paths:
       summary: Remove an assignment
       description: |
         The caller must be able to grant the assignment (403). The last
-        assignment of an admin role on everything can't be removed (409).
+        admin assignment on everything, and the last admin assignment on
+        any scope, can't be removed (409).
       responses:
         "204": {description: Removed.}
         "401": {$ref: "#/components/responses/Unauthorized"}

@@ -515,8 +515,3 @@ func (s *Store) IsAdminRole(name string) bool {
 	perms, ok := s.RolePerms(name)
 	return ok && IsAdminPermSet(perms)
 }
-
-// IsGlobalAdmin reports whether a is an admin role on everything.
-func (s *Store) IsGlobalAdmin(a Assignment) bool {
-	return a.Scope.IsGlobal() && s.IsAdminRole(a.Role)
-}

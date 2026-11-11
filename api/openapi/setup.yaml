@@ -223,9 +223,8 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "409":
           description: |
-            Another install is already running or has just finished, or an
-            account that can administer Dockmesh already exists (setup then
-            closes).
+            Another install is already running or has just finished, or the
+            install has a user account by now (setup then closes).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -287,7 +286,10 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "409":
-          description: Another restore is being staged.
+          description: |
+            Another install or restore is running, or the install has a
+            user account by now (setup then closes). Checked again after
+            the upload, right before setup mode ends.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -338,8 +340,9 @@ paths:
       tags: [setup]
       summary: Whether the server is in first-run setup mode
       description: |
-        Returns `active: true` when the server has no admin user and
-        the install wizard is the only thing that should be reachable.
+        Returns `active: true` when the install has no user account at all
+        and the install wizard is the only thing that should be reachable.
+        An install with accounts but no admin never reopens the wizard.
         The wizard frontend polls this on every page load to decide
         whether to redirect to the dashboard once setup is complete.
 

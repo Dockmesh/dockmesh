@@ -131,19 +131,9 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
 		return
 	}
-	// An admin may have been created since boot, e.g. with the CLI.
-	if h.DB != nil {
-		exists, err := setup.AdminExists(r.Context(), h.DB)
-		if err != nil {
-			h.SetupState.EndCommit(false)
-			writeError(w, http.StatusInternalServerError, "could not check for existing admins")
-			return
-		}
-		if exists {
-			h.SetupState.EndCommit(true)
-			writeError(w, http.StatusConflict, "an account that can administer Dockmesh already exists, sign in instead")
-			return
-		}
+	// An account may have been created since boot, e.g. with the CLI.
+	if !h.setupStillFree(w, r) {
+		return
 	}
 
 	runner := setup.NewRunner()

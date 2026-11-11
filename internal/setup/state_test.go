@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
 func newStateDB(t *testing.T) *sql.DB {
@@ -23,26 +25,30 @@ func newStateDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func TestNewFromDBUsesPermissions(t *testing.T) {
+func TestNewFromDBOnlyWithoutUsers(t *testing.T) {
 	adminEquivalent := map[string]string{"settings": "manage", "users": "manage"}
 	tests := []struct {
-		name       string
-		role       string
-		levels     map[string]string // custom role created with these levels
-		scope      string
-		wantActive bool
+		name          string
+		user          bool
+		role          string
+		levels        map[string]string // custom role created with these levels
+		scope         string
+		wantActive    bool
+		wantNeedAdmin bool
 	}{
 		{name: "no users", wantActive: true},
-		{name: "built-in admin", role: "admin", wantActive: false},
-		{name: "only viewer", role: "viewer", wantActive: true},
-		{name: "host-admin", role: "host-admin", wantActive: true},
-		{name: "admin on one host only", role: "admin", scope: "host", wantActive: false},
-		{name: "custom admin-equivalent role", role: "superops", levels: adminEquivalent, wantActive: false},
-		{name: "custom role without user management", role: "settings-only", levels: map[string]string{"settings": "manage"}, wantActive: true},
-		{name: "custom role named like admin", role: "Admin2", levels: map[string]string{"users": "view"}, wantActive: true},
+		{name: "built-in admin", user: true, role: "admin"},
+		{name: "user without any assignment", user: true, wantNeedAdmin: true},
+		{name: "only viewer", user: true, role: "viewer", wantNeedAdmin: true},
+		{name: "host-admin", user: true, role: "host-admin", wantNeedAdmin: true},
+		{name: "only a scoped admin", user: true, role: "admin", scope: "host"},
+		{name: "custom admin-equivalent role", user: true, role: "superops", levels: adminEquivalent},
+		{name: "custom role without user management", user: true, role: "settings-only", levels: map[string]string{"settings": "manage"}, wantNeedAdmin: true},
+		{name: "custom role named like admin", user: true, role: "Admin2", levels: map[string]string{"users": "view"}, wantNeedAdmin: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
 			database := newStateDB(t)
 			if tt.levels != nil {
 				if _, err := database.Exec(`INSERT INTO roles (name, display) VALUES (?, ?)`, tt.role, tt.role); err != nil {
@@ -54,24 +60,88 @@ func TestNewFromDBUsesPermissions(t *testing.T) {
 					}
 				}
 			}
+			if tt.user {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x')`); err != nil {
+					t.Fatalf("user: %v", err)
+				}
+			}
 			if tt.role != "" {
 				scope, host := "global", ""
 				if tt.scope != "" {
 					scope, host = tt.scope, "agent-1"
 				}
-				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x');
-					INSERT INTO role_assignments (user_id, role_name, scope_type, scope_host) VALUES ('u1', ?, ?, ?)`, tt.role, scope, host); err != nil {
-					t.Fatalf("user: %v", err)
+				if _, err := database.Exec(`INSERT INTO role_assignments (user_id, role_name, scope_type, scope_host) VALUES ('u1', ?, ?, ?)`, tt.role, scope, host); err != nil {
+					t.Fatalf("assignment: %v", err)
 				}
 			}
-			st, err := NewFromDB(context.Background(), database)
-			if err != nil {
-				t.Fatalf("NewFromDB: %v", err)
+			// Every start decides again; a restart must not change the outcome.
+			for range 2 {
+				st, err := NewFromDB(ctx, database)
+				if err != nil {
+					t.Fatalf("NewFromDB: %v", err)
+				}
+				if st.Active() != tt.wantActive {
+					t.Fatalf("Active() = %v, want %v", st.Active(), tt.wantActive)
+				}
+				if !tt.wantActive && st.TryBeginCommit() {
+					t.Fatal("commit accepted while setup is closed")
+				}
 			}
-			if st.Active() != tt.wantActive {
-				t.Fatalf("Active() = %v, want %v", st.Active(), tt.wantActive)
+			need, err := NeedsAdmin(ctx, database)
+			if err != nil {
+				t.Fatalf("NeedsAdmin: %v", err)
+			}
+			if need != tt.wantNeedAdmin {
+				t.Fatalf("NeedsAdmin() = %v, want %v", need, tt.wantNeedAdmin)
 			}
 		})
+	}
+}
+
+func TestNoAdminNotice(t *testing.T) {
+	ctx := context.Background()
+	database := newStateDB(t)
+	ns := notices.NewService(database)
+	openNotice := func() *notices.Notice {
+		t.Helper()
+		if err := NoAdminNoticeCheck(database)(ctx, ns); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		open, err := ns.Open(ctx)
+		if err != nil {
+			t.Fatalf("open notices: %v", err)
+		}
+		for i := range open {
+			if open[i].Key == NoAdminNoticeKey {
+				return &open[i]
+			}
+		}
+		return nil
+	}
+
+	if openNotice() != nil {
+		t.Fatal("notice raised on an install without accounts")
+	}
+	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x');
+		INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'viewer', 'global')`); err != nil {
+		t.Fatal(err)
+	}
+	n := openNotice()
+	if n == nil {
+		t.Fatal("no notice for accounts without an admin")
+	}
+	var audience string
+	if err := database.QueryRow(`SELECT audience FROM notices WHERE id = ?`, n.ID).Scan(&audience); err != nil {
+		t.Fatal(err)
+	}
+	if audience != string(notices.AudienceAll) || !strings.Contains(n.Body, RecoveryCommand) {
+		t.Fatalf("notice audience %q, body %q: want everyone and the recovery command", audience, n.Body)
+	}
+	if _, err := database.Exec(`INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
+		t.Fatal(err)
+	}
+	if openNotice() != nil {
+		t.Fatal("notice still open once an admin exists")
 	}
 }
 

@@ -369,8 +369,8 @@ func main() {
 		}
 	}
 
-	// Setup-mode state. Active when no admin user exists in the
-	// DB; the force flag never reopens it over an admin. Used by the gating
+	// Setup-mode state. Active only while the DB has no user account; the
+	// force flag never reopens it over existing accounts. Used by the gating
 	// middleware to redirect a freshly-installed server's URL to /setup
 	// instead of the login screen.
 	setupState, setupForceIgnored, err := setup.NewForBoot(ctx, database, cfg.SetupForce)
@@ -380,12 +380,17 @@ func main() {
 	}
 	setupEnvFile := serverEnvFile(cfg.DBPath)
 	if setupForceIgnored {
-		slog.Warn("DOCKMESH_SETUP_FORCE ignored: an admin account exists, the setup wizard stays closed — remove the flag from the env file",
+		slog.Warn("DOCKMESH_SETUP_FORCE ignored: user accounts exist, the setup wizard stays closed — remove the flag from the env file",
 			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
 		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
 			"window_min", int(setup.SetupWindow.Minutes()))
+	} else if need, err := setup.NeedsAdmin(ctx, database); err != nil {
+		slog.Warn("check for an admin account", "err", err)
+	} else if need {
+		slog.Error("no account holds an admin role, so nobody can manage users or settings; the setup wizard stays closed — create an admin on this server, then restart the service",
+			"command", setup.RecoveryCommand)
 	}
 
 	// Docker may not be up yet when we boot (macOS launchd fires us
@@ -804,6 +809,7 @@ func main() {
 	})
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
+	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -952,12 +958,19 @@ func main() {
 		})
 	}
 
-	// P.14.2: install-wizard commit function. Built here because it
-	// needs auth.Service + settings.Store + the configured paths.
-	// Idempotent — re-running the wizard against an already-set-up
-	// install does not corrupt state, it just emits "already exists"
-	// warnings for the user-create and admin-create steps.
+	// Install-wizard commit function. Built here because it needs
+	// auth.Service + settings.Store + the configured paths. It refuses to
+	// touch an install that has any account, also one created after the
+	// handler's check: the admin insert itself only succeeds on an empty
+	// users table.
 	setupCommit := func(commitCtx context.Context, in setup.CommitInput, emit func(step, msg, status string)) error {
+		if exists, err := setup.UsersExist(commitCtx, database); err != nil || exists {
+			if err == nil {
+				err = auth.ErrAlreadySetUp
+			}
+			emit("precheck", err.Error(), "fail")
+			return err
+		}
 		// Step 1 — service user. Skips entirely when we're not root,
 		// because useradd needs root and the wizard usually runs as the
 		// dockmesh user (non-root). The install script creates the user
@@ -998,16 +1011,11 @@ func main() {
 		emit("admin", "creating admin user '"+in.Admin.Username+"'", "info")
 		commitCtx2, cancel := context.WithTimeout(commitCtx, 10*time.Second)
 		defer cancel()
-		if _, err := authSvc.CreateUser(commitCtx2, in.Admin.Username, in.Admin.Email, in.Admin.Password, "admin"); err != nil {
-			if errors.Is(err, auth.ErrUsernameTaken) {
-				emit("admin", "admin '"+in.Admin.Username+"' already exists — password unchanged (use 'sudo dockmesh admin reset-password' to change it)", "warn")
-			} else {
-				emit("admin", err.Error(), "fail")
-				return err
-			}
-		} else {
-			emit("admin", "admin user created", "ok")
+		if _, err := authSvc.CreateFirstUser(commitCtx2, in.Admin.Username, in.Admin.Email, in.Admin.Password, "admin"); err != nil {
+			emit("admin", err.Error(), "fail")
+			return err
 		}
+		emit("admin", "admin user created", "ok")
 
 		// Step 4 — public URL persisted in the settings store
 		if settingsStore != nil {

@@ -5709,8 +5709,9 @@ paths:
       description: |
         The caller must hold everything the role grants before and after
         the change, on everything (403). Built-in roles can't be changed
-        (409; duplicate them instead), nor can the last admin role on
-        everything lose admin rights (409).
+        (409; duplicate them instead), nor can a role lose admin rights
+        when that leaves no admin on everything, or no admin on any scope
+        (409).
       requestBody:
         required: true
         content:
@@ -5797,7 +5798,8 @@ paths:
       summary: Remove an assignment
       description: |
         The caller must be able to grant the assignment (403). The last
-        assignment of an admin role on everything can't be removed (409).
+        admin assignment on everything, and the last admin assignment on
+        any scope, can't be removed (409).
       responses:
         "204": {description: Removed.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -6259,9 +6261,8 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "409":
           description: |
-            Another install is already running or has just finished, or an
-            account that can administer Dockmesh already exists (setup then
-            closes).
+            Another install is already running or has just finished, or the
+            install has a user account by now (setup then closes).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6323,7 +6324,10 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "409":
-          description: Another restore is being staged.
+          description: |
+            Another install or restore is running, or the install has a
+            user account by now (setup then closes). Checked again after
+            the upload, right before setup mode ends.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6374,8 +6378,9 @@ paths:
       tags: [setup]
       summary: Whether the server is in first-run setup mode
       description: |
-        Returns `active: true` when the server has no admin user and
-        the install wizard is the only thing that should be reachable.
+        Returns `active: true` when the install has no user account at all
+        and the install wizard is the only thing that should be reachable.
+        An install with accounts but no admin never reopens the wizard.
         The wizard frontend polls this on every page load to decide
         whether to redirect to the dashboard once setup is complete.
 
@@ -8071,7 +8076,7 @@ paths:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
-      description: Same rules as update; deleting the account that holds the last admin assignment on everything returns 409.
+      description: Same rules as update; deleting the account that holds the last admin assignment on everything, or the last admin assignment on any scope, returns 409.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
