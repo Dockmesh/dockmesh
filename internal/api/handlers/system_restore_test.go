@@ -19,10 +19,12 @@ import (
 func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 	tests := []struct {
 		name      string
-		admin     bool
+		account   string
 		slotTaken bool
 	}{
-		{name: "admin created after boot", admin: true},
+		{name: "admin created after boot", account: accountAdmin},
+		{name: "viewer created after boot", account: accountViewer},
+		{name: "account without role created after boot", account: accountBare},
 		{name: "install already running", slotTaken: true},
 	}
 	for _, tt := range tests {
@@ -40,8 +42,8 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}
-			if tt.admin {
-				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'cli-admin', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
+			if tt.account != "" {
+				if _, err := database.Exec(tt.account); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -62,8 +64,8 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 			if rec.Code != http.StatusConflict || restarted {
 				t.Fatalf("got %d (restart %v), want 409 and no restart: %s", rec.Code, restarted, rec.Body)
 			}
-			if tt.admin && st.Active() {
-				t.Fatal("setup still active after an admin was found")
+			if tt.account != "" && st.Active() {
+				t.Fatal("setup still active after an account was found")
 			}
 		})
 	}

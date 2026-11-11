@@ -273,7 +273,7 @@ paths:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
-      description: Same rules as update; deleting the account that holds the last admin assignment on everything returns 409.
+      description: Same rules as update; deleting the account that holds the last admin assignment on everything, or the last admin assignment on any scope, returns 409.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}

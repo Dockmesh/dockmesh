@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/i18n"
@@ -17,7 +18,7 @@ import (
 // what the caller holds; handlers turn it into 403.
 var errGrantExceedsCaller = errors.New("grant exceeds caller")
 
-var errLastAdmin = errors.New("this is the last assignment of an admin role on everything; give another account the Admin role first")
+var errLastAdmin = errors.New("this would remove the last admin assignment; give another account the Admin role first")
 
 // checkGrant reports whether the caller may hand out role on scope: the
 // caller must hold every permission of the role everywhere the scope
@@ -101,25 +102,35 @@ func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id 
 	return true
 }
 
-// globalAdminAssignments counts the assignments of an admin role on
-// everything, skipping those skip matches.
-func (h *Handlers) globalAdminAssignments(skip func(a rbac.Assignment) bool) int {
-	n := 0
-	for _, a := range h.Roles.AllAssignments() {
-		if h.Roles.IsGlobalAdmin(a) && (skip == nil || !skip(a)) {
-			n++
+// countAdmins counts the assignments of an admin role on everything and on
+// any scope.
+func (h *Handlers) countAdmins(as []rbac.Assignment) (global, anyScope int) {
+	for _, a := range as {
+		if !h.Roles.IsAdminRole(a.Role) {
+			continue
+		}
+		anyScope++
+		if a.Scope.IsGlobal() {
+			global++
 		}
 	}
-	return n
+	return global, anyScope
 }
 
 // checkKeepsAdmin fails with errLastAdmin when removing the assignments
-// skip matches would leave no admin role on everything.
-func (h *Handlers) checkKeepsAdmin(skip func(a rbac.Assignment) bool) error {
+// skip matches and adding add would leave no admin role on everything, or
+// no admin role on any scope. The second case protects installs whose
+// admins all hold narrower scopes.
+func (h *Handlers) checkKeepsAdmin(skip func(a rbac.Assignment) bool, add ...rbac.Assignment) error {
 	if h.Roles == nil {
 		return nil
 	}
-	if h.globalAdminAssignments(nil) > 0 && h.globalAdminAssignments(skip) == 0 {
+	before := h.Roles.AllAssignments()
+	after := slices.DeleteFunc(slices.Clone(before), func(a rbac.Assignment) bool { return skip != nil && skip(a) })
+	after = append(after, add...)
+	globalBefore, anyBefore := h.countAdmins(before)
+	globalAfter, anyAfter := h.countAdmins(after)
+	if (globalBefore > 0 && globalAfter == 0) || (anyBefore > 0 && anyAfter == 0) {
 		return errLastAdmin
 	}
 	return nil
@@ -136,9 +147,9 @@ func (h *Handlers) checkRoleKeepsAdmin(role string, stillAdmin bool) error {
 }
 
 // SyncIdPAssignments replaces a user's identity provider assignments at
-// sign-in. If that would remove the last admin assignment on everything,
-// the old admin assignments stay and admins are told to fix the group
-// mapping.
+// sign-in. If that would remove the last admin assignment (see
+// checkKeepsAdmin), the old admin assignments stay and admins are told to
+// fix the group mapping.
 func (h *Handlers) SyncIdPAssignments(ctx context.Context, userID string, want []rbac.Assignment) error {
 	if h.Roles == nil {
 		return errors.New("roles store unavailable")
@@ -149,20 +160,14 @@ func (h *Handlers) SyncIdPAssignments(ctx context.Context, userID string, want [
 			known = append(known, a)
 		}
 	}
-	err := h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.UserID == userID && a.Source == rbac.SourceIdP })
+	err := h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.UserID == userID && a.Source == rbac.SourceIdP }, known...)
 	if errors.Is(err, errLastAdmin) {
-		keepsAdmin := false
-		for _, a := range known {
-			keepsAdmin = keepsAdmin || h.Roles.IsGlobalAdmin(a)
-		}
-		if !keepsAdmin {
-			for _, a := range h.Roles.UserAssignments(userID) {
-				if a.Source == rbac.SourceIdP && h.Roles.IsGlobalAdmin(a) {
-					known = append(known, a)
-				}
+		for _, a := range h.Roles.UserAssignments(userID) {
+			if a.Source == rbac.SourceIdP && h.Roles.IsAdminRole(a.Role) {
+				known = append(known, a)
 			}
-			h.raiseLastAdminNotice(ctx, userID)
 		}
+		h.raiseLastAdminNotice(ctx, userID)
 	}
 	return h.Roles.ReplaceIdPAssignments(ctx, userID, known)
 }

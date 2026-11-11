@@ -13,15 +13,17 @@ func TestNewForBootForceFlag(t *testing.T) {
 		name         string
 		force        bool
 		admin        bool
+		viewer       bool
 		raisedBefore bool
 		wantActive   bool
 		wantIgnored  bool
 		wantNotice   bool
 	}{
 		{name: "flag with admin", force: true, admin: true, wantActive: false, wantIgnored: true, wantNotice: true},
-		{name: "flag without admin", force: true, admin: false, wantActive: true},
+		{name: "flag with accounts but no admin", force: true, viewer: true, wantActive: false, wantIgnored: true, wantNotice: true},
+		{name: "flag without accounts", force: true, admin: false, wantActive: true},
 		{name: "flag removed resolves notice", force: false, admin: true, raisedBefore: true, wantActive: false},
-		{name: "no flag no admin", force: false, admin: false, wantActive: true},
+		{name: "no flag no accounts", force: false, admin: false, wantActive: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -29,6 +31,11 @@ func TestNewForBootForceFlag(t *testing.T) {
 			database := newStateDB(t)
 			if tt.admin {
 				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
+					t.Fatalf("user: %v", err)
+				}
+			}
+			if tt.viewer {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'viewer', 'global')`); err != nil {
 					t.Fatalf("user: %v", err)
 				}
 			}

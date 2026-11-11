@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
@@ -77,15 +78,19 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 	}
 }
 
-func TestSetupCommitRefusedOnceAdminExists(t *testing.T) {
+// The wizard page may have been open since boot; any account created in
+// the meantime closes it, admin or not.
+func TestSetupCommitRefusedOnceAccountExists(t *testing.T) {
 	tests := []struct {
 		name     string
-		admin    bool
+		account  string // SQL run after boot, before the commit
 		wantCode int
 		wantRun  bool
 	}{
-		{name: "no admin", admin: false, wantCode: http.StatusAccepted, wantRun: true},
-		{name: "admin created after boot", admin: true, wantCode: http.StatusConflict},
+		{name: "still no account", wantCode: http.StatusAccepted, wantRun: true},
+		{name: "admin created after boot", account: accountAdmin, wantCode: http.StatusConflict},
+		{name: "viewer created after boot", account: accountViewer, wantCode: http.StatusConflict},
+		{name: "account without role created after boot", account: accountBare, wantCode: http.StatusConflict},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,8 +106,8 @@ func TestSetupCommitRefusedOnceAdminExists(t *testing.T) {
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}
-			if tt.admin {
-				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'cli-admin', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
+			if tt.account != "" {
+				if _, err := database.Exec(tt.account); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -121,16 +126,43 @@ func TestSetupCommitRefusedOnceAdminExists(t *testing.T) {
 			select {
 			case <-ran:
 				if !tt.wantRun {
-					t.Fatal("install ran although an admin exists")
+					t.Fatal("install ran although an account exists")
 				}
 			case <-time.After(time.Second):
 				if tt.wantRun {
 					t.Fatal("install did not run")
 				}
 			}
-			if tt.admin && st.Active() {
-				t.Fatal("setup still active after an admin was found")
+			if tt.account != "" && st.Active() {
+				t.Fatal("setup still active after an account was found")
 			}
 		})
+	}
+}
+
+const (
+	accountBare   = `INSERT INTO users (id, username, password) VALUES ('u1', 'cli-user', 'x')`
+	accountViewer = accountBare + `; INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'viewer', 'global')`
+	accountAdmin  = accountBare + `; INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`
+)
+
+// A runner that finds an account created after the handler's check ends
+// setup mode, so the gate stops answering 503 to the other routes.
+func TestSetupCommitLosingTheRaceEndsSetup(t *testing.T) {
+	h := &Handlers{
+		SetupState: setup.NewForced(),
+		SetupCommit_: func(context.Context, setup.CommitInput, func(string, string, string)) error {
+			return auth.ErrAlreadySetUp
+		},
+	}
+	if code := postSetup(h.SetupCommit, "/api/v1/setup/commit", setupCommitBody); code != http.StatusAccepted {
+		t.Fatalf("commit: %d", code)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for h.SetupState.Active() {
+		if time.Now().After(deadline) {
+			t.Fatal("setup still active after the install found an existing account")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

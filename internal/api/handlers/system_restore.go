@@ -241,7 +241,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	// The install slot keeps this and the wizard's own install apart, and
 	// the upload may take long: the setup has to still be open, without
-	// an admin, once the archive is in.
+	// any account, once the archive is in.
 	if !h.SetupState.TryBeginCommit() {
 		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
 		return
@@ -273,7 +273,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.SetupState.Expired() || !h.setupStillFree(w, r) {
-		_ = restore.DiscardStaged(h.RestoreConfig)
+		h.discardSetupRestore()
 		if h.SetupState.Expired() {
 			writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
 		}
@@ -282,7 +282,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.FinishSetup != nil {
 		if err := h.FinishSetup(); err != nil {
-			_ = restore.DiscardStaged(h.RestoreConfig)
+			h.discardSetupRestore()
 			writeError(w, http.StatusInternalServerError, "end setup mode: "+err.Error())
 			return
 		}
@@ -293,26 +293,34 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	h.RequestRestart()
 }
 
+// discardSetupRestore drops a staged setup restore that was refused; if
+// that fails it would be applied at the next start, so it is logged loudly.
+func (h *Handlers) discardSetupRestore() {
+	if err := restore.DiscardStaged(h.RestoreConfig); err != nil {
+		slog.Error("discard the refused setup restore failed; remove the staging directory before the next restart", "err", err)
+	}
+}
+
 // setupUploadTime bounds how long the setup restore may take to receive
 // its archive.
 const setupUploadTime = 30 * time.Minute
 
-// setupStillFree answers 409 once an account that can administer Dockmesh
-// exists, since the setup restore would replace it, and ends setup mode.
-// It releases the install slot whenever it returns false.
+// setupStillFree answers 409 and ends setup mode once the install has any
+// account, since the wizard would write over it. It releases the install
+// slot whenever it returns false.
 func (h *Handlers) setupStillFree(w http.ResponseWriter, r *http.Request) bool {
 	if h.DB == nil {
 		return true
 	}
-	exists, err := setup.AdminExists(r.Context(), h.DB)
+	exists, err := setup.UsersExist(r.Context(), h.DB)
 	if err != nil {
 		h.SetupState.EndCommit(false)
-		writeError(w, http.StatusInternalServerError, "could not check for existing admins")
+		writeError(w, http.StatusInternalServerError, "could not check for existing accounts")
 		return false
 	}
 	if exists {
 		h.SetupState.EndCommit(true)
-		writeError(w, http.StatusConflict, "an account that can administer Dockmesh already exists, sign in instead")
+		writeError(w, http.StatusConflict, "this Dockmesh is already set up, sign in instead")
 		return false
 	}
 	return true

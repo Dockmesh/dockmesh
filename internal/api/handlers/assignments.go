@@ -110,8 +110,8 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, assignmentView{Assignment: a, Username: u.Username})
 }
 
-// DeleteAssignment removes an assignment. The last admin assignment on
-// everything can't be removed.
+// DeleteAssignment removes an assignment. The last admin assignment, on
+// everything or on any scope, can't be removed.
 //
 //	DELETE /api/v1/assignments/{id}
 func (h *Handlers) DeleteAssignment(w http.ResponseWriter, r *http.Request) {
