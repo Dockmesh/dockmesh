@@ -959,17 +959,18 @@ func main() {
 	}
 
 	// Install-wizard commit function. Built here because it needs
-	// auth.Service + settings.Store + the configured paths. It refuses to
-	// touch an install that has any account, also one created after the
-	// handler's check: the admin insert itself only succeeds on an empty
-	// users table.
+	// auth.Service + settings.Store + the configured paths. It refuses an
+	// install that already has an account; CreateFirstUser repeats that
+	// check atomically for an account created after this precheck.
 	setupCommit := func(commitCtx context.Context, in setup.CommitInput, emit func(step, msg, status string)) error {
-		if exists, err := setup.UsersExist(commitCtx, database); err != nil || exists {
-			if err == nil {
-				err = auth.ErrAlreadySetUp
-			}
+		exists, err := setup.UsersExist(commitCtx, database)
+		if err != nil {
 			emit("precheck", err.Error(), "fail")
 			return err
+		}
+		if exists {
+			emit("precheck", auth.ErrAlreadySetUp.Error(), "fail")
+			return auth.ErrAlreadySetUp
 		}
 		// Step 1 — service user. Skips entirely when we're not root,
 		// because useradd needs root and the wizard usually runs as the
@@ -996,10 +997,7 @@ func main() {
 				in.ServiceUser.Username+"' if it needs Docker access", "warn")
 		}
 
-		// Step 2 — data directory. We only ensure existence + ownership;
-		// relocation between dirs is a P.14 follow-up (the install
-		// script will set the bootstrap dir to the operator's choice
-		// upfront).
+		// Step 2 — data directory. We only ensure existence + ownership.
 		emit("data_dir", "ensuring "+in.DataDir, "info")
 		if err := os.MkdirAll(in.DataDir, 0o750); err != nil {
 			emit("data_dir", err.Error(), "fail")
@@ -1029,19 +1027,15 @@ func main() {
 			}
 		}
 
-		// Step 4.5 — scrub DOCKMESH_SETUP_FORCE from the env file. The
-		// install script writes that flag so the wizard runs on first
-		// boot. Once the wizard's commit succeeds (admin user now
-		// exists in the DB), the next service restart should NOT
-		// re-enter setup mode — drop the flag so a regular boot lands
-		// the operator on the login screen.
+		// Step 4.5 — drop DOCKMESH_SETUP_FORCE; with an account present it
+		// is only ignored and warned about at every start.
 		envPath := serverEnvFile(cfg.DBPath)
 		if envPath == "" {
 			if cfg.SetupForce {
 				emit("setup_flag", "env file not located — remove DOCKMESH_SETUP_FORCE from it manually (default "+setup.DefaultEnvFile+")", "warn")
 			}
 		} else if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
-			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath+" — next boot will not re-enter setup mode", "ok")
+			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath, "ok")
 		} else if derr != nil {
 			emit("setup_flag", "could not scrub setup flag: "+derr.Error()+" (manual edit may be needed)", "warn")
 		}
