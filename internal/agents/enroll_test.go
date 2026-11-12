@@ -222,7 +222,7 @@ func TestCreateResultPinsListener(t *testing.T) {
 	if strings.Contains(res.InstallHint, "?token=") {
 		t.Fatalf("token travels in a URL: %s", res.InstallHint)
 	}
-	if got := res.TokenExpiresAt.Sub(time.Now()); got > time.Hour || got < 59*time.Minute {
+	if got := time.Until(res.TokenExpiresAt); got > time.Hour || got < 59*time.Minute {
 		t.Fatalf("token lifetime %s, want 1h", got)
 	}
 	if res.EnrollURL != "https://dockmesh.test:8443/enroll" {

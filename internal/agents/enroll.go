@@ -102,6 +102,6 @@ func serveEnroll(w http.ResponseWriter, r *http.Request, svc *Service) bool {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp) //nolint:gosec // the enrolling agent receives its own new key, over TLS
 	return true
 }

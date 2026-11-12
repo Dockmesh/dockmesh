@@ -43,7 +43,7 @@ func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(script)
+	_, _ = w.Write(script) //nolint:gosec // a shell script sent as text/x-shellscript, never rendered as HTML
 }
 
 // AgentBinary serves the cross-compiled linux agent binary. Path is

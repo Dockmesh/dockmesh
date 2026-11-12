@@ -21,15 +21,15 @@ Both URLs are set under **Settings → General** (**Base URL** and **Agent publi
 
 ### Adding a host
 
-1. On **Hosts**, click **Add host**, enter a name and click **Generate install command**. The server creates a pending host and a one-time enrollment token. It stores only a hash of the token. The token is valid for 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes this).
+1. On **Hosts**, click **Add host**, enter a name and click **Generate install command**. The server creates a pending host and a one-time enrollment token. It stores only a hash of the token. The token is valid for 1 hour (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes this); **New command** replaces it.
 2. The dialog shows an install command:
 
    ```bash
-   curl -fsSL '<base-url>/install/agent.sh?token=<token>&ca=<fingerprint>' | sudo bash
+   curl -fsSLk --pinnedpubkey 'sha256//<pin>' https://<agent URL host>:<port>/install/agent.sh | sudo bash -s -- --token <token>
    ```
 
-   The `ca` value is the fingerprint of the server's agent CA. The server refuses to hand out the script if its CA has changed since the command was created.
-3. Run the command on the remote host as root. The script has the token, both URLs, the agent CA and the SHA-256 checksums of the agent binaries filled in. It picks the `amd64` or `arm64` binary for the host, checks its checksum, and sets up a systemd service. See [What the installer does](../features/multi-host.md#what-the-installer-does).
+   The pin is the hash of the agent listener's public key. curl refuses any other server before the script runs, so the install is pinned end to end even when the base URL is plain HTTP.
+3. Run the command on the remote host as root. The script has both URLs, the key pin, the agent CA and the SHA-256 checksums of the agent binaries filled in; the token comes from `--token`. It picks the `amd64` or `arm64` binary for the host, checks its checksum, and sets up a systemd service. See [What the installer does](../features/multi-host.md#what-the-installer-does).
 4. On first start the agent sends the token to `https://<agent URL host>:<port>/enroll` on the agent port. It only trusts the agent CA the install script wrote, after checking its fingerprint (`DOCKMESH_CA_FINGERPRINT`), so it can't be redirected to another server. The server generates a key pair and a client certificate signed by its CA (ECDSA P-256, valid 365 days, the host ID as Common Name) and returns them. The token can't be used again.
 
 ### The connection

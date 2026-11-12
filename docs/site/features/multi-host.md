@@ -24,7 +24,7 @@ The server's environment file (`dockmesh.env`) can set the same values. These va
 | `DOCKMESH_AGENT_PUBLIC_URL` | none (Settings) | `wss://` URL agents dial. Without it, the **Agent public URL** field is used, or the URL derived from the base URL. |
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Address of the mTLS agent listener on the server. |
 | `DOCKMESH_AGENT_SANS` | empty | Extra host names and IPs for the agent listener's certificate, comma-separated. The agent URL's host is added automatically. |
-| `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `24h` | How long an enrollment token is valid, as a Go duration between `1m` and `720h`. The server refuses to start with any other value. |
+| `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `1h` | How long an enrollment token is valid, as a Go duration between `1m` and `720h`. The server refuses to start with any other value. |
 
 The listener certificate always covers `localhost`, `127.0.0.1` and `::1`. Port 8443 (or whatever you chose) has to be open on the server, not on the agent host. See [Ports](../reference/ports.md).
 
@@ -38,30 +38,30 @@ The check runs from the server. With split DNS or NAT, remote hosts can still ge
 
 1. Open **Hosts** and click **Add host**.
 2. Enter a **Hostname** (the name shown in Dockmesh) and, optionally, tags.
-3. Click **Generate install command**. The dialog shows a one-line command and the enrollment token, together with the time the token expires.
+3. Click **Generate install command**. The dialog shows a one-line command and the enrollment token, together with the time the token expires. **New command** replaces the token; the previous command stops working.
 4. Run the command on the remote host as root.
 5. The dialog checks every 2 seconds and closes once the host is online.
 
 The command looks like this:
 
 ```bash
-curl -fsSL 'https://dockmesh.example.com/install/agent.sh?token=<token>&ca=<fingerprint>' | sudo bash
+curl -fsSLk --pinnedpubkey 'sha256//<pin>' https://dockmesh.example.com:8443/install/agent.sh | sudo bash -s -- --token <token>
 ```
 
-The token is part of the URL, so a reverse proxy in front of Dockmesh writes it to its access log. It stays valid until it is used or expires; keep such logs private or re-issue the token if one leaked.
+The command fetches the installer from the agent port, at the host and port of the agent URL, and pins the public key of the agent listener's certificate. `-k` only skips the certificate chain check; curl still refuses any server whose key doesn't match the pin and stops with `curl: (90)` before the script runs. The script downloads the agent binary from the same address with the same pin, so the install doesn't depend on how the web UI is exposed. The listener keeps its key when its certificate is re-issued for a new agent URL, so a command stays valid until its token is used or expires.
 
-The command fetches the installer and the agent binary from the base URL. With an `http://` base URL, run it only on a trusted network, or put Dockmesh behind HTTPS first (see [Security hardening](../operations/hardening.md#network-exposure)).
+The token is an argument of the installer, not part of a URL, so it doesn't end up in proxy or access logs. While the installer runs it is visible in the process list and the shell history of the agent host; it can be used once.
 
 Adding a host needs the `hosts.create` permission.
 
 ### What the installer does
 
-The script served at `/install/agent.sh` is `scripts/install-agent.sh` with the token, the URLs, the agent CA and the agent binary checksums filled in. It:
+The script served at `/install/agent.sh` on the agent port is `scripts/install-agent.sh` with the URLs, the listener's key pin, the agent CA and the agent binary checksums filled in. It holds no secret; the token comes from `--token`. It:
 
 - supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`,
 - installs Docker from `get.docker.com` if it's missing (skip this with `--skip-docker`),
 - creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host (use `--as-root` to run as root instead),
-- downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the base URL and refuses to install it if its SHA-256 doesn't match,
+- downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin and refuses to install it if its SHA-256 doesn't match,
 - installs the binary to `/var/lib/dockmesh-agent/bin/dockmesh-agent` and a root-owned copy to `/usr/local/bin/dockmesh-agent`, which the service refreshes at every start,
 - writes the agent CA to `/var/lib/dockmesh-agent/enroll-ca.pem`, `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,
 - removes certificates from an earlier enrollment so the new token takes effect,
@@ -70,8 +70,12 @@ The script served at `/install/agent.sh` is `scripts/install-agent.sh` with the 
 Pass flags like this:
 
 ```bash
-curl -fsSL '<install-url>' | sudo bash -s -- --as-root
+curl -fsSLk --pinnedpubkey '<pin>' <install-url> | sudo bash -s -- --token <token> --as-root
 ```
+
+The installer and binary routes on the agent port need no sign-in. They and `/enroll` are limited per IP address with the limits of the sign-in endpoints: 100 requests in 15 minutes for the installer and binaries, and 100 failed enrollments in 15 minutes, after which the address waits 15 minutes. Behind TCP passthrough every agent host shares the proxy's address.
+
+Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation; the script it serves downloads the binary from the agent port with the pin.
 
 Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server.
 
@@ -99,7 +103,7 @@ The agent refuses to enroll over plain `http://` unless you start it with `--ins
 
 ## Enrollment and certificates
 
-Each host gets a single-use enrollment token, valid for 24 hours unless `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` says otherwise. The agent enrolls on the server's agent port and trusts only the agent CA pinned in the install script, so it can't be redirected to another server. The server generates the agent's key pair and a client certificate signed by its CA, and the agent pins that CA for all later connections.
+Each host gets a single-use enrollment token, valid for 1 hour unless `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` says otherwise. The agent enrolls on the server's agent port and trusts only the agent CA pinned in the install script, so it can't be redirected to another server. The server generates the agent's key pair and a client certificate signed by its CA, and the agent pins that CA for all later connections.
 
 Agent certificates are valid for 365 days. An online agent renews its certificate over its connection once less than 30 days are left; the host keeps its ID. The host's **Overview** tab shows when the certificate expires. Admins get a notice for an agent whose certificate expires within 14 days, and a critical one for an offline agent whose certificate has expired. To bring such an agent back, re-issue its token (see below) and run the new install command on the host.
 

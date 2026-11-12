@@ -151,7 +151,7 @@ All alert commands are read-only. `list-active` reads the latest 500 history ent
 dmctl enroll agent --name web-02
 ```
 
-Creates a host entry (`POST /agents`, needs `hosts.create`) and prints the install command to run as root on the new host. The enrollment token in that command can be used once and expires after 24 hours unless the server sets another lifetime (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL`). With `-o json` dmctl prints the full response, including the token and its expiry. See [Hosts and agents](../concepts/hosts-and-agents.md).
+Creates a host entry (`POST /agents`, needs `hosts.create`) and prints the install command to run as root on the new host. The enrollment token in that command can be used once and expires after 1 hour unless the server sets another lifetime (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL`). With `-o json` dmctl prints the full response, including the token and its expiry. See [Hosts and agents](../concepts/hosts-and-agents.md).
 
 ## Examples
 
