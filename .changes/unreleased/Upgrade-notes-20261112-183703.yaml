@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Hosts and agents on Docker Engine older than 19.03 have to upgrade Docker before updating Dockmesh
+time: 2026-11-12T18:37:03.197034643Z
+custom:
+    Audience: admins
+    Id: docker-19-03-minimum
