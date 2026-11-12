@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // A pull that fails inside the stream (HTTP 200) fails the deploy when no
@@ -44,7 +44,7 @@ func TestPrePullStreamError(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.47"))
+			cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.47"))
 			if err != nil {
 				t.Fatal(err)
 			}

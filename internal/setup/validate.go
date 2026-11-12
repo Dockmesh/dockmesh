@@ -22,7 +22,7 @@ type DataDirCheck struct {
 	Exists         bool   `json:"exists"`
 	IsDir          bool   `json:"is_dir"`
 	Writable       bool   `json:"writable"`
-	WillCreate     bool   `json:"will_create"`     // !exists, parent writable
+	WillCreate     bool   `json:"will_create"` // !exists, parent writable
 	TotalBytes     int64  `json:"total_bytes"`
 	FreeBytes      int64  `json:"free_bytes"`
 	ParentExists   bool   `json:"parent_exists"`

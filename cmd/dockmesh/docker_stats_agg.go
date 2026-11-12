@@ -7,11 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
-// aggregateDockerStats fans out `ContainerStatsOneShot` across every
+// aggregateDockerStats fans out a one-shot `ContainerStats` across every
 // running container and returns the sums expressed as:
 //
 //   - cpuPercent: total Docker CPU utilisation as a % of the Docker
@@ -30,8 +31,8 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 
-	list, err := cli.Raw().ContainerList(ctx, container.ListOptions{})
-	if err != nil || len(list) == 0 {
+	list, err := cli.Raw().ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil || len(list.Items) == 0 {
 		return 0, 0
 	}
 
@@ -44,7 +45,7 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 	)
 	sem := make(chan struct{}, maxWorkers)
 
-	for _, c := range list {
+	for _, c := range list.Items {
 		if c.State != "running" {
 			continue
 		}
@@ -54,7 +55,7 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			resp, err := cli.Raw().ContainerStatsOneShot(ctx, id)
+			resp, err := cli.Raw().ContainerStats(ctx, id, client.ContainerStatsOptions{})
 			if err != nil {
 				return
 			}

@@ -5,9 +5,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 )
 
 var errOutputFull = errors.New("exec output limit reached")
@@ -34,8 +33,8 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 // of its stdout and stderr, interleaved as written, plus the exit code.
 // Without a TTY Docker multiplexes both streams with frame headers, which
 // end up in the output unless they are split off here.
-func RunExec(ctx context.Context, cli client.ContainerAPIClient, containerID string, cmd []string, max int64) ([]byte, int, error) {
-	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+func RunExec(ctx context.Context, cli client.ExecAPIClient, containerID string, cmd []string, max int64) ([]byte, int, error) {
+	exec, err := cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -43,14 +42,14 @@ func RunExec(ctx context.Context, cli client.ContainerAPIClient, containerID str
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
+	attach, err := cli.ExecAttach(ctx, exec.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return nil, -1, err
 	}
 	defer attach.Close()
 	out := &cappedBuffer{max: max}
 	_, _ = stdcopy.StdCopy(out, out, attach.Reader)
-	insp, err := cli.ContainerExecInspect(ctx, exec.ID)
+	insp, err := cli.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return out.Bytes(), -1, err
 	}

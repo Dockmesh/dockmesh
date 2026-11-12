@@ -9,10 +9,11 @@ import (
 	"net"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // helperImage mounts volumes with data, so it is pinned to the multi-arch
@@ -54,24 +55,24 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 		Binds:     []string{volumeName + ":/source:ro"},
 		LogConfig: docker.HelperLogConfig,
 	}
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
 	if err != nil {
 		return nil, fmt.Errorf("create helper: %w", err)
 	}
 
-	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stream: true,
 		Stdout: true,
 		Stderr: true,
 	})
 	if err != nil {
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return nil, fmt.Errorf("attach helper: %w", err)
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		hijack.Close()
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return nil, fmt.Errorf("start helper: %w", err)
 	}
 
@@ -140,17 +141,17 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		Binds:      []string{volumeName + ":/dest"},
 		LogConfig:  docker.HelperLogConfig,
 	}
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
 	if err != nil {
 		return fmt.Errorf("create restore helper: %w", err)
 	}
 	defer func() {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
 		defer cancel()
-		_ = cli.ContainerRemove(rctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(rctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 	}()
 
-	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stderr: true,
@@ -160,7 +161,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 	defer hijack.Close()
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start restore: %w", err)
 	}
 
@@ -172,7 +173,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		_, err := io.Copy(hijack.Conn, src)
 		if err != nil {
 			kctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
-			_ = cli.ContainerKill(kctx, resp.ID, "KILL")
+			_, _ = cli.ContainerKill(kctx, resp.ID, client.ContainerKillOptions{Signal: "KILL"})
 			cancel()
 		} else {
 			_ = hijack.CloseWrite()
@@ -180,12 +181,12 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		copyDone <- err
 	}()
 
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	wait := cli.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	var exitCode int64
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		exitCode = s.StatusCode
-	case e := <-errCh:
+	case e := <-wait.Error:
 		return e
 	case <-ctx.Done():
 		return ctx.Err()
@@ -206,30 +207,33 @@ func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
 	defer cancel()
 	cli := dc.Raw()
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image:  helperImage,
-		Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
-		Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
-	}, &container.HostConfig{
-		Binds:     []string{volumeName + ":/dest"},
-		LogConfig: docker.HelperLogConfig,
-	}, nil, nil, "")
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:  helperImage,
+			Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
+			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
+		},
+		HostConfig: &container.HostConfig{
+			Binds:     []string{volumeName + ":/dest"},
+			LogConfig: docker.HelperLogConfig,
+		},
+	})
 	if err != nil {
 		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
-	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	defer func() { _, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true}) }()
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
-	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	wait := cli.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		if s.StatusCode != 0 {
 			slog.Warn("restore: volume cleanup failed", "volume", volumeName, "exit", s.StatusCode)
 		}
-	case err := <-errCh:
+	case err := <-wait.Error:
 		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 	}
 }

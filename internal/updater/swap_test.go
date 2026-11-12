@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // fakeDocker records the container API calls a swap makes and fails
@@ -53,7 +53,7 @@ func (f *fakeDocker) client(t *testing.T) *client.Client {
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.43"))
+	cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.43"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +62,11 @@ func (f *fakeDocker) client(t *testing.T) *client.Client {
 
 func oldContainer() *container.InspectResponse {
 	return &container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			ID:         "old",
-			Name:       "/web",
-			State:      &container.State{Running: true},
-			HostConfig: &container.HostConfig{},
-		},
-		Config: &container.Config{Image: "nginx:1.27"},
+		ID:         "old",
+		Name:       "/web",
+		State:      &container.State{Running: true},
+		HostConfig: &container.HostConfig{},
+		Config:     &container.Config{Image: "nginx:1.27"},
 	}
 }
 

@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 )
 
 // authResolver matches the interface compose.Service expects so the
@@ -294,7 +294,8 @@ func (h *LocalHost) ImageHistory(ctx context.Context, id string) ([]image.Histor
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
-	return h.cli.Raw().ImageHistory(ctx, id)
+	res, err := h.cli.Raw().ImageHistory(ctx, id)
+	return res.Items, err
 }
 
 func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error) {

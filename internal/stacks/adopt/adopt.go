@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/moby/moby/api/types/container"
 )
 
 const (
@@ -203,7 +203,7 @@ func (s *Service) Discover(ctx context.Context, hostID string) ([]DiscoveredStac
 				Name:          svcName,
 				ContainerID:   c.ID,
 				ContainerName: name,
-				State:         c.State,
+				State:         string(c.State),
 				Image:         c.Image,
 			})
 			created := time.Unix(c.Created, 0)

@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/container"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	dnetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // ServiceContainerConfig returns the create config a deploy of the

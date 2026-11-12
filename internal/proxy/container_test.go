@@ -5,17 +5,15 @@ import (
 	"io"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 func managedContainer(s *Service, imageID string) *container.InspectResponse {
 	return &container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			Image: imageID,
-			HostConfig: &container.HostConfig{
-				NetworkMode: proxyNetworkMode,
-				Binds:       s.proxyBinds(),
-			},
+		Image: imageID,
+		HostConfig: &container.HostConfig{
+			NetworkMode: proxyNetworkMode,
+			Binds:       s.proxyBinds(),
 		},
 		Config: &container.Config{
 			Cmd:    append([]string(nil), proxyCmd...),

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/moby/moby/client"
 )
 
 // UpdatePreview is a non-destructive lookup of what "Update" would fetch:
@@ -43,10 +45,11 @@ func (s *Service) Preview(ctx context.Context, containerID string) (*UpdatePrevi
 		return nil, ErrDockerUnavailable
 	}
 	cli := s.docker.Raw()
-	info, err := cli.ContainerInspect(ctx, containerID)
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
+	info := res.Container
 	ref := normalizeImageRef(info.Config.Image)
 
 	preview := &UpdatePreview{Image: ref}

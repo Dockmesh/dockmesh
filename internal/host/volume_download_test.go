@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // The download returns the whole file, not the 1 MiB preview.
@@ -100,7 +100,7 @@ func TestEnsureBrowseHelperImageReportsPullError(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
-	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.45"), client.WithHTTPClient(srv.Client()))
+	cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.45"), client.WithHTTPClient(srv.Client()))
 	if err != nil {
 		t.Fatal(err)
 	}

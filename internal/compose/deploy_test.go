@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/mount"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 )
 
 func TestParseEnvContent(t *testing.T) {
@@ -77,10 +78,10 @@ func TestServiceToContainerConfig(t *testing.T) {
 	if cfg.Labels[LabelProject] != "demo" || cfg.Labels[LabelService] != "web" || cfg.Labels["app"] != "web" {
 		t.Errorf("labels = %v", cfg.Labels)
 	}
-	if _, ok := cfg.ExposedPorts["80/tcp"]; !ok {
+	if _, ok := cfg.ExposedPorts[network.MustParsePort("80/tcp")]; !ok {
 		t.Errorf("80/tcp not exposed: %v", cfg.ExposedPorts)
 	}
-	if len(hostCfg.PortBindings["80/tcp"]) != 1 || hostCfg.PortBindings["80/tcp"][0].HostPort != "8080" {
+	if len(hostCfg.PortBindings[network.MustParsePort("80/tcp")]) != 1 || hostCfg.PortBindings[network.MustParsePort("80/tcp")][0].HostPort != "8080" {
 		t.Errorf("port binding = %v", hostCfg.PortBindings)
 	}
 	if len(hostCfg.Binds) != 1 || hostCfg.Binds[0] != "/host/path:/etc/nginx:ro" {

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 // CaddyVersion is a Caddy release tested with this Dockmesh version,
@@ -272,7 +272,7 @@ func (s *Service) pruneImages(ctx context.Context, keep ...string) {
 			continue
 		}
 		ref := digestRef(tv.Image)
-		if _, err := s.docker.Raw().ImageRemove(ctx, ref, image.RemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
+		if _, err := s.docker.Raw().ImageRemove(ctx, ref, client.ImageRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			slog.Debug("proxy: removing old Caddy image failed", "image", ref, "err", err)
 		}
 	}

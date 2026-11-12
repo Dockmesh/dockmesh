@@ -10,8 +10,8 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // Known database image prefixes — used to warn about scaling stateful
@@ -151,7 +151,7 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		}
 	}
 	for _, c := range stale {
-		_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
 	}
 
 	current := len(existing)
@@ -189,15 +189,15 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 				hostCfg.RestartPolicy.Name = "unless-stopped"
 			}
 			// Remove stale container with the same name if it exists.
-			if old, inspErr := cli.ContainerInspect(ctx, name); inspErr == nil {
-				_ = cli.ContainerStop(ctx, old.ID, container.StopOptions{})
-				_ = cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true})
+			if old, inspErr := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{}); inspErr == nil {
+				_, _ = cli.ContainerStop(ctx, old.Container.ID, client.ContainerStopOptions{})
+				_, _ = cli.ContainerRemove(ctx, old.Container.ID, client.ContainerRemoveOptions{Force: true})
 			}
-			resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+			resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name})
 			if err != nil {
 				return nil, fmt.Errorf("create replica %d: %w", i, err)
 			}
-			if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 				return nil, fmt.Errorf("start replica %d: %w", i, err)
 			}
 			// Gate the next replica behind this one becoming healthy —
@@ -213,8 +213,8 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		// Scale down: remove highest-indexed replicas first.
 		for i := current - 1; i >= replicas; i-- {
 			c := existing[i]
-			_ = cli.ContainerStop(ctx, c.ID, container.StopOptions{})
-			if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+			_, _ = cli.ContainerStop(ctx, c.ID, client.ContainerStopOptions{})
+			if _, err := cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				return nil, fmt.Errorf("remove replica %s: %w", c.ID[:12], err)
 			}
 			result.Removed++

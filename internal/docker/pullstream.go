@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/moby/moby/client"
 )
 
 // ReadPullStream reads an image pull stream to the end, as the pull only
@@ -52,7 +51,7 @@ func ReadPullStream(r io.Reader, secrets []string) error {
 // PullAnonymous pulls ref without credentials and waits until it is done,
 // for the images Dockmesh runs itself.
 func PullAnonymous(ctx context.Context, cli client.ImageAPIClient, ref string) error {
-	rc, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	rc, err := cli.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
 		return err
 	}

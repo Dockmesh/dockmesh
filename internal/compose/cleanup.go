@@ -7,13 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
-
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // CleanupOpts picks which project-scoped docker resources to remove for
@@ -61,28 +56,21 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 	plan := &CleanupPlan{}
 
 	// Networks labelled with this project.
-	netFilter := filters.NewArgs()
-	netFilter.Add("label", LabelProject+"="+stackName)
-	nets, err := cli.NetworkList(ctx, network.ListOptions{Filters: netFilter})
+	nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
-	for _, n := range nets {
+	for _, n := range nets.Items {
 		plan.Networks = append(plan.Networks, n.Name)
 	}
 
 	// Volumes labelled with this project. External volumes (no managed
 	// label, or external=true) never get touched.
-	volFilter := filters.NewArgs()
-	volFilter.Add("label", LabelProject+"="+stackName)
-	vols, err := cli.VolumeList(ctx, volume.ListOptions{Filters: volFilter})
+	vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}
-	for _, v := range vols.Volumes {
-		if v == nil {
-			continue
-		}
+	for _, v := range vols.Items {
 		plan.Volumes = append(plan.Volumes, v.Name)
 	}
 
@@ -103,12 +91,12 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 		}
 	}
 	if len(imageSet) > 0 {
-		allContainers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+		allContainers, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 		if err != nil {
 			return nil, fmt.Errorf("list containers: %w", err)
 		}
 		inUseElsewhere := map[string]struct{}{}
-		for _, c := range allContainers {
+		for _, c := range allContainers.Items {
 			if strings.EqualFold(c.Labels[LabelProject], stackName) {
 				continue
 			}
@@ -147,14 +135,12 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 	res := &CleanupResult{}
 
 	if opts.Networks {
-		netFilter := filters.NewArgs()
-		netFilter.Add("label", LabelProject+"="+stackName)
-		nets, err := cli.NetworkList(ctx, network.ListOptions{Filters: netFilter})
+		nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 		if err != nil {
 			return nil, fmt.Errorf("list networks: %w", err)
 		}
-		for _, n := range nets {
-			if err := cli.NetworkRemove(ctx, n.ID); err != nil && !cerrdefs.IsNotFound(err) {
+		for _, n := range nets.Items {
+			if _, err := cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("network %s: %v", n.Name, err))
 				continue
 			}
@@ -163,17 +149,12 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 	}
 
 	if opts.Volumes {
-		volFilter := filters.NewArgs()
-		volFilter.Add("label", LabelProject+"="+stackName)
-		vols, err := cli.VolumeList(ctx, volume.ListOptions{Filters: volFilter})
+		vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 		if err != nil {
 			return nil, fmt.Errorf("list volumes: %w", err)
 		}
-		for _, v := range vols.Volumes {
-			if v == nil {
-				continue
-			}
-			if err := cli.VolumeRemove(ctx, v.Name, false); err != nil && !cerrdefs.IsNotFound(err) {
+		for _, v := range vols.Items {
+			if _, err := cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("volume %s: %v", v.Name, err))
 				continue
 			}
@@ -189,7 +170,7 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 			return nil, fmt.Errorf("image preview: %w", err)
 		}
 		for _, img := range plan.Images {
-			if _, err := cli.ImageRemove(ctx, img, image.RemoveOptions{PruneChildren: true}); err != nil && !cerrdefs.IsNotFound(err) {
+			if _, err := cli.ImageRemove(ctx, img, client.ImageRemoveOptions{PruneChildren: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("image %s: %v", img, err))
 				continue
 			}

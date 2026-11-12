@@ -30,17 +30,16 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	imagetypes "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dnetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 var (
@@ -122,7 +121,8 @@ func (s *Service) ManagedStack(ctx context.Context, containerID string) string {
 	if s.docker == nil || s.stacks == nil {
 		return ""
 	}
-	info, err := s.docker.Raw().ContainerInspect(ctx, containerID)
+	res, err := s.docker.Raw().ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	info := res.Container
 	if err != nil || info.Config == nil {
 		return ""
 	}
@@ -200,10 +200,11 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	}
 	cli := s.docker.Raw()
 
-	info, err := cli.ContainerInspect(ctx, containerID)
+	inspected, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
+	info := inspected.Container
 	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
 		return nil, err
 	}
@@ -264,7 +265,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	// Tagged before the swap so it is also there when the swap fails.
 	rollbackTag := sanitizeTag(ref, time.Now().Unix())
 	op.StepStart(StepRollbackTag, "")
-	if err := cli.ImageTag(ctx, oldImageID, rollbackTag); err != nil {
+	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: oldImageID, Target: rollbackTag}); err != nil {
 		err = fmt.Errorf("tag rollback image: %w", err)
 		op.StepFail(StepRollbackTag, err)
 		return nil, err
@@ -297,7 +298,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		res.HistoryID = id
 	}
 	if st != nil {
-		digest := imageDigest(&newInfo, ref)
+		digest := imageDigest(&newInfo.InspectResponse, ref)
 		note := fmt.Sprintf("image update: service %s, %s now resolves to %s (was %s)",
 			st.svc.Name, image, digest, shortID(oldImageID))
 		s.recordStack(ctx, st, userID, note, image+"@"+digest)
@@ -319,7 +320,7 @@ func pull(ctx context.Context, cli *client.Client, ref, authBlob string, secrets
 	defer stop(nil)
 	op.AllowCancel(stop)
 	defer op.DisallowCancel(pctx)
-	rc, err := cli.ImagePull(pctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
+	rc, err := cli.ImagePull(pctx, ref, client.ImagePullOptions{RegistryAuth: authBlob})
 	if err == nil {
 		// Ends a read of the progress stream that blocks on the registry.
 		defer context.AfterFunc(pctx, func() { _ = rc.Close() })()
@@ -344,10 +345,11 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 		return nil, ErrDockerUnavailable
 	}
 	cli := s.docker.Raw()
-	info, err := cli.ContainerInspect(ctx, containerID)
+	inspected, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
+	info := inspected.Container
 	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
 		return nil, err
 	}
@@ -554,10 +556,11 @@ func (s *Service) swapService(ctx context.Context, cli *client.Client, st *stack
 }
 
 func (s *Service) swapReplica(ctx context.Context, cli *client.Client, st *stackTarget, containerID, image string) (string, error) {
-	old, err := cli.ContainerInspect(ctx, containerID)
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect: %w", err)
 	}
+	old := res.Container
 	cfg, hostCfg, netCfg, svc, err := compose.ServiceContainerConfig(st.proj, st.svc.Name)
 	if err != nil {
 		return "", err

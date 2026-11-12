@@ -7,10 +7,9 @@ import (
 	"regexp"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/versions"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 )
 
 // ErrInvalidVolumeName is returned by CheckVolumeName.
@@ -29,31 +28,34 @@ func CheckVolumeName(name string) error {
 	return nil
 }
 
-func (c *Client) ListVolumes(ctx context.Context) ([]*volume.Volume, error) {
-	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{})
+func (c *Client) ListVolumes(ctx context.Context) ([]volume.Volume, error) {
+	resp, err := c.cli.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return resp.Volumes, nil
+	return resp.Items, nil
 }
 
 func (c *Client) InspectVolume(ctx context.Context, name string) (volume.Volume, error) {
-	return c.cli.VolumeInspect(ctx, name)
+	res, err := c.cli.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
+	return res.Volume, err
 }
 
 func (c *Client) CreateVolume(ctx context.Context, name, driver string, labels map[string]string) (volume.Volume, error) {
 	if driver == "" {
 		driver = "local"
 	}
-	return c.cli.VolumeCreate(ctx, volume.CreateOptions{
+	res, err := c.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name:   name,
 		Driver: driver,
 		Labels: labels,
 	})
+	return res.Volume, err
 }
 
 func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) error {
-	return c.cli.VolumeRemove(ctx, name, force)
+	_, err := c.cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: force})
+	return err
 }
 
 func (c *Client) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
@@ -71,17 +73,17 @@ var anonymousVolumeName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // volumePruner is the part of the Docker client PruneUnusedVolumes uses.
 type volumePruner interface {
-	ServerVersion(ctx context.Context) (types.Version, error)
+	ServerVersion(ctx context.Context, opts client.ServerVersionOptions) (client.ServerVersionResult, error)
 	ClientVersion() string
-	VolumesPrune(ctx context.Context, f filters.Args) (volume.PruneReport, error)
-	VolumeList(ctx context.Context, opts volume.ListOptions) (volume.ListResponse, error)
-	VolumeRemove(ctx context.Context, id string, force bool) error
+	VolumePrune(ctx context.Context, opts client.VolumePruneOptions) (client.VolumePruneResult, error)
+	VolumeList(ctx context.Context, opts client.VolumeListOptions) (client.VolumeListResult, error)
+	VolumeRemove(ctx context.Context, id string, opts client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
 // PruneUnusedVolumes removes anonymous volumes no container uses and
 // keeps named volumes and Dockmesh's own.
 func PruneUnusedVolumes(ctx context.Context, cli volumePruner) (volume.PruneReport, error) {
-	v, err := cli.ServerVersion(ctx)
+	v, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		return volume.PruneReport{}, err
 	}
@@ -90,7 +92,8 @@ func PruneUnusedVolumes(ctx context.Context, cli volumePruner) (volume.PruneRepo
 	if versions.LessThan(v.APIVersion, anonymousPruneAPI) || versions.LessThan(cli.ClientVersion(), anonymousPruneAPI) {
 		return pruneAnonymousByName(ctx, cli)
 	}
-	return cli.VolumesPrune(ctx, filters.NewArgs(filters.Arg("label!", LabelManaged)))
+	res, err := cli.VolumePrune(ctx, client.VolumePruneOptions{Filters: client.Filters{}.Add("label!", LabelManaged)})
+	return res.Report, err
 }
 
 // pruneAnonymousByName is for daemons whose prune also deletes unused
@@ -98,19 +101,19 @@ func PruneUnusedVolumes(ctx context.Context, cli volumePruner) (volume.PruneRepo
 // label either, so the generated name is what identifies such a volume.
 func pruneAnonymousByName(ctx context.Context, cli volumePruner) (volume.PruneReport, error) {
 	report := volume.PruneReport{VolumesDeleted: []string{}}
-	list, err := cli.VolumeList(ctx, volume.ListOptions{Filters: filters.NewArgs(filters.Arg("dangling", "true"))})
+	list, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: client.Filters{}.Add("dangling", "true")})
 	if err != nil {
 		return report, err
 	}
-	for _, v := range list.Volumes {
-		if v == nil || !anonymousVolumeName.MatchString(v.Name) || v.Labels[LabelManaged] == "true" {
+	for _, v := range list.Items {
+		if !anonymousVolumeName.MatchString(v.Name) || v.Labels[LabelManaged] == "true" {
 			continue
 		}
 		// Docker's own prune doesn't touch plugin-backed volumes either.
 		if v.Driver != "local" || len(v.Options) > 0 {
 			continue
 		}
-		if err := cli.VolumeRemove(ctx, v.Name, false); err != nil {
+		if _, err := cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{}); err != nil {
 			if cerrdefs.IsConflict(err) || cerrdefs.IsNotFound(err) {
 				continue
 			}

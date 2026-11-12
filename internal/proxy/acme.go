@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 )
 
 const acmeBufferSize = 200
@@ -97,7 +97,7 @@ func (s *Service) tailACME(ctx context.Context) {
 			}
 			continue
 		}
-		rc, err := cli.ContainerLogs(ctx, ProxyContainerName, container.LogsOptions{
+		rc, err := cli.ContainerLogs(ctx, ProxyContainerName, client.ContainerLogsOptions{
 			ShowStdout: true, ShowStderr: true, Follow: true, Tail: "0",
 		})
 		if err != nil {

@@ -10,8 +10,8 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 var rollbackSuffix = regexp.MustCompile(`-?rollback-\d+$`)
@@ -124,7 +124,7 @@ func (s *Service) pruneRollbackTags(ctx context.Context, cli *client.Client, ref
 		return
 	}
 	for _, t := range rollbackTagsToPrune(ref, tags, s.rollbackKeep) {
-		if _, err := cli.ImageRemove(ctx, t, image.RemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
+		if _, err := cli.ImageRemove(ctx, t, client.ImageRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			slog.Info("updater: rollback tag kept", "tag", t, "err", err)
 			continue
 		}

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -73,11 +73,12 @@ func WaitHealthy(ctx context.Context, cli *client.Client, containerID string, sv
 			return ErrHealthTimeout
 		}
 
-		insp, err := cli.ContainerInspect(ctx, containerID)
+		res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("inspect: %w", err)
 		}
+		insp := res.Container
 
 		if insp.State == nil {
 			// Shouldn't happen in practice but keep us defensive.

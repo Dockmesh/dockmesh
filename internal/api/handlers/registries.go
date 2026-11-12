@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/client"
 )
 
 // ListRegistries returns the saved registry credentials without exposing
@@ -126,7 +127,11 @@ func (h *Handlers) TestRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	res, loginErr := h.Docker.Raw().RegistryLogin(ctx, *auth)
+	res, loginErr := h.Docker.Raw().RegistryLogin(ctx, client.RegistryLoginOptions{
+		Username:      auth.Username,
+		Password:      auth.Password,
+		ServerAddress: auth.ServerAddress,
+	})
 	ok := loginErr == nil
 	var errMsg string
 	if !ok {
@@ -143,7 +148,7 @@ func (h *Handlers) TestRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
-		"status":   res.Status,
-		"identity": res.IdentityToken != "",
+		"status":   res.Auth.Status,
+		"identity": res.Auth.IdentityToken != "",
 	})
 }

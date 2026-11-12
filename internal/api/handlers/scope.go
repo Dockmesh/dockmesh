@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/container"
 )
 
 // Scope checks test the permissions the route requires (recorded by

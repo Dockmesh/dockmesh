@@ -9,10 +9,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // OpenVolumeFileOnHost opens a regular file inside the volume for a full
@@ -78,21 +78,21 @@ func openFileViaHelper(ctx context.Context, cli *client.Client, volumeName, sub 
 	}
 	cfg, hostCfg := helperContainerConfig(volumeName, downloadFileScript(target))
 	cfg.AttachStdout, cfg.AttachStderr = true, true
-	created, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
 	if err != nil {
 		return nil, fmt.Errorf("volume helper: create: %w", err)
 	}
 	remove := func() {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = cli.ContainerRemove(rctx, created.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(rctx, created.ID, client.ContainerRemoveOptions{Force: true})
 	}
-	attach, err := cli.ContainerAttach(ctx, created.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	attach, err := cli.ContainerAttach(ctx, created.ID, client.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
 		remove()
 		return nil, fmt.Errorf("volume helper: attach: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		attach.Close()
 		remove()
 		return nil, fmt.Errorf("volume helper: start: %w", err)
@@ -109,11 +109,11 @@ func openFileViaHelper(ctx context.Context, cli *client.Client, volumeName, sub 
 		}
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		statusCh, errCh := cli.ContainerWait(wctx, created.ID, container.WaitConditionNotRunning)
+		wait := cli.ContainerWait(wctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 		select {
-		case err := <-errCh:
+		case err := <-wait.Error:
 			pw.CloseWithError(fmt.Errorf("volume helper: wait: %w", err))
-		case st := <-statusCh:
+		case st := <-wait.Result:
 			pw.CloseWithError(helperExitError(helperResult{exitCode: st.StatusCode, stderr: stderr.String()}, target))
 		}
 	}()

@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // fakeHelper is a helper container that only exits once it is killed or
@@ -15,12 +16,12 @@ type fakeHelper struct {
 	removed  bool
 }
 
-func (f *fakeHelper) ContainerKill(context.Context, string, string) error {
+func (f *fakeHelper) ContainerKill(context.Context, string, client.ContainerKillOptions) (client.ContainerKillResult, error) {
 	f.killed = true
-	return nil
+	return client.ContainerKillResult{}, nil
 }
 
-func (f *fakeHelper) ContainerWait(ctx context.Context, _ string, _ container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+func (f *fakeHelper) ContainerWait(ctx context.Context, _ string, _ client.ContainerWaitOptions) client.ContainerWaitResult {
 	status := make(chan container.WaitResponse, 1)
 	errs := make(chan error, 1)
 	switch {
@@ -31,12 +32,12 @@ func (f *fakeHelper) ContainerWait(ctx context.Context, _ string, _ container.Wa
 	default:
 		go func() { <-ctx.Done(); errs <- ctx.Err() }()
 	}
-	return status, errs
+	return client.ContainerWaitResult{Result: status, Error: errs}
 }
 
-func (f *fakeHelper) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+func (f *fakeHelper) ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	f.removed = true
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
 func TestFinishHelper(t *testing.T) {

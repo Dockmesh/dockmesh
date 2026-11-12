@@ -10,8 +10,8 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -283,19 +283,19 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 
 // stopFirstReplace: stop + remove old, then create + start + wait-healthy new.
 func stopFirstReplace(ctx context.Context, cli *client.Client, oldC container.Summary, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
-	_ = cli.ContainerStop(ctx, oldC.ID, container.StopOptions{})
-	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	_, _ = cli.ContainerStop(ctx, oldC.ID, client.ContainerStopOptions{})
+	if _, err := cli.ContainerRemove(ctx, oldC.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return "", fmt.Errorf("remove old: %w", err)
 	}
 	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
 	if err != nil {
 		return "", fmt.Errorf("config: %w", err)
 	}
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, containerName)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: containerName})
 	if err != nil {
 		return "", fmt.Errorf("create: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		return resp.ID, fmt.Errorf("start: %w", err)
 	}
 	if err := WaitHealthy(ctx, cli, resp.ID, &svc); err != nil {
@@ -309,39 +309,39 @@ func stopFirstReplace(ctx context.Context, cli *client.Client, oldC container.Su
 func startFirstReplace(ctx context.Context, cli *client.Client, oldC container.Summary, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
 	tempName := containerName + "-new"
 	// Cleanup any leftover from a prior aborted run.
-	if prev, err := cli.ContainerInspect(ctx, tempName); err == nil {
-		_ = cli.ContainerStop(ctx, prev.ID, container.StopOptions{})
-		_ = cli.ContainerRemove(ctx, prev.ID, container.RemoveOptions{Force: true})
+	if prev, err := cli.ContainerInspect(ctx, tempName, client.ContainerInspectOptions{}); err == nil {
+		_, _ = cli.ContainerStop(ctx, prev.Container.ID, client.ContainerStopOptions{})
+		_, _ = cli.ContainerRemove(ctx, prev.Container.ID, client.ContainerRemoveOptions{Force: true})
 	}
 
 	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
 	if err != nil {
 		return "", fmt.Errorf("config: %w", err)
 	}
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, tempName)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: tempName})
 	if err != nil {
 		return "", fmt.Errorf("create sibling: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		// Clean up the dead sibling so the slot is free for retry.
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return "", fmt.Errorf("start sibling: %w", err)
 	}
 	if err := WaitHealthy(ctx, cli, resp.ID, &svc); err != nil {
-		_ = cli.ContainerStop(ctx, resp.ID, container.StopOptions{})
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return "", fmt.Errorf("wait healthy: %w", err)
 	}
 
 	// Sibling is healthy — tear down the old one and promote.
-	_ = cli.ContainerStop(ctx, oldC.ID, container.StopOptions{})
-	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	_, _ = cli.ContainerStop(ctx, oldC.ID, client.ContainerStopOptions{})
+	if _, err := cli.ContainerRemove(ctx, oldC.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		// Rollback: the old container is lingering, can't claim the name.
-		_ = cli.ContainerStop(ctx, resp.ID, container.StopOptions{})
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerStop(ctx, resp.ID, client.ContainerStopOptions{})
+		_, _ = cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return "", fmt.Errorf("remove old: %w", err)
 	}
-	if err := cli.ContainerRename(ctx, resp.ID, containerName); err != nil {
+	if _, err := cli.ContainerRename(ctx, resp.ID, client.ContainerRenameOptions{NewName: containerName}); err != nil {
 		return resp.ID, fmt.Errorf("rename: %w", err)
 	}
 	return resp.ID, nil
@@ -371,19 +371,19 @@ func doRollback(ctx context.Context, cli *client.Client, proj *composetypes.Proj
 		d := done[i]
 		name := fmt.Sprintf("%s-%s-%d", proj.Name, svc.Name, d.replicaIndex)
 		// Stop + remove the freshly-replaced container.
-		_ = cli.ContainerStop(ctx, d.newID, container.StopOptions{})
-		_ = cli.ContainerRemove(ctx, d.newID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerStop(ctx, d.newID, client.ContainerStopOptions{})
+		_, _ = cli.ContainerRemove(ctx, d.newID, client.ContainerRemoveOptions{Force: true})
 		cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, rbSvc, netNames)
 		if err != nil {
 			slog.Error("rollback config", "error", err, "replica", d.replicaIndex)
 			continue
 		}
-		resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+		resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name})
 		if err != nil {
 			slog.Error("rollback create", "error", err, "replica", d.replicaIndex)
 			continue
 		}
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 			slog.Error("rollback start", "error", err, "replica", d.replicaIndex)
 			continue
 		}

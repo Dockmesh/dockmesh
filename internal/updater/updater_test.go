@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 )
 
 func TestCarryVolumes(t *testing.T) {
@@ -184,8 +184,8 @@ func TestWatcherPersistsChecks(t *testing.T) {
 
 func TestAcquireSerialisesPerStack(t *testing.T) {
 	s := NewService(nil, nil)
-	web := &container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{Name: "/app-web-1"}}
-	db := &container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{Name: "/app-db-1"}}
+	web := &container.InspectResponse{Name: "/app-web-1"}
+	db := &container.InspectResponse{Name: "/app-db-1"}
 	st := &stackTarget{stack: "app"}
 
 	release, err := s.acquire(web, st)

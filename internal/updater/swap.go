@@ -9,11 +9,11 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dnetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // newSpec is the container a swap creates in place of the old one.
@@ -40,7 +40,7 @@ func swapContainer(ctx context.Context, cli *client.Client, old *container.Inspe
 
 	carryVolumes(old.Mounts, spec.cfg, spec.hostCfg)
 
-	if err := cli.ContainerRename(ctx, old.ID, parked); err != nil {
+	if _, err := cli.ContainerRename(ctx, old.ID, client.ContainerRenameOptions{NewName: parked}); err != nil {
 		return "", fmt.Errorf("rename old container: %w", err)
 	}
 	restore := func(cause error) error {
@@ -48,11 +48,11 @@ func swapContainer(ctx context.Context, cli *client.Client, old *container.Inspe
 		// back must still happen.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
-		if err := cli.ContainerRename(rctx, old.ID, name); err != nil {
+		if _, err := cli.ContainerRename(rctx, old.ID, client.ContainerRenameOptions{NewName: name}); err != nil {
 			return fmt.Errorf("%w; restoring the old container failed too, it is kept as %s: %w", cause, parked, err)
 		}
 		if wasRunning {
-			if err := cli.ContainerStart(rctx, old.ID, container.StartOptions{}); err != nil {
+			if _, err := cli.ContainerStart(rctx, old.ID, client.ContainerStartOptions{}); err != nil {
 				return fmt.Errorf("%w; old container restored but not restarted: %w", cause, err)
 			}
 		}
@@ -61,21 +61,21 @@ func swapContainer(ctx context.Context, cli *client.Client, old *container.Inspe
 	discard := func(id string) {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
-		if err := cli.ContainerRemove(rctx, id, container.RemoveOptions{Force: true}); err != nil {
+		if _, err := cli.ContainerRemove(rctx, id, client.ContainerRemoveOptions{Force: true}); err != nil {
 			slog.Warn("updater: remove failed replacement", "container", id, "err", err)
 		}
 	}
 
 	if wasRunning {
-		if err := cli.ContainerStop(ctx, old.ID, container.StopOptions{}); err != nil {
+		if _, err := cli.ContainerStop(ctx, old.ID, client.ContainerStopOptions{}); err != nil {
 			return "", restore(fmt.Errorf("stop old container: %w", err))
 		}
 	}
-	resp, err := cli.ContainerCreate(ctx, spec.cfg, spec.hostCfg, spec.netCfg, nil, name)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: spec.cfg, HostConfig: spec.hostCfg, NetworkingConfig: spec.netCfg, Name: name})
 	if err != nil {
 		return "", restore(fmt.Errorf("create: %w", err))
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		discard(resp.ID)
 		return "", restore(fmt.Errorf("start: %w", err))
 	}
@@ -83,7 +83,7 @@ func swapContainer(ctx context.Context, cli *client.Client, old *container.Inspe
 		discard(resp.ID)
 		return "", restore(fmt.Errorf("new container did not come up: %w", err))
 	}
-	if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{}); err != nil {
+	if _, err := cli.ContainerRemove(ctx, old.ID, client.ContainerRemoveOptions{}); err != nil {
 		slog.Warn("updater: old container left behind", "container", parked, "err", err)
 	}
 	return resp.ID, nil

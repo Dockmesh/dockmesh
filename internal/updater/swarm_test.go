@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -91,7 +91,7 @@ func newSwarmDocker(t *testing.T, containers map[string]map[string]string) (*cli
 		}
 	}))
 	t.Cleanup(srv.Close)
-	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.47"))
+	cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.47"))
 	if err != nil {
 		t.Fatal(err)
 	}

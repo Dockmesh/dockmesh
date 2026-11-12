@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -18,9 +18,7 @@ func TestIsOwnContainer(t *testing.T) {
 	host.SetSelfContainerID(self)
 	t.Cleanup(func() { host.SetSelfContainerID("") })
 	inspect := func(id, image string, labels map[string]string) *container.InspectResponse {
-		info := &container.InspectResponse{Config: &container.Config{Image: image, Labels: labels}}
-		info.ContainerJSONBase = &container.ContainerJSONBase{ID: id}
-		return info
+		return &container.InspectResponse{ID: id, Config: &container.Config{Image: image, Labels: labels}}
 	}
 	tests := []struct {
 		name   string

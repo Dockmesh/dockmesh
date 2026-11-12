@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 func TestCheckVolumeName(t *testing.T) {
@@ -43,13 +42,13 @@ func TestCheckVolumeName(t *testing.T) {
 type fakePruner struct {
 	api     string
 	client  string
-	listed  []*volume.Volume
+	listed  []volume.Volume
 	removed []string
-	pruned  []filters.Args
+	pruned  []client.Filters
 }
 
-func (f *fakePruner) ServerVersion(context.Context) (types.Version, error) {
-	return types.Version{APIVersion: f.api}, nil
+func (f *fakePruner) ServerVersion(context.Context, client.ServerVersionOptions) (client.ServerVersionResult, error) {
+	return client.ServerVersionResult{APIVersion: f.api}, nil
 }
 
 func (f *fakePruner) ClientVersion() string {
@@ -59,18 +58,21 @@ func (f *fakePruner) ClientVersion() string {
 	return f.client
 }
 
-func (f *fakePruner) VolumesPrune(_ context.Context, a filters.Args) (volume.PruneReport, error) {
-	f.pruned = append(f.pruned, a)
-	return volume.PruneReport{}, nil
+func (f *fakePruner) VolumePrune(_ context.Context, o client.VolumePruneOptions) (client.VolumePruneResult, error) {
+	if o.All {
+		o.Filters = o.Filters.Clone().Add("all", "true")
+	}
+	f.pruned = append(f.pruned, o.Filters)
+	return client.VolumePruneResult{}, nil
 }
 
-func (f *fakePruner) VolumeList(context.Context, volume.ListOptions) (volume.ListResponse, error) {
-	return volume.ListResponse{Volumes: f.listed}, nil
+func (f *fakePruner) VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error) {
+	return client.VolumeListResult{Items: f.listed}, nil
 }
 
-func (f *fakePruner) VolumeRemove(_ context.Context, id string, _ bool) error {
+func (f *fakePruner) VolumeRemove(_ context.Context, id string, _ client.VolumeRemoveOptions) (client.VolumeRemoveResult, error) {
 	f.removed = append(f.removed, id)
-	return nil
+	return client.VolumeRemoveResult{}, nil
 }
 
 func TestPruneUnusedVolumesExcludesOwnVolumes(t *testing.T) {
@@ -81,10 +83,10 @@ func TestPruneUnusedVolumesExcludesOwnVolumes(t *testing.T) {
 	if len(f.pruned) != 1 {
 		t.Fatalf("prune calls = %d", len(f.pruned))
 	}
-	if !f.pruned[0].ExactMatch("label!", LabelManaged) {
+	if v := f.pruned[0]["label!"]; len(v) != 1 || !v[LabelManaged] {
 		t.Fatalf("filters = %v, want the managed label excluded", f.pruned[0])
 	}
-	if f.pruned[0].Contains("all") {
+	if _, ok := f.pruned[0]["all"]; ok {
 		t.Fatal("prune must not ask for all volumes")
 	}
 }
@@ -94,7 +96,7 @@ func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
 	anon := strings.Repeat("a", 64)
 	ownAnon := strings.Repeat("b", 64)
 	plugin := strings.Repeat("c", 64)
-	f := &fakePruner{api: "1.41", listed: []*volume.Volume{
+	f := &fakePruner{api: "1.41", listed: []volume.Volume{
 		{Name: anon, Driver: "local"},
 		{Name: plugin, Driver: "nfs-plugin"},
 		{Name: ownAnon, Driver: "local", Labels: map[string]string{LabelManaged: "true"}},
@@ -117,7 +119,7 @@ func TestPruneUnusedVolumesOldDaemonKeepsNamed(t *testing.T) {
 // The daemon adds all=true for a request below API 1.42, whatever it
 // supports itself.
 func TestPruneUnusedVolumesPinnedClientKeepsNamed(t *testing.T) {
-	f := &fakePruner{api: "1.43", client: "1.41", listed: []*volume.Volume{{Name: "stack_pgdata", Driver: "local"}}}
+	f := &fakePruner{api: "1.43", client: "1.41", listed: []volume.Volume{{Name: "stack_pgdata", Driver: "local"}}}
 	if _, err := PruneUnusedVolumes(context.Background(), f); err != nil {
 		t.Fatal(err)
 	}
