@@ -37,7 +37,9 @@ func TestInstallAgentLogState(t *testing.T) {
 		{"empty", "", "waiting"},
 		{"enrolling", `{"level":"INFO","msg":"enrolling","url":"https://s:8443"}`, "waiting"},
 		{"enrolled and connected", `{"msg":"enrolled successfully"}` + "\n" + `{"msg":"connected","agent_id":"a"}`, "connected"},
-		{"enrollment rejected", `{"msg":"enrolling"}` + "\n" + `{"level":"ERROR","msg":"enrollment failed","err":"token expired"}`, "failed"},
+		{"enrollment rejected", `{"msg":"enrolling"}` + "\n" + `{"level":"ERROR","msg":"enrollment failed","err":"enroll http 401: invalid or expired enrollment token"}`, "rejected"},
+		{"enrollment rate limited", `{"level":"ERROR","msg":"enrollment failed","err":"enroll http 429: too many requests"}`, "failed"},
+		{"enrollment tls error", `{"level":"ERROR","msg":"enrollment failed","err":"x509: certificate signed by unknown authority"}`, "failed"},
 		{"tls error after enroll", `{"msg":"enrolled successfully"}` + "\n" + `{"msg":"disconnected, reconnecting","err":"x509"}`, "waiting"},
 	}
 	for _, tt := range tests {

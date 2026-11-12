@@ -69,7 +69,7 @@ func EnrollHandler(svc *Service, limiter *ratelimit.Limiter) http.Handler {
 			writeTooMany(w, retry)
 			return
 		}
-		if serveEnroll(w, r, svc) {
+		if !serveEnroll(w, r, svc) {
 			limiter.Refund(ticket)
 			return
 		}
@@ -79,21 +79,22 @@ func EnrollHandler(svc *Service, limiter *ratelimit.Limiter) http.Handler {
 	})
 }
 
-// serveEnroll answers one enrollment request and reports whether it
-// succeeded.
-func serveEnroll(w http.ResponseWriter, r *http.Request, svc *Service) bool {
+// serveEnroll answers one enrollment request and reports whether it counts
+// as a failed attempt: a bad body or a rejected token. A server error is
+// not the client's.
+func serveEnroll(w http.ResponseWriter, r *http.Request, svc *Service) (failed bool) {
 	// The listener accepts unauthenticated clients here, so a slow
 	// body must not hold a connection open indefinitely.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(enrollReadTimeout))
 	var req EnrollRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollBody)).Decode(&req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
-		return false
+		return true
 	}
 	resp, err := svc.Enroll(r.Context(), req)
 	if errors.Is(err, ErrInvalidToken) {
 		http.Error(w, "invalid or expired enrollment token", http.StatusUnauthorized)
-		return false
+		return true
 	}
 	if err != nil {
 		slog.Error("agent enroll", "err", err)
@@ -103,5 +104,5 @@ func serveEnroll(w http.ResponseWriter, r *http.Request, svc *Service) bool {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(resp) //nolint:gosec // the enrolling agent receives its own new key, over TLS
-	return true
+	return false
 }

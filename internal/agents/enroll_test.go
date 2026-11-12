@@ -215,7 +215,7 @@ func TestCreateResultPinsListener(t *testing.T) {
 		t.Fatalf("ca_fingerprint = %q", res.CAFingerprint)
 	}
 	want := "curl -fsSLk --pinnedpubkey '" + mgr.ServerKeyPin() +
-		"' https://dockmesh.test:8443/install/agent.sh | sudo bash -s -- --token " + res.Token
+		"' 'https://dockmesh.test:8443/install/agent.sh' | sudo bash -s -- --token " + res.Token
 	if res.InstallHint != want {
 		t.Fatalf("install hint\n got %s\nwant %s", res.InstallHint, want)
 	}

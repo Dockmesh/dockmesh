@@ -297,9 +297,9 @@ func (r *ReissueResult) Changed() bool { return r.BackupCert != "" }
 
 // ReissueServerCert replaces the agent listener cert in dir with one signed
 // by the existing CA, covering the old cert's SANs plus add, for the same
-// key when the old one is still usable. The old files
-// are copied to <name>.bak-<timestamp> first. Nothing is written when add
-// is already covered and the current cert/key pair is valid.
+// key when the old one is still usable. The old files are copied to
+// <name>.bak-<timestamp> first. Nothing is written when add is already
+// covered and the current cert/key pair is valid.
 func ReissueServerCert(dir string, add []string, now time.Time) (*ReissueResult, error) {
 	if len(add) == 0 {
 		return nil, errors.New("at least one SAN to add is required")

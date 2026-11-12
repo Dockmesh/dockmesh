@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Dockmesh agent installer — concept §3.1.
+# Dockmesh agent installer.
 #
 # This script is templated by the dockmesh server at request time. The
 # {{ }} tokens are replaced with the URLs, the agent listener's key pin,
@@ -21,7 +21,6 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Filled in only by the deprecated web-port route (/install/agent.sh?token=).
 TOKEN="{{TOKEN}}"
-SERVER_URL="{{SERVER_URL}}"
 INSTALL_URL="{{INSTALL_URL}}"
 INSTALL_PIN="{{INSTALL_PIN}}"
 ENROLL_URL="{{ENROLL_URL}}"
@@ -102,11 +101,14 @@ pinned_get() {
 }
 
 # agent_log_state classifies the agent's JSON log lines ($1) as connected,
-# failed (enrollment rejected) or waiting.
+# rejected (the server refused the token), failed (enrollment failed for
+# another reason) or waiting.
 agent_log_state() {
   local logs="$1"
   if grep -q '"msg":"connected"' <<<"$logs"; then
     echo connected
+  elif grep '"msg":"enrollment failed"' <<<"$logs" | grep -q 'enroll http 401'; then
+    echo rejected
   elif grep -q '"msg":"enrollment failed"' <<<"$logs"; then
     echo failed
   else
@@ -189,7 +191,7 @@ fi
 
 ARCH="$(detect_arch)"
 log "host: $(uname -s)/$ARCH  systemd: yes"
-log "server: $SERVER_URL"
+log "server: $INSTALL_URL"
 
 BINARY_URL="$INSTALL_URL/install/dockmesh-agent-linux-$ARCH"
 case "$ARCH" in
@@ -481,8 +483,15 @@ if [[ "$STATE" == connected ]]; then
   printf '  status:  systemctl status dockmesh-agent\n'
   printf '  logs:    journalctl -u dockmesh-agent -f\n'
 else
-  if [[ "$STATE" == failed ]]; then
+  if [[ "$STATE" == rejected || "$STATE" == failed ]]; then
+    # A rejected or failed enrollment would only retry every 10 s and count
+    # against the server's per-address limit.
+    systemctl disable --now dockmesh-agent.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$STATE" == rejected ]]; then
     printf '\n\033[1;31m!!\033[0m This install command has expired or was already used. Copy a new one: Hosts > Add host > New command.\n'
+  elif [[ "$STATE" == failed ]]; then
+    printf '\n\033[1;31m!!\033[0m The agent could not enroll. The agent service is stopped; run the install command again once the cause below is fixed.\n'
   else
     printf '\n\033[1;31m!!\033[0m the agent did not connect to the server within %ss.\n' "$AGENT_WAIT_SECS"
   fi

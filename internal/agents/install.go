@@ -26,19 +26,15 @@ const (
 	InstallBinaryPrefix = "/install/"
 )
 
-// ErrInstallUnavailable means the installer cannot be rendered because
-// the agent listener address or the script template is missing.
-var ErrInstallUnavailable = errors.New("agent installer unavailable")
-
 var installTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 // ValidInstallToken reports whether token has the shape newToken produces.
 // The token is pasted into a shell script, so nothing else may get through.
 func ValidInstallToken(token string) bool { return installTokenRe.MatchString(token) }
 
-// InstallURL is the https origin of the agent listener as agent hosts
+// installURL is the https origin of the agent listener as agent hosts
 // reach it, taken from the public agent URL.
-func (s *Service) InstallURL() string {
+func (s *Service) installURL() string {
 	return installURLFromAgentURL(s.AgentURL())
 }
 
@@ -50,8 +46,8 @@ func installURLFromAgentURL(agentURL string) string {
 	return "https://" + u.Host
 }
 
-// InstallPin is the listener key in curl's --pinnedpubkey form.
-func (s *Service) InstallPin() string {
+// installPin is the listener key in curl's --pinnedpubkey form.
+func (s *Service) installPin() string {
 	if s.pki == nil {
 		return ""
 	}
@@ -61,8 +57,8 @@ func (s *Service) InstallPin() string {
 // InstallCommand is the one-liner for a new host. The token is an
 // installer argument so it never appears in a URL or an access log.
 func (s *Service) InstallCommand(token string) string {
-	return fmt.Sprintf("curl -fsSLk --pinnedpubkey '%s' %s%s | sudo bash -s -- --token %s",
-		s.InstallPin(), s.InstallURL(), InstallScriptPath, token)
+	return fmt.Sprintf("curl -fsSLk --pinnedpubkey '%s' '%s%s' | sudo bash -s -- --token %s",
+		s.installPin(), s.installURL(), InstallScriptPath, token)
 }
 
 // installScriptTemplate is where the server reads install-agent.sh from.
@@ -75,19 +71,19 @@ func installScriptTemplate() string {
 
 // RenderInstallScript fills the installer template with this server's
 // addresses, listener pin, agents CA and binary checksums. token is empty
-// for the generic script on the agent listener; the web-port route passes
-// the token from its query string so old commands keep working.
+// for the generic script on the agent listener and set by the legacy
+// web-port route.
 func (s *Service) RenderInstallScript(token string) ([]byte, error) {
 	if token != "" && !ValidInstallToken(token) {
 		return nil, errors.New("malformed token")
 	}
-	enrollURL, installURL, pin := s.EnrollURL(), s.InstallURL(), s.InstallPin()
+	enrollURL, installURL, pin := s.EnrollURL(), s.installURL(), s.installPin()
 	if enrollURL == "" || installURL == "" || pin == "" {
-		return nil, fmt.Errorf("%w: agent listener URL is not configured (DOCKMESH_AGENT_PUBLIC_URL)", ErrInstallUnavailable)
+		return nil, errors.New("agent listener URL is not configured (DOCKMESH_AGENT_PUBLIC_URL)")
 	}
 	raw, err := os.ReadFile(installScriptTemplate())
 	if err != nil {
-		return nil, fmt.Errorf("%w: installer script not found", ErrInstallUnavailable)
+		return nil, errors.New("installer script not found")
 	}
 	// A missing binary leaves its checksum empty; the script then refuses
 	// to install on that architecture.
@@ -95,7 +91,6 @@ func (s *Service) RenderInstallScript(token string) ([]byte, error) {
 	sumARM64, _ := AgentBinarySHA256("arm64")
 	out := strings.NewReplacer(
 		"{{TOKEN}}", token,
-		"{{SERVER_URL}}", s.PublicURL(),
 		"{{INSTALL_URL}}", installURL,
 		"{{INSTALL_PIN}}", pin,
 		"{{ENROLL_URL}}", enrollURL,

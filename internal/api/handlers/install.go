@@ -10,9 +10,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
-// AgentInstallScript serves the installer on the web port for install
-// commands created before the install channel moved to the agent
-// listener, with the token from the query string filled in. No JWT auth:
+// AgentInstallScript serves the legacy web-port installer (?token=), with
+// the token filled in. No JWT auth:
 // the enrollment token is redeemed later by the agent itself. The
 // optional ?ca= fingerprint must match this server's CA, so a command
 // copied before a CA rotation fails here with a clear message instead of
@@ -55,16 +54,16 @@ func (h *Handlers) AgentBinary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing name", http.StatusBadRequest)
 		return
 	}
-	// Whitelist exactly what we ship. Extended in P.12.9 to include the
-	// user-facing dmctl CLI for the platforms operators actually run it on.
+	// Whitelist exactly what we ship, including dmctl for the platforms
+	// operators run it on.
 	allowed := map[string]bool{
-		"dockmesh-agent-linux-amd64":  true,
-		"dockmesh-agent-linux-arm64":  true,
-		"dmctl-linux-amd64":           true,
-		"dmctl-linux-arm64":           true,
-		"dmctl-darwin-amd64":          true,
-		"dmctl-darwin-arm64":          true,
-		"dmctl-windows-amd64.exe":     true,
+		"dockmesh-agent-linux-amd64": true,
+		"dockmesh-agent-linux-arm64": true,
+		"dmctl-linux-amd64":          true,
+		"dmctl-linux-arm64":          true,
+		"dmctl-darwin-amd64":         true,
+		"dmctl-darwin-arm64":         true,
+		"dmctl-windows-amd64.exe":    true,
 	}
 	if !allowed[name] {
 		http.NotFound(w, r)

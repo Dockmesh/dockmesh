@@ -492,16 +492,14 @@ func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, e
 }
 
 func (s *Service) createResult(a *Agent, token string, expires time.Time) *CreateResult {
-	fp := s.pki.CAFingerprint()
-	installHint := s.InstallCommand(token)
 	return &CreateResult{
 		Agent:          *a,
 		Token:          token,
 		TokenExpiresAt: expires.UTC(),
 		EnrollURL:      s.EnrollURL(),
 		AgentURL:       s.AgentURL(),
-		CAFingerprint:  fp,
-		InstallHint:    installHint,
+		CAFingerprint:  s.pki.CAFingerprint(),
+		InstallHint:    s.InstallCommand(token),
 	}
 }
 
