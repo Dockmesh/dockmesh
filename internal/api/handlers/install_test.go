@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -10,8 +11,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
@@ -75,5 +79,79 @@ func TestAgentInstallScript(t *testing.T) {
 	}
 	if left := regexp.MustCompile(`\{\{[A-Z0-9_]+\}\}`).FindString(body); left != "" {
 		t.Errorf("rendered script still contains placeholder %s", left)
+	}
+}
+
+func TestAgentInstallScriptRaisesDeprecationNotice(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := pki.New(dir, []string{"dockmesh.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKMESH_BINARY_DIR", t.TempDir())
+	t.Setenv("DOCKMESH_INSTALL_SCRIPT", filepath.Join("..", "..", "..", "scripts", "install-agent.sh"))
+	svc := notices.NewService(database)
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	n := newWebInstallNotice(svc)
+	n.now = func() time.Time { return now }
+	h := &Handlers{
+		Agents:           agents.NewService(nil, mgr, "http://dockmesh.test:8080", "wss://dockmesh.test:8443/connect"),
+		webInstallNotice: n,
+	}
+	token := strings.Repeat("B", 43)
+	fetch := func() {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.AgentInstallScript(rec, httptest.NewRequest(http.MethodGet, "/install/agent.sh?token="+token, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d", rec.Code)
+		}
+	}
+	openNotice := func() *notices.Notice {
+		t.Helper()
+		open, err := svc.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range open {
+			if open[i].Key == noticeKeyWebInstall {
+				return &open[i]
+			}
+		}
+		return nil
+	}
+
+	fetch()
+	first := openNotice()
+	if first == nil || !strings.Contains(first.Body, "192.0.2.1") || strings.Contains(first.Body, token) {
+		t.Fatalf("notice after first use: %+v", first)
+	}
+	if err := svc.Resolve(context.Background(), noticeKeyWebInstall); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(23 * time.Hour)
+	fetch()
+	if openNotice() != nil {
+		t.Fatal("notice raised again within a day")
+	}
+	now = now.Add(2 * time.Hour)
+	fetch()
+	if openNotice() == nil {
+		t.Fatal("notice not raised again after a day of use")
+	}
+
+	// A restarted server takes the open notice's age instead of raising
+	// it again at once.
+	restarted := newWebInstallNotice(svc)
+	if restarted.due(context.Background()) {
+		t.Fatal("restart raised the notice again although it is open and recent")
 	}
 }

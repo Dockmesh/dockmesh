@@ -75,7 +75,7 @@ curl -fsSLk --pinnedpubkey '<pin>' <install-url> | sudo bash -s -- --token <toke
 
 The installer and binary routes on the agent port need no sign-in. They and `/enroll` are limited per IP address with the limits of the sign-in endpoints: 100 requests in 15 minutes for the installer and binaries, and 100 failed enrollments in 15 minutes, after which the address waits 15 minutes. Behind TCP passthrough every agent host shares the proxy's address.
 
-Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation; the script it serves downloads the binary from the agent port with the pin.
+Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation in 0.6.x and goes away in 0.7.0; the script it serves downloads the binary from the agent port with the pin, but the script itself still travels over the web port. Each use writes a warning to the server log, and admins get a notice at most once a day while the route is in use.
 
 Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server.
 

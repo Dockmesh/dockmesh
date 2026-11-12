@@ -124,8 +124,9 @@ type Handlers struct {
 
 	// ClientIPs resolves client addresses behind trusted proxies; the
 	// router mounts its middleware.
-	ClientIPs   *clientip.Resolver
-	proxyNotice *proxyNotice
+	ClientIPs        *clientip.Resolver
+	proxyNotice      *proxyNotice
+	webInstallNotice *webInstallNotice
 	// releaseSections is the embedded changelog, parsed once.
 	releaseSections []*changelog.Section
 	// attentionRows replaces the container fan-out of GET /attention in tests.
@@ -260,6 +261,7 @@ func New(d Deps) *Handlers {
 		inviteLimits:      newAuthLimits(10, 5, 15*time.Minute),
 		refreshLimits:     newAuthLimits(300, 0, 5*time.Minute),
 		proxyNotice:       &proxyNotice{notices: d.Notices},
+		webInstallNotice:  newWebInstallNotice(d.Notices),
 	}
 	h.ClientIPs = clientip.New(func() string {
 		if d.Settings == nil {
