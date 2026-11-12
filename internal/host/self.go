@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 var selfContainerID atomic.Value
@@ -51,9 +51,9 @@ func DetectSelfContainer(ctx context.Context, cli client.ContainerAPIClient) str
 			continue
 		}
 		seen[c] = true
-		info, err := cli.ContainerInspect(ctx, c)
-		if err == nil && strings.HasPrefix(info.ID, c) {
-			return info.ID
+		res, err := cli.ContainerInspect(ctx, c, client.ContainerInspectOptions{})
+		if err == nil && strings.HasPrefix(res.Container.ID, c) {
+			return res.Container.ID
 		}
 	}
 	return ""

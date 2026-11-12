@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/docker/docker/api/types/system"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/system"
+	"github.com/moby/moby/client"
 )
 
 const (
@@ -62,10 +62,7 @@ type Client struct {
 // within a probeInterval and handlers switch back to "connected"
 // automatically.
 func New(ctx context.Context) (*Client, error) {
-	cli, err := client.NewClientWithOpts(
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	)
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		// Only fail here if the client CAN'T be constructed (invalid
 		// env vars, bad host URL). Daemon availability is tracked
@@ -87,7 +84,7 @@ func New(ctx context.Context) (*Client, error) {
 func (c *Client) probe(ctx context.Context) {
 	pingCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	if _, err := c.cli.Ping(pingCtx); err != nil {
+	if _, err := c.cli.Ping(pingCtx, client.PingOptions{}); err != nil {
 		c.connected.Store(false)
 		s := err.Error()
 		c.lastErr.Store(&s)
@@ -148,7 +145,8 @@ func (c *Client) Ping(ctx context.Context) error {
 // constrained container. dockmesh's dashboard uses these as the
 // authoritative "resources Docker can use" numbers.
 func (c *Client) Info(ctx context.Context) (system.Info, error) {
-	return c.cli.Info(ctx)
+	res, err := c.cli.Info(ctx, client.InfoOptions{})
+	return res.Info, err
 }
 
 func (c *Client) Close() error {

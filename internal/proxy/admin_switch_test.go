@@ -18,10 +18,9 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -46,69 +45,69 @@ func (f *fakeDocker) record(call string) {
 	f.calls = append(f.calls, call)
 }
 
-func (f *fakeDocker) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.exists[id] {
-		return container.InspectResponse{}, cerrdefs.ErrNotFound
+		return client.ContainerInspectResult{}, cerrdefs.ErrNotFound
 	}
-	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id}, Config: f.config[id]}, nil
+	return client.ContainerInspectResult{Container: container.InspectResponse{ID: id, Config: f.config[id]}}, nil
 }
 
-func (f *fakeDocker) ContainerCreate(_ context.Context, _ *container.Config, _ *container.HostConfig, _ *dnetwork.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
-	f.record("create " + name)
+func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	f.record("create " + o.Name)
 	if f.failCreate {
-		return container.CreateResponse{}, errors.New("create refused")
+		return client.ContainerCreateResult{}, errors.New("create refused")
 	}
-	return container.CreateResponse{ID: "new"}, nil
+	return client.ContainerCreateResult{ID: "new"}, nil
 }
 
-func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ container.StartOptions) error {
+func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
 	f.record("start " + id)
 	if id == f.failStartID {
-		return errors.New("start refused")
+		return client.ContainerStartResult{}, errors.New("start refused")
 	}
 	if f.onStart != nil {
 		f.onStart(id)
 	}
-	return nil
+	return client.ContainerStartResult{}, nil
 }
 
-func (f *fakeDocker) ContainerStop(_ context.Context, id string, _ container.StopOptions) error {
+func (f *fakeDocker) ContainerStop(_ context.Context, id string, _ client.ContainerStopOptions) (client.ContainerStopResult, error) {
 	f.record("stop " + id)
-	return nil
+	return client.ContainerStopResult{}, nil
 }
 
-func (f *fakeDocker) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
+func (f *fakeDocker) ContainerRemove(_ context.Context, id string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	f.record("remove " + id)
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
-func (f *fakeDocker) ContainerRename(_ context.Context, id, name string) error {
-	f.record("rename " + id + " " + name)
-	return nil
+func (f *fakeDocker) ContainerRename(_ context.Context, id string, o client.ContainerRenameOptions) (client.ContainerRenameResult, error) {
+	f.record("rename " + id + " " + o.NewName)
+	return client.ContainerRenameResult{}, nil
 }
 
-func (f *fakeDocker) CopyToContainer(_ context.Context, id, dst string, content io.Reader, _ container.CopyToContainerOptions) error {
-	b, err := io.ReadAll(content)
+func (f *fakeDocker) CopyToContainer(_ context.Context, id string, o client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+	b, err := io.ReadAll(o.Content)
 	if err != nil {
-		return err
+		return client.CopyToContainerResult{}, err
 	}
-	if dst == "/config/caddy" && !bytes.Equal(b, f.autosave) {
-		return errors.New("restored something other than the saved config")
+	if o.DestinationPath == "/config/caddy" && !bytes.Equal(b, f.autosave) {
+		return client.CopyToContainerResult{}, errors.New("restored something other than the saved config")
 	}
-	f.record("copy " + id + " " + dst)
-	return nil
+	f.record("copy " + id + " " + o.DestinationPath)
+	return client.CopyToContainerResult{}, nil
 }
 
-func (f *fakeDocker) CopyFromContainer(_ context.Context, id, src string) (io.ReadCloser, container.PathStat, error) {
-	f.record("read " + id + " " + src)
-	return io.NopCloser(bytes.NewReader(f.autosave)), container.PathStat{}, nil
+func (f *fakeDocker) CopyFromContainer(_ context.Context, id string, o client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+	f.record("read " + id + " " + o.SourcePath)
+	return client.CopyFromContainerResult{Content: io.NopCloser(bytes.NewReader(f.autosave))}, nil
 }
 
-func (f *fakeDocker) VolumeCreate(_ context.Context, o volume.CreateOptions) (volume.Volume, error) {
+func (f *fakeDocker) VolumeCreate(_ context.Context, o client.VolumeCreateOptions) (client.VolumeCreateResult, error) {
 	f.record("volume " + o.Name + " " + o.Labels[docker.LabelManaged])
-	return volume.Volume{Name: o.Name}, nil
+	return client.VolumeCreateResult{Volume: volume.Volume{Name: o.Name}}, nil
 }
 
 type recordedNotice struct {
@@ -195,12 +194,10 @@ func serveSocket(t *testing.T, s *Service, api http.Handler) {
 
 func legacyContainer(id string) *container.InspectResponse {
 	return &container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{
-			ID:         id,
-			State:      &container.State{Running: true},
-			Image:      "sha256:caddy",
-			HostConfig: &container.HostConfig{NetworkMode: proxyNetworkMode, Binds: append([]string(nil), proxyVolumes...)},
-		},
+		ID:         id,
+		State:      &container.State{Running: true},
+		Image:      "sha256:caddy",
+		HostConfig: &container.HostConfig{NetworkMode: proxyNetworkMode, Binds: append([]string(nil), proxyVolumes...)},
 		Config: &container.Config{
 			Image: DefaultProxyImage,
 			Cmd:   append([]string(nil), proxyCmd...),

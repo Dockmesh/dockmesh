@@ -6,7 +6,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // NormalizedStats is the stats payload of one container frame, computed
@@ -36,7 +37,7 @@ type NormalizedStats struct {
 // the local handler and the remote agent use, so normalization can stay
 // in one place (Normalize).
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {
-	resp, err := c.cli.ContainerStats(ctx, containerID, true)
+	resp, err := c.cli.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: true})
 	if err != nil {
 		return nil, err
 	}
@@ -45,13 +46,13 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.Rea
 
 // StatsReader is the part of the Docker SDK client SampleStats needs.
 type StatsReader interface {
-	ContainerStats(ctx context.Context, id string, stream bool) (container.StatsResponseReader, error)
+	ContainerStats(ctx context.Context, id string, opts client.ContainerStatsOptions) (client.ContainerStatsResult, error)
 }
 
 // SampleStats reads two frames of a container's stats stream: the first
 // has no PreCPUStats baseline, so its CPU delta is 0.
 func SampleStats(ctx context.Context, cli StatsReader, id string) (NormalizedStats, error) {
-	resp, err := cli.ContainerStats(ctx, id, true)
+	resp, err := cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: true})
 	if err != nil {
 		return NormalizedStats{}, err
 	}

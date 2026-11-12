@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -90,8 +90,8 @@ func TestStandaloneSpecUsesNewImageDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
 			info := &container.InspectResponse{
-				ContainerJSONBase: &container.ContainerJSONBase{ID: "abc", HostConfig: &container.HostConfig{}},
-				Config:            &cfg,
+				ID: "abc", HostConfig: &container.HostConfig{},
+				Config: &cfg,
 			}
 			spec := standaloneSpec(info, "app:2", tt.oldImg, newImg)
 			got := spec.cfg

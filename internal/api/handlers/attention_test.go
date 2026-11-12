@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
@@ -26,7 +26,7 @@ func attentionRow(id, name, stack, state, status string) containerRow {
 		Summary: container.Summary{
 			ID:     id,
 			Names:  []string{"/" + name},
-			State:  state,
+			State:  container.ContainerState(state),
 			Status: status,
 			Labels: map[string]string{"com.docker.compose.project": stack},
 		},

@@ -19,10 +19,10 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/types/container"
+	dnetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // bootstrapConfig is the minimal Caddy config we seed into the config
@@ -133,7 +133,8 @@ func (s *Service) enableLocked(ctx context.Context) error {
 	if err := s.adoptNextContainer(ctx, cli); err != nil {
 		return err
 	}
-	existing, err := cli.ContainerInspect(ctx, ProxyContainerName)
+	res, err := cli.ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
+	existing := res.Container
 	if err == nil && s.isOldManagedContainer(ctx, &existing) {
 		return s.moveAdminToSocket(ctx, cli, img, &existing)
 	}
@@ -149,7 +150,7 @@ func (s *Service) enableLocked(ctx context.Context) error {
 		kept = true
 		adminID = existing.Config.Labels[adminIDLabel]
 		if existing.State == nil || !existing.State.Running {
-			if err := cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
+			if _, err := cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 				return fmt.Errorf("container start: %w", err)
 			}
 		}
@@ -188,7 +189,7 @@ func (s *Service) enableLocked(ctx context.Context) error {
 // what runs and with which privileges. The spec label alone is not
 // enough: anyone who can create a container can copy it.
 func (s *Service) matchesSpec(c *container.InspectResponse, img, imageID string) bool {
-	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
+	if c == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
 	return c.Config.Labels[specLabel] == s.specHashFor(img) &&
@@ -239,8 +240,8 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 	}
 	cli := s.docker.Raw()
 	if old != nil {
-		_ = cli.ContainerStop(ctx, old.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		_, _ = cli.ContainerStop(ctx, old.ID, client.ContainerStopOptions{})
+		if _, err := cli.ContainerRemove(ctx, old.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return "", fmt.Errorf("remove outdated proxy container: %w", err)
 		}
 	}
@@ -260,7 +261,7 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 func labelVolumes(ctx context.Context, cli containerAPI) {
 	for _, bind := range proxyVolumes {
 		name, _, _ := strings.Cut(bind, ":")
-		_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+		_, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 			Name:   name,
 			Labels: map[string]string{docker.LabelManaged: "true", "dockmesh.component": "proxy"},
 		})
@@ -293,7 +294,7 @@ func (s *Service) createContainer(ctx context.Context, cli containerAPI, img, na
 		RestartPolicy: container.RestartPolicy{Name: proxyRestartPolicy},
 		Binds:         s.proxyBinds(),
 	}
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, &dnetwork.NetworkingConfig{}, nil, name)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: &dnetwork.NetworkingConfig{}, Name: name})
 	if err != nil {
 		return "", "", fmt.Errorf("container create: %w", err)
 	}
@@ -317,10 +318,10 @@ func seedAndStart(ctx context.Context, cli containerAPI, id, adminID string) err
 	if err != nil {
 		return fmt.Errorf("build bootstrap tar: %w", err)
 	}
-	if err := cli.CopyToContainer(ctx, id, "/config", tarStream, container.CopyToContainerOptions{}); err != nil {
+	if _, err := cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/config", Content: tarStream}); err != nil {
 		return fmt.Errorf("seed bootstrap config: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("container start: %w", err)
 	}
 	return nil
@@ -405,7 +406,7 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	cli := s.docker.Raw()
-	info, err := cli.ContainerInspect(ctx, ProxyContainerName)
+	res, err := cli.ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
 			s.enabled.Store(false)
@@ -413,8 +414,9 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 		}
 		return err
 	}
-	_ = cli.ContainerStop(ctx, info.ID, container.StopOptions{})
-	if err := cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil {
+	info := res.Container
+	_, _ = cli.ContainerStop(ctx, info.ID, client.ContainerStopOptions{})
+	if _, err := cli.ContainerRemove(ctx, info.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return err
 	}
 	s.enabled.Store(false)
@@ -464,10 +466,11 @@ func (s *Service) GetStatus(ctx context.Context) *Status {
 		return st
 	}
 	cli := s.docker.Raw()
-	info, err := cli.ContainerInspect(ctx, ProxyContainerName)
+	res, err := cli.ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
 	if err != nil {
 		return st
 	}
+	info := res.Container
 	st.Container = info.ID[:12]
 	st.Running = info.State != nil && info.State.Running
 	if st.Running {

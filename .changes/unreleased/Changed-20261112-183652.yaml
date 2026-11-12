@@ -1,0 +1,3 @@
+kind: Changed
+body: Dockmesh and the agent talk to Docker through the maintained moby client; Docker Engine 19.03 (API 1.40) is now the oldest supported daemon
+time: 2026-11-12T18:36:52.139172137Z

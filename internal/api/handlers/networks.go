@@ -3,13 +3,14 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"strings"
 
-	"github.com/docker/docker/api/types/network"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/network"
 )
 
 type networkRequest struct {
@@ -146,13 +147,18 @@ func enrichNetworkMembers(ctx context.Context, h host.Host, nets []network.Inspe
 }
 
 func endpointToResource(name string, ep *network.EndpointSettings) network.EndpointResource {
-	return network.EndpointResource{
-		Name:        name,
-		EndpointID:  ep.EndpointID,
-		MacAddress:  ep.MacAddress,
-		IPv4Address: ep.IPAddress,
-		IPv6Address: ep.GlobalIPv6Address,
+	res := network.EndpointResource{
+		Name:       name,
+		EndpointID: ep.EndpointID,
+		MacAddress: ep.MacAddress,
 	}
+	if ep.IPAddress.IsValid() {
+		res.IPv4Address = netip.PrefixFrom(ep.IPAddress, ep.IPPrefixLen)
+	}
+	if ep.GlobalIPv6Address.IsValid() {
+		res.IPv6Address = netip.PrefixFrom(ep.GlobalIPv6Address, ep.GlobalIPv6PrefixLen)
+	}
+	return res
 }
 
 func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {

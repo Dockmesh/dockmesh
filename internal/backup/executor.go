@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -26,6 +24,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // Executor turns a Job into a Run: pre-hooks → tar → encrypt → upload →
@@ -547,15 +547,15 @@ func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src i
 func (l *localBackupTarget) VolumeInUse(ctx context.Context, name string) ([]string, error) {
 	// Paused and restarting containers come back while the volume is
 	// rewritten, so only stopped ones don't count.
-	list, err := l.dc.Raw().ContainerList(ctx, container.ListOptions{
+	list, err := l.dc.Raw().ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("volume", name)),
+		Filters: client.Filters{}.Add("volume", name),
 	})
 	if err != nil {
 		return nil, err
 	}
-	active := list[:0]
-	for _, c := range list {
+	active := list.Items[:0]
+	for _, c := range list.Items {
 		if c.State != container.StateExited && c.State != container.StateDead && c.State != container.StateCreated {
 			active = append(active, c)
 		}

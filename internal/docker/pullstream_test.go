@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/distribution/reference"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
@@ -64,7 +64,7 @@ func TestPullAnonymous(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.45"), client.WithHTTPClient(srv.Client()))
+			cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.45"), client.WithHTTPClient(srv.Client()))
 			if err != nil {
 				t.Fatal(err)
 			}

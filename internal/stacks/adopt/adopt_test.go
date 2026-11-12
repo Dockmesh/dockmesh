@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/moby/moby/api/types/container"
 )
 
 // --- test doubles -----------------------------------------------------------

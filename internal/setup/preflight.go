@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/client"
 )
 
 // Preflight collects host-level facts the wizard's first page renders.
@@ -27,10 +28,10 @@ type Preflight struct {
 }
 
 type PreflightCheck struct {
-	Key     string `json:"key"`     // stable identifier for the UI to map labels
-	Label   string `json:"label"`   // human-readable label, English
-	Value   string `json:"value"`   // measured value, freeform string
-	Status  string `json:"status"`  // "ok" | "warn" | "fail"
+	Key     string `json:"key"`    // stable identifier for the UI to map labels
+	Label   string `json:"label"`  // human-readable label, English
+	Value   string `json:"value"`  // measured value, freeform string
+	Status  string `json:"status"` // "ok" | "warn" | "fail"
 	Message string `json:"message,omitempty"`
 	Hint    string `json:"hint,omitempty"` // docs link or short next-step
 }
@@ -140,7 +141,7 @@ func checkDocker(ctx context.Context, dc *docker.Client) PreflightCheck {
 		c.Hint = "https://docs.docker.com/engine/install/"
 		return c
 	}
-	v, err := dc.Raw().ServerVersion(ctx)
+	v, err := dc.Raw().ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		c.Status = "fail"
 		c.Value = "error"
@@ -347,7 +348,7 @@ func CollectServerInfo(ctx context.Context, version string, dockerCli *docker.Cl
 	si.IP = requestHost
 	si.UptimeSecs = int64(time.Since(startedAt).Seconds())
 	if dockerCli != nil && dockerCli.Connected() {
-		if v, err := dockerCli.Raw().ServerVersion(ctx); err == nil {
+		if v, err := dockerCli.Raw().ServerVersion(ctx, client.ServerVersionOptions{}); err == nil {
 			si.DockerVersion = v.Version
 		}
 	}

@@ -4,44 +4,48 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 )
 
 type fakeExecClient struct {
-	client.ContainerAPIClient
+	client.ExecAPIClient
 	stream []byte
 	exit   int
 }
 
-func (f *fakeExecClient) ContainerExecCreate(context.Context, string, container.ExecOptions) (container.ExecCreateResponse, error) {
-	return container.ExecCreateResponse{ID: "e1"}, nil
+func (f *fakeExecClient) ExecCreate(context.Context, string, client.ExecCreateOptions) (client.ExecCreateResult, error) {
+	return client.ExecCreateResult{ID: "e1"}, nil
 }
 
-func (f *fakeExecClient) ContainerExecAttach(context.Context, string, container.ExecStartOptions) (types.HijackedResponse, error) {
+func (f *fakeExecClient) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
 	c1, c2 := net.Pipe()
 	_ = c2.Close()
-	return types.HijackedResponse{Conn: c1, Reader: bufio.NewReader(bytes.NewReader(f.stream))}, nil
+	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: c1, Reader: bufio.NewReader(bytes.NewReader(f.stream))}}, nil
 }
 
-func (f *fakeExecClient) ContainerExecInspect(context.Context, string) (container.ExecInspect, error) {
-	return container.ExecInspect{ExitCode: f.exit}, nil
+func (f *fakeExecClient) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
+	return client.ExecInspectResult{ExitCode: f.exit}, nil
 }
 
+// muxed builds a multiplexed exec stream: an 8-byte header (stream type,
+// three zero bytes, big-endian length) before every frame.
 func muxed(parts ...any) []byte {
 	var buf bytes.Buffer
-	out, errw := stdcopy.NewStdWriter(&buf, stdcopy.Stdout), stdcopy.NewStdWriter(&buf, stdcopy.Stderr)
 	for i := 0; i < len(parts); i += 2 {
-		w := out
+		typ := stdcopy.Stdout
 		if parts[i] == "err" {
-			w = errw
+			typ = stdcopy.Stderr
 		}
-		_, _ = w.Write([]byte(parts[i+1].(string)))
+		payload := parts[i+1].(string)
+		hdr := [8]byte{byte(typ)}
+		binary.BigEndian.PutUint32(hdr[4:], uint32(len(payload))) //nolint:gosec // test payloads are tiny
+		buf.Write(hdr[:])
+		buf.WriteString(payload)
 	}
 	return buf.Bytes()
 }

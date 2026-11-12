@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // HelperTimeout bounds stopping and removing a short-lived helper
@@ -18,9 +19,9 @@ var HelperLogConfig = container.LogConfig{Type: "none"}
 
 // HelperAPI is the part of the Docker client FinishHelper needs.
 type HelperAPI interface {
-	ContainerKill(ctx context.Context, id, signal string) error
-	ContainerWait(ctx context.Context, id string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
-	ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error
+	ContainerKill(ctx context.Context, id string, opts client.ContainerKillOptions) (client.ContainerKillResult, error)
+	ContainerWait(ctx context.Context, id string, opts client.ContainerWaitOptions) client.ContainerWaitResult
+	ContainerRemove(ctx context.Context, id string, opts client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
 }
 
 // FinishHelper waits for a helper container to exit and removes it. With
@@ -30,15 +31,15 @@ type HelperAPI interface {
 func FinishHelper(ctx context.Context, cli HelperAPI, id string, aborted bool) (int64, error) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), HelperTimeout)
 	defer cancel()
-	defer func() { _ = cli.ContainerRemove(cctx, id, container.RemoveOptions{Force: true}) }()
+	defer func() { _, _ = cli.ContainerRemove(cctx, id, client.ContainerRemoveOptions{Force: true}) }()
 	if aborted {
-		_ = cli.ContainerKill(cctx, id, "KILL")
+		_, _ = cli.ContainerKill(cctx, id, client.ContainerKillOptions{Signal: "KILL"})
 	}
-	statusCh, errCh := cli.ContainerWait(cctx, id, container.WaitConditionNotRunning)
+	wait := cli.ContainerWait(cctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		return s.StatusCode, nil
-	case err := <-errCh:
+	case err := <-wait.Error:
 		return -1, err
 	case <-cctx.Done():
 		return -1, cctx.Err()

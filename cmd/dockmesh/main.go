@@ -19,8 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-
 	"github.com/dockmesh/dockmesh"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
@@ -70,6 +68,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/dockmesh/dockmesh/pkg/version"
+	"github.com/moby/moby/client"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -1151,13 +1150,13 @@ func main() {
 		go func() {
 			bgCtx := context.Background()
 			cli := dockerCli.Raw()
-			all, err := cli.ContainerList(bgCtx, container.ListOptions{All: true})
+			all, err := cli.ContainerList(bgCtx, client.ContainerListOptions{All: true})
 			if err != nil {
 				slog.Warn("backfill: container list", "err", err)
 				return
 			}
-			infos := make([]stacks.ContainerInfo, len(all))
-			for i, c := range all {
+			infos := make([]stacks.ContainerInfo, len(all.Items))
+			for i, c := range all.Items {
 				infos[i] = stacks.ContainerInfo{Labels: c.Labels, HostID: "local"}
 			}
 			if err := stacks.BackfillDeployments(bgCtx, deployStore, stacksMgr, infos); err != nil {

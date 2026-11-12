@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/image"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/image"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/host"

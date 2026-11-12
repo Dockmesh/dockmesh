@@ -5,22 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sort"
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dnetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -345,7 +342,7 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 				attribute.Bool("forced", !localMissing),
 			))
 		auth := s.resolveImageAuth(pullCtx, svc.Image)
-		rc, err := cli.ImagePull(pullCtx, svc.Image, image.PullOptions{RegistryAuth: auth})
+		rc, err := cli.ImagePull(pullCtx, svc.Image, client.ImagePullOptions{RegistryAuth: auth})
 		if err != nil {
 			pullSpan.SetStatus(codes.Error, err.Error())
 			pullSpan.End()
@@ -383,8 +380,8 @@ func (s *Service) Stop(ctx context.Context, stackName string) error {
 		return err
 	}
 	for _, c := range list {
-		_ = cli.ContainerStop(ctx, c.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		_, _ = cli.ContainerStop(ctx, c.ID, client.ContainerStopOptions{})
+		if _, err := cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("remove %s: %w", c.ID[:12], err)
 		}
 	}
@@ -404,7 +401,7 @@ func (s *Service) Status(ctx context.Context, stackName string) ([]StatusEntry, 
 		out = append(out, StatusEntry{
 			Service:     c.Labels[LabelService],
 			ContainerID: c.ID,
-			State:       c.State,
+			State:       string(c.State),
 			Status:      c.Status,
 			Image:       c.Image,
 		})
@@ -431,7 +428,7 @@ func (s *Service) reconcileNetworks(ctx context.Context, cli *client.Client, pro
 		if bool(net.External) {
 			continue
 		}
-		if _, err := cli.NetworkInspect(ctx, actualName, dnetwork.InspectOptions{}); err == nil {
+		if _, err := cli.NetworkInspect(ctx, actualName, client.NetworkInspectOptions{}); err == nil {
 			res.Networks = append(res.Networks, ResourceResult{Name: actualName, Created: false})
 			continue
 		} else if !cerrdefs.IsNotFound(err) {
@@ -449,7 +446,7 @@ func (s *Service) reconcileNetworks(ctx context.Context, cli *client.Client, pro
 		if driver == "" {
 			driver = "bridge"
 		}
-		if _, err := cli.NetworkCreate(ctx, actualName, dnetwork.CreateOptions{
+		if _, err := cli.NetworkCreate(ctx, actualName, client.NetworkCreateOptions{
 			Driver:     driver,
 			Internal:   net.Internal,
 			Attachable: net.Attachable,
@@ -472,7 +469,7 @@ func (s *Service) reconcileVolumes(ctx context.Context, cli *client.Client, proj
 		if bool(vol.External) {
 			continue
 		}
-		if _, err := cli.VolumeInspect(ctx, actualName); err == nil {
+		if _, err := cli.VolumeInspect(ctx, actualName, client.VolumeInspectOptions{}); err == nil {
 			res.Volumes = append(res.Volumes, ResourceResult{Name: actualName, Created: false})
 			continue
 		} else if !cerrdefs.IsNotFound(err) {
@@ -490,7 +487,7 @@ func (s *Service) reconcileVolumes(ctx context.Context, cli *client.Client, proj
 		if driver == "" {
 			driver = "local"
 		}
-		if _, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+		if _, err := cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 			Name:       actualName,
 			Driver:     driver,
 			DriverOpts: vol.DriverOpts,
@@ -527,9 +524,9 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 	// the deploy aborted before touching containers).
 
 	// Remove any existing container with the same name (idempotent redeploy).
-	if existing, err := cli.ContainerInspect(ctx, containerName); err == nil {
-		_ = cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	if existing, err := cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
+		_, _ = cli.ContainerStop(ctx, existing.Container.ID, client.ContainerStopOptions{})
+		if _, err := cli.ContainerRemove(ctx, existing.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("remove existing %s: %w", containerName, err)
 		}
 	}
@@ -549,7 +546,7 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 	defer startSpan.End()
 
 	track(progressCreating)
-	resp, err := cli.ContainerCreate(startCtx, cfg, hostCfg, netCfg, nil, containerName)
+	resp, err := cli.ContainerCreate(startCtx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: containerName})
 	if err != nil {
 		startSpan.SetStatus(codes.Error, "create")
 		startSpan.RecordError(err)
@@ -557,7 +554,7 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 	}
 	track(progressStarting)
 	startSpan.SetAttributes(attribute.String("container.id", resp.ID))
-	if err := cli.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		startSpan.SetStatus(codes.Error, "start")
 		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container start %s: %w", containerName, err)
@@ -583,20 +580,26 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 	sort.Strings(env)
 
 	// Ports.
-	exposed := nat.PortSet{}
-	bindings := nat.PortMap{}
+	exposed := dnetwork.PortSet{}
+	bindings := dnetwork.PortMap{}
 	for _, p := range svc.Ports {
 		proto := p.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
-		port, err := nat.NewPort(proto, fmt.Sprintf("%d", p.Target))
+		port, err := dnetwork.ParsePort(fmt.Sprintf("%d/%s", p.Target, proto))
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("port %d/%s: %w", p.Target, proto, err)
 		}
+		var hostIP netip.Addr
+		if p.HostIP != "" {
+			if hostIP, err = netip.ParseAddr(p.HostIP); err != nil {
+				return nil, nil, nil, fmt.Errorf("port %d/%s: host ip: %w", p.Target, proto, err)
+			}
+		}
 		exposed[port] = struct{}{}
-		bindings[port] = append(bindings[port], nat.PortBinding{
-			HostIP:   p.HostIP,
+		bindings[port] = append(bindings[port], dnetwork.PortBinding{
+			HostIP:   hostIP,
 			HostPort: p.Published,
 		})
 	}
@@ -717,15 +720,15 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 }
 
 func listProjectContainers(ctx context.Context, cli *client.Client, stackName string) ([]container.Summary, error) {
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", LabelProject+"="+stackName)
-	list, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: f})
 	if err != nil {
 		return nil, err
 	}
 	// Sanity: filter again locally in case the daemon returns something unexpected.
-	out := list[:0]
-	for _, c := range list {
+	out := list.Items[:0]
+	for _, c := range list.Items {
 		if strings.EqualFold(c.Labels[LabelProject], stackName) {
 			out = append(out, c)
 		}

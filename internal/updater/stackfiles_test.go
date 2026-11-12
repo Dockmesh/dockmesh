@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestStackTargetRefusesOutsideChanges(t *testing.T) {

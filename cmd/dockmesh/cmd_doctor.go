@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/moby/moby/client"
 )
 
 type checkResult struct {
@@ -118,10 +119,10 @@ func checkDocker() checkResult {
 	}
 	defer cli.Close()
 	// Cheap round-trip to verify the socket answers.
-	if _, err := cli.Raw().ServerVersion(ctx); err != nil {
+	if _, err := cli.Raw().ServerVersion(ctx, client.ServerVersionOptions{}); err != nil {
 		return warn("docker daemon", "reachable but ServerVersion failed: "+err.Error())
 	}
-	v, _ := cli.Raw().ServerVersion(ctx)
+	v, _ := cli.Raw().ServerVersion(ctx, client.ServerVersionOptions{})
 	return ok("docker daemon", fmt.Sprintf("API %s, engine %s", v.APIVersion, v.Version))
 }
 

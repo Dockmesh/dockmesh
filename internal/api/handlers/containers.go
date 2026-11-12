@@ -9,12 +9,12 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/container"
 )
 
 // containerRow is the all-mode row for ListContainers. The embedded

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 func frame(cpu, preCPU, sys, preSys uint64, online uint32, usage uint64, stats map[string]uint64) *container.StatsResponse {

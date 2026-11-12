@@ -9,10 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 )
 
 type fakeImageAPI struct {
@@ -23,15 +22,24 @@ type fakeImageAPI struct {
 	gotAuth string
 }
 
-func (f *fakeImageAPI) ImagePull(_ context.Context, ref string, o image.PullOptions) (io.ReadCloser, error) {
+// fakePull is a pull response that is only read as a stream.
+type fakePull struct {
+	io.ReadCloser
+	client.ImagePullResponse
+}
+
+func (p fakePull) Read(b []byte) (int, error) { return p.ReadCloser.Read(b) }
+func (p fakePull) Close() error               { return p.ReadCloser.Close() }
+
+func (f *fakeImageAPI) ImagePull(_ context.Context, ref string, o client.ImagePullOptions) (client.ImagePullResponse, error) {
 	f.gotRef, f.gotAuth = ref, o.RegistryAuth
 	if f.err != nil {
 		return nil, f.err
 	}
-	return io.NopCloser(strings.NewReader(f.body)), nil
+	return fakePull{ReadCloser: io.NopCloser(strings.NewReader(f.body))}, nil
 }
 
-func (f *fakeImageAPI) ImageSave(_ context.Context, refs []string, _ ...client.ImageSaveOption) (io.ReadCloser, error) {
+func (f *fakeImageAPI) ImageSave(_ context.Context, refs []string, _ ...client.ImageSaveOption) (client.ImageSaveResult, error) {
 	f.gotRef = strings.Join(refs, ",")
 	if f.err != nil {
 		return nil, f.err

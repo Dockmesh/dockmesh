@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/registry"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/moby/moby/api/types/registry"
 )
 
 var (
@@ -301,7 +301,7 @@ func (s *Service) RecordTest(ctx context.Context, id int64, ok bool, errMsg stri
 
 // ResolveAuth looks up credentials for an image reference that will be
 // pulled against hostTags. Returns the base64-encoded X-Registry-Auth
-// blob ready to hand to Docker's image.PullOptions.RegistryAuth, and the
+// blob ready to hand to Docker's client.ImagePullOptions.RegistryAuth, and the
 // registry that provided it (for audit), or ("", nil, nil) when no
 // matching entry exists — the caller should then fall back to an
 // anonymous pull.

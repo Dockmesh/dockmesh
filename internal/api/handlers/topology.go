@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 )
 
@@ -109,7 +110,7 @@ func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 		topo.Containers = append(topo.Containers, TopoContainer{
 			ID:    c.ID,
 			Name:  name,
-			State: c.State,
+			State: string(c.State),
 			Image: c.Image,
 			Stack: stack,
 			Ports: ports,
@@ -148,7 +149,7 @@ func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 			topo.Links = append(topo.Links, TopoLink{
 				NetworkID:   full.ID,
 				ContainerID: cid,
-				IPv4:        stripCIDR(ep.IPv4Address),
+				IPv4:        prefixAddr(ep.IPv4Address),
 			})
 		}
 	}
@@ -163,11 +164,11 @@ func firstName(names []string) string {
 	return names[0]
 }
 
-func stripCIDR(s string) string {
-	if i := strings.Index(s, "/"); i >= 0 {
-		return s[:i]
+func prefixAddr(p netip.Prefix) string {
+	if !p.IsValid() {
+		return ""
 	}
-	return s
+	return p.Addr().String()
 }
 
 // networkHasContainer reports whether a network links a container the

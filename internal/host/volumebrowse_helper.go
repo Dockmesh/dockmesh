@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 )
 
 // Docker volumes live at /var/lib/docker/volumes/<name>/_data which is
@@ -304,22 +304,23 @@ func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 		}
 
 		cfg, hostCfg := helperContainerConfig(volumeName, script)
-		createResp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+		createResp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
 		if err != nil {
 			return helperResult{}, fmt.Errorf("volume helper: create: %w", err)
 		}
 		defer func() {
-			_ = cli.ContainerRemove(context.WithoutCancel(ctx), createResp.ID, container.RemoveOptions{Force: true})
+			_, _ = cli.ContainerRemove(context.WithoutCancel(ctx), createResp.ID, client.ContainerRemoveOptions{Force: true})
 		}()
 
-		if err := cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, createResp.ID, client.ContainerStartOptions{}); err != nil {
 			return helperResult{}, fmt.Errorf("volume helper: start: %w", err)
 		}
 
 		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var exitCode int64
-		statusCh, errCh := cli.ContainerWait(waitCtx, createResp.ID, container.WaitConditionNotRunning)
+		wait := cli.ContainerWait(waitCtx, createResp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+		statusCh, errCh := wait.Result, wait.Error
 		select {
 		case err := <-errCh:
 			if err != nil {
@@ -332,7 +333,7 @@ func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 			exitCode = st.StatusCode
 		}
 
-		logs, err := cli.ContainerLogs(ctx, createResp.ID, container.LogsOptions{
+		logs, err := cli.ContainerLogs(ctx, createResp.ID, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 		})

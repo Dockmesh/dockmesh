@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
@@ -10,7 +10,7 @@ import (
 )
 
 // runContainerFileStream sends one file's content as stream data.
-func runContainerFileStream(conn *websocket.Conn, cli client.ContainerAPIClient, open agents.StreamOpen, reg *streamReg) error {
+func runContainerFileStream(conn *websocket.Conn, cli host.ContainerFilesAPI, open agents.StreamOpen, reg *streamReg) error {
 	p, _ := open.Params["path"].(string)
 	body, _, err := host.DownloadContainerFile(reg.ctx, cli, open.Container, p)
 	if err != nil {
@@ -27,11 +27,11 @@ func runVolumeFileStream(conn *websocket.Conn, cli *client.Client, open agents.S
 	if err := dockerwrap.CheckVolumeName(volName); err != nil {
 		return err
 	}
-	vol, err := cli.VolumeInspect(reg.ctx, volName)
+	vol, err := cli.VolumeInspect(reg.ctx, volName, client.VolumeInspectOptions{})
 	if err != nil {
 		return err
 	}
-	mp, err := host.ExtractMountpoint(vol.Mountpoint)
+	mp, err := host.ExtractMountpoint(vol.Volume.Mountpoint)
 	if err != nil {
 		return err
 	}

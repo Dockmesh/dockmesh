@@ -8,9 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -106,7 +105,7 @@ func (b *historyBuffer) putBack(batch agents.MetricsBatch) {
 // runHistorySampler records host and container samples every
 // historyInterval for as long as the agent runs, connected or not.
 func runHistorySampler(ctx context.Context) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		slog.Warn("history: docker client init failed, recording host samples only", "err", err)
 	}
@@ -135,7 +134,7 @@ func runHistorySampler(ctx context.Context) {
 func sampleContainers(ctx context.Context, cli *client.Client, ts int64) []agents.MetricsContainerSample {
 	ctx, cancel := context.WithTimeout(ctx, historyInterval-5*time.Second)
 	defer cancel()
-	list, err := cli.ContainerList(ctx, container.ListOptions{})
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		slog.Debug("history: list containers", "err", err)
 		return nil
@@ -146,7 +145,7 @@ func sampleContainers(ctx context.Context, cli *client.Client, ts int64) []agent
 		wg  sync.WaitGroup
 	)
 	sem := make(chan struct{}, 8)
-	for _, ct := range list {
+	for _, ct := range list.Items {
 		if len(ct.Names) == 0 {
 			continue
 		}

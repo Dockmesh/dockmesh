@@ -14,8 +14,8 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -118,9 +118,26 @@ func statErr(err error) error {
 // be judged by where it lands on the host, not only by its name inside
 // the container.
 type containerFS struct {
-	cli    client.ContainerAPIClient
+	cli    ContainerFilesAPI
 	id     string
 	mounts []container.MountPoint
+}
+
+// ContainerFilesAPI is the part of the Docker client the container file
+// browser uses; deleting runs rm through exec.
+type ContainerFilesAPI interface {
+	client.ContainerAPIClient
+	client.ExecAPIClient
+}
+
+func (f *containerFS) statPath(ctx context.Context, p string) (container.PathStat, error) {
+	res, err := f.cli.ContainerStatPath(ctx, f.id, client.ContainerStatPathOptions{Path: p})
+	return res.Stat, err
+}
+
+func copyFrom(ctx context.Context, cli ContainerFilesAPI, id, p string) (io.ReadCloser, error) {
+	res, err := cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: p})
+	return res.Content, err
 }
 
 // openContainerFS inspects the container and refuses Dockmesh's own
@@ -128,11 +145,12 @@ type containerFS struct {
 // container) and containers with the Docker socket mounted: files there
 // reach the daemon itself, which is the host, or hold Dockmesh's keys and
 // database.
-func openContainerFS(ctx context.Context, cli client.ContainerAPIClient, id string) (*containerFS, error) {
-	info, err := cli.ContainerInspect(ctx, id)
+func openContainerFS(ctx context.Context, cli ContainerFilesAPI, id string) (*containerFS, error) {
+	res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, statErr(err)
 	}
+	info := res.Container
 	if info.Config != nil && info.Config.Labels["dockmesh.component"] != "" {
 		return nil, ErrContainerFilesRefused
 	}
@@ -174,7 +192,7 @@ func (f *containerFS) follow(ctx context.Context, p string) (string, error) {
 			continue
 		}
 		next := path.Join(cur, comp)
-		st, err := f.cli.ContainerStatPath(ctx, f.id, next)
+		st, err := f.statPath(ctx, next)
 		if err == nil && st.Mode&fs.ModeSymlink != 0 {
 			t, err := linkTarget(st)
 			if err != nil {
@@ -247,7 +265,7 @@ func (f *containerFS) deniedBelow(dir string) bool {
 // same as the path itself.
 func (f *containerFS) resolve(ctx context.Context, clean string) (string, container.PathStat, error) {
 	cur := "/"
-	st, err := f.cli.ContainerStatPath(ctx, f.id, cur)
+	st, err := f.statPath(ctx, cur)
 	if err != nil {
 		return "", st, statErr(err)
 	}
@@ -259,7 +277,7 @@ func (f *containerFS) resolve(ctx context.Context, clean string) (string, contai
 		if f.denied(next) {
 			return "", st, ErrContainerPathDenied
 		}
-		st, err = f.cli.ContainerStatPath(ctx, f.id, next)
+		st, err = f.statPath(ctx, next)
 		if err != nil {
 			return "", st, statErr(err)
 		}
@@ -272,7 +290,7 @@ func (f *containerFS) resolve(ctx context.Context, clean string) (string, contai
 				return "", st, ErrContainerPathDenied
 			}
 			next = target
-			st, err = f.cli.ContainerStatPath(ctx, f.id, next)
+			st, err = f.statPath(ctx, next)
 			if err != nil {
 				return "", st, statErr(err)
 			}
@@ -318,7 +336,7 @@ func (f *containerFS) resolveParent(ctx context.Context, clean string) (dir, nam
 	if f.denied(full) {
 		return "", "", st, false, ErrContainerPathDenied
 	}
-	st, err = f.cli.ContainerStatPath(ctx, f.id, full)
+	st, err = f.statPath(ctx, full)
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
 			return dir, name, st, false, nil
@@ -333,7 +351,7 @@ func (f *containerFS) resolveParent(ctx context.Context, clean string) (dir, nam
 
 // owner returns the uid and gid of p from the first header of its tar.
 func (f *containerFS) owner(ctx context.Context, p string) (int, int, error) {
-	rdr, _, err := f.cli.CopyFromContainer(ctx, f.id, p)
+	rdr, err := copyFrom(ctx, f.cli, f.id, p)
 	if err != nil {
 		return 0, 0, statErr(err)
 	}
@@ -349,7 +367,7 @@ func (f *containerFS) owner(ctx context.Context, p string) (int, int, error) {
 // container by asking the daemon for a tar of that path and walking
 // the archive at depth 1. Works against scratch / distroless images
 // because it doesn't rely on a shell inside the container.
-func BrowseContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, p string) ([]VolumeEntry, error) {
+func BrowseContainerDir(ctx context.Context, cli ContainerFilesAPI, id, p string) ([]VolumeEntry, error) {
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
 		return nil, err
@@ -369,7 +387,7 @@ func BrowseContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, 
 		return nil, ErrContainerMountBelow
 	}
 
-	rc, _, err := cli.CopyFromContainer(ctx, id, resolved)
+	rc, err := copyFrom(ctx, cli, id, resolved)
 	if err != nil {
 		return nil, statErr(err)
 	}
@@ -437,7 +455,7 @@ func tarHeaderToEntry(name string, hdr *tar.Header) VolumeEntry {
 }
 
 // openContainerFile resolves p to a regular file and opens its content.
-func openContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string) (io.ReadCloser, *tar.Header, error) {
+func openContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string) (io.ReadCloser, *tar.Header, error) {
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
 		return nil, nil, err
@@ -453,7 +471,7 @@ func openContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 	if !stat.Mode.IsRegular() {
 		return nil, nil, ErrContainerNotFile
 	}
-	rdr, _, err := cli.CopyFromContainer(ctx, id, resolved)
+	rdr, err := copyFrom(ctx, cli, id, resolved)
 	if err != nil {
 		return nil, nil, statErr(err)
 	}
@@ -472,7 +490,7 @@ func openContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 
 // ReadContainerFile returns the first maxBytes (at most
 // MaxContainerPreviewBytes) of a file along with a binary flag.
-func ReadContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string, maxBytes int64) (*VolumeFileResult, error) {
+func ReadContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string, maxBytes int64) (*VolumeFileResult, error) {
 	if maxBytes <= 0 || maxBytes > MaxContainerPreviewBytes {
 		maxBytes = MaxContainerPreviewBytes
 	}
@@ -511,7 +529,7 @@ type ContainerFileStat struct {
 
 // StatContainerFile checks that p is a readable regular file and returns
 // its name and size.
-func StatContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string) (*ContainerFileStat, error) {
+func StatContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string) (*ContainerFileStat, error) {
 	body, hdr, err := openContainerFile(ctx, cli, id, p)
 	if err != nil {
 		return nil, err
@@ -524,7 +542,7 @@ func StatContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 // for the caller to write directly to the HTTP response — used by the
 // "Download" button so large files don't have to fit in memory. The
 // caller closes the returned reader.
-func DownloadContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string) (io.ReadCloser, *tar.Header, error) {
+func DownloadContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string) (io.ReadCloser, *tar.Header, error) {
 	return openContainerFile(ctx, cli, id, p)
 }
 
@@ -541,7 +559,7 @@ func (t *tarBodyReader) Close() error               { return t.rdr.Close() }
 // WriteContainerFile creates or replaces a regular file at p. The parent
 // must already exist. A replaced file keeps its permissions unless mode
 // is set; a new one defaults to 0644.
-func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string, data []byte, mode int64) error {
+func WriteContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string, data []byte, mode int64) error {
 	if len(data) > MaxContainerUploadBytes {
 		return ErrContainerFileTooLarge
 	}
@@ -603,13 +621,14 @@ func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, 
 	if err := tw.Close(); err != nil {
 		return err
 	}
-	return statErr(cli.CopyToContainer(ctx, id, dir, &buf, container.CopyToContainerOptions{}))
+	_, err = cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: dir, Content: &buf})
+	return statErr(err)
 }
 
 // DeleteContainerFile removes a file or symbolic link (never a
 // directory). The archive API can't delete, so rm runs in the container
 // with the resolved path as a plain argument, no shell.
-func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p string) error {
+func DeleteContainerFile(ctx context.Context, cli ContainerFilesAPI, id, p string) error {
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
 		return err
@@ -643,7 +662,7 @@ func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id,
 
 // ServeContainerFileRequest answers one req.container.files.* frame on
 // the agent, so agent hosts run exactly the rules above.
-func ServeContainerFileRequest(ctx context.Context, cli client.ContainerAPIClient, f agents.Frame) (any, error) {
+func ServeContainerFileRequest(ctx context.Context, cli ContainerFilesAPI, f agents.Frame) (any, error) {
 	var req agents.ContainerFileReq
 	if err := json.Unmarshal(f.Payload, &req); err != nil {
 		return nil, err

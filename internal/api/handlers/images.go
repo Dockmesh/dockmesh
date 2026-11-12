@@ -9,13 +9,13 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/image"
 )
 
 // imageErrorStatus classifies docker-daemon image errors into the right

@@ -14,10 +14,9 @@ import (
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
 )
 
@@ -125,18 +124,15 @@ type stagedMount struct {
 // point into an old staging directory, with the source the project now
 // uses for the same target.
 func (s *Service) stagedMounts(ctx context.Context, cli *client.Client, proj *composetypes.Project) ([]stagedMount, error) {
-	list, err := cli.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", LabelManaged+"=true"),
-			filters.Arg("label", "com.docker.compose.project="+proj.Name),
-		),
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", LabelManaged+"=true").Add("label", "com.docker.compose.project="+proj.Name),
 	})
 	if err != nil {
 		return nil, err
 	}
 	var out []stagedMount
-	for _, c := range list {
+	for _, c := range list.Items {
 		if c.Labels["com.docker.compose.project"] != proj.Name {
 			continue
 		}
@@ -146,7 +142,7 @@ func (s *Service) stagedMounts(ctx context.Context, cli *client.Client, proj *co
 			if m.Type != "bind" || !IsStagingPath(m.Source) {
 				continue
 			}
-			sm := stagedMount{containerID: c.ID, running: c.State, service: svcName, target: m.Destination}
+			sm := stagedMount{containerID: c.ID, running: string(c.State), service: svcName, target: m.Destination}
 			for _, v := range svc.Volumes {
 				if v.Type == composetypes.VolumeTypeBind && v.Target == m.Destination && !IsStagingPath(v.Source) {
 					sm.dest = v.Source
@@ -187,7 +183,7 @@ func (s *Service) adoptStagedBindData(ctx context.Context, cli *client.Client, p
 	)
 	restart := func() {
 		for _, id := range stopped {
-			_ = cli.ContainerStart(context.WithoutCancel(ctx), id, container.StartOptions{})
+			_, _ = cli.ContainerStart(context.WithoutCancel(ctx), id, client.ContainerStartOptions{})
 		}
 	}
 	for _, m := range staged {
@@ -195,7 +191,7 @@ func (s *Service) adoptStagedBindData(ctx context.Context, cli *client.Client, p
 			continue
 		}
 		if m.running == "running" && !contains(stopped, m.containerID) {
-			if err := cli.ContainerStop(ctx, m.containerID, container.StopOptions{}); err != nil {
+			if _, err := cli.ContainerStop(ctx, m.containerID, client.ContainerStopOptions{}); err != nil {
 				restart()
 				return out, fmt.Errorf("stop %s before copying its data: %w", m.service, err)
 			}
@@ -245,22 +241,26 @@ func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath,
 			return 0, fmt.Errorf("pull helper image: %w", err)
 		}
 	}
-	helper, err := cli.ContainerCreate(ctx, &container.Config{
-		Image:  bindCopyHelperImage,
-		Cmd:    []string{"true"},
-		Labels: map[string]string{LabelManaged: "true", "dockmesh.component": "bind-copy-helper"},
-	}, &container.HostConfig{Binds: []string{dest + ":/dest"}}, nil, nil, "")
+	helper, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:  bindCopyHelperImage,
+			Cmd:    []string{"true"},
+			Labels: map[string]string{LabelManaged: "true", "dockmesh.component": "bind-copy-helper"},
+		},
+		HostConfig: &container.HostConfig{Binds: []string{dest + ":/dest"}},
+	})
 	if err != nil {
 		return 0, err
 	}
 	defer func() {
-		_ = cli.ContainerRemove(context.WithoutCancel(ctx), helper.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(context.WithoutCancel(ctx), helper.ID, client.ContainerRemoveOptions{Force: true})
 	}()
 
-	rc, _, err := cli.CopyFromContainer(ctx, containerID, srcPath)
+	src, err := cli.CopyFromContainer(ctx, containerID, client.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
 		return 0, err
 	}
+	rc := src.Content
 	defer rc.Close()
 	pr, pw := io.Pipe()
 	files := 0
@@ -269,7 +269,7 @@ func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath,
 		files = n
 		pw.CloseWithError(err)
 	}()
-	if err := cli.CopyToContainer(ctx, helper.ID, "/dest", pr, container.CopyToContainerOptions{CopyUIDGID: true}); err != nil {
+	if _, err := cli.CopyToContainer(ctx, helper.ID, client.CopyToContainerOptions{DestinationPath: "/dest", Content: pr, CopyUIDGID: true}); err != nil {
 		pr.CloseWithError(err)
 		return files, err
 	}

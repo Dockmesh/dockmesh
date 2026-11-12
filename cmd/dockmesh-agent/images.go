@@ -3,11 +3,10 @@ package main
 import (
 	"errors"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 )
 
 // runImagePullStream pulls an image and relays Docker's progress lines. A
@@ -18,7 +17,7 @@ func runImagePullStream(conn *websocket.Conn, cli client.ImageAPIClient, open ag
 	if ref == "" {
 		return errors.New("image required")
 	}
-	body, err := cli.ImagePull(reg.ctx, ref, image.PullOptions{RegistryAuth: auth})
+	body, err := cli.ImagePull(reg.ctx, ref, client.ImagePullOptions{RegistryAuth: auth})
 	if err != nil {
 		return errors.New(operations.MaskText(err.Error(), operations.RegistryAuthSecrets(auth)))
 	}

@@ -20,9 +20,8 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
@@ -40,6 +39,7 @@ type fakeNode struct {
 // path, as the daemon reports it.
 type fakeContainerFS struct {
 	client.ContainerAPIClient // unused methods panic
+	client.ExecAPIClient
 
 	mu      sync.Mutex
 	nodes   map[string]*fakeNode
@@ -103,11 +103,25 @@ func (f *fakeContainerFS) resolve(p string, followLast bool, depth int) (string,
 	return cur, nil
 }
 
-func (f *fakeContainerFS) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
-	return container.InspectResponse{Config: &container.Config{Labels: f.labels}, Mounts: f.mounts}, nil
+func (f *fakeContainerFS) ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return client.ContainerInspectResult{Container: container.InspectResponse{Config: &container.Config{Labels: f.labels}, Mounts: f.mounts}}, nil
 }
 
-func (f *fakeContainerFS) ContainerStatPath(_ context.Context, _, p string) (container.PathStat, error) {
+func (f *fakeContainerFS) ContainerStatPath(_ context.Context, _ string, o client.ContainerStatPathOptions) (client.ContainerStatPathResult, error) {
+	st, err := f.statPath(o.Path)
+	return client.ContainerStatPathResult{Stat: st}, err
+}
+
+func (f *fakeContainerFS) CopyFromContainer(_ context.Context, _ string, o client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+	rc, st, err := f.copyFrom(o.SourcePath)
+	return client.CopyFromContainerResult{Content: rc, Stat: st}, err
+}
+
+func (f *fakeContainerFS) CopyToContainer(_ context.Context, _ string, o client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+	return client.CopyToContainerResult{}, f.copyTo(o.DestinationPath, o.Content)
+}
+
+func (f *fakeContainerFS) statPath(p string) (container.PathStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, err := f.resolve(p, false, 0)
@@ -127,7 +141,7 @@ func (f *fakeContainerFS) ContainerStatPath(_ context.Context, _, p string) (con
 	return st, nil
 }
 
-func (f *fakeContainerFS) CopyFromContainer(_ context.Context, _, p string) (io.ReadCloser, container.PathStat, error) {
+func (f *fakeContainerFS) copyFrom(p string) (io.ReadCloser, container.PathStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, err := f.resolve(p, false, 0)
@@ -183,7 +197,7 @@ func (f *fakeContainerFS) CopyFromContainer(_ context.Context, _, p string) (io.
 	return io.NopCloser(&buf), container.PathStat{}, nil
 }
 
-func (f *fakeContainerFS) CopyToContainer(_ context.Context, _, dst string, content io.Reader, _ container.CopyToContainerOptions) error {
+func (f *fakeContainerFS) copyTo(dst string, content io.Reader) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	dir, err := f.resolve(dst, true, 0)
@@ -204,30 +218,30 @@ func (f *fakeContainerFS) CopyToContainer(_ context.Context, _, dst string, cont
 	}
 }
 
-func (f *fakeContainerFS) ContainerExecCreate(_ context.Context, _ string, opts container.ExecOptions) (container.ExecCreateResponse, error) {
+func (f *fakeContainerFS) ExecCreate(_ context.Context, _ string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.noRm {
-		return container.ExecCreateResponse{}, errors.New("container is not running")
+		return client.ExecCreateResult{}, errors.New("container is not running")
 	}
 	f.execs = append(f.execs, opts.Cmd)
 	f.execCmd = opts.Cmd
-	return container.ExecCreateResponse{ID: "exec1"}, nil
+	return client.ExecCreateResult{ID: "exec1"}, nil
 }
 
-func (f *fakeContainerFS) ContainerExecAttach(context.Context, string, container.ExecStartOptions) (types.HijackedResponse, error) {
+func (f *fakeContainerFS) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
 	c1, c2 := net.Pipe()
 	_ = c2.Close()
-	return types.HijackedResponse{Conn: c1, Reader: bufio.NewReader(strings.NewReader(""))}, nil
+	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: c1, Reader: bufio.NewReader(strings.NewReader(""))}}, nil
 }
 
-func (f *fakeContainerFS) ContainerExecInspect(context.Context, string) (container.ExecInspect, error) {
+func (f *fakeContainerFS) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.execCmd) == 3 && f.execCmd[0] == "rm" && f.execCmd[1] == "--" {
 		delete(f.nodes, f.execCmd[2])
 	}
-	return container.ExecInspect{ExitCode: 0}, nil
+	return client.ExecInspectResult{ExitCode: 0}, nil
 }
 
 func TestContainerPathRules(t *testing.T) {

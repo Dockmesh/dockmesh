@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -29,6 +28,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // mergeGlobalEnv puts the global variables in front of the stack's .env.
@@ -102,8 +103,8 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 	// only on a remote agent stay at 0 until we batch across hosts.
 	containerCounts := map[string]int{}
 	if h.Docker != nil {
-		if running, err := h.Docker.Raw().ContainerList(r.Context(), container.ListOptions{All: false}); err == nil {
-			for _, c := range running {
+		if running, err := h.Docker.Raw().ContainerList(r.Context(), client.ContainerListOptions{All: false}); err == nil {
+			for _, c := range running.Items {
 				if c.Labels == nil {
 					continue
 				}

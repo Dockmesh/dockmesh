@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/moby/moby/client"
 )
 
 // UpdateInfo describes whether a newer image is available for one image
@@ -186,13 +186,13 @@ func (w *Watcher) poll(ctx context.Context) {
 		return
 	}
 	cli := w.docker.Raw()
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: false})
+	containers, err := cli.ContainerList(ctx, client.ContainerListOptions{All: false})
 	if err != nil {
 		slog.Debug("image-update watcher: list containers failed", "err", err)
 		return
 	}
-	seen := make(map[string]struct{}, len(containers))
-	for _, c := range containers {
+	seen := make(map[string]struct{}, len(containers.Items))
+	for _, c := range containers.Items {
 		if c.Image == "" || strings.HasPrefix(c.Image, "sha256:") || SwarmService(c.Labels) != "" {
 			continue
 		}
@@ -223,7 +223,7 @@ func (w *Watcher) poll(ctx context.Context) {
 					authBlob = a
 				}
 			}
-			dist, derr := cli.DistributionInspect(ctx, ref, authBlob)
+			dist, derr := cli.DistributionInspect(ctx, ref, client.DistributionInspectOptions{EncodedRegistryAuth: authBlob})
 			if derr != nil {
 				info.Error = trimErr(derr.Error())
 			} else {

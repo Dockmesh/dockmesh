@@ -5,12 +5,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/docker/docker/api/types/events"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/moby/moby/api/types/events"
 )
 
 type dockerEventSource interface {

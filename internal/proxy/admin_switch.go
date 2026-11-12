@@ -14,10 +14,8 @@ import (
 	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -40,15 +38,15 @@ var ErrAdminSwitchFailed = errors.New("moving the proxy's admin API to the unix 
 // containerAPI is the part of the Docker client the move to the socket
 // uses, so tests can drive its failure paths.
 type containerAPI interface {
-	ContainerInspect(ctx context.Context, id string) (container.InspectResponse, error)
-	ContainerCreate(ctx context.Context, cfg *container.Config, host *container.HostConfig, net *dnetwork.NetworkingConfig, platform *ocispec.Platform, name string) (container.CreateResponse, error)
-	ContainerStart(ctx context.Context, id string, opts container.StartOptions) error
-	ContainerStop(ctx context.Context, id string, opts container.StopOptions) error
-	ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error
-	ContainerRename(ctx context.Context, id, name string) error
-	CopyToContainer(ctx context.Context, id, dst string, content io.Reader, opts container.CopyToContainerOptions) error
-	CopyFromContainer(ctx context.Context, id, src string) (io.ReadCloser, container.PathStat, error)
-	VolumeCreate(ctx context.Context, opts volume.CreateOptions) (volume.Volume, error)
+	ContainerInspect(ctx context.Context, id string, opts client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+	ContainerCreate(ctx context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error)
+	ContainerStart(ctx context.Context, id string, opts client.ContainerStartOptions) (client.ContainerStartResult, error)
+	ContainerStop(ctx context.Context, id string, opts client.ContainerStopOptions) (client.ContainerStopResult, error)
+	ContainerRemove(ctx context.Context, id string, opts client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+	ContainerRename(ctx context.Context, id string, opts client.ContainerRenameOptions) (client.ContainerRenameResult, error)
+	CopyToContainer(ctx context.Context, id string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error)
+	CopyFromContainer(ctx context.Context, id string, opts client.CopyFromContainerOptions) (client.CopyFromContainerResult, error)
+	VolumeCreate(ctx context.Context, opts client.VolumeCreateOptions) (client.VolumeCreateResult, error)
 }
 
 // SetAdminSocketDir sets the data directory the admin socket lives under.
@@ -146,7 +144,7 @@ func (s *Service) ensureSocketDir() error {
 // before the admin API moved to the socket. Labels alone wouldn't do:
 // anyone who can create a container can copy them.
 func usesTCPAdmin(c *container.InspectResponse) bool {
-	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
+	if c == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
 	return c.Config.Labels["dockmesh.component"] == "proxy" && hasProxyShape(c, proxyVolumes)
@@ -174,25 +172,28 @@ func (s *Service) isOldManagedContainer(ctx context.Context, c *container.Inspec
 // with the old container gone the new one takes the fixed name, otherwise
 // the new one is dropped and the move starts over.
 func (s *Service) adoptNextContainer(ctx context.Context, cli containerAPI) error {
-	next, err := cli.ContainerInspect(ctx, nextContainerName)
+	res, err := cli.ContainerInspect(ctx, nextContainerName, client.ContainerInspectOptions{})
 	if cerrdefs.IsNotFound(err) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", nextContainerName, err)
 	}
+	next := res.Container
 	if next.Config == nil || next.Config.Labels["dockmesh.component"] != "proxy" ||
 		next.Config.Labels[specLabel] != s.specHashFor(next.Config.Image) {
 		return nil
 	}
-	_, err = cli.ContainerInspect(ctx, ProxyContainerName)
+	_, err = cli.ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
 	if cerrdefs.IsNotFound(err) {
-		return cli.ContainerRename(ctx, next.ID, ProxyContainerName)
+		_, err = cli.ContainerRename(ctx, next.ID, client.ContainerRenameOptions{NewName: ProxyContainerName})
+		return err
 	}
 	if err != nil {
 		return fmt.Errorf("inspect proxy container: %w", err)
 	}
-	return cli.ContainerRemove(ctx, next.ID, container.RemoveOptions{Force: true})
+	_, err = cli.ContainerRemove(ctx, next.ID, client.ContainerRemoveOptions{Force: true})
+	return err
 }
 
 // moveAdminToSocket replaces a container whose admin API is on TCP and
@@ -242,8 +243,8 @@ func (s *Service) tryMoveAdmin(ctx context.Context, cli containerAPI, img string
 	// proxy stopped halfway.
 	moveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchTimeout)
 	defer cancel()
-	if err := cli.ContainerStop(moveCtx, old.ID, container.StopOptions{}); err != nil {
-		_ = cli.ContainerRemove(moveCtx, id, container.RemoveOptions{Force: true})
+	if _, err := cli.ContainerStop(moveCtx, old.ID, client.ContainerStopOptions{}); err != nil {
+		_, _ = cli.ContainerRemove(moveCtx, id, client.ContainerRemoveOptions{Force: true})
 		return s.keepOld(ctx, old, fmt.Errorf("stop the old container: %w", err))
 	}
 	if err := s.startOnSocket(moveCtx, cli, id, adminID); err != nil {
@@ -253,10 +254,10 @@ func (s *Service) tryMoveAdmin(ctx context.Context, cli containerAPI, img string
 		}
 		return err
 	}
-	if err := cli.ContainerRemove(moveCtx, old.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	if _, err := cli.ContainerRemove(moveCtx, old.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		slog.Warn("proxy: removing the old container failed", "err", err)
 	}
-	if err := cli.ContainerRename(moveCtx, id, ProxyContainerName); err != nil {
+	if _, err := cli.ContainerRename(moveCtx, id, client.ContainerRenameOptions{NewName: ProxyContainerName}); err != nil {
 		slog.Warn("proxy: renaming the new container failed", "err", err)
 	}
 	return nil
@@ -311,16 +312,16 @@ func (s *Service) startOnSocket(ctx context.Context, cli containerAPI, id, admin
 }
 
 func (s *Service) restoreOld(ctx context.Context, cli containerAPI, old *container.InspectResponse, newID string, autosave []byte) error {
-	if err := cli.ContainerRemove(ctx, newID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+	if _, err := cli.ContainerRemove(ctx, newID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove the new container: %w", err)
 	}
 	if autosave == nil {
 		return errors.New("no saved config of the old container to go back to")
 	}
-	if err := cli.CopyToContainer(ctx, old.ID, "/config/caddy", bytes.NewReader(autosave), container.CopyToContainerOptions{}); err != nil {
+	if _, err := cli.CopyToContainer(ctx, old.ID, client.CopyToContainerOptions{DestinationPath: "/config/caddy", Content: bytes.NewReader(autosave)}); err != nil {
 		return fmt.Errorf("restore the saved config: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, old.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, old.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start the old container: %w", err)
 	}
 	s.manageOld(ctx, old)
@@ -330,12 +331,12 @@ func (s *Service) restoreOld(ctx context.Context, cli containerAPI, old *contain
 // readAutosave returns Caddy's saved config as the tar stream Docker
 // produced, ready to be copied back.
 func readAutosave(ctx context.Context, cli containerAPI, id string) ([]byte, error) {
-	rc, _, err := cli.CopyFromContainer(ctx, id, autosavePath)
+	res, err := cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: autosavePath})
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
-	b, err := io.ReadAll(io.LimitReader(rc, maxAutosaveTar+1))
+	defer res.Content.Close()
+	b, err := io.ReadAll(io.LimitReader(res.Content, maxAutosaveTar+1))
 	if err != nil {
 		return nil, err
 	}

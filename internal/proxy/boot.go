@@ -8,6 +8,7 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/client"
 )
 
 // SettingsStore is the part of the settings store the boot decision needs.
@@ -59,8 +60,8 @@ func (s *Service) detectTCPAdmin(ctx context.Context) {
 	if s.docker == nil {
 		return
 	}
-	info, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName)
-	if err == nil && s.isOldManagedContainer(ctx, &info) {
+	res, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
+	if err == nil && s.isOldManagedContainer(ctx, &res.Container) {
 		s.useLegacyAdmin()
 	}
 }
@@ -72,14 +73,14 @@ func (s *Service) state(ctx context.Context) (exists, running bool) {
 	if s.docker == nil {
 		return false, false
 	}
-	info, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName)
+	res, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName, client.ContainerInspectOptions{})
 	if err != nil {
 		if !cerrdefs.IsNotFound(err) {
 			slog.Warn("proxy: container inspect failed", "err", err)
 		}
 		return false, false
 	}
-	return true, info.State != nil && info.State.Running
+	return true, res.Container.State != nil && res.Container.State.Running
 }
 
 func (s *Service) inUse(ctx context.Context) bool {
