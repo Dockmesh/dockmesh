@@ -181,7 +181,7 @@ make build VERSION=v0.0.0-local
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 
-The repository's `Dockerfile` is for development. No container image is published; NAS systems run the binary as well.
+The repository's `Dockerfile` is for development. No container image is published.
 
 ## Next steps
 

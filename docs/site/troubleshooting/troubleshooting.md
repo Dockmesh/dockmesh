@@ -457,7 +457,7 @@ sudo journalctl -u dockmesh -b | grep -i migrat
 
 ### Scans fail with "scanner not configured"
 
-**Cause:** the `grype` binary wasn't found when the server started (HTTP 503). The server log shows `scanner disabled — install grype to enable CVE scans`. `install.sh` installs Grype unless `DOCKMESH_NO_SCANNER=1` is set; a failed download shows up there as `grype install failed — CVE scanning disabled`. The Docker image built from the repository doesn't contain Grype.
+**Cause:** the `grype` binary wasn't found when the server started (HTTP 503). The server log shows `scanner disabled — install grype to enable CVE scans`. `install.sh` installs Grype unless `DOCKMESH_NO_SCANNER=1` is set; a failed download shows up there as `grype install failed — CVE scanning disabled`.
 
 **Fix:** install Grype where the service user finds it on `PATH`, or set `DOCKMESH_SCANNER_BINARY` to its full path, and restart Dockmesh. The binary is only looked up at startup.
 
