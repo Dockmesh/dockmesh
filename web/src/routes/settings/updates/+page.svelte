@@ -17,12 +17,13 @@
   // get.dockmesh.dev serves the latest stable installer, so a candidate is
   // installed with the installer published next to it.
   const tagPattern = /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
-  const upgradeOneLiner = $derived.by(() => {
-    const v = status?.latest_version ?? '';
-    if (!status?.latest_prerelease || !tagPattern.test(v)) return stableOneLiner;
-    return `curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/${v}/install.sh | sudo bash -s -- --version ${v} && sudo systemctl restart dockmesh`;
-  });
-  const showCommand = $derived(!status?.latest_prerelease || tagPattern.test(status?.latest_version ?? ''));
+  const prereleaseTag = $derived(status?.latest_prerelease ? (status.latest_version ?? '') : '');
+  const upgradeOneLiner = $derived(
+    prereleaseTag
+      ? `curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/${prereleaseTag}/install.sh | sudo bash -s -- --version ${prereleaseTag} && sudo systemctl restart dockmesh`
+      : stableOneLiner
+  );
+  const showCommand = $derived(!prereleaseTag || tagPattern.test(prereleaseTag));
   const canChangeChannel = $derived(allowed('system.upgrade'));
   let savedChannel = $state('stable');
   const channel = $derived(form.get('update_channel') || 'stable');

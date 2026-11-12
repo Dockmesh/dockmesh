@@ -10,7 +10,8 @@
 #
 #  Env vars:
 #    DOCKMESH_VERSION         tag to install, same as --version (default: latest
-#                             stable release; pre-releases only when named)
+#                             stable release; pre-releases only when named
+#                             or with DOCKMESH_CHANNEL=testing)
 #    DOCKMESH_CHANNEL         stable | testing      (default: stable)
 #    DOCKMESH_INSTALL_DIR     bin directory         (default: /usr/local/bin)
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
@@ -396,7 +397,7 @@ parse_args() {
 }
 
 valid_tag() {
-  printf '%s' "$1" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+  [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 }
 
 # version_older A B: A's major.minor.patch is lower than B's. A release
@@ -458,9 +459,9 @@ PREV_VERSION=""
 if [ -x "$INSTALL_DIR/dockmesh" ]; then
   if PREV_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1)"; then
     IS_UPGRADE=1
-    # Extract bare version tag (first vX.Y.Z token) for the summary box.
-    # `|| true` keeps `set -o pipefail` happy when the version line
-    # doesn't match the v0.0.0 pattern (dev / RC / nightly builds).
+    # Extract the version tag (vX.Y.Z or vX.Y.Z-rc.N) for the summary box.
+    # `|| true` keeps `set -o pipefail` happy for dev and nightly builds,
+    # whose version line has no tag.
     PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -1 || true)"
   fi
 fi

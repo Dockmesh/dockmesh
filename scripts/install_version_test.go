@@ -51,6 +51,7 @@ func TestInstallValidTag(t *testing.T) {
 		"latest":            false,
 		"v0.6":              false,
 		"v0.6.0-rc.1;id":    false,
+		"v1.2.3\n$(id)":     false,
 		"v0.6.0/../../evil": false,
 		"":                  false,
 	} {
