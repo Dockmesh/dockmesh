@@ -233,7 +233,7 @@ func (s *Service) restoreVersion(ctx context.Context, version, previous string) 
 }
 
 // startAndVerify recreates the container with the current image and
-// checks that Caddy runs the config Dockmesh generates. Callers hold
+// checks that Caddy runs the config Dockmesh loaded into it. Callers hold
 // s.lifecycle.
 func (s *Service) startAndVerify(ctx context.Context) error {
 	if s.startProxy != nil {
@@ -251,11 +251,7 @@ func (s *Service) startAndVerify(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	want, err := s.desiredConfig(ctx)
-	if err != nil {
-		return err
-	}
-	if !sameConfig(running, want) {
+	if s.lastLoaded == nil || !sameConfig(running, s.lastLoaded) {
 		return errors.New("the running config differs from the routes")
 	}
 	return nil

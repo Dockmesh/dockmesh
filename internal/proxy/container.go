@@ -357,6 +357,11 @@ func (s *Service) StartWatchdog(ctx context.Context, interval time.Duration, wan
 	}()
 }
 
+// reconcileConfig pushes the stored routes when Caddy runs something
+// else, unless Caddy already refused exactly that config. A container
+// resumed from its autosave keeps serving what it has when Caddy refuses
+// the stored routes; one running the bootstrap config gets the sites it
+// has loaded before.
 func (s *Service) reconcileConfig(ctx context.Context) error {
 	if !s.Enabled() {
 		return nil
@@ -367,15 +372,27 @@ func (s *Service) reconcileConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	want, err := s.desiredConfig(ctx)
+	if err := s.resolveBackfill(ctx); err != nil {
+		return err
+	}
+	routes, err := s.listRoutes(ctx)
 	if err != nil {
 		return err
 	}
+	want, blocked := s.configFor(routes)
 	if sameConfig(running, want) {
+		s.lastLoaded = want
+		if err := markApplied(ctx, s.db, routes); err != nil {
+			return err
+		}
+		s.updateNotices(ctx, &loadResult{cfg: want, included: routes, blocked: blocked})
+		return nil
+	}
+	if configKey(want) == s.lastRejected {
 		return nil
 	}
 	slog.Info("proxy: caddy config differs from stored routes, pushing")
-	return pushConfig(ctx, want)
+	return s.syncLocked(ctx, func() bool { return !servesRoutes(running) })
 }
 
 // DisableProxy stops and removes the managed Caddy container. The Docker

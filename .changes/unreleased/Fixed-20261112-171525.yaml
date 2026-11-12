@@ -1,0 +1,3 @@
+kind: Fixed
+body: A proxy site change Caddy refuses is rolled back with "Caddy rejected the configuration. Nothing was changed." instead of staying saved and making every later proxy change fail
+time: 2026-11-12T17:15:25.942602924Z

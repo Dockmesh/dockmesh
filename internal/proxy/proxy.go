@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
-	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
@@ -51,6 +50,10 @@ type Route struct {
 	// optionsErr is set when the stored options can't be read; such a
 	// route is not served rather than served without its access rules.
 	optionsErr error
+	// stored is the options column as stored; appliedHash the stateHash
+	// of the row at Caddy's last successful load of it.
+	stored      string
+	appliedHash string
 }
 
 // RouteSpec is the input for a new route. Nil Options means defaults.
@@ -128,11 +131,16 @@ type Service struct {
 	inContainer func() bool
 
 	// lifecycle serialises EnableProxy/DisableProxy, version switches
-	// and settings saves; mu guards config pushes and metrics.
+	// and settings saves; mu guards route writes, config pushes and
+	// metrics.
 	lifecycle sync.Mutex
 	mu        sync.Mutex
-	metrics   *metricsState
-	acme      *acmeBuffer
+	// lastLoaded is the config Caddy accepted last and lastRejected the
+	// configKey of the last one it refused; both guarded by mu.
+	lastLoaded   *caddyConfig
+	lastRejected string
+	metrics      *metricsState
+	acme         *acmeBuffer
 
 	// certMu guards the RouteCerts cache.
 	certMu     sync.Mutex
@@ -168,48 +176,17 @@ func (s *Service) SetImage(image string) {
 func (s *Service) SetNotices(n noticeSetter) { s.notices = n }
 
 // SyncFromDB loads all routes and pushes a fresh config to Caddy. Called
-// at startup and after every mutation.
+// whenever the container may run something else than the stored routes:
+// at startup, after the container was created and after an admin switch.
+// When Caddy refuses the stored routes while it runs the bootstrap config,
+// the sites it hasn't loaded in their current state are left out.
 func (s *Service) SyncFromDB(ctx context.Context) error {
 	if !s.Enabled() {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfg, err := s.desiredConfig(ctx)
-	if err != nil {
-		return err
-	}
-	return pushConfig(ctx, cfg)
-}
-
-// desiredConfig builds the Caddy config for the stored routes and keeps
-// the blocked-upstream notice in line with it. Callers hold s.mu.
-func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
-	routes, err := s.listRoutes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cfg, blocked := buildConfig(routes, s.ProxySettings())
-	if id := s.adminID.Load(); id != nil {
-		cfg.Admin.ID = *id
-	}
-	if s.legacyAdmin.Load() {
-		cfg.Admin.Listen, cfg.Admin.Origins = legacyAdminAddr, legacyAdminOrigins
-	}
-	if s.notices != nil {
-		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{
-			Key:      noticeKeyBlocked,
-			Audience: notices.Admins(),
-			Severity: notices.SevWarning,
-			Title:    i18n.Msg("notice.proxy_blocked_routes.title"),
-			Body:     i18n.Msg("notice.proxy_blocked_routes.body", strings.Join(blocked, ", ")),
-			Link:     "/proxy",
-		})
-		if err != nil {
-			slog.Warn("proxy: update blocked-upstream notice failed", "err", err)
-		}
-	}
-	return cfg, nil
+	return s.syncLocked(ctx, fallbackIfEmpty(ctx))
 }
 
 // ListRoutes returns all configured routes, without password hashes.
@@ -263,42 +240,49 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	}
 	op.AddSecrets(opts.SecretValues()...)
 	op.StepStart(StepSave, "")
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, ?, ?)`,
-		spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw)
+	id, outcome, err := s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, ?, ?)`,
+			spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw)
+		if err != nil {
+			// SQLite unique constraint code is vendor-specific; the string
+			// "UNIQUE constraint" is stable enough.
+			return 0, ErrDuplicateHost
+		}
+		return res.LastInsertId()
+	})
 	if err != nil {
-		// SQLite unique constraint code is vendor-specific; the string
-		// "UNIQUE constraint" is stable enough.
-		op.StepFail(StepSave, ErrDuplicateHost)
-		return nil, ErrDuplicateHost
-	}
-	id, _ := res.LastInsertId()
-	op.StepDone(StepSave, "")
-	route, err := s.GetRoute(ctx, id)
-	if err != nil {
+		if errors.Is(err, ErrApplyRejected) {
+			op.StepSkip(StepSave, "not kept")
+			op.StepFail(StepApply, err)
+		} else {
+			op.StepFail(StepSave, err)
+		}
 		return nil, err
 	}
-	if !s.Enabled() {
+	op.StepDone(StepSave, "")
+	reportApply(op, outcome)
+	return s.GetRoute(ctx, id)
+}
+
+// reportApply ends the apply step of a saved change.
+func reportApply(op *operations.Op, outcome applyOutcome) {
+	switch outcome {
+	case applyOff:
 		op.StepSkip(StepApply, "the proxy is off")
-	} else {
-		op.StepStart(StepApply, "")
-	}
-	if err := s.SyncFromDB(ctx); err != nil {
-		op.StepFail(StepApply, ErrConfigRejected)
-		return route, err
-	}
-	if s.Enabled() {
+	case applyPending:
+		op.StepSkip(StepApply, "Caddy is not reachable; the change is applied once it answers")
+	default:
 		op.StepDone(StepApply, "")
 	}
-	return route, nil
 }
 
 // UpdateRoute replaces the upstream and TLS mode of an existing route,
 // its enabled state unless enabled is nil and its options unless opts is
 // nil. A disabled route stays in the table but is left out of the
 // generated config, so traffic stops without losing config. It returns
-// what changed (upstream, tls_mode, enabled, options.<group>), non-nil
-// once the change is saved, also when applying it to Caddy fails.
+// what changed (upstream, tls_mode, enabled, options.<group>) once the
+// change is saved; a change Caddy refuses is not saved.
 func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) ([]string, error) {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
@@ -336,9 +320,18 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if enabled != nil {
 		on = *enabled
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		upstream, tlsMode, boolToInt(on), raw, id)
+	_, _, err = s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			upstream, tlsMode, boolToInt(on), raw, id)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return 0, ErrRouteNotFound
+		}
+		return id, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +350,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	} else {
 		changed = append(changed, ChangedGroups(cur.Options, next)...)
 	}
-	return changed, s.SyncFromDB(ctx)
+	return changed, nil
 }
 
 // addsUpstream reports whether next has an upstream address not in cur.
@@ -491,27 +484,33 @@ func (s *Service) SetRouteEnabled(ctx context.Context, id int64, enabled bool) e
 			}
 		}
 	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE proxy_routes SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		boolToInt(enabled), id)
-	if err != nil {
-		return err
-	}
-	return s.SyncFromDB(ctx)
+	_, _, err := s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE proxy_routes SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			boolToInt(enabled), id)
+		return id, err
+	})
+	return err
 }
 
 // DeleteRoute removes a route.
 func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM proxy_routes WHERE id = ?`, id); err != nil {
-		return err
-	}
-	return s.SyncFromDB(ctx)
+	_, _, err := s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
+		_, err := tx.ExecContext(ctx, `DELETE FROM proxy_routes WHERE id = ?`, id)
+		return 0, err
+	})
+	return err
 }
 
-const routeColumns = `id, host, upstream, tls_mode, enabled, options, created_at, updated_at`
+const routeColumns = `id, host, upstream, tls_mode, enabled, options, applied_hash, created_at, updated_at`
 
 func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+routeColumns+` FROM proxy_routes ORDER BY host`)
+	return queryRoutes(ctx, s.db, "")
+}
+
+// queryRoutes reads the routes matching where (empty for all), by host.
+func queryRoutes(ctx context.Context, q querier, where string, args ...any) ([]Route, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+routeColumns+` FROM proxy_routes`+where+` ORDER BY host`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -538,12 +537,11 @@ func (s *Service) getRoute(ctx context.Context, id int64) (*Route, error) {
 func scanRoute(row interface{ Scan(...any) error }) (*Route, error) {
 	var r Route
 	var enabledInt int
-	var raw string
-	if err := row.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &raw, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &r.stored, &r.appliedHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
 	r.Enabled = enabledInt != 0
-	r.Options, r.optionsErr = decodeOptions([]byte(raw))
+	r.Options, r.optionsErr = decodeOptions([]byte(r.stored))
 	if r.optionsErr != nil {
 		slog.Warn("proxy: stored route options unreadable, route not served", "host", r.Host, "err", r.optionsErr)
 	}

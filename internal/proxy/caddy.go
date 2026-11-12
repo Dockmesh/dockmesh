@@ -130,18 +130,27 @@ func pushConfig(ctx context.Context, cfg *caddyConfig) error {
 	if err := verifyAdmin(ctx, cfg.Admin.ID); err != nil {
 		return err
 	}
+	return postLoad(ctx, cfg, loadTimeout)
+}
+
+// postLoad sends cfg to /load of an admin API already verified as the
+// managed Caddy. A refusal is a *loadRejectedError.
+func postLoad(ctx context.Context, cfg *caddyConfig, timeout time.Duration) error {
+	if cfg.Admin == nil {
+		return errNotManagedCaddy
+	}
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	resp, err := adminDo(ctx, http.MethodPost, "/load", bytes.NewReader(body), 10*time.Second)
+	resp, err := adminDo(ctx, http.MethodPost, "/load", bytes.NewReader(body), timeout)
 	if err != nil {
 		return fmt.Errorf("caddy admin unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return fmt.Errorf("caddy /load %d: %s", resp.StatusCode, string(b))
+		return &loadRejectedError{status: resp.StatusCode, body: string(b)}
 	}
 	return nil
 }

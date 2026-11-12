@@ -1,0 +1,3 @@
+kind: Fixed
+body: When Caddy can't load a stored site after the proxy container was recreated, only that site goes offline and admins get a notice naming it; the other sites keep serving
+time: 2026-11-12T17:15:37.863422781Z

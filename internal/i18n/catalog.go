@@ -119,6 +119,8 @@ var en = map[string]string{
 	"notice.bind_copy.body":              "The redeploy could not copy files the old container wrote into its temporary bind mount:%[1]sThe old container is gone; check the server log and restore the data from a backup if needed.",
 	"notice.proxy_blocked_routes.title":  "Some proxy routes are not served",
 	"notice.proxy_blocked_routes.body":   "These routes have a host or upstream Dockmesh no longer accepts (for example the proxy's admin API, localhost, or a placeholder), so they are left out of the proxy: %[1]s. Edit each one to a domain name and a host:port upstream, or delete it.",
+	"notice.proxy_offline_sites.title":   "Some proxy sites are offline",
+	"notice.proxy_offline_sites.body":    "These sites are offline because their configuration could not be loaded:%[1]sOpen the site to fix it.",
 }
 
 var de = map[string]string{
@@ -240,4 +242,6 @@ var de = map[string]string{
 	"notice.bind_copy.body":              "Das erneute Deployment konnte Dateien nicht kopieren, die der alte Container in seinen temporären Bind-Mount geschrieben hat:%[1]sDer alte Container existiert nicht mehr. Das Server-Log prüfen und die Daten bei Bedarf aus einem Backup wiederherstellen.",
 	"notice.proxy_blocked_routes.title":  "Einige Proxy-Routen werden nicht bedient",
 	"notice.proxy_blocked_routes.body":   "Diese Routen haben einen Host oder Upstream, den Dockmesh nicht mehr akzeptiert (zum Beispiel die Admin-API des Proxys, localhost oder einen Platzhalter), daher lässt der Proxy sie aus: %[1]s. Jede davon auf einen Domainnamen und einen host:port-Upstream ändern oder löschen.",
+	"notice.proxy_offline_sites.title":   "Einige Proxy-Sites sind offline",
+	"notice.proxy_offline_sites.body":    "Diese Sites sind offline, weil ihre Konfiguration nicht geladen werden konnte:%[1]sDie Site öffnen und den Fehler beheben.",
 }
