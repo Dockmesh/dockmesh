@@ -14,7 +14,7 @@ Install commands and the agent's connection use two addresses of the server. Set
 | **Base URL** | `https://dockmesh.example.com` | The web UI address: invite links, sign-in callbacks and links in notifications. Install commands created before this version download the script from it. |
 | **Agent public URL** | `wss://dockmesh.example.com:8443/connect` | Enrollment, the permanent connection, certificate renewal and agent upgrades. Empty means `wss://<host of the base URL>:<agent port>/connect`. |
 
-The setup wizard fills both from the address you enter there. Saving a new agent URL adds its host name to the agent listener's certificate; names and IPs already in the certificate stay, so enrolled agents keep connecting.
+The setup wizard fills both from the address you enter there. Saving a new agent URL adds its host name to the agent listener's certificate; names and IPs already in the certificate stay, so enrolled agents keep connecting. Changing the base URL also needs Users & roles: Manage, and changing the agent URL Hosts: Manage; every change of either field writes an audit entry with the old and the new value.
 
 The server's environment file (`dockmesh.env`) can set the same values. These variables win over the fields; change them there and restart the server:
 

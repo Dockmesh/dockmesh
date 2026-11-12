@@ -137,6 +137,9 @@ func TestBaseURLChangeNeedsUsersCreate(t *testing.T) {
 			if details.Before != oldURL || details.After != tt.wantURL {
 				t.Errorf("audit details %s, want before %q after %q", entries[0].Details, oldURL, tt.wantURL)
 			}
+			if entries[0].UserID == "" {
+				t.Errorf("audit entry has no actor")
+			}
 		})
 	}
 }
