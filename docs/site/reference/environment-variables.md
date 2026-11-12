@@ -25,7 +25,7 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Listen address of the agent listener. It always runs; an empty value falls back to the default |
 | `DOCKMESH_AGENT_PUBLIC_URL` | unset | `wss://` URL agents enroll at and connect to. Wins over **Agent public URL** under **Settings → General**. With neither set: `wss://<host of the base URL>:<port of DOCKMESH_AGENT_LISTEN>/connect` |
 | `DOCKMESH_AGENT_SANS` | empty | Comma-separated extra host names and IPs for the agent listener certificate. `localhost`, `127.0.0.1`, `::1` and the agent URL's host are always included |
-| `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `24h` | Lifetime of host enrollment tokens, as a Go duration from `1m` to `720h`. Any other value stops the server at startup |
+| `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `1h` | Lifetime of host enrollment tokens, as a Go duration from `1m` to `720h`. Any other value stops the server at startup |
 | `DOCKMESH_TRUSTED_PROXIES` | unset | Used when **Trusted proxies** under **Settings → General** is empty: comma-separated IPs or CIDRs whose forwarding headers are believed. With neither, only localhost |
 
 The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, so agent install commands work without editing `dockmesh.env`. SSO callbacks and invite links don't read those settings; when you use them, also set the public URL in `dockmesh.env`:
@@ -45,7 +45,7 @@ DOCKMESH_BASE_URL=https://dockmesh.example.com
 | `DOCKMESH_SECRETS_PATH` | `./data/secrets.env` | File holding `DOCKMESH_JWT_SECRET`; created on first start |
 | `DOCKMESH_SECRETS_KEY_PATH` | `./data/secrets.age-key` | age key that encrypts stack `.env` files and stored credentials |
 | `DOCKMESH_AUDIT_GENESIS_PATH` | `./data/audit-genesis.sha256` | Genesis hash of the audit log chain |
-| `DOCKMESH_INSTALL_SCRIPT` | `./scripts/install-agent.sh` | Template served at `/install/agent.sh` |
+| `DOCKMESH_INSTALL_SCRIPT` | `./scripts/install-agent.sh` | Template served at `/install/agent.sh` on the agent port (and on the web port for older commands) |
 | `DOCKMESH_BINARY_DIR` | `./bin` | Directory with the agent binaries (`dockmesh-agent-linux-amd64`, `-arm64`) served under `/install/` and to agents for upgrades. dmctl binaries are served from it only if you copy them in |
 
 Relative defaults resolve against the server's working directory. The installers write absolute paths. See [Filesystem layout](./filesystem-layout.md).
@@ -133,7 +133,7 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 
 ## install-agent.sh
 
-The server fills in the token, the URLs, the agent CA and the binary checksums when it serves the script. It accepts two flags, `--as-root` (run the agent as root instead of a `dockmesh-agent` user) and `--skip-docker`. The only variable it reads is `AGENT_WAIT_SECS` (default `60`): how long it waits for the agent to connect. Pass it through sudo, for example `| sudo AGENT_WAIT_SECS=120 bash`.
+The server fills in the URLs, the agent listener's key pin, the agent CA and the binary checksums when it serves the script. It takes the enrollment token as `--token <token>` and accepts two more flags, `--as-root` (run the agent as root instead of a `dockmesh-agent` user) and `--skip-docker`. The only variable it reads is `AGENT_WAIT_SECS` (default `60`): how long it waits for the agent to connect. Pass it through sudo, for example `| sudo AGENT_WAIT_SECS=120 bash`.
 
 ## uninstall.sh
 

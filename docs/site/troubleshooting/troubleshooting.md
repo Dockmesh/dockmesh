@@ -270,13 +270,17 @@ sudo systemctl restart dockmesh
 
 To point an agent at a new address, edit `DOCKMESH_AGENT_URL` in `/etc/dockmesh-agent/agent.env` on the agent host and run `sudo systemctl restart dockmesh-agent`. That value wins over the URL saved at enrollment.
 
-### "the agent could not enroll" during the install command
+### `curl: (90)` when you run the install command
+
+**Cause:** the agent port answered with a different key than the one pinned in the command. Either the command reached another server (a proxy that terminates TLS, a wrong DNS answer), or the agent CA was rotated since you copied it. Copy a new command from **Hosts → Add host**; if it fails again, check that port 8443 reaches Dockmesh without TLS termination in between.
+
+### "This install command has expired or was already used" during the install command
 
 **Cause:** the installer prints this when the agent logs `enrollment failed`. Look at the error in the last log lines it prints:
 
 | Agent log error | Meaning |
 |---|---|
-| `enroll http 401: invalid or expired enrollment token` | The token expired (24 hours by default, `DOCKMESH_AGENT_ENROLL_TOKEN_TTL`), was already used, or was replaced by a newer one. Revoked hosts can't enroll at all. |
+| `enroll http 401: invalid or expired enrollment token` | The token expired (1 hour by default, `DOCKMESH_AGENT_ENROLL_TOKEN_TTL`), was already used, or was replaced by a newer one. Revoked hosts can't enroll at all. |
 | `DOCKMESH_CA_FINGERPRINT is required to enroll over https` | The install command was copied incompletely or the agent was started by hand without it. |
 | `refusing to enroll over plain http` | The agent URL is `ws://`. Enrollment sends the token and the client key, so plain http needs `--insecure-enroll`, for isolated labs only. |
 | `x509: certificate signed by unknown authority` | Something between the agent and port 8443 presents its own certificate, usually a proxy or load balancer that terminates TLS. |

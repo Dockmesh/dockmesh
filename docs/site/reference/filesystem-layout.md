@@ -80,7 +80,7 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/usr/local/bin/dockmesh.bak` | `install.sh` on upgrade | Previous binary, for rollback |
 | `/usr/local/bin/dmctl` | `install.sh` | CLI client |
 | `/usr/local/bin/grype` | `install.sh` unless `DOCKMESH_NO_SCANNER=1` | Vulnerability scanner |
-| `/usr/local/share/dockmesh/install-agent.sh` | `install.sh` (`DOCKMESH_ASSET_DIR`) | Served at `/install/agent.sh` |
+| `/usr/local/share/dockmesh/install-agent.sh` | `install.sh` (`DOCKMESH_ASSET_DIR`) | Served at `/install/agent.sh` on the agent port |
 | `/usr/local/share/dockmesh/bin/dockmesh-agent-linux-amd64`, `dockmesh-agent-linux-arm64` | `install.sh` | Agent binaries, served at `/install/{name}` and to agent upgrades (`DOCKMESH_BINARY_DIR`) |
 | `/etc/systemd/system/dockmesh.service` | `install.sh` or `dockmesh init` | Service unit, user `dockmesh`, group `docker` |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |

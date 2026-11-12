@@ -205,7 +205,7 @@ func TestRotateEnrollTokenRefusesRevoked(t *testing.T) {
 	}
 }
 
-func TestCreateResultPinsCA(t *testing.T) {
+func TestCreateResultPinsListener(t *testing.T) {
 	svc, mgr := newTestService(t)
 	res, err := svc.Create(context.Background(), "edge-1")
 	if err != nil {
@@ -214,8 +214,16 @@ func TestCreateResultPinsCA(t *testing.T) {
 	if res.CAFingerprint != mgr.CAFingerprint() || len(res.CAFingerprint) != 64 {
 		t.Fatalf("ca_fingerprint = %q", res.CAFingerprint)
 	}
-	if !strings.Contains(res.InstallHint, "ca="+res.CAFingerprint) {
-		t.Fatalf("install hint lacks the CA fingerprint: %s", res.InstallHint)
+	want := "curl -fsSLk --pinnedpubkey '" + mgr.ServerKeyPin() +
+		"' 'https://dockmesh.test:8443/install/agent.sh' | sudo bash -s -- --token " + res.Token
+	if res.InstallHint != want {
+		t.Fatalf("install hint\n got %s\nwant %s", res.InstallHint, want)
+	}
+	if strings.Contains(res.InstallHint, "?token=") {
+		t.Fatalf("token travels in a URL: %s", res.InstallHint)
+	}
+	if got := time.Until(res.TokenExpiresAt); got > time.Hour || got < 59*time.Minute {
+		t.Fatalf("token lifetime %s, want 1h", got)
 	}
 	if res.EnrollURL != "https://dockmesh.test:8443/enroll" {
 		t.Fatalf("enroll_url = %q", res.EnrollURL)
@@ -244,7 +252,7 @@ func TestEnrollHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := EnrollHandler(svc)
+	h := EnrollHandler(svc, nil)
 	cases := []struct {
 		name   string
 		method string

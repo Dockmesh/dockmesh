@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Install commands copied before the update keep working until their token expires. Copy new ones from Hosts > Add host: they need only the agent port (8443) on the agent host, not the web port'
+time: 2026-11-12T12:53:40.453574171Z
+custom:
+    Audience: admins
+    Id: pinned-install-command

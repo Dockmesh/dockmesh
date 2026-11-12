@@ -97,7 +97,7 @@ A remote host runs `dockmesh-agent`, which connects out to the server on port 84
 
 1. Open **Hosts** and click **Add host**.
 2. Enter a **Hostname** and optional tags, then click **Generate install command**.
-3. Run the displayed `curl -fsSL '<server>/install/agent.sh?token=...&ca=...' | sudo bash` command on the remote host as root. The token is shown only once.
+3. Run the displayed `curl -fsSLk --pinnedpubkey '...' https://<server>:8443/install/agent.sh | sudo bash -s -- --token ...` command on the remote host as root. The token can be used once and is valid for 1 hour.
 4. The dialog waits until the agent connects and then shows the host as online.
 
 The agent installer needs Linux with systemd on an `amd64` or `arm64` host; it picks the matching agent binary and checks it against the checksum the server put into the script. It installs Docker from get.docker.com if Docker is missing (`--skip-docker` turns that off). Some features work on the local host only; [Multi-host](../features/multi-host.md) lists them.

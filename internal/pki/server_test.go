@@ -379,3 +379,80 @@ func TestServerCertCovers(t *testing.T) {
 		}
 	}
 }
+
+func TestServerKeyPinStableAcrossReissue(t *testing.T) {
+	tests := []struct {
+		name    string
+		reissue func(t *testing.T, dir string, m *Manager) *Manager
+	}{
+		{
+			name: "EnsureServerHosts with a new host",
+			reissue: func(t *testing.T, _ string, m *Manager) *Manager {
+				changed, err := m.EnsureServerHosts([]string{"agents.example.net"})
+				if err != nil || !changed {
+					t.Fatalf("EnsureServerHosts = %v, %v; want a re-issue", changed, err)
+				}
+				return m
+			},
+		},
+		{
+			name: "server start with a new env SAN",
+			reissue: func(t *testing.T, dir string, _ *Manager) *Manager {
+				m, err := New(dir, []string{"203.0.113.9"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return m
+			},
+		},
+		{
+			name: "dockmesh ca reissue-server",
+			reissue: func(t *testing.T, dir string, _ *Manager) *Manager {
+				if _, err := ReissueServerCert(dir, []string{"203.0.113.5"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				m, err := New(dir, oldHosts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return m
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, m := newTestPKI(t)
+			pin := m.ServerKeyPin()
+			oldCert := m.ServerCertPEM()
+			m = tt.reissue(t, dir, m)
+			if bytes.Equal(m.ServerCertPEM(), oldCert) {
+				t.Fatal("certificate was not re-issued")
+			}
+			if got := m.ServerKeyPin(); got != pin {
+				t.Fatalf("pin changed on re-issue: %s -> %s", pin, got)
+			}
+			cert := verifyServerCert(t, dir, oldHosts)
+			if SPKIPin(cert) != pin {
+				t.Fatal("certificate on disk carries a different key")
+			}
+		})
+	}
+}
+
+func TestServerKeyPinNewWithoutKey(t *testing.T) {
+	dir, m := newTestPKI(t)
+	pin := m.ServerKeyPin()
+	if len(pin) != len("sha256//")+44 || pin[:8] != "sha256//" {
+		t.Fatalf("pin %q is not in curl's sha256// form", pin)
+	}
+	if err := os.Remove(filepath.Join(dir, serverKeyFile)); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(dir, oldHosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ServerKeyPin() == pin {
+		t.Fatal("a missing key must be replaced by a new one")
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -138,6 +139,23 @@ func (m *Manager) EnsureServerHosts(hosts []string) (bool, error) {
 		return false, err
 	}
 	return m.serverX509 != before, nil
+}
+
+// ServerKeyPin returns the listener's public key in curl's --pinnedpubkey
+// form, sha256//<base64 of the SHA-256 of the SubjectPublicKeyInfo>.
+func (m *Manager) ServerKeyPin() string {
+	m.serverMu.RLock()
+	defer m.serverMu.RUnlock()
+	if m.serverX509 == nil {
+		return ""
+	}
+	return SPKIPin(m.serverX509)
+}
+
+// SPKIPin is the --pinnedpubkey value for cert's public key.
+func SPKIPin(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return "sha256//" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 // CACertPool returns an x509.CertPool with just the CA cert in it. Use
