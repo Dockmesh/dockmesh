@@ -109,35 +109,6 @@ func BinaryHandler(svc *Service) http.Handler {
 			http.Error(w, "agent not registered", http.StatusUnauthorized)
 			return
 		}
-		// The file name is taken from AgentBinaryName, never from the
-		// request path, so only the bundled agent binaries can be served.
-		requested := strings.TrimPrefix(r.URL.Path, BinaryPath)
-		var name string
-		for _, arch := range []string{"amd64", "arm64"} {
-			if n, _ := AgentBinaryName(arch); n == requested {
-				name = n
-			}
-		}
-		if name == "" {
-			http.NotFound(w, r)
-			return
-		}
-		f, err := os.Open(filepath.Join(BinaryDir(), name))
-		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, ErrNoAgentBinary.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		if err != nil {
-			http.Error(w, "open binary", http.StatusInternalServerError)
-			return
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			http.Error(w, "stat binary", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeContent(w, r, name, st.ModTime(), f)
+		serveAgentBinary(w, r, strings.TrimPrefix(r.URL.Path, BinaryPath))
 	})
 }

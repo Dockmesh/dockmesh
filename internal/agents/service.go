@@ -342,7 +342,7 @@ func NewService(db *sql.DB, p *pki.Manager, publicURL, agentURL string) *Service
 
 // DefaultEnrollTokenTTL is how long an enrollment token stays valid when
 // DOCKMESH_AGENT_ENROLL_TOKEN_TTL is not set.
-const DefaultEnrollTokenTTL = 24 * time.Hour
+const DefaultEnrollTokenTTL = time.Hour
 
 // SetEnrollTokenTTL overrides the enrollment-token lifetime. Non-positive
 // values keep the default.
@@ -493,13 +493,7 @@ func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, e
 
 func (s *Service) createResult(a *Agent, token string, expires time.Time) *CreateResult {
 	fp := s.pki.CAFingerprint()
-	// The installer runs as root on the remote host: it creates a
-	// dedicated service user, installs Docker if missing and drops a
-	// hardened systemd unit. The ca= fingerprint lets the server refuse
-	// to render the script once the agents CA has rotated.
-	installHint := fmt.Sprintf(
-		"curl -fsSL '%s/install/agent.sh?token=%s&ca=%s' | sudo bash",
-		s.PublicURL(), token, fp)
+	installHint := s.InstallCommand(token)
 	return &CreateResult{
 		Agent:          *a,
 		Token:          token,

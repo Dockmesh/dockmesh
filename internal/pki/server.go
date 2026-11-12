@@ -36,7 +36,8 @@ func (m *Manager) ensureServerCert(hosts []string) error {
 // one when the file is missing, unusable (key mismatch, foreign CA) or does
 // not cover every entry in hosts. A re-issued cert keeps the SANs of the
 // old one, so names added with `dockmesh ca reissue-server` survive a
-// restart with an unchanged DOCKMESH_AGENT_SANS.
+// restart with an unchanged DOCKMESH_AGENT_SANS, and it keeps the key on
+// disk, so install commands that pin the listener key stay valid.
 func (m *Manager) ensureServerCertLocked(hosts []string) error {
 	certPath := filepath.Join(m.dir, serverCertFile)
 	keyPath := filepath.Join(m.dir, serverKeyFile)
@@ -93,7 +94,11 @@ func (m *Manager) ensureServerCertLocked(hosts []string) error {
 		return fmt.Errorf("the agent server certificate would carry %d names and IPs, more than %d; "+
 			"remove old ones with dockmesh ca rotate", len(d)+len(i), maxServerSANs)
 	}
-	cert, newCert, newKey, err := m.issueServerCert(dns, ips)
+	var key *ecdsa.PrivateKey
+	if kErr == nil {
+		key = reusableServerKey(keyPEM)
+	}
+	cert, newCert, newKey, err := m.issueServerCert(dns, ips, key)
 	if err != nil {
 		return err
 	}
@@ -132,17 +137,29 @@ func (m *Manager) pairProblem(cert *x509.Certificate, keyPEM []byte) string {
 	return ""
 }
 
-// issueServerCert signs a fresh key with the CA for the given SANs plus
-// the loopback names, deduplicated.
-func (m *Manager) issueServerCert(dns []string, ips []net.IP) (*x509.Certificate, []byte, []byte, error) {
+// reusableServerKey returns the listener key in keyPEM if a new cert can
+// be issued for it, or nil.
+func reusableServerKey(keyPEM []byte) *ecdsa.PrivateKey {
+	key, err := parseECKeyPEM(keyPEM)
+	if err != nil || key.Curve != elliptic.P256() {
+		return nil
+	}
+	return key
+}
+
+// issueServerCert signs key (a fresh one when nil) with the CA for the
+// given SANs plus the loopback names, deduplicated.
+func (m *Manager) issueServerCert(dns []string, ips []net.IP, key *ecdsa.PrivateKey) (*x509.Certificate, []byte, []byte, error) {
 	// Loopback is always included so on-host operators can dial the
 	// listener even when the public name does not resolve locally.
 	dns, ips = mergeSANs(append([]string{"localhost"}, dns...),
 		append([]net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}, ips...))
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
+	if key == nil {
+		var err error
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	serial, err := randomSerial()
 	if err != nil {
@@ -279,7 +296,8 @@ type ReissueResult struct {
 func (r *ReissueResult) Changed() bool { return r.BackupCert != "" }
 
 // ReissueServerCert replaces the agent listener cert in dir with one signed
-// by the existing CA, covering the old cert's SANs plus add. The old files
+// by the existing CA, covering the old cert's SANs plus add, for the same
+// key when the old one is still usable. The old files
 // are copied to <name>.bak-<timestamp> first. Nothing is written when add
 // is already covered and the current cert/key pair is valid.
 func ReissueServerCert(dir string, add []string, now time.Time) (*ReissueResult, error) {
@@ -349,9 +367,13 @@ func ReissueServerCert(dir string, add []string, now time.Time) (*ReissueResult,
 		return res, nil
 	}
 
+	var key *ecdsa.PrivateKey
+	if haveKey {
+		key = reusableServerKey(keyPEM)
+	}
 	cert, newCert, newKey, err := m.issueServerCert(
 		append(append([]string{}, old.DNSNames...), addDNS...),
-		append(append([]net.IP{}, old.IPAddresses...), addIPs...))
+		append(append([]net.IP{}, old.IPAddresses...), addIPs...), key)
 	if err != nil {
 		return nil, fmt.Errorf("issue server cert: %w", err)
 	}

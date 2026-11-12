@@ -3,9 +3,9 @@
 # Dockmesh agent installer — concept §3.1.
 #
 # This script is templated by the dockmesh server at request time. The
-# {{ }} tokens are replaced with the real token, URLs, the agents CA and
-# the agent binary checksums before being served, so the user only ever
-# sees a single one-line curl command in the UI.
+# {{ }} tokens are replaced with the URLs, the agent listener's key pin,
+# the agents CA and the agent binary checksums. The agent listener serves
+# it without a token; the enrollment token is passed with --token.
 #
 # Default mode creates a dedicated `dockmesh-agent` system user, locks it,
 # adds it to the `docker` group, and runs the agent under systemd with
@@ -19,8 +19,11 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Templated by the server
 # -----------------------------------------------------------------------------
+# Filled in only by the deprecated web-port route (/install/agent.sh?token=).
 TOKEN="{{TOKEN}}"
 SERVER_URL="{{SERVER_URL}}"
+INSTALL_URL="{{INSTALL_URL}}"
+INSTALL_PIN="{{INSTALL_PIN}}"
 ENROLL_URL="{{ENROLL_URL}}"
 AGENT_URL="{{AGENT_URL}}"
 CA_FINGERPRINT="{{CA_FINGERPRINT}}"
@@ -37,6 +40,10 @@ AS_ROOT=0
 SKIP_DOCKER=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --token)
+      [[ $# -ge 2 ]] || { echo "--token needs a value" >&2; exit 1; }
+      TOKEN="$2"; shift 2 ;;
+    --token=*)     TOKEN="${1#--token=}"; shift ;;
     --as-root)     AS_ROOT=1; shift ;;
     --skip-docker) SKIP_DOCKER=1; shift ;;
     -h|--help)
@@ -44,10 +51,12 @@ while [[ $# -gt 0 ]]; do
 Dockmesh agent installer.
 
 Usage:
-  curl -fsSL <server>/install/agent.sh?token=XYZ | sudo bash
-  curl -fsSL <server>/install/agent.sh?token=XYZ | sudo bash -s -- [flags]
+  curl -fsSLk --pinnedpubkey '<pin>' ${INSTALL_URL}/install/agent.sh | sudo bash -s -- --token <token> [flags]
+
+Copy the full command from Hosts > Add host in Dockmesh.
 
 Flags:
+  --token <token>  One-time enrollment token from the install command.
   --as-root        Run the agent as root instead of a dedicated user.
                    Skips user creation. Less secure but simplest.
   --skip-docker    Don't auto-install Docker even if missing.
@@ -68,8 +77,7 @@ die() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; exit 1; }
 
 require_root() {
   if [[ $EUID -ne 0 ]]; then
-    die "This installer must run as root. Re-run with sudo:
-  curl -fsSL ${SERVER_URL}/install/agent.sh?token=… | sudo bash"
+    die "The agent installer must run as root: … | sudo bash -s -- --token <token>"
   fi
 }
 
@@ -87,15 +95,10 @@ detect_arch() {
   esac
 }
 
-http_get() {
-  # $1 = url, $2 = output file
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$2" "$1"
-  else
-    die "neither curl nor wget found"
-  fi
+# pinned_get downloads $1 from the agent listener to $2. -k only skips the
+# chain check: curl still refuses any server whose key is not INSTALL_PIN.
+pinned_get() {
+  curl -fsSLk --pinnedpubkey "$INSTALL_PIN" --retry 3 --retry-delay 2 -o "$2" "$1"
 }
 
 # agent_log_state classifies the agent's JSON log lines ($1) as connected,
@@ -178,14 +181,17 @@ require_root
 require_systemd
 
 if [[ -z "$TOKEN" ]]; then
-  die "no enrollment token — did you fetch this script with ?token=… ?"
+  die "No enrollment token. Copy the install command from Hosts > Add host in Dockmesh."
+fi
+if [[ ! "$TOKEN" =~ ^[A-Za-z0-9_-]{16,128}$ ]]; then
+  die "The enrollment token is malformed. Copy the install command from Hosts > Add host in Dockmesh."
 fi
 
 ARCH="$(detect_arch)"
 log "host: $(uname -s)/$ARCH  systemd: yes"
 log "server: $SERVER_URL"
 
-BINARY_URL="$SERVER_URL/install/dockmesh-agent-linux-$ARCH"
+BINARY_URL="$INSTALL_URL/install/dockmesh-agent-linux-$ARCH"
 case "$ARCH" in
   amd64) BINARY_SHA256="$BINARY_SHA256_AMD64" ;;
   arm64) BINARY_SHA256="$BINARY_SHA256_ARM64" ;;
@@ -350,7 +356,7 @@ chmod 0750 "$BIN_DIR"
 
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
-http_get "$BINARY_URL" "$TMP_BIN"
+pinned_get "$BINARY_URL" "$TMP_BIN" || { rm -f "$TMP_BIN"; die "could not download the agent binary from $BINARY_URL"; }
 GOT_SHA256="$(sha256sum "$TMP_BIN" | cut -d' ' -f1)"
 if [[ "$GOT_SHA256" != "$BINARY_SHA256" ]]; then
   rm -f "$TMP_BIN"
@@ -476,7 +482,7 @@ if [[ "$STATE" == connected ]]; then
   printf '  logs:    journalctl -u dockmesh-agent -f\n'
 else
   if [[ "$STATE" == failed ]]; then
-    printf '\n\033[1;31m!!\033[0m the agent could not enroll. If the token expired or was already used, copy a fresh command from the Hosts page.\n'
+    printf '\n\033[1;31m!!\033[0m This install command has expired or was already used. Copy a new one: Hosts > Add host > New command.\n'
   else
     printf '\n\033[1;31m!!\033[0m the agent did not connect to the server within %ss.\n' "$AGENT_WAIT_SECS"
   fi

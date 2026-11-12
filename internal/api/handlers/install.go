@@ -5,18 +5,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
-// AgentInstallScript serves the bash installer with the token, URLs, the
-// agents CA and the agent binary checksums templated in. No JWT auth —
+// AgentInstallScript serves the installer on the web port for install
+// commands created before the install channel moved to the agent
+// listener, with the token from the query string filled in. No JWT auth:
 // the enrollment token is redeemed later by the agent itself. The
-// optional ?ca= fingerprint from the install command must match this
-// server's CA, so a command copied before a CA rotation fails here with
-// a clear message instead of at enroll time.
+// optional ?ca= fingerprint must match this server's CA, so a command
+// copied before a CA rotation fails here with a clear message instead of
+// at enroll time.
 func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 	if h.Agents == nil {
 		http.Error(w, "agents not configured", http.StatusServiceUnavailable)
@@ -27,59 +27,24 @@ func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing token", http.StatusBadRequest)
 		return
 	}
-	if !installTokenRe.MatchString(token) {
+	if !agents.ValidInstallToken(token) {
 		http.Error(w, "malformed token", http.StatusBadRequest)
 		return
 	}
-	caFingerprint := h.Agents.CAFingerprint()
-	if want := r.URL.Query().Get("ca"); want != "" && !strings.EqualFold(want, caFingerprint) {
+	if want := r.URL.Query().Get("ca"); want != "" && !strings.EqualFold(want, h.Agents.CAFingerprint()) {
 		http.Error(w, "the server's agent CA has changed since this install command was created — "+
 			"copy a fresh command from the Hosts page", http.StatusConflict)
 		return
 	}
-	enrollURL := h.Agents.EnrollURL()
-	if enrollURL == "" {
-		http.Error(w, "agent listener URL is not configured (DOCKMESH_AGENT_PUBLIC_URL)", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Read the script template from disk. In production we could embed
-	// this; reading on each request makes hot iteration easier and the
-	// file is tiny anyway.
-	path := os.Getenv("DOCKMESH_INSTALL_SCRIPT")
-	if path == "" {
-		path = "./scripts/install-agent.sh"
-	}
-	raw, err := os.ReadFile(path)
+	script, err := h.Agents.RenderInstallScript(token)
 	if err != nil {
-		http.Error(w, "installer script not found", http.StatusServiceUnavailable)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-
-	// A missing binary leaves its checksum empty; the script then refuses
-	// to install on that architecture.
-	sumAMD64, _ := agents.AgentBinarySHA256("amd64")
-	sumARM64, _ := agents.AgentBinarySHA256("arm64")
-
-	out := strings.NewReplacer(
-		"{{TOKEN}}", token,
-		"{{SERVER_URL}}", h.Agents.PublicURL(),
-		"{{ENROLL_URL}}", enrollURL,
-		"{{AGENT_URL}}", h.Agents.AgentURL(),
-		"{{CA_FINGERPRINT}}", caFingerprint,
-		"{{CA_CERT_PEM}}", strings.TrimSpace(string(h.Agents.CACertPEM())),
-		"{{BINARY_SHA256_AMD64}}", sumAMD64,
-		"{{BINARY_SHA256_ARM64}}", sumARM64,
-	).Replace(string(raw))
-
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(out))
+	_, _ = w.Write(script)
 }
-
-// installTokenRe matches the base64url tokens newToken produces. The
-// token is pasted into a shell script, so nothing else may get through.
-var installTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 // AgentBinary serves the cross-compiled linux agent binary. Path is
 // configurable so we can run the dev server from a checkout but a

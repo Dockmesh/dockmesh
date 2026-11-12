@@ -62,6 +62,8 @@ func TestAgentInstallScript(t *testing.T) {
 	for _, want := range []string{
 		`TOKEN="` + token + `"`,
 		`ENROLL_URL="https://dockmesh.test:8443/enroll"`,
+		`INSTALL_URL="https://dockmesh.test:8443"`,
+		`INSTALL_PIN="` + mgr.ServerKeyPin() + `"`,
 		`CA_FINGERPRINT="` + fp + `"`,
 		`BINARY_SHA256_ARM64="` + hex.EncodeToString(sum[:]) + `"`,
 		`BINARY_SHA256_AMD64=""`,
