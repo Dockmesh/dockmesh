@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: A site whose last change Caddy refused before the update is named in a notice after it; open the site and save a configuration that works. The other sites keep serving and can be changed again
+time: 2026-11-12T17:15:38.299165433Z
+custom:
+    Audience: admins
+    Id: proxy-refused-sites

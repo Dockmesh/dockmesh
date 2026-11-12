@@ -1,0 +1,788 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "plain.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.1:80"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "internal.home"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "encode",
+                  "encodings": {
+                    "gzip": {},
+                    "zstd": {}
+                  },
+                  "prefer": [
+                    "zstd",
+                    "gzip"
+                  ]
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.3:443"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "full.example.com",
+                    "www.full.example.com"
+                  ],
+                  "not": [
+                    {
+                      "client_ip": {
+                        "ranges": [
+                          "192.168.10.0/24"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 403
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "www.full.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 301,
+                  "headers": {
+                    "Location": [
+                      "https://full.example.com{http.request.uri}"
+                    ]
+                  }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "full.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "headers",
+                  "response": {
+                    "set": {
+                      "Cache-Control": [
+                        "no-store"
+                      ],
+                      "Referrer-Policy": [
+                        "strict-origin-when-cross-origin"
+                      ],
+                      "Strict-Transport-Security": [
+                        "max-age=31536000"
+                      ],
+                      "X-Content-Type-Options": [
+                        "nosniff"
+                      ],
+                      "X-Frame-Options": [
+                        "SAMEORIGIN"
+                      ]
+                    },
+                    "delete": [
+                      "Server"
+                    ],
+                    "deferred": true
+                  }
+                },
+                {
+                  "handler": "encode",
+                  "encodings": {
+                    "gzip": {},
+                    "zstd": {}
+                  },
+                  "prefer": [
+                    "zstd",
+                    "gzip"
+                  ]
+                },
+                {
+                  "handler": "request_body",
+                  "max_size": 1048576
+                },
+                {
+                  "handler": "authentication",
+                  "providers": {
+                    "http_basic": {
+                      "accounts": [
+                        {
+                          "username": "ops",
+                          "password": "$2a$04$LJ3FMD0CUmp0L58htuEqR.j9XBgCTxlHttAycaIOV10mIFLQNOS2y"
+                        }
+                      ],
+                      "hash": {
+                        "algorithm": "bcrypt"
+                      },
+                      "hash_cache": {}
+                    }
+                  }
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "authelia:9091"
+                    }
+                  ],
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "X-Forwarded-Method": [
+                          "{http.request.method}"
+                        ],
+                        "X-Forwarded-Uri": [
+                          "{http.request.uri}"
+                        ]
+                      }
+                    }
+                  },
+                  "rewrite": {
+                    "method": "GET",
+                    "uri": "/api/verify?rd=https://auth.example.org"
+                  },
+                  "handle_response": [
+                    {
+                      "match": {
+                        "status_code": [
+                          2
+                        ]
+                      },
+                      "routes": [
+                        {
+                          "handle": [
+                            {
+                              "handler": "vars"
+                            }
+                          ]
+                        },
+                        {
+                          "handle": [
+                            {
+                              "handler": "headers",
+                              "request": {
+                                "delete": [
+                                  "Remote-User"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "match": [
+                            {
+                              "not": [
+                                {
+                                  "vars": {
+                                    "{http.reverse_proxy.header.Remote-User}": [
+                                      ""
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "handle": [
+                            {
+                              "handler": "headers",
+                              "request": {
+                                "set": {
+                                  "Remote-User": [
+                                    "{http.reverse_proxy.header.Remote-User}"
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    },
+                    {
+                      "dial": "10.0.0.6:8080"
+                    }
+                  ],
+                  "load_balancing": {
+                    "selection_policy": {
+                      "policy": "round_robin"
+                    }
+                  },
+                  "health_checks": {
+                    "active": {
+                      "uri": "/healthz"
+                    }
+                  },
+                  "flush_interval": -1,
+                  "request_buffers": 4194304,
+                  "stream_close_delay": 30000000000,
+                  "transport": {
+                    "protocol": "http",
+                    "dial_timeout": 5000000000,
+                    "read_timeout": 120000000000,
+                    "write_timeout": 120000000000
+                  },
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "X-Api-Key": [
+                          "s3cret"
+                        ],
+                        "X-Env": [
+                          "lab"
+                        ]
+                      },
+                      "delete": [
+                        "X-Debug"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "shop.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.9:80"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "www.shop.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.10:80"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "logs": {
+            "logger_names": {
+              "full.example.com": [
+                ""
+              ],
+              "internal.home": [
+                ""
+              ]
+            },
+            "skip_unmapped_hosts": true
+          }
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "lan.home"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.2:80"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "full.example.com",
+                    "www.full.example.com"
+                  ],
+                  "not": [
+                    {
+                      "client_ip": {
+                        "ranges": [
+                          "192.168.10.0/24"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 403
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "www.full.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 301,
+                  "headers": {
+                    "Location": [
+                      "https://full.example.com{http.request.uri}"
+                    ]
+                  }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "full.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "headers",
+                  "response": {
+                    "set": {
+                      "Cache-Control": [
+                        "no-store"
+                      ],
+                      "Referrer-Policy": [
+                        "strict-origin-when-cross-origin"
+                      ],
+                      "Strict-Transport-Security": [
+                        "max-age=31536000"
+                      ],
+                      "X-Content-Type-Options": [
+                        "nosniff"
+                      ],
+                      "X-Frame-Options": [
+                        "SAMEORIGIN"
+                      ]
+                    },
+                    "delete": [
+                      "Server"
+                    ],
+                    "deferred": true
+                  }
+                },
+                {
+                  "handler": "encode",
+                  "encodings": {
+                    "gzip": {},
+                    "zstd": {}
+                  },
+                  "prefer": [
+                    "zstd",
+                    "gzip"
+                  ]
+                },
+                {
+                  "handler": "request_body",
+                  "max_size": 1048576
+                },
+                {
+                  "handler": "authentication",
+                  "providers": {
+                    "http_basic": {
+                      "accounts": [
+                        {
+                          "username": "ops",
+                          "password": "$2a$04$LJ3FMD0CUmp0L58htuEqR.j9XBgCTxlHttAycaIOV10mIFLQNOS2y"
+                        }
+                      ],
+                      "hash": {
+                        "algorithm": "bcrypt"
+                      },
+                      "hash_cache": {}
+                    }
+                  }
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "authelia:9091"
+                    }
+                  ],
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "X-Forwarded-Method": [
+                          "{http.request.method}"
+                        ],
+                        "X-Forwarded-Uri": [
+                          "{http.request.uri}"
+                        ]
+                      }
+                    }
+                  },
+                  "rewrite": {
+                    "method": "GET",
+                    "uri": "/api/verify?rd=https://auth.example.org"
+                  },
+                  "handle_response": [
+                    {
+                      "match": {
+                        "status_code": [
+                          2
+                        ]
+                      },
+                      "routes": [
+                        {
+                          "handle": [
+                            {
+                              "handler": "vars"
+                            }
+                          ]
+                        },
+                        {
+                          "handle": [
+                            {
+                              "handler": "headers",
+                              "request": {
+                                "delete": [
+                                  "Remote-User"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "match": [
+                            {
+                              "not": [
+                                {
+                                  "vars": {
+                                    "{http.reverse_proxy.header.Remote-User}": [
+                                      ""
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "handle": [
+                            {
+                              "handler": "headers",
+                              "request": {
+                                "set": {
+                                  "Remote-User": [
+                                    "{http.reverse_proxy.header.Remote-User}"
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    },
+                    {
+                      "dial": "10.0.0.6:8080"
+                    }
+                  ],
+                  "load_balancing": {
+                    "selection_policy": {
+                      "policy": "round_robin"
+                    }
+                  },
+                  "health_checks": {
+                    "active": {
+                      "uri": "/healthz"
+                    }
+                  },
+                  "flush_interval": -1,
+                  "request_buffers": 4194304,
+                  "stream_close_delay": 30000000000,
+                  "transport": {
+                    "protocol": "http",
+                    "dial_timeout": 5000000000,
+                    "read_timeout": 120000000000,
+                    "write_timeout": 120000000000
+                  },
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "X-Api-Key": [
+                          "s3cret"
+                        ],
+                        "X-Env": [
+                          "lab"
+                        ]
+                      },
+                      "delete": [
+                        "X-Debug"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "lanfull.home",
+                    "www.lanfull.home"
+                  ],
+                  "client_ip": {
+                    "ranges": [
+                      "203.0.113.0/24"
+                    ]
+                  }
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 403
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "www.lanfull.home"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "status_code": 301,
+                  "headers": {
+                    "Location": [
+                      "http://lanfull.home{http.request.uri}"
+                    ]
+                  }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "lanfull.home"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "headers",
+                  "response": {
+                    "set": {
+                      "Referrer-Policy": [
+                        "strict-origin-when-cross-origin"
+                      ],
+                      "X-Content-Type-Options": [
+                        "nosniff"
+                      ],
+                      "X-Frame-Options": [
+                        "SAMEORIGIN"
+                      ]
+                    },
+                    "deferred": true
+                  }
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.7:80"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "logs": {
+            "logger_names": {
+              "full.example.com": [
+                ""
+              ],
+              "lanfull.home": [
+                ""
+              ]
+            },
+            "skip_unmapped_hosts": true
+          }
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "plain.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          },
+          {
+            "subjects": [
+              "internal.home"
+            ],
+            "issuers": [
+              {
+                "module": "internal"
+              }
+            ]
+          },
+          {
+            "subjects": [
+              "full.example.com",
+              "www.full.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          },
+          {
+            "subjects": [
+              "shop.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          },
+          {
+            "subjects": [
+              "www.shop.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

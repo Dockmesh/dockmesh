@@ -139,7 +139,7 @@ func (s *Service) SaveSettings(ctx context.Context, g Settings) error {
 	if err := s.storeSettings(ctx, g); err != nil {
 		return err
 	}
-	if err := s.SyncFromDB(ctx); err != nil {
+	if err := s.syncSettings(ctx); err != nil {
 		// Caddy keeps its old config when it rejects a push; keep the
 		// stored settings in line with it.
 		if rbErr := s.storeSettings(ctx, prev); rbErr != nil {
@@ -148,6 +148,18 @@ func (s *Service) SaveSettings(ctx context.Context, g Settings) error {
 		return fmt.Errorf("apply proxy settings: %w", err)
 	}
 	return nil
+}
+
+// syncSettings pushes the routes with new settings. Like a site change,
+// it leaves out sites Caddy hasn't loaded in their current state when
+// Caddy refuses them, so one broken site doesn't block the settings.
+func (s *Service) syncSettings(ctx context.Context) error {
+	if !s.Enabled() {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncLocked(ctx, always)
 }
 
 func (s *Service) storeSettings(ctx context.Context, g Settings) error {

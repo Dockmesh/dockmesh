@@ -119,29 +119,26 @@ func verifyAdmin(ctx context.Context, id string) error {
 	return nil
 }
 
-// pushConfig POSTs the config to Caddy's admin API /load endpoint after
-// checking it reaches the managed Caddy. Caddy replaces its entire
-// running config atomically and saves it, so a restarted container
-// (`--resume`) comes back with the same routes.
-func pushConfig(ctx context.Context, cfg *caddyConfig) error {
+// postLoad sends cfg to /load of an admin API already verified as the
+// managed Caddy. Caddy replaces its entire running config atomically and
+// saves it, so a restarted container (`--resume`) comes back with the same
+// routes. A refusal is a *loadRejectedError.
+func postLoad(ctx context.Context, cfg *caddyConfig, timeout time.Duration) error {
 	if cfg.Admin == nil {
 		return errNotManagedCaddy
-	}
-	if err := verifyAdmin(ctx, cfg.Admin.ID); err != nil {
-		return err
 	}
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	resp, err := adminDo(ctx, http.MethodPost, "/load", bytes.NewReader(body), 10*time.Second)
+	resp, err := adminDo(ctx, http.MethodPost, "/load", bytes.NewReader(body), timeout)
 	if err != nil {
 		return fmt.Errorf("caddy admin unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return fmt.Errorf("caddy /load %d: %s", resp.StatusCode, string(b))
+		return &loadRejectedError{status: resp.StatusCode, body: string(b)}
 	}
 	return nil
 }

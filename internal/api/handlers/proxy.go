@@ -44,6 +44,8 @@ func writeProxyRouteError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusNotFound, "route not found")
 	case errors.Is(err, proxy.ErrInvalidTLSMode):
 		writeError(w, http.StatusBadRequest, "invalid tls_mode")
+	case errors.Is(err, proxy.ErrApplyRejected):
+		writeError(w, http.StatusInternalServerError, proxy.ErrApplyRejected.Error())
 	case errors.Is(err, proxy.ErrInvalidUpstream), errors.Is(err, proxy.ErrAdminUpstream),
 		errors.Is(err, proxy.ErrInvalidHost), errors.Is(err, proxy.ErrInvalidOptions):
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -203,20 +205,12 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), proxy.RouteSpec{
 		Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts,
 	})
-	switch {
-	case err != nil && route != nil:
-		slog.Warn("proxy: new site saved but not applied", "host", route.Host, "err", err)
-		op.Finish(proxy.ErrConfigRejected)
-	case err != nil:
+	if err != nil {
 		op.Finish(err)
-	default:
+	} else {
 		go h.Proxy.WatchCertificate(context.WithoutCancel(r.Context()), op, route.Host, route.TLSMode, started)
 	}
 	if writeProxyRouteError(w, err) {
-		return
-	}
-	if err != nil && route != nil {
-		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
 		return
 	}
 	if err != nil {
@@ -254,21 +248,14 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	changed, err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts)
-	if changed != nil || err == nil {
-		h.audit(r, "proxy.route_update", idStr, map[string]any{"changed": orNone(changed)})
-	}
 	if writeProxyRouteError(w, err) {
-		return
-	}
-	if err != nil && changed != nil {
-		slog.Warn("proxy: site saved but not applied", "id", id, "err", err)
-		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "proxy.route_update", idStr, map[string]any{"changed": orNone(changed)})
 	route, err := h.Proxy.GetRoute(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -410,7 +397,9 @@ func (h *Handlers) DeleteProxyRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Proxy.DeleteRoute(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if !writeProxyRouteError(w, err) {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	h.audit(r, "proxy.route_delete", idStr, nil)

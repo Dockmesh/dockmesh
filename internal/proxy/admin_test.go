@@ -59,9 +59,13 @@ func TestPushConfigOnlyToManagedCaddy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loads := adminServer(t, tc.serverID)
-			cfg, _ := buildConfig(nil, Settings{})
-			cfg.Admin.ID = tc.configID
-			err := pushConfig(context.Background(), cfg)
+			s := newServiceDB(t)
+			s.enabled.Store(true)
+			if tc.configID != "" {
+				id := tc.configID
+				s.adminID.Store(&id)
+			}
+			err := s.SyncFromDB(context.Background())
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("pushConfig: %v, want %v", err, tc.wantErr)
 			}

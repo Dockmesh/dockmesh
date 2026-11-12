@@ -25,11 +25,6 @@ var NewSiteSteps = []operations.StepSpec{
 	{Key: StepCertificate, Label: "Get a certificate"},
 }
 
-// ErrConfigRejected stands in for Caddy's own error in an operation: that
-// error can quote other sites' configuration, which proxy.view callers
-// only see masked.
-var ErrConfigRejected = errors.New("caddy rejected the configuration; the server log has the details")
-
 // SecretValues returns the values in the options that can carry
 // credentials: header values, basic-auth passwords and hashes and the
 // forward-auth URL's query.
