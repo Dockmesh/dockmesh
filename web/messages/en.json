@@ -5985,5 +5985,13 @@
   "hosts_add_pin_hint": "The command pins this server's agent certificate, so it only runs against this server.",
   "hosts_add_new_command": "New command",
   "hosts_add_new_command_failed": "Could not create a new command",
-  "hosts_add_expired": "This command has expired."
+  "hosts_add_expired": "This command has expired.",
+  "audit_act_settings_update_channel_update": "changed the update channel",
+  "audit_sen_settings_update_channel_update": "{actor} changed the update channel",
+  "settings_update_channel": "Update channel",
+  "settings_update_channel_hint": "Stable offers only releases. Pre-release also offers release candidates, which are for testing and not for production servers. Agents always follow the server's version.",
+  "settings_channel_stable": "Stable",
+  "settings_channel_prerelease": "Pre-release",
+  "settings_channel_needs_upgrade": "Only users who may install Dockmesh updates can change the channel.",
+  "settings_run_prerelease": "{version} is a pre-release, which get.dockmesh.dev doesn't serve. Run its own installer on this host:"
 }

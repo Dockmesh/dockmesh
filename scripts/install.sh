@@ -5,10 +5,12 @@
 #  Usage:
 #    curl -fsSL https://get.dockmesh.dev | sudo bash
 #    curl -fsSL https://get.dockmesh.dev | DOCKMESH_VERSION=v1.2.3 bash
+#    curl -fsSL <release>/install.sh | sudo bash -s -- --version v1.3.0-rc.1
 #    curl -fsSL https://get.dockmesh.dev | DOCKMESH_INSTALL_DIR=/opt/bin bash
 #
 #  Env vars:
-#    DOCKMESH_VERSION         tag to install (default: latest release)
+#    DOCKMESH_VERSION         tag to install, same as --version (default: latest
+#                             stable release; pre-releases only when named)
 #    DOCKMESH_CHANNEL         stable | testing      (default: stable)
 #    DOCKMESH_INSTALL_DIR     bin directory         (default: /usr/local/bin)
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
@@ -372,6 +374,42 @@ install_agent_binaries() {
 }
 
 # ------------------------------------------------------------------
+#  Version helpers
+# ------------------------------------------------------------------
+
+# Arguments come after `bash -s --` in the one-liner.
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version)
+        [ $# -ge 2 ] || die "--version needs a release tag, e.g. --version v1.3.0-rc.1"
+        DOCKMESH_VERSION="$2"
+        shift 2
+        ;;
+      --version=*)
+        DOCKMESH_VERSION="${1#--version=}"
+        shift
+        ;;
+      *) die "unknown argument: $1 (supported: --version <tag>)" ;;
+    esac
+  done
+}
+
+valid_tag() {
+  printf '%s' "$1" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+}
+
+# version_older A B: A's major.minor.patch is lower than B's. A release
+# candidate shares its release's numbers, so v0.6.0 is not older than
+# v0.6.0-rc.2.
+version_older() {
+  local a b
+  a="$(printf '%s' "${1#v}" | sed -E 's/[-+].*//')"
+  b="$(printf '%s' "${2#v}" | sed -E 's/[-+].*//')"
+  [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$a" ]
+}
+
+# ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
 cat >&2 <<BANNER
@@ -394,7 +432,11 @@ REPO="dockmesh/dockmesh"
 # DM_VERSION instead of VERSION because /etc/os-release (sourced below)
 # defines $VERSION as the distro release ("12 (bookworm)" on Debian)
 # which silently clobbers any local VERSION var we set.
+parse_args "$@"
 DM_VERSION="${DOCKMESH_VERSION:-latest}"
+if [ "$DM_VERSION" != "latest" ] && ! valid_tag "$DM_VERSION"; then
+  die "release tag '$DM_VERSION' is not of the form vX.Y.Z or vX.Y.Z-rc.N"
+fi
 CHANNEL="${DOCKMESH_CHANNEL:-stable}"
 INSTALL_DIR="${DOCKMESH_INSTALL_DIR:-/usr/local/bin}"
 # Agent-enrollment assets live next to the install root, matching the
@@ -419,7 +461,7 @@ if [ -x "$INSTALL_DIR/dockmesh" ]; then
     # Extract bare version tag (first vX.Y.Z token) for the summary box.
     # `|| true` keeps `set -o pipefail` happy when the version line
     # doesn't match the v0.0.0 pattern (dev / RC / nightly builds).
-    PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -1 || true)"
   fi
 fi
 
@@ -753,8 +795,16 @@ if [ "$DM_VERSION" = "latest" ]; then
   fi
   DM_VERSION="$(printf '%s' "$META" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
   [ -z "$DM_VERSION" ] && die "could not parse latest release tag from GitHub API response"
+  valid_tag "$DM_VERSION" || die "GitHub returned an unexpected release tag '$DM_VERSION'"
 fi
 ok "latest          $DM_VERSION"
+
+# An install running a release candidate is ahead of the latest stable
+# release until the final version is out.
+if [ "$IS_UPGRADE" = "1" ] && [ -z "${DOCKMESH_VERSION:-}" ] && [ -n "$PREV_VERSION" ] &&
+  version_older "$DM_VERSION" "$PREV_VERSION" && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
+  die "installed $PREV_VERSION is newer than $DM_VERSION; pass --version <tag> to pick a release (DOCKMESH_FORCE=1 installs $DM_VERSION anyway)"
+fi
 
 TARBALL="dockmesh_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$DM_VERSION/$TARBALL"

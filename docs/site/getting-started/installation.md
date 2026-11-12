@@ -68,7 +68,7 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.3`. |
+| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.3`; same as `--version v0.5.3` after `bash -s --`. Pre-releases are only installed when named. |
 | `DOCKMESH_CHANNEL` | `stable` | `testing` also considers pre-releases when resolving "latest". |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |

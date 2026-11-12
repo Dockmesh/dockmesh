@@ -5985,5 +5985,13 @@
   "hosts_add_pin_hint": "Der Befehl pinnt das Agent-Zertifikat dieses Servers und läuft deshalb nur gegen diesen Server.",
   "hosts_add_new_command": "Neuer Befehl",
   "hosts_add_new_command_failed": "Neuer Befehl konnte nicht erstellt werden",
-  "hosts_add_expired": "Dieser Befehl ist abgelaufen."
+  "hosts_add_expired": "Dieser Befehl ist abgelaufen.",
+  "audit_act_settings_update_channel_update": "Update-Kanal geändert",
+  "audit_sen_settings_update_channel_update": "{actor} hat den Update-Kanal geändert",
+  "settings_update_channel": "Update-Kanal",
+  "settings_update_channel_hint": "Stabil bietet nur Releases an. Vorabversion bietet auch Release-Kandidaten an; sie sind zum Testen da, nicht für Produktivserver. Agents folgen immer der Version des Servers.",
+  "settings_channel_stable": "Stabil",
+  "settings_channel_prerelease": "Vorabversion",
+  "settings_channel_needs_upgrade": "Nur Benutzer, die Dockmesh-Updates installieren dürfen, können den Kanal ändern.",
+  "settings_run_prerelease": "{version} ist eine Vorabversion, die get.dockmesh.dev nicht ausliefert. Führe ihren eigenen Installer auf diesem Host aus:"
 }

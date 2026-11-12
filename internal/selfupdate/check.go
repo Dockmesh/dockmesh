@@ -25,7 +25,11 @@ const (
 	// GitHub Releases API for the public Dockmesh repo. No auth required
 	// — anonymous rate limit is 60 req/h which is more than enough for a
 	// 24-hour poll.
-	releasesURL = "https://api.github.com/repos/Dockmesh/dockmesh/releases/latest"
+	apiBase = "https://api.github.com/repos/Dockmesh/dockmesh"
+
+	// releasesPage is how many of the newest releases the pre-release
+	// channel compares; GitHub lists them newest first.
+	releasesPage = 30
 
 	// Default poll interval — 2h is a reasonable compromise for a
 	// project in active release mode (multiple versions/day possible)
@@ -53,21 +57,41 @@ const (
 	maxNotesLen = 2000
 )
 
+// ChannelKey is the setting that selects the releases the check offers.
+// Unset means stable, so installs that predate the setting keep their
+// behaviour.
+const ChannelKey = "update_channel"
+
+const (
+	ChannelStable     = "stable"
+	ChannelPrerelease = "prerelease"
+)
+
+// ValidChannel reports whether v may be stored under ChannelKey; empty
+// stands for stable.
+func ValidChannel(v string) bool {
+	return v == "" || v == ChannelStable || v == ChannelPrerelease
+}
+
 // Result is the public snapshot the UI renders. Empty LatestVersion means
 // "never checked yet" (or check disabled). UpdateAvailable is computed
 // against runtime version at read time so a binary built from a newer
 // tag than the cached LatestVersion doesn't nag about itself.
 type Result struct {
-	CurrentVersion  string    `json:"current_version"`
-	LatestVersion   string    `json:"latest_version"`
-	UpdateAvailable bool      `json:"update_available"`
-	IsDevBuild      bool      `json:"is_dev_build"`
-	ReleaseURL      string    `json:"release_url"`
-	ReleaseNotes    string    `json:"release_notes"`
-	PublishedAt     time.Time `json:"published_at,omitempty"`
-	CheckedAt       time.Time `json:"checked_at,omitempty"`
-	Enabled         bool      `json:"enabled"`
-	Error           string    `json:"error,omitempty"`
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	// LatestPrerelease is set when LatestVersion is a release candidate,
+	// which get.dockmesh.dev doesn't serve.
+	LatestPrerelease bool      `json:"latest_prerelease"`
+	Channel          string    `json:"channel"`
+	UpdateAvailable  bool      `json:"update_available"`
+	IsDevBuild       bool      `json:"is_dev_build"`
+	ReleaseURL       string    `json:"release_url"`
+	ReleaseNotes     string    `json:"release_notes"`
+	PublishedAt      time.Time `json:"published_at,omitempty"`
+	CheckedAt        time.Time `json:"checked_at,omitempty"`
+	Enabled          bool      `json:"enabled"`
+	Error            string    `json:"error,omitempty"`
 }
 
 type ghRelease struct {
@@ -94,6 +118,7 @@ type Checker struct {
 	notifs   *notifications.Service
 	// assetPrefix is the only URL prefix a manifest is fetched from.
 	assetPrefix string
+	apiBase     string
 
 	mu      sync.RWMutex
 	lastErr string
@@ -114,6 +139,7 @@ func New(s *settings.Store, currentVersion string) *Checker {
 		client:   &http.Client{Timeout: 10 * time.Second},
 
 		assetPrefix: assetPrefix,
+		apiBase:     apiBase,
 	}
 }
 
@@ -180,42 +206,38 @@ func (c *Checker) tick(ctx context.Context) {
 	}
 }
 
+// Channel returns the configured update channel.
+func (c *Checker) Channel() string {
+	if c.settings.Get(ChannelKey, "") == ChannelPrerelease {
+		return ChannelPrerelease
+	}
+	return ChannelStable
+}
+
 // CheckNow performs an immediate GitHub Releases lookup and persists
 // the result to settings. Safe to call from an HTTP handler ("Check
 // now" button). Never panics; errors are recorded on the Checker and
 // surfaced via Status().Error.
 func (c *Checker) CheckNow(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+	var rel *ghRelease
+	if c.Channel() == ChannelPrerelease {
+		var rels []ghRelease
+		if err := c.getJSON(ctx, fmt.Sprintf("%s/releases?per_page=%d", c.apiBase, releasesPage), &rels); err != nil {
+			c.recordErr(err)
+			return err
+		}
+		rel = newestRelease(rels)
+	} else {
+		var latest ghRelease
+		if err := c.getJSON(ctx, c.apiBase+"/releases/latest", &latest); err != nil {
+			c.recordErr(err)
+			return err
+		}
+		if !latest.Draft && !latest.Prerelease && latest.TagName != "" && !isPrerelease(latest.TagName) {
+			rel = &latest
+		}
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "Dockmesh/"+c.current)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		c.recordErr(fmt.Errorf("fetch: %w", err))
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		err := fmt.Errorf("github api %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		c.recordErr(err)
-		return err
-	}
-
-	var rel ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		c.recordErr(fmt.Errorf("decode: %w", err))
-		return err
-	}
-
-	// Skip drafts and prereleases — the banner should only nag about
-	// stable releases. A dedicated "include prereleases" toggle can come
-	// later if users ask for it.
-	if rel.Draft || rel.Prerelease || rel.TagName == "" {
+	if rel == nil {
 		c.recordErr(nil)
 		return nil
 	}
@@ -235,7 +257,7 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 	_ = c.settings.Set(ctx, "update_release_url", rel.HTMLURL)
 	_ = c.settings.Set(ctx, "update_release_notes", notes)
 	_ = c.settings.Set(ctx, "update_published_at", published)
-	_ = c.settings.Set(ctx, keyManifest, c.fetchManifest(ctx, rel))
+	_ = c.settings.Set(ctx, keyManifest, c.fetchManifest(ctx, *rel))
 
 	c.recordErr(nil)
 	updateAvailable := isNewer(c.current, rel.TagName) || isDevVersion(c.current)
@@ -245,6 +267,49 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 		c.notifyAvailable(ctx, rel.TagName)
 	}
 	return nil
+}
+
+func (c *Checker) getJSON(ctx context.Context, url string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "Dockmesh/"+c.current)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("github api %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	return nil
+}
+
+// newestRelease returns the highest published version among rels, stable
+// or pre-release, or nil when there is none.
+func newestRelease(rels []ghRelease) *ghRelease {
+	var best *ghRelease
+	var bestV semver
+	for i := range rels {
+		r := &rels[i]
+		if r.Draft {
+			continue
+		}
+		v, ok := parseSemver(r.TagName)
+		if !ok {
+			continue
+		}
+		if best == nil || v.compare(bestV) > 0 {
+			best, bestV = r, v
+		}
+	}
+	return best
 }
 
 // keyNotifiedVersion is the release admins were last told about. Stored,
@@ -353,6 +418,12 @@ func (c *Checker) recordErr(err error) {
 // flag. No blocking, no network.
 func (c *Checker) Status() Result {
 	latest := c.settings.Get("update_latest_version", "")
+	channel := c.Channel()
+	// The cache may still hold a candidate found before the channel was
+	// switched back to stable.
+	if channel == ChannelStable && isPrerelease(latest) {
+		latest = ""
+	}
 	checkedAtStr := c.settings.Get("update_last_check", "")
 	publishedStr := c.settings.Get("update_published_at", "")
 
@@ -382,16 +453,18 @@ func (c *Checker) Status() Result {
 	}
 
 	return Result{
-		CurrentVersion:  c.current,
-		LatestVersion:   latest,
-		UpdateAvailable: available,
-		IsDevBuild:      dev,
-		ReleaseURL:      c.settings.Get("update_release_url", ""),
-		ReleaseNotes:    c.settings.Get("update_release_notes", ""),
-		PublishedAt:     publishedAt,
-		CheckedAt:       checkedAt,
-		Enabled:         c.settings.GetBool("update_check_enabled", true),
-		Error:           lastErr,
+		CurrentVersion:   c.current,
+		LatestVersion:    latest,
+		LatestPrerelease: isPrerelease(latest),
+		Channel:          channel,
+		UpdateAvailable:  available,
+		IsDevBuild:       dev,
+		ReleaseURL:       c.settings.Get("update_release_url", ""),
+		ReleaseNotes:     c.settings.Get("update_release_notes", ""),
+		PublishedAt:      publishedAt,
+		CheckedAt:        checkedAt,
+		Enabled:          c.settings.GetBool("update_check_enabled", true),
+		Error:            lastErr,
 	}
 }
 
@@ -414,48 +487,133 @@ func isDevVersion(v string) bool {
 // isNewer returns true when `latest` is a newer semver tag than `current`.
 // Both inputs may include a leading "v". Dev builds (current=="dev") are
 // treated as "up-to-date" — local development shouldn't show an update
-// banner about itself.
+// banner about itself. A release candidate is older than its release, so
+// an install running v0.6.0-rc.2 is offered v0.6.0.
 func isNewer(current, latest string) bool {
-	if latest == "" {
+	cur, ok := parseSemver(current)
+	if !ok {
 		return false
 	}
-	cur := strings.TrimPrefix(current, "v")
-	lat := strings.TrimPrefix(latest, "v")
-	if cur == "" || cur == "dev" || cur == "unknown" {
+	lat, ok := parseSemver(latest)
+	if !ok {
 		return false
 	}
-	curParts := parseSemver(cur)
-	latParts := parseSemver(lat)
-	for i := 0; i < 3; i++ {
-		if latParts[i] > curParts[i] {
-			return true
+	return lat.compare(cur) > 0
+}
+
+func isPrerelease(tag string) bool {
+	v, ok := parseSemver(tag)
+	return ok && len(v.pre) > 0
+}
+
+type semver struct {
+	core [3]int
+	pre  []string
+}
+
+// parseSemver parses "1.2.3", "v1.2.3-rc.1" or "1.2.3+build"; build
+// metadata is ignored.
+func parseSemver(s string) (semver, bool) {
+	s = strings.TrimPrefix(s, "v")
+	if i := strings.IndexByte(s, '+'); i >= 0 {
+		s = s[:i]
+	}
+	var v semver
+	core, pre, hasPre := strings.Cut(s, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return semver{}, false
+	}
+	for i, p := range parts {
+		n, ok := number(p)
+		if !ok {
+			return semver{}, false
 		}
-		if latParts[i] < curParts[i] {
+		v.core[i] = n
+	}
+	if hasPre {
+		v.pre = strings.Split(pre, ".")
+		for _, id := range v.pre {
+			if !validIdent(id) {
+				return semver{}, false
+			}
+		}
+	}
+	return v, true
+}
+
+// validIdent reports whether id is a semver pre-release identifier:
+// non-empty, ASCII letters, digits and hyphens.
+func validIdent(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && r != '-' {
 			return false
 		}
 	}
-	return false
+	return true
 }
 
-// parseSemver extracts [major, minor, patch] from a "1.2.3" or "1.2.3-rc1"
-// style string. Unparseable segments become 0 so a malformed tag doesn't
-// falsely trigger an update banner.
-func parseSemver(v string) [3]int {
-	// Drop any pre-release / build metadata suffix.
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i]
+// number parses a non-empty run of ASCII digits.
+func number(s string) (int, bool) {
+	if s == "" || len(s) > 9 {
+		return 0, false
 	}
-	parts := strings.SplitN(v, ".", 3)
-	out := [3]int{}
-	for i := 0; i < len(parts) && i < 3; i++ {
-		n := 0
-		for _, r := range parts[i] {
-			if r < '0' || r > '9' {
-				break
-			}
-			n = n*10 + int(r-'0')
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
 		}
-		out[i] = n
+		n = n*10 + int(r-'0')
 	}
-	return out
+	return n, true
+}
+
+// compare orders by semver precedence: a pre-release sorts before its
+// release, numeric identifiers numerically and below alphanumeric ones.
+func (a semver) compare(b semver) int {
+	for i := range a.core {
+		if a.core[i] != b.core[i] {
+			return cmpInt(a.core[i], b.core[i])
+		}
+	}
+	switch {
+	case len(a.pre) == 0 && len(b.pre) == 0:
+		return 0
+	case len(a.pre) == 0:
+		return 1
+	case len(b.pre) == 0:
+		return -1
+	}
+	for i := 0; i < len(a.pre) && i < len(b.pre); i++ {
+		an, aNum := number(a.pre[i])
+		bn, bNum := number(b.pre[i])
+		switch {
+		case aNum && bNum:
+			if an != bn {
+				return cmpInt(an, bn)
+			}
+		case aNum:
+			return -1
+		case bNum:
+			return 1
+		default:
+			if c := strings.Compare(a.pre[i], b.pre[i]); c != 0 {
+				return c
+			}
+		}
+	}
+	return cmpInt(len(a.pre), len(b.pre))
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }

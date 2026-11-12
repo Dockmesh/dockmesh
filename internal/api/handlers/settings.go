@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -110,6 +111,17 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// The channel decides which builds admins are told to install.
+		if e.Key == selfupdate.ChannelKey {
+			if !selfupdate.ValidChannel(e.Value) {
+				writeError(w, http.StatusBadRequest, "update_channel must be stable or prerelease")
+				return
+			}
+			if h.Settings.Stored(e.Key) != e.Value && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+				writeError(w, http.StatusForbidden, "changing update_channel needs the system.upgrade permission")
+				return
+			}
+		}
 		if e.Key == settings.KeyTrustedProxies {
 			if _, err := clientip.ParseList(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "trusted proxies: "+err.Error())
@@ -138,7 +150,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		prev := h.Settings.Get(e.Key, "")
-		if e.Key == settings.KeyBaseURL || e.Key == settings.KeyAgentPublicURL {
+		if e.Key == settings.KeyBaseURL || e.Key == settings.KeyAgentPublicURL || e.Key == selfupdate.ChannelKey {
 			prev = h.Settings.Stored(e.Key)
 		}
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
@@ -153,6 +165,8 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			h.audit(r, "settings.base_url_update", "", map[string]any{"before": prev, "after": e.Value})
 		case settings.KeyAgentPublicURL:
 			h.audit(r, "settings.agent_public_url_update", "", map[string]any{"before": prev, "after": e.Value})
+		case selfupdate.ChannelKey:
+			h.audit(r, "settings.update_channel_update", "", map[string]any{"before": prev, "after": e.Value})
 		}
 		h.applySettingSideEffect(r, e.Key, e.Value)
 	}

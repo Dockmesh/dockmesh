@@ -116,7 +116,7 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_VERSION` | `latest` | Release tag to install |
+| `DOCKMESH_VERSION` | `latest` | Release tag to install (same as `--version`) |
 | `DOCKMESH_CHANNEL` | `stable` | `stable` or `testing` |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Directory for `dockmesh`, `dmctl` and `grype` |
 | `DOCKMESH_ASSET_DIR` | `<install-dir>/../share/dockmesh` | Agent installer and agent binaries |

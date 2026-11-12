@@ -164,6 +164,7 @@ var categories = map[string]string{
 	"secrets.rotate":                   CategorySystem,
 	"settings.base_url_update":         CategorySystem,
 	"settings.agent_public_url_update": CategorySystem,
+	"settings.update_channel_update":   CategorySystem,
 	"system.update_check":              CategorySystem,
 	"system.restore_stage":             CategorySystem,
 	"system.restore_apply":             CategorySystem,

@@ -205,6 +205,8 @@ export interface ContainerSummary {
 export interface UpdateStatus {
   current_version: string;
   latest_version: string;
+  latest_prerelease: boolean;
+  channel: 'stable' | 'prerelease';
   update_available: boolean;
   is_dev_build: boolean;
   release_url: string;
