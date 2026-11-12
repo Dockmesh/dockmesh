@@ -34,6 +34,8 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"cannot delete yourself", "cannot_delete_yourself"},
 	{"changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it", "base_url_needs_users_create"},
 	{"changing agent_public_url needs the hosts.create permission as well, because install commands use it", "agent_url_needs_hosts_create"},
+	{"changing update_channel needs the system.upgrade permission", "update_channel_needs_system_upgrade"},
+	{"update_channel must be stable or prerelease", "update_channel_invalid"},
 	{"choose the host this stack is for: you can only create stacks on some hosts", "stack_host_required"},
 	{"code required", "code_required"},
 	{"command required", "command_required"},

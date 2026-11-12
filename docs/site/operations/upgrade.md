@@ -11,6 +11,21 @@ Dockmesh asks the GitHub releases API for the latest release 30 seconds after st
 
 **Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version and the command to run, with a copy button. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
 
+### Update channel
+
+**Update channel** on the same page decides which releases the check offers:
+
+- **Stable** (the default, also for installs from before the setting existed) offers only releases, never a pre-release.
+- **Pre-release** also offers release candidates (`vX.Y.Z-rc.N`) and always offers the newest version of either kind, so an install on a candidate is offered the next candidate and then the final release.
+
+Release candidates are for testing an upcoming release; don't use them on a production server. Only users who may install Dockmesh updates (Settings & audit: Manage on everything) can change the channel, and every change is written to the audit log. Saving a new channel runs a check right away. For a candidate the page shows that release's own installer, because get.dockmesh.dev only serves stable releases:
+
+```bash
+curl -fsSL https://github.com/dockmesh/dockmesh/releases/download/v0.6.0-rc.1/install.sh | sudo bash -s -- --version v0.6.0-rc.1
+```
+
+Agents don't have a channel of their own: the server updates them to its own version. Going back to **Stable** doesn't downgrade anything; the install is offered the next stable release that is newer than the one it runs.
+
 Read the release notes before you upgrade. They are generated from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 
 | Part | Meaning |
@@ -51,7 +66,7 @@ When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade
 5. If the service still runs as root, it moves it to the `dockmesh` user: it chowns the data root to `dockmesh:dockmesh` (mode 700) and adds `User=dockmesh` and `Group=docker` to the unit.
 6. It restarts `dockmesh.service`, checks that the service came up with a new process started from the new binary, and that the installed binary reports the new version.
 
-Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.5.3`; `DOCKMESH_CHANNEL=testing` includes pre-releases. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.5.3 bash`.
+Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, pass `--version v0.5.3` (`curl -fsSL https://get.dockmesh.dev | sudo bash -s -- --version v0.5.3`) or set `DOCKMESH_VERSION=v0.5.3`. A pre-release is only installed when you name it this way, or with `DOCKMESH_CHANNEL=testing`. If the installed version is newer than the latest release, for example a release candidate, the installer stops instead of downgrading unless you name a version or set `DOCKMESH_FORCE=1`. Put the variables after `sudo`, for example `curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=v0.5.3 bash`.
 
 > **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary and runs a fresh install into `/usr/local/bin`: it keeps `dockmesh.env` and the data, but rewrites the systemd unit to start the new copy, leaves the old binary where it is and makes no `.bak`.
 

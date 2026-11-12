@@ -114,6 +114,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'secrets.rotate': [m.audit_act_secrets_rotate, m.audit_sen_secrets_rotate],
   'settings.agent_public_url_update': [m.audit_act_settings_agent_public_url_update, m.audit_sen_settings_agent_public_url_update],
   'settings.base_url_update': [m.audit_act_settings_base_url_update, m.audit_sen_settings_base_url_update],
+  'settings.update_channel_update': [m.audit_act_settings_update_channel_update, m.audit_sen_settings_update_channel_update],
   'stack.accept_external_changes': [m.audit_act_stack_accept_external_changes, m.audit_sen_stack_accept_external_changes],
   'stack.adopt': [m.audit_act_stack_adopt, m.audit_sen_stack_adopt],
   'stack.create': [m.audit_act_stack_create, m.audit_sen_stack_create],

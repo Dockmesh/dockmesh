@@ -5,7 +5,7 @@
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
-  import { StatusChip, Switch } from '$lib/components/ui';
+  import { Segmented, StatusChip, Switch } from '$lib/components/ui';
   import { Copy, RefreshCw } from 'lucide-svelte';
   import { createSettingsForm } from '../settingsForm.svelte';
   import { m } from '$lib/paraglide/messages.js';
@@ -13,14 +13,27 @@
   const form = createSettingsForm();
   let status = $state<UpdateStatus | null>(null);
   let checking = $state(false);
-  const upgradeOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
+  const stableOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
+  // get.dockmesh.dev serves the latest stable installer, so a candidate is
+  // installed with the installer published next to it.
+  const tagPattern = /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+  const prereleaseTag = $derived(status?.latest_prerelease ? (status.latest_version ?? '') : '');
+  const upgradeOneLiner = $derived(
+    prereleaseTag
+      ? `curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/${prereleaseTag}/install.sh | sudo bash -s -- --version ${prereleaseTag} && sudo systemctl restart dockmesh`
+      : stableOneLiner
+  );
+  const showCommand = $derived(!prereleaseTag || tagPattern.test(prereleaseTag));
+  const canChangeChannel = $derived(allowed('system.upgrade'));
+  let savedChannel = $state('stable');
+  const channel = $derived(form.get('update_channel') || 'stable');
 
   onMount(() => {
     if (!allowed('system.update')) {
       goto('/', { replace: true });
       return;
     }
-    form.load();
+    form.load().then(() => (savedChannel = form.get('update_channel') || 'stable'));
     api.system
       .updateStatus()
       .then((s) => (status = s))
@@ -37,6 +50,15 @@
     } finally {
       checking = false;
     }
+  }
+
+  // A new channel changes which release counts as latest, so look again
+  // right away instead of at the next poll.
+  async function save() {
+    await form.save();
+    if (form.dirty || channel === savedChannel) return;
+    savedChannel = channel;
+    await checkNow();
   }
 
   function fmtRelative(iso: string | undefined): string {
@@ -89,13 +111,15 @@
             {#if status.release_url}
               <a href={status.release_url} target="_blank" rel="noopener">{m.settings_release_notes()}</a>
             {/if}
-            <span class="dm-sub">{m.settings_run_on_host()}</span>
-            <div class="up-cmd">
-              <code class="dm-mono">{upgradeOneLiner}</code>
-              <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(upgradeOneLiner, m.settings_command_copied())}>
-                <Copy size={12} /> {m.common_copy()}
-              </button>
-            </div>
+            {#if showCommand}
+              <span class="dm-sub">{status.latest_prerelease ? m.settings_run_prerelease({ version: status.latest_version }) : m.settings_run_on_host()}</span>
+              <div class="up-cmd">
+                <code class="dm-mono">{upgradeOneLiner}</code>
+                <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(upgradeOneLiner, m.settings_command_copied())}>
+                  <Copy size={12} /> {m.common_copy()}
+                </button>
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -126,11 +150,34 @@
         </label>
       </div>
     </div>
+
+    <div class="dm-form-sec">
+      <div>
+        <h4>{m.settings_update_channel()}</h4>
+        <p>{m.settings_update_channel_hint()}</p>
+      </div>
+      <div class="up-chan">
+        {#if canChangeChannel}
+          <Segmented
+            label={m.settings_update_channel()}
+            value={channel}
+            options={[
+              { key: 'stable', label: m.settings_channel_stable() },
+              { key: 'prerelease', label: m.settings_channel_prerelease() }
+            ]}
+            onchange={(k) => form.set('update_channel', k)}
+          />
+        {:else}
+          <span>{channel === 'prerelease' ? m.settings_channel_prerelease() : m.settings_channel_stable()}</span>
+          <span class="dm-sub">{m.settings_channel_needs_upgrade()}</span>
+        {/if}
+      </div>
+    </div>
   </div>
 
   <div class="set-bar">
     <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>{m.settings_discard()}</button>
-    <button type="button" class="dm-btn dm-btn-primary" onclick={form.save} disabled={!form.dirty || form.busy}>
+    <button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={!form.dirty || form.busy}>
       {form.busy ? m.common_saving() : m.common_save()}
     </button>
   </div>
@@ -163,6 +210,7 @@
     padding: 4px 8px;
   }
   .up-int { display: flex; align-items: center; gap: 8px; }
+  .up-chan { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
   .up-int input { width: 90px; }
   .set-bar { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; }
   :global(.up-spin) { animation: up-spin 0.9s linear infinite; }

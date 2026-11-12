@@ -49,6 +49,12 @@ paths:
         back unchanged is allowed. Every change writes a
         `settings.agent_public_url_update` audit entry with the old and new
         value.
+
+        `update_channel` is `stable` (also when unset) or `prerelease`; any
+        other value is rejected with 400. Changing it also needs
+        `system.upgrade` on everything (403 otherwise), and every change
+        writes a `settings.update_channel_update` audit entry with the old
+        and new value.
       requestBody:
         required: true
         content:

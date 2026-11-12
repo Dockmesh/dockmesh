@@ -4001,6 +4001,8 @@ paths:
         checker runs once every 24h in the background; `POST /system/update-check`
         forces an immediate refresh. `update_available` is computed against
         the running binary's version — "dev" builds never show as upgradable.
+        On the `stable` channel only stable releases count; on `prerelease`
+        the newest release, stable or release candidate, does.
       responses:
         "200":
           description: Update status snapshot.
@@ -4011,6 +4013,8 @@ paths:
                 properties:
                   current_version: {type: string}
                   latest_version: {type: string}
+                  latest_prerelease: {type: boolean, description: True when latest_version is a release candidate.}
+                  channel: {type: string, enum: [stable, prerelease]}
                   update_available: {type: boolean}
                   release_url: {type: string}
                   release_notes: {type: string}
@@ -5914,6 +5918,12 @@ paths:
         back unchanged is allowed. Every change writes a
         `settings.agent_public_url_update` audit entry with the old and new
         value.
+
+        `update_channel` is `stable` (also when unset) or `prerelease`; any
+        other value is rejected with 400. Changing it also needs
+        `system.upgrade` on everything (403 otherwise), and every change
+        writes a `settings.update_channel_update` audit entry with the old
+        and new value.
       requestBody:
         required: true
         content:

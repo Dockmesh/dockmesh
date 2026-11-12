@@ -1,0 +1,3 @@
+kind: Changed
+body: install.sh accepts --version <tag> after bash -s --, installs a pre-release only when it is named, and stops instead of replacing a newer installed version, such as a release candidate, with an older latest release
+time: 2026-11-12T19:40:45.626851634Z
