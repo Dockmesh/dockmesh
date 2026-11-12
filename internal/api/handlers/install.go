@@ -11,15 +11,23 @@ import (
 )
 
 // AgentInstallScript serves the legacy web-port installer (?token=), with
-// the token filled in. No JWT auth:
-// the enrollment token is redeemed later by the agent itself. The
-// optional ?ca= fingerprint must match this server's CA, so a command
-// copied before a CA rotation fails here with a clear message instead of
-// at enroll time.
+// the token filled in. No JWT auth: the enrollment token is redeemed later
+// by the agent itself. The optional ?ca= fingerprint must match this
+// server's CA, so a command copied before a CA rotation fails here with a
+// clear message instead of at enroll time. Every use is logged and limited
+// per IP address like the installer on the agent port; admins get a notice
+// at most once a day.
 func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 	if h.Agents == nil {
 		http.Error(w, "agents not configured", http.StatusServiceUnavailable)
 		return
+	}
+	if l := h.webInstallLimiter; l != nil {
+		if _, ok, retry := l.Acquire(limitKey(clientIP(r))); !ok {
+			writeRetryAfter(w, retry)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 	}
 	token := r.URL.Query().Get("token")
 	if token == "" {
@@ -40,6 +48,7 @@ func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	h.webInstallNotice.observe(r.Context(), clientIP(r))
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(script) //nolint:gosec // a shell script sent as text/x-shellscript, never rendered as HTML

@@ -1,0 +1,3 @@
+kind: Changed
+body: Fetching the agent installer over the web port (install/agent.sh?token=) is deprecated and goes away in 0.7.0; each use is logged and admins get a notice at most once a day
+time: 2026-11-12T13:59:37.845336644Z
