@@ -247,7 +247,10 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		if err != nil {
 			// SQLite unique constraint code is vendor-specific; the string
 			// "UNIQUE constraint" is stable enough.
-			return 0, ErrDuplicateHost
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				return 0, ErrDuplicateHost
+			}
+			return 0, err
 		}
 		return res.LastInsertId()
 	})

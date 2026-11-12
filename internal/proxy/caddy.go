@@ -119,22 +119,10 @@ func verifyAdmin(ctx context.Context, id string) error {
 	return nil
 }
 
-// pushConfig POSTs the config to Caddy's admin API /load endpoint after
-// checking it reaches the managed Caddy. Caddy replaces its entire
-// running config atomically and saves it, so a restarted container
-// (`--resume`) comes back with the same routes.
-func pushConfig(ctx context.Context, cfg *caddyConfig) error {
-	if cfg.Admin == nil {
-		return errNotManagedCaddy
-	}
-	if err := verifyAdmin(ctx, cfg.Admin.ID); err != nil {
-		return err
-	}
-	return postLoad(ctx, cfg, loadTimeout)
-}
-
 // postLoad sends cfg to /load of an admin API already verified as the
-// managed Caddy. A refusal is a *loadRejectedError.
+// managed Caddy. Caddy replaces its entire running config atomically and
+// saves it, so a restarted container (`--resume`) comes back with the same
+// routes. A refusal is a *loadRejectedError.
 func postLoad(ctx context.Context, cfg *caddyConfig, timeout time.Duration) error {
 	if cfg.Admin == nil {
 		return errNotManagedCaddy

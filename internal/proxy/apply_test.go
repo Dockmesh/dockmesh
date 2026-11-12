@@ -281,8 +281,7 @@ func TestReconcileSkipsRefusedConfig(t *testing.T) {
 	}
 }
 
-// With Caddy not answering, a change is saved and applied later, as
-// before.
+// With Caddy not answering, a change is saved and applied later.
 func TestChangeWhileCaddyDownIsSavedAndAppliedLater(t *testing.T) {
 	ctx := context.Background()
 	s, f, _ := newApplyService(t)
@@ -362,7 +361,7 @@ func TestServesRoutes(t *testing.T) {
 }
 
 // An install upgraded while one row is a change Caddy refused (saved
-// before the apply transaction existed): that row doesn't count as loaded,
+// by an older version): that row doesn't count as loaded,
 // so it no longer blocks the other sites.
 func TestBackfillLeavesOutRowCaddyRefused(t *testing.T) {
 	ctx := context.Background()

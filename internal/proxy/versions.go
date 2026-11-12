@@ -252,7 +252,7 @@ func (s *Service) startAndVerify(ctx context.Context) error {
 		return err
 	}
 	if s.lastLoaded == nil || !sameConfig(running, s.lastLoaded) {
-		return errors.New("the running config differs from the routes")
+		return errors.New("the running config differs from the config Dockmesh loaded")
 	}
 	return nil
 }

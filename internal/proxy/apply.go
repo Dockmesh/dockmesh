@@ -23,6 +23,11 @@ import (
 // sites) stays in the server log.
 var ErrApplyRejected = errors.New("Caddy rejected the configuration. Nothing was changed.") //nolint:staticcheck // shown to users as is
 
+// ErrConfigRejected stands in for Caddy's own error when a new container
+// refuses the stored config: that error can quote other sites'
+// configuration, which proxy.view callers only see masked.
+var ErrConfigRejected = errors.New("caddy rejected the configuration; the server log has the details")
+
 // loadRejectedError is Caddy refusing a /load; it keeps running its
 // previous config then.
 type loadRejectedError struct {
@@ -294,7 +299,6 @@ func (s *Service) applyChange(ctx context.Context, write func(tx *sql.Tx) (int64
 	res, err := s.load(ctx, routes, id, always, txLoadTimeout)
 	switch {
 	case isRejected(err):
-		_ = tx.Rollback()
 		return 0, 0, ErrApplyRejected
 	case err != nil:
 		// Caddy may or may not have taken the config; the watchdog
