@@ -50,6 +50,8 @@ curl -fsSL 'https://dockmesh.example.com/install/agent.sh?token=<token>&ca=<fing
 
 The token is part of the URL, so a reverse proxy in front of Dockmesh writes it to its access log. It stays valid until it is used or expires; keep such logs private or re-issue the token if one leaked.
 
+The command fetches the installer and the agent binary from the base URL. With an `http://` base URL, run it only on a trusted network, or put Dockmesh behind HTTPS first (see [Security hardening](../operations/hardening.md#network-exposure)).
+
 Adding a host needs the `hosts.create` permission.
 
 ### What the installer does
@@ -98,8 +100,6 @@ The agent refuses to enroll over plain `http://` unless you start it with `--ins
 ## Enrollment and certificates
 
 Each host gets a single-use enrollment token, valid for 24 hours unless `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` says otherwise. The agent enrolls on the server's agent port and trusts only the agent CA pinned in the install script, so it can't be redirected to another server. The server generates the agent's key pair and a client certificate signed by its CA, and the agent pins that CA for all later connections.
-
-The install script itself comes from the base URL and carries the CA fingerprint and the binary checksums. Use an `https://` base URL so nobody can change the script on the way.
 
 Agent certificates are valid for 365 days. An online agent renews its certificate over its connection once less than 30 days are left; the host keeps its ID. The host's **Overview** tab shows when the certificate expires. Admins get a notice for an agent whose certificate expires within 14 days, and a critical one for an offline agent whose certificate has expired. To bring such an agent back, re-issue its token (see below) and run the new install command on the host.
 
