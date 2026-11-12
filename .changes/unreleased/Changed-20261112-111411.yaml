@@ -1,3 +1,3 @@
 kind: Changed
-body: The Add host dialog and the docs warn that over a plain http:// base URL the agent install command should only be run on a trusted network
+body: The docs warn that install commands created by earlier versions (install/agent.sh?token= on the web port) should only be run from a trusted network when the base URL is plain http://
 time: 2026-11-12T11:14:11.777594763Z
