@@ -45,6 +45,17 @@ The update keeps running if you close the page. It can be cancelled while it pul
 
 There's no vulnerability scan gate before the swap. Containers started with `--rm` are refused, since stopping them would delete them.
 
+## Swarm task containers
+
+On a host that is a Docker Swarm node, the containers Swarm runs for a service's tasks (label `com.docker.swarm.service.id`) are never updated or recreated by Dockmesh. Replacing one would make Swarm start a new task while the replaced container stays behind outside Swarm. Update the service instead.
+
+- The update check skips them, so they are never marked **update** or listed under **Apps**.
+- The **Updates** page lists them under **Managed by Swarm** with the service name, and their container page has no **Updates** tab.
+- `POST /api/v1/containers/{id}/update` and `/rollback` answer `409` with code `swarm_managed`. `POST /api/v1/containers/updates` leaves them out and returns them under `skipped`; if every container is one, it answers `409` `swarm_managed`.
+- Stop and restart still work. Swarm then starts a new task for the service.
+
+Hosts that are not in a Swarm have no such containers, so nothing changes there.
+
 ## Roll back
 
 The **Rollback timeline** on the **Updates** tab lists earlier updates. Use **Roll back to this image** on an entry to recreate the container from that entry's rollback tag, the same way as an update. A rollback only accepts history entries of the container it is called for.

@@ -34,6 +34,7 @@
     host_name?: string;
     restart_count?: number;
     image_update_available?: boolean;
+    swarm_service?: string;
   }
 
   let containers = $state<Container[]>([]);
@@ -251,7 +252,8 @@
     if (canControl) {
       items.push({ separator: true });
       if (running) {
-        items.push({ label: m.common_restart(), onclick: () => action(c, 'restart') }, { label: m.common_stop(), onclick: () => action(c, 'stop') });
+        const hint = c.swarm_service ? m.containers_swarm_new_task() : undefined;
+        items.push({ label: m.common_restart(), hint, onclick: () => action(c, 'restart') }, { label: m.common_stop(), hint, onclick: () => action(c, 'stop') });
       } else {
         items.push({ label: m.common_start(), onclick: () => action(c, 'start') });
       }

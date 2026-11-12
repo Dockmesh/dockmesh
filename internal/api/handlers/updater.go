@@ -28,6 +28,9 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 		return
 	}
+	if h.writeIfSwarmTask(w, r, id) {
+		return
+	}
 	if !h.allowStackRebuild(w, r, id) {
 		return
 	}
@@ -39,6 +42,10 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	op := h.startImageUpdateOp(dr, id, "", false)
 	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
 	op.Finish(err)
+	if svc, ok := updater.AsSwarmManaged(err); ok {
+		writeSwarmManaged(w, svc)
+		return
+	}
 	if errors.Is(err, updater.ErrBusy) || errors.Is(err, operations.ErrCancelled) || errors.Is(err, stacks.ErrModifiedOutside) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -73,10 +80,17 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "history_id required")
 		return
 	}
+	if h.writeIfSwarmTask(w, r, id) {
+		return
+	}
 	if !h.allowStackRebuild(w, r, id) {
 		return
 	}
 	res, err := h.Updater.Rollback(r.Context(), id, req.HistoryID, middleware.UserID(r.Context()))
+	if svc, ok := updater.AsSwarmManaged(err); ok {
+		writeSwarmManaged(w, svc)
+		return
+	}
 	if errors.Is(err, updater.ErrHistoryNotFound) {
 		writeError(w, http.StatusNotFound, "history entry not found")
 		return
@@ -163,4 +177,44 @@ func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, con
 		return false
 	}
 	return h.checkStackFiles(w, r, stack)
+}
+
+// writeIfSwarmTask answers 409 for a task container of a Swarm service
+// before an operation is recorded for it; the updater refuses it again.
+func (h *Handlers) writeIfSwarmTask(w http.ResponseWriter, r *http.Request, containerID string) bool {
+	if h.Docker == nil {
+		return false
+	}
+	info, err := h.Docker.InspectContainer(r.Context(), containerID)
+	if err != nil || info.Config == nil {
+		return false
+	}
+	if svc := updater.SwarmService(info.Config.Labels); svc != "" {
+		writeSwarmManaged(w, svc)
+		return true
+	}
+	return false
+}
+
+func writeSwarmManaged(w http.ResponseWriter, service string) {
+	writeJSON(w, http.StatusConflict, newSwarmSkip("", service))
+}
+
+func newSwarmSkip(containerID, service string) swarmSkip {
+	return swarmSkip{
+		ContainerID: containerID,
+		Error:       (&updater.SwarmManagedError{Service: service}).Error(),
+		Code:        codeSwarmManaged,
+		Service:     service,
+	}
+}
+
+const codeSwarmManaged = "swarm_managed"
+
+// swarmSkip is a container an update refused because Swarm manages it.
+type swarmSkip struct {
+	ContainerID string `json:"container_id,omitempty"`
+	Error       string `json:"error"`
+	Code        string `json:"code"`
+	Service     string `json:"service"`
 }

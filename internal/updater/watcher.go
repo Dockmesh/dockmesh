@@ -193,7 +193,7 @@ func (w *Watcher) poll(ctx context.Context) {
 	}
 	seen := make(map[string]struct{}, len(containers))
 	for _, c := range containers {
-		if c.Image == "" || strings.HasPrefix(c.Image, "sha256:") {
+		if c.Image == "" || strings.HasPrefix(c.Image, "sha256:") || SwarmService(c.Labels) != "" {
 			continue
 		}
 		ref := normalizeImageRef(baseRef(c.Image))

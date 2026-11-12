@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -27,6 +28,7 @@ type containerRow struct {
 	HealthStatus         string `json:"health_status,omitempty"`          // healthy / unhealthy / starting / "" (none)
 	RestartCount         int    `json:"restart_count,omitempty"`          // populated via per-row inspect
 	ImageUpdateAvailable bool   `json:"image_update_available,omitempty"` // from the update watcher cache
+	SwarmService         string `json:"swarm_service,omitempty"`          // set on Swarm task containers, which are never updated here
 }
 
 // parseHealthFromStatus extracts the healthcheck verdict from Docker's
@@ -78,13 +80,14 @@ func enrichRestartCounts(ctx context.Context, target host.Host, rows []container
 	wg.Wait()
 }
 
-// applyImageUpdateFlags sets ImageUpdateAvailable per row from the
-// background watcher cache. No-op when the watcher is absent.
+// applyImageUpdateFlags sets SwarmService per row and ImageUpdateAvailable
+// from the background watcher cache, never for a Swarm task container.
 func (h *Handlers) applyImageUpdateFlags(rows []containerRow) {
-	if h.UpdateWatcher == nil {
-		return
-	}
 	for i := range rows {
+		rows[i].SwarmService = updater.SwarmService(rows[i].Labels)
+		if h.UpdateWatcher == nil || rows[i].SwarmService != "" {
+			continue
+		}
 		if info, ok := h.UpdateWatcher.Get(rows[i].Image); ok && info.UpdateAvailable {
 			rows[i].ImageUpdateAvailable = true
 		}

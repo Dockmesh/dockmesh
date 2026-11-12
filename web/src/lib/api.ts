@@ -2214,7 +2214,7 @@ export const api = {
       request<UpdateResult>(`/containers/${id}/update`, { method: 'POST' }),
     // Queues image updates that run one after another on the server.
     updateBulk: (ids: string[]) =>
-      request<{ group_id: string; operations: Operation[] }>('/containers/updates', {
+      request<{ group_id: string; operations: Operation[]; skipped?: { container_id: string; service: string }[] }>('/containers/updates', {
         method: 'POST',
         body: JSON.stringify({ container_ids: ids })
       }),
