@@ -1,3 +1,0 @@
-kind: Changed
-body: A deploy of a stack with a default environment override asks first and names the override file; scale and rolling update ask before they use stack files changed outside Dockmesh; the stack page shows when auto-scaling is paused and why
-time: 2026-11-10T14:43:56.241722473Z

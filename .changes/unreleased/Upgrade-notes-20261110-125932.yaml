@@ -1,6 +1,0 @@
-kind: Upgrade notes
-body: On the first start, the .dockmesh.meta.json and compose.<env>.yaml files of existing stacks are accepted as they are on disk, the same way compose.yaml and .env were when they were first checked. If a container can write its own stack directory, review those files after the upgrade. The auto-scaler pauses a stack with a notice while its files are changed outside Dockmesh or its default override was never deployed by hand; deploy the stack once to resume it
-time: 2026-11-10T12:59:32.546790538Z
-custom:
-    Audience: admins
-    Id: stack-files-backfill

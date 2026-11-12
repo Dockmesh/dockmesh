@@ -1,3 +1,0 @@
-kind: Security
-body: The auto-scaler, manual scale, rolling updates and image updates of stack containers check the stack files like a deploy does. .dockmesh.meta.json and compose.<env>.yaml override files count as stack files, so a change to them outside Dockmesh needs a confirmation before anything is deployed from them. Affects v0.5.2 and earlier
-time: 2026-11-10T12:59:31.286185095Z
