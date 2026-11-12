@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
 
 // EnrollPath is where the agent listener accepts enrollment requests.
@@ -48,34 +50,59 @@ func enrollURLFromAgentURL(agentURL string) string {
 
 // EnrollHandler serves POST /enroll on the agent listener. The client has
 // no certificate yet, so the listener must allow certificate-less
-// handshakes; the one-time token is the credential.
-func EnrollHandler(svc *Service) http.Handler {
+// handshakes; the one-time token is the credential. Failed attempts count
+// against the per-IP limiter, successful ones are taken back.
+func EnrollHandler(svc *Service, limiter *ratelimit.Limiter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// The listener accepts unauthenticated clients here, so a slow
-		// body must not hold a connection open indefinitely.
-		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(enrollReadTimeout))
-		var req EnrollRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollBody)).Decode(&req); err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
+		if limiter == nil {
+			serveEnroll(w, r, svc)
 			return
 		}
-		resp, err := svc.Enroll(r.Context(), req)
-		if errors.Is(err, ErrInvalidToken) {
-			http.Error(w, "invalid or expired enrollment token", http.StatusUnauthorized)
+		key := peerLimitKey(r)
+		ticket, ok, retry := limiter.Acquire(key)
+		if !ok {
+			writeTooMany(w, retry)
 			return
 		}
-		if err != nil {
-			slog.Error("agent enroll", "err", err)
-			http.Error(w, "enrollment failed", http.StatusInternalServerError)
+		if !serveEnroll(w, r, svc) {
+			limiter.Refund(ticket)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(resp)
+		if until, started := limiter.Settle(ticket); started {
+			slog.Warn("agent enroll: address blocked after repeated failures", "peer", key, "until", until)
+		}
 	})
+}
+
+// serveEnroll answers one enrollment request and reports whether it counts
+// as a failed attempt: a bad body or a rejected token. A server error is
+// not the client's.
+func serveEnroll(w http.ResponseWriter, r *http.Request, svc *Service) (failed bool) {
+	// The listener accepts unauthenticated clients here, so a slow
+	// body must not hold a connection open indefinitely.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(enrollReadTimeout))
+	var req EnrollRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollBody)).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return true
+	}
+	resp, err := svc.Enroll(r.Context(), req)
+	if errors.Is(err, ErrInvalidToken) {
+		http.Error(w, "invalid or expired enrollment token", http.StatusUnauthorized)
+		return true
+	}
+	if err != nil {
+		slog.Error("agent enroll", "err", err)
+		http.Error(w, "enrollment failed", http.StatusInternalServerError)
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp) //nolint:gosec // the enrolling agent receives its own new key, over TLS
+	return false
 }

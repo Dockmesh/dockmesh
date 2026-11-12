@@ -153,7 +153,7 @@ func TestReloadEndpointsAddsAgentHostToCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(res.InstallHint, "curl -fsSL 'https://dm.lan/install/agent.sh?") {
+	if !strings.Contains(res.InstallHint, " 'https://dm.lan:8443/install/agent.sh' ") {
 		t.Errorf("install hint uses old URL: %s", res.InstallHint)
 	}
 	if res.AgentURL != ep.AgentURL || res.EnrollURL != "https://dm.lan:8443/enroll" {

@@ -2601,11 +2601,10 @@
   "hosts_add_generating": "Wird erzeugt…",
   "hosts_add_hostname_ph": "z. B. edge-fra-2",
   "hosts_add_hostname_required": "Hostname erforderlich",
-  "hosts_add_http_hint": "Über unverschlüsseltes HTTP diesen Befehl nur in einem vertrauenswürdigen Netz ausführen.",
   "hosts_add_identify": "Host benennen",
   "hosts_add_is_online": "ist online.",
   "hosts_add_name_first": "Zuerst den Host benennen.",
-  "hosts_add_paste_after": ". Das Token wird nur einmal angezeigt und läuft ab am {date}.",
+  "hosts_add_paste_after": ". Einmal verwendbar, gültig bis {date}.",
   "hosts_add_paste_before": "In einer Shell einfügen auf",
   "hosts_add_ready": "Installationsbefehl bereit für",
   "hosts_add_run_title": "Installation auf dem neuen Host ausführen",
@@ -5980,5 +5979,9 @@
   "stacks_d_scaler_paused_title": "Auto-Scaling ist für diesen Stack pausiert",
   "stacks_d_scaler_paused_files": "Außerhalb von Dockmesh geändert: {files}. Die Dateien prüfen und den Stack einmal deployen, um sie zu bestätigen; danach skaliert der Auto-Scaler wieder.",
   "stacks_d_scaler_paused_override": "Der Standard-Override {env} wurde noch nicht durch ein manuelles Deployment bestätigt. Den Stack einmal deployen; danach skaliert der Auto-Scaler wieder.",
-  "stacks_d_scaler_paused_rules": "Die Skalierungsregeln sind ungültig ({error}). Die Regeln über die API erneut speichern."
+  "stacks_d_scaler_paused_rules": "Die Skalierungsregeln sind ungültig ({error}). Die Regeln über die API erneut speichern.",
+  "hosts_add_pin_hint": "Der Befehl pinnt das Agent-Zertifikat dieses Servers und läuft deshalb nur gegen diesen Server.",
+  "hosts_add_new_command": "Neuer Befehl",
+  "hosts_add_new_command_failed": "Neuer Befehl konnte nicht erstellt werden",
+  "hosts_add_expired": "Dieser Befehl ist abgelaufen."
 }

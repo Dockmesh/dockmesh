@@ -39,14 +39,13 @@ Agents never listen on a port. They connect out to the server:
 
 | Destination | When |
 |---|---|
-| Base URL (8080 by default, 443 behind a TLS proxy) | Install script and agent binary download, only while you install |
-| Agent URL (8443 by default) | Enrollment, then always: one long-lived WebSocket; certificate renewal and agent upgrades go over the same port |
+| Agent URL (8443 by default) | Install script and agent binary download, enrollment, then always: one long-lived WebSocket; certificate renewal and agent upgrades go over the same port |
 | Container registries | Image pulls on the agent host |
 | `get.docker.com` | Only if the installer has to install Docker |
 
-So the server needs 8443 reachable from every agent host, and the base URL reachable while you install an agent. The host name or IP in the agent URL must be covered by the agent listener's certificate; Dockmesh adds the agent URL's host itself, and `DOCKMESH_AGENT_SANS` adds more. **Check connection** under **Settings → General** tests this from the server; see [Multi-host](../features/multi-host.md#check-the-agent-url).
+So the server needs 8443 reachable from every agent host; agent hosts don't need the base URL. The host name or IP in the agent URL must be covered by the agent listener's certificate; Dockmesh adds the agent URL's host itself, and `DOCKMESH_AGENT_SANS` adds more. **Check connection** under **Settings → General** tests this from the server; see [Multi-host](../features/multi-host.md#check-the-agent-url).
 
-Enrollment runs over TLS on the agent port, and the agent trusts only the agent CA pinned in the install script. The install script itself comes from the base URL, so serve that over `https://` when agent hosts reach it across an untrusted network.
+The install command pins the agent listener's public key, and the agent trusts only the agent CA in the install script for enrollment, so the whole install runs over TLS on the agent port.
 
 ## Firewall examples
 

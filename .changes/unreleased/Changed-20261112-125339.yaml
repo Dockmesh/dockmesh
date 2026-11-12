@@ -1,0 +1,3 @@
+kind: Changed
+body: Enrollment tokens are valid for 1 hour instead of 24 by default (DOCKMESH_AGENT_ENROLL_TOKEN_TTL still overrides it), and the Add host dialog has a New command button that replaces the token
+time: 2026-11-12T12:53:39.621685709Z

@@ -1175,7 +1175,11 @@ func main() {
 		} else {
 			agentMux := http.NewServeMux()
 			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
-			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc))
+			// The public routes use the per-IP limits of the sign-in
+			// endpoints, one limiter each so downloads can't use up the
+			// enrollment budget.
+			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc, handlers.NewLoginLimiter()))
+			agentMux.Handle(agents.InstallBinaryPrefix, agents.InstallHandler(agentsSvc, handlers.NewLoginLimiter()))
 			agentMux.Handle(agents.BinaryPath, agents.BinaryHandler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,

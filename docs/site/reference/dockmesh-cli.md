@@ -119,7 +119,7 @@ sudo systemctl start dockmesh
 |---|---|
 | `--add-san NAME` | DNS name or IP address to add. Required; repeat it or pass a comma-separated list |
 
-`ca rotate` renames `agents-ca.*` and `agents-server.*` to `*.old`, creates a new CA and server certificate (SANs from `DOCKMESH_AGENT_SANS`), and sets every agent to `pending` with a fresh enrollment token. It prints one `curl … /install/agent.sh?token=…&ca=… | sudo bash` line per agent, built from the base URL in `dockmesh.env` or on the **Settings** page. Run that line on each agent host to re-enroll it.
+`ca rotate` renames `agents-ca.*` and `agents-server.*` to `*.old`, creates a new CA and server certificate (SANs from `DOCKMESH_AGENT_SANS`), and sets every agent to `pending` with a fresh enrollment token. It prints one `curl … --pinnedpubkey … /install/agent.sh | sudo bash -s -- --token …` line per agent, built from the agent URL in `dockmesh.env` or on the **Settings** page and pinned to the new listener key. Restart the server, then run that line on each agent host to re-enroll it.
 
 | Flag | Meaning |
 |---|---|
@@ -163,7 +163,7 @@ sudo -u dockmesh dockmesh enroll list
 sudo -u dockmesh dockmesh enroll revoke --name web-02
 ```
 
-`enroll create --name NAME` registers a host and prints its ID, the enrollment token and an install command. The install command pins the agent CA by its fingerprint. The token can be used once and expires after 24 hours, or after `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` (a Go duration from `1m` to `720h`).
+`enroll create --name NAME` registers a host and prints its ID, the enrollment token and an install command. The install command pins the agent listener's public key. The token can be used once and expires after 1 hour, or after `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` (a Go duration from `1m` to `720h`).
 
 `enroll list` shows ID, name, status, hostname, agent version and last-seen time. `enroll revoke` takes `--name` or `--id` and deletes the agent record from the database. A running server is not told about it, so an agent that is connected at that moment stays connected until it reconnects; revoke under **Hosts** in the UI to close the connection right away. See [Hosts and agents](../concepts/hosts-and-agents.md).
 

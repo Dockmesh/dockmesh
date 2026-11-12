@@ -77,6 +77,23 @@
     }
   }
 
+  // "New command" rotates the token; the previous command stops working.
+  let rotating = $state(false);
+  let now = $state(Date.now());
+  const expired = $derived(!!createResult && Date.parse(createResult.token_expires_at) <= now);
+  async function newCommand() {
+    if (!createResult) return;
+    rotating = true;
+    try {
+      createResult = await api.agents.rotateToken(createResult.agent.id);
+      now = Date.now();
+    } catch (err) {
+      toast.error(m.hosts_add_new_command_failed(), err instanceof ApiError ? err.message : undefined);
+    } finally {
+      rotating = false;
+    }
+  }
+
   async function copyCmd() {
     if (!createResult) return;
     const ok = await copyToClipboard(createResult.install_hint);
@@ -95,6 +112,7 @@
     if (!createResult || connected) return;
     pollTimer = setInterval(async () => {
       if (!createResult) return;
+      now = Date.now();
       try {
         const a = await api.agents.get(createResult.agent.id);
         if (a.status === 'online') {
@@ -212,9 +230,9 @@
             <p class="ed-add-host-blurb">
               {m.hosts_add_paste_before()} <b>{createResult.agent.name}</b>{m.hosts_add_paste_after({ date: fmtDateTime(createResult.token_expires_at) })}
             </p>
-            <div class="ed-add-host-cmd-wrap">
+            <div class="ed-add-host-cmd-wrap" class:expired>
               <pre class="ed-add-host-cmd">{createResult.install_hint}</pre>
-              <button type="button" class="dm-btn dm-btn-secondary dm-btn-xs ed-add-host-copy" onclick={copyCmd}>
+              <button type="button" class="dm-btn dm-btn-secondary dm-btn-xs ed-add-host-copy" onclick={copyCmd} disabled={expired}>
                 {#if copied}<Check size={10} strokeWidth={1.5} /> {m.common_copied()}{:else}<Copy size={10} strokeWidth={1.5} /> {m.common_copy()}{/if}
               </button>
             </div>
@@ -222,7 +240,13 @@
               <span class="ed-add-host-tokenbox-label">{m.hosts_add_token()}</span>
               <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
             </div>
-            <p class="ed-add-host-blurb">{m.hosts_add_http_hint()}</p>
+            <p class="ed-add-host-blurb">
+              {#if expired}{m.hosts_add_expired()}{/if}
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={newCommand} disabled={rotating || connected}>
+                {m.hosts_add_new_command()}
+              </button>
+            </p>
+            <p class="ed-add-host-blurb">{m.hosts_add_pin_hint()}</p>
           {/if}
         </div>
       </section>
@@ -401,6 +425,7 @@
 
   /* ─── Section 02 ─── */
   .ed-add-host-cmd-wrap { position: relative; margin-top: 10px; }
+  .ed-add-host-cmd-wrap.expired { opacity: 0.45; }
   .ed-add-host-cmd {
     margin: 0;
     padding: 14px 16px;

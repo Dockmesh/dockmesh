@@ -80,9 +80,9 @@ The push webhook of a git-backed stack only works with a webhook secret of at le
 
 ## Agents
 
-- The install command downloads the installer and the agent binary from the base URL; the installer runs as root and carries the CA fingerprint and the binary checksums. With an `http://` base URL, install agents only from a trusted network, or put Dockmesh behind HTTPS first (see [Network exposure](#network-exposure)).
+- The install command downloads the installer and the agent binary from the agent port and pins the agent listener's public key, so a wrong server stops curl before the script runs. Commands created by earlier versions (`<base-url>/install/agent.sh?token=…`) still work but fetch the script from the base URL: with an `http://` base URL, run those only from a trusted network, or copy a new command from **Hosts → Add host**.
 - The agent enrolls over HTTPS on the agent port and checks the server's certificate against the pinned CA fingerprint. It refuses plain-HTTP enrollment unless started with `--insecure-enroll` (or `DOCKMESH_INSECURE_ENROLL=true`); use that only in an isolated lab.
-- Enrollment tokens expire after 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL`, a Go duration such as `72h`). Treat an install command like a password until then, and revoke hosts you never finished enrolling.
+- Enrollment tokens expire after 1 hour (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL`, a Go duration such as `4h`). Treat an install command like a password until then, and revoke hosts you never finished enrolling.
 - Agent self-upgrades download the binary from the agent listener over the agent's mTLS connection and check it against the SHA-256 the server sends.
 - Revoking a host closes a connected agent's session. Stop the agent service on the host as well; see [Uninstall](./uninstall.md#remove-an-agent).
 

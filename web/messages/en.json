@@ -2601,11 +2601,10 @@
   "hosts_add_generating": "Generating…",
   "hosts_add_hostname_ph": "e.g. edge-fra-2",
   "hosts_add_hostname_required": "Hostname required",
-  "hosts_add_http_hint": "Over plain HTTP, run this only on a trusted network.",
   "hosts_add_identify": "Identify the host",
   "hosts_add_is_online": "is online.",
   "hosts_add_name_first": "Name the host first.",
-  "hosts_add_paste_after": ". The token is shown only once and expires {date}.",
+  "hosts_add_paste_after": ". Single use, valid until {date}.",
   "hosts_add_paste_before": "Paste this in a shell on",
   "hosts_add_ready": "Install command ready for",
   "hosts_add_run_title": "Run the install on the new host",
@@ -5980,5 +5979,9 @@
   "stacks_d_scaler_paused_title": "Auto-scaling is paused for this stack",
   "stacks_d_scaler_paused_files": "{files} changed outside Dockmesh. Review the files, then deploy the stack once to confirm them; auto-scaling resumes after that.",
   "stacks_d_scaler_paused_override": "The default environment override {env} was not confirmed by a manual deploy. Deploy the stack once; auto-scaling resumes after that.",
-  "stacks_d_scaler_paused_rules": "The scaling rules are invalid ({error}). Save them again through the API."
+  "stacks_d_scaler_paused_rules": "The scaling rules are invalid ({error}). Save them again through the API.",
+  "hosts_add_pin_hint": "The command pins this server's agent certificate, so it only runs against this server.",
+  "hosts_add_new_command": "New command",
+  "hosts_add_new_command_failed": "Could not create a new command",
+  "hosts_add_expired": "This command has expired."
 }

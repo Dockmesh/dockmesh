@@ -8533,7 +8533,7 @@ components:
         token_expires_at:
           type: string
           format: date-time
-          description: When the token stops working (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, default 24h).
+          description: When the token stops working (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, default 1h).
         enroll_url:
           type: string
           format: uri
@@ -8547,7 +8547,11 @@ components:
           description: SHA-256 of the agents CA certificate; the agent refuses to enroll with any other CA.
         install_hint:
           type: string
-          description: Single-line install command to run on the agent host as root.
+          description: |
+            Single-line install command to run on the agent host as root:
+            `curl -fsSLk --pinnedpubkey '<pin>' https://<agent host>:<port>/install/agent.sh | sudo bash -s -- --token <token>`.
+            The pin is the agent listener's public key; the token is an
+            installer argument, never part of a URL.
     AgentUpgradePolicy:
       type: object
       description: Fleet-wide agent upgrade policy (P.11.16) + live snapshot.

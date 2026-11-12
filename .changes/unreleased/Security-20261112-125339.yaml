@@ -1,0 +1,3 @@
+kind: Security
+body: The agent install command fetches the installer and the agent binary from the agent port and pins the agent listener's key; the enrollment token is passed to the installer instead of being part of the URL
+time: 2026-11-12T12:53:39.229855042Z
