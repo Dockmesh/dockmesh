@@ -25,6 +25,8 @@ func TestIsLatest(t *testing.T) {
 		{"first release", "v1.0.0", nil, true},
 		{"newer pre-release does not count", "v0.5.4", []string{"v0.6.0-rc.1", "v0.5.3"}, true},
 		{"pre-release is never latest", "v0.6.0-rc.1", []string{"v0.5.3"}, false},
+		{"pre-release of a far newer major is never latest", "v9.0.0-rc.1", []string{"v0.5.3"}, false},
+		{"first stable after its own pre-release", "v0.6.0", []string{"v0.6.0-rc.2", "v0.6.0-rc.1", "v0.5.3"}, true},
 		{"untagged version is never latest", "0.5.4", []string{"v0.5.3"}, false},
 		{"junk published tags are ignored", "v0.5.4", []string{"nightly", "v0.5.3"}, true},
 	}
