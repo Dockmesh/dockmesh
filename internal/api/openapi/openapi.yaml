@@ -2751,6 +2751,10 @@ paths:
         Stack files changed outside Dockmesh are refused like a deploy
         (`code: modified_outside`) until the request confirms them with
         `confirm_external=1`.
+        A task container of a Swarm service (label
+        `com.docker.swarm.service.id`) is refused with 409 `swarm_managed`:
+        replacing it would leave a copy outside Swarm next to the task
+        Swarm starts. Update the service instead.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/ConfirmExternalQuery"
@@ -2764,10 +2768,13 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "An update of this container or its stack is already running, or the stack files changed outside Dockmesh (`modified_outside`)."
+          description: "An update of this container or its stack is already running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ModifiedOutsideError"
+                  - $ref: "#/components/schemas/SwarmManagedError"
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -2786,7 +2793,8 @@ paths:
         the image compose.yaml names again.
         Stack files changed outside Dockmesh are refused like a deploy
         (`code: modified_outside`) until the request confirms them with
-        `confirm_external=1`.
+        `confirm_external=1`. Swarm task containers are refused with 409
+        `swarm_managed`, as for an update.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/ConfirmExternalQuery"
@@ -2810,10 +2818,13 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, or the stack files changed outside Dockmesh (`modified_outside`)."
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/ModifiedOutsideError"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ModifiedOutsideError"
+                  - $ref: "#/components/schemas/SwarmManagedError"
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info
@@ -3237,6 +3248,9 @@ paths:
         "not started". Stack files changed outside Dockmesh reject the
         request with 409 `modified_outside` unless it confirms them with
         `confirm_external=1`; an item whose files change after that fails.
+        Swarm task containers are not queued: they are listed under
+        `skipped` with code `swarm_managed`. When every container is one,
+        the request is refused with 409 `swarm_managed`.
       parameters:
         - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
@@ -3264,11 +3278,29 @@ paths:
                   operations:
                     type: array
                     items: {$ref: "#/components/schemas/Operation"}
+                  skipped:
+                    type: array
+                    description: Swarm task containers left out of the queue.
+                    items: {$ref: "#/components/schemas/SwarmManagedError"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "409":
+          description: "Stack files changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or every container is a Swarm task (`swarm_managed`, all of them under `skipped`)."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ModifiedOutsideError"
+                  - allOf:
+                      - $ref: "#/components/schemas/SwarmManagedError"
+                      - type: object
+                        required: [skipped]
+                        properties:
+                          skipped:
+                            type: array
+                            items: {$ref: "#/components/schemas/SwarmManagedError"}
         "503":
           description: The updater is not configured.
           content:
@@ -9371,6 +9403,21 @@ components:
           additionalProperties: {type: string}
         host_id: {type: string}
         host_name: {type: string}
+        health_status: {type: string, enum: [healthy, unhealthy, starting], description: Healthcheck verdict; absent without a healthcheck.}
+        restart_count: {type: integer}
+        image_update_available: {type: boolean, description: "A newer image is published for the container's image ref (from the update watcher). Never set for Swarm task containers."}
+        swarm_service:
+          type: string
+          description: Set on a task container of a Swarm service (its name, or its id without a name label). Image updates and rollbacks refuse these containers; stop and restart work and Swarm starts a new task.
+    SwarmManagedError:
+      type: object
+      description: The container is a task of a Swarm service. Swarm decides which image its tasks run, so update the service instead.
+      required: [error, code, service]
+      properties:
+        error: {type: string, example: Managed by Swarm service web.}
+        code: {type: string, enum: [swarm_managed]}
+        service: {type: string, description: Name of the Swarm service, or its id without a name label.: ''}
+        container_id: {type: string}
     GlobalEnvItem:
       type: object
       required: [id, key, value, group_name, encrypted]

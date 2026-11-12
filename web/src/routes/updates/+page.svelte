@@ -21,6 +21,7 @@
     State: string;
     Labels?: Record<string, string>;
     image_update_available?: boolean;
+    swarm_service?: string;
   }
   interface ImageCheck {
     image: string;
@@ -37,6 +38,12 @@
     image: string;
     check?: ImageCheck;
   }
+  interface SwarmRow {
+    id: string;
+    name: string;
+    image: string;
+    service: string;
+  }
   interface SystemRow {
     name: string;
     note: string;
@@ -52,6 +59,7 @@
   let refreshing = $state(false);
   let lastLoaded = $state<number | null>(null);
   let apps = $state<AppRow[]>([]);
+  let swarmTasks = $state<SwarmRow[]>([]);
   let checks = $state<Record<string, ImageCheck>>({});
   let system = $state<SystemRow[]>([]);
   let recentOps = $state<Operation[]>([]);
@@ -122,6 +130,10 @@
           check: checks[c.Image]
         }))
         .sort((a, b) => (a.stack || '~').localeCompare(b.stack || '~') || a.name.localeCompare(b.name));
+      swarmTasks = items
+        .filter((c) => c.swarm_service)
+        .map((c) => ({ id: c.Id, name: nameOf(c), image: c.Image, service: c.swarm_service! }))
+        .sort((a, b) => a.service.localeCompare(b.service) || a.name.localeCompare(b.name));
       operations.track(ops);
       recentOps = ops
         .filter((o) => o.status === 'succeeded' && o.steps.some((s) => s.key === 'swap' && s.status === 'succeeded'))
@@ -202,7 +214,11 @@
       started = next;
       operations.track(res.operations);
       selected = new Set();
-      toast.info(m.updates_queued({ count: list.length }), m.updates_queued_body());
+      toast.info(m.updates_queued({ count: res.operations.length }), m.updates_queued_body());
+      if (res.skipped?.length) {
+        const skipped = new Set(res.skipped.map((s) => s.container_id));
+        toast.info(m.updates_swarm_skipped({ names: list.filter((r) => skipped.has(r.id)).map((r) => r.name).join(', ') }));
+      }
     } catch (e) {
       toast.error(m.updates_queue_failed(), e instanceof ApiError ? e.message : undefined);
     } finally {
@@ -227,6 +243,7 @@
   const APP_COLS = '22px minmax(180px, 1.3fr) minmax(200px, 1.6fr) minmax(150px, 1fr) 110px 190px';
   const SYS_COLS = 'minmax(180px, 1.3fr) minmax(200px, 1.4fr) 80px minmax(160px, 1fr) 100px';
   const REC_COLS = 'minmax(180px, 1.3fr) minmax(200px, 1.4fr) 140px';
+  const SWARM_COLS = 'minmax(180px, 1.3fr) minmax(200px, 1.6fr) minmax(200px, 1.4fr)';
 </script>
 
 <section class="dm-page">
@@ -322,6 +339,22 @@
       <p class="dm-sub up-note">{m.updates_footer_note()} <InfoTip text={m.updates_footer_tip()} /></p>
     {/if}
   </div>
+
+  {#if swarmTasks.length}
+    <div>
+      <h2 class="dm-h2">{m.updates_swarm_title()}</h2>
+      <div class="dm-tbl" role="table" aria-label={m.updates_swarm_label()}>
+        {#each swarmTasks as s (s.id)}
+          <div class="dm-tr" role="row" style="grid-template-columns: {SWARM_COLS}">
+            <span role="cell" class="dm-nm"><a href="/containers/{encodeURIComponent(s.id)}">{s.name}</a></span>
+            <span role="cell" class="dm-mono up-ver dm-trunc" title={s.image}>{s.image}</span>
+            <span role="cell" class="dm-dim">{m.updates_swarm_reason({ service: s.service })}</span>
+          </div>
+        {/each}
+      </div>
+      <p class="dm-sub up-note">{m.updates_swarm_note()}</p>
+    </div>
+  {/if}
 
   {#if recentOps.length}
     <div>

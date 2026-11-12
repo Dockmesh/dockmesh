@@ -77,6 +77,13 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
+  // Swarm replaces its task containers itself: Dockmesh never swaps one
+  // for a new image, and a stop or restart makes Swarm start a new task.
+  const swarmService = $derived.by(() => {
+    const labels = info?.Config?.Labels as Record<string, string> | undefined;
+    const id = labels?.['com.docker.swarm.service.id'];
+    return id ? labels?.['com.docker.swarm.service.name'] || id : '';
+  });
   const canControl = $derived(!isSystem && allowed('containers.update'));
   const canExec = $derived(!isSystem && allowed('containers.exec'));
   const canFiles = $derived(!isSystem && allowed('containers.files'));
@@ -84,7 +91,7 @@
   // delete also need the terminal extra.
   const canWriteFiles = $derived(canFiles && canExec);
   const canRemove = $derived(!isSystem && allowed('containers.delete'));
-  const canUpgrade = $derived(!isSystem && allowed('containers.upgrade'));
+  const canUpgrade = $derived(!isSystem && !swarmService && allowed('containers.upgrade'));
   let loading = $state(true);
   type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
   const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];
@@ -1066,6 +1073,7 @@
         {#if info.State?.Paused}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> {m.containers_detail_resume()}</button>
         {:else if info.State?.Running}
+          {#if swarmService}<span class="dm-sub">{m.containers_swarm_new_task()}</span>{/if}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> {m.common_restart()}</button>
           <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else}
@@ -1074,6 +1082,13 @@
       {/if}
       <Menu label={m.containers_detail_more_actions()} items={headerMenu} />
     </header>
+  {/if}
+
+  {#if info && swarmService}
+    <div class="ctn-remote">
+      <span class="ctn-remote-bullet">·</span>
+      {m.containers_swarm_notice({ service: swarmService })}
+    </div>
   {/if}
 
   {#if info && isSystem}
