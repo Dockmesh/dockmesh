@@ -342,23 +342,6 @@ paths:
               schema: {$ref: "#/components/schemas/AgentUpgradePolicy"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
-  /agents/enroll:
-    post:
-      operationId: agents.enroll
-      tags: [agents]
-      summary: "Removed: agents enroll on the agent port"
-      description: |
-        Always answers 410. Agents enroll at `/enroll` on the agent listener
-        (the `enroll_url` of `AgentCreateResult`), where the TLS chain is
-        signed by the pinned agents CA. The install command from the Hosts
-        page uses that URL.
-      security: []
-      responses:
-        "410":
-          description: Gone; agents enroll with the install command from the Hosts page.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
   /alerts/rules:
     get:
       operationId: alerts.list_rules
@@ -5924,6 +5907,11 @@ paths:
         request is refused with 403 and nothing is saved. Sending the current
         value back unchanged is allowed. Every change writes a
         `settings.base_url_update` audit entry with the old and new value.
+
+        Install commands are built from `agent_public_url`, so changing it
+        also needs `hosts.create` on everything; without it the request is
+        refused with 403 and nothing is saved. Sending the current value
+        back unchanged is allowed.
       requestBody:
         required: true
         content:

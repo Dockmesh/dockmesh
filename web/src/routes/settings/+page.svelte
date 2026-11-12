@@ -117,8 +117,10 @@
           aria-label={m.settings_agent_url()}
           placeholder="wss://dockmesh.example.com:8443/connect"
           value={form.get('agent_public_url')}
+          disabled={!allowed('hosts.create')}
           oninput={(e) => form.set('agent_public_url', e.currentTarget.value)}
         />
+        {#if !allowed('hosts.create')}<p class="dm-sub">{m.settings_agent_url_needs_hosts()}</p>{/if}
         <div class="set-reach"><AgentReachability auto={false} showSettingsLink={false} /></div>
       </div>
     </div>

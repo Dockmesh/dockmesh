@@ -442,7 +442,7 @@ type PingPayload struct {
 	TS int64 `json:"ts"`
 }
 
-// EnrollRequest is POSTed to /api/v1/agents/enroll by an unauthenticated
+// EnrollRequest is POSTed to /enroll on the agent listener by an unauthenticated
 // agent that wants to swap a one-time token for a client cert.
 type EnrollRequest struct {
 	Token string `json:"token"`

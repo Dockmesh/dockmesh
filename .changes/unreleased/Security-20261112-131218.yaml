@@ -1,0 +1,3 @@
+kind: Security
+body: Changing the agent public URL in Settings needs the hosts.create permission as well as system.update, because every install command is built from it
+time: 2026-11-12T13:12:18.850828211Z

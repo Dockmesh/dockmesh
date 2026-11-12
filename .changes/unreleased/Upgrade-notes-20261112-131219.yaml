@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Custom roles that manage settings but not hosts can no longer change the agent public URL; add Hosts: Manage to such a role if it should'
+time: 2026-11-12T13:12:19.258685731Z
+custom:
+    Audience: admins
+    Id: agent-url-needs-hosts-create
