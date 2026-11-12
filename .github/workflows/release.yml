@@ -43,22 +43,35 @@ on:
         description: 'Tag to build (e.g. v1.2.3)'
         required: true
 
+# One release at a time: the latest decision reads the published releases
+# and must not race another run that is about to publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
-  contents: write  # needed to create the release + attach assets
+  contents: read
 
 jobs:
   notes:
     name: release notes
     runs-on: ubuntu-latest
+    # Later jobs check out this exact commit, so a branch named like the tag
+    # or a moved tag can't change what gets built.
+    outputs:
+      sha: ${{ steps.line.outputs.sha }}
+      version: ${{ steps.line.outputs.version }}
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+          persist-credentials: false
 
       # Once release/X.Y.x exists, main has moved on to the next minor, so a
       # vX.Y.N tag must come from that branch.
       - name: tag is on its release line
+        id: line
         env:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
@@ -66,9 +79,10 @@ jobs:
           [ -n "$line" ] || { echo "::error::$VERSION is not a vX.Y.Z tag"; exit 1; }
           git fetch --no-tags --unshallow origin \
             '+refs/heads/main:refs/remotes/origin/main' \
-            '+refs/heads/release/*:refs/remotes/origin/release/*' \
+            '+refs/heads/release/*.x:refs/remotes/origin/release/*.x' \
             "+refs/tags/$VERSION:refs/tags/$VERSION"
           sha=$(git rev-parse --verify "refs/tags/$VERSION^{commit}")
+          [ "$(git rev-parse HEAD)" = "$sha" ] || { echo "::error::checkout is not $VERSION"; exit 1; }
           branch=main
           if git rev-parse -q --verify "refs/remotes/origin/release/$line.x" > /dev/null; then
             branch="release/$line.x"
@@ -78,6 +92,8 @@ jobs:
             exit 1
           }
           echo "$VERSION ($sha) is on $branch"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -120,17 +136,15 @@ jobs:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.notes.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: set VERSION
         id: v
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
+        env:
+          VERSION: ${{ needs.notes.outputs.version }}
+        run: echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: setup Node (for SvelteKit build)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -207,22 +221,22 @@ jobs:
 
   release:
     name: publish release
-    needs: build
+    needs: [notes, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release and attach assets
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.notes.outputs.sha }}
+          persist-credentials: false
 
       - name: set VERSION
         id: v
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
+        env:
+          VERSION: ${{ needs.notes.outputs.version }}
+        run: echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: download all artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

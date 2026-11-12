@@ -10,7 +10,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
-    branches: [main, 'release/*']
+    branches: [main, 'release/*.x']
   merge_group:
   workflow_dispatch:
 
@@ -225,11 +225,13 @@ jobs:
       # Built with the job's toolchain, as prebuilt binaries can lag go.mod.
       # Only issues added since the branch left main count; only-new-issues
       # reads the PR patch, which GitHub does not serve past 20 000 lines.
+      # The push that creates a branch has no before commit; its code is
+      # already linted where it came from.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           install-mode: goinstall
-          args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.created && github.sha || github.event.before }}
 
   govulncheck:
     name: govulncheck
