@@ -5993,5 +5993,7 @@
   "settings_channel_stable": "Stable",
   "settings_channel_prerelease": "Pre-release",
   "settings_channel_needs_upgrade": "Only users who may install Dockmesh updates can change the channel.",
-  "settings_run_prerelease": "{version} is a pre-release, which get.dockmesh.dev doesn't serve. Run its own installer on this host:"
+  "settings_run_prerelease": "{version} is a pre-release, which get.dockmesh.dev doesn't serve. Run its own installer on this host:",
+  "apierr_update_channel_needs_system_upgrade": "Changing the update channel needs the permission to install Dockmesh updates",
+  "apierr_update_channel_invalid": "The update channel must be stable or prerelease"
 }
