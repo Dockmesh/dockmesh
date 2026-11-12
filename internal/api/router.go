@@ -115,9 +115,6 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/auth/oauth2/{slug}/login", h.OAuth2Login)
 		r.Get("/auth/oauth2/{slug}/callback", h.OAuth2Callback)
 
-		// Old enrollment route; answers 410 with the agent-port URL.
-		r.Post("/agents/enroll", h.EnrollAgent)
-
 		// Invite-link accept flow — token is the auth. Preview shows
 		// "Invitation as <role> for <email_hint>" to the recipient;
 		// accept consumes the token + provisions the user account.

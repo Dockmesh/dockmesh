@@ -96,6 +96,13 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// Every install command is built from the agent URL, so pointing
+		// it elsewhere is as powerful as enrolling hosts.
+		if e.Key == settings.KeyAgentPublicURL && h.Settings.Stored(e.Key) != e.Value &&
+			!middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsCreate) {
+			writeError(w, http.StatusForbidden, "changing agent_public_url needs the hosts.create permission as well, because install commands use it")
+			return
+		}
 		if e.Key == settings.KeyAgentPublicURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
 			if err := agents.ValidateAgentURL(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "agent URL "+err.Error())

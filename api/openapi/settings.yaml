@@ -42,6 +42,11 @@ paths:
         request is refused with 403 and nothing is saved. Sending the current
         value back unchanged is allowed. Every change writes a
         `settings.base_url_update` audit entry with the old and new value.
+
+        Install commands are built from `agent_public_url`, so changing it
+        also needs `hosts.create` on everything; without it the request is
+        refused with 403 and nothing is saved. Sending the current value
+        back unchanged is allowed.
       requestBody:
         required: true
         content:
