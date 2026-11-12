@@ -58,12 +58,18 @@ func TestAgentURLChangeNeedsHostsCreate(t *testing.T) {
 		{"system.update with hosts.create changes it", "settings-hosts", `[{"key":"agent_public_url","value":"wss://new.example:8443/connect"}]`, http.StatusOK, "wss://new.example:8443/connect"},
 		{"admin changes it", rbac.RoleAdmin, `[{"key":"agent_public_url","value":"wss://admin.example:8443/connect"}]`, http.StatusOK, "wss://admin.example:8443/connect"},
 	}
-	newEntries := func(t *testing.T, before int) []audit.Entry {
+	listAudit := func(t *testing.T) []audit.Entry {
 		t.Helper()
 		all, err := auditSvc.List(ctx, 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return all
+	}
+	// List returns the newest entries first.
+	newEntries := func(t *testing.T, before int) []audit.Entry {
+		t.Helper()
+		all := listAudit(t)
 		var out []audit.Entry
 		for _, e := range all[:len(all)-before] {
 			if e.Action == "settings.agent_public_url_update" {
@@ -72,14 +78,6 @@ func TestAgentURLChangeNeedsHostsCreate(t *testing.T) {
 		}
 		return out
 	}
-	auditCount := func(t *testing.T) int {
-		t.Helper()
-		all, err := auditSvc.List(ctx, 1000)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(all)
-	}
 	// DOCKMESH_AGENT_PUBLIC_URL wins over an empty saved value; the
 	// settings page sends that empty value back, which is not a change.
 	t.Run("empty saved value under an env override is unchanged", func(t *testing.T) {
@@ -87,7 +85,7 @@ func TestAgentURLChangeNeedsHostsCreate(t *testing.T) {
 		if err := store.Set(ctx, settings.KeyAgentPublicURL, ""); err != nil {
 			t.Fatal(err)
 		}
-		before := auditCount(t)
+		before := len(listAudit(t))
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`[{"key":"agent_public_url","value":""}]`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+tokens["settings-only"])
@@ -105,7 +103,7 @@ func TestAgentURLChangeNeedsHostsCreate(t *testing.T) {
 			if err := store.Set(ctx, settings.KeyAgentPublicURL, oldURL); err != nil {
 				t.Fatal(err)
 			}
-			before := auditCount(t)
+			before := len(listAudit(t))
 			req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+tokens[tt.role])
