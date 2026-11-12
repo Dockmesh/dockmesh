@@ -11,7 +11,6 @@ Each entry starts with the symptom as you see it, an error message or a behaviou
 |---|---|---|
 | Linux, `install.sh` or `dockmesh init` (systemd unit `dockmesh.service`) | `journalctl -u dockmesh` | `journalctl -u dockmesh-agent` on the agent host |
 | macOS (launchd `dev.dockmesh.service`) | `/usr/local/var/log/dockmesh.log` and `/usr/local/var/log/dockmesh.err` | not applicable |
-| Docker image built from the repository | `docker logs <container>` | not applicable |
 
 ```bash
 sudo systemctl status dockmesh
@@ -458,7 +457,7 @@ sudo journalctl -u dockmesh -b | grep -i migrat
 
 ### Scans fail with "scanner not configured"
 
-**Cause:** the `grype` binary wasn't found when the server started (HTTP 503). The server log shows `scanner disabled — install grype to enable CVE scans`. `install.sh` installs Grype unless `DOCKMESH_NO_SCANNER=1` is set; a failed download shows up there as `grype install failed — CVE scanning disabled`. The Docker image built from the repository doesn't contain Grype.
+**Cause:** the `grype` binary wasn't found when the server started (HTTP 503). The server log shows `scanner disabled — install grype to enable CVE scans`. `install.sh` installs Grype unless `DOCKMESH_NO_SCANNER=1` is set; a failed download shows up there as `grype install failed — CVE scanning disabled`.
 
 **Fix:** install Grype where the service user finds it on `PATH`, or set `DOCKMESH_SCANNER_BINARY` to its full path, and restart Dockmesh. The binary is only looked up at startup.
 

@@ -60,7 +60,7 @@ Open `http://<host>:8080/setup` to create the admin account and finish the setup
 
 Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host (Linux with systemd).
 
-Requirements, macOS, manual and from-source installs and running in Docker: [installation guide](https://dockmesh.dev/docs/getting-started/installation/).
+Requirements, macOS, manual and from-source installs: [installation guide](https://dockmesh.dev/docs/getting-started/installation/).
 
 ## Upgrade
 

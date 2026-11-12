@@ -17,7 +17,7 @@ Dockmesh is one server binary, `dockmesh`. It serves the web UI and the REST API
 | Local Docker engine | Reached through the Docker SDK | Connection settings come from the standard Docker environment (`DOCKER_HOST` etc.), usually the local socket. Dockmesh never shells out to the `docker` CLI. |
 | `dockmesh-agent` | Small binary on each remote host | Dials out to the server over a mutual-TLS WebSocket and runs Docker operations locally on the server's behalf. See [Hosts and agents](./hosts-and-agents.md). |
 | Reverse proxy | Docker container `dockmesh-proxy` running a pinned, tested `caddy` image (or `DOCKMESH_PROXY_IMAGE`) | Only exists when the proxy is enabled (`DOCKMESH_PROXY_ENABLED=true` or the `proxy_enabled` setting). Dockmesh configures it over Caddy's admin API on a private Unix socket. See [Reverse proxy](../features/reverse-proxy.md). |
-| Vulnerability scanner | External `grype` binary, run as a subprocess | `scripts/install.sh` installs it unless `DOCKMESH_NO_SCANNER=1`. The Dockerfile in the repository does not include it. Binary path: `DOCKMESH_SCANNER_BINARY` (default `grype`). See [Vulnerability scanning](../features/vulnerability-scanning.md). |
+| Vulnerability scanner | External `grype` binary, run as a subprocess | `scripts/install.sh` installs it unless `DOCKMESH_NO_SCANNER=1`. Binary path: `DOCKMESH_SCANNER_BINARY` (default `grype`). See [Vulnerability scanning](../features/vulnerability-scanning.md). |
 | `dmctl` | Command-line client | Talks to the same REST API with an API token or a username and password. See [dmctl](../reference/dmctl.md). |
 
 Caddy and Grype are not compiled into Dockmesh. If the proxy is off and Grype is not installed, the server runs fine without them; only those features are unavailable.
