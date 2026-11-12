@@ -93,7 +93,7 @@ Other pages, API error messages and `dmctl whoami -o json` name single permissio
 
 Proxy, alert rules and notification channels, users and roles, settings, the audit log and the `/metrics` scrape are instance-wide. Only an assignment on **everything** grants them; a narrower assignment of the same role does not. Editing host tags, adding new hosts, adding, editing and removing registries, creating, editing and deleting templates, other users' API tokens and the backup key are instance-wide for the same reason. Alert history, the registry list and hosts follow the scope.
 
-Changing the **Base URL** in Settings needs Users & roles: Manage on everything in addition to Settings & audit: Manage, because invite links and SSO callback URLs are built from it. Every change is written to the audit log with the old and the new address.
+Changing the **Base URL** in Settings needs Users & roles: Manage on everything in addition to Settings & audit: Manage, because invite links and SSO callback URLs are built from it. Every change is written to the audit log with the old and the new address. Changing the **Agent public URL** needs Hosts: Manage on everything as well, because every install command is built from it.
 
 A stack that exists only as files and was never deployed has no host yet. Only assignments on everything or on that stack without a host see it, change it or deploy it.
 

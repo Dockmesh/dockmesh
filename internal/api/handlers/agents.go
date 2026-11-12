@@ -233,11 +233,3 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		"version": req.Version,
 	})
 }
-
-// EnrollAgent answers the old enrollment route on the HTTP port. Agents
-// enroll on the agent listener, where the pinned agents CA protects the
-// token and the issued key; this route would hand them out over whatever
-// the HTTP port is reachable by, plain HTTP included.
-func (h *Handlers) EnrollAgent(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusGone, "enrollment moved to the agent port: run the install command from the Hosts page")
-}

@@ -64,7 +64,6 @@ var routeGates = []struct {
 	{"GET", "/api/v1/auth/oauth2/providers", gatePublic},
 	{"GET", "/api/v1/auth/oauth2/{slug}/login", gatePublic},
 	{"GET", "/api/v1/auth/oauth2/{slug}/callback", gatePublic},
-	{"POST", "/api/v1/agents/enroll", gatePublic},
 	{"GET", "/api/v1/invite/{token}", gatePublic},
 	{"POST", "/api/v1/invite/{token}/accept", gatePublic},
 	{"POST", "/api/v1/stacks/{name}/git/webhook", gatePublic},
