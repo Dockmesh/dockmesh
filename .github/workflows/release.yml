@@ -22,6 +22,11 @@
 # CHANGELOG.md; the release fails before building if that section is
 # missing.
 #
+# Tags come from main or, for patches of an older minor, from its
+# release/X.Y.x branch. Only the highest stable version becomes GitHub's
+# latest release and moves the website; get.dockmesh.dev, install.sh and
+# the in-app update check all follow latest.
+#
 # The install.sh served from get.dockmesh.dev expects the asset names
 # exactly as above — don't rename without updating the installer.
 #
@@ -38,18 +43,57 @@ on:
         description: 'Tag to build (e.g. v1.2.3)'
         required: true
 
+# One release at a time: the latest decision reads the published releases
+# and must not race another run that is about to publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
-  contents: write  # needed to create the release + attach assets
+  contents: read
 
 jobs:
   notes:
     name: release notes
     runs-on: ubuntu-latest
+    # Later jobs check out this exact commit, so a branch named like the tag
+    # or a moved tag can't change what gets built.
+    outputs:
+      sha: ${{ steps.line.outputs.sha }}
+      version: ${{ steps.line.outputs.version }}
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      # Once release/X.Y.x exists, main has moved on to the next minor, so a
+      # vX.Y.N tag must come from that branch.
+      - name: tag is on its release line
+        id: line
+        env:
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          line=$(printf '%s' "$VERSION" | sed -nE 's/^v([0-9]+\.[0-9]+)\..*/\1/p')
+          [ -n "$line" ] || { echo "::error::$VERSION is not a vX.Y.Z tag"; exit 1; }
+          git fetch --no-tags --unshallow origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/release/*.x:refs/remotes/origin/release/*.x' \
+            "+refs/tags/$VERSION:refs/tags/$VERSION"
+          sha=$(git rev-parse --verify "refs/tags/$VERSION^{commit}")
+          [ "$(git rev-parse HEAD)" = "$sha" ] || { echo "::error::checkout is not $VERSION"; exit 1; }
+          branch=main
+          if git rev-parse -q --verify "refs/remotes/origin/release/$line.x" > /dev/null; then
+            branch="release/$line.x"
+          fi
+          git merge-base --is-ancestor "$sha" "origin/$branch" || {
+            echo "::error::$VERSION ($sha) is not on $branch"
+            exit 1
+          }
+          echo "$VERSION ($sha) is on $branch"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -92,16 +136,15 @@ jobs:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.notes.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: set VERSION
         id: v
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
+        env:
+          VERSION: ${{ needs.notes.outputs.version }}
+        run: echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: setup Node (for SvelteKit build)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -178,22 +221,22 @@ jobs:
 
   release:
     name: publish release
-    needs: build
+    needs: [notes, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release and attach assets
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.notes.outputs.sha }}
+          persist-credentials: false
 
       - name: set VERSION
         id: v
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
+        env:
+          VERSION: ${{ needs.notes.outputs.version }}
+        run: echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: download all artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -211,6 +254,22 @@ jobs:
           sha256sum *.tar.gz install.sh uninstall.sh release-manifest.json > checksums.txt
           cat checksums.txt
 
+      - name: setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: decide latest
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | select(.draft | not) | .tag_name' > "$RUNNER_TEMP/published.txt"
+          latest=$(go run ./scripts/relmanifest latest -version "$VERSION" -published "$RUNNER_TEMP/published.txt")
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
       - name: publish GitHub Release
         id: publish
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -219,6 +278,7 @@ jobs:
           name: Dockmesh ${{ steps.v.outputs.version }}
           draft: false
           prerelease: ${{ contains(steps.v.outputs.version, '-') }}
+          make_latest: ${{ steps.latest.outputs.latest }}
           body_path: artifacts/release-notes/release-body.md
           files: |
             release/*.tar.gz
@@ -234,7 +294,7 @@ jobs:
       # which already bit us once when an env-file change shipped in a
       # tag but the cached install.sh still wrote the old layout.
       - name: purge get.dockmesh.dev cache
-        if: success() && env.CF_API_TOKEN != '' && env.CF_ZONE_ID != ''
+        if: success() && steps.latest.outputs.latest == 'true' && env.CF_API_TOKEN != '' && env.CF_ZONE_ID != ''
         env:
           CF_API_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
@@ -253,7 +313,7 @@ jobs:
       # The release is out at this point; a missing token or a failed call
       # only leaves the website behind, so it warns instead of failing.
       - name: trigger website sync
-        if: always() && steps.publish.outcome == 'success' && !contains(steps.v.outputs.version, '-')
+        if: always() && steps.publish.outcome == 'success' && steps.latest.outputs.latest == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
