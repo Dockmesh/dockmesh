@@ -169,7 +169,7 @@ Install `grype` yourself if you want image scans ([grype installation](https://g
 
 ## Build from source
 
-You need Go (the version in `go.mod`), Node.js with npm, `make` and `git`.
+You need Go (the version in `go.mod`), Node.js 26 with npm (the version in `web/.nvmrc`), `make` and `git`.
 
 ```bash
 git clone https://github.com/dockmesh/dockmesh.git
