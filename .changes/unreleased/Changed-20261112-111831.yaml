@@ -1,0 +1,3 @@
+kind: Changed
+body: The docs no longer describe running Dockmesh from a locally built container image; the Dockerfile is for development, and the docs state that the docker group is equivalent to root
+time: 2026-11-12T11:18:31.191538256Z

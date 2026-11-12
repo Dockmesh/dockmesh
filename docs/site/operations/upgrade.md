@@ -55,7 +55,7 @@ Apart from step 5, `dockmesh.env`, the data root and the systemd unit are left a
 
 > **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary and runs a fresh install into `/usr/local/bin`: it keeps `dockmesh.env` and the data, but rewrites the systemd unit to start the new copy, leaves the old binary where it is and makes no `.bak`.
 
-Without systemd, the script replaces the binary but cannot restart the server; restart it yourself. On macOS it restarts the launchd job `dev.dockmesh.service`. If you built from source or run the locally built container, pull the new source and rebuild (`make build`, or `docker compose up -d --build`).
+Without systemd, the script replaces the binary but cannot restart the server; restart it yourself. On macOS it restarts the launchd job `dev.dockmesh.service`. If you built from source, pull the new source and rebuild with `make build`.
 
 To upgrade by hand, for example on an air-gapped host:
 

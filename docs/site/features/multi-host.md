@@ -58,7 +58,7 @@ The script served at `/install/agent.sh` is `scripts/install-agent.sh` with the 
 
 - supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`,
 - installs Docker from `get.docker.com` if it's missing (skip this with `--skip-docker`),
-- creates a locked `dockmesh-agent` system user in the `docker` group (use `--as-root` to run as root instead),
+- creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host (use `--as-root` to run as root instead),
 - downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the base URL and refuses to install it if its SHA-256 doesn't match,
 - installs the binary to `/var/lib/dockmesh-agent/bin/dockmesh-agent` and a root-owned copy to `/usr/local/bin/dockmesh-agent`, which the service refreshes at every start,
 - writes the agent CA to `/var/lib/dockmesh-agent/enroll-ca.pem`, `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,

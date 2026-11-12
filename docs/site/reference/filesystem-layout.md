@@ -112,17 +112,6 @@ Agents installed by older releases used `/var/lib/dockmesh` as their data direct
 
 Re-running the installer with a new token removes the old certificate, key, CA files, URL file and `staging/` first.
 
-## Docker image
-
-The repository's `Dockerfile` builds a distroless image that runs `/app/dockmesh` as user `nonroot` with working directory `/app`. No image is published; build it yourself with `docker compose build` or `make docker`. With the default relative paths the data ends up in:
-
-| Path in the container | Content |
-|---|---|
-| `/app/data` | Data directory (DB, keys, PKI, git-cache, default local backups) |
-| `/app/stacks` | Stacks directory |
-
-The repository's `docker-compose.yml` mounts `./data:/app/data`, `./stacks:/app/stacks` and the Docker socket read-only. The image contains no Grype binary and serves no agent installer or binaries unless you mount them and set `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_DIR`.
-
 ## Reverse proxy volumes
 
 When the reverse proxy is enabled, the `dockmesh-proxy` container stores Caddy's state in two named Docker volumes: `dockmesh-caddy-data` (certificates, ACME account) and `dockmesh-caddy-config`. They live with your other Docker volumes, not in the Dockmesh data root.

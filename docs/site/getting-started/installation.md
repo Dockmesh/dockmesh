@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the Dockmesh server with the installer script, by hand, from source, or as a locally built container.
+description: Install the Dockmesh server with the installer script, by hand, or from source.
 ---
 
 The recommended path is the installer script on a Linux host that already runs Docker. It installs the binaries, creates a service account and a systemd unit, starts the server and hands you over to a setup wizard in the browser.
@@ -33,7 +33,7 @@ The script:
 2. Looks up the latest release on GitHub, downloads `dockmesh_<os>_<arch>.tar.gz` and verifies it against the release's `checksums.txt`. It aborts on a mismatch and when no checksum is published for the archive.
 3. Installs the binaries and agent assets (table below).
 4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
-5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group.
+5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine.
 6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
 7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
 8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
@@ -181,25 +181,7 @@ make build VERSION=v0.0.0-local
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 
-## Run in Docker
-
-No Dockmesh image is published. The repository's `Dockerfile` and `docker-compose.yml` build one locally:
-
-```bash
-git clone https://github.com/dockmesh/dockmesh.git
-cd dockmesh
-docker compose up -d --build
-docker compose logs dockmesh | grep -A3 "Bootstrap admin created"
-```
-
-The compose file publishes port 8080, mounts the Docker socket, and bind-mounts `./data` to `/app/data` and `./stacks` to `/app/stacks`. Because no setup flag is set, the server creates the `admin` user on first start and prints its password instead of showing the setup wizard.
-
-Things to know about the image:
-
-- It is distroless and runs as the non-root user 65532. Make `./data` and `./stacks` writable for that user (`sudo chown -R 65532:65532 data stacks`), and give the container access to the socket by adding `group_add: ["<gid of the docker group on the host>"]` to the service.
-- `grype` is not in the image, so image scans are unavailable.
-- The agent installer and agent binaries are not in the image, so the one-line agent install from this server does not work unless you mount them and set `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_DIR`. Port 8443 is not published either; add `8443:8443` if you use remote agents.
-- Mounting the socket read-only does not restrict what can be done through it. Whoever controls Dockmesh controls the Docker engine.
+The repository's `Dockerfile` is for development. No container image is published; NAS systems run the binary as well.
 
 ## Next steps
 
