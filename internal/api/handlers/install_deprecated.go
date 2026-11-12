@@ -13,6 +13,7 @@ import (
 const (
 	noticeKeyWebInstall   = "agents.web-port-install"
 	webInstallNoticeEvery = 24 * time.Hour
+	webInstallRetryAfter  = 5 * time.Minute
 )
 
 // webInstallNotice tells admins that the legacy web-port installer is in
@@ -33,7 +34,7 @@ func newWebInstallNotice(n *notices.Service) *webInstallNotice {
 // observe records one use of the legacy route from ip. The token is never
 // logged.
 func (n *webInstallNotice) observe(ctx context.Context, ip string) {
-	slog.Warn("agent installer fetched over the deprecated web-port route; use the command from Hosts > Add host", "ip", ip)
+	slog.Warn("agent installer fetched over the deprecated web-port route; use the command from Hosts › Add host", "ip", ip)
 	if n == nil || n.notices == nil || !n.due(ctx) {
 		return
 	}
@@ -51,7 +52,7 @@ func (n *webInstallNotice) observe(ctx context.Context, ip string) {
 	}
 	if err := n.notices.Raise(ctx, in); err != nil {
 		n.mu.Lock()
-		n.last = time.Time{}
+		n.last = n.now().Add(webInstallRetryAfter - webInstallNoticeEvery)
 		n.mu.Unlock()
 		slog.Warn("web-port install notice", "err", err)
 	}

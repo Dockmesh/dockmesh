@@ -127,6 +127,8 @@ type Handlers struct {
 	ClientIPs        *clientip.Resolver
 	proxyNotice      *proxyNotice
 	webInstallNotice *webInstallNotice
+	// webInstallLimiter bounds the legacy web-port installer per IP.
+	webInstallLimiter *ratelimit.Limiter
 	// releaseSections is the embedded changelog, parsed once.
 	releaseSections []*changelog.Section
 	// attentionRows replaces the container fan-out of GET /attention in tests.
@@ -262,6 +264,7 @@ func New(d Deps) *Handlers {
 		refreshLimits:     newAuthLimits(300, 0, 5*time.Minute),
 		proxyNotice:       &proxyNotice{notices: d.Notices},
 		webInstallNotice:  newWebInstallNotice(d.Notices),
+		webInstallLimiter: NewLoginLimiter(),
 	}
 	h.ClientIPs = clientip.New(func() string {
 		if d.Settings == nil {

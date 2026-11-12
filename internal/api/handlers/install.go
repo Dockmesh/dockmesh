@@ -14,12 +14,20 @@ import (
 // the token filled in. No JWT auth: the enrollment token is redeemed later
 // by the agent itself. The optional ?ca= fingerprint must match this
 // server's CA, so a command copied before a CA rotation fails here with a
-// clear message instead of at enroll time. Every use is logged and raises
-// an admin notice, since the script travels over the web port.
+// clear message instead of at enroll time. Every use is logged and limited
+// per IP address like the installer on the agent port; admins get a notice
+// at most once a day.
 func (h *Handlers) AgentInstallScript(w http.ResponseWriter, r *http.Request) {
 	if h.Agents == nil {
 		http.Error(w, "agents not configured", http.StatusServiceUnavailable)
 		return
+	}
+	if l := h.webInstallLimiter; l != nil {
+		if _, ok, retry := l.Acquire(limitKey(clientIP(r))); !ok {
+			writeRetryAfter(w, retry)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 	}
 	token := r.URL.Query().Get("token")
 	if token == "" {

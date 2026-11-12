@@ -17,6 +17,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
 
 func TestAgentInstallScript(t *testing.T) {
@@ -153,5 +154,27 @@ func TestAgentInstallScriptRaisesDeprecationNotice(t *testing.T) {
 	restarted := newWebInstallNotice(svc)
 	if restarted.due(context.Background()) {
 		t.Fatal("restart raised the notice again although it is open and recent")
+	}
+}
+
+func TestAgentInstallScriptRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := pki.New(dir, []string{"dockmesh.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKMESH_BINARY_DIR", t.TempDir())
+	t.Setenv("DOCKMESH_INSTALL_SCRIPT", filepath.Join("..", "..", "..", "scripts", "install-agent.sh"))
+	h := &Handlers{
+		Agents:            agents.NewService(nil, mgr, "http://dockmesh.test:8080", "wss://dockmesh.test:8443/connect"),
+		webInstallLimiter: ratelimit.New(2, time.Minute, time.Minute),
+	}
+	url := "/install/agent.sh?token=" + strings.Repeat("C", 43)
+	for i, want := range []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests} {
+		rec := httptest.NewRecorder()
+		h.AgentInstallScript(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		if rec.Code != want {
+			t.Fatalf("request %d: status %d, want %d", i, rec.Code, want)
+		}
 	}
 }
