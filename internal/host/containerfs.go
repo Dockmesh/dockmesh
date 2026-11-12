@@ -114,6 +114,13 @@ func statErr(err error) error {
 	return err
 }
 
+// ContainerFilesAPI is the part of the Docker client the container file
+// browser uses; deleting runs rm through exec.
+type ContainerFilesAPI interface {
+	client.ContainerAPIClient
+	client.ExecAPIClient
+}
+
 // containerFS is one container's file access: its mounts, so a path can
 // be judged by where it lands on the host, not only by its name inside
 // the container.
@@ -121,13 +128,6 @@ type containerFS struct {
 	cli    ContainerFilesAPI
 	id     string
 	mounts []container.MountPoint
-}
-
-// ContainerFilesAPI is the part of the Docker client the container file
-// browser uses; deleting runs rm through exec.
-type ContainerFilesAPI interface {
-	client.ContainerAPIClient
-	client.ExecAPIClient
 }
 
 func (f *containerFS) statPath(ctx context.Context, p string) (container.PathStat, error) {

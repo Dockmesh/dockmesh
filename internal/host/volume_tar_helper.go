@@ -129,14 +129,13 @@ func (s *volumeTarStream) exitErr() error {
 	waitCtx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 	wait := s.cli.ContainerWait(waitCtx, s.id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	waitCh, errCh := wait.Result, wait.Error
 	select {
-	case w := <-waitCh:
+	case w := <-wait.Result:
 		if w.StatusCode != 0 {
 			return fmt.Errorf("tar exit %d", w.StatusCode)
 		}
 		return io.EOF
-	case err := <-errCh:
+	case err := <-wait.Error:
 		return fmt.Errorf("wait for tar: %w", err)
 	}
 }

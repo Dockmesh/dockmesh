@@ -144,7 +144,7 @@ func (s *Service) ensureSocketDir() error {
 // before the admin API moved to the socket. Labels alone wouldn't do:
 // anyone who can create a container can copy them.
 func usesTCPAdmin(c *container.InspectResponse) bool {
-	if c == nil || c.Config == nil || c.HostConfig == nil {
+	if c.Config == nil || c.HostConfig == nil {
 		return false
 	}
 	return c.Config.Labels["dockmesh.component"] == "proxy" && hasProxyShape(c, proxyVolumes)

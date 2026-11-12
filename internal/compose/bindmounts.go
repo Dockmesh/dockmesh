@@ -260,12 +260,11 @@ func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath,
 	if err != nil {
 		return 0, err
 	}
-	rc := src.Content
-	defer rc.Close()
+	defer src.Content.Close()
 	pr, pw := io.Pipe()
 	files := 0
 	go func() {
-		n, err := rewriteBindTar(tar.NewReader(rc), tar.NewWriter(pw), path.Base(srcPath))
+		n, err := rewriteBindTar(tar.NewReader(src.Content), tar.NewWriter(pw), path.Base(srcPath))
 		files = n
 		pw.CloseWithError(err)
 	}()

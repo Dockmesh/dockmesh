@@ -110,11 +110,10 @@ func openFileViaHelper(ctx context.Context, cli *client.Client, volumeName, sub 
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		wait := cli.ContainerWait(wctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-		statusCh, errCh := wait.Result, wait.Error
 		select {
-		case err := <-errCh:
+		case err := <-wait.Error:
 			pw.CloseWithError(fmt.Errorf("volume helper: wait: %w", err))
-		case st := <-statusCh:
+		case st := <-wait.Result:
 			pw.CloseWithError(helperExitError(helperResult{exitCode: st.StatusCode, stderr: stderr.String()}, target))
 		}
 	}()

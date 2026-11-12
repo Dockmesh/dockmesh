@@ -56,9 +56,7 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 	plan := &CleanupPlan{}
 
 	// Networks labelled with this project.
-	netFilter := client.Filters{}
-	netFilter.Add("label", LabelProject+"="+stackName)
-	nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: netFilter})
+	nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -68,9 +66,7 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 
 	// Volumes labelled with this project. External volumes (no managed
 	// label, or external=true) never get touched.
-	volFilter := client.Filters{}
-	volFilter.Add("label", LabelProject+"="+stackName)
-	vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: volFilter})
+	vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}
@@ -139,9 +135,7 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 	res := &CleanupResult{}
 
 	if opts.Networks {
-		netFilter := client.Filters{}
-		netFilter.Add("label", LabelProject+"="+stackName)
-		nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: netFilter})
+		nets, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 		if err != nil {
 			return nil, fmt.Errorf("list networks: %w", err)
 		}
@@ -155,9 +149,7 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 	}
 
 	if opts.Volumes {
-		volFilter := client.Filters{}
-		volFilter.Add("label", LabelProject+"="+stackName)
-		vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: volFilter})
+		vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 		if err != nil {
 			return nil, fmt.Errorf("list volumes: %w", err)
 		}

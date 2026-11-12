@@ -12,7 +12,7 @@ import (
 	"github.com/moby/moby/client"
 )
 
-// aggregateDockerStats fans out `ContainerStatsOneShot` across every
+// aggregateDockerStats fans out a one-shot `ContainerStats` across every
 // running container and returns the sums expressed as:
 //
 //   - cpuPercent: total Docker CPU utilisation as a % of the Docker

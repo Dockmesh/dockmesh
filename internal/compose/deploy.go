@@ -720,9 +720,7 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 }
 
 func listProjectContainers(ctx context.Context, cli *client.Client, stackName string) ([]container.Summary, error) {
-	f := client.Filters{}
-	f.Add("label", LabelProject+"="+stackName)
-	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: f})
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: client.Filters{}.Add("label", LabelProject+"="+stackName)})
 	if err != nil {
 		return nil, err
 	}

@@ -121,8 +121,8 @@ func (s *Service) ManagedStack(ctx context.Context, containerID string) string {
 	if s.docker == nil || s.stacks == nil {
 		return ""
 	}
-	inspected, err := s.docker.Raw().ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-	info := inspected.Container
+	res, err := s.docker.Raw().ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	info := res.Container
 	if err != nil || info.Config == nil {
 		return ""
 	}
@@ -556,11 +556,11 @@ func (s *Service) swapService(ctx context.Context, cli *client.Client, st *stack
 }
 
 func (s *Service) swapReplica(ctx context.Context, cli *client.Client, st *stackTarget, containerID, image string) (string, error) {
-	inspected, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect: %w", err)
 	}
-	old := inspected.Container
+	old := res.Container
 	cfg, hostCfg, netCfg, svc, err := compose.ServiceContainerConfig(st.proj, st.svc.Name)
 	if err != nil {
 		return "", err

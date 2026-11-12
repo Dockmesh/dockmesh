@@ -182,12 +182,11 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}()
 
 	wait := cli.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	statusCh, errCh := wait.Result, wait.Error
 	var exitCode int64
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		exitCode = s.StatusCode
-	case e := <-errCh:
+	case e := <-wait.Error:
 		return e
 	case <-ctx.Done():
 		return ctx.Err()
@@ -229,13 +228,12 @@ func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
 		return
 	}
 	wait := cli.ContainerWait(ctx, resp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	statusCh, errCh := wait.Result, wait.Error
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		if s.StatusCode != 0 {
 			slog.Warn("restore: volume cleanup failed", "volume", volumeName, "exit", s.StatusCode)
 		}
-	case err := <-errCh:
+	case err := <-wait.Error:
 		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 	}
 }

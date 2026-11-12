@@ -27,7 +27,6 @@ func (h *LocalHost) ContainerEvents(ctx context.Context) (<-chan events.Message,
 	sub := h.cli.Raw().Events(ctx, client.EventsListOptions{
 		Filters: client.Filters{}.Add("type", string(events.ContainerEventType)),
 	})
-	msgs, errs := sub.Messages, sub.Err
 	out := make(chan events.Message, 16)
 	go func() {
 		defer close(out)
@@ -35,12 +34,12 @@ func (h *LocalHost) ContainerEvents(ctx context.Context) (<-chan events.Message,
 			select {
 			case <-ctx.Done():
 				return
-			case err := <-errs:
+			case err := <-sub.Err:
 				if err != nil && ctx.Err() == nil {
 					slog.Debug("local docker events ended", "err", err)
 				}
 				return
-			case m := <-msgs:
+			case m := <-sub.Messages:
 				select {
 				case out <- m:
 				case <-ctx.Done():

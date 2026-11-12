@@ -45,11 +45,11 @@ func (s *Service) Preview(ctx context.Context, containerID string) (*UpdatePrevi
 		return nil, ErrDockerUnavailable
 	}
 	cli := s.docker.Raw()
-	inspected, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	res, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
-	info := inspected.Container
+	info := res.Container
 	ref := normalizeImageRef(info.Config.Image)
 
 	preview := &UpdatePreview{Image: ref}

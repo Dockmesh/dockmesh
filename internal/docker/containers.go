@@ -2,7 +2,6 @@ package docker
 
 import (
 	"context"
-	"io"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -58,30 +57,5 @@ func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
 // "SIGKILL", "SIGTERM", "SIGHUP" names or numeric strings like "9".
 func (c *Client) KillContainer(ctx context.Context, id, signal string) error {
 	_, err := c.cli.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: signal})
-	return err
-}
-
-// ContainerStatPath stats a path inside the container without copying
-// any bytes — used by the file-browser to decide "is this a dir or a
-// file?" before deciding whether to stream a single file or a listing.
-func (c *Client) ContainerStatPath(ctx context.Context, id, path string) (container.PathStat, error) {
-	res, err := c.cli.ContainerStatPath(ctx, id, client.ContainerStatPathOptions{Path: path})
-	return res.Stat, err
-}
-
-// CopyFromContainer streams the requested path out of the container as
-// a tar archive. The returned ReadCloser must be drained and closed by
-// the caller. Used by the file-browser for both directory listings
-// (depth-1 tar walk) and file downloads (single tar entry → raw bytes).
-func (c *Client) CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, container.PathStat, error) {
-	res, err := c.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: path})
-	return res.Content, res.Stat, err
-}
-
-// CopyToContainer writes a tar archive into the container at dstPath.
-// Caller supplies the tar stream — usually a single-entry tar built in
-// memory by the file-browser's upload handler.
-func (c *Client) CopyToContainer(ctx context.Context, id, dstPath string, src io.Reader) error {
-	_, err := c.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: dstPath, Content: src})
 	return err
 }

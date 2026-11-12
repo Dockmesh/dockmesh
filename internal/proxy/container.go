@@ -189,7 +189,7 @@ func (s *Service) enableLocked(ctx context.Context) error {
 // what runs and with which privileges. The spec label alone is not
 // enough: anyone who can create a container can copy it.
 func (s *Service) matchesSpec(c *container.InspectResponse, img, imageID string) bool {
-	if c == nil || c.Config == nil || c.HostConfig == nil {
+	if c.Config == nil || c.HostConfig == nil {
 		return false
 	}
 	return c.Config.Labels[specLabel] == s.specHashFor(img) &&

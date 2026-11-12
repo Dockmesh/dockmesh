@@ -90,8 +90,9 @@ func TestStandaloneSpecUsesNewImageDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
 			info := &container.InspectResponse{
-				ID: "abc", HostConfig: &container.HostConfig{},
-				Config: &cfg,
+				ID:         "abc",
+				HostConfig: &container.HostConfig{},
+				Config:     &cfg,
 			}
 			spec := standaloneSpec(info, "app:2", tt.oldImg, newImg)
 			got := spec.cfg

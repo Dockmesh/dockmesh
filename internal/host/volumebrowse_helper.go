@@ -320,13 +320,12 @@ func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 		defer cancel()
 		var exitCode int64
 		wait := cli.ContainerWait(waitCtx, createResp.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-		statusCh, errCh := wait.Result, wait.Error
 		select {
-		case err := <-errCh:
+		case err := <-wait.Error:
 			if err != nil {
 				return helperResult{}, fmt.Errorf("volume helper: wait: %w", err)
 			}
-		case st := <-statusCh:
+		case st := <-wait.Result:
 			if st.Error != nil {
 				return helperResult{}, fmt.Errorf("volume helper: wait: %s", st.Error.Message)
 			}

@@ -625,14 +625,13 @@ func runEventsStream(conn *websocket.Conn, cli *client.Client, reg *streamReg) e
 	sub := cli.Events(reg.ctx, client.EventsListOptions{
 		Filters: client.Filters{}.Add("type", string(events.ContainerEventType)),
 	})
-	msgs, errs := sub.Messages, sub.Err
 	for {
 		select {
 		case <-reg.ctx.Done():
 			return nil
-		case err := <-errs:
+		case err := <-sub.Err:
 			return err
-		case m := <-msgs:
+		case m := <-sub.Messages:
 			data, err := json.Marshal(m)
 			if err != nil {
 				continue
@@ -767,11 +766,10 @@ func helperExitCode(cli *client.Client, id string) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
 	defer cancel()
 	wait := cli.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	statusCh, errCh := wait.Result, wait.Error
 	select {
-	case s := <-statusCh:
+	case s := <-wait.Result:
 		return s.StatusCode, nil
-	case err := <-errCh:
+	case err := <-wait.Error:
 		return 0, err
 	}
 }
