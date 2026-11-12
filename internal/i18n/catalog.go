@@ -243,5 +243,5 @@ var de = map[string]string{
 	"notice.proxy_blocked_routes.title":  "Einige Proxy-Routen werden nicht bedient",
 	"notice.proxy_blocked_routes.body":   "Diese Routen haben einen Host oder Upstream, den Dockmesh nicht mehr akzeptiert (zum Beispiel die Admin-API des Proxys, localhost oder einen Platzhalter), daher lässt der Proxy sie aus: %[1]s. Jede davon auf einen Domainnamen und einen host:port-Upstream ändern oder löschen.",
 	"notice.proxy_offline_sites.title":   "Einige Proxy-Sites sind offline",
-	"notice.proxy_offline_sites.body":    "Diese Sites sind offline, weil ihre Konfiguration nicht geladen werden konnte:%[1]sDie Site öffnen und den Fehler beheben.",
+	"notice.proxy_offline_sites.body":    "Diese Sites sind offline, weil ihre Einstellungen nicht geladen werden konnten:%[1]sDie Site öffnen und den Fehler beheben.",
 }
