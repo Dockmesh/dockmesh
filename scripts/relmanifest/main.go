@@ -5,6 +5,7 @@
 //
 //	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] -notes notes.md [-body body.md] -manifest release-manifest.json
 //	relmanifest check -base base-CHANGELOG.md -changed changed.txt [-changelog CHANGELOG.md] [-fragments .changes/unreleased]
+//	relmanifest latest -version v0.5.4 -published published-tags.txt
 package main
 
 import (
@@ -31,15 +32,17 @@ func main() {
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: relmanifest release|check [flags]")
+		return errors.New("usage: relmanifest release|check|latest [flags]")
 	}
 	switch args[0] {
 	case "release":
 		return runRelease(args[1:], stdout)
 	case "check":
 		return runCheck(args[1:], stdout)
+	case "latest":
+		return runLatest(args[1:], stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want release or check)", args[0])
+		return fmt.Errorf("unknown command %q (want release, check or latest)", args[0])
 	}
 }
 

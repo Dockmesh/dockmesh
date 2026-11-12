@@ -69,3 +69,43 @@ gh workflow run release-sync.yml -R Dockmesh/website -f tag=vX.Y.Z
 
 The trigger uses the `WEBSITE_DISPATCH_TOKEN` secret, a fine-grained token limited to
 `Dockmesh/website` with Contents read and write. It expires after a year; renew it before then.
+
+## Patch releases from release/0.5.x
+
+While `main` moves toward the next minor, fixes for the previous one are released from its
+branch, `release/0.5.x`. The branch has the same rules as `main`: changes only by pull request
+through the merge queue, `ci-ok` required, squash merges, linear history. CI and CodeQL run for
+pull requests, merge-queue runs and pushes on it like on `main`.
+
+1. **Fix on `main` first** when the bug exists there too, with its changelog fragment as usual.
+2. **Backport by pull request** to `release/0.5.x`: branch from it, cherry-pick the squash
+   commit from `main` (`git cherry-pick -x <sha>`) and open the PR against `release/0.5.x`. The
+   fragment comes along with the commit; if the fix differs on the branch, adjust or add the
+   fragment there. A fix that only applies to 0.5.x goes straight to the branch with its fragment.
+3. **Release PR on the branch** (`release: v0.5.N`), exactly as in "Cutting a release", then tag
+   the merge commit on the branch:
+
+   ```bash
+   git fetch origin
+   git tag v0.5.N origin/release/0.5.x && git push origin v0.5.N
+   ```
+
+   The release workflow refuses a `v0.5.N` tag whose commit is not on `release/0.5.x` once that
+   branch exists, and a tag of any other minor that is not on its `release/X.Y.x` branch or, if
+   there is none, on `main`.
+4. **Security advisories** work as described above; the advisory names the fixed patch version
+   (and the minor that also contains the fix).
+5. **Forward-port the changelog** to `main` in a PR: copy `.changes/v0.5.N.md` from the branch,
+   delete the fragments under `.changes/unreleased/` on `main` that went into that patch, and run
+   `changie merge`. The next minor then doesn't list the same fixes again.
+
+Only the highest stable version becomes GitHub's latest release. A `v0.5.N` tagged after a
+`v0.6.x` is published is a normal release with its assets, but it does not become latest, so
+get.dockmesh.dev, `install.sh` without `DOCKMESH_VERSION` and the in-app update check keep
+pointing at 0.6.x, and the workflow skips the cache purge and the website sync. Don't run
+`release-sync` by hand for such a patch: it would put the older version on dockmesh.dev. Users
+who stay on 0.5.x install the patch with `DOCKMESH_VERSION=v0.5.N`; the update check only ever
+offers the latest release.
+
+The workflows run from the tagged or pushed commit, so the branch must carry the current
+`.github/workflows/` and `scripts/relmanifest`; backport changes to either like any other fix.
