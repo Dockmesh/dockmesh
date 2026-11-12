@@ -347,12 +347,7 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if svc != "" {
-			skipped = append(skipped, swarmSkip{
-				ContainerID: id,
-				Error:       (&updater.SwarmManagedError{Service: svc}).Error(),
-				Code:        codeSwarmManaged,
-				Service:     svc,
-			})
+			skipped = append(skipped, newSwarmSkip(id, svc))
 			continue
 		}
 		if !h.allowStackRebuild(w, r, id) {
@@ -362,12 +357,10 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 	}
 	ids = kept
 	if len(ids) == 0 {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":   skipped[0].Error,
-			"code":    codeSwarmManaged,
-			"service": skipped[0].Service,
-			"skipped": skipped,
-		})
+		writeJSON(w, http.StatusConflict, struct {
+			swarmSkip
+			Skipped []swarmSkip `json:"skipped"`
+		}{newSwarmSkip("", skipped[0].Service), skipped})
 		return
 	}
 

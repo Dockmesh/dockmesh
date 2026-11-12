@@ -77,8 +77,7 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
-  // Swarm replaces its task containers itself: Dockmesh never swaps one
-  // for a new image, and a stop or restart makes Swarm start a new task.
+  // Same rule as updater.SwarmService on the server.
   const swarmService = $derived.by(() => {
     const labels = info?.Config?.Labels as Record<string, string> | undefined;
     const id = labels?.['com.docker.swarm.service.id'];

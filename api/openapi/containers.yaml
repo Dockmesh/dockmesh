@@ -897,5 +897,5 @@ components:
       properties:
         error: {type: string, example: Managed by Swarm service web.}
         code: {type: string, enum: [swarm_managed]}
-        service: {type: string, description: Name of the Swarm service, or its id without a name label.}
+        service: {type: string, description: "Name of the Swarm service, or its id without a name label."}
         container_id: {type: string}

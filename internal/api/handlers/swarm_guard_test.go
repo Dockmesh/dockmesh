@@ -83,9 +83,10 @@ func swarmGuardCall(ctx context.Context, handler http.HandlerFunc, id string, bo
 	return rr
 }
 
-// Single update and rollback answer 409 swarm_managed for a Swarm task
-// container; a plain container gets past the guard to the updater.
-func TestSingleUpdateRefusesSwarmTask(t *testing.T) {
+// Update and rollback answer 409 swarm_managed for a Swarm task container.
+// A plain container gets past the guard; its status then comes from the
+// fake daemon failing the pull (500) or from the missing history row (404).
+func TestUpdateAndRollbackRefuseSwarmTask(t *testing.T) {
 	e, ctx := swarmGuardEnv(t)
 	tests := []struct {
 		name      string
@@ -93,11 +94,12 @@ func TestSingleUpdateRefusesSwarmTask(t *testing.T) {
 		container string
 		body      any
 		want      int
+		wantSwarm bool
 	}{
-		{"update task", e.h.UpdateContainer, "task", nil, http.StatusConflict},
-		{"rollback task", e.h.RollbackContainer, "task", rollbackRequest{HistoryID: 1}, http.StatusConflict},
-		{"update plain", e.h.UpdateContainer, "plain", nil, http.StatusInternalServerError},
-		{"rollback plain", e.h.RollbackContainer, "plain", rollbackRequest{HistoryID: 1}, http.StatusNotFound},
+		{"update task", e.h.UpdateContainer, "task", nil, http.StatusConflict, true},
+		{"rollback task", e.h.RollbackContainer, "task", rollbackRequest{HistoryID: 1}, http.StatusConflict, true},
+		{"update plain", e.h.UpdateContainer, "plain", nil, http.StatusInternalServerError, false},
+		{"rollback plain", e.h.RollbackContainer, "plain", rollbackRequest{HistoryID: 1}, http.StatusNotFound, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -106,12 +108,13 @@ func TestSingleUpdateRefusesSwarmTask(t *testing.T) {
 				t.Fatalf("status %d, want %d: %s", rr.Code, tt.want, rr.Body)
 			}
 			var got swarmSkip
-			_ = json.Unmarshal(rr.Body.Bytes(), &got)
-			isSwarm := got.Code == codeSwarmManaged
-			if isSwarm != (tt.want == http.StatusConflict) {
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Code == codeSwarmManaged) != tt.wantSwarm {
 				t.Fatalf("code %q: %s", got.Code, rr.Body)
 			}
-			if isSwarm && (got.Service != "web" || got.Error != "Managed by Swarm service web.") {
+			if tt.wantSwarm && (got.Service != "web" || got.Error != "Managed by Swarm service web.") {
 				t.Fatalf("body %s", rr.Body)
 			}
 		})
@@ -126,12 +129,12 @@ func TestBulkUpdateSkipsSwarmTasks(t *testing.T) {
 		name        string
 		ids         []string
 		want        int
-		wantQueued  int
+		wantQueued  []string
 		wantSkipped []string
 	}{
-		{"mix", []string{"task", "plain", "task2"}, http.StatusAccepted, 1, []string{"task", "task2"}},
-		{"only swarm", []string{"task", "task2"}, http.StatusConflict, 0, []string{"task", "task2"}},
-		{"only plain", []string{"plain"}, http.StatusAccepted, 1, nil},
+		{"mix", []string{"task", "plain", "task2"}, http.StatusAccepted, []string{"plain"}, []string{"task", "task2"}},
+		{"only swarm", []string{"task", "task2"}, http.StatusConflict, nil, []string{"task", "task2"}},
+		{"only plain", []string{"plain"}, http.StatusAccepted, []string{"plain"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,12 +150,15 @@ func TestBulkUpdateSkipsSwarmTasks(t *testing.T) {
 			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if len(got.Operations) != tt.wantQueued {
-				t.Fatalf("%d operations queued, want %d", len(got.Operations), tt.wantQueued)
-			}
 			for _, op := range got.Operations {
-				if op.Ref != "container:plain" {
-					t.Errorf("queued %s", op.Ref)
+				waitOpDone(t, ctx, e.h.Operations, op.ID)
+			}
+			if len(got.Operations) != len(tt.wantQueued) {
+				t.Fatalf("%d operations queued, want %v", len(got.Operations), tt.wantQueued)
+			}
+			for i, op := range got.Operations {
+				if op.Ref != "container:"+tt.wantQueued[i] {
+					t.Errorf("queued %s, want %s", op.Ref, tt.wantQueued[i])
 				}
 			}
 			if len(got.Skipped) != len(tt.wantSkipped) {
@@ -166,18 +172,17 @@ func TestBulkUpdateSkipsSwarmTasks(t *testing.T) {
 			if tt.want == http.StatusConflict && got.Code != codeSwarmManaged {
 				t.Errorf("code %q", got.Code)
 			}
-			for _, op := range got.Operations {
-				waitOpDone(t, e.h.Operations, op.ID)
-			}
 		})
 	}
 }
 
-func waitOpDone(t *testing.T, ops *operations.Service, id string) {
+// waitOpDone lets the bulk queue's goroutine finish before the test's
+// database is closed.
+func waitOpDone(t *testing.T, ctx context.Context, ops *operations.Service, id string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if got, err := ops.Get(context.Background(), id); err == nil && !got.Status.Active() {
+		if got, err := ops.Get(ctx, id); err == nil && !got.Status.Active() {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

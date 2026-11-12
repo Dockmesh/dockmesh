@@ -44,14 +44,15 @@ func TestSwarmService(t *testing.T) {
 	}
 }
 
-// swarmDocker answers container inspects from containers (id → labels),
-// lists them as running, and fails everything else. It records the
-// paths it was asked for.
+// swarmDocker records the paths the fake daemon was asked for.
 type swarmDocker struct {
 	mu    sync.Mutex
 	paths []string
 }
 
+// newSwarmDocker fakes a daemon that answers container inspects from
+// containers (id → labels), lists them as running, and fails everything
+// else.
 func newSwarmDocker(t *testing.T, containers map[string]map[string]string) (*client.Client, *swarmDocker) {
 	t.Helper()
 	f := &swarmDocker{}
@@ -98,6 +99,12 @@ func newSwarmDocker(t *testing.T, containers map[string]map[string]string) (*cli
 	return cli, f
 }
 
+func (f *swarmDocker) reset() {
+	f.mu.Lock()
+	f.paths = nil
+	f.mu.Unlock()
+}
+
 func (f *swarmDocker) asked(part string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -132,15 +139,20 @@ func TestUpdateAndRollbackRefuseSwarmTasks(t *testing.T) {
 		run       func(id string) error
 		wantSwarm bool
 		wantErr   error
+		wantPull  bool
 	}{
-		{"update task", "task", func(id string) error { _, err := svc.Update(context.Background(), id, ""); return err }, true, nil},
-		{"rollback task", "task", func(id string) error { _, err := svc.Rollback(context.Background(), id, 1, ""); return err }, true, nil},
-		{"update plain", "plain", func(id string) error { _, err := svc.Update(context.Background(), id, ""); return err }, false, nil},
-		{"rollback plain", "plain", func(id string) error { _, err := svc.Rollback(context.Background(), id, 1, ""); return err }, false, ErrHistoryNotFound},
+		{"update task", "task", func(id string) error { _, err := svc.Update(context.Background(), id, ""); return err }, true, nil, false},
+		{"rollback task", "task", func(id string) error { _, err := svc.Rollback(context.Background(), id, 1, ""); return err }, true, nil, false},
+		{"update plain", "plain", func(id string) error { _, err := svc.Update(context.Background(), id, ""); return err }, false, nil, true},
+		{"rollback plain", "plain", func(id string) error { _, err := svc.Rollback(context.Background(), id, 1, ""); return err }, false, ErrHistoryNotFound, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			fake.reset()
 			err := tt.run(tt.container)
+			if pulled := fake.asked("/images/create"); pulled != tt.wantPull {
+				t.Fatalf("pulled = %v, want %v", pulled, tt.wantPull)
+			}
 			got, isSwarm := AsSwarmManaged(err)
 			if isSwarm != tt.wantSwarm {
 				t.Fatalf("err = %v, swarm managed = %v, want %v", err, isSwarm, tt.wantSwarm)
@@ -158,9 +170,6 @@ func TestUpdateAndRollbackRefuseSwarmTasks(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 		})
-	}
-	if !fake.asked("/images/create") {
-		t.Error("the plain container's update never reached the pull")
 	}
 }
 

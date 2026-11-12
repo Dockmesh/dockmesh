@@ -80,8 +80,8 @@ func enrichRestartCounts(ctx context.Context, target host.Host, rows []container
 	wg.Wait()
 }
 
-// applyImageUpdateFlags sets ImageUpdateAvailable per row from the
-// background watcher cache, never for a Swarm task container.
+// applyImageUpdateFlags sets SwarmService per row and ImageUpdateAvailable
+// from the background watcher cache, never for a Swarm task container.
 func (h *Handlers) applyImageUpdateFlags(rows []containerRow) {
 	for i := range rows {
 		rows[i].SwarmService = updater.SwarmService(rows[i].Labels)

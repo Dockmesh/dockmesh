@@ -28,7 +28,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 		return
 	}
-	if h.refuseSwarmTask(w, r, id) {
+	if h.writeIfSwarmTask(w, r, id) {
 		return
 	}
 	if !h.allowStackRebuild(w, r, id) {
@@ -80,7 +80,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "history_id required")
 		return
 	}
-	if h.refuseSwarmTask(w, r, id) {
+	if h.writeIfSwarmTask(w, r, id) {
 		return
 	}
 	if !h.allowStackRebuild(w, r, id) {
@@ -179,9 +179,9 @@ func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, con
 	return h.checkStackFiles(w, r, stack)
 }
 
-// refuseSwarmTask answers 409 for a task container of a Swarm service:
-// Swarm, not Dockmesh, decides which image its tasks run.
-func (h *Handlers) refuseSwarmTask(w http.ResponseWriter, r *http.Request, containerID string) bool {
+// writeIfSwarmTask answers 409 for a task container of a Swarm service
+// before an operation is recorded for it; the updater refuses it again.
+func (h *Handlers) writeIfSwarmTask(w http.ResponseWriter, r *http.Request, containerID string) bool {
 	if h.Docker == nil {
 		return false
 	}
@@ -197,11 +197,16 @@ func (h *Handlers) refuseSwarmTask(w http.ResponseWriter, r *http.Request, conta
 }
 
 func writeSwarmManaged(w http.ResponseWriter, service string) {
-	writeJSON(w, http.StatusConflict, swarmSkip{
-		Error:   (&updater.SwarmManagedError{Service: service}).Error(),
-		Code:    codeSwarmManaged,
-		Service: service,
-	})
+	writeJSON(w, http.StatusConflict, newSwarmSkip("", service))
+}
+
+func newSwarmSkip(containerID, service string) swarmSkip {
+	return swarmSkip{
+		ContainerID: containerID,
+		Error:       (&updater.SwarmManagedError{Service: service}).Error(),
+		Code:        codeSwarmManaged,
+		Service:     service,
+	}
 }
 
 const codeSwarmManaged = "swarm_managed"
