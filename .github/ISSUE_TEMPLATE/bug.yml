@@ -29,7 +29,7 @@ body:
     attributes:
       label: Dockmesh version
       description: Output of `dockmesh version` on the server.
-      placeholder: v0.5.2
+      placeholder: v0.5.3
     validations:
       required: true
   - type: dropdown

@@ -33,6 +33,31 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 Entries for the next release are the fragments in `.changes/unreleased/`; `changie batch`
 moves them into a release section.
 
+## [0.5.3] - 2026-11-12 [security]
+
+Dockmesh 0.5.3 is a security patch release. The auto-scaler, manual scale, rolling updates and image updates now check a stack's files like a deploy does, and the meta and override files count as stack files, so a change a container makes to its own stack directory needs a confirmation before Dockmesh deploys it. The setup wizard no longer reopens on an installation that was already set up. Upgrading is recommended; read the upgrade notes.
+
+
+### Changed
+
+- A deploy of a stack with a default environment override asks first and names the override file
+- Manual scale and rolling updates ask before they use stack files changed outside Dockmesh
+- The stack page shows when auto-scaling is paused and why
+
+### Fixed
+
+- Replicas the auto-scaler adds use the stack directory for relative bind mounts, like a manual scale, instead of a temporary copy that is deleted right after
+
+### Security
+
+- GHSA-h9m2-3vjx-c8cq (high): The auto-scaler, manual scale, rolling updates and image updates check the stack files like a deploy does, and `.dockmesh.meta.json` and `compose.<env>.yaml` count as stack files. A change that a container makes to its own stack directory now needs a confirmation before Dockmesh creates containers from it. Affects v0.5.2 and earlier
+- GHSA-6pmw-gcfw-xc5x (high): The setup wizard only opens on an installation without any user account, so an installation with accounts but no admin assignment no longer reopens it without authentication after a restart. The wizard's setup and restore check this again right before they change anything, and removing the last admin is refused also when every admin holds the role only on some hosts or stacks. Affects v0.4.0 to v0.5.2
+- Built with Go 1.27.4, which fixes GO-2026-6859 in the Go standard library
+
+### Upgrade notes
+
+- **Admins:** If a container can write its own stack directory, review its `.dockmesh.meta.json` and `compose.<env>.yaml` after the upgrade: on the first start they are accepted as they are on disk, like `compose.yaml` and `.env` were when they were first checked. No other step is needed. If a container changes one of these files later, the stack shows Modified outside Dockmesh, the next deploy, scale, rolling update or image update asks for a confirmation, and the auto-scaler pauses the stack with a notice until someone confirms the change. A stack with a default environment override that wasn't deployed by hand since v0.5.0 pauses auto-scaling until it is deployed once <!-- stack-files-backfill -->
+- **Admins:** An installation that has user accounts but none with an admin role no longer opens the setup wizard. The server log and a notice show how to get access back: run `sudo dockmesh admin create --username <name> --role admin` on the server and restart the service <!-- setup-no-admin -->
 ## [0.5.2] - 2026-11-10 [security]
 
 Dockmesh 0.5.2 is a patch release. Pulling and scanning images act on the host you selected, the reverse proxy's admin API moved off TCP to a private socket, saving a stack no longer overwrites files changed on disk, and notices and alert messages follow the user's language. It also fixes the SAML provider options, the scanner switch in Settings, volume prune, template secrets and several smaller issues. Update your agents after the server and read the upgrade notes.

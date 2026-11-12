@@ -1,3 +1,0 @@
-kind: Security
-body: The setup wizard only opens on an installation without any user account. An installation that has accounts but no admin keeps it closed, and the wizard's setup and restore check this again right before they change anything. Removing the last admin is also refused when every admin holds the role on a narrower scope. Affects v0.4.0 to v0.5.2
-time: 2026-11-11T20:29:51.695257869Z

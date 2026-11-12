@@ -1,6 +1,0 @@
-kind: Upgrade notes
-body: 'An installation that has user accounts but none with an admin role no longer opens the setup wizard. Its log and a notice show how to get access back: run sudo dockmesh admin create --username <name> --role admin on the server and restart the service. Installations with an admin and new installations need nothing'
-time: 2026-11-11T20:29:52.95339821Z
-custom:
-    Audience: admins
-    Id: setup-no-admin
