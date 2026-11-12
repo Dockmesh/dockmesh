@@ -2599,6 +2599,7 @@
   "hosts_add_generating": "Wird erzeugt…",
   "hosts_add_hostname_ph": "z. B. edge-fra-2",
   "hosts_add_hostname_required": "Hostname erforderlich",
+  "hosts_add_http_hint": "Über unverschlüsseltes HTTP diesen Befehl nur in einem vertrauenswürdigen Netz ausführen.",
   "hosts_add_identify": "Host benennen",
   "hosts_add_is_online": "ist online.",
   "hosts_add_name_first": "Zuerst den Host benennen.",

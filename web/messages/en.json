@@ -2599,6 +2599,7 @@
   "hosts_add_generating": "Generating…",
   "hosts_add_hostname_ph": "e.g. edge-fra-2",
   "hosts_add_hostname_required": "Hostname required",
+  "hosts_add_http_hint": "Over plain HTTP, run this only on a trusted network.",
   "hosts_add_identify": "Identify the host",
   "hosts_add_is_online": "is online.",
   "hosts_add_name_first": "Name the host first.",
