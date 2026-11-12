@@ -103,7 +103,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "changing agent_public_url needs the hosts.create permission as well, because install commands use it")
 			return
 		}
-		if e.Key == settings.KeyAgentPublicURL && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
+		if e.Key == settings.KeyAgentPublicURL && e.Value != "" && h.Settings.Stored(e.Key) != e.Value {
 			if err := agents.ValidateAgentURL(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "agent URL "+err.Error())
 				return
@@ -137,7 +137,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		prev := h.Settings.Get(e.Key, "")
-		if e.Key == settings.KeyBaseURL {
+		if e.Key == settings.KeyBaseURL || e.Key == settings.KeyAgentPublicURL {
 			prev = h.Settings.Stored(e.Key)
 		}
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
@@ -147,8 +147,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if prev == e.Value {
 			continue
 		}
-		if e.Key == settings.KeyBaseURL {
+		switch e.Key {
+		case settings.KeyBaseURL:
 			h.audit(r, "settings.base_url_update", "", map[string]any{"before": prev, "after": e.Value})
+		case settings.KeyAgentPublicURL:
+			h.audit(r, "settings.agent_public_url_update", "", map[string]any{"before": prev, "after": e.Value})
 		}
 		h.applySettingSideEffect(r, e.Key, e.Value)
 	}
