@@ -127,8 +127,8 @@ func TestEnrollClientTransportRules(t *testing.T) {
 		cfg     agentConfig
 		wantErr string
 	}{
-		{"http refused by default", agentConfig{enrollURL: "http://srv:8080/api/v1/agents/enroll"}, "plain http"},
-		{"http allowed with flag", agentConfig{enrollURL: "http://srv:8080/api/v1/agents/enroll", insecureEnroll: true}, ""},
+		{"http refused by default", agentConfig{enrollURL: "http://srv:8443/enroll"}, "plain http"},
+		{"http allowed with flag", agentConfig{enrollURL: "http://srv:8443/enroll", insecureEnroll: true}, ""},
 		{"https needs fingerprint", agentConfig{enrollURL: "https://srv:8443/enroll", insecureEnroll: true}, "DOCKMESH_CA_FINGERPRINT"},
 		{"https needs CA file", agentConfig{enrollURL: "https://srv:8443/enroll", caFingerprint: mgr.CAFingerprint()}, "DOCKMESH_ENROLL_CA_FILE"},
 		{"https wrong fingerprint", agentConfig{enrollURL: "https://srv:8443/enroll", caFingerprint: strings.Repeat("ab", 32), enrollCAFile: caFile}, "fingerprint mismatch"},
