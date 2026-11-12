@@ -50,6 +50,8 @@ curl -fsSL 'https://dockmesh.example.com/install/agent.sh?token=<token>&ca=<fing
 
 The token is part of the URL, so a reverse proxy in front of Dockmesh writes it to its access log. It stays valid until it is used or expires; keep such logs private or re-issue the token if one leaked.
 
+The command fetches the installer and the agent binary from the base URL. With an `http://` base URL, run it only on a trusted network, or put Dockmesh behind HTTPS first (see [Security hardening](../operations/hardening.md#network-exposure)).
+
 Adding a host needs the `hosts.create` permission.
 
 ### What the installer does

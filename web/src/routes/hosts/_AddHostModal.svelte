@@ -222,6 +222,7 @@
               <span class="ed-add-host-tokenbox-label">{m.hosts_add_token()}</span>
               <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
             </div>
+            <p class="ed-add-host-blurb">{m.hosts_add_http_hint()}</p>
           {/if}
         </div>
       </section>
