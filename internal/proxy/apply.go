@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -35,9 +35,11 @@ type loadRejectedError struct {
 	body   string
 }
 
-func (e *loadRejectedError) Error() string {
-	return fmt.Sprintf("caddy /load %d: %s", e.status, e.body)
-}
+// Error leaves Caddy's text out: it can quote other sites' configuration
+// and error strings end up in API responses. load logs it.
+func (e *loadRejectedError) Error() string { return ErrConfigRejected.Error() }
+
+func (e *loadRejectedError) Is(target error) bool { return target == ErrConfigRejected }
 
 func isRejected(err error) bool {
 	var r *loadRejectedError
@@ -49,15 +51,16 @@ const (
 	// config because their stored state could not be loaded.
 	noticeKeyOffline = "proxy.offline-sites"
 
-	// backfillHash marks rows that existed before applied_hash did; they
-	// were loaded as they are, so their current state counts as applied.
+	// backfillHash marks rows that existed before applied_hash did. Until
+	// resolveBackfill checked them against Caddy, they count as loaded as
+	// they are.
 	backfillHash = "@backfill"
 
 	loadTimeout = 10 * time.Second
-	// txLoadTimeout bounds a /load made while a write transaction holds
-	// the database lock: other writers wait at most busy_timeout (5 s)
-	// for it, and a fallback can need a second load.
-	txLoadTimeout = 2 * time.Second
+	// txLoadTimeout bounds the /load calls (two with a fallback) made
+	// while a write transaction holds the database lock, below the 5 s
+	// busy_timeout other writers wait for it.
+	txLoadTimeout = 3 * time.Second
 )
 
 // stateHash identifies a row's stored state: what decides its part of the
@@ -73,7 +76,7 @@ func stateHash(r *Route) string {
 // A disabled row adds nothing to the config, so it never keeps a site
 // offline.
 func (r *Route) applied() bool {
-	return !r.Enabled || r.appliedHash == stateHash(r)
+	return !r.Enabled || r.appliedHash == backfillHash || r.appliedHash == stateHash(r)
 }
 
 type querier interface {
@@ -84,8 +87,9 @@ type querier interface {
 // resolveBackfill replaces the migration's marker. The version before
 // applied_hash loaded every row it saved, so a marked row counts as loaded
 // in its current state, unless Caddy doesn't run its site: then Caddy
-// refused it after it was saved. Caddy is only asked when it answers as
-// the managed container. Runs before any write, so a marker is never
+// refused it after it was saved. That needs the managed Caddy running a
+// config with routes (not the bootstrap of a new container), so until
+// then the markers stay. Runs before any write, so a marker is never
 // resolved against a state Caddy hasn't seen. Callers hold s.mu.
 func (s *Service) resolveBackfill(ctx context.Context) error {
 	routes, err := queryRoutes(ctx, s.db, ` WHERE applied_hash = ?`, backfillHash)
@@ -94,13 +98,16 @@ func (s *Service) resolveBackfill(ctx context.Context) error {
 	}
 	var running *runningServers
 	if s.Enabled() && s.verifyManaged(ctx) == nil {
-		if b, err := runningConfig(ctx); err == nil {
+		if b, err := runningConfig(ctx); err == nil && servesRoutes(b) {
 			running = parseRunning(b)
 		}
 	}
+	if running == nil {
+		return nil
+	}
 	for i := range routes {
 		h := stateHash(&routes[i])
-		if running != nil && !s.runsSite(running, routes[i]) {
+		if !s.runsSite(running, routes[i]) {
 			slog.Warn("proxy: caddy doesn't run the stored config of this site", "host", routes[i].Host)
 			h = ""
 		}
@@ -208,7 +215,7 @@ func (s *Service) load(ctx context.Context, routes []Route, keep int64, fallback
 	if !isRejected(err) {
 		return nil, err
 	}
-	slog.Warn("proxy: caddy rejected the config", "err", err)
+	logRejected("proxy: caddy rejected the config", err)
 	s.lastRejected = configKey(cfg)
 	var included, offline []Route
 	for _, r := range routes {
@@ -218,13 +225,16 @@ func (s *Service) load(ctx context.Context, routes []Route, keep int64, fallback
 			offline = append(offline, r)
 		}
 	}
-	if len(offline) == 0 || !fallback() {
+	if len(offline) == 0 || wildcardCovers(included, offline) || !fallback() {
 		return nil, err
 	}
 	cfg, blocked = s.configFor(included)
 	if err := postLoad(ctx, cfg, timeout); err != nil {
 		if isRejected(err) {
-			slog.Warn("proxy: caddy rejected the config without the sites it hasn't loaded yet", "err", err)
+			logRejected("proxy: caddy rejected the config without the sites it hasn't loaded yet", err)
+		} else {
+			// Caddy may have taken it; let the watchdog compare again.
+			s.lastRejected = ""
 		}
 		return nil, err
 	}
@@ -234,6 +244,31 @@ func (s *Service) load(ctx context.Context, routes []Route, keep int64, fallback
 }
 
 func always() bool { return true }
+
+func logRejected(msg string, err error) {
+	var r *loadRejectedError
+	if errors.As(err, &r) {
+		slog.Warn(msg, "status", r.status, "caddy", r.body)
+	}
+}
+
+// wildcardCovers reports whether a site left out would be answered by an
+// included wildcard site instead, under that site's access rules.
+func wildcardCovers(included, offline []Route) bool {
+	for _, w := range included {
+		suffix, ok := strings.CutPrefix(strings.ToLower(w.Host), "*")
+		if !ok || !w.Enabled {
+			continue
+		}
+		for _, o := range offline {
+			label, ok := strings.CutSuffix(strings.ToLower(o.Host), suffix)
+			if ok && label != "" && !strings.Contains(label, ".") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // configKey identifies a config, so the watchdog doesn't push one Caddy
 // already refused again every interval.
@@ -290,13 +325,15 @@ func (s *Service) applyChange(ctx context.Context, write func(tx *sql.Tx) (int64
 		return 0, 0, err
 	}
 	if outcome != applyLoaded {
-		return id, outcome, tx.Commit()
+		return id, outcome, commitUnapplied(ctx, tx, id)
 	}
 	routes, err := queryRoutes(ctx, tx, "")
 	if err != nil {
 		return 0, 0, err
 	}
-	res, err := s.load(ctx, routes, id, always, txLoadTimeout)
+	loadCtx, cancel := context.WithTimeout(ctx, txLoadTimeout)
+	res, err := s.load(loadCtx, routes, id, always, txLoadTimeout)
+	cancel()
 	switch {
 	case isRejected(err):
 		return 0, 0, ErrApplyRejected
@@ -304,7 +341,7 @@ func (s *Service) applyChange(ctx context.Context, write func(tx *sql.Tx) (int64
 		// Caddy may or may not have taken the config; the watchdog
 		// compares and pushes the stored state.
 		slog.Warn("proxy: loading the change into caddy failed, it is applied once caddy answers", "err", err)
-		return id, applyPending, tx.Commit()
+		return id, applyPending, commitUnapplied(ctx, tx, id)
 	}
 	if err := markApplied(ctx, tx, res.included); err != nil {
 		return 0, 0, err
@@ -314,6 +351,15 @@ func (s *Service) applyChange(ctx context.Context, write func(tx *sql.Tx) (int64
 	}
 	s.updateNotices(ctx, res)
 	return id, applyLoaded, nil
+}
+
+// commitUnapplied commits a change Caddy hasn't loaded. A backfill marker
+// on the changed row would make its new state count as loaded, so it goes.
+func commitUnapplied(ctx context.Context, tx *sql.Tx, id int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE proxy_routes SET applied_hash = '' WHERE id = ? AND applied_hash = ?`, id, backfillHash); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // verifyManaged checks that the admin API answering is the managed Caddy.
@@ -410,7 +456,7 @@ func (s *Service) setOfflineNotice(ctx context.Context, offline []Route) {
 	}
 	link := "/proxy"
 	if len(offline) == 1 {
-		link = "/proxy/" + offline[0].Host
+		link = "/proxy/" + url.PathEscape(offline[0].Host)
 	}
 	err := s.notices.Set(ctx, len(offline) > 0, notices.RaiseInput{
 		Key:      noticeKeyOffline,

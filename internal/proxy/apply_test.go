@@ -307,8 +307,8 @@ func TestChangeWhileCaddyDownIsSavedAndAppliedLater(t *testing.T) {
 	}
 }
 
-// Rows from before applied_hash count as loaded in their current state,
-// and a later change doesn't inherit the marker.
+// Rows from before applied_hash that Caddy runs count as loaded in their
+// current state.
 func TestBackfilledRowsCountAsApplied(t *testing.T) {
 	ctx := context.Background()
 	s, _, _ := newApplyService(t)
@@ -316,23 +316,15 @@ func TestBackfilledRowsCountAsApplied(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE proxy_routes SET applied_hash = ?`, backfillHash); err != nil {
 		t.Fatal(err)
 	}
-	s.enabled.Store(false)
-	before, err := s.getRoute(ctx, r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.9:80", "auto", nil, nil); err != nil {
+	if err := s.resolveBackfill(ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.getRoute(ctx, r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.appliedHash == backfillHash || got.applied() {
-		t.Fatalf("applied_hash = %q, applied = %v; want the hash of the state before the change", got.appliedHash, got.applied())
-	}
-	if got.appliedHash != stateHash(before) {
-		t.Fatal("applied_hash is not the hash of the backfilled state")
+	if got.appliedHash != stateHash(got) {
+		t.Fatalf("applied_hash = %q, want the hash of the current state", got.appliedHash)
 	}
 }
 
@@ -394,5 +386,55 @@ func TestBackfillLeavesOutRowCaddyRefused(t *testing.T) {
 	mustCreate(t, s, "c.example.com", "10.0.0.3:80")
 	if running, _ := f.state(); !strings.Contains(running, "c.example.com") || !strings.Contains(running, "a.example.com") {
 		t.Fatalf("running config: %s", running)
+	}
+}
+
+// A site left out would be answered by an overlapping wildcard site under
+// that site's rules, so the change is refused instead.
+func TestNoFallbackWhenWildcardCoversLeftOutSite(t *testing.T) {
+	s, f, _ := newApplyService(t)
+	mustCreate(t, s, "*.example.com", "10.0.0.1:80")
+	b := mustCreate(t, s, "secure.example.com", "10.0.0.2:80")
+	makeUnloadable(t, s, b.ID)
+	before, _ := f.state()
+
+	_, err := s.CreateRoute(context.Background(), RouteSpec{Host: "other.example.org", Upstream: "10.0.0.3:80", TLSMode: "auto"})
+	if !errors.Is(err, ErrApplyRejected) {
+		t.Fatalf("err = %v, want ErrApplyRejected", err)
+	}
+	if running, _ := f.state(); running != before {
+		t.Fatal("running config changed")
+	}
+}
+
+// Caddy's text stays out of errors, which reach API responses.
+func TestRejectionErrorHidesCaddyText(t *testing.T) {
+	err := error(&loadRejectedError{status: 400, body: "route 3: secret.example.com"})
+	if strings.Contains(err.Error(), "secret") || !errors.Is(err, ErrConfigRejected) {
+		t.Fatalf("err = %q", err)
+	}
+}
+
+// A marked row changed while Caddy doesn't answer no longer counts as
+// loaded, and the markers stay until Caddy runs a config to check them
+// against.
+func TestBackfillMarkerOnUnappliedChange(t *testing.T) {
+	ctx := context.Background()
+	s, f, _ := newApplyService(t)
+	a := mustCreate(t, s, "a.example.com", "10.0.0.1:80")
+	b := mustCreate(t, s, "b.example.com", "10.0.0.2:80")
+	if _, err := s.db.Exec(`UPDATE proxy_routes SET applied_hash = ?`, backfillHash); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.down = true
+	f.mu.Unlock()
+	if _, err := s.UpdateRoute(ctx, a.ID, "10.0.0.9:80", "auto", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	ra, _ := s.getRoute(ctx, a.ID)
+	rb, _ := s.getRoute(ctx, b.ID)
+	if ra.applied() || rb.appliedHash != backfillHash {
+		t.Fatalf("a applied=%v (%q), b=%q", ra.applied(), ra.appliedHash, rb.appliedHash)
 	}
 }
