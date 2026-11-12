@@ -285,6 +285,7 @@ type bulkUpdateRequest struct {
 type bulkUpdateResponse struct {
 	GroupID    string          `json:"group_id"`
 	Operations []operationView `json:"operations"`
+	Skipped    []swarmSkip     `json:"skipped,omitempty"`
 }
 
 const maxBulkUpdates = 100
@@ -293,7 +294,8 @@ const maxBulkUpdates = 100
 // runs them one after another in the background, each as its own
 // operation, so a bulk update does not depend on the request staying
 // open. Every container is checked like a single update first; one
-// denial rejects the whole request.
+// denial rejects the whole request. Swarm task containers are left out
+// and listed as skipped.
 //
 //	POST /api/v1/containers/updates
 func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) {
@@ -324,23 +326,49 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "at most "+strconv.Itoa(maxBulkUpdates)+" containers per request")
 		return
 	}
-	for i, id := range ids {
+	var skipped []swarmSkip
+	kept := ids[:0]
+	for _, id := range ids {
 		// Pin the full id, so a name reused before the item runs cannot
 		// redirect the update to another container.
+		var svc string
 		if h.Docker != nil {
 			info, err := h.Docker.InspectContainer(r.Context(), id)
 			if err != nil {
 				writeError(w, http.StatusNotFound, "container "+id+" not found")
 				return
 			}
-			id, ids[i] = info.ID, info.ID
+			id = info.ID
+			if info.Config != nil {
+				svc = updater.SwarmService(info.Config.Labels)
+			}
 		}
 		if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 			return
 		}
+		if svc != "" {
+			skipped = append(skipped, swarmSkip{
+				ContainerID: id,
+				Error:       (&updater.SwarmManagedError{Service: svc}).Error(),
+				Code:        codeSwarmManaged,
+				Service:     svc,
+			})
+			continue
+		}
 		if !h.allowStackRebuild(w, r, id) {
 			return
 		}
+		kept = append(kept, id)
+	}
+	ids = kept
+	if len(ids) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   skipped[0].Error,
+			"code":    codeSwarmManaged,
+			"service": skipped[0].Service,
+			"skipped": skipped,
+		})
+		return
 	}
 
 	group := operations.NewGroupID()
@@ -396,5 +424,5 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}()
-	writeJSON(w, http.StatusAccepted, bulkUpdateResponse{GroupID: group, Operations: h.viewOperations(r.Context(), snaps)})
+	writeJSON(w, http.StatusAccepted, bulkUpdateResponse{GroupID: group, Operations: h.viewOperations(r.Context(), snaps), Skipped: skipped})
 }

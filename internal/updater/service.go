@@ -204,6 +204,9 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
+	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
+		return nil, err
+	}
 	st, err := s.stackTarget(ctx, &info)
 	if err != nil {
 		return nil, err
@@ -344,6 +347,9 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 	info, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
+	}
+	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
+		return nil, err
 	}
 	var e Entry
 	var rolledAt sql.NullTime
@@ -671,6 +677,13 @@ func dropImageDefaults(cfg *container.Config, img *dockerspec.DockerOCIImageConf
 		}
 		cfg.Labels = labels
 	}
+}
+
+func containerLabels(info *container.InspectResponse) map[string]string {
+	if info.Config == nil {
+		return nil
+	}
+	return info.Config.Labels
 }
 
 func containerNameOf(c container.Summary) string {

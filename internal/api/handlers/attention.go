@@ -19,6 +19,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -486,6 +487,9 @@ func (h *Handlers) attentionImageUpdates(rows []containerRow, showNames bool) []
 	users := map[string][]string{}
 	var images []string
 	for _, c := range rows {
+		if updater.SwarmService(c.Labels) != "" {
+			continue
+		}
 		info, ok := h.UpdateWatcher.Get(c.Image)
 		if !ok || !info.UpdateAvailable {
 			continue
