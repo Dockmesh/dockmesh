@@ -83,3 +83,25 @@ func TestInstallVersionOlder(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallChannelWarning(t *testing.T) {
+	tests := []struct {
+		channel string
+		warns   bool
+	}{
+		{"testing", true},
+		{"stable", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.channel, func(t *testing.T) {
+			out, err := runVersionHelper(t, `warn() { echo "WARN $*"; }; channel_warning "$1"`, tt.channel)
+			if err != nil {
+				t.Fatalf("err = %v, output %q", err, out)
+			}
+			if got := strings.Contains(out, "deprecated and will be removed in 0.7.0") && strings.Contains(out, "--version <tag>"); got != tt.warns {
+				t.Errorf("channel %q: output %q, want warning %v", tt.channel, out, tt.warns)
+			}
+		})
+	}
+}

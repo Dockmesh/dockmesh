@@ -68,8 +68,8 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.3`; same as `--version v0.5.3` after `bash -s --`. Pre-releases are only installed when named or with `DOCKMESH_CHANNEL=testing`. |
-| `DOCKMESH_CHANNEL` | `stable` | `testing` also considers pre-releases when resolving "latest". |
+| `DOCKMESH_VERSION` | latest release | Release tag to install, e.g. `v0.5.3`; same as `--version v0.5.3` after `bash -s --`. Pre-releases are only installed when named. |
+| `DOCKMESH_CHANNEL` | `stable` | Deprecated, removed in 0.7.0: `testing` also considers pre-releases when resolving "latest" and prints a warning. Name the pre-release with `--version` instead. |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
 | `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` (full rule in [Environment variables](../reference/environment-variables.md)) | Data root. Must match the data root of an earlier install the script finds. |

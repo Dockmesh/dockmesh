@@ -1,0 +1,3 @@
+kind: Changed
+body: 'DOCKMESH_CHANNEL=testing in install.sh is deprecated: it still works but prints a warning, and it will be removed in 0.7.0; install a pre-release with --version <tag>'
+time: 2026-11-13T08:19:10.186903805Z
