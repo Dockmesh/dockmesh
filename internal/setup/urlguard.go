@@ -38,7 +38,7 @@ var sharedAddrSpace = netip.MustParsePrefix("100.64.0.0/10")
 // Dockmesh can be served on. The public URL the operator types is normally
 // either a public name or this server's own LAN address, so nothing else on
 // the internal network, and no other local service, needs to be reachable
-// from an unauthenticated endpoint.
+// from the setup wizard.
 type urlGuard struct {
 	ownAddrs func() []netip.Addr
 	ownPorts []uint16

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -159,9 +158,8 @@ type codeSession struct {
 // session. Counters live in memory; the file is read on every check, so
 // `new-code` takes effect without a restart.
 type Codes struct {
-	path  string
-	now   func() time.Time
-	trust func(fs.FileInfo) error
+	path string
+	now  func() time.Time
 
 	verify sync.Mutex // one argon2id verification at a time
 
@@ -181,7 +179,6 @@ func NewCodes(path string) *Codes {
 	return &Codes{
 		path:     path,
 		now:      time.Now,
-		trust:    trustCodeFile,
 		ipFails:  map[string][]time.Time{},
 		failed:   map[string]int{},
 		logged:   map[string]CodeState{},
@@ -201,7 +198,7 @@ func (c *Codes) read() (CodeRecord, bool) {
 	defer f.Close()
 	fi, err := f.Stat()
 	if err == nil {
-		err = c.trust(fi)
+		err = trustCodeFile(fi)
 	}
 	if err != nil {
 		slog.Warn("setup code file ignored", "path", c.path, "err", err)
@@ -251,8 +248,10 @@ func (c *Codes) State() CodeState {
 	return c.stateLocked(rec, ok)
 }
 
-// Redeem checks code from ip. A right code opens the setup session and
-// returns its token; the session of an earlier entry ends.
+// Redeem checks code from ip (a rate-limit key). A right code opens the
+// setup session and returns its token; the session of an earlier entry
+// ends. Every attempt counts as a failure until it verified, so parallel
+// requests cannot run more guesses than the limits allow.
 func (c *Codes) Redeem(ip, code string) (string, error) {
 	rec, ok := c.read()
 	now := c.now()
@@ -267,11 +266,14 @@ func (c *Codes) Redeem(ip, code string) (string, error) {
 			recent = append(recent, t)
 		}
 	}
-	c.ipFails[ip] = recent
 	if len(recent) >= codeIPLimit {
+		c.ipFails[ip] = recent
+		wait := codeIPWindow - now.Sub(recent[0])
 		c.mu.Unlock()
-		return "", &RedeemError{State: CodeReady, RateLimited: true, RetryAfter: codeIPWindow - now.Sub(recent[0])}
+		return "", &RedeemError{State: CodeReady, RateLimited: true, RetryAfter: wait}
 	}
+	c.ipFails[ip] = append(recent, now)
+	c.failed[rec.Hash]++
 	c.mu.Unlock()
 
 	norm, valid := NormalizeCode(code)
@@ -285,14 +287,12 @@ func (c *Codes) Redeem(ip, code string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !right {
-		c.ipFails[ip] = append(c.ipFails[ip], now)
-		c.failed[rec.Hash]++
-		left := codeIPLimit - len(c.ipFails[ip])
-		if total := codeTotalLimit - c.failed[rec.Hash]; total < left {
-			left = total
-		}
-		st := c.stateLocked(rec, true)
-		return "", &RedeemError{State: st, AttemptsLeft: max(left, 0)}
+		left := min(codeIPLimit-len(c.ipFails[ip]), codeTotalLimit-c.failed[rec.Hash])
+		return "", &RedeemError{State: c.stateLocked(rec, true), AttemptsLeft: max(left, 0)}
+	}
+	c.failed[rec.Hash]--
+	if fails := c.ipFails[ip]; len(fails) > 0 {
+		c.ipFails[ip] = fails[:len(fails)-1]
 	}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -308,13 +308,17 @@ func (c *Codes) Redeem(ip, code string) (string, error) {
 
 // Session reports what token is worth now.
 func (c *Codes) Session(token string) SessionState {
+	rec, ok := c.read()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionLocked(token, rec, ok)
+}
+
+func (c *Codes) sessionLocked(token string, rec CodeRecord, ok bool) SessionState {
 	if token == "" {
 		return SessionNone
 	}
-	rec, ok := c.read()
 	sum := sha256.Sum256([]byte(token))
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	s := c.session
 	if s == nil || subtle.ConstantTimeCompare(s.token[:], sum[:]) != 1 {
 		if c.replaced[sum] {
@@ -334,11 +338,12 @@ func (c *Codes) Session(token string) SessionState {
 // BeginCommit marks the session of token as installing, after which it
 // can only follow the install. It fails unless token may write.
 func (c *Codes) BeginCommit(token string) bool {
-	if c.Session(token) != SessionWrite {
-		return false
-	}
+	rec, ok := c.read()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.sessionLocked(token, rec, ok) != SessionWrite {
+		return false
+	}
 	c.session.committed = true
 	return true
 }
@@ -360,8 +365,4 @@ func WriteCodeRecord(path string, rec CodeRecord, gid int) error {
 		return err
 	}
 	return writeRootFile(path, data, gid)
-}
-
-func errUntrusted(format string, a ...any) error {
-	return fmt.Errorf("untrusted setup code file: "+format, a...)
 }

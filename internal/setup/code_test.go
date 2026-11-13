@@ -292,3 +292,26 @@ func TestUntrustedCodeFileIgnored(t *testing.T) {
 		t.Fatal("code from a group-writable file accepted")
 	}
 }
+
+func TestParallelGuessesStayWithinLimit(t *testing.T) {
+	c, path, clock := newTestCodes(t)
+	writeTestCode(t, path, clock.t)
+	const n = 20
+	verified := make(chan bool, n)
+	for range n {
+		go func() {
+			_, err := c.Redeem("192.0.2.1", "AAAA-AAAA-AAAA")
+			var re *RedeemError
+			verified <- errors.As(err, &re) && !re.RateLimited
+		}()
+	}
+	checked := 0
+	for range n {
+		if <-verified {
+			checked++
+		}
+	}
+	if checked > 5 {
+		t.Fatalf("%d parallel guesses from one address were checked, want at most 5", checked)
+	}
+}

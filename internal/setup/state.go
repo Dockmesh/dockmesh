@@ -2,9 +2,9 @@
 //
 // Setup mode is active only for an install Decide places as never set up
 // or legacy unfinished. A configured install stays closed even without
-// accounts or without an admin: the wizard is unauthenticated, so opening
-// it on an install with data would hand that install to whoever reaches it
-// first; `dockmesh admin create` recovers it instead. While
+// accounts or without an admin: the wizard needs no account, so opening it
+// on an install with data would hand that install to whoever holds a setup
+// code; `dockmesh admin create` recovers it instead. While
 // active, the HTTP layer redirects all non-setup paths so an operator
 // who just installed dockmesh and visited the dashboard URL lands on
 // the install wizard rather than the login screen. After the wizard

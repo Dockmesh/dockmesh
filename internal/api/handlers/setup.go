@@ -37,6 +37,8 @@ func (h *Handlers) SetupCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGone, "setup mode is no longer active")
 		return
 	}
+	// The only write that answers before a setup session: keep it small.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	var req struct {
 		Code string `json:"code"`
 	}
@@ -44,7 +46,7 @@ func (h *Handlers) SetupCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	token, err := h.SetupState.Codes().Redeem(clientip.IP(r), req.Code)
+	token, err := h.SetupState.Codes().Redeem(clientip.LimitKey(clientip.IP(r)), req.Code)
 	var re *setup.RedeemError
 	switch {
 	case errors.As(err, &re):
@@ -54,14 +56,12 @@ func (h *Handlers) SetupCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Setup mode serves plain HTTP until it gets its own certificate, so
-	// Secure follows the connection.
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set whenever the request came over TLS
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set whenever the request came over TLS, directly or through a trusted proxy
 		Name:     middleware.SetupCookie,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   clientip.Secure(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(http.StatusNoContent)

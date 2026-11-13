@@ -3,6 +3,8 @@
 package setup
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,11 +28,36 @@ func trustCodeFile(fi fs.FileInfo) error {
 	return nil
 }
 
+// ensureCodeDir creates dir root:gid 0750, or lets gid traverse an
+// existing one: the server reads the code file with its own group, which
+// on older units is not the group of /etc/dockmesh. Others may only
+// traverse, never list; the config next to it stays 0640.
+func ensureCodeDir(dir string, gid int) error {
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			return err
+		}
+		return os.Chown(dir, 0, gid)
+	}
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || st.Uid != 0 {
+		return fmt.Errorf("%s is not a directory owned by root", dir)
+	}
+	if int(st.Gid) != gid && fi.Mode().Perm()&0o001 == 0 {
+		return os.Chmod(dir, fi.Mode().Perm()|0o001)
+	}
+	return nil
+}
+
 // writeRootFile replaces path with data: a temp file in the same
-// directory, fsync, rename. The directory is created 0750 if missing.
+// directory, fsync, rename.
 func writeRootFile(path string, data []byte, gid int) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := ensureCodeDir(dir, gid); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".setup-code-*")
@@ -59,4 +86,8 @@ func writeRootFile(path string, data []byte, gid int) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+func errUntrusted(format string, a ...any) error {
+	return fmt.Errorf("untrusted setup code file: "+format, a...)
 }

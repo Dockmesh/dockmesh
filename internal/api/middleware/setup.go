@@ -44,6 +44,11 @@ func openDuringSetup(method, path string) bool {
 	if strings.HasPrefix(path, "/_app/") {
 		return true
 	}
+	// Other static files sit at the site root; deeper paths with the same
+	// endings belong to real routes (/ws/…, /install/…).
+	if strings.Count(path, "/") != 1 {
+		return false
+	}
 	for _, ext := range staticExts {
 		if strings.HasSuffix(path, ext) {
 			return true

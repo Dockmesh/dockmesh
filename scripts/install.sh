@@ -1412,7 +1412,7 @@ ok "installed       $INSTALLED"
 TOTAL_ELAPSED=$(awk "BEGIN { printf \"%.1f\", $(get_time) - $START_TS }")
 printf '   %s%ss total%s\n' "$FG_MUTED" "$TOTAL_ELAPSED" "$RST" >&2
 
-# Pick a sensible LAN IP for the wizard URL — first non-loopback IPv4
+# Pick a sensible LAN IP for the printed URL — first non-loopback IPv4
 # address. Falls back to <hostname> if no IP could be derived.
 WIZARD_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [ -z "$WIZARD_HOST" ] && WIZARD_HOST="$(hostname 2>/dev/null || echo localhost)"
@@ -1439,17 +1439,17 @@ else
     sleep 1
   done
   CODE_LINES=()
-  if CODE_OUT="$("$INSTALL_DIR/dockmesh" setup new-code 2>&1)"; then
+  if CODE_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup new-code 2>&1)"; then
     while IFS= read -r line; do CODE_LINES+=("  $line"); done <<<"$CODE_OUT"
   else
-    CODE_LINES=("  Get a setup code with:" "  $USE_SUDO dockmesh setup new-code")
+    CODE_LINES=("  Get a setup code with:" "  sudo dockmesh setup new-code")
   fi
   box "Open the install wizard" \
     "" \
     "${CODE_LINES[@]}" \
     "" \
     "The code is valid for 2 hours. A new one, which replaces it:" \
-    "  $USE_SUDO dockmesh setup new-code"
+    "  sudo dockmesh setup new-code"
 fi
 
 printf '   %sDocs%s     https://dockmesh.dev/docs\n'   "$DIM" "$RST" >&2
