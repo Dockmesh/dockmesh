@@ -43,6 +43,7 @@ func configShow(args []string) error {
 	}
 	fmt.Printf("HTTPAddr          = %q\n", cfg.HTTPAddr)
 	fmt.Printf("BaseURL           = %q\n", cfg.BaseURL)
+	fmt.Printf("DataDir           = %q\n", cfg.DataDir)
 	fmt.Printf("DBPath            = %q\n", cfg.DBPath)
 	fmt.Printf("StacksRoot        = %q\n", cfg.StacksRoot)
 	fmt.Printf("SecretsPath       = %q\n", cfg.SecretsPath)

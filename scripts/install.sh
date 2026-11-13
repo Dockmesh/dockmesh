@@ -194,8 +194,10 @@ get_time() {
 #  place with rename.
 # ------------------------------------------------------------------
 
-# Env files of an earlier install at the script's default data dirs.
+# Env files of an earlier install at the script's default data dirs. Once
+# `dockmesh system migrate-layout` has run, each is a symlink to ETC_ENV_FILE.
 ENV_FILE_CANDIDATES=(/var/lib/dockmesh/dockmesh.env /data/dockmesh.env /usr/local/var/dockmesh/dockmesh.env)
+ETC_ENV_FILE=/etc/dockmesh/dockmesh.env
 
 # Owners an env file of an earlier install may have to be reused.
 TRUSTED_ENV_OWNERS="root dockmesh"
@@ -236,7 +238,7 @@ find_existing_env_file() {
   local p
   for p in "$@" "${ENV_FILE_CANDIDATES[@]}"; do
     [ -n "$p" ] || continue
-    if $USE_SUDO test -f "$p" && ! $USE_SUDO test -L "$p"; then
+    if $USE_SUDO test -f "$p" && { ! $USE_SUDO test -L "$p" || [ "$($USE_SUDO readlink "$p")" = "$ETC_ENV_FILE" ]; }; then
       if ! env_file_trusted "$p"; then
         die "refusing to reuse $p: it must be named dockmesh.env and, like its directory, be owned by root or dockmesh and not writable by group or others"
       fi
@@ -277,7 +279,7 @@ setup_flag_wanted() {
   if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ] || [ "${HAS_LAUNCHD_UNIT:-0}" = "1" ]; then
     return 1
   fi
-  for p in "${ENV_FILE_CANDIDATES[@]}" "$@"; do
+  for p in "$ETC_ENV_FILE" "${ENV_FILE_CANDIDATES[@]}" "$@"; do
     [ -n "$p" ] || continue
     if $USE_SUDO test -e "$p" || $USE_SUDO test -L "$p"; then
       return 1
@@ -323,6 +325,7 @@ write_env_file() {
 # successful commit; this file stays as the live config afterwards.
 DOCKMESH_HTTP_ADDR=:8080
 DOCKMESH_AGENT_LISTEN=:8443
+DOCKMESH_DATA_DIR=$data_dir
 DOCKMESH_DB_PATH=$data_dir/data/dockmesh.db
 DOCKMESH_STACKS_ROOT=$data_dir/stacks
 DOCKMESH_SECRETS_PATH=$data_dir/data/secrets.env
@@ -1134,6 +1137,9 @@ if [ "$IS_UPGRADE" = "1" ]; then
         warn "could not locate data dir — run 'dockmesh init' to finish migration manually"
       fi
     fi
+    if ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout; then
+      warn "config left at its old place; Dockmesh keeps using it"
+    fi
     info "restarting dockmesh.service..."
     RESTART_T0=$(get_time)
     if ! $USE_SUDO systemctl restart dockmesh; then
@@ -1260,16 +1266,14 @@ else
     UNIT_ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' || true)"
   fi
   KEPT_ENV_FILE="$(find_existing_env_file "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/dockmesh.env}" "$UNIT_ENV_FILE" || true)"
-  # Default data root: /data if mounted as a separate volume, else
-  # /var/lib/dockmesh on Linux, /usr/local/var/dockmesh on macOS.
+  # Default data root: /var/lib/dockmesh on Linux, /usr/local/var/dockmesh
+  # on macOS. An existing /data install is found through its env file.
   if [ -n "$KEPT_ENV_FILE" ]; then
     DATA_DIR="$(dirname "$KEPT_ENV_FILE")"
     if [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$DATA_DIR" != "$DOCKMESH_DATA_DIR" ]; then
       die "DOCKMESH_DATA_DIR=$DOCKMESH_DATA_DIR, but the earlier install's config is $KEPT_ENV_FILE — set DOCKMESH_DATA_DIR=$DATA_DIR or move that file away"
     fi
     info "earlier install $KEPT_ENV_FILE"
-  elif [ -d /data ] && [ -w /data -o "$(id -u)" = "0" ]; then
-    DATA_DIR="${DOCKMESH_DATA_DIR:-/data}"
   elif [ "$OS" = "darwin" ]; then
     DATA_DIR="${DOCKMESH_DATA_DIR:-/usr/local/var/dockmesh}"
   else
@@ -1319,6 +1323,9 @@ else
     ENV_FILE="$KEPT_ENV_FILE"
     warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
     ok "env file        $ENV_FILE (kept)"
+    if [ "$OS" = "linux" ] && ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout --from "$ENV_FILE"; then
+      warn "config left at its old place; Dockmesh keeps using it"
+    fi
   else
     if [ "$OS" = "linux" ]; then
       write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker

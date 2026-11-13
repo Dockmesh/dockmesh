@@ -30,6 +30,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=backend /out/dockmesh /app/dockmesh
+ENV DOCKMESH_DATA_DIR=/app
 EXPOSE 8080
 LABEL dockmesh.component="server"
 USER nonroot:nonroot

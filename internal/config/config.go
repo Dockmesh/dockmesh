@@ -17,12 +17,15 @@ import (
 const DefaultBaseURL = "http://localhost:8080"
 
 type Config struct {
-	HTTPAddr          string
-	DBPath            string
-	StacksRoot        string
-	SecretsPath       string
-	AuditGenesisPath  string
-	SecretsKeyPath    string
+	HTTPAddr         string
+	DataDir          string
+	DBPath           string
+	StacksRoot       string
+	SecretsPath      string
+	AuditGenesisPath string
+	SecretsKeyPath   string
+	// UpdateDir is where a binary update is staged before it is applied.
+	UpdateDir         string
 	SecretsEncryptEnv bool
 	ScannerBinary     string
 	ScannerEnabled    bool
@@ -63,13 +66,16 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	paths := ResolvePaths(os.Getenv)
 	cfg := &Config{
 		HTTPAddr:          envOr("DOCKMESH_HTTP_ADDR", ":8080"),
-		DBPath:            envOr("DOCKMESH_DB_PATH", "./data/dockmesh.db"),
-		StacksRoot:        envOr("DOCKMESH_STACKS_ROOT", "./stacks"),
-		SecretsPath:       envOr("DOCKMESH_SECRETS_PATH", "./data/secrets.env"),
-		AuditGenesisPath:  envOr("DOCKMESH_AUDIT_GENESIS_PATH", "./data/audit-genesis.sha256"),
-		SecretsKeyPath:    envOr("DOCKMESH_SECRETS_KEY_PATH", "./data/secrets.age-key"),
+		DataDir:           paths.DataDir,
+		DBPath:            paths.DBPath,
+		StacksRoot:        paths.StacksRoot,
+		SecretsPath:       paths.SecretsPath,
+		AuditGenesisPath:  paths.AuditGenesisPath,
+		SecretsKeyPath:    paths.SecretsKeyPath,
+		UpdateDir:         paths.UpdateDir,
 		SecretsEncryptEnv: envOr("DOCKMESH_SECRETS_ENCRYPT_ENV", "true") != "false",
 		ScannerBinary:     envOr("DOCKMESH_SCANNER_BINARY", "grype"),
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
