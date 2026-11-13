@@ -1,0 +1,3 @@
+kind: Security
+body: The setup wizard needs a one-time setup code from `sudo dockmesh setup new-code` (2 hours, locked after 20 wrong attempts); before the code only the code form, a bare status and the health checks answer, so whoever reaches port 8080 first can no longer take over a new server
+time: 2026-11-13T19:22:04.009612014Z

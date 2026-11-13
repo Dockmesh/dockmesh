@@ -54,7 +54,9 @@ func (h *Handlers) SetupCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	// Setup mode serves plain HTTP until it gets its own certificate, so
+	// Secure follows the connection.
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set whenever the request came over TLS
 		Name:     middleware.SetupCookie,
 		Value:    token,
 		Path:     "/",

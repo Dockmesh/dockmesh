@@ -168,7 +168,8 @@ Some responses differ:
 | Account locked by the lockout policy | `423` | JSON, with `Retry-After` |
 | Too many attempts | `429` | JSON, with `Retry-After` |
 | Refresh token from before a security update | `401` | `{"error":"…","code":"session_outdated"}` |
-| Server still in setup mode | `503` | `{"error":"…","setup_url":"/setup"}` |
+| Server in setup mode, no setup session | `401` | `{"error":"setup code required","setup_url":"/setup"}` |
+| Server in setup mode, with a setup session | `503` | `{"error":"…","setup_url":"/setup"}` |
 | API token checks overloaded | `503` | plain text, `Retry-After: 1` |
 | Unknown path under `/api/` | `404` | plain text |
 
@@ -193,7 +194,7 @@ The client address is the TCP peer unless the peer is a trusted proxy: only then
 
 ## Public endpoints
 
-These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/ready` (503 while shutting down or when the database does not answer), the OpenAPI paths above, the sign-in routes under `/api/v1/auth/` (login, MFA, refresh, logout, SSO), `/api/v1/setup/*` during setup, `/api/v1/invite/{token}`, `POST /api/v1/stacks/{name}/git/webhook` (checked with the webhook secret, see [Git sources](../features/git-sources.md#push-webhook)), and `/install/agent.sh` and `/install/{name}`. The agent listener (port 8443) accepts enrollment at `/enroll` and serves `/install/agent.sh` and the agent binaries under `/install/` without a client certificate, limited per IP address. `/metrics` is public only with `DOCKMESH_METRICS_AUTH=false`; otherwise it needs a token with `metrics.view`. See [Monitoring](../features/monitoring.md).
+These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/ready` (503 while shutting down or when the database does not answer), the OpenAPI paths above, the sign-in routes under `/api/v1/auth/` (login, MFA, refresh, logout, SSO), `GET /api/v1/setup/status` and `POST /api/v1/setup/code` during setup (the other `/api/v1/setup/*` routes need the setup session cookie `POST /api/v1/setup/code` sets), `/api/v1/invite/{token}`, `POST /api/v1/stacks/{name}/git/webhook` (checked with the webhook secret, see [Git sources](../features/git-sources.md#push-webhook)), and `/install/agent.sh` and `/install/{name}`. The agent listener (port 8443) accepts enrollment at `/enroll` and serves `/install/agent.sh` and the agent binaries under `/install/` without a client certificate, limited per IP address. `/metrics` is public only with `DOCKMESH_METRICS_AUTH=false`; otherwise it needs a token with `metrics.view`. See [Monitoring](../features/monitoring.md).
 
 ## dmctl
 

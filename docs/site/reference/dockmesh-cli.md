@@ -29,6 +29,7 @@ Most commands open the database and apply pending migrations first. Loading the 
 |---|---|
 | `serve` | Start the HTTP server and the agent mTLS listener (default) |
 | `init` | Interactive first-run setup on the command line |
+| `setup new-code` | Print a one-time code that opens the setup wizard |
 | `restore` | Restore database, stacks and data directory from a system backup |
 | `doctor` | Run local health checks |
 | `ca export` / `ca rotate` / `ca reissue-server` | Export the agent CA, replace it, or add names to the agent listener certificate |
@@ -76,6 +77,20 @@ A command-line alternative to the web setup wizard. It walks through six steps (
 The agent URL defaults to the base URL's host with `wss://`, port `8443` and path `/connect`. init writes it as `DOCKMESH_AGENT_PUBLIC_URL`, which then wins over the agent URL on the **Settings** page, and derives `DOCKMESH_AGENT_SANS` from both URLs and the hostname. If the admin user already exists, init leaves its password unchanged and says so.
 
 The systemd unit init writes runs as user `dockmesh`, group `docker`, with `ProtectSystem=strict` and write access limited to the data root and `/var/run/docker.sock`. init creates the `dockmesh` user if needed, adds it to the `docker` group and hands the data root to it. A copy of the unit is kept at `<data-dir>/dockmesh.service`.
+
+## setup new-code
+
+`sudo dockmesh setup new-code` prints a setup code, its expiry and the link to the wizard:
+
+```
+Setup code   K7QD-3MXA-9PRT
+Valid until  16:05 (2 hours)
+Open http://192.168.10.50:8080/setup#K7QD-3MXA-9PRT
+```
+
+The code is 12 characters of Crockford base32; case and dashes don't matter when you type it. It is in the link's fragment (after `#`), which browsers never send to the server, and the wizard fills the field from it without submitting. Only an argon2id hash of the code and its expiry are stored, in `/etc/dockmesh/setup-code.hash` (owner root, group `dockmesh`, mode 0640); the code itself is never stored or logged and can't be shown again. Each run replaces the previous code and ends a setup session opened with it.
+
+The command must run as root. It refuses on an install that is set up (`This server is already set up`); to get an admin there, use `dockmesh admin create`. It works only while the server runs in setup mode or before its first start on a host with no config, no database and no accounts. In a container, run it as root inside the container: `docker exec -u 0 <container> /app/dockmesh setup new-code`.
 
 ## restore
 

@@ -1416,7 +1416,6 @@ printf '   %s%ss total%s\n' "$FG_MUTED" "$TOTAL_ELAPSED" "$RST" >&2
 # address. Falls back to <hostname> if no IP could be derived.
 WIZARD_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [ -z "$WIZARD_HOST" ] && WIZARD_HOST="$(hostname 2>/dev/null || echo localhost)"
-WIZARD_URL="http://$WIZARD_HOST:8080/setup"
 
 if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
   box "Next step" \
@@ -1433,12 +1432,24 @@ elif [ -n "${KEPT_ENV_FILE:-}" ]; then
     "Reused $KEPT_ENV_FILE and the data next to it." \
     "Sign in with your existing account."
 else
+  # The setup code goes to this terminal only, never to a log. Wait for
+  # the service first: new-code asks it whether it is in setup mode.
+  for _ in $(seq 1 30); do
+    curl -fs "http://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  CODE_LINES=()
+  if CODE_OUT="$("$INSTALL_DIR/dockmesh" setup new-code 2>&1)"; then
+    while IFS= read -r line; do CODE_LINES+=("  $line"); done <<<"$CODE_OUT"
+  else
+    CODE_LINES=("  Get a setup code with:" "  $USE_SUDO dockmesh setup new-code")
+  fi
   box "Open the install wizard" \
     "" \
-    "  $WIZARD_URL" \
+    "${CODE_LINES[@]}" \
     "" \
-    "Pick your data location, service user, and admin password." \
-    "Wizard window: 30 minutes — restart the service to extend it."
+    "The code is valid for 2 hours. A new one, which replaces it:" \
+    "  $USE_SUDO dockmesh setup new-code"
 fi
 
 printf '   %sDocs%s     https://dockmesh.dev/docs\n'   "$DIM" "$RST" >&2

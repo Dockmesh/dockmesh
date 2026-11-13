@@ -50,7 +50,7 @@ Like the other `dockmesh` subcommands, `doctor` loads the first env file it find
 | `http server error` | The listener failed, usually because another process holds the port. |
 | `db open failed` / `db migrate failed` | The database path is wrong, not writable by the service user, or a migration failed (see [Upgrades](#upgrades)). |
 | `docker daemon not reachable yet` | Dockmesh runs, but container endpoints return 503 until Docker answers. |
-| `server starting in setup-mode` | The install wizard owns the UI. Open `/setup`. |
+| `Setup mode. Get a setup code with: sudo dockmesh setup new-code` | The install wizard owns the UI. Run the command, then open the link it prints. |
 
 **Fix:** for a port conflict, find the other process and either stop it or set `DOCKMESH_HTTP_ADDR=:<port>` in the env file. For Docker, check the daemon and that the service user is in the `docker` group.
 
@@ -62,14 +62,14 @@ id dockmesh
 
 See [Ports](../reference/ports.md).
 
-### "setup window expired — restart the dockmesh service to start a fresh window"
+### "The setup code has expired" or "Setup is locked"
 
-**Cause:** the setup wizard accepts its final step for 30 minutes after the server starts.
+**Cause:** a setup code is valid for 2 hours, and it locks after 20 wrong attempts. After 5 wrong attempts from one address, that address waits 15 minutes.
 
-**Fix:** restart and finish the wizard within 30 minutes.
+**Fix:** create a new code on the server; the old one stops working. No restart is needed.
 
 ```bash
-sudo systemctl restart dockmesh
+sudo dockmesh setup new-code
 ```
 
 ### The sign-in page appears instead of the setup wizard

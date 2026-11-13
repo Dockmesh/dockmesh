@@ -23,12 +23,16 @@ func runSetupCmd(args []string) {
 		os.Exit(2)
 	}
 	if err := setupNewCode(time.Now()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, errSetUpAlready) {
+			fmt.Fprintln(os.Stderr, "This server is already set up. To add an admin, run: "+setupAdminCommand)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
 
-var errSetUpAlready = errors.New("This server is already set up. To add an admin, run: " + setupAdminCommand)
+var errSetUpAlready = errors.New("server already set up")
 
 const setupAdminCommand = "sudo dockmesh admin create --username <name> --role admin"
 
@@ -106,7 +110,7 @@ func serverInSetup(httpAddr string) bool {
 		host = "127.0.0.1"
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/v1/setup/status")
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/v1/setup/status") // #nosec G704 -- this host's own listen address from the server config
 	if err != nil {
 		return false
 	}
@@ -144,4 +148,3 @@ func lanAddress() string {
 	}
 	return "localhost"
 }
-
