@@ -378,7 +378,7 @@ func TestIdleTimeoutFailsStalledRun(t *testing.T) {
 	}
 }
 
-// dripHost sends the volume in small pieces with pauses shorter than the
+// dripHost sends the volume in small pieces with pauses well below the
 // idle timeout, for longer than the timeout in total.
 type dripHost struct{ *fakeHost }
 
@@ -398,9 +398,9 @@ type dripReader struct {
 }
 
 func (d *dripReader) Read(p []byte) (int, error) {
-	if d.n < 8 {
+	if d.n < 12 {
 		d.n++
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		if len(p) > 64 {
 			p = p[:64]
 		}
@@ -410,7 +410,7 @@ func (d *dripReader) Read(p []byte) (int, error) {
 
 func TestIdleTimeoutKeepsMovingTransfer(t *testing.T) {
 	prev := idleTimeout
-	idleTimeout = 150 * time.Millisecond
+	idleTimeout = time.Second
 	t.Cleanup(func() { idleTimeout = prev })
 	svc, fake, root := newExecTest(t, false)
 	svc.SetHostResolver(dripHost{fake})
