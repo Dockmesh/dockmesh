@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: An install whose setup wizard was never finished opens the wizard only after `sudo dockmesh setup new-code`; the 30-minute window and its restart are gone
+time: 2026-11-13T19:22:04.444828053Z
+custom:
+    Audience: admins
+    Id: setup-code

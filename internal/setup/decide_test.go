@@ -108,7 +108,7 @@ func boot(t *testing.T, root string, p Probe) Mode {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	st, mode, _, err := NewForBoot(context.Background(), conn, facts)
+	st, mode, _, err := NewForBoot(context.Background(), conn, facts, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,5 +404,36 @@ func TestDatabaseSymlinkToKnownPathIsNotForeign(t *testing.T) {
 	}
 	if f := probe(root, active).Scan(); f.ForeignDB || !f.DB {
 		t.Fatalf("facts = %+v, want the linked database as the active one", f)
+	}
+}
+
+func TestCodeAllowed(t *testing.T) {
+	tests := []struct {
+		name          string
+		f             Facts
+		serverInSetup bool
+		want          bool
+	}{
+		{name: "never set up, server not started", f: Facts{}, want: true},
+		{name: "legacy unfinished", f: Facts{EnvFile: true, Config: true, Force: true, DB: true}, want: true},
+		{name: "users exist", f: Facts{EnvFile: true, Config: true, Force: true, DB: true, Users: 2}, serverInSetup: true, want: false},
+		{name: "users unknown", f: Facts{Users: -1}, serverInSetup: true, want: false},
+		{name: "other database", f: Facts{ForeignDB: true}, serverInSetup: true, want: false},
+		{name: "configured, server not in setup", f: Facts{EnvFile: true, Config: true, DB: true}, want: false},
+		// A never-set-up server created its database and secrets on the
+		// first start; it says it is in setup mode.
+		{name: "server in setup created its files", f: Facts{DB: true, Data: true}, serverInSetup: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asked := false
+			got := CodeAllowed(tt.f, func() bool { asked = true; return tt.serverInSetup })
+			if got != tt.want {
+				t.Fatalf("CodeAllowed = %v, want %v", got, tt.want)
+			}
+			if asked && (tt.f.Users != 0 || tt.f.ForeignDB) {
+				t.Fatal("asked the server although the files already refuse")
+			}
+		})
 	}
 }

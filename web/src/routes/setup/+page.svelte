@@ -162,6 +162,12 @@
   async function loadServerInfo() {
     try {
       const r = await fetch('/api/v1/setup/server-info');
+      // The session ends with the code, or when the code is entered in
+      // another browser.
+      if (r.status === 401 && !installing) {
+        await refreshGate();
+        return;
+      }
       if (!r.ok) return;
       serverInfo = await r.json();
     } catch { /* keep the last value */ }
@@ -434,21 +440,99 @@
         : svcExistingUser || '—'
   );
 
-  onMount(async () => {
-    // Setup may have finished meanwhile (restart, bookmark); a commit
-    // would only return 410, so go to the dashboard instead.
+  // ----- Setup code: nothing of the wizard loads before it ----------------
+  type CodeState = 'no_code' | 'ready' | 'expired' | 'locked';
+  let gate = $state<'checking' | 'code' | 'open'>('checking');
+  let codeState = $state<CodeState>('ready');
+  let sessionReplaced = $state(false);
+  let codeInput = $state('');
+  let codeFromLink = $state(false);
+  let codeError = $state<string | null>(null);
+  let codeBusy = $state(false);
+  let codeHelpOpen = $state(false);
+  let wizardStarted = false;
+
+  // Returns true when this browser holds a setup session. Setup may also
+  // have finished meanwhile (restart, bookmark): then go to the dashboard.
+  async function refreshGate(): Promise<boolean> {
+    let st: { active?: boolean; code?: CodeState; session?: string } | null = null;
     try {
       const r = await fetch('/api/v1/setup/status', { headers: { Accept: 'application/json' } });
-      if (r.ok) {
-        const s = await r.json();
-        if (!s.active) {
-          window.location.replace('/');
-          return;
-        }
-      }
+      if (r.ok) st = await r.json();
     } catch {
-      // The commit endpoint rejects if setup really ended.
+      /* show the code form; entering the code reports the real state */
     }
+    if (st && !st.active) {
+      window.location.replace('/');
+      return false;
+    }
+    if (st?.session === 'valid' || st?.session === 'read_only') {
+      gate = 'open';
+      return true;
+    }
+    codeState = st?.code ?? 'ready';
+    sessionReplaced = st?.session === 'replaced';
+    gate = 'code';
+    return false;
+  }
+
+  async function submitCode() {
+    codeBusy = true;
+    codeError = null;
+    try {
+      const r = await fetch('/api/v1/setup/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
+        body: JSON.stringify({ code: codeInput })
+      });
+      if (r.status === 204) {
+        codeInput = '';
+        sessionReplaced = false;
+        gate = 'open';
+        startWizard();
+        return;
+      }
+      const b = await r.json().catch(() => ({}));
+      if (b.code_state) codeState = b.code_state;
+      if (r.status === 429) {
+        codeError = m.setup_code_rate_limited({ minutes: Math.max(1, Math.ceil((b.retry_after_secs ?? 60) / 60)) });
+      } else if (r.status === 401) {
+        codeError = m.setup_code_wrong({ n: b.attempts_left ?? 0 });
+      } else if (r.status === 410 && !b.code_state) {
+        window.location.replace('/');
+      } else if (r.status === 400 || r.status === 403) {
+        codeError = m.setup_code_format();
+      }
+    } catch (e) {
+      codeError = e instanceof Error ? e.message : String(e);
+    } finally {
+      codeBusy = false;
+    }
+  }
+
+  function retryCode() {
+    codeError = null;
+    codeState = 'ready';
+    sessionReplaced = false;
+  }
+
+  onMount(async () => {
+    // The link the server prints carries the code in the fragment, which
+    // never reaches the server. Fill the field, drop it from the address
+    // bar, and wait for Continue: opening the link again must not take
+    // over a running setup.
+    const fragment = window.location.hash.slice(1);
+    if (fragment) {
+      codeInput = decodeURIComponent(fragment);
+      codeFromLink = true;
+      history.replaceState(history.state, '', window.location.pathname + window.location.search);
+    }
+    if (await refreshGate()) startWizard();
+  });
+
+  function startWizard() {
+    if (wizardStarted) return;
+    wizardStarted = true;
     const param = new URLSearchParams(window.location.search).get('step');
     const n = parseInt(param || '1', 10);
     if (Number.isFinite(n) && n >= 1 && n <= 7) {
@@ -463,7 +547,7 @@
     loadServerInfo();
     serverInfoTimer = setInterval(loadServerInfo, 10_000);
     loadPreflight();
-  });
+  }
   onDestroy(() => {
     if (serverInfoTimer) clearInterval(serverInfoTimer);
   });
@@ -498,6 +582,58 @@
 {/snippet}
 
 <AuthShell width={760} footer={serverMeta}>
+  {#if gate === 'checking'}
+    <div class="col"><div class="dm-empty">{m.setup_checking_server()}</div></div>
+  {:else if gate === 'code'}
+    <div class="col">
+      {#if sessionReplaced}
+        <div class="head"><h1>{m.setup_code_replaced_title()}</h1><p>{m.setup_code_replaced_body()}</p></div>
+      {:else if codeState === 'expired'}
+        <div class="head"><h1>{m.setup_code_expired_title()}</h1><p>{m.setup_code_expired_body()}</p></div>
+      {:else if codeState === 'locked'}
+        <div class="head"><h1>{m.setup_code_locked_title()}</h1><p>{m.setup_code_locked_body()}</p></div>
+      {:else if codeState === 'no_code'}
+        <div class="head"><h1>{m.setup_code_none_title()}</h1><p>{m.setup_code_none_body()}</p></div>
+      {:else}
+        <div class="head"><h1>{m.setup_code_title()}</h1><p>{m.setup_code_sub()}</p></div>
+      {/if}
+      <section class="panel">
+        {#if sessionReplaced || codeState !== 'ready'}
+          <div class="cmd-line">
+            <span class="dm-mono">sudo dockmesh setup new-code</span>
+            <Button size="sm" variant="secondary" onclick={() => copyToClipboard('newcode', 'sudo dockmesh setup new-code')}>
+              {#if copiedKey === 'newcode'}<Check size={13} />{:else}<Copy size={13} />{/if}
+            </Button>
+          </div>
+          <div class="foot">
+            <span class="dm-sp"></span>
+            <Button variant="primary" onclick={retryCode}>{m.setup_code_have_new()}</Button>
+          </div>
+        {:else}
+          <form class="dm-field" onsubmit={(e) => { e.preventDefault(); submitCode(); }}>
+            <label for="setup-code">{m.setup_code_label()}</label>
+            <input id="setup-code" class="dm-input dm-mono code-input" placeholder="XXXX-XXXX-XXXX" bind:value={codeInput}
+              autocomplete="off" spellcheck="false" aria-invalid={codeError !== null} />
+            {#if codeError}
+              {@render checkLine('fail', codeError)}
+            {:else if codeFromLink}
+              <span class="hint">{m.setup_code_from_link()}</span>
+            {/if}
+            <div>
+              <button type="button" class="link" onclick={() => (codeHelpOpen = !codeHelpOpen)} aria-expanded={codeHelpOpen}>{m.setup_code_lost()}</button>
+              {#if codeHelpOpen}
+                <p class="note">{m.setup_code_lost_body_before()} <span class="dm-mono">sudo dockmesh setup new-code</span> {m.setup_code_lost_body_after()}</p>
+              {/if}
+            </div>
+            <div class="foot">
+              <span class="dm-sp"></span>
+              <Button variant="primary" type="submit" disabled={codeBusy || codeInput.trim() === ''}>{m.setup_continue()} <ArrowRight size={14} /></Button>
+            </div>
+          </form>
+        {/if}
+      </section>
+    </div>
+  {:else}
   <div class="col">
     <nav aria-label={m.setup_aria_steps()}>
       <ol class="stepper">
@@ -841,6 +977,7 @@
       {/if}
     </section>
   </div>
+  {/if}
 </AuthShell>
 
 <style>
@@ -904,6 +1041,9 @@
   .dm-field .lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
   .dm-field.sub { margin-top: 10px; }
   .hint { color: var(--subtle); font-size: var(--fs-xs); }
+  .code-input { font-size: 18px; letter-spacing: 0.08em; }
+  .cmd-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius, 6px); }
+  .link { background: none; border: 0; padding: 0; color: var(--accent); font-size: var(--fs-sm); cursor: pointer; }
   .note { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
   .note a { color: var(--accent); }
   .warn-t { color: var(--warn); font-weight: 600; }

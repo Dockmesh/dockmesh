@@ -64,10 +64,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", h.Health)
 
-		// P.14.1+P.14.2: install-wizard endpoints. All public — the
-		// wizard runs before any auth exists. The gate middleware lets
-		// /setup/* through automatically.
+		// Install wizard. No account exists yet: SetupGate lets only the
+		// status and the code form through before a setup code opened a
+		// setup session, and the handlers check the session again.
 		r.Get("/setup/status", h.SetupStatus)
+		r.With(middleware.RequireSetupHeader).Post("/setup/code", h.SetupCode)
 		r.Get("/setup/preflight", h.SetupPreflight)
 		r.Get("/setup/server-info", h.SetupServerInfo)
 		r.With(middleware.RequireSetupHeader).Post("/setup/validate-data-dir", h.SetupValidateDataDir)

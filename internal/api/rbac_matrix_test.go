@@ -41,6 +41,7 @@ var routeGates = []struct {
 	{"GET", "/metrics", rbac.PermMetricsView},
 	{"GET", "/api/v1/health", gatePublic},
 	{"GET", "/api/v1/setup/status", gatePublic},
+	{"POST", "/api/v1/setup/code", gatePublic},
 	{"GET", "/api/v1/setup/preflight", gatePublic},
 	{"GET", "/api/v1/setup/server-info", gatePublic},
 	{"GET", "/api/v1/setup/stream/{run_id}", gatePublic},

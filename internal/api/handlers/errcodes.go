@@ -165,7 +165,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"settings store not configured", "settings_store_not_configured"},
 	{"settings store unavailable", "settings_store_unavailable"},
 	{"setup mode is no longer active", "setup_mode_is_no_longer_active"},
-	{"setup window expired — restart the dockmesh service to start a fresh window", "setup_window_expired"},
+	{"setup code required", "setup_code_required"},
 	{"source must be manual or sso", "source_must_be_manual_or_sso"},
 	{"stack already exists", "stack_already_exists"},
 	{"stack_name is required", "stack_name_is_required"},

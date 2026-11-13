@@ -56,7 +56,7 @@ curl -fsSL https://get.dockmesh.dev | sudo bash
 ```
 
 The installer picks the amd64 or arm64 build, verifies its checksum, puts the binary in `/usr/local/bin`, creates a service user and a systemd unit and starts Dockmesh.
-Open `http://<host>:8080/setup` to create the admin account and finish the setup.
+Open the link the installer prints (`http://<host>:8080/setup#<code>`) to create the admin account and finish the setup; `sudo dockmesh setup new-code` prints a new one.
 
 Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host (Linux with systemd).
 

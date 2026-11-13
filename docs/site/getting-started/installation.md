@@ -36,7 +36,7 @@ The script:
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group if that group exists. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine.
 6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
 7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service. The next upgrade moves the file to `/etc/dockmesh/dockmesh.env` and leaves a symlink.
-8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
+8. Creates a setup code with `dockmesh setup new-code` and prints it with the wizard link, `http://<first IP of the host>:8080/setup#<code>`. The code goes only to the terminal.
 
 ### What goes where
 
@@ -104,7 +104,9 @@ DOCKMESH_SETUP_FORCE=true
 
 ## The setup wizard
 
-Open the URL the installer printed (`http://<host>:8080/setup`). While setup mode is active, the rest of the UI and API answer with 503 and point to `/setup`.
+Open the link the installer printed (`http://<host>:8080/setup#<code>`) and select **Continue**: the code from the link is filled in. Without the link, open `/setup` and type the code. Before a right code is entered, the server answers only the code form, a bare status endpoint and the health checks; every other page redirects to `/setup` and every other API call, including restore and the wizard's own checks, is refused with 401.
+
+The setup code is valid for 2 hours and cannot be shown again. `sudo dockmesh setup new-code` prints a new one and the old one stops working. After 5 wrong codes from one address, that address waits 15 minutes; after 20 wrong codes in total the code is locked until `new-code` runs again, so someone on your network guessing codes blocks setup until you create a new one. A right code opens one setup session in that browser; entering the code in another browser takes the session over. The session ends when the code expires. Once you start the install it can still follow the progress, but changes nothing more.
 
 To move an existing install to this machine instead, choose **Restore from a backup instead** on the first page and upload a system backup (plus the backup key file exported from the old server if the backup is encrypted). The server checks the backup, ends setup mode and restarts into the restored install; see [Disaster recovery](../operations/disaster-recovery.md).
 
@@ -126,7 +128,7 @@ Port 8080 is plain HTTP. Before you use Dockmesh beyond a trusted LAN, put a TLS
 
 The data directory and service user answers do not relocate anything: the server keeps using the paths in `dockmesh.env` and keeps running as the user from the unit file. The wizard only creates the directory you name and, if the server runs as root, the user. To move the data root, stop the service, move the files and edit `dockmesh.env`.
 
-The wizard accepts an install for 30 minutes after the server starts. After that it refuses with "setup window expired"; restart the service (`sudo systemctl restart dockmesh`) to open a new window. Only one install runs at a time. Until the wizard is finished, anyone who can reach port 8080 can complete it and become admin, so finish it right away and keep the port closed to untrusted networks until then.
+Only one install runs at a time. Setup mode still serves plain HTTP, so the code and the admin password cross the network unencrypted: finish the wizard from a trusted network and keep port 8080 closed to everyone else until then.
 
 ## Install with `dockmesh init`
 

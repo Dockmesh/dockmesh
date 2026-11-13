@@ -8,10 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/google/uuid"
 )
@@ -24,12 +27,78 @@ func (h *Handlers) SetupStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, setup.Status{Active: false})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.SetupState.SnapshotStatus())
+	writeJSON(w, http.StatusOK, h.SetupState.SnapshotStatus(middleware.SetupToken(r)))
+}
+
+// SetupCode checks a setup code. A right one opens the setup session,
+// which takes over from any earlier one, and sets its cookie.
+func (h *Handlers) SetupCode(w http.ResponseWriter, r *http.Request) {
+	if h.SetupState == nil || !h.SetupState.Active() {
+		writeError(w, http.StatusGone, "setup mode is no longer active")
+		return
+	}
+	// The only write that answers before a setup session: keep it small.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	token, err := h.SetupState.Codes().Redeem(clientip.LimitKey(clientip.IP(r)), req.Code)
+	var re *setup.RedeemError
+	switch {
+	case errors.As(err, &re):
+		writeSetupCodeError(w, re)
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set whenever the request came over TLS, directly or through a trusted proxy
+		Name:     middleware.SetupCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   clientip.Secure(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeSetupCodeError(w http.ResponseWriter, re *setup.RedeemError) {
+	body := map[string]any{"code_state": re.State}
+	status := http.StatusUnauthorized
+	switch {
+	case re.RateLimited:
+		status = http.StatusTooManyRequests
+		secs := int(re.RetryAfter.Round(time.Second).Seconds())
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		body["error"] = "too many wrong setup codes from this address"
+		body["retry_after_secs"] = secs
+	case re.State == setup.CodeNone:
+		status = http.StatusConflict
+		body["error"] = "no setup code has been created"
+	case re.State == setup.CodeExpired:
+		status = http.StatusGone
+		body["error"] = "the setup code has expired"
+	case re.State == setup.CodeLocked:
+		status = http.StatusLocked
+		body["error"] = "the setup code is locked after too many wrong attempts"
+	default:
+		body["error"] = "wrong setup code"
+		body["attempts_left"] = re.AttemptsLeft
+	}
+	writeJSON(w, status, body)
 }
 
 // SetupPreflight runs the host-fact + Docker-health checks the
-// wizard's first page renders. Public — wizard runs before auth exists.
+// wizard's first page renders, for a setup session.
 func (h *Handlers) SetupPreflight(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
 	pf := setup.CollectPreflight(r.Context(), h.Docker)
 	writeJSON(w, http.StatusOK, pf)
 }
@@ -38,6 +107,9 @@ func (h *Handlers) SetupPreflight(w http.ResponseWriter, r *http.Request) {
 // The wizard polls this every ~10s so uptime stays live while the
 // operator is configuring. Lightweight on purpose.
 func (h *Handlers) SetupServerInfo(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
 	startedAt := time.Now()
 	if h.SetupState != nil {
 		startedAt = h.SetupState.StartedAt()
@@ -53,7 +125,7 @@ func (h *Handlers) SetupServerInfo(w http.ResponseWriter, r *http.Request) {
 // SetupValidateDataDir is the live-validate Step 2 endpoint. Body:
 // `{ "path": "/data" }`. Returns the DataDirCheck struct verbatim.
 func (h *Handlers) SetupValidateDataDir(w http.ResponseWriter, r *http.Request) {
-	if !h.setupWindowOpen(w) {
+	if !h.setupWritable(w, r) {
 		return
 	}
 	var req struct {
@@ -69,7 +141,7 @@ func (h *Handlers) SetupValidateDataDir(w http.ResponseWriter, r *http.Request) 
 // SetupValidateUser checks an existing-or-new system user choice.
 // Body: `{ "mode": "existing" | "create", "username": "dockmesh" }`.
 func (h *Handlers) SetupValidateUser(w http.ResponseWriter, r *http.Request) {
-	if !h.setupWindowOpen(w) {
+	if !h.setupWritable(w, r) {
 		return
 	}
 	var req struct {
@@ -93,7 +165,7 @@ func (h *Handlers) SetupValidateUser(w http.ResponseWriter, r *http.Request) {
 // SetupTestURL is Step 5's "Test connection" button — issues a GET
 // against the supplied URL with a 5s timeout and reports back.
 func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
-	if !h.setupWindowOpen(w) {
+	if !h.setupWritable(w, r) {
 		return
 	}
 	var req struct {
@@ -113,7 +185,7 @@ func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
 // the alternative (commit returns when done) would block the HTTP
 // connection for several seconds and lose intermediate events.
 func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
-	if !h.setupWindowOpen(w) {
+	if !h.setupWritable(w, r) {
 		return
 	}
 	var in setup.CommitInput
@@ -129,7 +201,7 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "install runner not wired")
 		return
 	}
-	if !h.SetupState.TryBeginCommit() {
+	if !h.SetupState.TryBeginCommit(middleware.SetupToken(r)) {
 		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
 		return
 	}
@@ -178,16 +250,16 @@ func localPort(r *http.Request) uint16 {
 	return ap.Port()
 }
 
-// setupWindowOpen answers 410 once setup is over or its window expired.
-// The probing endpoints are unauthenticated, so they only answer while
-// the wizard is actually waiting for its operator.
-func (h *Handlers) setupWindowOpen(w http.ResponseWriter) bool {
+// setupWritable answers 410 once setup is over and 401 without a setup
+// session that may still write. SetupGate refuses the same requests; this
+// keeps each handler safe on its own.
+func (h *Handlers) setupWritable(w http.ResponseWriter, r *http.Request) bool {
 	if h.SetupState == nil || !h.SetupState.Active() {
 		writeError(w, http.StatusGone, "setup mode is no longer active")
 		return false
 	}
-	if h.SetupState.Expired() {
-		writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
+	if h.SetupState.Codes().Session(middleware.SetupToken(r)) != setup.SessionWrite {
+		writeError(w, http.StatusUnauthorized, "setup code required")
 		return false
 	}
 	return true

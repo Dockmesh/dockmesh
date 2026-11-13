@@ -73,14 +73,14 @@ func TestNewForBootNeverSetUpOnlyWithoutUsers(t *testing.T) {
 			}
 			// Every start decides again; a restart must not change the outcome.
 			for range 2 {
-				st, _, _, err := NewForBoot(ctx, database, Facts{})
+				st, _, _, err := NewForBoot(ctx, database, Facts{}, "")
 				if err != nil {
 					t.Fatalf("NewForBoot: %v", err)
 				}
 				if st.Active() != tt.wantActive {
 					t.Fatalf("Active() = %v, want %v", st.Active(), tt.wantActive)
 				}
-				if !tt.wantActive && st.TryBeginCommit() {
+				if !tt.wantActive && st.TryBeginCommit("") {
 					t.Fatal("commit accepted while setup is closed")
 				}
 			}
@@ -143,32 +143,35 @@ func TestNoAdminNotice(t *testing.T) {
 }
 
 func TestCommitLock(t *testing.T) {
-	st := NewForced()
-	if !st.TryBeginCommit() {
+	path := filepath.Join(t.TempDir(), "setup-code.hash")
+	st := NewForced(path)
+	code := writeTestCode(t, path, time.Now())
+	token, err := st.Codes().Redeem("192.0.2.1", code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.TryBeginCommit("") {
+		t.Fatal("commit accepted without a setup session")
+	}
+	if !st.TryBeginCommit(token) {
 		t.Fatal("first commit refused")
 	}
-	if st.TryBeginCommit() {
+	if st.TryBeginCommit(token) {
 		t.Fatal("second concurrent commit accepted")
 	}
 	st.EndCommit(false)
 	if !st.Active() {
 		t.Fatal("failed install ended setup mode")
 	}
-	if !st.TryBeginCommit() {
+	if !st.TryBeginCommit(token) {
 		t.Fatal("retry after a failed install refused")
 	}
 	st.EndCommit(true)
 	if st.Active() {
 		t.Fatal("successful install left setup mode active")
 	}
-	if st.TryBeginCommit() {
+	if st.TryBeginCommit(token) {
 		t.Fatal("commit accepted after setup finished")
-	}
-
-	expired := NewForced()
-	expired.startedAt = time.Now().Add(-SetupWindow - time.Second)
-	if expired.TryBeginCommit() {
-		t.Fatal("commit accepted after the setup window expired")
 	}
 }
 

@@ -113,6 +113,16 @@ components:
         Accepts either a user session JWT (from `POST /auth/login`) or an API
         token (prefix `dmt_`, from Settings → API Tokens). The route layer
         checks role permissions after authentication.
+    setupSession:
+      type: apiKey
+      in: cookie
+      name: dm_setup
+      description: |
+        Setup session, set by `POST /setup/code` when the setup code is
+        right. Only one exists; entering the code again takes it over. It
+        ends with the code (2 hours) or when `dockmesh setup new-code`
+        creates a new one; after the install starts it can only follow the
+        install's progress.
   schemas: {}
   parameters:
     OperationIDPath:

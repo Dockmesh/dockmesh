@@ -272,6 +272,9 @@ func main() {
 		case "system":
 			runSystemCmd(os.Args[2:])
 			return
+		case "setup":
+			runSetupCmd(os.Args[2:])
+			return
 		case "doctor":
 			runDoctorCmd(os.Args[2:])
 			return
@@ -377,7 +380,7 @@ func main() {
 
 	authSvc := auth.NewService(database, cfg.JWTSecret)
 
-	setupState, setupMode, setupForceIgnored, err := setup.NewForBoot(ctx, database, setupFacts)
+	setupState, setupMode, setupForceIgnored, err := setup.NewForBoot(ctx, database, setupFacts, "")
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
@@ -388,8 +391,7 @@ func main() {
 			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
-		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
-			"install", setupMode.String(), "window_min", int(setup.SetupWindow.Minutes()))
+		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
 	} else if exists, err := setup.UsersExist(ctx, database); err != nil {
 		slog.Warn("check for user accounts", "err", err)
 	} else if !exists {
