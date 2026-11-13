@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 // pickStackHost is the host a request about one stack acts on: the host
@@ -32,7 +33,7 @@ func (h *Handlers) refuseOtherHost(w http.ResponseWriter, r *http.Request, name 
 		return false
 	}
 	switch d.Status {
-	case "deployed", "stopped", "migrating":
+	case "deployed", "stopped", "migrating", stacks.DeploymentDeletePending:
 	default:
 		return false
 	}

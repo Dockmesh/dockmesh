@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -323,5 +324,20 @@ func TestPendingStackDeleteSkipsBusyStack(t *testing.T) {
 	e.h.ResumePendingStackDeletes(ctx, "agent-1")
 	if e.mgr.DirExists("db") {
 		t.Fatal("stack not deleted once free")
+	}
+}
+
+// While a delete waits for its host, a deploy elsewhere is refused: it would
+// leave the old host's data untracked and race the resumed delete.
+func TestDeployElsewhereRefusedWhileDeletePending(t *testing.T) {
+	e := newAgentDeleteEnv(t)
+	e.stack(t)
+	if rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil); rr.Code != http.StatusAccepted {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/stacks/db/deploy?host=local", nil)
+	if !e.h.refuseOtherHost(rr, req, "db", host.NewLocal(nil)) || rr.Code != http.StatusConflict {
+		t.Fatalf("deploy to another host while the delete is pending: refused=%v %d %s", rr.Code == http.StatusConflict, rr.Code, rr.Body)
 	}
 }
