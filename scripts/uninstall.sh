@@ -129,33 +129,6 @@ asset_dir_from_env() {
   esac
 }
 
-# root_owned_file FILE succeeds for a regular, non-symlink file owned by
-# root that neither group nor others can write. Only such a file may name
-# a directory this script removes recursively.
-root_owned_file() {
-  [ -f "$1" ] && [ ! -L "$1" ] &&
-    [ -n "$(find "$1" -maxdepth 0 -user 0 ! -perm -020 ! -perm -002 2>/dev/null)" ]
-}
-
-# usable_asset_dir DIR DATA_DIR succeeds when DIR is an absolute path
-# without symlinks, outside the data dir, other than /, and looks like an
-# asset dir. A value copied into /etc by migrate-layout may still come from
-# the service user.
-usable_asset_dir() {
-  local real
-  case "$1" in
-    /|*/..|*/../*|*/.|*/./*) return 1 ;;
-    /*) ;;
-    *) return 1 ;;
-  esac
-  real="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || return 1
-  [ "$real" = "${1%/}" ] || return 1
-  case "$real/" in
-    "${2%/}/"*) return 1 ;;
-  esac
-  [ -e "$real/install-agent.sh" ] || [ -d "$real/bin" ]
-}
-
 # ---------------------------------------------------------------------------
 #  Detect install layout
 # ---------------------------------------------------------------------------
@@ -191,22 +164,24 @@ do
   fi
 done
 
-# The asset directory is removed with rm -rf, so it never comes from the
-# env file in the data dir, which the service user can change.
-ETC_ENV_FILE="/etc/dockmesh/dockmesh.env"
-ASSET_DIR="${DOCKMESH_ASSET_DIR:-}"
-if [ -z "$ASSET_DIR" ] && root_owned_file "$ETC_ENV_FILE"; then
-  ASSET_DIR="$(asset_dir_from_env "$ETC_ENV_FILE")"
-  usable_asset_dir "$ASSET_DIR" "$DATA_DIR" || ASSET_DIR=""
-fi
-if [ -z "$ASSET_DIR" ]; then
-  ASSET_DIR="$(dirname "$BIN_DIR")/share/dockmesh"
-fi
-ASSET_DIR_HINT=""
-if [ -n "$DATA_ENV_FILE" ] && [ ! "$DATA_ENV_FILE" -ef "$ETC_ENV_FILE" ]; then
-  ASSET_DIR_HINT="$(asset_dir_from_env "$DATA_ENV_FILE")"
-  [ "$ASSET_DIR_HINT" = "$ASSET_DIR" ] && ASSET_DIR_HINT=""
-fi
+# The asset directory is removed with rm -rf, so it comes only from root's
+# environment or the default. The env files never choose it: the service
+# user can write the data-dir copy, and migrate-layout copies its content
+# into /etc.
+ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$BIN_DIR")/share/dockmesh}"
+case "$ASSET_DIR" in
+  /) die "DOCKMESH_ASSET_DIR must not be /" ;;
+  /*) ;;
+  *) die "DOCKMESH_ASSET_DIR must be an absolute path" ;;
+esac
+ASSET_DIR_DIFFERS=0
+for f in "$DATA_ENV_FILE" /etc/dockmesh/dockmesh.env; do
+  [ -n "$f" ] && [ -f "$f" ] || continue
+  named="$(asset_dir_from_env "$f")"
+  if [ -n "$named" ] && [ "$named" != "$ASSET_DIR" ]; then
+    ASSET_DIR_DIFFERS=1
+  fi
+done
 
 # Service file / label per platform.
 SYSTEMD_UNIT="/etc/systemd/system/dockmesh.service"
@@ -221,8 +196,8 @@ ok "OS                  $OS"
 ok "Binary              $BIN_PATH"
 ok "Data directory      $DATA_DIR"
 ok "Asset directory     $ASSET_DIR"
-if [ -n "$ASSET_DIR_HINT" ]; then
-  warn "$DATA_ENV_FILE names the asset directory $ASSET_DIR_HINT; it is not removed. Re-run with DOCKMESH_ASSET_DIR=$ASSET_DIR_HINT if that is right."
+if [ "$ASSET_DIR_DIFFERS" = "1" ]; then
+  warn "dockmesh.env names a different asset directory; it is not removed. Check DOCKMESH_BINARY_DIR there and remove that folder by hand."
 fi
 case "$OS" in
   linux)  ok "Service unit        $SYSTEMD_UNIT" ;;

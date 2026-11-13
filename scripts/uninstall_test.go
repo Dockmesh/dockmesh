@@ -93,46 +93,22 @@ func TestUninstallEnvFileIsNotExecuted(t *testing.T) {
 	}
 }
 
-func TestUninstallUsableAssetDir(t *testing.T) {
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash not available")
+// The asset dir is removed with rm -rf as root, so no env file may set it.
+func TestUninstallAssetDirOnlyFromRootEnv(t *testing.T) {
+	b, err := os.ReadFile("uninstall.sh")
+	if err != nil {
+		t.Fatal(err)
 	}
-	root := t.TempDir()
-	dataDir := filepath.Join(root, "data")
-	assets := filepath.Join(root, "share", "dockmesh")
-	inData := filepath.Join(dataDir, "share")
-	for _, d := range []string{filepath.Join(assets, "bin"), filepath.Join(inData, "bin"), filepath.Join(root, "empty")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
+	assign := regexp.MustCompile(`^\s*ASSET_DIR=`)
+	var got []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if assign.MatchString(line) {
+			got = append(got, strings.TrimSpace(line))
 		}
 	}
-	link := filepath.Join(dataDir, "link")
-	if err := os.Symlink(filepath.Join(root, "share"), link); err != nil {
-		t.Skipf("symlinks not supported: %v", err)
-	}
-
-	tests := []struct {
-		name string
-		dir  string
-		want bool
-	}{
-		{"asset dir", assets, true},
-		{"trailing slash", assets + "/", true},
-		{"root", "/", false},
-		{"relative", "share/dockmesh", false},
-		{"dot-dot", filepath.Join(root, "share") + "/x/../dockmesh", false},
-		{"symlinked parent", filepath.Join(link, "dockmesh"), false},
-		{"inside the data dir", inData, false},
-		{"not an asset dir", filepath.Join(root, "empty"), false},
-		{"missing", filepath.Join(root, "missing"), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out, err := runUninstallHelper(t, root, "usable_asset_dir", tt.dir, dataDir)
-			if got := err == nil; got != tt.want {
-				t.Errorf("usable_asset_dir(%s) = %v, want %v (%s)", tt.dir, got, tt.want, out)
-			}
-		})
+	want := `ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$BIN_DIR")/share/dockmesh}"`
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("ASSET_DIR assignments = %q, want only %q", got, want)
 	}
 }
 
