@@ -60,7 +60,7 @@ curl -fsSL https://get.dockmesh.dev | sudo bash
 When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade mode:
 
 1. If the installed version is already the latest release, it stops without changing anything. `DOCKMESH_FORCE=1` reinstalls anyway.
-2. It picks `amd64` or `arm64` from `uname -m`, downloads `dockmesh_<os>_<arch>.tar.gz` from the GitHub release and checks its SHA-256 against the release's `checksums.txt`. A mismatch, a missing `checksums.txt` or a missing entry aborts the upgrade; `DOCKMESH_SKIP_CHECKSUM=1` skips the check.
+2. It picks `amd64` or `arm64` from `uname -m`, downloads `dockmesh_<os>_<arch>.tar.gz` from the GitHub release, checks the minisign signature of the release's `checksums.txt` and then the archive's SHA-256 against it. A missing or invalid signature, a mismatch, a missing `checksums.txt` or a missing entry aborts the upgrade. `DOCKMESH_SKIP_SIGNATURE=1` skips only the signature check (needed for releases before v0.6.0), `DOCKMESH_SKIP_CHECKSUM=1` skips both ([Verify a release](./verify-release.md)).
 3. It copies the old binary to `/usr/local/bin/dockmesh.bak`, installs the new `dockmesh` and `dmctl`, and refreshes `install-agent.sh` and the agent binaries under `/usr/local/share/dockmesh/`. Linux archives carry the agent for both `amd64` and `arm64`, so the server can enroll and upgrade agents of either architecture.
 4. It installs `grype` if it is missing, unless `DOCKMESH_NO_SCANNER=1`.
 5. If the service still runs as root, it moves it to the `dockmesh` user: it chowns the data root to `dockmesh:dockmesh` (mode 700) and adds `User=dockmesh` and `Group=docker` to the unit.
@@ -75,10 +75,12 @@ Without systemd, the script replaces the binary but cannot restart the server; r
 To upgrade by hand, for example on an air-gapped host:
 
 ```bash
-TAG=v0.5.3
+TAG=v0.6.0
 ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
+curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt.minisig"
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt" || { echo "bad signature, aborting"; exit 1; }
 sha256sum -c --ignore-missing checksums.txt || { echo "checksum mismatch, aborting"; exit 1; }
 tar -xzf "dockmesh_linux_$ARCH.tar.gz"
 sudo cp -a /usr/local/bin/dockmesh /usr/local/bin/dockmesh.bak
@@ -170,11 +172,13 @@ During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linu
 On the agent host, take the agent binary from the release archive. Linux archives contain both architectures:
 
 ```bash
-TAG=v0.5.3
+TAG=v0.6.0
 ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
-sha256sum -c --ignore-missing checksums.txt
+curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt.minisig"
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt" || { echo "bad signature, aborting"; exit 1; }
+sha256sum -c --ignore-missing checksums.txt || { echo "checksum mismatch, aborting"; exit 1; }
 tar -xzf "dockmesh_linux_$ARCH.tar.gz" "dockmesh-agent-linux-$ARCH"
 sudo install -m 0755 -o dockmesh-agent -g dockmesh-agent "dockmesh-agent-linux-$ARCH" /var/lib/dockmesh-agent/bin/dockmesh-agent
 sudo systemctl restart dockmesh-agent

@@ -34,6 +34,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
@@ -86,21 +87,29 @@ type Service struct {
 	history      deployRecorder
 	rollbackKeep int
 
+	locks *stacklock.Locks
+
 	mu   sync.Mutex
 	busy map[string]bool
 }
 
 func NewService(dockerCli *docker.Client, db *sql.DB) *Service {
-	return &Service{docker: dockerCli, db: db, rollbackKeep: DefaultRollbackKeep, busy: make(map[string]bool)}
+	return &Service{docker: dockerCli, db: db, rollbackKeep: DefaultRollbackKeep, locks: stacklock.New(), busy: make(map[string]bool)}
 }
 
+// SetLocks replaces the updater's own stack locks with the ones deploys,
+// scaling and rolling updates share.
+func (s *Service) SetLocks(l *stacklock.Locks) { s.locks = l }
+
 // acquire serialises swaps per stack (or per standalone container), so
-// two updates never rename and recreate the same replicas at once.
-func (s *Service) acquire(info *container.InspectResponse, st *stackTarget) (func(), error) {
-	key := "container:" + strings.TrimPrefix(info.Name, "/")
+// two updates never rename and recreate the same replicas at once. A stack
+// container takes the shared stack lock; the updater only runs on the
+// local host.
+func (s *Service) acquire(info *container.InspectResponse, st *stackTarget, op string) (func(), error) {
 	if st != nil {
-		key = "stack:" + st.stack
+		return s.locks.TryLock(stacklock.HostKey("local", st.stack), op)
 	}
+	key := "container:" + strings.TrimPrefix(info.Name, "/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.busy[key] {
@@ -219,7 +228,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	ref := normalizeImageRef(image)
 	containerName := strings.TrimPrefix(info.Name, "/")
 	oldImageID := info.Image
-	release, err := s.acquire(&info, st)
+	release, err := s.acquire(&info, st, stacklock.OpImageUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +389,7 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 	if err != nil {
 		return nil, err
 	}
-	release, err := s.acquire(&info, st)
+	release, err := s.acquire(&info, st, stacklock.OpRollback)
 	if err != nil {
 		return nil, err
 	}

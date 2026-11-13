@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -56,6 +57,11 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpScale)
+	if !ok {
+		return
+	}
+	defer release()
 	detail, ok := h.verifiedStack(w, r, name)
 	if !ok {
 		return
@@ -185,6 +191,11 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "delay_seconds must be >= 0")
 		return
 	}
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpRolling)
+	if !ok {
+		return
+	}
+	defer release()
 	detail, ok := h.verifiedStack(w, r, name)
 	if !ok {
 		return

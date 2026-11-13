@@ -15,6 +15,31 @@ Releases that fix a security issue are marked `security` in their release notes 
 `release-manifest.json` attached to the release, and the issue is published as a GitHub
 security advisory.
 
+## Release signatures
+
+From v0.6.0 on, every release, release candidates included, has a `checksums.txt.minisig`: a
+[minisign](https://jedisct1.github.io/minisign/) signature over `checksums.txt`, whose trusted
+comment names the release tag (`dockmesh v0.6.0 checksums.txt`). `install.sh` checks it before
+it trusts any checksum. The public keys:
+
+```
+untrusted comment: minisign public key 01A0941E358E1C5A
+RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1
+untrusted comment: minisign public key 73BBC751F8715F03
+RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA
+```
+
+`01A0941E358E1C5A` signs every release. `73BBC751F8715F03` is kept offline and only signs the
+release that replaces the first key; such a release says so in its notes. Check a download of release `$TAG` with
+
+```bash
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 \
+  | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt"
+sha256sum -c --ignore-missing checksums.txt
+```
+
+See [Verify a release](docs/site/operations/verify-release.md) for details.
+
 ## Reporting a vulnerability
 
 Please do not open a public issue, discussion or pull request for a security problem.

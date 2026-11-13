@@ -140,10 +140,13 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A stack with this name already exists.
+          description: A stack with this name already exists, or another operation is changing a stack of that name (`stack_busy`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/StackBusyError"
   /templates/{id}/export:
     get:
       operationId: templates.export

@@ -105,3 +105,16 @@ func TestInstallChannelWarning(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallDownloadSpeed(t *testing.T) {
+	for _, tt := range []struct{ bytes, secs, want string }{
+		{"20971520", "2.0", "10.0 MB/s"},
+		{"20971520", "0.0", "—"},
+		{"0", "0", "—"},
+	} {
+		out, err := runVersionHelper(t, `download_speed "$1" "$2"`, tt.bytes, tt.secs)
+		if err != nil || out != tt.want {
+			t.Errorf("download_speed(%s, %s) = %q (err %v), want %q", tt.bytes, tt.secs, out, err, tt.want)
+		}
+	}
+}

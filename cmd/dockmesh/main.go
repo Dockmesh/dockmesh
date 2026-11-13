@@ -61,6 +61,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
@@ -527,7 +528,9 @@ func main() {
 	proxySvc.SetImage(cfg.ProxyImage)
 	proxySvc.SetAdminSocketDir(filepath.Dir(cfg.DBPath))
 	proxySvc.SetInContainer(proxy.DetectContainer(host.SelfContainerID))
+	stackLocks := stacklock.New()
 	updaterSvc := updater.NewService(dockerCli, database)
+	updaterSvc.SetLocks(stackLocks)
 	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
@@ -618,6 +621,11 @@ func main() {
 			return fmt.Errorf("stack %s has no enabled scaling rules", stackName)
 		}
 		detail := v.Files.Detail
+		release, err := stackLocks.TryLock(stacklock.HostKey("local", stackName), stacklock.OpAutoScale)
+		if err != nil {
+			return err
+		}
+		defer release()
 		lh := host.NewLocal(dockerCli)
 		lh.SetStackDirResolver(stacksMgr.Dir)
 		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
@@ -856,6 +864,7 @@ func main() {
 		hosts:       hostRegistry,
 		globals:     globalEnvStore.List,
 		notifs:      notifSvc,
+		locks:       stackLocks,
 		commit: func(ctx context.Context, stack string) string {
 			if src, err := gitSourceSvc.Get(ctx, stack); err == nil && src != nil {
 				return src.LastSyncSHA
@@ -1087,6 +1096,7 @@ func main() {
 		ScanStore:      scanStore,
 		Proxy:          proxySvc,
 		Updater:        updaterSvc,
+		StackLocks:     stackLocks,
 		Operations:     opsSvc,
 		UpdateWatcher:  updateWatcher,
 		OIDC:           oidcSvc,

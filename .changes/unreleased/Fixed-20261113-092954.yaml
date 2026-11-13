@@ -1,0 +1,3 @@
+kind: Fixed
+body: A deploy, rollback, scale, rolling update or image update no longer runs at the same time as another one on the same stack and collides on container names and replicas; the second one is refused with the operation that is running and since when, a git auto-deploy waits up to 10 minutes and auto-scaling retries at its next check
+time: 2026-11-13T09:29:54.399223176Z

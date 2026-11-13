@@ -2751,13 +2751,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "An update of this container or its stack is already running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "An update of this container is already running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/ModifiedOutsideError"
                   - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -2801,13 +2802,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container is running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/ModifiedOutsideError"
                   - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info
@@ -7168,21 +7170,24 @@ paths:
           description: |
             Stack files changed outside Dockmesh (`code: modified_outside`;
             repeat with `confirm_external=1` after reviewing `files`), the
-            stack is on another host (`code: stack_on_other_host`), or the
-            service looks stateful (`warning: stateful_service`; repeat with
-            `force: true`).
+            stack is on another host (`code: stack_on_other_host`), another
+            operation is changing the stack (`code: stack_busy`, with
+            `operation` and `since`), or the service looks stateful
+            (`warning: stateful_service`; repeat with `force: true`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: {type: string}
-                  code: {type: string, enum: [modified_outside, stack_on_other_host]}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
                   stack: {type: string}
                   host_id: {type: string}
                   files:
                     type: array
                     items: {type: string}
+                  operation: {type: string}
+                  since: {type: string, format: date-time}
                   warning: {type: string, enum: [stateful_service]}
                   message: {type: string}
                   force_needed: {type: boolean}
@@ -7824,10 +7829,13 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A stack with this name already exists.
+          description: A stack with this name already exists, or another operation is changing a stack of that name (`stack_busy`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/StackBusyError"
   /templates/{id}/export:
     get:
       operationId: templates.export
@@ -9126,6 +9134,17 @@ components:
         files:
           type: array
           items: {type: string}
+    StackBusyError:
+      type: object
+      description: Another operation is changing the stack's containers (`code` `stack_busy`); retry when it has finished.
+      required: [error, code, operation, since]
+      properties:
+        error: {type: string}
+        code: {type: string, enum: [stack_busy]}
+        operation:
+          type: string
+          description: What holds the stack, e.g. `deploy`, `scale`, `rolling update`, `image update`, `image rollback`, `git auto-deploy`, `auto-scaling`, `dependency deploy` or `maintenance`.
+        since: {type: string, format: date-time}
     HistoryReason:
       type: string
       enum: [agent_outdated, agent_offline]
@@ -10727,7 +10746,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`).
       content:
         application/json:
           schema:
@@ -10735,9 +10754,11 @@ components:
             required: [error, code]
             properties:
               error: {type: string}
-              code: {type: string, enum: [modified_outside, stack_on_other_host]}
+              code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
               stack: {type: string}
               host_id: {type: string}
+              operation: {type: string, description: "With `stack_busy`: the operation that holds the stack."}
+              since: {type: string, format: date-time, description: "With `stack_busy`: when that operation started."}
               files:
                 type: array
                 items: {type: string}
