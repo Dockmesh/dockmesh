@@ -78,13 +78,10 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, e.Key+" is managed via /audit/webhook")
 			return
 		}
-		// A page loaded before the upgrade may still send the cache back
-		// unchanged; that is skipped, not written.
-		if selfupdate.IsCacheKey(e.Key) {
-			if h.Settings.Stored(e.Key) != e.Value {
-				writeError(w, http.StatusBadRequest, e.Key+" is written by the update check and can't be set")
-				return
-			}
+		// An older settings page may send these back; only a change is refused.
+		if selfupdate.IsCacheKey(e.Key) && h.Settings.Stored(e.Key) != e.Value {
+			writeError(w, http.StatusBadRequest, e.Key+" is written by the update check and can't be set")
+			return
 		}
 		// The settings page sends every key back; only a change is refused.
 		if slices.Contains(proxy.ManagedSettingKeys, e.Key) && h.Settings.Get(e.Key, "") != e.Value {
