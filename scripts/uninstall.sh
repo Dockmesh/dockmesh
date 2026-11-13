@@ -112,33 +112,48 @@ BANNER
 # ---------------------------------------------------------------------------
 
 # env_value FILE KEY prints the last value FILE assigns to KEY, without
-# quotes.
+# quotes. Only the first 64 KiB are read.
 env_value() {
-  grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" 2>/dev/null | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true
+  head -c 65536 "$1" 2>/dev/null | grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true
 }
 
 # asset_dir_from_env FILE prints the asset directory FILE points at, or
-# nothing. The directory is removed recursively later, so it only counts
-# when it holds a root-owned install-agent.sh, which the service user
-# cannot plant.
-TRUSTED_ASSET_UID=0
+# nothing.
 asset_dir_from_env() {
-  local v dir=""
+  local v
   v="$(env_value "$1" DOCKMESH_BINARY_DIR)"
-  [ -n "$v" ] && dir="$(dirname "$v")"
-  if [ -z "$dir" ]; then
-    v="$(env_value "$1" DOCKMESH_INSTALL_SCRIPT)"
-    [ -n "$v" ] && dir="$(dirname "$v")"
-  fi
-  case "$dir" in
-    /|*/..|*/../*|*/.|*/./*) return 0 ;;
-    /*) ;;
-    *) return 0 ;;
+  [ -n "$v" ] || v="$(env_value "$1" DOCKMESH_INSTALL_SCRIPT)"
+  [ -n "$v" ] || return 0
+  case "$v" in
+    /*) dirname -- "$v" ;;
   esac
-  if [ -f "$dir/install-agent.sh" ] && [ ! -L "$dir/install-agent.sh" ] && [ ! -L "$dir" ] &&
-     [ -n "$(find "$dir/install-agent.sh" -maxdepth 0 -user "$TRUSTED_ASSET_UID" 2>/dev/null)" ]; then
-    printf '%s\n' "$dir"
-  fi
+}
+
+# root_owned_file FILE succeeds for a regular, non-symlink file owned by
+# root that neither group nor others can write. Only such a file may name
+# a directory this script removes recursively.
+root_owned_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] &&
+    [ -n "$(find "$1" -maxdepth 0 -user 0 ! -perm -020 ! -perm -002 2>/dev/null)" ]
+}
+
+# usable_asset_dir DIR DATA_DIR succeeds when DIR is an absolute path
+# without symlinks, outside the data dir, other than /, and looks like an
+# asset dir. A value copied into /etc by migrate-layout may still come from
+# the service user.
+usable_asset_dir() {
+  local real
+  case "$1" in
+    /|*/..|*/../*|*/.|*/./*) return 1 ;;
+    /*) ;;
+    *) return 1 ;;
+  esac
+  real="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || return 1
+  [ "$real" = "${1%/}" ] || return 1
+  case "$real/" in
+    "${2%/}/"*) return 1 ;;
+  esac
+  [ -e "$real/install-agent.sh" ] || [ -d "$real/bin" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -157,7 +172,7 @@ DATA_DIR_DEFAULT="/var/lib/dockmesh"
 [ "$OS" = "darwin" ] && DATA_DIR_DEFAULT="/usr/local/var/dockmesh"
 
 DATA_DIR="$DATA_DIR_DEFAULT"
-ASSET_DIR=""
+DATA_ENV_FILE=""
 # The detection list covers the platform defaults plus /data (a common
 # operator override on VMs where /data is a separate, expandable
 # volume — install.sh / dockmesh init both accept --data-dir /data).
@@ -171,13 +186,26 @@ for candidate in \
 do
   if [ -f "$candidate" ]; then
     DATA_DIR="$(dirname "$candidate")"
-    ASSET_DIR="$(asset_dir_from_env "$candidate")"
+    DATA_ENV_FILE="$candidate"
     break
   fi
 done
-# Fallback for asset dir if env file didn't have it.
+
+# The asset directory is removed with rm -rf, so it never comes from the
+# env file in the data dir, which the service user can change.
+ETC_ENV_FILE="/etc/dockmesh/dockmesh.env"
+ASSET_DIR="${DOCKMESH_ASSET_DIR:-}"
+if [ -z "$ASSET_DIR" ] && root_owned_file "$ETC_ENV_FILE"; then
+  ASSET_DIR="$(asset_dir_from_env "$ETC_ENV_FILE")"
+  usable_asset_dir "$ASSET_DIR" "$DATA_DIR" || ASSET_DIR=""
+fi
 if [ -z "$ASSET_DIR" ]; then
   ASSET_DIR="$(dirname "$BIN_DIR")/share/dockmesh"
+fi
+ASSET_DIR_HINT=""
+if [ -n "$DATA_ENV_FILE" ] && [ ! "$DATA_ENV_FILE" -ef "$ETC_ENV_FILE" ]; then
+  ASSET_DIR_HINT="$(asset_dir_from_env "$DATA_ENV_FILE")"
+  [ "$ASSET_DIR_HINT" = "$ASSET_DIR" ] && ASSET_DIR_HINT=""
 fi
 
 # Service file / label per platform.
@@ -193,6 +221,9 @@ ok "OS                  $OS"
 ok "Binary              $BIN_PATH"
 ok "Data directory      $DATA_DIR"
 ok "Asset directory     $ASSET_DIR"
+if [ -n "$ASSET_DIR_HINT" ]; then
+  warn "$DATA_ENV_FILE names the asset directory $ASSET_DIR_HINT; it is not removed. Re-run with DOCKMESH_ASSET_DIR=$ASSET_DIR_HINT if that is right."
+fi
 case "$OS" in
   linux)  ok "Service unit        $SYSTEMD_UNIT" ;;
   darwin) ok "LaunchDaemon plist  $LAUNCHD_PLIST" ;;

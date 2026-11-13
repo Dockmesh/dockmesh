@@ -1,3 +1,3 @@
 kind: Fixed
-body: The uninstaller reads dockmesh.env as plain data instead of running it as a root shell script, and only removes an asset directory that holds the root-owned agent installer
+body: The uninstaller reads dockmesh.env as plain data instead of running it as a root shell script, and takes the folder it removes for the agent installer only from root-owned settings
 time: 2026-11-13T17:09:21.537455964Z
