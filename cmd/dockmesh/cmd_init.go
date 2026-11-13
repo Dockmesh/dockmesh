@@ -548,9 +548,7 @@ func spinnerStop() {
 }
 
 // ---------------------------------------------------------------------------
-//
-//	Prompts
-//
+//  Prompts
 // ---------------------------------------------------------------------------
 var stdinReader = bufio.NewReader(os.Stdin)
 
@@ -732,10 +730,9 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 
 // deriveAgentSANs pulls the hostnames + IPs that need to end up in the
 // agent-mTLS server cert so remote agents can verify it. We harvest:
-//  1. Hostname from the HTTP base URL (what operators browse to)
-//  2. Hostname from the agent public wss:// URL (what agents connect to)
-//  3. The OS hostname (fallback for DNS-less LAN deploys)
-//
+//   1. Hostname from the HTTP base URL (what operators browse to)
+//   2. Hostname from the agent public wss:// URL (what agents connect to)
+//   3. The OS hostname (fallback for DNS-less LAN deploys)
 // Returns a comma-separated list suitable for DOCKMESH_AGENT_SANS.
 func deriveAgentSANs(baseURL, agentURL string) string {
 	hostOf := func(rawURL string) string {
@@ -775,19 +772,19 @@ func deriveAgentSANs(baseURL, agentURL string) string {
 
 // resolveAssetDir returns the path where `install.sh` placed the agent
 // enrollment assets (install-agent.sh + dockmesh-agent-linux-*). Order:
-//  1. DOCKMESH_ASSET_DIR env var (explicit override by operator)
-//  2. Auto-detection against known candidates (probes for
-//     install-agent.sh existence so we don't point at an empty dir)
-//  3. Fallback /usr/local/share/dockmesh to match the install.sh default
+//   1. DOCKMESH_ASSET_DIR env var (explicit override by operator)
+//   2. Auto-detection against known candidates (probes for
+//      install-agent.sh existence so we don't point at an empty dir)
+//   3. Fallback /usr/local/share/dockmesh to match the install.sh default
 func resolveAssetDir() string {
 	if v := os.Getenv("DOCKMESH_ASSET_DIR"); v != "" {
 		return v
 	}
 	for _, candidate := range []string{
-		"/usr/local/share/dockmesh",     // default for DOCKMESH_INSTALL_DIR=/usr/local/bin
-		"/opt/share/dockmesh",           // DOCKMESH_INSTALL_DIR=/opt/bin
-		"/usr/share/dockmesh",           // DOCKMESH_INSTALL_DIR=/usr/bin
-		"/usr/local/var/dockmesh/share", // macOS convention
+		"/usr/local/share/dockmesh",      // default for DOCKMESH_INSTALL_DIR=/usr/local/bin
+		"/opt/share/dockmesh",            // DOCKMESH_INSTALL_DIR=/opt/bin
+		"/usr/share/dockmesh",            // DOCKMESH_INSTALL_DIR=/usr/bin
+		"/usr/local/var/dockmesh/share",  // macOS convention
 	} {
 		if _, err := os.Stat(filepath.Join(candidate, "install-agent.sh")); err == nil {
 			return candidate

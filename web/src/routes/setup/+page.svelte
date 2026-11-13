@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import AuthShell from '$lib/components/auth/AuthShell.svelte';
   // Install wizard: one question per step, a review of every answer before
   // anything is written, then the live install log and the credentials.
@@ -269,7 +270,7 @@
     return { score: s, label: ['—', m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][s] };
   }
   const strength = $derived(scorePassword(adminPassword));
-  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < 12);
+  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < MIN_PASSWORD_LENGTH);
 
   function generatePassword() {
     const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*';

@@ -203,7 +203,7 @@ paths:
               properties:
                 username: {type: string, minLength: 1}
                 email: {type: string, format: email}
-                password: {type: string, format: password, minLength: 8}
+                password: {type: string, format: password, minLength: 12}
                 role:
                   type: string
                   description: Role name — `admin`, `operator`, `viewer`, or a custom role.
@@ -296,7 +296,7 @@ paths:
               type: object
               required: [password]
               properties:
-                password: {type: string, format: password, minLength: 8}
+                password: {type: string, format: password, minLength: 12}
       responses:
         "204": {description: Password updated.}
         "400": {$ref: "#/components/responses/BadRequest"}

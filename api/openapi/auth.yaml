@@ -854,7 +854,7 @@ components:
       type: object
       description: |
         Password-complexity + account-lockout + rotation config
-        (P.12.1). All fields are optional — omitted values keep their
+        All fields are optional — omitted values keep their
         current stored value on PUT. Defaults on a fresh install:
         min_length=12, no class requirements, lockout_max_attempts=5
         after 15-minute window.

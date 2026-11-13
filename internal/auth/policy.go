@@ -1,4 +1,4 @@
-// Password policy + account lockout config (P.12.1). All settings are
+// Password policy + account lockout config. All settings are
 // read from the runtime settings store so admins can edit via the UI
 // without a restart. The length rule applies only when a password is set,
 // so an existing shorter password keeps signing in.
@@ -103,10 +103,7 @@ func SavePolicy(ctx context.Context, s SettingsReader, p PolicyConfig) error {
 	return set(LockoutDurationMinsKey, strconv.Itoa(p.LockoutDurationMins))
 }
 
-// ValidatePassword enforces the configured policy. Called from
-// CreateUser and ChangePassword — NOT from Login (an existing user
-// with a now-too-short password doesn't get locked out retroactively;
-// they just won't be able to change TO another too-short one).
+// ValidatePassword enforces the configured policy; Login never calls it.
 func ValidatePassword(p PolicyConfig, password string) error {
 	if minLen := max(p.MinLength, MinPasswordLength); utf8.RuneCountInString(password) < minLen {
 		return fmt.Errorf("password must be at least %d characters", minLen)
