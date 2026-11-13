@@ -23,7 +23,10 @@ func dataDir() string {
 // openStacksRoot opens <dataDir>/stacks as an os.Root, so the per-stack
 // operations below cannot leave it even through symlinks.
 func openStacksRoot(base string) (*os.Root, error) {
-	dir := filepath.Join(base, "stacks")
+	dir, err := filepath.Abs(filepath.Join(base, "stacks"))
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("stacks dir: %w", err)
 	}

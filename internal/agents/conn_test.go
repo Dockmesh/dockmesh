@@ -162,6 +162,7 @@ func TestRequestTimeouts(t *testing.T) {
 		{FrameReqStackScale, 10 * time.Minute, time.Hour},
 		{FrameReqContainerExecRun, 10 * time.Minute, time.Hour},
 		{FrameReqAgentUpgrade, 10 * time.Minute, time.Hour},
+		{FrameReqStackDelete, 10 * time.Minute, time.Hour},
 	} {
 		if d := requestTimeout(tc.frame); d < tc.min || d > tc.max {
 			t.Errorf("%s: timeout %s outside [%s, %s]", tc.frame, d, tc.min, tc.max)

@@ -1506,7 +1506,7 @@ func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string
 		return
 	}
 	req := agents.StackNameReq{Name: name}
-	ctx, cancel := mirrorContext(ctx)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentDeleteTimeout)
 	go func() {
 		defer cancel()
 		if _, err := ag.Request(ctx, agents.Frame{
@@ -1518,8 +1518,12 @@ func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string
 	}()
 }
 
-// agentMirrorTimeout bounds a background stack sync or delete on an agent.
+// agentMirrorTimeout bounds a background stack sync on an agent.
 const agentMirrorTimeout = 2 * time.Minute
+
+// agentDeleteTimeout bounds a background stack delete on an agent, which
+// may have to empty a large data directory through a helper container.
+const agentDeleteTimeout = 30 * time.Minute
 
 // mirrorContext detaches a background agent call from the request that
 // started it: the handler returns before the call ends, which would
