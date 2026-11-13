@@ -122,14 +122,14 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnprocessableEntity, "this deploy's compose snapshot was removed because it contained .env values; roll back to another deploy")
 		return
 	}
-	if !h.checkStackFiles(w, r, name) {
-		return
-	}
 	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpDeploy)
 	if !ok {
 		return
 	}
 	defer release()
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 	// Read current env so rollback only swings compose.yaml — secrets stay put.
 	current, err := h.Stacks.Get(name)
 	if err != nil {

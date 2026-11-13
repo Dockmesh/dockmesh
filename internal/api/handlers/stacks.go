@@ -1077,14 +1077,14 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
-	if !h.checkStackFiles(w, r, name) {
-		return
-	}
 	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpDeploy)
 	if !ok {
 		return
 	}
 	defer release()
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 
 	// Dependency resolution (P.12.7). For any declared prerequisite
 	// stack whose containers aren't already running, deploy it first
