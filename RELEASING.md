@@ -71,6 +71,18 @@ gh workflow run release-sync.yml -R Dockmesh/website -f tag=vX.Y.Z
 The trigger uses the `WEBSITE_DISPATCH_TOKEN` secret, a fine-grained token limited to
 `Dockmesh/website` with Contents read and write. It expires after a year; renew it before then.
 
+## Re-running a release
+
+Only the maintainer re-runs the release workflow; it publishes. To rebuild a release without
+re-tagging:
+
+1. Actions → release → Run workflow.
+2. Under "Use workflow from" choose the **tag** (`vX.Y.Z` or `vX.Y.Z-rc.N`), never `main` or
+   another branch, and enter the same tag as the input. The `release` environment only deploys
+   from tags, so a run from a branch is refused at the signing job.
+3. The `release` environment asks for approval on every run: open the run, Review deployments →
+   Approve.
+
 ## Signing keys
 
 Each release has a minisign signature over `checksums.txt`, `checksums.txt.minisig`. Its
