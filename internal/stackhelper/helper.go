@@ -53,10 +53,10 @@ func New(cli API) *Helper {
 // below its base after symlinks are resolved.
 var ErrOutside = errors.New("path is not a directory inside the stacks directory")
 
-// Resolve returns the real path of dir. dir itself must be a directory,
+// resolve returns the real path of dir. dir itself must be a directory,
 // not a symlink, and its real path must lie strictly below the real path
-// of base. Only the result of Resolve is ever mounted into a helper.
-func Resolve(base, dir string) (string, error) {
+// of base. Only the result of resolve is ever mounted into a helper.
+func resolve(base, dir string) (string, error) {
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		return "", err
@@ -73,10 +73,7 @@ func Resolve(base, dir string) (string, error) {
 		return "", err
 	}
 	rel, err := filepath.Rel(realBase, realDir)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("%s: %w", dir, ErrOutside)
-	}
-	if realDir == string(filepath.Separator) {
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s: %w", dir, ErrOutside)
 	}
 	return realDir, nil
@@ -98,7 +95,7 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 	if h == nil || h.cli == nil {
 		return fmt.Errorf("%w (files owned by another user need Docker to remove them)", err)
 	}
-	real, rerr := Resolve(base, dir)
+	real, rerr := resolve(base, dir)
 	if rerr != nil {
 		return rerr
 	}
@@ -140,7 +137,7 @@ func leftovers(dir string) string {
 const emptyScript = "rm -rf " + mountPoint + "/* " + mountPoint + "/.[!.]* " + mountPoint + "/..?*"
 
 func (h *Helper) empty(ctx context.Context, real string) error {
-	id, err := h.create(ctx, real, false, []string{"sh", "-c", emptyScript},
+	id, err := h.create(ctx, real, []string{"sh", "-c", emptyScript},
 		// rm needs to enter and unlink in directories of other users,
 		// and FOWNER covers sticky directories.
 		[]string{"DAC_OVERRIDE", "FOWNER"})
@@ -167,7 +164,7 @@ func (h *Helper) empty(ctx context.Context, real string) error {
 	}
 }
 
-func (h *Helper) create(ctx context.Context, real string, readOnly bool, cmd, caps []string) (string, error) {
+func (h *Helper) create(ctx context.Context, real string, cmd, caps []string) (string, error) {
 	if err := h.ensureImage(ctx); err != nil {
 		return "", err
 	}
@@ -181,7 +178,7 @@ func (h *Helper) create(ctx context.Context, real string, readOnly bool, cmd, ca
 		HostConfig: &container.HostConfig{
 			// A typed bind mount fails on a missing source instead of
 			// creating it as root the way a -v bind would.
-			Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: real, Target: mountPoint, ReadOnly: readOnly}},
+			Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: real, Target: mountPoint}},
 			NetworkMode:    "none",
 			CapDrop:        []string{"ALL"},
 			CapAdd:         caps,

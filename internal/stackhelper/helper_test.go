@@ -34,11 +34,7 @@ func (f *fakeDocker) ImageInspect(context.Context, string, ...client.ImageInspec
 }
 
 func (f *fakeDocker) ImagePull(context.Context, string, client.ImagePullOptions) (client.ImagePullResponse, error) {
-	if f.pullErr != nil {
-		return nil, f.pullErr
-	}
-	f.haveImage = true
-	return nil, errors.New("fake pull has no stream")
+	return nil, f.pullErr
 }
 
 func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
@@ -256,9 +252,9 @@ func TestResolve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Resolve(tt.base, tt.dir)
+			got, err := resolve(tt.base, tt.dir)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("Resolve(%s, %s) = %q, %v; wantErr %v", tt.base, tt.dir, got, err, tt.wantErr)
+				t.Fatalf("resolve(%s, %s) = %q, %v; wantErr %v", tt.base, tt.dir, got, err, tt.wantErr)
 			}
 		})
 	}
