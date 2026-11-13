@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -16,9 +15,6 @@ func TestCheckOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	m, err := NewManager(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)

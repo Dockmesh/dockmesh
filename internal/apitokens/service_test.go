@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
@@ -24,9 +23,6 @@ func newTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('owner', 'owner', 'x')`); err != nil {
 		t.Fatalf("user: %v", err)
 	}

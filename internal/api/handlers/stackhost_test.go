@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -20,9 +19,6 @@ func TestStackRequestsStayOnTheStacksHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	deps := stacks.NewDeploymentStore(database)
 	h := &Handlers{Deployments: deps, Hosts: host.NewRegistry(nil, nil)}

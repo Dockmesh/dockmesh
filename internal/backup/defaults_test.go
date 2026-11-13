@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -43,9 +42,6 @@ func TestMigrateSystemJobPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			svc := NewService(database, nil, nil, nil, SystemPaths{DBPath: filepath.Join(dataDir, "test.db"), StacksRoot: t.TempDir(), DataDir: dataDir})
 			id, err := svc.store.createJob(ctx, JobInput{
 				Name: DefaultSystemJobName, TargetType: "local",

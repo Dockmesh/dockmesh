@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/config"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -34,9 +33,6 @@ func TestSaveSetupURLs(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			ctx := context.Background()
 			st := settings.NewStore(database)
 			if err := st.Load(ctx); err != nil {
@@ -69,9 +65,6 @@ func TestInviteLinksUseThePublicBaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	st := settings.NewStore(database)
 	if err := st.Load(ctx); err != nil {

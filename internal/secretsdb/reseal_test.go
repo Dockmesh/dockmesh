@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -19,9 +18,6 @@ func TestResealMovesSecretsToNewKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	old, err := secrets.New(filepath.Join(t.TempDir(), "key"), true)
 	if err != nil {
 		t.Fatal(err)

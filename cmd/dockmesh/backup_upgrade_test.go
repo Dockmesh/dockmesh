@@ -8,7 +8,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -22,9 +21,6 @@ func TestRepairJobSecretsRunsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	sec, err := secrets.New(filepath.Join(t.TempDir(), "key"), true)
 	if err != nil {
 		t.Fatal(err)
@@ -75,9 +71,6 @@ func TestPrepareJobTargetsRepairsBeforeMigrating(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	svc := backup.NewService(database, nil, nil, nil, backup.SystemPaths{})
 	n := notices.NewService(database)
 	svc.SetNotices(n)
@@ -133,9 +126,6 @@ func TestPinEmptyLocalPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			st := settings.NewStore(database)
 			dataDir := filepath.Join(t.TempDir(), "var-data")
 			workDir := t.TempDir()

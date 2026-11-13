@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -234,9 +233,6 @@ func newServiceDB(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatal(err)
-	}
 	return NewService(conn, nil, false)
 }
 

@@ -13,7 +13,6 @@ import (
 
 	"github.com/moby/moby/client"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
@@ -129,9 +128,6 @@ func TestUpdateAndRollbackRefuseSwarmTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	svc := NewService(docker.Wrap(cli), database)
 
 	tests := []struct {

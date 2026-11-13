@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -350,9 +349,6 @@ func TestDefaultEventRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	s := NewService(database, nil)
 	rules, err := s.ListRules(context.Background())
 	if err != nil {
@@ -488,9 +484,6 @@ func TestRuleChangesApplyToEventsAtOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	s := NewService(database, nil)
 	in := RuleInput{Name: "crash", Kind: KindContainerStopped, ContainerFilter: "*", Enabled: true}

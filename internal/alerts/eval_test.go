@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -75,9 +74,6 @@ func newEvalService(t *testing.T) (*Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.Exec(`DELETE FROM alert_rules`); err != nil {
 		t.Fatal(err)
 	}

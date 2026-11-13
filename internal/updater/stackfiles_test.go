@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
@@ -31,9 +30,6 @@ func TestStackTargetRefusesOutsideChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			m, err := stacks.NewManager(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)

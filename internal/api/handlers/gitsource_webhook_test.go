@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -27,9 +26,6 @@ func newGitSourceTestHandlers(t *testing.T) (*Handlers, *gitsource.Service, *not
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	gs := gitsource.New(database, nil, nil, t.TempDir(), nil)
 	ns := notices.NewService(database)
 	return &Handlers{GitSource: gs, Notices: ns}, gs, ns

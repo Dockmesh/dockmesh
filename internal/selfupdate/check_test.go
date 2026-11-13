@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -72,9 +71,6 @@ func TestNotifyAvailableOncePerVersionAcrossRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	store := settings.NewStore(database)
 	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('admin', 'admin', 'x')`); err != nil {
@@ -197,9 +193,6 @@ func newStore(t *testing.T) *settings.Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	return settings.NewStore(database)
 }
 

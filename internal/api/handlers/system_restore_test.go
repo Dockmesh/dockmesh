@@ -12,7 +12,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/config"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
@@ -36,9 +35,6 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			st, err := setup.NewFromDB(context.Background(), database)
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)

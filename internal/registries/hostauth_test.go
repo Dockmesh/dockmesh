@@ -11,7 +11,6 @@ import (
 
 	"github.com/moby/moby/api/types/registry"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
@@ -39,9 +38,6 @@ func TestResolveUsesHostTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	sec, err := secrets.New(filepath.Join(t.TempDir(), "key"), true)
 	if err != nil {
 		t.Fatal(err)

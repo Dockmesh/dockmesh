@@ -11,7 +11,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -26,9 +25,6 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	authSvc := auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))
 	roles := rbac.NewStore(database)

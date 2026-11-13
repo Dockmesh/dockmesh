@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -27,9 +26,6 @@ func openRedactionTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	return database
 }
 

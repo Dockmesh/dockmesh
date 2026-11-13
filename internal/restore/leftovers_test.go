@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
@@ -66,9 +65,6 @@ func TestLeftoversAfterApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	n := notices.NewService(database)
 	ctx := context.Background()
 	if err := SyncLeftoverNotice(ctx, cfg, n); err != nil {

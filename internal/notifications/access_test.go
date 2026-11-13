@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -43,9 +42,6 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	for _, id := range []string{"admin", "viewer", "noperm", "hostA", "stackY", "tagged"} {
 		if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, 'x')`, id, id); err != nil {
 			t.Fatal(err)

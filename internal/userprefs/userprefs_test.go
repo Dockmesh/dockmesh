@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -34,9 +33,6 @@ func TestLanguageForEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, email, password) VALUES
 		('u1', 'anna', 'Anna@example.com', 'x'), ('u2', 'ben', 'ben@example.com', 'x'), ('u3', 'nomail', NULL, 'x')`); err != nil {
 		t.Fatal(err)

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -15,9 +14,6 @@ func TestHistoryRecordsEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	s := NewHistoryStore(database)
 	ctx := context.Background()
 	base := "services:\n  db:\n    environment:\n      PASSWORD: ${DB_PASSWORD}\n"

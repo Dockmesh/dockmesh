@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -22,9 +21,6 @@ func newSumManager(t *testing.T) *Manager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	m, err := NewManager(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -58,9 +57,6 @@ func TestGitDeployTargetsStackHost(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			mgr, err := stacks.NewManager(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
@@ -154,9 +150,6 @@ func TestGitDeployOverrideFromCheckedFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			mgr, err := stacks.NewManager(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)

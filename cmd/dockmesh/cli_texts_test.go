@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -40,9 +39,6 @@ func TestSeedScannerEnabled(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			ctx := context.Background()
 			store := settings.NewStore(database)
 			if err := store.Set(ctx, settings.KeyScannerEnabled, tt.stored); err != nil {

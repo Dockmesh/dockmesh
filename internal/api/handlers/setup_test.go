@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
@@ -100,9 +99,6 @@ func TestSetupCommitRefusedOnceAccountExists(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			st, err := setup.NewFromDB(context.Background(), database)
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)

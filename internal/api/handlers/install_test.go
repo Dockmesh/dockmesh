@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -91,9 +90,6 @@ func TestAgentInstallScriptRaisesDeprecationNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	mgr, err := pki.New(dir, []string{"dockmesh.test"})
 	if err != nil {
 		t.Fatal(err)

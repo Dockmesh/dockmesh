@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
@@ -18,9 +17,6 @@ func newTestStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	sec, err := secrets.New(filepath.Join(t.TempDir(), "key"), true)
 	if err != nil {
 		t.Fatal(err)

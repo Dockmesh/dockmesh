@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
@@ -20,9 +19,6 @@ func newStateDB(t *testing.T) *sql.DB {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	return database
 }
 

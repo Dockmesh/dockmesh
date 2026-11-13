@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -27,9 +26,6 @@ func TestUnlockUserClearsLoginLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			svc := auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))
 			const pw = "correct horse battery"
 			u, err := svc.CreateUser(ctx, "frank", "", pw, "viewer")

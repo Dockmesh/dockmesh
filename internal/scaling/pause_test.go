@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -21,9 +20,6 @@ func scalingEnv(t *testing.T) (*stacks.Manager, *notices.Service, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	m, err := stacks.NewManager(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)

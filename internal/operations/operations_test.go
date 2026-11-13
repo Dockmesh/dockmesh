@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -20,9 +19,6 @@ func newTestService(t *testing.T) (*Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	return New(database), database
 }
 

@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -22,9 +21,6 @@ func TestNoticesHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	svc := notices.NewService(database)
 	ctx := context.Background()
 	if err := svc.Raise(ctx, notices.RaiseInput{Key: "all", Audience: notices.All(), Severity: notices.SevWarning, Title: i18n.Msg("for everyone")}); err != nil {

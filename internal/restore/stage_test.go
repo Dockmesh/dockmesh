@@ -20,9 +20,6 @@ func systemDB(t *testing.T, user string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, 'x');
 		INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES (?, 'admin', 'global')`, user, user, user); err != nil {
 		t.Fatal(err)

@@ -102,7 +102,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: fetch the base commit
-        if: github.event_name == 'pull_request'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
@@ -175,7 +175,7 @@ jobs:
         if: ${{ !cancelled() && env.DEPS_CHANGED == 'true' }}
         working-directory: web
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npx --yes license-checker-rseidelsohn@4.4.2 --production \
             --excludePrivatePackages --onlyAllow "$ALLOWED" --summary
 

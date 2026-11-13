@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -32,9 +31,6 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			s := NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil, "")
 			p, err := s.CreateProvider(ctx, in)
 			if err != nil {
@@ -79,9 +75,6 @@ func TestScopesAcceptSpacesAndCommas(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			s := NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil, "")
 			p, err := s.CreateProvider(context.Background(), ProviderInput{Slug: "kc", DisplayName: "Keycloak",
 				IssuerURL: "https://sso.example/realms/main", ClientID: "c", ClientSecret: "s", Scopes: tt.in})

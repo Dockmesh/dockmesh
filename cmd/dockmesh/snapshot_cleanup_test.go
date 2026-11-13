@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -78,9 +77,6 @@ func TestRemovePlaintextSnapshots(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			sec, err := secrets.New(filepath.Join(dir, "key"), tt.encrypt)
 			if err != nil {
 				t.Fatal(err)
@@ -134,9 +130,6 @@ func TestRemovePlaintextSnapshotsResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	sec, err := secrets.New(filepath.Join(dir, "key"), true)
 	if err != nil {
 		t.Fatal(err)

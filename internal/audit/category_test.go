@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
@@ -221,9 +220,6 @@ func TestListFilteredByCategory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	s := NewService(database, filepath.Join(t.TempDir(), "genesis"))
 	ctx := context.Background()
 	for _, a := range []string{ActionStackDeploy, ActionContainerReadFile, ActionLogin, "something.unknown"} {
