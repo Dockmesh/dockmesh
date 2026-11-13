@@ -362,3 +362,23 @@ func TestCreditCountClamps(t *testing.T) {
 		t.Fatalf("balance %d above the window", c.n)
 	}
 }
+
+func TestConnectHooksRunPerConnect(t *testing.T) {
+	svc := NewService(nil, nil, "http://dockmesh.test", "")
+	got := make(chan string, 2)
+	svc.OnConnect(func(_ context.Context, id string) { got <- id })
+	svc.runConnectHooks(context.Background(), "a1")
+	svc.runConnectHooks(context.Background(), "a2")
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case id := <-got:
+			seen[id] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("hook did not run")
+		}
+	}
+	if !seen["a1"] || !seen["a2"] {
+		t.Errorf("hooks ran for %v, want a1 and a2", seen)
+	}
+}

@@ -141,6 +141,9 @@ type Handlers struct {
 	backupVolumeCheck func(ctx context.Context, hostID, name string) error
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
+	// pendingDeleteRuns holds the hosts whose pending stack deletes are
+	// being finished, so a reconnect does not run them twice.
+	pendingDeleteRuns sync.Map
 }
 
 type Deps struct {

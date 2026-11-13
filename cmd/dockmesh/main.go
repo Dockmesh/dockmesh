@@ -1172,6 +1172,10 @@ func main() {
 			slog.Warn("reload roles and assignments", "err", err)
 		}
 	}, h.SyncIdPAssignments)
+	agentsSvc.OnConnect(h.ResumePendingStackDeletes)
+	for _, id := range agentsSvc.Connected() {
+		go h.ResumePendingStackDeletes(ctx, id)
+	}
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
 	// Backfill stack deployments (P.7): scan local containers to detect

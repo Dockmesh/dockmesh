@@ -571,6 +571,13 @@
               members={s.services.map((x) => ({ name: x.name, state: x.state, unhealthy: isUnhealthy(x) }))}
               notDeployed={s.state === 'undeployed'}
             />
+            {#if s.deployment?.status === 'delete_pending'}
+              <StatusChip
+                tone="warn"
+                label={m.stacks_delete_pending({ host: s.deployment.host_name || s.deployment.host_id })}
+                title={m.stacks_delete_pending_desc({ host: s.deployment.host_name || s.deployment.host_id })}
+              />
+            {/if}
             {#if s.pendingDeploy}
               <StatusChip
                 tone="acc"

@@ -26,3 +26,20 @@ func NewLoopback(id string, hello HelloPayload, serve func(f Frame, reply func(F
 	}()
 	return ag, ag.shutdown
 }
+
+// AttachLoopback lists a loopback session as connected, so server code
+// that looks agents up by ID reaches it. For tests only: it skips the
+// certificate and revocation checks of a real connection. The returned
+// func detaches it.
+func (s *Service) AttachLoopback(ag *ConnectedAgent) (detach func()) {
+	s.mu.Lock()
+	s.connected[ag.ID] = ag
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		if s.connected[ag.ID] == ag {
+			delete(s.connected, ag.ID)
+		}
+		s.mu.Unlock()
+	}
+}

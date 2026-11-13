@@ -6640,6 +6640,9 @@ paths:
 
         Safety: external volumes are never removed; images still used by
         containers outside this project are skipped.
+
+        A stack deployed on an agent is removed there first and the call
+        waits for the agent's answer (up to 30 minutes).
       parameters:
         - in: query
           name: force
@@ -6676,12 +6679,30 @@ paths:
                 properties:
                   cleanup: {$ref: "#/components/schemas/StackCleanupResult"}
                   cleanup_error: {type: string}
+        "202":
+          description: |
+            The stack runs on an agent that is offline. Its deployment status
+            becomes `delete_pending`; the delete finishes when the agent
+            reconnects, and a failure then raises a notice. A deploy before
+            that cancels the delete.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_host_id: {type: string}
+                  pending_host_name: {type: string}
         "204": {description: "Deleted (files only, no cleanup requested)."}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: Stack has dependents (re-send with `?force=true` to override), or another operation such as a deploy holds the stack (`code` is `stack_busy`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The agent could not delete its copy of the stack; the message carries the agent's error. Nothing was deleted on the server.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -10237,7 +10258,10 @@ components:
         host_id: {type: string}
         host_name: {type: string}
         deployed_at: {type: string, format: date-time}
-        status: {type: string, enum: [deployed, failed, stopped, unknown]}
+        status:
+          type: string
+          enum: [deployed, stopped, migrating, migrated_away, delete_pending]
+          description: "`delete_pending`: a delete waits for the offline agent host."
     StackListEntry:
       type: object
       properties:

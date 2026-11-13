@@ -222,7 +222,7 @@ export interface StackDeployment {
   stack_name: string;
   host_id: string;
   host_name?: string;
-  status: 'deployed' | 'stopped' | 'migrating' | 'migrated_away';
+  status: 'deployed' | 'stopped' | 'migrating' | 'migrated_away' | 'delete_pending';
   deployed_at: string;
   updated_at: string;
 }
@@ -395,6 +395,9 @@ export interface StackCleanupResult {
 export interface StackCleanupDeleteResult {
   cleanup?: StackCleanupResult | null;
   cleanup_error?: string;
+  // Set on 202: the stack's agent is offline and the delete waits for it.
+  pending_host_id?: string;
+  pending_host_name?: string;
 }
 
 export interface StackDetail {
