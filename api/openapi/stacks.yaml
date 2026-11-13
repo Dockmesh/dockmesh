@@ -245,7 +245,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Stack has dependents; re-send with `?force=true` to override.
+          description: Stack has dependents (re-send with `?force=true` to override), or another operation such as a deploy holds the stack (`code` is `stack_busy`).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
