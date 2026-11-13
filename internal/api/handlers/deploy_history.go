@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -121,6 +122,11 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnprocessableEntity, "this deploy's compose snapshot was removed because it contained .env values; roll back to another deploy")
 		return
 	}
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpDeploy)
+	if !ok {
+		return
+	}
+	defer release()
 	if !h.checkStackFiles(w, r, name) {
 		return
 	}

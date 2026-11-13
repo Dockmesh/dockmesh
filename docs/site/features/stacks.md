@@ -91,6 +91,8 @@ On the server's host the header shows live progress: pulling, creating, starting
 
 Common failures are translated into readable messages, for example a host port that is already in use or a pull that failed because registry credentials are missing (see [Registries](./registries.md)).
 
+Only one operation changes a stack's containers at a time: a deploy, a rollback from the history, scaling, a rolling update or an image update. Starting another one while it runs is refused with **stack &lt;name&gt; is busy: &lt;operation&gt; running since &lt;time&gt;**; try again when it has finished. Stacks with other names, and the same stack name on another host, are not held up. A git auto-deploy waits up to 10 minutes for the stack to become free, and auto-scaling tries again at its next check.
+
 **Stop** stops and removes all of the stack's containers. Networks, volumes and files stay, and the next deploy creates the containers again.
 
 Relative bind mounts such as `./data:/data` point into the stack's directory (on agent hosts, into the agent's copy of it). Stacks that an earlier version deployed with such mounts need one redeploy to move their data there. See [Relative paths and the staging directory](../concepts/stacks.md#relative-paths-and-the-staging-directory).

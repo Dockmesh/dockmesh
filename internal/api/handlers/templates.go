@@ -9,6 +9,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/go-chi/chi/v5"
@@ -183,6 +184,11 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStackCreate(w, r, rbac.PermStacksDeploy, req.StackName, target.ID()) {
 		return
 	}
+	release, ok := h.lockStack(w, target.ID(), req.StackName, stacklock.OpDeploy)
+	if !ok {
+		return
+	}
+	defer release()
 	composeYAML, envContent, resolved, err := h.Templates.Materialize(r.Context(), id, req.Values)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

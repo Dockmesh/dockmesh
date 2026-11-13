@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 )
@@ -188,22 +189,56 @@ func TestAcquireSerialisesPerStack(t *testing.T) {
 	db := &container.InspectResponse{Name: "/app-db-1"}
 	st := &stackTarget{stack: "app"}
 
-	release, err := s.acquire(web, st)
+	release, err := s.acquire(web, st, stacklock.OpImageUpdate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.acquire(db, st); !errors.Is(err, ErrBusy) {
-		t.Fatalf("second swap in the same stack: err = %v, want ErrBusy", err)
+	if _, err := s.acquire(db, st, stacklock.OpImageUpdate); !errors.Is(err, stacklock.ErrBusy) {
+		t.Fatalf("second swap in the same stack: err = %v, want busy", err)
 	}
-	other, err := s.acquire(db, nil)
+	other, err := s.acquire(db, nil, stacklock.OpImageUpdate)
 	if err != nil {
 		t.Fatalf("standalone container blocked by a stack swap: %v", err)
 	}
+	if _, err := s.acquire(db, nil, stacklock.OpImageUpdate); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second swap of a standalone container: err = %v, want ErrBusy", err)
+	}
 	other()
 	release()
-	again, err := s.acquire(db, st)
+	again, err := s.acquire(db, st, stacklock.OpImageUpdate)
 	if err != nil {
 		t.Fatalf("after release: %v", err)
 	}
 	again()
+}
+
+func TestAcquireSharesStackLock(t *testing.T) {
+	locks := stacklock.New()
+	s := NewService(nil, nil)
+	s.SetLocks(locks)
+	web := &container.InspectResponse{Name: "/app-web-1"}
+
+	deploy, err := locks.TryLock(stacklock.HostKey("local", "app"), stacklock.OpDeploy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.acquire(web, &stackTarget{stack: "app"}, stacklock.OpImageUpdate)
+	var busy *stacklock.BusyError
+	if !errors.As(err, &busy) || busy.Operation != stacklock.OpDeploy {
+		t.Fatalf("image update during a deploy: err = %v, want busy with the deploy", err)
+	}
+	other, err := s.acquire(web, &stackTarget{stack: "other"}, stacklock.OpImageUpdate)
+	if err != nil {
+		t.Fatalf("image update of another stack blocked: %v", err)
+	}
+	other()
+	deploy()
+	rel, err := s.acquire(web, &stackTarget{stack: "app"}, stacklock.OpImageUpdate)
+	if err != nil {
+		t.Fatalf("after the deploy: %v", err)
+	}
+	if _, err := locks.TryLock(stacklock.HostKey("local", "app"), stacklock.OpDeploy); !errors.Is(err, stacklock.ErrBusy) {
+		t.Fatalf("deploy during an image update: err = %v, want busy", err)
+	}
+	rel()
 }

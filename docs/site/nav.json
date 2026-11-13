@@ -52,6 +52,7 @@
         { "title": "Disaster recovery", "path": "operations/disaster-recovery.md" },
         { "title": "Security hardening", "path": "operations/hardening.md" },
         { "title": "Upgrade", "path": "operations/upgrade.md" },
+        { "title": "Verify a release", "path": "operations/verify-release.md" },
         { "title": "Uninstall", "path": "operations/uninstall.md" }
       ]
     },
