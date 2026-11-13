@@ -2602,9 +2602,9 @@ export const api = {
         warnings?: string[];
       }>('/audit/verify'),
     getRetention: () =>
-      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview }>('/audit/retention'),
+      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview; default_local_dir?: string }>('/audit/retention'),
     setRetention: (cfg: AuditRetentionConfig) =>
-      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview }>('/audit/retention', {
+      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview; default_local_dir?: string }>('/audit/retention', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg)

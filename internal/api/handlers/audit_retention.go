@@ -20,8 +20,9 @@ func (h *Handlers) GetAuditRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"config":  cfg,
-		"preview": preview,
+		"config":            cfg,
+		"preview":           preview,
+		"default_local_dir": h.AuditRetention.DefaultLocalDir(),
 	})
 }
 
