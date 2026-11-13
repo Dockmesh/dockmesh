@@ -13,6 +13,7 @@ dev:
 	@(cd web && npm run dev) & \
 	 (command -v air >/dev/null && air || go run ./cmd/dockmesh)
 
+# The frontend builds with the Node version in web/.nvmrc.
 frontend-install:
 	cd web && npm install
 

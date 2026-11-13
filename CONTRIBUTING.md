@@ -103,7 +103,7 @@ tries again. Never edit or rename a migration that has been merged.
 mkdir -p cmd/dockmesh/web_dist
 go test -race ./...        # -race needs cgo (gcc); drop the flag if you have none
 
-# Frontend
+# Frontend: Node 26, the version in web/.nvmrc (`nvm use` picks it up)
 cd web && npm ci && npm run check && npm test && npm run build && cd ..
 
 # Lint
