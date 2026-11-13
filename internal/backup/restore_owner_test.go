@@ -16,8 +16,7 @@ import (
 )
 
 // ownerArchive builds a stack archive whose manifest records owner (nil
-// for archives written before owners were recorded), with a database
-// directory owned by uid 999.
+// for an archive without one), with a database directory owned by uid 999.
 func ownerArchive(t *testing.T, owner *int) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer

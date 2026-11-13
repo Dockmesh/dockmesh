@@ -96,7 +96,7 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, files *stackh
 		// A file that shrank since it was opened is padded to the size
 		// its header already promised.
 		if n < hdr.Size {
-			_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+			_, err = tw.Write(make([]byte, hdr.Size-n))
 		}
 		return err
 	})
@@ -177,13 +177,6 @@ type stackManifest struct {
 	// other owners through the helper so they keep their owner; archives
 	// without it restore every file as the server's own.
 	OwnerUID *int `json:"owner_uid,omitempty"`
-}
-
-type zeroReader struct{}
-
-func (zeroReader) Read(p []byte) (int, error) {
-	clear(p)
-	return len(p), nil
 }
 
 func readStackManifest(r io.Reader) (*stackManifest, error) {

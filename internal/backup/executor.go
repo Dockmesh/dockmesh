@@ -450,7 +450,7 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 		if err != nil {
 			return 0, fmt.Errorf("stack dir: %w", err)
 		}
-		return tarStackWithVolumes(ctx, hostTarget, e.files(), dir, src.Name, w)
+		return tarStackWithVolumes(ctx, hostTarget, stackFiles(e.docker), dir, src.Name, w)
 	case "system":
 		// System backup always lives on the central server, not on any
 		// agent. Host routing is irrelevant here.
@@ -460,12 +460,13 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	}
 }
 
-// files reads stack directories that hold data of other users.
-func (e *Executor) files() *stackhelper.Helper {
-	if e.docker == nil {
+// stackFiles returns the helper for stack files of other users, nil
+// without Docker.
+func stackFiles(d *docker.Client) *stackhelper.Helper {
+	if d == nil {
 		return nil
 	}
-	return stackhelper.New(e.docker.Raw())
+	return stackhelper.New(d.Raw())
 }
 
 // runHooks runs the hooks in order and stops at the first failure.

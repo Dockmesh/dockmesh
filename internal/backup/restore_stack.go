@@ -391,7 +391,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	var composeContent, envContent string
 	var restored []string
 	var owner *int
-	owned := &ownedRestore{files: s.files(), base: filepath.Dir(stackDir), dir: stackDir}
+	owned := &ownedRestore{files: stackFiles(s.docker), base: filepath.Dir(stackDir), dir: stackDir}
 	defer owned.abort()
 	entries := 0
 	for {
@@ -493,14 +493,6 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	return nil
 }
 
-// files writes stack entries of other owners.
-func (s *Service) files() *stackhelper.Helper {
-	if s.docker == nil {
-		return nil
-	}
-	return stackhelper.New(s.docker.Raw())
-}
-
 // errHelperDone closes the pipe once the helper returned, so a write after
 // that fails instead of blocking.
 var errHelperDone = errors.New("helper stopped reading the archive")
@@ -522,7 +514,7 @@ type ownedRestore struct {
 // foreign reports whether hdr belongs to another owner than the server
 // that wrote the archive. Archives without an owner have none.
 func foreign(owner *int, hdr *tar.Header) bool {
-	return owner != nil && hdr.Uid != *owner && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg)
+	return owner != nil && hdr.Uid != *owner
 }
 
 func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
@@ -541,7 +533,7 @@ func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
 }
 
 func (o *ownedRestore) unavailable(owner *int, hdr *tar.Header) bool {
-	return o.files == nil && foreign(owner, hdr)
+	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && foreign(owner, hdr)
 }
 
 func (o *ownedRestore) write(ctx context.Context, hdr *tar.Header, rel string, r io.Reader) error {
@@ -557,8 +549,10 @@ func (o *ownedRestore) write(ctx context.Context, hdr *tar.Header, rel string, r
 			o.done <- err
 		}()
 	}
+	// Setuid and setgid are dropped: a crafted archive must not leave a
+	// set-id binary owned by root on the host.
 	out := &tar.Header{
-		Name: rel, Typeflag: hdr.Typeflag, Mode: hdr.Mode, Uid: hdr.Uid, Gid: hdr.Gid,
+		Name: rel, Typeflag: hdr.Typeflag, Mode: hdr.Mode & 0o1777, Uid: hdr.Uid, Gid: hdr.Gid,
 		Size: hdr.Size, ModTime: hdr.ModTime, Format: tar.FormatPAX,
 	}
 	if hdr.Typeflag == tar.TypeDir {
