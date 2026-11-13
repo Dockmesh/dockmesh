@@ -46,6 +46,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -78,6 +79,7 @@ type Handlers struct {
 	ScanStore         *scanner.Store
 	Proxy             *proxy.Service
 	Updater           *updater.Service
+	StackLocks        *stacklock.Locks
 	Operations        *operations.Service
 	UpdateWatcher     *updater.Watcher
 	OIDC              *oidc.Service
@@ -159,6 +161,7 @@ type Deps struct {
 	ScanStore      *scanner.Store
 	Proxy          *proxy.Service
 	Updater        *updater.Service
+	StackLocks     *stacklock.Locks
 	Operations     *operations.Service
 	UpdateWatcher  *updater.Watcher
 	OIDC           *oidc.Service
@@ -220,6 +223,7 @@ func New(d Deps) *Handlers {
 		Proxy:          d.Proxy,
 		Operations:     d.Operations,
 		Updater:        d.Updater,
+		StackLocks:     d.StackLocks,
 		UpdateWatcher:  d.UpdateWatcher,
 		OIDC:           d.OIDC,
 		SAML:           d.SAML,
