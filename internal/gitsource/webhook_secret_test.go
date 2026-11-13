@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
@@ -17,7 +18,7 @@ const testSecret = "0123456789abcdef-webhook"
 func newWebhookTestService(t *testing.T, encrypt bool) (*Service, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()
-	database, err := db.Open(filepath.Join(dir, "test.db"))
+	database, err := dbtest.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

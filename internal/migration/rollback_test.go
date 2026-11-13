@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/scaling"
@@ -86,7 +87,7 @@ type migrationEnv struct {
 
 func newMigrationEnv(t *testing.T) *migrationEnv {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +278,7 @@ func TestMigrationRefusesUnconfirmedOverride(t *testing.T) {
 func busyStore(t *testing.T) (*Store, *sql.DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
-	database, err := db.Open(path)
+	database, err := dbtest.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

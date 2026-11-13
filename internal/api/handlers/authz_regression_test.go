@@ -22,6 +22,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
@@ -46,7 +47,7 @@ type authzEnv struct {
 // router.go: REST routes behind NewAuth, WebSocket routes outside it.
 func newAuthzEnv(t *testing.T) *authzEnv {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

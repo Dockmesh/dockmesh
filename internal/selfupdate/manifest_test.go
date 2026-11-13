@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -24,7 +25,7 @@ func TestFetchManifest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	database, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

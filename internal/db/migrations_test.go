@@ -9,6 +9,7 @@ import (
 // Upgrading must keep every API token working: tokens with a resolvable
 // creator get it as owner, everything else is marked legacy.
 func TestAPITokenOwnerMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +97,7 @@ func TestAPITokenOwnerMigration(t *testing.T) {
 // Enrollment tokens issued before expiry existed must stay usable for a
 // grace window after the upgrade; enrolled agents get no expiry.
 func TestAgentEnrollTokenExpiryMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +134,7 @@ func TestAgentEnrollTokenExpiryMigration(t *testing.T) {
 // Upgrading keeps existing alert rules as metric rules and tells admins
 // about the new built-in event rules.
 func TestEventAlertsMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

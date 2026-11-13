@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -228,7 +229,7 @@ func TestApplyPasswords(t *testing.T) {
 
 func newServiceDB(t *testing.T) *Service {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
+	conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

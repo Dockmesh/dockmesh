@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 )
@@ -138,7 +139,7 @@ func TestShouldNotify(t *testing.T) {
 }
 
 func TestWatcherPersistsChecks(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

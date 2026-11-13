@@ -14,13 +14,14 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

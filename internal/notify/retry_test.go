@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func newNotifyService(t *testing.T) *Service {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "notify.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "notify.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

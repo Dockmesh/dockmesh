@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -37,7 +38,7 @@ type fakeTags map[string][]string
 func (f fakeTags) Tags(id string) []string { return f[id] }
 
 func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "n.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "n.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

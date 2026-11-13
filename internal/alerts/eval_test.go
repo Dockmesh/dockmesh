@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 var evalNow = time.Unix(1_800_000_000, 0)
@@ -69,7 +70,7 @@ func TestDecideLessThan(t *testing.T) {
 
 func newEvalService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "alerts.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "alerts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

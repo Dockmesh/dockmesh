@@ -9,6 +9,7 @@ import (
 // get the marker the proxy service turns into the hash of their state;
 // routes created later start without one.
 func TestProxyAppliedHashMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

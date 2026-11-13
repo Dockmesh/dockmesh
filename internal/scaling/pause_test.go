@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -15,7 +16,7 @@ const validRules = `{"scaling":{"enabled":true,"rules":[{"service":"web","min_re
 
 func scalingEnv(t *testing.T) (*stacks.Manager, *notices.Service, string) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

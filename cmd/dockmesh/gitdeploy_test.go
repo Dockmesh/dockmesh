@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -52,7 +53,7 @@ func TestGitDeployTargetsStackHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +149,7 @@ func TestGitDeployOverrideFromCheckedFiles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}

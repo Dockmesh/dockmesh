@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -41,7 +42,7 @@ func commitCompose(t *testing.T, repo *git.Repository, dir, rev string) {
 // would record them as written by Dockmesh and the deploy check would pass.
 func TestSyncHoldsCommitWhenStackFilesChangedOutside(t *testing.T) {
 	ctx := context.Background()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func TestValidLanguage(t *testing.T) {
@@ -28,7 +29,7 @@ func TestValidLanguage(t *testing.T) {
 }
 
 func TestLanguageForEmail(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "prefs.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "prefs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

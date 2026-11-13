@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -72,7 +73,7 @@ func TestRemovePlaintextSnapshots(t *testing.T) {
 			ctx := context.Background()
 			dir := t.TempDir()
 			dbPath := filepath.Join(dir, "dockmesh.db")
-			database, err := db.Open(dbPath)
+			database, err := dbtest.Open(dbPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +129,7 @@ func TestRemovePlaintextSnapshotsResolves(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "dockmesh.db")
-	database, err := db.Open(dbPath)
+	database, err := dbtest.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

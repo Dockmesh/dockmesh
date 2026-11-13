@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -66,7 +67,7 @@ func (oneAdmin) ListActiveUserIDs(context.Context) ([]string, error)            
 func (oneAdmin) CanReceive(context.Context, string, notifications.EmitInput) bool { return true }
 
 func TestNotifyAvailableOncePerVersionAcrossRestarts(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestSwitchingBackToStableHidesCachedCandidate(t *testing.T) {
 
 func newStore(t *testing.T) *settings.Store {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

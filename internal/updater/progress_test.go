@@ -9,12 +9,13 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
 
 func newOps(t *testing.T) *operations.Service {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "ops.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "ops.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

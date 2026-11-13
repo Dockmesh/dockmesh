@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func TestSubject(t *testing.T) {
@@ -79,7 +80,7 @@ func TestIdentityKey(t *testing.T) {
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

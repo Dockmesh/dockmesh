@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -60,7 +61,7 @@ func TestLeftoversAfterApply(t *testing.T) {
 		}
 	}
 
-	database, err := db.Open(filepath.Join(t.TempDir(), "notices.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "notices.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

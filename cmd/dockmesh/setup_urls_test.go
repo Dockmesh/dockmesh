@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -28,7 +29,7 @@ func TestSaveSetupURLs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("DOCKMESH_BASE_URL", "")
 			t.Setenv("DOCKMESH_AGENT_PUBLIC_URL", "")
-			database, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "t.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,7 +64,7 @@ func TestSaveSetupURLs(t *testing.T) {
 // Invite links follow the Base URL the wizard or the settings page saved;
 // DOCKMESH_BASE_URL overrides it, and without either the default is used.
 func TestInviteLinksUseThePublicBaseURL(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

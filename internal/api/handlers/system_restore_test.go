@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
@@ -30,7 +31,7 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			database, err := db.Open(filepath.Join(dir, "test.db"))
+			database, err := dbtest.Open(filepath.Join(dir, "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}

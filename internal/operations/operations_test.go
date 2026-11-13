@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "ops.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "ops.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

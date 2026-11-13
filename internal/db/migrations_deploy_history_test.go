@@ -9,6 +9,7 @@ import (
 // Env-override deploys and rollbacks to them stored compose with .env
 // values filled in; the upgrade clears those snapshots and keeps the rest.
 func TestDeployHistoryEnvironmentMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

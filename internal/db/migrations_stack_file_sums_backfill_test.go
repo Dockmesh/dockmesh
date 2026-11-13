@@ -6,6 +6,7 @@ import (
 )
 
 func TestStackFileSumsBackfillMarksTrackedStacks(t *testing.T) {
+	t.Parallel()
 	database, _ := openFileDB(t)
 	if err := migrateUpTo(database, "20261109150513_notice_alert_text_keys.sql"); err != nil {
 		t.Fatal(err)
