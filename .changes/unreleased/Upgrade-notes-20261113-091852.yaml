@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Nothing to do for existing installs. Installing a release from before v0.6.0 with --version, or on a host without OpenSSL 3, now stops; set DOCKMESH_SKIP_SIGNATURE=1 to install it without the signature check
+time: 2026-11-13T09:18:52.446237261Z
+custom:
+    Audience: admins
+    Id: release-signature

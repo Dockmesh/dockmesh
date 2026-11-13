@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -233,6 +235,11 @@ func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, k
 		"metric", rule.ScaleUp.Metric, "value", fmt.Sprintf("%.1f%%", metricVal))
 
 	if err := c.scaleFn(ctx, stackName, rule.Service, to); err != nil {
+		if errors.Is(err, stacklock.ErrBusy) {
+			slog.Info("scaling: stack busy, retrying on the next check", "stack", stackName, "service", rule.Service, "err", err)
+			st.phase = phaseStable
+			return
+		}
 		slog.Warn("scaling: action failed",
 			"stack", stackName, "service", rule.Service,
 			"direction", direction, "err", err)

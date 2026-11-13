@@ -227,7 +227,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), or the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host).
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`).
       content:
         application/json:
           schema:
@@ -235,9 +235,11 @@ components:
             required: [error, code]
             properties:
               error: {type: string}
-              code: {type: string, enum: [modified_outside, stack_on_other_host]}
+              code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
               stack: {type: string}
               host_id: {type: string}
+              operation: {type: string, description: "With `stack_busy`: the operation that holds the stack."}
+              since: {type: string, format: date-time, description: "With `stack_busy`: when that operation started."}
               files:
                 type: array
                 items: {type: string}

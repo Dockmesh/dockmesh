@@ -75,6 +75,7 @@ With **Auto-deploy on new commits** on, every sync that pulls a new commit deplo
 - It runs on the host the stack is deployed on. A stack that was never deployed is deployed on the host it was created for, or on the server host if it has none.
 - Every image is pulled again, also on agent hosts, so a new image pushed under the same tag is picked up.
 - Global environment variables and the stack's default environment override are applied. If the override file was added or changed since the last manual deploy, the auto-deploy fails with `environment override changed since the last manual deploy`; deploy once by hand after you add or change an override.
+- If another operation (a deploy, scaling, a rolling update or an image update) is changing the stack, the auto-deploy waits up to 10 minutes for it to finish, then fails with `stack <name> is busy`.
 - The deployment record and the stack's **History** are updated (marked as a git deploy, with the commit SHA), and the result is sent to the notification bell.
 
 A failed auto-deploy does not fail the sync: the new files are in place, and the error is in the notification and in **History**.

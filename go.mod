@@ -5,6 +5,7 @@ go 1.27.0
 toolchain go1.27.4
 
 require (
+	aead.dev/minisign v0.3.0
 	filippo.io/age v1.3.2
 	github.com/XSAM/otelsql v0.44.0
 	github.com/beevik/etree v1.8.1
