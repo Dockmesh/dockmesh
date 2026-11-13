@@ -47,7 +47,7 @@ func Migrate(opts MigrateOptions) (Result, error) {
 		return Result{}, err
 	}
 	defer srcRoot.Close()
-	data, srcInfo, err := readSource(srcRoot, src, opts.UID)
+	data, srcInfo, err := readSource(srcRoot, src, opts.UID, opts.GID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -75,7 +75,7 @@ func Migrate(opts MigrateOptions) (Result, error) {
 		return Result{}, err
 	}
 	defer dstRoot.Close()
-	if err := writeAtomic(dstRoot, envFileName, data, opts.UID, opts.GID); err != nil {
+	if err := writeAtomic(dstRoot, envFileName, data, opts.UID, opts.GID, targetMode(srcInfo, opts.UID)); err != nil {
 		return Result{}, err
 	}
 	if err := linkOldPlace(srcRoot, srcInfo, target); err != nil {
@@ -105,7 +105,7 @@ func findSource(candidates []string) string {
 // one hard link only (a link to a root-owned file elsewhere would copy
 // that file into /etc), and, like its directory, owned by root, the
 // service user or a deleted account and writable by nobody else.
-func readSource(root *os.Root, src string, selfUID int) ([]byte, os.FileInfo, error) {
+func readSource(root *os.Root, src string, selfUID, gid int) ([]byte, os.FileInfo, error) {
 	dirInfo, err := root.Stat(".")
 	if err != nil {
 		return nil, nil, err
@@ -131,6 +131,11 @@ func readSource(root *os.Root, src string, selfUID int) ([]byte, os.FileInfo, er
 	if err := checkTrusted(fi, selfUID); err != nil {
 		return nil, nil, fmt.Errorf("%w: %s: %v", ErrUntrusted, src, err)
 	}
+	// A root file readable by some other group (/etc/shadow) is no config.
+	if st := fi.Sys().(*syscall.Stat_t); (int(st.Uid) == 0 || int(st.Uid) == selfUID) &&
+		fi.Mode().Perm()&0o040 != 0 && st.Gid != 0 && int(st.Gid) != gid {
+		return nil, nil, fmt.Errorf("%w: %s is readable by group %d", ErrUntrusted, src, st.Gid)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxEnvFileSize+1))
 	if err != nil {
 		return nil, nil, err
@@ -139,6 +144,21 @@ func readSource(root *os.Root, src string, selfUID int) ([]byte, os.FileInfo, er
 		return nil, nil, fmt.Errorf("%w: %s is larger than %d bytes", ErrUntrusted, src, maxEnvFileSize)
 	}
 	return data, fi, nil
+}
+
+// targetMode is 0640 for a config the service could already read, and
+// 0600 for a root-owned file without group read: such a file may be a
+// root-only secret renamed into place, and the copy must not hand it to
+// the dockmesh group.
+func targetMode(src os.FileInfo, selfUID int) os.FileMode {
+	st, ok := src.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0o600
+	}
+	if (int(st.Uid) == 0 || int(st.Uid) == selfUID) && src.Mode().Perm()&0o040 == 0 {
+		return 0o600
+	}
+	return 0o640
 }
 
 func checkTrusted(fi os.FileInfo, selfUID int) error {
@@ -184,7 +204,7 @@ func ensureConfigDir(dir string, uid, gid int) error {
 
 // writeAtomic writes name below root through a temp file and a rename,
 // so a reader sees the old state or the complete new file.
-func writeAtomic(root *os.Root, name string, data []byte, uid, gid int) error {
+func writeAtomic(root *os.Root, name string, data []byte, uid, gid int, mode os.FileMode) error {
 	tmp := "." + name + ".new-" + randSuffix()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -204,7 +224,7 @@ func writeAtomic(root *os.Root, name string, data []byte, uid, gid int) error {
 		f.Close()
 		return err
 	}
-	if err := f.Chmod(0o640); err != nil {
+	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}

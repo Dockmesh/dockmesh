@@ -131,7 +131,6 @@ ASSET_DIR=""
 # Without /data here, an operator who ran with that flag would see
 # "skipping for safety" and the install would survive uninstall.
 for candidate in \
-  "/etc/dockmesh/dockmesh.env" \
   "/var/lib/dockmesh/dockmesh.env" \
   "/usr/local/var/dockmesh/dockmesh.env" \
   "/opt/dockmesh/dockmesh.env" \
@@ -141,9 +140,6 @@ do
     DATA_DIR="$(dirname "$candidate")"
     # shellcheck disable=SC1090
     set +u; . "$candidate"; set -u
-    if [ -n "${DOCKMESH_DATA_DIR:-}" ]; then
-      DATA_DIR="$DOCKMESH_DATA_DIR"
-    fi
     if [ -n "${DOCKMESH_INSTALL_SCRIPT:-}" ]; then
       ASSET_DIR="$(dirname "${DOCKMESH_INSTALL_SCRIPT}")"
     fi

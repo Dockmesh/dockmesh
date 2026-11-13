@@ -69,7 +69,7 @@ func TestMigrateMovesAndLinks(t *testing.T) {
 	checks := []struct {
 		path string
 		mode os.FileMode
-	}{{f.etc, 0o750 | os.ModeDir}, {target, 0o640}}
+	}{{f.etc, 0o750 | os.ModeDir}, {target, 0o600}}
 	for _, c := range checks {
 		fi, err := os.Stat(c.path)
 		if err != nil {
@@ -98,7 +98,7 @@ func TestMigrateOutcomes(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		setup   func(t *testing.T, f fixture)
+		setup   func(t *testing.T, f *fixture)
 		want    Outcome
 		wantErr error
 		dataDir string
@@ -111,15 +111,22 @@ func TestMigrateOutcomes(t *testing.T) {
 		{name: "db path outside data/", body: "DOCKMESH_DB_PATH=/opt/dm/dockmesh.db\n", want: Moved, dataDir: "/opt/dm"},
 		{
 			name: "group-writable source refused", body: oldEnv, wantErr: ErrUntrusted,
-			setup: func(t *testing.T, f fixture) { chmod(t, f.src, 0o620) },
+			setup: func(t *testing.T, f *fixture) { chmod(t, f.src, 0o620) },
+		},
+		{
+			name: "root file readable by another group refused", body: oldEnv, wantErr: ErrUntrusted,
+			setup: func(t *testing.T, f *fixture) {
+				chmod(t, f.src, 0o640)
+				f.opts.GID = os.Getgid() + 1
+			},
 		},
 		{
 			name: "group-writable dir refused", body: oldEnv, wantErr: ErrUntrusted,
-			setup: func(t *testing.T, f fixture) { chmod(t, f.data, 0o770) },
+			setup: func(t *testing.T, f *fixture) { chmod(t, f.data, 0o770) },
 		},
 		{
 			name: "hard-linked source refused", body: oldEnv, wantErr: ErrUntrusted,
-			setup: func(t *testing.T, f fixture) {
+			setup: func(t *testing.T, f *fixture) {
 				if err := os.Link(f.src, filepath.Join(t.TempDir(), "other")); err != nil {
 					t.Fatal(err)
 				}
@@ -127,7 +134,7 @@ func TestMigrateOutcomes(t *testing.T) {
 		},
 		{
 			name: "symlinked source skipped", want: NothingFound,
-			setup: func(t *testing.T, f fixture) {
+			setup: func(t *testing.T, f *fixture) {
 				target := filepath.Join(t.TempDir(), "dockmesh.env")
 				if err := os.WriteFile(target, []byte("DOCKMESH_HTTP_ADDR=:1\n"), 0o600); err != nil {
 					t.Fatal(err)
@@ -139,7 +146,7 @@ func TestMigrateOutcomes(t *testing.T) {
 		},
 		{
 			name: "target is a symlink", body: oldEnv, wantErr: errAny,
-			setup: func(t *testing.T, f fixture) {
+			setup: func(t *testing.T, f *fixture) {
 				if err := os.MkdirAll(f.etc, 0o750); err != nil {
 					t.Fatal(err)
 				}
@@ -150,7 +157,7 @@ func TestMigrateOutcomes(t *testing.T) {
 		},
 		{
 			name: "config dir is a file", body: oldEnv, wantErr: errAny,
-			setup: func(t *testing.T, f fixture) {
+			setup: func(t *testing.T, f *fixture) {
 				if err := os.WriteFile(f.etc, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -161,7 +168,7 @@ func TestMigrateOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t, tt.body)
 			if tt.setup != nil {
-				tt.setup(t, f)
+				tt.setup(t, &f)
 			}
 			before, _ := os.Lstat(f.src)
 			beforeData, _ := os.ReadFile(f.src)
@@ -214,5 +221,32 @@ func TestParseEnv(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+func TestMigrateKeepsOwnerOnlyReadable(t *testing.T) {
+	tests := []struct {
+		name    string
+		srcMode os.FileMode
+		want    os.FileMode
+	}{
+		{"owner only stays owner only", 0o600, 0o600},
+		{"group-readable becomes 0640", 0o640, 0o640},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, oldEnv)
+			chmod(t, f.src, tt.srcMode)
+			if _, err := Migrate(f.opts); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Stat(filepath.Join(f.etc, "dockmesh.env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fi.Mode().Perm() != tt.want {
+				t.Errorf("mode = %v, want %v", fi.Mode().Perm(), tt.want)
+			}
+		})
 	}
 }

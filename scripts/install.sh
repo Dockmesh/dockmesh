@@ -1321,11 +1321,16 @@ else
   ENV_FILE="$DATA_DIR/dockmesh.env"
   if [ -n "$KEPT_ENV_FILE" ]; then
     ENV_FILE="$KEPT_ENV_FILE"
-    warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
-    ok "env file        $ENV_FILE (kept)"
     if [ "$OS" = "linux" ] && ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout --from "$ENV_FILE"; then
       warn "config left at its old place; Dockmesh keeps using it"
     fi
+    # The old place is a symlink the service user could swap; the unit
+    # loads the root-owned file itself.
+    if $USE_SUDO test -L "$ENV_FILE" && [ "$($USE_SUDO readlink "$ENV_FILE")" = "$ETC_ENV_FILE" ]; then
+      ENV_FILE="$ETC_ENV_FILE"
+    fi
+    warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
+    ok "env file        $ENV_FILE (kept)"
   else
     if [ "$OS" = "linux" ]; then
       write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
