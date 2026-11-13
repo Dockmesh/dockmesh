@@ -85,3 +85,10 @@ func canDeleteIn(dir string) error {
 	}
 	return nil
 }
+
+func canRead(p string) error {
+	if err := unix.Access(p, unix.R_OK); err != nil {
+		return &fs.PathError{Op: "access", Path: p, Err: err}
+	}
+	return nil
+}

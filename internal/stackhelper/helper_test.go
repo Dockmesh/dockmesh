@@ -1,9 +1,11 @@
 package stackhelper
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +26,18 @@ type fakeDocker struct {
 	start     func(src string) error
 	created   []client.ContainerCreateOptions
 	removed   int
+	archive   []byte // what CopyFromContainer returns
+	extracted []byte // what CopyToContainer received
+}
+
+func (f *fakeDocker) CopyFromContainer(context.Context, string, client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+	return client.CopyFromContainerResult{Content: io.NopCloser(bytes.NewReader(f.archive))}, nil
+}
+
+func (f *fakeDocker) CopyToContainer(_ context.Context, _ string, o client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+	b, err := io.ReadAll(o.Content)
+	f.extracted = b
+	return client.CopyToContainerResult{}, err
 }
 
 func (f *fakeDocker) ImageInspect(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
