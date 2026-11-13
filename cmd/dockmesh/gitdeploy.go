@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -26,7 +27,13 @@ type gitDeployer struct {
 	globals deploy.GlobalVars
 	notifs  *notifications.Service
 	commit  func(ctx context.Context, stack string) string
+	locks   *stacklock.Locks
 }
+
+// gitDeployLockWait is how long a git deploy waits for another operation on
+// the stack to finish. The sync has already recorded the commit, so giving
+// up at once would leave it undeployed until the next push.
+const gitDeployLockWait = 10 * time.Minute
 
 // deploy runs on the stack's deployment host, or the host it was created
 // for, with the same globals and default override as a manual deploy.
@@ -56,6 +63,13 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 	if hostID == "" {
 		hostID = "local"
 	}
+	lockCtx, cancel := context.WithTimeout(ctx, gitDeployLockWait)
+	release, err := g.locks.Lock(lockCtx, stacklock.HostKey(hostID, stackName), stacklock.OpGitDeploy)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	gitSHA := ""
 	if g.commit != nil {
 		gitSHA = g.commit(ctx, stackName)

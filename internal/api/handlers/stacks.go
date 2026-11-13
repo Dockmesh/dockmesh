@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	"github.com/go-chi/chi/v5"
@@ -1079,6 +1080,11 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if !h.checkStackFiles(w, r, name) {
 		return
 	}
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpDeploy)
+	if !ok {
+		return
+	}
+	defer release()
 
 	// Dependency resolution (P.12.7). For any declared prerequisite
 	// stack whose containers aren't already running, deploy it first
@@ -1138,7 +1144,10 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 					"dependency "+depName+" is declared but missing on disk: "+dErr.Error())
 				return
 			}
-			if err := h.deployStackOnce(r, target, depName, depDetail); err != nil {
+			if err := h.deployStackOnce(r, target, depName, depDetail, name); err != nil {
+				if writeStackBusy(w, err) {
+					return
+				}
 				writeError(w, http.StatusFailedDependency,
 					"deploy dependency "+depName+": "+err.Error())
 				return
@@ -1335,7 +1344,12 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // still run via a direct DeployStack call later if the operator
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep. P.12.7.
-func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
+func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail, dependent string) error {
+	release, err := h.StackLocks.TryLock(stacklock.HostKey(target.ID(), name), stacklock.DependencyOf(dependent))
+	if err != nil {
+		return err
+	}
+	defer release()
 	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
 	if err != nil {
 		return err

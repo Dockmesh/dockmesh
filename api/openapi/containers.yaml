@@ -231,13 +231,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "An update of this container or its stack is already running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "An update of this container is already running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/ModifiedOutsideError"
                   - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -281,13 +282,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "Already rolled back, the rollback image was pruned or removed, an update of this container or its stack is running, the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container is running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/ModifiedOutsideError"
                   - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
   /containers/{id}/update-info:
     get:
       operationId: containers.update_info

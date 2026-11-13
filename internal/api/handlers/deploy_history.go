@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -124,6 +125,11 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 	if !h.checkStackFiles(w, r, name) {
 		return
 	}
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpDeploy)
+	if !ok {
+		return
+	}
+	defer release()
 	// Read current env so rollback only swings compose.yaml — secrets stay put.
 	current, err := h.Stacks.Get(name)
 	if err != nil {

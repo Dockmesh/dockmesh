@@ -724,21 +724,24 @@ paths:
           description: |
             Stack files changed outside Dockmesh (`code: modified_outside`;
             repeat with `confirm_external=1` after reviewing `files`), the
-            stack is on another host (`code: stack_on_other_host`), or the
-            service looks stateful (`warning: stateful_service`; repeat with
-            `force: true`).
+            stack is on another host (`code: stack_on_other_host`), another
+            operation is changing the stack (`code: stack_busy`, with
+            `operation` and `since`), or the service looks stateful
+            (`warning: stateful_service`; repeat with `force: true`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: {type: string}
-                  code: {type: string, enum: [modified_outside, stack_on_other_host]}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
                   stack: {type: string}
                   host_id: {type: string}
                   files:
                     type: array
                     items: {type: string}
+                  operation: {type: string}
+                  since: {type: string, format: date-time}
                   warning: {type: string, enum: [stateful_service]}
                   message: {type: string}
                   force_needed: {type: boolean}

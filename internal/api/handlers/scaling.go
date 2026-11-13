@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -87,6 +88,11 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpScale)
+	if !ok {
+		return
+	}
+	defer release()
 	res, err := target.ScaleService(r.Context(), name, detail.Compose, detail.Env, service, req.Replicas)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -201,6 +207,11 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	// Zero fields bubble into the engine, which fills them from the
 	// service's compose `deploy.update_config` and then applies defaults.
 
+	release, ok := h.lockStack(w, target.ID(), name, stacklock.OpRolling)
+	if !ok {
+		return
+	}
+	defer release()
 	res, err := target.RollingReplace(r.Context(), name, detail.Compose, detail.Env, service, opts)
 	if err != nil {
 		// User-correctable precondition failures are 422, not 500.
