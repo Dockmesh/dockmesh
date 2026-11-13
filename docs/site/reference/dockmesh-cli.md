@@ -50,7 +50,7 @@ An unknown subcommand prints the command list and exits with status 2. A failing
 dockmesh serve --env-file /var/lib/dockmesh/dockmesh.env
 ```
 
-Starts the web UI and REST API on `DOCKMESH_HTTP_ADDR` (default `:8080`) and the agent listener on `DOCKMESH_AGENT_LISTEN` (default `:8443`). The only flag is `--env-file`. On SIGINT or SIGTERM the server marks itself not ready, waits two seconds, then shuts down. If the database has no users at all and `DOCKMESH_SETUP_FORCE` is not set, the server creates an `admin` user with a random password and prints the password once to the console (stderr), not to the structured log. The console output stays in the journal or the container log, so change the password after the first sign-in.
+Starts the web UI and REST API on `DOCKMESH_HTTP_ADDR` (default `:8080`) and the agent listener on `DOCKMESH_AGENT_LISTEN` (default `:8443`). The only flag is `--env-file`. On SIGINT or SIGTERM the server marks itself not ready, waits two seconds, then shuts down. The server never creates an account by itself. It starts in setup mode only on an install without accounts that has no env file, no database and no data, or whose env file still has `DOCKMESH_SETUP_FORCE=true`; any other install without accounts logs the `dockmesh admin create` command to run.
 
 After a system restore was staged in the UI, the server exits with status 75 so the service manager starts it again; on that start it swaps the restored files in before it opens the database.
 

@@ -22,7 +22,7 @@ func newStateDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func TestNewForBootOnlyWithoutUsers(t *testing.T) {
+func TestNewForBootNeverSetUpOnlyWithoutUsers(t *testing.T) {
 	adminEquivalent := map[string]string{"settings": "manage", "users": "manage"}
 	tests := []struct {
 		name          string

@@ -46,7 +46,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 				}
 			}
 
-			st, _, ignored, err := NewForBoot(ctx, database, Facts{Config: true, DB: true, Force: tt.force})
+			st, _, ignored, err := NewForBoot(ctx, database, Facts{EnvFile: true, Config: true, DB: true, Force: tt.force})
 			if err != nil {
 				t.Fatalf("NewForBoot: %v", err)
 			}

@@ -302,6 +302,15 @@ func main() {
 
 	slog.Info("starting dockmesh", "version", version.Version, "commit", version.Commit)
 
+	// Before config.Load and db.Open: they create the secrets file and the
+	// database a fresh install lacks.
+	setupFacts := setup.Probe{
+		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
+		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
+		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
+		Paths:       config.ResolvePaths(os.Getenv),
+	}.Scan()
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config load failed", "err", err)
@@ -348,14 +357,6 @@ func main() {
 		}
 	}
 
-	// Before db.Open, which creates the database a fresh install lacks.
-	setupFacts := setup.Probe{
-		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
-		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
-		Force:       cfg.SetupForce,
-		DBPath:      cfg.DBPath,
-	}.Scan()
-
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		slog.Error("db open failed", "err", err)
@@ -376,9 +377,6 @@ func main() {
 
 	authSvc := auth.NewService(database, cfg.JWTSecret)
 
-	// Setup mode opens only for an install that was never set up or whose
-	// wizard never finished; everything else starts normally, even
-	// without accounts.
 	setupState, setupMode, setupForceIgnored, err := setup.NewForBoot(ctx, database, setupFacts)
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
@@ -396,10 +394,11 @@ func main() {
 		slog.Warn("check for user accounts", "err", err)
 	} else if !exists {
 		slog.Error("this installation has no user accounts and is not a new install, so the setup wizard stays closed; create an admin on this server, then restart the service",
-			"command", setup.RecoveryCommand)
-	} else if need, err := setup.NeedsAdmin(ctx, database); err != nil {
+			"command", setup.RecoveryCommand, "env_file", setupFacts.EnvFile,
+			"database", setupFacts.DB, "other_database", setupFacts.ForeignDB, "data", setupFacts.Data)
+	} else if admin, err := setup.AdminExists(ctx, database); err != nil {
 		slog.Warn("check for an admin account", "err", err)
-	} else if need {
+	} else if !admin {
 		slog.Error("no account holds an admin role, so nobody can manage users or settings; the setup wizard stays closed — create an admin on this server, then restart the service",
 			"command", setup.RecoveryCommand)
 	}

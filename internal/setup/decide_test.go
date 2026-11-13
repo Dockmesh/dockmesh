@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/layout"
 )
@@ -19,7 +20,22 @@ func rootedStat(root string) func(string) (fs.FileInfo, error) {
 		if p == "" {
 			return nil, fs.ErrNotExist
 		}
-		return os.Stat(filepath.Join(root, p))
+		return os.Lstat(filepath.Join(root, p))
+	}
+}
+
+func rootedReadDir(root string) func(string) ([]fs.DirEntry, error) {
+	return func(p string) ([]fs.DirEntry, error) {
+		return os.ReadDir(filepath.Join(root, p))
+	}
+}
+
+// probe returns a Probe for the server's paths below root.
+func probe(root, dbPath string) Probe {
+	return Probe{
+		Paths:   config.Paths{DBPath: dbPath},
+		Lstat:   rootedStat(root),
+		ReadDir: rootedReadDir(root),
 	}
 }
 
@@ -74,9 +90,9 @@ func seedAccounts(t *testing.T, root, dbPath string, users, admin bool) {
 // database, count accounts, decide.
 func boot(t *testing.T, root string, p Probe) Mode {
 	t.Helper()
-	p.Stat = rootedStat(root)
+	p.Lstat, p.ReadDir = rootedStat(root), rootedReadDir(root)
 	facts := p.Scan()
-	full := filepath.Join(root, p.DBPath)
+	full := filepath.Join(root, p.Paths.DBPath)
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +136,14 @@ func configLocations() []configLocation {
 
 // wantMode is the rule set of the decision, written out per input rather
 // than derived from Decide.
-func wantMode(config, db, users, force bool) Mode {
+func wantMode(envFile, config, db, users, force bool) Mode {
 	if users {
 		return SetUp
 	}
 	if !config && !db {
 		return NeverSetUp
 	}
-	if config && force {
+	if envFile && force {
 		return LegacyUnfinished
 	}
 	return SetUp
@@ -161,14 +177,15 @@ func TestDecisionTable(t *testing.T) {
 							openAt(t, root, activeDB)
 							seedAccounts(t, root, activeDB, acc.users, acc.admin)
 						}
-						p := Probe{DBPath: activeDB, DBPathSet: loc.dbPathSet, Force: force}
+						p := Probe{Paths: config.Paths{DBPath: activeDB}, DBPathSet: loc.dbPathSet, Force: force}
 						if loc.extra != "" {
 							p.ConfigFiles = []string{loc.extra}
 						}
-						config := loc.file != "" || loc.dbPathSet
+						envFile := loc.file != ""
+						hasConfig := envFile || loc.dbPathSet
 						// The second start sees the database the first one created.
 						for i, dbBefore := range []bool{db, true} {
-							want := wantMode(config, dbBefore, acc.users, force)
+							want := wantMode(envFile, hasConfig, dbBefore, acc.users, force)
 							if got := boot(t, root, p); got != want {
 								t.Fatalf("start %d: mode = %v, want %v", i+1, got, want)
 							}
@@ -191,7 +208,10 @@ func TestUsersWithoutAdminNeverOpenSetup(t *testing.T) {
 				}
 				openAt(t, root, activeDB)
 				seedAccounts(t, root, activeDB, true, false)
-				p := Probe{DBPath: activeDB, DBPathSet: loc.dbPathSet, Force: force, ConfigFiles: []string{loc.extra}}
+				p := Probe{Paths: config.Paths{DBPath: activeDB}, DBPathSet: loc.dbPathSet, Force: force}
+				if loc.extra != "" {
+					p.ConfigFiles = []string{loc.extra}
+				}
 				if got := boot(t, root, p); got != SetUp {
 					t.Fatalf("mode = %v, want set up", got)
 				}
@@ -208,7 +228,7 @@ func TestForeignDatabaseKeepsSetupClosed(t *testing.T) {
 		t.Run(known, func(t *testing.T) {
 			root := t.TempDir()
 			openAt(t, root, known)
-			if got := boot(t, root, Probe{DBPath: activeDB, Force: true}); got != SetUp {
+			if got := boot(t, root, Probe{Paths: config.Paths{DBPath: activeDB}, Force: true}); got != SetUp {
 				t.Fatalf("mode = %v, want set up", got)
 			}
 		})
@@ -233,12 +253,14 @@ func TestSameDatabaseThroughSymlinkIsNotForeign(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, root, layout.LegacyEnvFiles[0])
-	f := Probe{DBPath: activeDB, Force: true, Stat: rootedStat(root)}.Scan()
+	p := probe(root, activeDB)
+	p.Force = true
+	f := p.Scan()
 	if f.ForeignDB {
 		t.Fatal("the active database seen through a symlink counts as foreign")
 	}
 	openAt(t, root, activeDB)
-	if got := boot(t, root, Probe{DBPath: activeDB, Force: true}); got != LegacyUnfinished {
+	if got := boot(t, root, Probe{Paths: config.Paths{DBPath: activeDB}, Force: true}); got != LegacyUnfinished {
 		t.Fatalf("mode = %v, want legacy unfinished", got)
 	}
 }
@@ -255,8 +277,11 @@ func TestDecideDoubtIsSetUp(t *testing.T) {
 		{name: "foreign database", f: Facts{ForeignDB: true}, want: SetUp},
 		{name: "force without config", f: Facts{Force: true, DB: true}, want: SetUp},
 		{name: "force without config or db", f: Facts{Force: true}, want: NeverSetUp},
-		{name: "config and force, no db yet", f: Facts{Config: true, Force: true}, want: LegacyUnfinished},
-		{name: "config and force, empty db", f: Facts{Config: true, Force: true, DB: true}, want: LegacyUnfinished},
+		{name: "env file and force, no db yet", f: Facts{EnvFile: true, Config: true, Force: true}, want: LegacyUnfinished},
+		{name: "env file and force, empty db", f: Facts{EnvFile: true, Config: true, Force: true, DB: true}, want: LegacyUnfinished},
+		{name: "DOCKMESH_DB_PATH and force, no env file", f: Facts{Config: true, Force: true, DB: true}, want: SetUp},
+		{name: "data but no db or config", f: Facts{Data: true}, want: SetUp},
+		{name: "env file, force and data", f: Facts{EnvFile: true, Config: true, Force: true, Data: true}, want: LegacyUnfinished},
 		{name: "config, no force", f: Facts{Config: true, DB: true}, want: SetUp},
 		{name: "db only", f: Facts{DB: true}, want: SetUp},
 	}
@@ -276,11 +301,80 @@ func TestScanCountsUnreadableAsPresent(t *testing.T) {
 		}
 		return nil, fs.ErrNotExist
 	}
-	f := Probe{DBPath: "/x/data/dockmesh.db", Stat: denied}.Scan()
-	if !f.Config {
+	f := Probe{Paths: config.Paths{DBPath: "/x/data/dockmesh.db"}, Lstat: denied}.Scan()
+	if !f.Config || !f.EnvFile {
 		t.Fatal("a config the service may not stat counts as missing")
 	}
 	if f.Users >= 0 {
 		t.Fatal("Scan claims to know the accounts")
+	}
+}
+
+// Files an install keeps next to its database mean data even without the
+// database itself, e.g. a container whose database volume went missing.
+func TestLeftoverDataKeepsSetupClosed(t *testing.T) {
+	const dataDir = "/app/data"
+	paths := config.Paths{
+		DBPath:           dataDir + "/dockmesh.db",
+		SecretsPath:      dataDir + "/secrets.env",
+		SecretsKeyPath:   dataDir + "/secrets.age-key",
+		AuditGenesisPath: dataDir + "/audit-genesis.sha256",
+		StacksRoot:       "/app/stacks",
+	}
+	tests := []struct {
+		name string
+		file string
+	}{
+		{name: "nothing"},
+		{name: "wal", file: paths.DBPath + "-wal"},
+		{name: "secrets.env", file: paths.SecretsPath},
+		{name: "age key", file: paths.SecretsKeyPath},
+		{name: "audit genesis", file: paths.AuditGenesisPath},
+		{name: "agent CA key", file: dataDir + "/agents-ca.key"},
+		{name: "agent CA cert", file: dataDir + "/agents-ca.crt"},
+		{name: "a stack", file: paths.StacksRoot + "/web/compose.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tt.file != "" {
+				touch(t, root, tt.file)
+			}
+			p := probe(root, paths.DBPath)
+			p.Paths = paths
+			want := SetUp
+			if tt.file == "" {
+				want = NeverSetUp
+			}
+			if got := boot(t, root, p); got != want {
+				t.Fatalf("mode = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestEmptyStacksRootIsNoData(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "/app/stacks"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	p := probe(root, "/app/data/dockmesh.db")
+	p.Paths.StacksRoot = "/app/stacks"
+	if f := p.Scan(); f.Data {
+		t.Fatal("an empty stacks root counts as data")
+	}
+}
+
+func TestDanglingDatabaseSymlinkIsPresent(t *testing.T) {
+	root := t.TempDir()
+	const dbPath = "/app/data/dockmesh.db"
+	if err := os.MkdirAll(filepath.Join(root, "/app/data"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/mnt/not-mounted/dockmesh.db", filepath.Join(root, dbPath)); err != nil {
+		t.Fatal(err)
+	}
+	if f := probe(root, dbPath).Scan(); !f.DB {
+		t.Fatal("a database symlink to an unmounted disk counts as no database")
 	}
 }

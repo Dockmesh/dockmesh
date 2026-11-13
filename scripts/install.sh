@@ -1314,10 +1314,9 @@ else
   fi
   ok "data layout     $DATA_DIR/{data,stacks}"
 
-  # Bootstrap env file. DOCKMESH_SETUP_FORCE=true keeps the wizard in
-  # control of admin creation (auto-bootstrap is suppressed). The
-  # wizard's commit handler scrubs that flag at the end so a future
-  # service restart behaves normally.
+  # Bootstrap env file. DOCKMESH_SETUP_FORCE=true marks the install as
+  # not finished, so the server opens the setup wizard while it has no
+  # accounts; the wizard's commit handler scrubs the flag.
   ENV_FILE="$DATA_DIR/dockmesh.env"
   if [ -n "$KEPT_ENV_FILE" ]; then
     ENV_FILE="$KEPT_ENV_FILE"

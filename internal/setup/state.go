@@ -1,8 +1,10 @@
 // Package setup tracks whether the server is in first-run setup mode.
 //
 // Setup mode is active only for an install Decide places as never set up
-// or legacy unfinished. An install with accounts but no admin stays
-// closed: `dockmesh admin create` recovers it instead. While
+// or legacy unfinished. A configured install stays closed even without
+// accounts or without an admin: the wizard is unauthenticated, so opening
+// it on an install with data would hand that install to whoever reaches it
+// first; `dockmesh admin create` recovers it instead. While
 // active, the HTTP layer redirects all non-setup paths so an operator
 // who just installed dockmesh and visited the dashboard URL lands on
 // the install wizard rather than the login screen. After the wizard
@@ -43,7 +45,7 @@ type Status struct {
 }
 
 // State carries the live setup-mode flag for the lifetime of one
-// server process. Built by main at boot from the DB, then consulted
+// server process. Built by NewForBoot at server start, then consulted
 // by middleware on every request.
 type State struct {
 	mu         sync.RWMutex
