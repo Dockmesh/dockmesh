@@ -181,6 +181,8 @@ When a stack's `compose.yaml` is missing or empty, the stack page hides the tabs
 
 The dialog lists exactly which networks, volumes and images would be removed. Network, volume and image cleanup only works on the server's host; for a stack on an agent host the dialog says **Resource cleanup unavailable for this host**. **Stop and remove containers** still works there, and the files are removed. Clean up on that host with `docker` afterwards.
 
+For a stack on an agent host, the agent removes its copy first and the dialog waits for its answer. If the agent fails, the stack stays on the server and on the agent and the error shows the agent's message, for example a helper image an air-gapped host can't pull. If the agent is offline, the stack list shows **Delete pending on &lt;host&gt;** and the delete finishes when the host reconnects. A failure at that point raises a notice with the agent's message, and the next reconnect tries again. Deploying the stack before then cancels the delete.
+
 ## Permissions
 
 Stack permissions come from the **Stacks** area of a role.

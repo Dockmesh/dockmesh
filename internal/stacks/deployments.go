@@ -14,10 +14,14 @@ type Deployment struct {
 	StackName  string    `json:"stack_name"`
 	HostID     string    `json:"host_id"`
 	HostName   string    `json:"host_name,omitempty"` // populated at query time, not stored
-	Status     string    `json:"status"`              // deployed | stopped | migrating | migrated_away
+	Status     string    `json:"status"`              // deployed | stopped | migrating | migrated_away | delete_pending
 	DeployedAt time.Time `json:"deployed_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
+
+// DeploymentDeletePending marks a stack whose delete waits for its offline
+// agent host. The next deploy replaces the status and so cancels the delete.
+const DeploymentDeletePending = "delete_pending"
 
 // DeploymentStore provides CRUD for the stack_deployments table.
 // Kept separate from Manager so the filesystem-only Manager doesn't

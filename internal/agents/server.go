@@ -128,6 +128,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	go h.pump(ag, conn)
+	h.svc.runConnectHooks(context.WithoutCancel(r.Context()), agent.ID)
 
 	// Inbound loop (agent → server). Any frame proves the agent is alive.
 	for {

@@ -105,6 +105,9 @@ type Service struct {
 	enrollTTL      time.Duration
 	now            func() time.Time
 
+	hooksMu   sync.Mutex
+	onConnect []func(ctx context.Context, agentID string)
+
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
 }
@@ -112,6 +115,23 @@ type Service struct {
 // SetNotifier wires in the bell-icon notification center so agent
 // offline transitions emit an entry. Optional — nil disables.
 func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
+
+// OnConnect registers fn to run in its own goroutine each time an agent
+// has connected and received its welcome.
+func (s *Service) OnConnect(fn func(ctx context.Context, agentID string)) {
+	s.hooksMu.Lock()
+	defer s.hooksMu.Unlock()
+	s.onConnect = append(s.onConnect, fn)
+}
+
+func (s *Service) runConnectHooks(ctx context.Context, agentID string) {
+	s.hooksMu.Lock()
+	hooks := append([]func(context.Context, string){}, s.onConnect...)
+	s.hooksMu.Unlock()
+	for _, fn := range hooks {
+		go fn(ctx, agentID)
+	}
+}
 
 // ConnectedAgent is held in memory while the agent's WS is open. HTTP
 // handlers ask the remote agent to do things via Request() (one-shot

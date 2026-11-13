@@ -69,6 +69,13 @@
     busy = true;
     try {
       const res = await stackOps.run(host, name, () => api.stacks.delete(name, { stop, networks, volumes, images }));
+      if (res?.pending_host_id) {
+        const h = res.pending_host_name || res.pending_host_id;
+        toast.warning(m.stacks_del_pending_title({ host: h }), m.stacks_del_pending_body({ host: h }));
+        open = false;
+        ondeleted?.();
+        return;
+      }
       const parts: string[] = [];
       if (stop && containers > 0) parts.push(m.stacks_n_containers({ count: containers }));
       if (res?.cleanup?.networks?.length) parts.push(m.stacks_n_networks({ count: res.cleanup.networks.length }));

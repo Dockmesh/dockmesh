@@ -802,38 +802,33 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A client that disconnects must not stop the delete half-way.
-	if err := h.Stacks.Delete(context.WithoutCancel(r.Context()), name); err != nil {
-		writeStackError(w, err)
+	// The agent's copy goes first: a failure there leaves the stack in
+	// place on both sides, so it is never shown as deleted while its data
+	// is still on the host.
+	if deployHostID != "" && deployHostID != "local" && !h.Stacks.DirExists(name) {
+		writeStackError(w, stacks.ErrNotFound)
 		return
 	}
-	// Remove deployment row (no-op if none exists).
-	if h.Deployments != nil {
-		if err := h.Deployments.Delete(r.Context(), name); err != nil {
-			slog.Warn("delete stack deployment row", "stack", name, "err", err)
-		}
+	agentState, hostName, err := h.deleteStackOnAgent(r.Context(), deployHostID, name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("deleting the stack on %s failed: %s", hostName, strings.TrimPrefix(err.Error(), "agent: ")))
+		return
 	}
-	h.forgetStackTarget(r, name)
-	// A git source left behind would re-create the stack on its next commit.
-	if h.GitSource != nil {
-		if err := h.GitSource.Delete(r.Context(), name); err != nil && !errors.Is(err, gitsource.ErrNotFound) {
-			slog.Warn("delete stack git source", "stack", name, "err", err)
+	if agentState == agentDeletePending {
+		if err := h.Deployments.Set(r.Context(), name, deployHostID, stacks.DeploymentDeletePending); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		h.audit(r, audit.ActionStackDelete, name, map[string]string{"pending_on": hostName})
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"pending_host_id":   deployHostID,
+			"pending_host_name": hostName,
+		})
+		return
 	}
-	// Remove every dependency edge this stack participates in (P.12.7)
-	// so the graph doesn't drag around references to a stack that no
-	// longer exists. Other stacks that depended on this one will now
-	// fail-fast on their next deploy with "dependency X missing on disk",
-	// which is the right signal — the operator has to decide whether
-	// to drop the edge or restore the dep.
-	if h.Dependencies != nil {
-		if err := h.Dependencies.DeleteAll(r.Context(), name); err != nil {
-			slog.Warn("delete stack dependency edges", "stack", name, "err", err)
-		}
-	}
-	// Tell the agent to drop its local copy (P.7 compose-file mirroring).
-	if deployHostID != "" {
-		h.deleteStackFromAgent(r.Context(), deployHostID, name)
+	if err := h.finishStackDelete(r.Context(), name, false); err != nil {
+		writeStackError(w, err)
+		return
 	}
 	meta := map[string]string{}
 	if wantStop {
@@ -1495,28 +1490,6 @@ func (h *Handlers) syncStackToAgent(ctx context.Context, hostID, name, compose, 
 			Payload: mustJSON(req),
 		}); err != nil {
 			slog.Warn("stack sync to agent", "stack", name, "agent", hostID, "err", err)
-		}
-	}()
-}
-
-// deleteStackFromAgent tells the agent to remove its local copy.
-func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string) {
-	if hostID == "" || hostID == "local" || h.Agents == nil {
-		return
-	}
-	ag := h.Agents.GetConnected(hostID)
-	if ag == nil {
-		return
-	}
-	req := agents.StackNameReq{Name: name}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentDeleteTimeout)
-	go func() {
-		defer cancel()
-		if _, err := ag.Request(ctx, agents.Frame{
-			Type:    agents.FrameReqStackDelete,
-			Payload: mustJSON(req),
-		}); err != nil {
-			slog.Warn("stack delete from agent", "stack", name, "agent", hostID, "err", err)
 		}
 	}()
 }
