@@ -105,6 +105,43 @@ ${DIM}  Interactive — you pick what gets removed.${RST}
 BANNER
 
 # ---------------------------------------------------------------------------
+#  Env file helpers
+#
+#  The env file can sit in a directory the service user owns, so it is
+#  read as data and never sourced: this script runs as root.
+# ---------------------------------------------------------------------------
+
+# env_value FILE KEY prints the last value FILE assigns to KEY, without
+# quotes.
+env_value() {
+  grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" 2>/dev/null | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true
+}
+
+# asset_dir_from_env FILE prints the asset directory FILE points at, or
+# nothing. The directory is removed recursively later, so it only counts
+# when it holds a root-owned install-agent.sh, which the service user
+# cannot plant.
+TRUSTED_ASSET_UID=0
+asset_dir_from_env() {
+  local v dir=""
+  v="$(env_value "$1" DOCKMESH_BINARY_DIR)"
+  [ -n "$v" ] && dir="$(dirname "$v")"
+  if [ -z "$dir" ]; then
+    v="$(env_value "$1" DOCKMESH_INSTALL_SCRIPT)"
+    [ -n "$v" ] && dir="$(dirname "$v")"
+  fi
+  case "$dir" in
+    /|*/..|*/../*|*/.|*/./*) return 0 ;;
+    /*) ;;
+    *) return 0 ;;
+  esac
+  if [ -f "$dir/install-agent.sh" ] && [ ! -L "$dir/install-agent.sh" ] && [ ! -L "$dir" ] &&
+     [ -n "$(find "$dir/install-agent.sh" -maxdepth 0 -user "$TRUSTED_ASSET_UID" 2>/dev/null)" ]; then
+    printf '%s\n' "$dir"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 #  Detect install layout
 # ---------------------------------------------------------------------------
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -119,10 +156,6 @@ BIN_PATH="$BIN_DIR/dockmesh"
 DATA_DIR_DEFAULT="/var/lib/dockmesh"
 [ "$OS" = "darwin" ] && DATA_DIR_DEFAULT="/usr/local/var/dockmesh"
 
-# Env file lives at <data_dir>/dockmesh.env. Use it to discover the
-# *actual* data + asset paths the install used, rather than assuming
-# the defaults — an operator might have passed DOCKMESH_DATA_DIR or
-# similar at install time.
 DATA_DIR="$DATA_DIR_DEFAULT"
 ASSET_DIR=""
 # The detection list covers the platform defaults plus /data (a common
@@ -138,14 +171,7 @@ for candidate in \
 do
   if [ -f "$candidate" ]; then
     DATA_DIR="$(dirname "$candidate")"
-    # shellcheck disable=SC1090
-    set +u; . "$candidate"; set -u
-    if [ -n "${DOCKMESH_INSTALL_SCRIPT:-}" ]; then
-      ASSET_DIR="$(dirname "${DOCKMESH_INSTALL_SCRIPT}")"
-    fi
-    if [ -n "${DOCKMESH_BINARY_DIR:-}" ]; then
-      ASSET_DIR="$(dirname "${DOCKMESH_BINARY_DIR}")"
-    fi
+    ASSET_DIR="$(asset_dir_from_env "$candidate")"
     break
   fi
 done
