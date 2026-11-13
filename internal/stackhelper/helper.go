@@ -101,9 +101,15 @@ const removeTimeout = 30 * time.Minute
 // itself. Either way the directory must be gone afterwards; otherwise the
 // error lists what is left. Errors name the directory relative to base.
 func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
-	err := os.RemoveAll(dir)
+	// A direct delete that fails half-way would already have removed
+	// compose.yaml, so a tree the service cannot delete goes to the helper
+	// untouched; a failing helper then leaves the stack as it was.
+	err := blocked(dir)
 	if err == nil {
-		return nil
+		err = os.RemoveAll(dir)
+		if err == nil {
+			return nil
+		}
 	}
 	if !errors.Is(err, fs.ErrPermission) {
 		return err
@@ -141,6 +147,24 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 		return fmt.Errorf("remove %s: directory still exists%s", name, leftovers(dir))
 	}
 	return nil
+}
+
+// blocked walks dir and returns a permission error for the first directory
+// whose entries the service could not delete. A missing dir is no error.
+func blocked(dir string) error {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return canDeleteIn(p)
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // leftovers names up to ten top-level entries still in dir, for an error

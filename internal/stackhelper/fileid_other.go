@@ -12,3 +12,5 @@ var errUnsupported = errors.New("removing files owned by another user is only su
 func fileID(fs.FileInfo) (string, error) { return "", errUnsupported }
 
 func mountBelow(string) (string, error) { return "", errUnsupported }
+
+func canDeleteIn(string) error { return nil }

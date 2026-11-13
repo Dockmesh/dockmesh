@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func fileID(fi fs.FileInfo) (string, error) {
@@ -65,4 +67,13 @@ func unescapeMount(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// canDeleteIn reports a permission error when entries of dir cannot be
+// unlinked: that needs write and search access to dir.
+func canDeleteIn(dir string) error {
+	if err := unix.Access(dir, unix.W_OK|unix.X_OK); err != nil {
+		return &fs.PathError{Op: "access", Path: dir, Err: err}
+	}
+	return nil
 }

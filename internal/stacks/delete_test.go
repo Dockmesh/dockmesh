@@ -30,6 +30,9 @@ func TestDeleteForeignOwnedWithoutDocker(t *testing.T) {
 	if !m.Has("app") {
 		t.Fatal("a failed delete forgot the stack")
 	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
+		t.Fatalf("a failed delete removed compose.yaml: %v", err)
+	}
 
 	if err := os.Chmod(locked, 0o700); err != nil {
 		t.Fatal(err)

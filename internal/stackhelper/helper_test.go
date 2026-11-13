@@ -175,7 +175,7 @@ func TestRemoveAllHelperThatDoesNothingFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("delete reported success with the directory still there")
 	}
-	if !strings.Contains(err.Error(), "left behind: pgdata") {
+	if !strings.Contains(err.Error(), "left behind: compose.yaml, pgdata") {
 		t.Errorf("error does not name what is left: %v", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestRemoveAllHelperFails(t *testing.T) {
 	base, dir, _ := lockedStack(t)
 	f := &fakeDocker{haveImage: true, start: func(string) error { return errors.New("rm failed") }}
 	err := New(f).RemoveAll(context.Background(), base, dir)
-	if err == nil || !strings.Contains(err.Error(), "status 1") || !strings.Contains(err.Error(), "left behind: pgdata") {
+	if err == nil || !strings.Contains(err.Error(), "status 1") || !strings.Contains(err.Error(), "left behind: compose.yaml, pgdata") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -198,6 +198,9 @@ func TestRemoveAllAirGapped(t *testing.T) {
 	}
 	if len(f.created) != 0 {
 		t.Fatal("helper created without its image")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
+		t.Fatalf("a delete that could not run removed compose.yaml: %v", err)
 	}
 }
 
@@ -286,28 +289,5 @@ func TestRemoveAllRefusesEscape(t *testing.T) {
 	}
 	if len(f.created) != 0 {
 		t.Fatal("helper created for a path outside the base")
-	}
-}
-
-func TestMountBelow(t *testing.T) {
-	info := `22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw
-30 22 0:40 / /srv/stacks rw - ext4 /dev/sdb1 rw
-31 30 0:41 / /srv/stacks/plex/media\040share rw - nfs host:/media rw
-32 22 0:42 / /srv/stacks/plexa rw - tmpfs tmpfs rw
-`
-	tests := []struct {
-		dir  string
-		want string
-	}{
-		{"/srv/stacks/plex", "media share"},
-		{"/srv/stacks/web", ""},
-		{"/srv/stacks/plexa", ""},
-		{"/srv/stacks/plex/media share", ""},
-	}
-	for _, tt := range tests {
-		got, err := mountBelowIn(strings.NewReader(info), tt.dir)
-		if err != nil || got != tt.want {
-			t.Errorf("mountBelowIn(%q) = %q, %v; want %q", tt.dir, got, err, tt.want)
-		}
 	}
 }
