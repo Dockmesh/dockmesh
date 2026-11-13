@@ -15,17 +15,26 @@ import (
 	"github.com/crewjam/saml/xmlenc"
 )
 
-const assertionNS = "urn:oasis:names:tc:SAML:2.0:assertion"
+const (
+	assertionNS = "urn:oasis:names:tc:SAML:2.0:assertion"
+	protocolNS  = "urn:oasis:names:tc:SAML:2.0:protocol"
+	soapNS      = "http://schemas.xmlsoap.org/soap/envelope/"
+	xmlencNS    = "http://www.w3.org/2001/04/xmlenc#"
+)
 
-// maxArtifactResponse bounds what is kept of an artifact resolution answer
-// for the namespace check; a larger one is refused.
+// maxArtifactResponse bounds an artifact resolution answer; a larger one
+// is refused.
 const maxArtifactResponse = 1 << 20
+
+// maxACSBody bounds the posted form; signed and encrypted responses stay
+// far below it, and each EncryptedAssertion in it costs an RSA decryption.
+const maxACSBody = 1 << 20
 
 var errForeignElement = errors.New("assertion element outside the SAML assertion namespace")
 
-// parseResponse validates the IdP's answer with crewjam and adds two checks
-// it lacks: a signed assertion missing an element crewjam dereferences makes
-// it panic, and it fills Subject.NameID and the attributes from elements of
+// parseResponse validates the IdP's answer with crewjam and covers two
+// gaps: crewjam panics on a signed assertion missing an element it
+// dereferences, and it fills Subject.NameID and the attributes from elements of
 // any XML namespace, so a foreign one could name the account.
 func parseResponse(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []string) (*crewjam.Assertion, error) {
 	var raw []byte
@@ -68,12 +77,12 @@ func parseRecovering(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []
 	return sp.ParseResponse(r, requestIDs)
 }
 
-const protocolNS = "urn:oasis:names:tc:SAML:2.0:protocol"
-
 // unqualified lists, per assertion element, the children crewjam reads by
-// local name alone; the identity and the roles come from them.
+// local name alone; the identity and the roles come from them. Subject,
+// Issuer and Conditions are matched with their namespace but refused here
+// as well, so a foreign one never reaches crewjam either.
 var unqualified = map[string][]string{
-	"Assertion":          {"AttributeStatement", "AuthnStatement"},
+	"Assertion":          {"Subject", "Issuer", "Conditions", "AttributeStatement", "AuthnStatement"},
 	"Subject":            {"NameID", "SubjectConfirmation"},
 	"AttributeStatement": {"Attribute"},
 	"Attribute":          {"AttributeValue"},
@@ -83,7 +92,13 @@ var unqualified = map[string][]string{
 // from another namespace, also inside assertions encrypted to sp.
 // Assertions that don't decrypt are skipped: crewjam can't accept them
 // either.
-func checkNamespaces(raw []byte, sp *crewjam.ServiceProvider) error {
+func checkNamespaces(raw []byte, sp *crewjam.ServiceProvider) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			slog.Error("saml: namespace check panicked", "panic", fmt.Sprint(v))
+			err = ErrLoginFailed
+		}
+	}()
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(raw); err != nil {
 		return err
@@ -91,10 +106,66 @@ func checkNamespaces(raw []byte, sp *crewjam.ServiceProvider) error {
 	if len(doc.ChildElements()) != 1 {
 		return errors.New("response must have exactly one root element")
 	}
-	return walk(doc.Root(), sp, true)
+	return checkTree(doc.Root(), processedResponse(doc.Root()), sp)
 }
 
-func walk(el *etree.Element, sp *crewjam.ServiceProvider, decrypt bool) error {
+// processedResponse is the Response whose direct EncryptedAssertions
+// crewjam decrypts: the root, or the one inside an artifact answer.
+func processedResponse(root *etree.Element) *etree.Element {
+	if is(root, protocolNS, "Response") {
+		return root
+	}
+	el := root
+	for _, step := range []struct{ ns, tag string }{
+		{soapNS, "Body"}, {protocolNS, "ArtifactResponse"}, {protocolNS, "Response"},
+	} {
+		var next *etree.Element
+		for _, c := range el.ChildElements() {
+			if is(c, step.ns, step.tag) {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			return nil
+		}
+		el = next
+	}
+	return el
+}
+
+func is(el *etree.Element, ns, tag string) bool {
+	return el.Tag == tag && el.NamespaceURI() == ns
+}
+
+func checkTree(root, response *etree.Element, sp *crewjam.ServiceProvider) error {
+	if err := checkPrefixes(root); err != nil {
+		return err
+	}
+	return checkElement(root, response, sp)
+}
+
+// checkPrefixes refuses a document that binds one prefix to two
+// namespaces. crewjam re-serialises an assertion with every prefix its
+// elements use declared once on the root, last binding winning, so the
+// XML it decodes could otherwise resolve a prefix differently from the
+// signed one checked here.
+func checkPrefixes(root *etree.Element) error {
+	seen := map[string]string{}
+	for _, el := range append([]*etree.Element{root}, root.FindElements("//*")...) {
+		if el.Space == "" {
+			continue
+		}
+		ns := el.NamespaceURI()
+		if prev, ok := seen[el.Space]; ok && prev != ns {
+			return fmt.Errorf("%w: prefix %q bound to two namespaces", errForeignElement, el.Space)
+		}
+		seen[el.Space] = ns
+	}
+	return nil
+}
+
+func checkElement(el, response *etree.Element, sp *crewjam.ServiceProvider) error {
 	if el.NamespaceURI() == assertionNS {
 		for _, c := range el.ChildElements() {
 			if slices.Contains(unqualified[el.Tag], c.Tag) && c.NamespaceURI() != assertionNS {
@@ -102,18 +173,16 @@ func walk(el *etree.Element, sp *crewjam.ServiceProvider, decrypt bool) error {
 			}
 		}
 	}
-	// crewjam only decrypts the assertions directly in a Response.
-	isResponse := el.Tag == "Response" && el.NamespaceURI() == protocolNS
 	for _, c := range el.ChildElements() {
-		if decrypt && isResponse && c.Tag == "EncryptedAssertion" && c.NamespaceURI() == assertionNS {
+		if el == response && is(c, assertionNS, "EncryptedAssertion") {
 			if plain, err := decryptAssertion(c, sp); err == nil {
-				if err := walk(plain, sp, false); err != nil {
+				if err := checkTree(plain, nil, sp); err != nil {
 					return err
 				}
 			}
 			continue
 		}
-		if err := walk(c, sp, decrypt); err != nil {
+		if err := checkElement(c, response, sp); err != nil {
 			return err
 		}
 	}
@@ -124,7 +193,7 @@ func walk(el *etree.Element, sp *crewjam.ServiceProvider, decrypt bool) error {
 func decryptAssertion(el *etree.Element, sp *crewjam.ServiceProvider) (*etree.Element, error) {
 	var data *etree.Element
 	for _, c := range el.ChildElements() {
-		if c.Tag == "EncryptedData" && c.NamespaceURI() == "http://www.w3.org/2001/04/xmlenc#" {
+		if c.Tag == "EncryptedData" && c.NamespaceURI() == xmlencNS {
 			data = c
 			break
 		}
@@ -161,10 +230,13 @@ type capturedBody struct {
 	tooLarge bool
 }
 
+var errArtifactTooLarge = errors.New("artifact response too large")
+
+// Write fails past the limit, so crewjam stops reading the answer too.
 func (c *capturedBody) Write(p []byte) (int, error) {
 	if c.tooLarge || c.buf.Len()+len(p) > maxArtifactResponse {
 		c.tooLarge = true
-		return len(p), nil
+		return 0, errArtifactTooLarge
 	}
 	return c.buf.Write(p)
 }

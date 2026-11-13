@@ -258,6 +258,7 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 	if err != nil {
 		return nil, err
 	}
+	r.Body = http.MaxBytesReader(nil, r.Body, maxACSBody)
 	if err := r.ParseForm(); err != nil {
 		return nil, fmt.Errorf("parse acs form: %w", err)
 	}

@@ -66,10 +66,10 @@ func (idp *testIdP) sign(t *testing.T, xmlStr string) *etree.Element {
 }
 
 type assertionParts struct {
-	issuer  bool
-	subject string // the Subject children before SubjectConfirmation
-	noSubj  bool
-	encrypt bool // to the SP's certificate
+	issuer    bool
+	subject   string // the Subject children before SubjectConfirmation
+	noSubject bool
+	encrypt   bool // to the SP's certificate
 }
 
 func (idp *testIdP) response(t *testing.T, requestID, acs, audience string, spCert *x509.Certificate, parts assertionParts) string {
@@ -84,7 +84,7 @@ func (idp *testIdP) response(t *testing.T, requestID, acs, audience string, spCe
 		`<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">` +
 		`<saml:SubjectConfirmationData InResponseTo="` + requestID + `" Recipient="` + acs + `" NotOnOrAfter="` + ts(5*time.Minute) + `"/>` +
 		`</saml:SubjectConfirmation></saml:Subject>`
-	if parts.noSubj {
+	if parts.noSubject {
 		subject = ""
 	}
 	a := `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_a1" Version="2.0" IssueInstant="` + ts(0) + `">` +
@@ -139,7 +139,7 @@ func TestHandleACSAssertionShapes(t *testing.T) {
 	}{
 		{name: "normal assertion", parts: assertionParts{issuer: true, subject: samlNameID}},
 		{name: "missing issuer", parts: assertionParts{subject: samlNameID}, wantErr: ErrInvalidAssertion},
-		{name: "missing subject", parts: assertionParts{issuer: true, noSubj: true}, wantErr: ErrLoginFailed},
+		{name: "missing subject", parts: assertionParts{issuer: true, noSubject: true}, wantErr: ErrLoginFailed},
 		{name: "foreign-namespace NameID only", wantErr: ErrInvalidAssertion,
 			parts: assertionParts{issuer: true, subject: `<x:NameID xmlns:x="urn:example:other">persist-admin</x:NameID>`}},
 		{name: "NameID without namespace", wantErr: ErrInvalidAssertion,
@@ -230,6 +230,10 @@ func TestCheckNamespaces(t *testing.T) {
 		{name: "foreign AttributeValue", wantErr: true,
 			raw: attrs(`<saml:AttributeStatement><saml:Attribute Name="email"><x:AttributeValue>a@example.com</x:AttributeValue></saml:Attribute></saml:AttributeStatement>`)},
 		{name: "second root element", wantErr: true, raw: `<decoy/>` + attrs("")},
+		{name: "prefix bound twice", wantErr: true,
+			raw: attrs(`<y:A xmlns:y="urn:example:a"/><saml:Conditions><y:B xmlns:y="urn:example:b"/></saml:Conditions>`)},
+		{name: "foreign Subject", wantErr: true,
+			raw: head + `<saml:Assertion><x:Subject>` + samlNameID + `</x:Subject></saml:Assertion></samlp:Response>`},
 	}
 	key, _, _, _, err := generateSPKey()
 	if err != nil {
@@ -277,17 +281,47 @@ func TestCapturingClientKeepsTheArtifactAnswer(t *testing.T) {
 			}
 			read, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if tt.tooLarge {
+				if !errors.Is(err, errArtifactTooLarge) || !captured.tooLarge {
+					t.Fatalf("err = %v, tooLarge = %v; want the read to stop", err, captured.tooLarge)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(read) != body {
-				t.Error("caller got a different body")
+			if string(read) != body || captured.buf.String() != body {
+				t.Error("caller or capture got a different body")
 			}
-			if captured.tooLarge != tt.tooLarge {
-				t.Errorf("tooLarge = %v, want %v", captured.tooLarge, tt.tooLarge)
+		})
+	}
+}
+
+func TestProcessedResponse(t *testing.T) {
+	const ns = `xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"`
+	tests := []struct {
+		name string
+		raw  string
+		want string // ID of the Response crewjam decrypts in, "" for none
+	}{
+		{name: "POST binding", want: "outer",
+			raw: `<samlp:Response ` + ns + ` ID="outer"><samlp:Extensions><samlp:Response ID="inner"/></samlp:Extensions></samlp:Response>`},
+		{name: "artifact binding", want: "art",
+			raw: `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" ` + ns + `><s:Body><samlp:ArtifactResponse><samlp:Response ID="art"/></samlp:ArtifactResponse></s:Body></s:Envelope>`},
+		{name: "no Response", raw: `<samlp:LogoutResponse ` + ns + `/>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := etree.NewDocument()
+			if err := doc.ReadFromString(tt.raw); err != nil {
+				t.Fatal(err)
 			}
-			if !tt.tooLarge && captured.buf.String() != body {
-				t.Error("captured body differs")
+			got := ""
+			if el := processedResponse(doc.Root()); el != nil {
+				got = el.SelectAttrValue("ID", "")
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
