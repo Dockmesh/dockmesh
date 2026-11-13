@@ -105,6 +105,31 @@ ${DIM}  Interactive — you pick what gets removed.${RST}
 BANNER
 
 # ---------------------------------------------------------------------------
+#  Env file helpers
+#
+#  The env file can sit in a directory the service user owns, so it is
+#  read as data and never sourced: this script runs as root.
+# ---------------------------------------------------------------------------
+
+# env_value FILE KEY prints the last value FILE assigns to KEY, without
+# quotes.
+env_value() {
+  head -c 65536 "$1" 2>/dev/null | grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true
+}
+
+# asset_dir_from_env FILE prints the asset directory FILE points at, or
+# nothing.
+asset_dir_from_env() {
+  local v
+  v="$(env_value "$1" DOCKMESH_BINARY_DIR)"
+  [ -n "$v" ] || v="$(env_value "$1" DOCKMESH_INSTALL_SCRIPT)"
+  [ -n "$v" ] || return 0
+  case "$v" in
+    /*) dirname -- "$v" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 #  Detect install layout
 # ---------------------------------------------------------------------------
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -119,12 +144,8 @@ BIN_PATH="$BIN_DIR/dockmesh"
 DATA_DIR_DEFAULT="/var/lib/dockmesh"
 [ "$OS" = "darwin" ] && DATA_DIR_DEFAULT="/usr/local/var/dockmesh"
 
-# Env file lives at <data_dir>/dockmesh.env. Use it to discover the
-# *actual* data + asset paths the install used, rather than assuming
-# the defaults — an operator might have passed DOCKMESH_DATA_DIR or
-# similar at install time.
 DATA_DIR="$DATA_DIR_DEFAULT"
-ASSET_DIR=""
+DATA_ENV_FILE=""
 # The detection list covers the platform defaults plus /data (a common
 # operator override on VMs where /data is a separate, expandable
 # volume — install.sh / dockmesh init both accept --data-dir /data).
@@ -138,21 +159,29 @@ for candidate in \
 do
   if [ -f "$candidate" ]; then
     DATA_DIR="$(dirname "$candidate")"
-    # shellcheck disable=SC1090
-    set +u; . "$candidate"; set -u
-    if [ -n "${DOCKMESH_INSTALL_SCRIPT:-}" ]; then
-      ASSET_DIR="$(dirname "${DOCKMESH_INSTALL_SCRIPT}")"
-    fi
-    if [ -n "${DOCKMESH_BINARY_DIR:-}" ]; then
-      ASSET_DIR="$(dirname "${DOCKMESH_BINARY_DIR}")"
-    fi
+    DATA_ENV_FILE="$candidate"
     break
   fi
 done
-# Fallback for asset dir if env file didn't have it.
-if [ -z "$ASSET_DIR" ]; then
-  ASSET_DIR="$(dirname "$BIN_DIR")/share/dockmesh"
-fi
+
+# The asset directory is removed with rm -rf, so it comes only from root's
+# environment or the default. The env files never choose it: the service
+# user can write the data-dir copy, and migrate-layout copies its content
+# into /etc.
+ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$BIN_DIR")/share/dockmesh}"
+case "$ASSET_DIR" in
+  /|//*|*/..|*/../*|*/.|*/./*) die "DOCKMESH_ASSET_DIR must be a plain absolute path other than /" ;;
+  /*) ;;
+  *) die "DOCKMESH_ASSET_DIR must be an absolute path" ;;
+esac
+ASSET_DIR_DIFFERS=0
+for f in "$DATA_ENV_FILE" /etc/dockmesh/dockmesh.env; do
+  [ -n "$f" ] && [ -f "$f" ] || continue
+  named="$(asset_dir_from_env "$f")"
+  if [ -n "$named" ] && [ "$named" != "$ASSET_DIR" ]; then
+    ASSET_DIR_DIFFERS=1
+  fi
+done
 
 # Service file / label per platform.
 SYSTEMD_UNIT="/etc/systemd/system/dockmesh.service"
@@ -167,6 +196,9 @@ ok "OS                  $OS"
 ok "Binary              $BIN_PATH"
 ok "Data directory      $DATA_DIR"
 ok "Asset directory     $ASSET_DIR"
+if [ "$ASSET_DIR_DIFFERS" = "1" ]; then
+  warn "dockmesh.env names a different asset directory; it is not removed. Check DOCKMESH_BINARY_DIR there and remove that folder by hand, or re-run with: sudo DOCKMESH_ASSET_DIR=<folder> bash uninstall.sh"
+fi
 case "$OS" in
   linux)  ok "Service unit        $SYSTEMD_UNIT" ;;
   darwin) ok "LaunchDaemon plist  $LAUNCHD_PLIST" ;;
