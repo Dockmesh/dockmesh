@@ -82,7 +82,8 @@ func TestDockerStackBackupRestoreForeignOwned(t *testing.T) {
 
 	rootRun(t, cli, src, "mkdir -p /stack/pgdata/base && echo 17 > /stack/pgdata/PG_VERSION && "+
 		"chown -R 999:999 /stack/pgdata && chmod 0700 /stack/pgdata && chmod 0600 /stack/pgdata/PG_VERSION && "+
-		"touch -d '2020-01-02 03:04:05' /stack/pgdata/PG_VERSION /stack/pgdata")
+		"touch -d '2020-01-02 03:04:05' /stack/pgdata/PG_VERSION /stack/pgdata && "+
+		"echo A=1 > /stack/.env && chown 0:0 /stack/.env")
 	var archive bytes.Buffer
 	if _, err := tarStackWithVolumes(context.Background(), nil, stackhelper.New(cli), src, "db", &archive); err != nil {
 		t.Fatal(err)
@@ -110,5 +111,9 @@ func TestDockerStackBackupRestoreForeignOwned(t *testing.T) {
 		`[ "$(stat -c %u:%a /stack/pgdata/PG_VERSION)" = 999:600 ] && [ -d /stack/pgdata/base ]`)
 	if b, err := os.ReadFile(filepath.Join(root, "db2", "compose.yaml")); err != nil || string(b) != "services: {}\n" {
 		t.Errorf("compose.yaml = %q, %v", b, err)
+	}
+	// A root-owned .env is still restored as the server's own file.
+	if b, err := os.ReadFile(filepath.Join(root, "db2", ".env")); err != nil || string(b) != "A=1\n" {
+		t.Errorf(".env = %q, %v", b, err)
 	}
 }

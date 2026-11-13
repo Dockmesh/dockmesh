@@ -26,13 +26,12 @@ func ownerArchive(t *testing.T, owner *int) *bytes.Buffer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	self := os.Getuid()
 	for _, e := range []struct {
 		hdr  tar.Header
 		body string
 	}{
 		{tar.Header{Name: stackManifestName, Typeflag: tar.TypeReg, Mode: 0o600}, string(manifest)},
-		{tar.Header{Name: "stack/compose.yaml", Typeflag: tar.TypeReg, Mode: 0o644, Uid: self}, "services: {}\n"},
+		{tar.Header{Name: "stack/compose.yaml", Typeflag: tar.TypeReg, Mode: 0o644, Uid: 0}, "services: {}\n"},
 		{tar.Header{Name: "stack/pgdata", Typeflag: tar.TypeDir, Mode: 0o700, Uid: 999}, ""},
 		{tar.Header{Name: "stack/pgdata/PG_VERSION", Typeflag: tar.TypeReg, Mode: 0o600, Uid: 999}, "17\n"},
 	} {
@@ -117,5 +116,17 @@ func TestStackArchiveRecordsOwner(t *testing.T) {
 	hdr, err := tr.Next()
 	if err != nil || hdr.Name != "stack/compose.yaml" || hdr.Uid != os.Getuid() {
 		t.Fatalf("first stack entry = %+v, %v", hdr, err)
+	}
+}
+
+func TestManagerFile(t *testing.T) {
+	for rel, want := range map[string]bool{
+		"compose.yaml": true, ".env": true, ".env.age": true, stacks.MetaFileName: true,
+		"compose.prod.yaml": true, "compose.override.yml": true,
+		"pgdata": false, "data/compose.yaml": false, "composer.json": false,
+	} {
+		if got := managerFile(rel); got != want {
+			t.Errorf("managerFile(%q) = %v, want %v", rel, got, want)
+		}
 	}
 }

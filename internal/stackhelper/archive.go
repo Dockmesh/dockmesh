@@ -17,8 +17,8 @@ import (
 
 // Walk calls fn for every entry below dir, which must lie below base, with
 // its name relative to dir and the owner, mode and times of the file.
-// Directories, regular files and symlinks are passed on; for a regular
-// file r yields its content. When the service can read the whole tree it
+// Directories, regular files and symlinks are passed on, and hard links
+// when the helper reads; for a regular file r yields its content. When the service can read the whole tree it
 // reads it itself, so a host without the helper image keeps working;
 // otherwise the helper reads it.
 func (h *Helper) Walk(ctx context.Context, base, dir string, fn func(hdr *tar.Header, r io.Reader) error) error {
@@ -130,7 +130,7 @@ func (h *Helper) archive(ctx context.Context, base, dir string, fn func(hdr *tar
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return unchanged(dir, t)
 		}
 		if err != nil {
 			return fmt.Errorf("read stack directory: %w", err)
@@ -148,11 +148,38 @@ func (h *Helper) archive(ctx context.Context, base, dir string, fn func(hdr *tar
 			err = fn(hdr, nil)
 		case tar.TypeReg:
 			err = fn(hdr, tr)
+		case tar.TypeLink:
+			// The daemon writes further names of one inode as hard links
+			// to the first; passed on so the archive shows them.
+			target, ok := relName(hdr.Linkname, prefix)
+			if !ok || target == "" {
+				return fmt.Errorf("archive entry %q links outside the stack directory", hdr.Name)
+			}
+			hdr.Linkname = target
+			err = fn(hdr, nil)
 		}
 		if err != nil {
 			return err
 		}
 	}
+}
+
+// unchanged fails when dir is no longer the directory resolve checked: the
+// daemon mounts by path, so a swap in between would have read or written
+// another directory.
+func unchanged(dir string, t target) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	id, err := fileID(fi)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() || id != t.id {
+		return fmt.Errorf("%s changed while the helper used it", filepath.Base(dir))
+	}
+	return nil
 }
 
 // relName strips the mount point's directory name from an archive entry.
@@ -205,5 +232,5 @@ func (h *Helper) Extract(ctx context.Context, base, dir string, r io.Reader) err
 	}); err != nil {
 		return fmt.Errorf("write stack directory: %w", err)
 	}
-	return nil
+	return unchanged(dir, t)
 }

@@ -430,7 +430,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				}
 				continue
 			}
-			if owned.unavailable(owner, hdr) {
+			if owned.unavailable(owner, hdr, rel) {
 				owned.lostOwners++
 			}
 			buf, err := restoreStackEntry(root, tr, hdr, rel, report)
@@ -518,7 +518,7 @@ func foreign(owner *int, hdr *tar.Header) bool {
 }
 
 func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
-	if o.files == nil || (hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg) {
+	if o.files == nil || (hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg) || managerFile(rel) {
 		return false
 	}
 	if foreign(owner, hdr) {
@@ -532,8 +532,22 @@ func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
 	return false
 }
 
-func (o *ownedRestore) unavailable(owner *int, hdr *tar.Header) bool {
-	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && foreign(owner, hdr)
+func (o *ownedRestore) unavailable(owner *int, hdr *tar.Header, rel string) bool {
+	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && !managerFile(rel) && foreign(owner, hdr)
+}
+
+// managerFile reports the top-level files the stacks manager reads and
+// writes itself. They are always restored as the server's own, whoever
+// owned them at backup time.
+func managerFile(rel string) bool {
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	switch rel {
+	case "compose.yaml", ".env", ".env.age", stacks.MetaFileName:
+		return true
+	}
+	return strings.HasPrefix(rel, "compose.") && (strings.HasSuffix(rel, ".yaml") || strings.HasSuffix(rel, ".yml"))
 }
 
 func (o *ownedRestore) write(ctx context.Context, hdr *tar.Header, rel string, r io.Reader) error {
