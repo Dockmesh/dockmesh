@@ -197,7 +197,7 @@
   let retentionPreview = $state<AuditRetentionPreview | null>(null);
   let retentionMode = $state<'forever' | 'days' | 'archive_local' | 'archive_target'>('forever');
   let retentionDays = $state(365);
-  let retentionLocalDir = $state('/var/lib/dockmesh/audit-archive');
+  let retentionLocalDir = $state('');
   let retentionTargetID = $state(0);
   let retentionTargets = $state<Array<{ id: number; name: string; type: string }>>([]);
   let retentionBusy = $state(false);
@@ -208,7 +208,7 @@
       retentionPreview = res.preview;
       retentionMode = res.config.mode;
       retentionDays = res.config.days || 365;
-      retentionLocalDir = res.config.local_dir || '/var/lib/dockmesh/audit-archive';
+      retentionLocalDir = res.config.local_dir || res.default_local_dir || '';
       retentionTargetID = res.config.target_id || 0;
     } catch { /* ignore */ }
     try {

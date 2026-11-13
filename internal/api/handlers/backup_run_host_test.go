@@ -102,7 +102,7 @@ func TestAuditArchiveTargetNeedsAdmin(t *testing.T) {
 	e.h.AuditRetention = audit.NewRetention(e.db, nil, mapSettings{
 		audit.RetentionModeKey:   "archive_target",
 		audit.RetentionTargetKey: "1",
-	}, nil)
+	}, nil, t.TempDir())
 	tok := e.login("thadmin").AccessToken
 	if rr := e.do(http.MethodGet, "/backups/targets", tok, nil); rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "audit-share") {
 		t.Errorf("host admin lists the audit target: %d %s", rr.Code, rr.Body)

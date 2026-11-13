@@ -917,7 +917,7 @@ func main() {
 	// archive_target runs.
 	backupTargetStore := backupSvc.Targets()
 	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
-	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
+	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter, cfg.DataDir)
 	auditRetention.Start(ctx)
 	defer auditRetention.Stop()
 

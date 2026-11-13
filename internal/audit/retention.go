@@ -21,7 +21,7 @@ const (
 	RetentionModeKey    = "audit.retention_mode"     // forever | days | archive_local | archive_target
 	RetentionDaysKey    = "audit.retention_days"     // int — applicable for 'days' and 'archive_*'
 	RetentionTargetKey  = "audit.retention_target_id" // backup_targets.id when mode = archive_target
-	RetentionLocalDir   = "audit.retention_local_dir" // path when mode = archive_local (default: ./data/audit-archive)
+	RetentionLocalDir   = "audit.retention_local_dir" // path when mode = archive_local (default: <data dir>/audit-archive)
 	ActionChainBridge   = "audit.chain_bridge"
 )
 
@@ -77,18 +77,38 @@ type Retention struct {
 	audit    *Service
 	settings SettingsReader
 	targets  TargetWriter // may be nil — then archive_target mode errors out
+	dataDir  string
 
 	stop chan struct{}
 }
 
-func NewRetention(db *sql.DB, audit *Service, settings SettingsReader, targets TargetWriter) *Retention {
+// NewRetention builds the retention job. dataDir is the server's data
+// directory; archive_local without a folder writes below it.
+func NewRetention(db *sql.DB, audit *Service, settings SettingsReader, targets TargetWriter, dataDir string) *Retention {
 	return &Retention{
 		db:       db,
 		audit:    audit,
 		settings: settings,
 		targets:  targets,
+		dataDir:  dataDir,
 		stop:     make(chan struct{}),
 	}
+}
+
+// legacyLocalDir is where archive_local without a folder wrote before the
+// default followed the data directory: relative to the working directory.
+const legacyLocalDir = "data/audit-archive"
+
+// DefaultLocalDir is the folder archive_local writes to when none is set.
+// An install that already archived into the old working-directory
+// fallback keeps writing there, so its archives stay in one place.
+func (r *Retention) DefaultLocalDir() string {
+	if legacy, err := filepath.Abs(legacyLocalDir); err == nil {
+		if fi, err := os.Stat(legacy); err == nil && fi.IsDir() {
+			return legacy
+		}
+	}
+	return filepath.Join(r.dataDir, "audit-archive")
 }
 
 // Start launches the daily ticker. Runs at 03:00 local time each day.
@@ -311,7 +331,7 @@ func (r *Retention) archive(ctx context.Context, cfg RetentionConfig, cutoff tim
 	case "archive_local":
 		dir := cfg.LocalDir
 		if dir == "" {
-			dir = "./data/audit-archive"
+			dir = r.DefaultLocalDir()
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", err

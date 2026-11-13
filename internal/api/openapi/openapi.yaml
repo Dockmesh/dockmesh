@@ -674,6 +674,9 @@ paths:
                 properties:
                   config: {$ref: "#/components/schemas/AuditRetentionConfig"}
                   preview: {$ref: "#/components/schemas/AuditRetentionPreview"}
+                  default_local_dir:
+                    type: string
+                    description: Folder archive_local writes to when `local_dir` is empty.
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
     put:
@@ -699,6 +702,9 @@ paths:
                 properties:
                   config: {$ref: "#/components/schemas/AuditRetentionConfig"}
                   preview: {$ref: "#/components/schemas/AuditRetentionPreview"}
+                  default_local_dir:
+                    type: string
+                    description: Folder archive_local writes to when `local_dir` is empty.
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
