@@ -85,10 +85,10 @@ var CacheKeys = []string{
 // IsCacheKey reports whether key is one of CacheKeys.
 func IsCacheKey(key string) bool { return slices.Contains(CacheKeys, key) }
 
-// ReleaseURL returns u if it is a page of a Dockmesh release on GitHub
+// ReleaseURL returns u, re-encoded, if it is a page of a Dockmesh release on GitHub
 // and "" otherwise, so the UI never links anywhere else.
 func ReleaseURL(u string) string {
-	if strings.ContainsAny(u, `\`) || strings.Contains(strings.ToLower(u), "%5c") {
+	if strings.Contains(u, `\`) || strings.Contains(strings.ToLower(u), "%5c") {
 		return ""
 	}
 	p, err := url.Parse(u)
