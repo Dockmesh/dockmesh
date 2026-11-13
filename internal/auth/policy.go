@@ -1,8 +1,7 @@
-// Password policy + account lockout config (P.12.1). All settings are
+// Password policy + account lockout config. All settings are
 // read from the runtime settings store so admins can edit via the UI
-// without a restart. Defaults match the status quo (8-char minimum,
-// no character-class requirements, no lockout) so existing installs
-// don't have their users locked out on the first post-upgrade login.
+// without a restart. The length rule applies only when a password is set,
+// so an existing shorter password keeps signing in.
 package auth
 
 import (
@@ -12,7 +11,12 @@ import (
 	"strconv"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
+
+// MinPasswordLength is the floor for every new or changed local password;
+// the policy can only raise it.
+const MinPasswordLength = 12
 
 // Setting keys.
 const (
@@ -50,7 +54,7 @@ type SettingsReader interface {
 // the settings cache.
 func LoadPolicy(s SettingsReader) PolicyConfig {
 	return PolicyConfig{
-		MinLength:           intSetting(s, PolicyMinLengthKey, 8),
+		MinLength:           max(intSetting(s, PolicyMinLengthKey, MinPasswordLength), MinPasswordLength),
 		RequireUpper:        boolSetting(s, PolicyRequireUpperKey, false),
 		RequireLower:        boolSetting(s, PolicyRequireLowerKey, false),
 		RequireDigit:        boolSetting(s, PolicyRequireDigitKey, false),
@@ -65,8 +69,8 @@ func LoadPolicy(s SettingsReader) PolicyConfig {
 // store. Validation here is the one place we enforce "don't shoot
 // yourself in the foot" rules.
 func SavePolicy(ctx context.Context, s SettingsReader, p PolicyConfig) error {
-	if p.MinLength < 1 || p.MinLength > 256 {
-		return errors.New("min_length must be 1..256")
+	if p.MinLength < MinPasswordLength || p.MinLength > 256 {
+		return fmt.Errorf("min_length must be %d..256", MinPasswordLength)
 	}
 	if p.RotationDays < 0 {
 		return errors.New("rotation_days must be >= 0")
@@ -99,13 +103,10 @@ func SavePolicy(ctx context.Context, s SettingsReader, p PolicyConfig) error {
 	return set(LockoutDurationMinsKey, strconv.Itoa(p.LockoutDurationMins))
 }
 
-// ValidatePassword enforces the configured policy. Called from
-// CreateUser and ChangePassword — NOT from Login (an existing user
-// with a now-too-short password doesn't get locked out retroactively;
-// they just won't be able to change TO another too-short one).
+// ValidatePassword enforces the configured policy; Login never calls it.
 func ValidatePassword(p PolicyConfig, password string) error {
-	if len(password) < p.MinLength {
-		return fmt.Errorf("password must be at least %d characters", p.MinLength)
+	if minLen := max(p.MinLength, MinPasswordLength); utf8.RuneCountInString(password) < minLen {
+		return fmt.Errorf("password must be at least %d characters", minLen)
 	}
 	var hasUpper, hasLower, hasDigit, hasSymbol bool
 	for _, r := range password {

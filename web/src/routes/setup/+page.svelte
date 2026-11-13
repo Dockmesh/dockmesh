@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import AuthShell from '$lib/components/auth/AuthShell.svelte';
   // Install wizard: one question per step, a review of every answer before
   // anything is written, then the live install log and the credentials.
@@ -261,15 +262,15 @@
   function scorePassword(pw: string): { score: number; label: string } {
     if (!pw) return { score: 0, label: '—' };
     let s = 0;
-    if (pw.length >= 8) s++;
-    if (pw.length >= 14) s++;
+    if (pw.length >= 12) s++;
+    if (pw.length >= 16) s++;
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw)) s++;
     if (/[^A-Za-z0-9]/.test(pw) && pw.length >= 12) s++;
     s = Math.min(4, s);
     return { score: s, label: ['—', m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][s] };
   }
   const strength = $derived(scorePassword(adminPassword));
-  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < 8);
+  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < MIN_PASSWORD_LENGTH);
 
   function generatePassword() {
     const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*';
@@ -711,7 +712,7 @@
             {/each}
             <span class="dm-num dm-dim">{strength.label}</span>
           </div>
-          <span class="hint">{m.setup_min_8()}</span>
+          <span class="hint">{m.setup_min_password()}</span>
         </div>
         <div class="dm-field">
           <label for="admin-email">{m.setup_email()} <span class="dm-dim">({m.common_optional()})</span></label>

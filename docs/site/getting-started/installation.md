@@ -113,7 +113,7 @@ The wizard has seven steps. Nothing is written until you confirm on the review s
 1. **Welcome** runs preflight checks: operating system, CPU, RAM, root disk space, Docker Engine, Docker socket, time synchronisation. A failed Docker check blocks the wizard.
 2. **Data** asks for the data directory. It proposes `/var/lib/dockmesh`.
 3. **Service user** asks which OS account Dockmesh runs as (`dockmesh` is recommended).
-4. **Admin** creates the first administrator: username, password (at least 8 characters), optional email.
+4. **Admin** creates the first administrator: username, password (at least 12 characters), optional email.
 5. **URL** asks for the public URL users and agents use to reach the server. It defaults to the address in your browser; enter the `https://` address of your reverse proxy instead of accepting a plain `http://<host>:8080`. **Test connection** checks that the server can reach the address; it only connects to public addresses and to this host's own private addresses on ports 80, 443 and the port the wizard is served on.
 6. **Review** shows your answers. **Install** starts the installation.
 7. **Done** streams the progress of the installation and says whether it finished or failed, then shows the **Login URL** and your username.

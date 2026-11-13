@@ -15,7 +15,7 @@ import (
 )
 
 const setupCommitBody = `{"data_dir":"/tmp/dm","service_user":{"mode":"existing","username":"dockmesh"},
-	"admin":{"username":"admin","password":"longenough"},"public_url":"https://dm.example.com"}`
+	"admin":{"username":"admin","password":"long-enough-pw"},"public_url":"https://dm.example.com"}`
 
 func postSetup(fn http.HandlerFunc, path, body string) int {
 	rec := httptest.NewRecorder()

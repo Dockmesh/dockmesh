@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -108,6 +109,10 @@ func runInitCmd(args []string) {
 		admin = promptDefault(admin)
 		say("   Password (leave empty to auto-generate a strong 18-char one)")
 		password = promptPassword()
+		for password != "" && utf8.RuneCountInString(password) < auth.MinPasswordLength {
+			initWarn(fmt.Sprintf("the password needs at least %d characters", auth.MinPasswordLength))
+			password = promptPassword()
+		}
 	}
 	generated := password == ""
 	if generated {

@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Existing passwords shorter than 12 characters keep working; the 12-character minimum applies the next time a password is set. A password policy minimum below 12 is raised to 12
+time: 2026-11-13T18:48:36.005579687Z
+custom:
+    Audience: all
+    Id: password-min-12

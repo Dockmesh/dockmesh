@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   // Account — editorial rebuild based on `Dockmesh Wizard/account.jsx`.
   //
   // Slice 1: visual rebuild only. Sections that need backend additions are
@@ -84,7 +85,7 @@
   let newPassword = $state('');
   let confirmPassword = $state('');
   let passwordBusy = $state(false);
-  const minLen = $derived(policy?.min_length ?? 8);
+  const minLen = $derived(policy?.min_length ?? MIN_PASSWORD_LENGTH);
   const passwordStrength = $derived(scorePassword(newPassword));
   const canSubmitPassword = $derived(
     currentPassword.length > 0 &&
@@ -172,8 +173,8 @@
 
   function scorePassword(pw: string): { score: number; label: string } {
     let s = 0;
-    if (pw.length >= 8)  s++;
     if (pw.length >= 12) s++;
+    if (pw.length >= 16) s++;
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
     if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
     return { score: s, label: [m.account_strength_too_short(), m.account_strength_weak(), m.account_strength_fair(), m.account_strength_good(), m.account_strength_strong()][s] };

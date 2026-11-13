@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import { getLocale } from '$lib/paraglide/runtime.js';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
@@ -576,7 +577,7 @@
   </div>
   {#snippet footer()}
     <button type="button" class="dm-btn" onclick={() => (pwOpen = false)}>{m.common_cancel()}</button>
-    <button type="button" class="dm-btn dm-btn-primary" disabled={pwBusy || pw1.length < 8} onclick={resetPassword}>{pwBusy ? m.users_resetting() : m.users_reset_password()}</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={pwBusy || pw1.length < MIN_PASSWORD_LENGTH} onclick={resetPassword}>{pwBusy ? m.users_resetting() : m.users_reset_password()}</button>
   {/snippet}
 </Modal>
 

@@ -113,7 +113,7 @@ func (s *Service) SetSettings(r SettingsReader) { s.settings = r }
 // store is attached.
 func (s *Service) policy() PolicyConfig {
 	if s.settings == nil {
-		return PolicyConfig{MinLength: 8, LockoutMaxAttempts: 5, LockoutDurationMins: 15}
+		return PolicyConfig{MinLength: MinPasswordLength, LockoutMaxAttempts: 5, LockoutDurationMins: 15}
 	}
 	return LoadPolicy(s.settings)
 }
@@ -424,6 +424,11 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	// The user's assignments went with it.
 	s.accessChanged(ctx)
 	return nil
+}
+
+// CheckPassword reports whether password meets the current policy.
+func (s *Service) CheckPassword(password string) error {
+	return ValidatePassword(s.policy(), password)
 }
 
 func (s *Service) ChangePassword(ctx context.Context, id, newPassword string) error {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import Logo from '$lib/components/shell/Logo.svelte';
   // Public invite redeem page. The token in the URL is shown by the
   // backend without auth and consumed by submitting username + password.
@@ -82,7 +83,7 @@
     }
   }
 
-  let canSubmit = $derived(!submitting && username.trim().length >= 2 && password.length >= 8);
+  let canSubmit = $derived(!submitting && username.trim().length >= 2 && password.length >= MIN_PASSWORD_LENGTH);
 </script>
 
 <div class="login-shell">
