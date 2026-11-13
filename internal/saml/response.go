@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
@@ -17,15 +18,15 @@ import (
 const assertionNS = "urn:oasis:names:tc:SAML:2.0:assertion"
 
 // maxArtifactResponse bounds what is kept of an artifact resolution answer
-// for the NameID check; a larger one is refused.
+// for the namespace check; a larger one is refused.
 const maxArtifactResponse = 1 << 20
 
-var errForeignNameID = errors.New("assertion subject has a NameID outside the SAML assertion namespace")
+var errForeignElement = errors.New("assertion element outside the SAML assertion namespace")
 
 // parseResponse validates the IdP's answer with crewjam and adds two checks
 // it lacks: a signed assertion missing an element crewjam dereferences makes
-// it panic, and it fills Subject.NameID from a NameID element of any XML
-// namespace, so a foreign one could name the account.
+// it panic, and it fills Subject.NameID and the attributes from elements of
+// any XML namespace, so a foreign one could name the account.
 func parseResponse(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []string) (*crewjam.Assertion, error) {
 	var raw []byte
 	var artifact *capturedBody
@@ -51,7 +52,7 @@ func parseResponse(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []st
 		}
 		raw = artifact.buf.Bytes()
 	}
-	if err := checkSubjectNameIDs(raw, sp); err != nil {
+	if err := checkNamespaces(raw, sp); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidAssertion, err)
 	}
 	return a, nil
@@ -67,40 +68,52 @@ func parseRecovering(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []
 	return sp.ParseResponse(r, requestIDs)
 }
 
-// checkSubjectNameIDs refuses any SAML Subject in the response, including
-// those in assertions encrypted to sp, with a NameID child from another
-// namespace. Assertions that don't decrypt are skipped: crewjam can't
-// accept them either.
-func checkSubjectNameIDs(raw []byte, sp *crewjam.ServiceProvider) error {
+const protocolNS = "urn:oasis:names:tc:SAML:2.0:protocol"
+
+// unqualified lists, per assertion element, the children crewjam reads by
+// local name alone; the identity and the roles come from them.
+var unqualified = map[string][]string{
+	"Assertion":          {"AttributeStatement", "AuthnStatement"},
+	"Subject":            {"NameID", "SubjectConfirmation"},
+	"AttributeStatement": {"Attribute"},
+	"Attribute":          {"AttributeValue"},
+}
+
+// checkNamespaces refuses a response in which one of those children is
+// from another namespace, also inside assertions encrypted to sp.
+// Assertions that don't decrypt are skipped: crewjam can't accept them
+// either.
+func checkNamespaces(raw []byte, sp *crewjam.ServiceProvider) error {
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(raw); err != nil {
 		return err
 	}
-	if doc.Root() == nil {
-		return errors.New("empty response")
+	if len(doc.ChildElements()) != 1 {
+		return errors.New("response must have exactly one root element")
 	}
-	return walkSubjects(doc.Root(), sp)
+	return walk(doc.Root(), sp, true)
 }
 
-func walkSubjects(el *etree.Element, sp *crewjam.ServiceProvider) error {
+func walk(el *etree.Element, sp *crewjam.ServiceProvider, decrypt bool) error {
 	if el.NamespaceURI() == assertionNS {
-		switch el.Tag {
-		case "Subject":
-			for _, c := range el.ChildElements() {
-				if c.Tag == "NameID" && c.NamespaceURI() != assertionNS {
-					return errForeignNameID
-				}
-			}
-		case "EncryptedAssertion":
-			if plain, err := decryptAssertion(el, sp); err == nil {
-				if err := walkSubjects(plain, sp); err != nil {
-					return err
-				}
+		for _, c := range el.ChildElements() {
+			if slices.Contains(unqualified[el.Tag], c.Tag) && c.NamespaceURI() != assertionNS {
+				return fmt.Errorf("%w: %s in %s", errForeignElement, c.Tag, el.Tag)
 			}
 		}
 	}
+	// crewjam only decrypts the assertions directly in a Response.
+	isResponse := el.Tag == "Response" && el.NamespaceURI() == protocolNS
 	for _, c := range el.ChildElements() {
-		if err := walkSubjects(c, sp); err != nil {
+		if decrypt && isResponse && c.Tag == "EncryptedAssertion" && c.NamespaceURI() == assertionNS {
+			if plain, err := decryptAssertion(c, sp); err == nil {
+				if err := walk(plain, sp, false); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if err := walk(c, sp, decrypt); err != nil {
 			return err
 		}
 	}
@@ -119,7 +132,7 @@ func decryptAssertion(el *etree.Element, sp *crewjam.ServiceProvider) (*etree.El
 	if data == nil {
 		return nil, errors.New("no EncryptedData")
 	}
-	var key interface{} = sp.Key
+	var key any = sp.Key
 	if keyEl := el.FindElement("./EncryptedKey"); keyEl != nil {
 		k, err := xmlenc.Decrypt(sp.Key, keyEl)
 		if err != nil {
@@ -142,14 +155,14 @@ func decryptAssertion(el *etree.Element, sp *crewjam.ServiceProvider) (*etree.El
 }
 
 // capturedBody keeps the artifact resolution answer crewjam reads, so the
-// NameID check sees the same XML.
+// namespace check sees the same XML.
 type capturedBody struct {
 	buf      bytes.Buffer
 	tooLarge bool
 }
 
 func (c *capturedBody) Write(p []byte) (int, error) {
-	if c.buf.Len()+len(p) > maxArtifactResponse {
+	if c.tooLarge || c.buf.Len()+len(p) > maxArtifactResponse {
 		c.tooLarge = true
 		return len(p), nil
 	}
@@ -166,6 +179,9 @@ func capturingClient(base *http.Client, into *capturedBody) *http.Client {
 		next = http.DefaultTransport
 	}
 	c.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		// After a redirect only the answer crewjam goes on to read counts.
+		into.buf.Reset()
+		into.tooLarge = false
 		resp, err := next.RoundTrip(req)
 		if err != nil {
 			return nil, err

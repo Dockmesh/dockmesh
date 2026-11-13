@@ -209,21 +209,40 @@ func TestHandleACSAssertionShapes(t *testing.T) {
 	}
 }
 
-func TestCheckSubjectNameIDsSkipsUndecryptable(t *testing.T) {
-	raw := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">` +
-		`<saml:EncryptedAssertion><xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#"/></saml:EncryptedAssertion>` +
-		`<saml:Assertion><saml:Subject>` + samlNameID + `</saml:Subject></saml:Assertion></samlp:Response>`
+func TestCheckNamespaces(t *testing.T) {
+	const head = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:x="urn:example:other">`
+	const undecryptable = `<saml:EncryptedAssertion><xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#"/></saml:EncryptedAssertion>`
+	attrs := func(inner string) string {
+		return head + undecryptable + `<saml:Assertion><saml:Subject>` + samlNameID + `</saml:Subject>` + inner + `</saml:Assertion></samlp:Response>`
+	}
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{name: "qualified", raw: attrs(`<saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>a@example.com</saml:AttributeValue></saml:Attribute></saml:AttributeStatement>`)},
+		{name: "foreign NameID", wantErr: true,
+			raw: head + `<saml:Assertion><saml:Subject><NameID xmlns="urn:example:other">x</NameID></saml:Subject></saml:Assertion></samlp:Response>`},
+		{name: "foreign AttributeStatement", wantErr: true,
+			raw: attrs(`<x:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>a@example.com</saml:AttributeValue></saml:Attribute></x:AttributeStatement>`)},
+		{name: "foreign Attribute", wantErr: true,
+			raw: attrs(`<saml:AttributeStatement><x:Attribute Name="email"><saml:AttributeValue>a@example.com</saml:AttributeValue></x:Attribute></saml:AttributeStatement>`)},
+		{name: "foreign AttributeValue", wantErr: true,
+			raw: attrs(`<saml:AttributeStatement><saml:Attribute Name="email"><x:AttributeValue>a@example.com</x:AttributeValue></saml:Attribute></saml:AttributeStatement>`)},
+		{name: "second root element", wantErr: true, raw: `<decoy/>` + attrs("")},
+	}
 	key, _, _, _, err := generateSPKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	sp := &crewjam.ServiceProvider{Key: key}
-	if err := checkSubjectNameIDs([]byte(raw), sp); err != nil {
-		t.Fatalf("valid response refused: %v", err)
-	}
-	bad := strings.Replace(raw, samlNameID, `<NameID xmlns="urn:example:other">x</NameID>`, 1)
-	if err := checkSubjectNameIDs([]byte(bad), sp); !errors.Is(err, errForeignNameID) {
-		t.Fatalf("err = %v, want errForeignNameID", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkNamespaces([]byte(tt.raw), sp)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -232,14 +251,22 @@ func TestCapturingClientKeepsTheArtifactAnswer(t *testing.T) {
 		name     string
 		size     int
 		tooLarge bool
+		redirect bool
 	}{
 		{name: "small", size: 100},
 		{name: "over the limit", size: maxArtifactResponse + 1, tooLarge: true},
+		{name: "after a redirect", size: 100, redirect: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := strings.Repeat("x", tt.size)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.redirect && r.URL.Path != "/final" {
+					w.Header().Set("Location", "/final")
+					w.WriteHeader(http.StatusTemporaryRedirect)
+					_, _ = w.Write([]byte("<decoy/>"))
+					return
+				}
 				_, _ = w.Write([]byte(body))
 			}))
 			t.Cleanup(srv.Close)
