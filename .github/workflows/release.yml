@@ -1,7 +1,7 @@
 # Build + publish release tarballs when a v* tag is pushed.
 #
 # Triggers
-#   - tag push: v*.*.* (normal release)
+#   - tag push: vX.Y.Z (release) or vX.Y.Z-rc.N (release candidate)
 #   - manual: workflow_dispatch with a tag input (re-run a failed release
 #     without re-tagging)
 #
@@ -20,12 +20,17 @@
 #
 # Release notes and the manifest come from the tag's section in
 # CHANGELOG.md; the release fails before building if that section is
-# missing.
+# missing. A release candidate has no section yet: its notes come from
+# the unreleased fragments in .changes/.
 #
 # Tags come from main or, for patches of an older minor, from its
 # release/X.Y.x branch. Only the highest stable version becomes GitHub's
 # latest release and moves the website; get.dockmesh.dev, install.sh and
-# the in-app update check all follow latest.
+# the in-app update check all follow latest. A release candidate is
+# published as a GitHub pre-release with the same assets, is never latest
+# and leaves the website and the get.dockmesh.dev cache alone; only
+# installs on the pre-release update channel or an explicit
+# `install.sh --version vX.Y.Z-rc.N` pick it up.
 #
 # The install.sh served from get.dockmesh.dev expects the asset names
 # exactly as above — don't rename without updating the installer.
@@ -40,7 +45,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. v1.2.3)'
+        description: 'Tag to build (e.g. v1.2.3 or v1.3.0-rc.1)'
         required: true
 
 # One release at a time: the latest decision reads the published releases
@@ -61,6 +66,7 @@ jobs:
     outputs:
       sha: ${{ steps.line.outputs.sha }}
       version: ${{ steps.line.outputs.version }}
+      prerelease: ${{ steps.line.outputs.prerelease }}
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,8 +81,13 @@ jobs:
         env:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
+          case "$VERSION" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          printf '%s' "$VERSION" | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$' ||
+            { echo "::error::$VERSION is not a vX.Y.Z or vX.Y.Z-rc.N tag"; exit 1; }
           line=$(printf '%s' "$VERSION" | sed -nE 's/^v([0-9]+\.[0-9]+)\..*/\1/p')
-          [ -n "$line" ] || { echo "::error::$VERSION is not a vX.Y.Z tag"; exit 1; }
           git fetch --no-tags --unshallow origin \
             '+refs/heads/main:refs/remotes/origin/main' \
             '+refs/heads/release/*.x:refs/remotes/origin/release/*.x' \
@@ -94,13 +105,14 @@ jobs:
           echo "$VERSION ($sha) is on $branch"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      - name: render notes + manifest from CHANGELOG.md
+      - name: render notes + manifest
         env:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
@@ -277,7 +289,7 @@ jobs:
           tag_name: ${{ steps.v.outputs.version }}
           name: Dockmesh ${{ steps.v.outputs.version }}
           draft: false
-          prerelease: ${{ contains(steps.v.outputs.version, '-') }}
+          prerelease: ${{ needs.notes.outputs.prerelease }}
           make_latest: ${{ steps.latest.outputs.latest }}
           body_path: artifacts/release-notes/release-body.md
           files: |
@@ -294,7 +306,7 @@ jobs:
       # which already bit us once when an env-file change shipped in a
       # tag but the cached install.sh still wrote the old layout.
       - name: purge get.dockmesh.dev cache
-        if: success() && steps.latest.outputs.latest == 'true' && env.CF_API_TOKEN != '' && env.CF_ZONE_ID != ''
+        if: success() && needs.notes.outputs.prerelease == 'false' && steps.latest.outputs.latest == 'true' && env.CF_API_TOKEN != '' && env.CF_ZONE_ID != ''
         env:
           CF_API_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
@@ -313,7 +325,7 @@ jobs:
       # The release is out at this point; a missing token or a failed call
       # only leaves the website behind, so it warns instead of failing.
       - name: trigger website sync
-        if: always() && steps.publish.outcome == 'success' && steps.latest.outputs.latest == 'true'
+        if: always() && steps.publish.outcome == 'success' && needs.notes.outputs.prerelease == 'false' && steps.latest.outputs.latest == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}

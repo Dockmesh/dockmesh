@@ -89,8 +89,13 @@ func RenderBody(s *changelog.Section) string {
 		b.WriteString(s.Summary + "\n\n")
 	}
 
-	b.WriteString("## How to upgrade\n\n```\ncurl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh\n```\n\n")
-	fmt.Fprintf(&b, "If you run Dockmesh in a container you built yourself, rebuild it from the v%s tag and recreate the container. Then check that the version shown in the UI or printed by `dockmesh version` is %s; if it is not, the old version is still running. Finally update the agents from the Hosts page.\n\n", s.Version, s.Version)
+	if s.Prerelease() {
+		fmt.Fprintf(&b, "## How to install\n\nRun the installer of this pre-release; get.dockmesh.dev keeps installing the latest stable release.\n\n```\ncurl -fsSL %s/releases/download/v%s/install.sh | sudo bash -s -- --version v%s\n```\n\n", repoURL, s.Version, s.Version)
+		fmt.Fprintf(&b, "Then check that the version shown in the UI or printed by `dockmesh version` is %s. Agents follow the server: update them from the Hosts page.\n\n", s.Version)
+	} else {
+		b.WriteString("## How to upgrade\n\n```\ncurl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh\n```\n\n")
+		fmt.Fprintf(&b, "If you run Dockmesh in a container you built yourself, rebuild it from the v%s tag and recreate the container. Then check that the version shown in the UI or printed by `dockmesh version` is %s; if it is not, the old version is still running. Finally update the agents from the Hosts page.\n\n", s.Version, s.Version)
+	}
 
 	if len(s.Actions) > 0 {
 		b.WriteString("## After upgrading, check\n\n")
@@ -106,7 +111,22 @@ func RenderBody(s *changelog.Section) string {
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "## Details\n\nAll changes and the full upgrade notes: [CHANGELOG.md, %s](%s/blob/v%s/CHANGELOG.md#%s)\n", s.Version, repoURL, s.Version, headingAnchor(s))
+	if s.Prerelease() {
+		// CHANGELOG.md gets these entries only with the final release, so
+		// there is no section to link to yet.
+		b.WriteString("## Changes since the last release\n")
+		for _, sec := range []struct {
+			title string
+			items []string
+		}{{"Added", s.Added}, {"Changed", s.Changed}, {"Fixed", s.Fixed}, {"Security", s.Security}} {
+			if len(sec.items) > 0 {
+				b.WriteString("\n### " + sec.title + "\n\n")
+				writeBullets(&b, sec.items)
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "## Details\n\nAll changes and the full upgrade notes: [CHANGELOG.md, %s](%s/blob/v%s/CHANGELOG.md#%s)\n", s.Version, repoURL, s.Version, headingAnchor(s))
+	}
 	return b.String()
 }
 

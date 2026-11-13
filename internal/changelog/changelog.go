@@ -303,6 +303,7 @@ type Manifest struct {
 	Advisories     []Advisory `json:"advisories"`
 	Actions        []Action   `json:"actions"`
 	MinUpgradeFrom string     `json:"min_upgrade_from"`
+	Prerelease     bool       `json:"prerelease"`
 }
 
 // Changes holds a manifest's entries by subsection.
@@ -339,8 +340,12 @@ func BuildManifest(s *Section) Manifest {
 		Advisories:     NonNil(s.Advisories),
 		Actions:        NonNil(s.Actions),
 		MinUpgradeFrom: s.MinUpgradeFrom,
+		Prerelease:     s.Prerelease(),
 	}
 }
+
+// Prerelease reports whether s is a pre-release such as 0.6.0-rc.1.
+func (s *Section) Prerelease() bool { return strings.Contains(s.Version, "-") }
 
 // IsSubsection reports whether name is a valid "### " subsection title.
 func IsSubsection(name string) bool { return subsections[name] }
