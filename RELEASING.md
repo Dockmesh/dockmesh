@@ -89,7 +89,10 @@ For a candidate the release workflow:
   and the commit must be on its release line like any other tag;
 - builds the notes and `release-manifest.json` from the fragments in `.changes/unreleased/` at
   the tagged commit, with `"prerelease": true` in the manifest; the Highlights a minor needs
-  come with the release PR, so a candidate doesn't need them yet;
+  come with the release PR, so a candidate doesn't need them yet. Security entries keep their
+  text, but GHSA ids and advisory links are left out of a candidate's notes and manifest:
+  advisories are published with the final release. The fragments themselves are public as soon
+  as they are pushed, so an advisory id goes into a fragment only once the advisory is published;
 - builds, packages and checksums every asset exactly as for a release;
 - publishes a GitHub pre-release that never becomes latest, whatever its number, and skips
   the get.dockmesh.dev cache purge and the website sync.

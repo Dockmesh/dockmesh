@@ -286,7 +286,53 @@ func preReleaseSection(fragDir, version string, now time.Time) (*changelog.Secti
 	if err != nil {
 		return nil, fmt.Errorf("fragments: %w", err)
 	}
-	return sections[0], nil
+	s := sections[0]
+	for _, a := range s.Actions {
+		if ghsaID.MatchString(a.ID) {
+			return nil, fmt.Errorf("upgrade note id %q names an advisory; release candidate notes must not", a.ID)
+		}
+	}
+	withoutAdvisories(s)
+	return s, nil
+}
+
+var (
+	advisoryLink = regexp.MustCompile(`\[([^\]]*)\]\(https://github\.com/[^/\s)]+/[^/\s)]+/security/advisories/[^)\s]*\)`)
+	advisoryURLs = regexp.MustCompile(`https://github\.com/[^/\s)]+/[^/\s)]+/security/advisories/\S*`)
+	ghsaInParens = regexp.MustCompile(`(?i)\s*\(\s*(?:GHSA(?:-[0-9a-z]{4}){3}|CVE-\d{4}-\d{4,})\s*\)`)
+	ghsaID       = regexp.MustCompile(`(?i)(?:GHSA(?:-[0-9a-z]{4}){3}|CVE-\d{4}-\d{4,}):?\s*`)
+	spaces       = regexp.MustCompile(`\s{2,}`)
+)
+
+// withoutAdvisories keeps the neutral security text of a release candidate
+// but drops advisory and CVE ids and links: the advisories are published with the
+// final release, not before.
+func withoutAdvisories(s *changelog.Section) {
+	for _, a := range s.Advisories {
+		s.Security = append(s.Security, a.Title)
+	}
+	s.Advisories = nil
+	for _, list := range []*[]string{&s.Highlights, &s.Added, &s.Changed, &s.Fixed, &s.Security} {
+		kept := (*list)[:0]
+		for _, item := range *list {
+			if item = stripAdvisoryRefs(item); item != "" {
+				kept = append(kept, item)
+			}
+		}
+		*list = kept
+	}
+	for i := range s.Actions {
+		s.Actions[i].Text = stripAdvisoryRefs(s.Actions[i].Text)
+	}
+}
+
+func stripAdvisoryRefs(text string) string {
+	text = advisoryLink.ReplaceAllString(text, "$1")
+	text = advisoryURLs.ReplaceAllString(text, "")
+	text = ghsaInParens.ReplaceAllString(text, "")
+	text = ghsaID.ReplaceAllString(text, "")
+	text = strings.ReplaceAll(text, "()", "")
+	return strings.TrimSpace(spaces.ReplaceAllString(text, " "))
 }
 
 // changedFragments counts the paths listed in the file at path that name
