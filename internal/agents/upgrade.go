@@ -64,6 +64,7 @@ type UpgradeController struct {
 	mu         sync.Mutex
 	lastRunAt  time.Time
 	stageQueue []string // agent ids left to upgrade in the current staged wave
+	lastWaveAt time.Time
 	attempts   map[string]upgradeAttempt
 	now        func() time.Time
 }
@@ -219,36 +220,9 @@ func (c *UpgradeController) Evaluate(ctx context.Context) {
 	}
 }
 
-// stagedWave picks the next N% of agents to upgrade and fires their
-// frames. The queue persists across calls so we walk through every
-// pending agent over multiple ticks rather than re-picking the same
-// sample each time.
+// stagedWave fires the upgrade frames of the next wave.
 func (c *UpgradeController) stagedWave(ctx context.Context, pending []*ConnectedAgent) {
-	percent := intSetting(c.settings, UpgradeStagePercentKey, 10)
-	gap := intSetting(c.settings, UpgradeStageGapKey, 300)
-
-	c.mu.Lock()
-	if len(c.stageQueue) == 0 {
-		// Rebuild the queue when empty or after mode switched.
-		c.stageQueue = pendingIDs(pending)
-	}
-	// Wave size: at least 1, at most percent% of the ORIGINAL pending
-	// set (not the current remaining). Rough — but staged rollout
-	// precision isn't a customer feature, it's a blast-radius limit.
-	waveSize := len(pending) * percent / 100
-	if waveSize < 1 {
-		waveSize = 1
-	}
-	if waveSize > len(c.stageQueue) {
-		waveSize = len(c.stageQueue)
-	}
-	wave := c.stageQueue[:waveSize]
-	c.stageQueue = c.stageQueue[waveSize:]
-	c.mu.Unlock()
-
-	slog.Info("staged upgrade wave",
-		"size", len(wave), "remaining", len(c.stageQueue), "gap_sec", gap)
-
+	wave := c.nextWave(pendingIDs(pending))
 	for _, id := range wave {
 		ag := c.agents.GetConnected(id)
 		if ag == nil {
@@ -256,13 +230,37 @@ func (c *UpgradeController) stagedWave(ctx context.Context, pending []*Connected
 		}
 		go func() { _, _ = c.upgradeOne(ctx, ag, false) }()
 	}
-	// Note: we don't sleep here for `gap` seconds — the outer 60s
-	// tick already provides a natural gap. Operators tuning for
-	// aggressive rollouts can lower settings; for slower rollouts
-	// they raise gap (which won't take effect until the 60s loop
-	// ticks anyway, so the perceived minimum interval is 60s). Good
-	// enough for P.11.16; a proper scheduler can come later.
-	_ = gap
+}
+
+// nextWave picks the next stage-percent of the pending agents, or none
+// while the stage gap since the previous wave has not passed. The queue
+// persists across calls so every pending agent is reached over several
+// ticks instead of the same sample being picked each time. Waves still
+// start on the 60 s evaluator tick, so a gap below that acts as 60 s.
+func (c *UpgradeController) nextWave(pending []string) []string {
+	percent := intSetting(c.settings, UpgradeStagePercentKey, 10)
+	gap := time.Duration(intSetting(c.settings, UpgradeStageGapKey, 300)) * time.Second
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if !c.lastWaveAt.IsZero() && now.Sub(c.lastWaveAt) < gap {
+		return nil
+	}
+	if len(c.stageQueue) == 0 {
+		c.stageQueue = pending
+	}
+	// The wave size is a share of all pending agents, not of the ones
+	// left, so the waves stay the same size; at least one agent.
+	waveSize := max(len(pending)*percent/100, 1)
+	waveSize = min(waveSize, len(c.stageQueue))
+	wave := c.stageQueue[:waveSize]
+	c.stageQueue = c.stageQueue[waveSize:]
+	if len(wave) > 0 {
+		c.lastWaveAt = now
+		slog.Info("staged upgrade wave", "size", len(wave), "remaining", len(c.stageQueue), "gap_sec", int(gap.Seconds()))
+	}
+	return wave
 }
 
 // UpgradeOne is the handler-facing wrapper — sends the upgrade frame

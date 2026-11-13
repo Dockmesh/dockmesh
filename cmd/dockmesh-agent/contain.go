@@ -18,10 +18,6 @@ import (
 // name the server sends is re-validated here with the server's own rules
 // before it reaches the filesystem or a bind mount.
 
-func dataDir() string {
-	return envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh")
-}
-
 // openStacksRoot opens <dataDir>/stacks as an os.Root, so the per-stack
 // operations below cannot leave it even through symlinks.
 func openStacksRoot(base string) (*os.Root, error) {

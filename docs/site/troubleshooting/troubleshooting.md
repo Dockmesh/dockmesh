@@ -248,7 +248,7 @@ docker pull <image>
 ```bash
 sudo systemctl status dockmesh-agent
 sudo journalctl -u dockmesh-agent -n 100
-sudo DOCKMESH_DATA_DIR=/var/lib/dockmesh-agent dockmesh-agent status
+sudo dockmesh-agent status
 ```
 
 `dockmesh-agent status` prints whether the agent is enrolled, when its certificate expires (`EXPIRED`, or `expiring soon` within 14 days), the server URL it dials, and whether a TLS connection to that address can be opened. It skips certificate verification, so `reachability:  ok (tls handshake succeeded)` only proves that a TLS listener answers on that address.

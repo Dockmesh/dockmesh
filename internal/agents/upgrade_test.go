@@ -165,3 +165,55 @@ func TestUpgradeRefusal(t *testing.T) {
 		}
 	}
 }
+
+type mapSettings map[string]string
+
+func (m mapSettings) Get(key, def string) string {
+	if v, ok := m[key]; ok {
+		return v
+	}
+	return def
+}
+
+func (m mapSettings) Set(_ context.Context, key, value string) error {
+	m[key] = value
+	return nil
+}
+
+func TestStagedWaveHonoursGap(t *testing.T) {
+	settings := mapSettings{UpgradeStagePercentKey: "50", UpgradeStageGapKey: "600"}
+	c := NewUpgradeController(&Service{}, settings)
+	now := time.Unix(1_700_000_000, 0)
+	c.now = func() time.Time { return now }
+	pending := []string{"a", "b", "c", "d"}
+
+	steps := []struct {
+		name    string
+		advance time.Duration
+		want    []string
+	}{
+		{"first wave", 0, []string{"a", "b"}},
+		{"next tick inside the gap", time.Minute, nil},
+		{"just before the gap ends", 8*time.Minute + 59*time.Second, nil},
+		{"gap passed", time.Second, []string{"c", "d"}},
+		{"queue rebuilt after the gap", 10 * time.Minute, []string{"a", "b"}},
+	}
+	for _, s := range steps {
+		now = now.Add(s.advance)
+		got := c.nextWave(pending)
+		if len(got) != len(s.want) {
+			t.Fatalf("%s: wave = %v, want %v", s.name, got, s.want)
+		}
+		for i := range got {
+			if got[i] != s.want[i] {
+				t.Fatalf("%s: wave = %v, want %v", s.name, got, s.want)
+			}
+		}
+	}
+
+	settings[UpgradeStageGapKey] = "0"
+	now = now.Add(time.Second)
+	if got := c.nextWave(pending); len(got) != 2 {
+		t.Errorf("gap 0: wave = %v, want two agents", got)
+	}
+}
