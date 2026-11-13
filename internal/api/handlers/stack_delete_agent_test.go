@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -237,5 +238,25 @@ func TestDeleteStackOfRemovedAgent(t *testing.T) {
 	}
 	if e.mgr.DirExists("db") {
 		t.Error("stack kept")
+	}
+}
+
+func TestAgentErrorText(t *testing.T) {
+	long := strings.Repeat("é", 400)
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"prefix dropped", errors.New("agent: disk full"), "disk full"},
+		{"control characters", errors.New("agent: a\nb\x1b[2Jc"), "a b [2Jc"},
+		{"long text cut on a rune", errors.New("agent: " + long), long[:512] + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agentErrorText(tt.err); got != tt.want {
+				t.Errorf("agentErrorText = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

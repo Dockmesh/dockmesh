@@ -810,15 +810,27 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	// while its data is still on the host.
 	agentState, hostName, err := h.deleteStackOnAgent(r.Context(), deployHostID, name)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("deleting the stack on %s failed: %s", hostName, strings.TrimPrefix(err.Error(), "agent: ")))
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("deleting the stack on %s failed: %s", hostName, agentErrorText(err)))
 		return
 	}
 	if agentState == agentDeletePending {
-		if err := h.Deployments.Set(r.Context(), name, deployHostID, stacks.DeploymentDeletePending); err != nil {
+		marked, err := h.Deployments.MarkDeletePending(r.Context(), name, deployHostID)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		h.audit(r, audit.ActionStackDelete, name, map[string]string{"pending_on": hostName})
+		if !marked {
+			writeError(w, http.StatusConflict, "the stack was deployed elsewhere meanwhile; delete it again")
+			return
+		}
+		pendingMeta := map[string]string{"pending_on": hostName}
+		if cleanupErr != "" {
+			pendingMeta["cleanup_error"] = cleanupErr
+		}
+		if cleanupResult != nil && len(cleanupResult.Volumes) > 0 {
+			pendingMeta["volumes_removed"] = strings.Join(cleanupResult.Volumes, ",")
+		}
+		h.audit(r, audit.ActionStackDelete, name, pendingMeta)
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"pending_host_id":   deployHostID,
 			"pending_host_name": hostName,

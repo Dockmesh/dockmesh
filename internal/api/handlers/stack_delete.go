@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -117,17 +119,19 @@ func (h *Handlers) ResumePendingStackDeletes(ctx context.Context, hostID string)
 			continue
 		}
 		name := d.StackName
-		// A deploy since the first query cancels the delete.
-		if cur, err := h.Deployments.Get(ctx, name); err != nil || cur == nil || cur.Status != stacks.DeploymentDeletePending || cur.HostID != hostID {
+		if !h.deletePending(ctx, name, hostID) {
 			continue
 		}
 		state, hostName, err := h.deleteStackOnAgent(ctx, hostID, name)
 		if err != nil {
-			h.raiseStackDeleteNotice(ctx, name, hostName, strings.TrimPrefix(err.Error(), "agent: "))
+			h.raiseStackDeleteNotice(ctx, name, hostName, agentErrorText(err))
 			continue
 		}
 		if state == agentDeletePending {
 			return
+		}
+		if !h.deletePending(ctx, name, hostID) {
+			continue
 		}
 		if err := h.finishStackDelete(ctx, name, true); err != nil {
 			h.raiseStackDeleteNotice(ctx, name, "Dockmesh server", err.Error())
@@ -145,6 +149,13 @@ func (h *Handlers) ResumePendingStackDeletes(ctx context.Context, hostID string)
 	}
 }
 
+// deletePending reports whether name still waits for its delete on hostID;
+// a deploy since then cancelled it.
+func (h *Handlers) deletePending(ctx context.Context, name, hostID string) bool {
+	cur, err := h.Deployments.Get(ctx, name)
+	return err == nil && cur != nil && cur.Status == stacks.DeploymentDeletePending && cur.HostID == hostID
+}
+
 func (h *Handlers) raiseStackDeleteNotice(ctx context.Context, name, hostName, reason string) {
 	slog.Warn("pending stack delete failed", "stack", name, "host", hostName, "err", reason)
 	if h.Notices == nil {
@@ -160,4 +171,24 @@ func (h *Handlers) raiseStackDeleteNotice(ctx context.Context, name, hostName, r
 	}); err != nil {
 		slog.Warn("stack delete notice", "stack", name, "err", err)
 	}
+}
+
+// agentErrorText is an agent's error as shown to users: one line, without
+// control characters, at most 512 bytes. The agent controls the text.
+func agentErrorText(err error) string {
+	msg := strings.TrimPrefix(err.Error(), "agent: ")
+	msg = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, msg)
+	if len(msg) > 512 {
+		cut := 512
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "…"
+	}
+	return msg
 }

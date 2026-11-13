@@ -49,6 +49,19 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 	return err
 }
 
+// MarkDeletePending sets a stack's status to DeploymentDeletePending if it
+// is still deployed on hostID, and reports whether it did.
+func (s *DeploymentStore) MarkDeletePending(ctx context.Context, stackName, hostID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE stack_deployments SET status = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE stack_name = ? AND host_id = ?`, DeploymentDeletePending, stackName, hostID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // Delete removes a deployment row. Called by DeleteStack.
 func (s *DeploymentStore) Delete(ctx context.Context, stackName string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM stack_deployments WHERE stack_name = ?`, stackName)
