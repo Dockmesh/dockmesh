@@ -150,8 +150,11 @@ func TestRemoveAllForeignOwned(t *testing.T) {
 	}
 	hc := f.created[0].HostConfig
 	m := hc.Mounts[0]
-	if m.Source != realDir || m.Target != mountPoint || m.ReadOnly {
-		t.Errorf("mount = %+v, want %s on %s read-write", m, realDir, mountPoint)
+	if m.Source != realDir || m.Target != mountPoint || m.ReadOnly || m.BindOptions == nil || !m.BindOptions.NonRecursive {
+		t.Errorf("mount = %+v, want %s on %s read-write, non-recursive", m, realDir, mountPoint)
+	}
+	if env := f.created[0].Config.Env; len(env) != 1 || !strings.HasPrefix(env[0], "DOCKMESH_EXPECT=") || len(env[0]) < len("DOCKMESH_EXPECT=1:1") {
+		t.Errorf("helper gets no device:inode to check: %v", env)
 	}
 	if hc.NetworkMode != "none" || len(hc.CapDrop) != 1 || hc.CapDrop[0] != "ALL" || !hc.ReadonlyRootfs {
 		t.Errorf("helper not locked down: network=%q capdrop=%v rorootfs=%v", hc.NetworkMode, hc.CapDrop, hc.ReadonlyRootfs)
@@ -283,5 +286,28 @@ func TestRemoveAllRefusesEscape(t *testing.T) {
 	}
 	if len(f.created) != 0 {
 		t.Fatal("helper created for a path outside the base")
+	}
+}
+
+func TestMountBelow(t *testing.T) {
+	info := `22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw
+30 22 0:40 / /srv/stacks rw - ext4 /dev/sdb1 rw
+31 30 0:41 / /srv/stacks/plex/media\040share rw - nfs host:/media rw
+32 22 0:42 / /srv/stacks/plexa rw - tmpfs tmpfs rw
+`
+	tests := []struct {
+		dir  string
+		want string
+	}{
+		{"/srv/stacks/plex", "media share"},
+		{"/srv/stacks/web", ""},
+		{"/srv/stacks/plexa", ""},
+		{"/srv/stacks/plex/media share", ""},
+	}
+	for _, tt := range tests {
+		got, err := mountBelowIn(strings.NewReader(info), tt.dir)
+		if err != nil || got != tt.want {
+			t.Errorf("mountBelowIn(%q) = %q, %v; want %q", tt.dir, got, err, tt.want)
+		}
 	}
 }

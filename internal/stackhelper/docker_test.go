@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -97,5 +98,24 @@ func TestDockerRemoveAllForeignOwned(t *testing.T) {
 	}
 	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("dir still there: %v", err)
+	}
+}
+
+func TestDockerHelperRefusesSwappedMount(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs an unprivileged test user")
+	}
+	cli := dockerClient(t)
+	base, dir := foreignStack(t, cli)
+	tg, err := resolve(base, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg.id = "1:1"
+	if err := New(cli).empty(context.Background(), tg); err == nil || !strings.Contains(err.Error(), "not the one that was checked") {
+		t.Fatalf("empty = %v, want the swap refused", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
+		t.Fatalf("helper deleted files of a directory it should have refused: %v", err)
 	}
 }

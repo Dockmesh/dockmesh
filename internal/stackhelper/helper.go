@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -53,37 +54,52 @@ func New(cli API) *Helper {
 // below its base after symlinks are resolved.
 var ErrOutside = errors.New("path is not a directory inside the stacks directory")
 
-// resolve returns the real path of dir. dir itself must be a directory,
-// not a symlink, and its real path must lie strictly below the real path
-// of base. Only the result of resolve is ever mounted into a helper.
-func resolve(base, dir string) (string, error) {
+// target is a directory that passed resolve: its real path and the
+// device:inode the helper checks again once it is mounted.
+type target struct {
+	path string
+	id   string
+}
+
+// resolve checks dir before it is mounted into a helper. dir itself must
+// be a directory, not a symlink, and its real path must lie strictly below
+// the real path of base.
+func resolve(base, dir string) (target, error) {
 	fi, err := os.Lstat(dir)
 	if err != nil {
-		return "", err
+		return target{}, err
 	}
 	if !fi.IsDir() {
-		return "", fmt.Errorf("%s: %w", dir, ErrOutside)
+		return target{}, fmt.Errorf("%s: %w", filepath.Base(dir), ErrOutside)
 	}
 	realBase, err := filepath.EvalSymlinks(base)
 	if err != nil {
-		return "", err
+		return target{}, err
 	}
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", err
+		return target{}, err
 	}
 	rel, err := filepath.Rel(realBase, realDir)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s: %w", dir, ErrOutside)
+		return target{}, fmt.Errorf("%s: %w", filepath.Base(dir), ErrOutside)
 	}
-	return realDir, nil
+	id, err := fileID(fi)
+	if err != nil {
+		return target{}, err
+	}
+	return target{path: realDir, id: id}, nil
 }
+
+// removeTimeout bounds a helper delete, so a stalled pull or a hung file
+// system cannot keep a request and a root container around for good.
+const removeTimeout = 30 * time.Minute
 
 // RemoveAll deletes dir, which must lie below base. It tries a normal
 // delete first. Only when that fails for lack of permission does it empty
 // the directory through the helper and then remove the empty directory
 // itself. Either way the directory must be gone afterwards; otherwise the
-// error lists what is left.
+// error lists what is left. Errors name the directory relative to base.
 func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 	err := os.RemoveAll(dir)
 	if err == nil {
@@ -95,18 +111,34 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 	if h == nil || h.cli == nil {
 		return fmt.Errorf("%w (files owned by another user need Docker to remove them)", err)
 	}
-	real, rerr := resolve(base, dir)
-	if rerr != nil {
-		return rerr
+	ctx, cancel := context.WithTimeout(ctx, removeTimeout)
+	defer cancel()
+	name := filepath.Base(dir)
+	// Pulled first, so the gap between the check and the mount stays short.
+	if err := h.ensureImage(ctx); err != nil {
+		return err
 	}
-	if herr := h.empty(ctx, real); herr != nil {
-		return fmt.Errorf("remove %s: %w%s", dir, herr, leftovers(dir))
+	t, err := resolve(base, dir)
+	if err != nil {
+		return err
+	}
+	if m, err := mountBelow(t.path); err != nil {
+		return err
+	} else if m != "" {
+		return fmt.Errorf("remove %s: %s is a mount point; unmount it first", name, m)
+	}
+	if herr := h.empty(ctx, t); herr != nil {
+		return fmt.Errorf("remove %s: %w%s", name, herr, leftovers(dir))
 	}
 	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove %s: %w%s", dir, err, leftovers(dir))
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return fmt.Errorf("remove %s: %w%s", name, err, leftovers(dir))
 	}
 	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove %s: directory still exists%s", dir, leftovers(dir))
+		return fmt.Errorf("remove %s: directory still exists%s", name, leftovers(dir))
 	}
 	return nil
 }
@@ -132,12 +164,19 @@ func leftovers(dir string) string {
 }
 
 // emptyScript removes everything below the mount point, dotfiles
-// included. Patterns that match nothing stay literal and rm -f ignores
-// them.
-const emptyScript = "rm -rf " + mountPoint + "/* " + mountPoint + "/.[!.]* " + mountPoint + "/..?*"
+// included, after checking that the mounted directory is the one resolve
+// checked: the daemon mounts by path, and the path could have been swapped
+// for a symlink in between. Patterns that match nothing stay literal and
+// rm -f ignores them.
+const emptyScript = `[ "$(stat -c %d:%i ` + mountPoint + `)" = "$DOCKMESH_EXPECT" ] || exit 3; ` +
+	"rm -rf " + mountPoint + "/* " + mountPoint + "/.[!.]* " + mountPoint + "/..?*"
 
-func (h *Helper) empty(ctx context.Context, real string) error {
-	id, err := h.create(ctx, real, []string{"sh", "-c", emptyScript},
+// statusSwapped is emptyScript's exit status for a mount that is not the
+// checked directory.
+const statusSwapped = 3
+
+func (h *Helper) empty(ctx context.Context, t target) error {
+	id, err := h.create(ctx, t, []string{"sh", "-c", emptyScript},
 		// rm needs to enter and unlink in directories of other users,
 		// and FOWNER covers sticky directories.
 		[]string{"DAC_OVERRIDE", "FOWNER"})
@@ -153,6 +192,9 @@ func (h *Helper) empty(ctx context.Context, real string) error {
 	wait := h.cli.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
 	case s := <-wait.Result:
+		if s.StatusCode == statusSwapped {
+			return errors.New("the mounted directory is not the one that was checked")
+		}
 		if s.StatusCode != 0 {
 			return fmt.Errorf("helper exited with status %d", s.StatusCode)
 		}
@@ -164,21 +206,23 @@ func (h *Helper) empty(ctx context.Context, real string) error {
 	}
 }
 
-func (h *Helper) create(ctx context.Context, real string, cmd, caps []string) (string, error) {
-	if err := h.ensureImage(ctx); err != nil {
-		return "", err
-	}
+func (h *Helper) create(ctx context.Context, t target, cmd, caps []string) (string, error) {
 	resp, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:  Image,
 			Cmd:    cmd,
+			Env:    []string{"DOCKMESH_EXPECT=" + t.id},
 			User:   "0:0",
 			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "stack-files-helper"},
 		},
 		HostConfig: &container.HostConfig{
 			// A typed bind mount fails on a missing source instead of
-			// creating it as root the way a -v bind would.
-			Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: real, Target: mountPoint}},
+			// creating it as root the way a -v bind would. Non-recursive,
+			// so a file system mounted below the stack dir stays out.
+			Mounts: []mount.Mount{{
+				Type: mount.TypeBind, Source: t.path, Target: mountPoint,
+				BindOptions: &mount.BindOptions{NonRecursive: true},
+			}},
 			NetworkMode:    "none",
 			CapDrop:        []string{"ALL"},
 			CapAdd:         caps,
