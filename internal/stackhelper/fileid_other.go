@@ -14,3 +14,5 @@ func fileID(fs.FileInfo) (string, error) { return "", errUnsupported }
 func mountBelow(string) (string, error) { return "", nil }
 
 func canDeleteIn(string) error { return nil }
+
+func canRead(string) error { return nil }

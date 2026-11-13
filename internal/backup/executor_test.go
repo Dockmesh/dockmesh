@@ -386,7 +386,7 @@ func TestStackArchiveVolumes(t *testing.T) {
 
 	fake := &fakeHost{volumes: map[string][]byte{"web_data": vol, "web_cache": vol}}
 	var buf bytes.Buffer
-	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", &buf); err != nil {
+	if _, err := tarStackWithVolumes(ctx, fake, nil, dir, "web", &buf); err != nil {
 		t.Fatal(err)
 	}
 	res := &VerifyResult{Passed: true}
@@ -397,7 +397,7 @@ func TestStackArchiveVolumes(t *testing.T) {
 
 	// A volume that can't be read fails the backup.
 	delete(fake.volumes, "web_cache")
-	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", io.Discard); err == nil || !strings.Contains(err.Error(), "web_cache") {
+	if _, err := tarStackWithVolumes(ctx, fake, nil, dir, "web", io.Discard); err == nil || !strings.Contains(err.Error(), "web_cache") {
 		t.Fatalf("missing volume: %v", err)
 	}
 
@@ -423,7 +423,7 @@ func TestStackArchiveVolumes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", io.Discard); err == nil {
+	if _, err := tarStackWithVolumes(ctx, fake, nil, dir, "web", io.Discard); err == nil {
 		t.Fatal("unparseable compose must fail the backup")
 	}
 }

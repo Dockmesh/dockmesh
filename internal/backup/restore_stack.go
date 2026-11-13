@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -389,6 +390,9 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 
 	var composeContent, envContent string
 	var restored []string
+	var owner *int
+	owned := &ownedRestore{files: stackFiles(s.docker), base: filepath.Dir(stackDir), dir: stackDir}
+	defer owned.abort()
 	entries := 0
 	for {
 		hdr, err := tr.Next()
@@ -404,6 +408,10 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 		}
 		name := filepath.ToSlash(hdr.Name)
 		switch {
+		case name == stackManifestName && hdr.Typeflag == tar.TypeReg:
+			if m, err := readStackManifest(tr); err == nil {
+				owner = m.OwnerUID
+			}
 		case strings.HasPrefix(name, "stack/"):
 			rel := strings.TrimPrefix(name, "stack/")
 			if rel == "" {
@@ -412,6 +420,18 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 			if !safeRelPath(rel) {
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
+			}
+			if owned.wants(owner, hdr, rel) {
+				if err := owned.write(ctx, hdr, rel, tr); err != nil {
+					return fmt.Errorf("restore %s: %w", rel, err)
+				}
+				if hdr.Typeflag == tar.TypeReg {
+					report.FilesRestored = append(report.FilesRestored, rel)
+				}
+				continue
+			}
+			if owned.unavailable(owner, hdr, rel) {
+				owned.lostOwners++
 			}
 			buf, err := restoreStackEntry(root, tr, hdr, rel, report)
 			if err != nil {
@@ -448,6 +468,13 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 			report.VolumesRestored = append(report.VolumesRestored, dest)
 		}
 	}
+	if err := owned.finish(); err != nil {
+		return fmt.Errorf("restore files of other owners: %w", err)
+	}
+	if owned.lostOwners > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"%d entries of other owners were restored as the server's own files, since Docker is unavailable", owned.lostOwners))
+	}
 	if composeContent == "" {
 		return errors.New("archive does not contain stack/compose.yaml")
 	}
@@ -464,6 +491,131 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	slog.Info("stack restored from backup", "stack", stackName, "files", len(report.FilesRestored),
 		"volumes", len(report.VolumesRestored), "warnings", len(report.Warnings))
 	return nil
+}
+
+// errHelperDone closes the pipe once the helper returned, so a write after
+// that fails instead of blocking.
+var errHelperDone = errors.New("helper stopped reading the archive")
+
+// ownedRestore streams the stack entries that belong to another owner
+// than the server into the stack directory through the helper, which gives
+// them back their owner, mode and times. The helper starts with the first
+// such entry; entries below a directory it wrote go to it as well.
+type ownedRestore struct {
+	files      *stackhelper.Helper
+	base, dir  string
+	tw         *tar.Writer
+	pw         *io.PipeWriter
+	done       chan error
+	dirs       []string
+	lostOwners int
+}
+
+// foreign reports whether hdr belongs to another owner than the server
+// that wrote the archive. Archives without an owner have none.
+func foreign(owner *int, hdr *tar.Header) bool {
+	return owner != nil && hdr.Uid != *owner
+}
+
+func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
+	if o.files == nil || (hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg) || managerFile(rel) {
+		return false
+	}
+	if foreign(owner, hdr) {
+		return true
+	}
+	for _, d := range o.dirs {
+		if strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *ownedRestore) unavailable(owner *int, hdr *tar.Header, rel string) bool {
+	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && !managerFile(rel) && foreign(owner, hdr)
+}
+
+// managerFile reports the top-level files the stacks manager reads and
+// writes itself. They are always restored as the server's own, whoever
+// owned them at backup time.
+func managerFile(rel string) bool {
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	switch rel {
+	case "compose.yaml", ".env", ".env.age", stacks.MetaFileName:
+		return true
+	}
+	return strings.HasPrefix(rel, "compose.") && (strings.HasSuffix(rel, ".yaml") || strings.HasSuffix(rel, ".yml"))
+}
+
+func (o *ownedRestore) write(ctx context.Context, hdr *tar.Header, rel string, r io.Reader) error {
+	if o.tw == nil {
+		pr, pw := io.Pipe()
+		o.tw, o.pw, o.done = tar.NewWriter(pw), pw, make(chan error, 1)
+		go func() {
+			err := o.files.Extract(ctx, o.base, o.dir, pr)
+			if err == nil {
+				err = errHelperDone
+			}
+			pr.CloseWithError(err)
+			o.done <- err
+		}()
+	}
+	// Setuid and setgid are dropped: a crafted archive must not leave a
+	// set-id binary owned by root on the host.
+	out := &tar.Header{
+		Name: rel, Typeflag: hdr.Typeflag, Mode: hdr.Mode & 0o1777, Uid: hdr.Uid, Gid: hdr.Gid,
+		Size: hdr.Size, ModTime: hdr.ModTime, Format: tar.FormatPAX,
+	}
+	if hdr.Typeflag == tar.TypeDir {
+		out.Size = 0
+		o.dirs = append(o.dirs, rel)
+	}
+	if err := o.tw.WriteHeader(out); err != nil {
+		return err
+	}
+	if out.Size > 0 {
+		if _, err := io.CopyN(o.tw, r, out.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finish ends the archive and waits for the helper.
+func (o *ownedRestore) finish() error {
+	if o.tw == nil {
+		return nil
+	}
+	tw, pw, done := o.tw, o.pw, o.done
+	o.tw = nil
+	if err := tw.Close(); err != nil {
+		pw.CloseWithError(err)
+		if herr := <-done; herr != nil && !errors.Is(herr, errHelperDone) {
+			return errors.Join(err, herr)
+		}
+		return err
+	}
+	_ = pw.Close()
+	err := <-done
+	if errors.Is(err, errHelperDone) {
+		return nil
+	}
+	return err
+}
+
+// abort stops a helper that a failed restore left running.
+func (o *ownedRestore) abort() {
+	if o.tw == nil {
+		return
+	}
+	o.pw.CloseWithError(errors.New("restore aborted"))
+	if err := <-o.done; err != nil {
+		slog.Debug("restore helper stopped", "err", err)
+	}
+	o.tw = nil
 }
 
 // restoreStackEntry writes one stack/<rel> entry and returns the content

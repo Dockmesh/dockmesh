@@ -36,6 +36,8 @@ type API interface {
 	client.ImageAPIClient
 	ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error)
 	ContainerStart(ctx context.Context, id string, options client.ContainerStartOptions) (client.ContainerStartResult, error)
+	CopyFromContainer(ctx context.Context, id string, options client.CopyFromContainerOptions) (client.CopyFromContainerResult, error)
+	CopyToContainer(ctx context.Context, id string, options client.CopyToContainerOptions) (client.CopyToContainerResult, error)
 	docker.HelperAPI
 }
 
@@ -220,7 +222,7 @@ const emptyScript = `[ "$(stat -c %d:%i ` + mountPoint + `)" = "$DOCKMESH_EXPECT
 const statusSwapped = 3
 
 func (h *Helper) empty(ctx context.Context, t target) error {
-	id, err := h.create(ctx, t, []string{"sh", "-c", emptyScript},
+	id, err := h.create(ctx, t, false, []string{"sh", "-c", emptyScript},
 		// rm needs to enter and unlink in directories of other users,
 		// and FOWNER covers sticky directories.
 		[]string{"DAC_OVERRIDE", "FOWNER"})
@@ -250,7 +252,7 @@ func (h *Helper) empty(ctx context.Context, t target) error {
 	}
 }
 
-func (h *Helper) create(ctx context.Context, t target, cmd, caps []string) (string, error) {
+func (h *Helper) create(ctx context.Context, t target, readOnly bool, cmd, caps []string) (string, error) {
 	resp, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:  Image,
@@ -264,7 +266,7 @@ func (h *Helper) create(ctx context.Context, t target, cmd, caps []string) (stri
 			// creating it as root the way a -v bind would. Non-recursive,
 			// so a file system mounted below the stack dir stays out.
 			Mounts: []mount.Mount{{
-				Type: mount.TypeBind, Source: t.path, Target: mountPoint,
+				Type: mount.TypeBind, Source: t.path, Target: mountPoint, ReadOnly: readOnly,
 				BindOptions: &mount.BindOptions{NonRecursive: true},
 			}},
 			NetworkMode:    "none",
