@@ -168,8 +168,8 @@ func (e *pendingEnv) commit(t *testing.T, rev string) {
 	}
 }
 
-// busySync holds the stack with an image update and syncs: the commit must
-// end up pending instead of deployed.
+// busySync syncs while the stack is held by an image update: the commit
+// must end up pending instead of deployed.
 func (e *pendingEnv) busySync(t *testing.T) *gitsource.SyncResult {
 	t.Helper()
 	res, err := e.svc.Sync(e.ctx, "web")

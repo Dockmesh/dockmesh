@@ -615,31 +615,14 @@ func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
 }
 
 func (s *Service) deployAllPending(ctx context.Context) {
-	names, err := s.pendingStacks(ctx)
+	pending, err := s.PendingDeploys(ctx)
 	if err != nil {
 		slog.Warn("gitsource: list pending deploys", "err", err)
 		return
 	}
-	for _, name := range names {
+	for name := range pending {
 		s.DeployPending(ctx, name)
 	}
-}
-
-func (s *Service) pendingStacks(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT stack_name FROM stack_git_sources WHERE pending_sha IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
-	}
-	return names, rows.Err()
 }
 
 // PendingDeploys returns the pending commit of every stack that has one.
