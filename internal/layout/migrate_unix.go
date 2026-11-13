@@ -18,18 +18,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 )
 
-// MigrateOptions configure Migrate. The zero values of UID and GID are
-// root, which is what the installer runs as.
-type MigrateOptions struct {
-	// ConfigDir defaults to ConfigDir; tests point it elsewhere.
-	ConfigDir string
-	// Candidates are the env files to move, first match wins. The
-	// caller puts the one the service unit names first.
-	Candidates []string
-	// UID and GID own the config dir and file.
-	UID, GID int
-}
-
 // Migrate moves the first candidate env file to <ConfigDir>/dockmesh.env,
 // adds DOCKMESH_DATA_DIR naming the directory the data is in today, and
 // leaves a symlink at the old place so a unit or script that names the old

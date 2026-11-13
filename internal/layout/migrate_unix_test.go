@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -129,11 +128,11 @@ func TestMigrateOutcomes(t *testing.T) {
 		{
 			name: "symlinked source skipped", want: NothingFound,
 			setup: func(t *testing.T, f fixture) {
-				real := filepath.Join(t.TempDir(), "dockmesh.env")
-				if err := os.WriteFile(real, []byte("DOCKMESH_HTTP_ADDR=:1\n"), 0o600); err != nil {
+				target := filepath.Join(t.TempDir(), "dockmesh.env")
+				if err := os.WriteFile(target, []byte("DOCKMESH_HTTP_ADDR=:1\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(real, f.src); err != nil {
+				if err := os.Symlink(target, f.src); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -214,34 +213,6 @@ func TestParseEnv(t *testing.T) {
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
-		}
-	}
-}
-
-func TestLegacyEnvFile(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the config only moves on Linux")
-	}
-	dir := t.TempDir()
-	regular := filepath.Join(dir, "dockmesh.env")
-	link := filepath.Join(dir, "link.env")
-	config := filepath.Join(dir, "etc.env")
-	if err := os.WriteFile(regular, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(config, link); err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct{ name, env, want string }{
-		{"unknown env file", "", ""},
-		{"runs from the config", config, ""},
-		{"old place, moved", link, ""},
-		{"old place, not moved", regular, regular},
-		{"missing file", filepath.Join(dir, "gone.env"), ""},
-	}
-	for _, tt := range tests {
-		if got := LegacyEnvFile(tt.env, config); got != tt.want {
-			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }

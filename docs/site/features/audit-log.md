@@ -42,7 +42,7 @@ curl -H "Authorization: Bearer dmt_…" \
 
 Every entry stores the hash of the previous entry and its own hash, SHA-256 over the previous hash, timestamp, user, action, target and details. Changing or deleting an entry in the middle breaks the chain from that point on.
 
-The first entry's previous hash is the genesis value, stored in `audit-genesis.sha256` (path set by `DOCKMESH_AUDIT_GENESIS_PATH`, default `./data/audit-genesis.sha256`). The server writes it once with mode `0400` and logs it at first start.
+The first entry's previous hash is the genesis value, stored in `audit-genesis.sha256` (path set by `DOCKMESH_AUDIT_GENESIS_PATH`, default `<data root>/data/audit-genesis.sha256`). The server writes it once with mode `0400` and logs it at first start.
 
 Click **Verify chain** to recompute the chain (`GET /api/v1/audit/verify`). The check walks every entry in order, stops at the first broken link and shows it, or reports the chain as intact. Entries written before the chain existed are reported as warnings and skipped.
 

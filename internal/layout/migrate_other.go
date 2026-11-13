@@ -4,14 +4,7 @@ package layout
 
 import "errors"
 
-// MigrateOptions configure Migrate.
-type MigrateOptions struct {
-	ConfigDir  string
-	Candidates []string
-	UID, GID   int
-}
-
-// Migrate is only supported on Unix hosts.
+// Migrate fails off Unix; the config stays where it is.
 func Migrate(MigrateOptions) (Result, error) {
 	return Result{}, errors.New("moving the config is only supported on Linux")
 }

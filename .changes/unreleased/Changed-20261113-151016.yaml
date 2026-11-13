@@ -1,0 +1,3 @@
+kind: Changed
+body: The server reads its config from /etc/dockmesh/dockmesh.env, and DOCKMESH_DATA_DIR alone now sets every data path; the old per-path variables still override single paths
+time: 2026-11-13T15:10:16.591043028Z

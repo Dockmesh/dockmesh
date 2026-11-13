@@ -17,15 +17,13 @@ import (
 const DefaultBaseURL = "http://localhost:8080"
 
 type Config struct {
-	HTTPAddr         string
-	DataDir          string
-	DBPath           string
-	StacksRoot       string
-	SecretsPath      string
-	AuditGenesisPath string
-	SecretsKeyPath   string
-	// UpdateDir is where a binary update is staged before it is applied.
-	UpdateDir         string
+	HTTPAddr          string
+	DataDir           string
+	DBPath            string
+	StacksRoot        string
+	SecretsPath       string
+	AuditGenesisPath  string
+	SecretsKeyPath    string
 	SecretsEncryptEnv bool
 	ScannerBinary     string
 	ScannerEnabled    bool
@@ -75,7 +73,6 @@ func Load() (*Config, error) {
 		SecretsPath:       paths.SecretsPath,
 		AuditGenesisPath:  paths.AuditGenesisPath,
 		SecretsKeyPath:    paths.SecretsKeyPath,
-		UpdateDir:         paths.UpdateDir,
 		SecretsEncryptEnv: envOr("DOCKMESH_SECRETS_ENCRYPT_ENV", "true") != "false",
 		ScannerBinary:     envOr("DOCKMESH_SCANNER_BINARY", "grype"),
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",

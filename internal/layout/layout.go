@@ -1,7 +1,6 @@
 // Package layout knows where a server install keeps its config, and moves
 // the config of an install from before /etc/dockmesh to that place. The
-// installer and later the root updater call Migrate through
-// `dockmesh system migrate-layout`.
+// installer calls Migrate through `dockmesh system migrate-layout`.
 package layout
 
 import (
@@ -25,6 +24,18 @@ var LegacyEnvFiles = []string{
 	"/var/lib/dockmesh/dockmesh.env",
 	"/data/dockmesh.env",
 	"/usr/local/var/dockmesh/dockmesh.env",
+}
+
+// MigrateOptions configure Migrate. The zero values of UID and GID are
+// root, which is what the installer runs as.
+type MigrateOptions struct {
+	// ConfigDir defaults to ConfigDir; tests point it elsewhere.
+	ConfigDir string
+	// Candidates are the env files to move, first match wins. The
+	// caller puts the one the service unit names first.
+	Candidates []string
+	// UID and GID own the config dir and file.
+	UID, GID int
 }
 
 // Outcome says what Migrate did.

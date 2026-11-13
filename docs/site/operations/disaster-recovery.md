@@ -61,7 +61,7 @@ There are three ways to restore a system backup. All of them unpack the archive 
 | `--force` | Restore over a database that already has users |
 | `--dry-run` | Only walk the archive and print `would restore N files, M bytes` |
 
-Like other subcommands, `restore` loads the first of `/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env` and `/usr/local/var/dockmesh/dockmesh.env` that exists when `DOCKMESH_DB_PATH` is not set in the environment (see [dockmesh commands](../reference/dockmesh-cli.md#how-commands-find-their-configuration)). Pass `--env-file <path>` for any other location.
+Like other subcommands, `restore` loads the first of `/etc/dockmesh/dockmesh.env`, `/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env` and `/usr/local/var/dockmesh/dockmesh.env` that exists when neither `DOCKMESH_DATA_DIR` nor `DOCKMESH_DB_PATH` is set in the environment (see [dockmesh commands](../reference/dockmesh-cli.md#how-commands-find-their-configuration)). Pass `--env-file <path>` for any other location.
 
 ### 1. Install Dockmesh on the new machine
 
