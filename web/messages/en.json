@@ -5057,6 +5057,8 @@
   "stacks_d_update_title": "Update {service}",
   "stacks_d_used_by": "Used by",
   "stacks_d_waiting_line": "Waiting for the first line…",
+  "stacks_git_pending": "Deploy pending — waiting for {operation}",
+  "stacks_git_pending_desc": "Commit {sha} deploys as soon as the stack is free.",
   "stacks_d_webhook_disabled": "Git webhook disabled",
   "stacks_d_webhook_disabled_desc": "Pushes only reach this stack through polling or Sync now. Set a webhook secret in the git source settings.",
   "stacks_d_webhook_disabled_until": "Disabled until a webhook secret is set.",

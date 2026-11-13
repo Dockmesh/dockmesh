@@ -5057,6 +5057,8 @@
   "stacks_d_update_title": "{service} aktualisieren",
   "stacks_d_used_by": "Genutzt von",
   "stacks_d_waiting_line": "Warte auf die erste Zeile…",
+  "stacks_git_pending": "Deploy ausstehend – wartet auf {operation}",
+  "stacks_git_pending_desc": "Commit {sha} wird deployt, sobald der Stack frei ist.",
   "stacks_d_webhook_disabled": "Git-Webhook deaktiviert",
   "stacks_d_webhook_disabled_desc": "Pushes erreichen diesen Stack nur per Abfrage oder Jetzt synchronisieren. Ein Webhook-Secret in den Einstellungen der Git-Quelle setzen.",
   "stacks_d_webhook_disabled_until": "Deaktiviert, bis ein Webhook-Secret gesetzt ist.",

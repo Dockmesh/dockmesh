@@ -2,11 +2,11 @@
   import { untrack } from 'svelte';
   import {
     api, ApiError, isFanOut,
-    type StackDeployment, type DiscoveredStack, type StackGitSourceInput, type EnvDrift,
+    type StackDeployment, type DiscoveredStack, type StackGitSourceInput, type EnvDrift, type GitPendingDeploy,
   } from '$lib/api';
   import { goto } from '$app/navigation';
   import { stackInLens } from '$lib/lens';
-  import { Button, Modal, Input, Skeleton, Segmented, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import { Button, Modal, Input, Skeleton, Segmented, LiveIndicator, Menu, EmptyState, StatusChip } from '$lib/components/ui';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -37,6 +37,7 @@
     deployment?: StackDeployment;
     targetHost?: string;
     status?: 'ok' | 'needs_recovery';
+    pendingDeploy?: GitPendingDeploy;
   }
 
   let stackCards = $state<StackCard[]>([]);
@@ -158,6 +159,7 @@
           deployment: s.deployment,
           targetHost: s.target_host,
           status: s.status ?? 'ok',
+          pendingDeploy: s.pending_deploy,
         };
       });
       lastLoaded = Date.now();
@@ -561,7 +563,7 @@
               {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else if s.state === 'undeployed'}{m.stacks_list_deploy_to_start()}{:else}{m.stacks_list_no_containers()}{/if}
             </small>
           </span>
-          <span role="cell">
+          <span role="cell" class="stk-st">
             <StackHealth
               {running}
               total={s.services.length}
@@ -569,6 +571,13 @@
               members={s.services.map((x) => ({ name: x.name, state: x.state, unhealthy: isUnhealthy(x) }))}
               notDeployed={s.state === 'undeployed'}
             />
+            {#if s.pendingDeploy}
+              <StatusChip
+                tone="acc"
+                label={m.stacks_git_pending({ operation: s.pendingDeploy.operation })}
+                title={m.stacks_git_pending_desc({ sha: s.pendingDeploy.sha.slice(0, 7) })}
+              />
+            {/if}
           </span>
           <span role="cell" class="dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
           <span role="cell" class="dm-num dm-dim" title={s.deployment?.deployed_at ? fmtDateTime(s.deployment.deployed_at) : ''}>
@@ -941,6 +950,7 @@
 </Modal>
 
 <style>
+  .stk-st { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
   .st-attn {
     border: 1px solid var(--warn-bd);
     background: var(--warn-bg);
