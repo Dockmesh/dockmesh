@@ -40,6 +40,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
@@ -82,11 +83,17 @@ var webDist embed.FS
 var loadedEnvFile string
 
 // serverEnvFile names the env file this server most likely runs with: the
-// one loaded from --env-file or the default location, else the file
-// install.sh writes next to the data dir. Empty when neither is known.
+// one loaded from --env-file or the default location, then the config in
+// /etc/dockmesh, else the file older installs keep next to the data dir.
+// Empty when none is known.
 func serverEnvFile(dbPath string) string {
 	if loadedEnvFile != "" {
 		return loadedEnvFile
+	}
+	// The service user may not be in the config's group, so a file it
+	// cannot stat counts as present.
+	if _, err := os.Lstat(layout.ConfigFile); err == nil || errors.Is(err, fs.ErrPermission) {
+		return layout.ConfigFile
 	}
 	if dbPath == "" {
 		return ""
@@ -147,9 +154,12 @@ func loadEnvFileFromArgs() error {
 	explicit := path != ""
 	if !explicit {
 		// Auto-detect a well-known env file location. Only load if the
-		// operator hasn't already set DOCKMESH_DB_PATH in their shell —
+		// operator hasn't already set the data paths in their shell —
 		// an explicit env var always wins over the auto-loaded file.
 		if _, already := os.LookupEnv("DOCKMESH_DB_PATH"); already {
+			return nil
+		}
+		if _, already := os.LookupEnv("DOCKMESH_DATA_DIR"); already {
 			return nil
 		}
 		path = firstExistingFile(defaultEnvFiles)
@@ -258,6 +268,9 @@ func main() {
 			return
 		case "config":
 			runConfigCmd(os.Args[2:])
+			return
+		case "system":
+			runSystemCmd(os.Args[2:])
 			return
 		case "doctor":
 			runDoctorCmd(os.Args[2:])
@@ -818,6 +831,7 @@ func main() {
 	})
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
+	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an
@@ -1145,7 +1159,9 @@ func main() {
 			if envPath == "" {
 				return nil
 			}
-			if _, err := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// A root-owned config cannot be rewritten by the service; the
+			// flag is inert once accounts exist and the notice names it.
+			if _, err := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
 				return err
 			}
 			return nil

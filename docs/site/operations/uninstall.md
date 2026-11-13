@@ -38,7 +38,7 @@ curl -fsSL https://get.dockmesh.dev/uninstall | sudo bash -s -- --yes
 
 ### How the data root is found
 
-The script looks for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one. It reads the asset paths from that file. Without an env file it assumes `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
+The script looks for `dockmesh.env` (or the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves) in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one. `--purge` also removes `/etc/dockmesh`. It reads the asset paths from that file. Without an env file it assumes `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
 
 Before deleting, it checks that the directory contains `data/`, `stacks/` or `dockmesh.env`, and skips it with a warning otherwise. If the directory is a mount point, only its contents are removed.
 

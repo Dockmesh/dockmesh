@@ -340,6 +340,10 @@ if [ "$DO_DATA" = "1" ]; then
       warn "$DATA_DIR exists but doesn't look like a dockmesh data dir — skipping for safety"
     fi
   fi
+  if [ -d /etc/dockmesh ]; then
+    run rm -rf /etc/dockmesh
+    ok "removed /etc/dockmesh (config)"
+  fi
 fi
 
 # Remove service user. Two fixes for prior bugs:

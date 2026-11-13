@@ -7,11 +7,11 @@ Dockmesh keeps stack definitions as files and runtime state in one SQLite databa
 
 ## Server data root
 
-`install.sh` and `dockmesh init` create the same layout under the data root. The default is `/var/lib/dockmesh` on Linux and `/usr/local/var/dockmesh` on macOS; `install.sh` uses `/data` instead when that directory already exists, and reuses the data root of an earlier install when it finds its `dockmesh.env`.
+`install.sh` and `dockmesh init` create the same layout under the data root (`DOCKMESH_DATA_DIR`). The default is `/var/lib/dockmesh` on Linux and `/usr/local/var/dockmesh` on macOS; `install.sh` reuses the data root of an earlier install when it finds its `dockmesh.env`. On Linux the config moves to `/etc/dockmesh/dockmesh.env` (root:dockmesh, 0640) on the first installer upgrade; the old place then holds a symlink to it.
 
 ```text
 /var/lib/dockmesh/
-├── dockmesh.env                 environment file loaded by the service (0600)
+├── dockmesh.env                 environment file loaded by the service (0600), or a symlink to /etc/dockmesh/dockmesh.env
 ├── dockmesh.service             copy of the systemd unit (dockmesh init only)
 ├── data/                        data directory = directory of DOCKMESH_DB_PATH
 │   ├── dockmesh.db              SQLite database (+ -wal, -shm while running)
@@ -47,7 +47,7 @@ What each file is for:
 
 Keep `secrets.age-key` somewhere outside the server as well: it is the only way to read encrypted backups. Copy the file, or download it under **Settings** → **Encryption key** → **Download key backup** (permission `backups.key_export`, the API is `GET /api/v1/system/backup-key/export`). See [Backups](../operations/backups.md).
 
-Running `dockmesh serve` with no variables set uses `./data/...` and `./stacks` relative to the working directory.
+Running `dockmesh serve` with no variables set uses `/var/lib/dockmesh`. `make dev` sets `DOCKMESH_DATA_DIR` to the checkout, so development data stays in `./data` and `./stacks`.
 
 ## Stack directory
 

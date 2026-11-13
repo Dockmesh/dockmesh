@@ -1,0 +1,3 @@
+kind: Changed
+body: The installer no longer picks /data as the data root by itself; set DOCKMESH_DATA_DIR=/data to use it, existing /data installs keep it
+time: 2026-11-13T15:10:17.992791591Z

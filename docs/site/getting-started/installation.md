@@ -35,7 +35,7 @@ The script:
 4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group if that group exists. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine.
 6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
-7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
+7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service. The next upgrade moves the file to `/etc/dockmesh/dockmesh.env` and leaves a symlink.
 8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
 
 ### What goes where
@@ -52,9 +52,9 @@ The script:
 
 The agent binaries are not installed into `/usr/local/bin`; they are only kept so the server can hand them to remote hosts. The full tree is in [Filesystem layout](../reference/filesystem-layout.md).
 
-The data root is `/data` instead of `/var/lib/dockmesh` if a `/data` directory already exists on the host. On macOS it is `/usr/local/var/dockmesh`, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
+Since 0.6 the installer no longer picks `/data` by itself; set `DOCKMESH_DATA_DIR=/data` to use it. Installs that already use `/data` keep it. On macOS the data root is `/usr/local/var/dockmesh`, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
 
-If the script finds the `dockmesh.env` of an earlier install (in `/var/lib/dockmesh`, `/data`, `/usr/local/var/dockmesh`, the one named in an existing unit, or at `$DOCKMESH_DATA_DIR/dockmesh.env`), it keeps that file unchanged and uses its data root, so a reinstall over kept data picks up the existing database, stacks and keys. It then does not open the setup wizard; you sign in with your existing account.
+If the script finds the `dockmesh.env` of an earlier install (in `/var/lib/dockmesh`, `/data`, `/usr/local/var/dockmesh`, the one named in an existing unit, or at `$DOCKMESH_DATA_DIR/dockmesh.env`, also as the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves), it keeps that file and uses its data root, so a reinstall over kept data picks up the existing database, stacks and keys. It then does not open the setup wizard; you sign in with your existing account.
 
 The repository also contains `scripts/dockmesh.service`. That is a sample unit for running from a checkout in `/home/dockmesh/dockmesh`; neither the installer nor `dockmesh init` uses it.
 
@@ -72,7 +72,7 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_CHANNEL` | `stable` | Deprecated, removed in 0.7.0: `testing` also considers pre-releases when resolving "latest" and prints a warning. Name the pre-release with `--version` instead. |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
-| `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` (full rule in [Environment variables](../reference/environment-variables.md)) | Data root. Must match the data root of an earlier install the script finds. |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` (full rule in [Environment variables](../reference/environment-variables.md)) | Data root. Must match the data root of an earlier install the script finds. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
 | `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
@@ -100,7 +100,7 @@ DOCKMESH_SETUP_FORCE=true
 
 `DOCKMESH_SETUP_FORCE=true` keeps the server from creating an admin account by itself, so the web wizard can do it; the wizard removes the line when it finishes. The server opens the wizard only while no admin account exists. If the flag is still set on an install that has an admin, the server ignores it and shows admins a notice to remove it. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
 
-`dockmesh` subcommands such as `dockmesh admin list-users` load the first `dockmesh.env` they find in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh`. If your data root is elsewhere, pass `--env-file <path>`. Run them as the service user (`sudo -u dockmesh dockmesh …`), because the data root is only readable by the service account and files they create keep the right owner.
+`dockmesh` subcommands such as `dockmesh admin list-users` load `/etc/dockmesh/dockmesh.env`, else the first `dockmesh.env` they find in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh`. If your data root is elsewhere, pass `--env-file <path>`. Run them as the service user (`sudo -u dockmesh dockmesh …`), because the data root is only readable by the service account and files they create keep the right owner.
 
 ## The setup wizard
 

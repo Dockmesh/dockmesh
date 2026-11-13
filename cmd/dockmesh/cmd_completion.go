@@ -34,7 +34,7 @@ _dockmesh_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="serve init admin db ca enroll secrets import restore config doctor completion version help"
+    local commands="serve init admin db ca enroll secrets import restore config system doctor completion version help"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -49,6 +49,7 @@ _dockmesh_complete() {
         secrets)     COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
         import)      COMPREPLY=( $(compgen -W "compose-dir" -- "$cur") ) ;;
         config)      COMPREPLY=( $(compgen -W "show" -- "$cur") ) ;;
+        system)      COMPREPLY=( $(compgen -W "migrate-layout" -- "$cur") ) ;;
         completion)  COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;
     esac
 }
@@ -70,6 +71,7 @@ _dockmesh() {
         'secrets:Secrets management'
         'import:Import stacks from another tool'
         'config:Configuration inspection'
+        'system:Host layout changes (root)'
         'doctor:Run health checks'
         'completion:Print shell completion script'
         'version:Print version'
@@ -87,6 +89,7 @@ _dockmesh() {
         secrets)    _values 'secrets subcommand' rotate ;;
         import)     _values 'import source' compose-dir ;;
         config)     _values 'config subcommand' show ;;
+        system)     _values 'system subcommand' migrate-layout ;;
         completion) _values 'shell' bash zsh fish ;;
     esac
 }
@@ -105,6 +108,7 @@ complete -c dockmesh -n '__fish_use_subcommand' -a enroll -d 'Agent enrollment'
 complete -c dockmesh -n '__fish_use_subcommand' -a secrets -d 'Secrets management'
 complete -c dockmesh -n '__fish_use_subcommand' -a import  -d 'Import stacks from another tool'
 complete -c dockmesh -n '__fish_use_subcommand' -a config  -d 'Show config'
+complete -c dockmesh -n '__fish_use_subcommand' -a system  -d 'Host layout changes (root)'
 complete -c dockmesh -n '__fish_use_subcommand' -a doctor  -d 'Health checks'
 complete -c dockmesh -n '__fish_use_subcommand' -a completion -d 'Shell completion'
 complete -c dockmesh -n '__fish_use_subcommand' -a version -d 'Print version'
@@ -117,5 +121,6 @@ complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke l
 complete -c dockmesh -n '__fish_seen_subcommand_from secrets' -a 'rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from import' -a 'compose-dir'
 complete -c dockmesh -n '__fish_seen_subcommand_from config' -a 'show'
+complete -c dockmesh -n '__fish_seen_subcommand_from system' -a 'migrate-layout'
 complete -c dockmesh -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 `

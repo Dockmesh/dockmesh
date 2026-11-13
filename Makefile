@@ -8,6 +8,8 @@ LDFLAGS := -s -w \
 	-X github.com/dockmesh/dockmesh/pkg/version.Commit=$(COMMIT) \
 	-X github.com/dockmesh/dockmesh/pkg/version.Date=$(DATE)
 
+# Keeps the dev data in ./data and ./stacks of the checkout.
+dev: export DOCKMESH_DATA_DIR ?= $(CURDIR)
 dev:
 	@echo ">> starting backend (:8080) and frontend (:5173)"
 	@(cd web && npm run dev) & \

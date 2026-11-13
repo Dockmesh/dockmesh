@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: The installer moves dockmesh.env from the data root to /etc/dockmesh/dockmesh.env on upgrade and leaves a symlink at the old place; the data stays where it is and nothing needs to be done
+time: 2026-11-13T15:10:19.391053591Z
+custom:
+    Audience: admins
+    Id: config-to-etc

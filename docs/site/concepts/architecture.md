@@ -13,7 +13,7 @@ Dockmesh is one server binary, `dockmesh`. It serves the web UI and the REST API
 |---|---|---|
 | `dockmesh` server | Go binary with the SvelteKit UI embedded | Listens on `DOCKMESH_HTTP_ADDR` (default `:8080`) for the UI and API, and on `DOCKMESH_AGENT_LISTEN` (default `:8443`) for agents. |
 | Web UI | Single-page app served by the server | Fetches everything from `/api/v1`. There is no separate frontend server. |
-| SQLite database | `modernc.org/sqlite`, file at `DOCKMESH_DB_PATH` (default `./data/dockmesh.db`) | The only supported database. |
+| SQLite database | `modernc.org/sqlite`, file at `DOCKMESH_DB_PATH` (default `<data root>/data/dockmesh.db`) | The only supported database. |
 | Local Docker engine | Reached through the Docker SDK | Connection settings come from the standard Docker environment (`DOCKER_HOST` etc.), usually the local socket. Dockmesh never shells out to the `docker` CLI. |
 | `dockmesh-agent` | Small binary on each remote host | Dials out to the server over a mutual-TLS WebSocket and runs Docker operations locally on the server's behalf. See [Hosts and agents](./hosts-and-agents.md). |
 | Reverse proxy | Docker container `dockmesh-proxy` running a pinned, tested `caddy` image (or `DOCKMESH_PROXY_IMAGE`) | Only exists when the proxy is enabled (`DOCKMESH_PROXY_ENABLED=true` or the `proxy_enabled` setting). Dockmesh configures it over Caddy's admin API on a private Unix socket. See [Reverse proxy](../features/reverse-proxy.md). |
@@ -29,7 +29,7 @@ Dockmesh splits state between the filesystem and the database on purpose.
 **On the filesystem (source of truth for what runs):**
 
 - Stack definitions: `<stacks root>/<name>/compose.yaml`, the stack's `.env` or encrypted `.env.age`, optional `compose.<env>.yaml` override files and `.dockmesh.meta.json`. The stacks root is `DOCKMESH_STACKS_ROOT` (default `./stacks`). See [Stacks](./stacks.md).
-- The data directory, which is the directory containing the database file. It holds the internal CA and server certificate for agents and the git-source cache (`git-cache/`). The JWT secret (`secrets.env`, `DOCKMESH_SECRETS_PATH`) and the age key used to encrypt stack secrets (`secrets.age-key`, `DOCKMESH_SECRETS_KEY_PATH`) are in `./data` by default too, but their paths do not follow `DOCKMESH_DB_PATH`. A local backup target without a path writes to `backups/` in the data directory (see [Backups](../operations/backups.md)).
+- The data directory, which is the directory containing the database file. It holds the internal CA and server certificate for agents and the git-source cache (`git-cache/`). The JWT secret (`secrets.env`, `DOCKMESH_SECRETS_PATH`) and the age key used to encrypt stack secrets (`secrets.age-key`, `DOCKMESH_SECRETS_KEY_PATH`) are in `<data root>/data` by default too, but their paths do not follow `DOCKMESH_DB_PATH`. A local backup target without a path writes to `backups/` in the data directory (see [Backups](../operations/backups.md)).
 
 **In SQLite (runtime and management state):**
 

@@ -122,6 +122,10 @@ Disaster recovery:
   restore                Restore DB + /stacks + /data from a system-backup
                          tarball (--from ./backup.tar.gz [--force] [--dry-run])
 
+Host:
+  system migrate-layout  Move the config to /etc/dockmesh and leave a symlink
+                         (root; the installer runs it on upgrade)
+
 Diagnostics:
   config show            Print effective config (secrets redacted)
   doctor                 Run health checks (DB, docker, disk, TLS)

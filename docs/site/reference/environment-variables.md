@@ -5,7 +5,7 @@ description: Every environment variable read by the Dockmesh server, the agent, 
 
 Dockmesh has no configuration file format of its own. The server reads `DOCKMESH_*` environment variables at startup; everything else lives in the database and is changed in the UI. `configs/dockmesh.example.yaml` in the repository is not parsed by anything.
 
-On a normal install the variables live in `dockmesh.env` in the data root (`/var/lib/dockmesh/dockmesh.env` by default). systemd loads it with `EnvironmentFile=`, launchd passes it as `--env-file`, and the `dockmesh` admin commands load it automatically (see [dockmesh commands](./dockmesh-cli.md#how-commands-find-their-configuration)). Edit the file and restart the service to apply a change:
+On a Linux install the variables live in `/etc/dockmesh/dockmesh.env` (owned by root, readable by the `dockmesh` group). Installs from before 0.6 kept the file in the data root (`/var/lib/dockmesh/dockmesh.env`); the installer moves it to `/etc/dockmesh` on the next upgrade and leaves a symlink at the old place, and until then the server keeps reading it from there. systemd loads it with `EnvironmentFile=`, launchd passes it as `--env-file`, and the `dockmesh` admin commands load it automatically (see [dockmesh commands](./dockmesh-cli.md#how-commands-find-their-configuration)). Edit the file and restart the service to apply a change:
 
 ```bash
 sudo systemctl restart dockmesh
@@ -38,13 +38,16 @@ DOCKMESH_BASE_URL=https://dockmesh.example.com
 
 ### Paths
 
+`DOCKMESH_DATA_DIR` is the one path a config needs; the others are derived from it. Set one of the others only to move that single path somewhere else.
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_DB_PATH` | `./data/dockmesh.db` | SQLite database. Its directory is the data directory: PKI files and `git-cache/` go there too |
-| `DOCKMESH_STACKS_ROOT` | `./stacks` | Stacks directory, one subdirectory per stack |
-| `DOCKMESH_SECRETS_PATH` | `./data/secrets.env` | File holding `DOCKMESH_JWT_SECRET`; created on first start |
-| `DOCKMESH_SECRETS_KEY_PATH` | `./data/secrets.age-key` | age key that encrypts stack `.env` files and stored credentials |
-| `DOCKMESH_AUDIT_GENESIS_PATH` | `./data/audit-genesis.sha256` | Genesis hash of the audit log chain |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh`, or, when only `DOCKMESH_DB_PATH` is set, the directory above its `data/` | Data root. All paths below default to places in it |
+| `DOCKMESH_DB_PATH` | `<data root>/data/dockmesh.db` | SQLite database. Its directory is the data directory: PKI files and `git-cache/` go there too |
+| `DOCKMESH_STACKS_ROOT` | `<data root>/stacks` | Stacks directory, one subdirectory per stack |
+| `DOCKMESH_SECRETS_PATH` | `<data root>/data/secrets.env` | File holding `DOCKMESH_JWT_SECRET`; created on first start |
+| `DOCKMESH_SECRETS_KEY_PATH` | `<data root>/data/secrets.age-key` | age key that encrypts stack `.env` files and stored credentials |
+| `DOCKMESH_AUDIT_GENESIS_PATH` | `<data root>/data/audit-genesis.sha256` | Genesis hash of the audit log chain |
 | `DOCKMESH_INSTALL_SCRIPT` | `./scripts/install-agent.sh` | Template served at `/install/agent.sh` on the agent port (and on the web port for older commands) |
 | `DOCKMESH_BINARY_DIR` | `./bin` | Directory with the agent binaries (`dockmesh-agent-linux-amd64`, `-arm64`) served under `/install/` and to agents for upgrades. dmctl binaries are served from it only if you copy them in |
 
@@ -120,7 +123,7 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 | `DOCKMESH_CHANNEL` | `stable` | `stable` or `testing`; `testing` is deprecated and removed in 0.7.0, use `--version <tag>` |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Directory for `dockmesh`, `dmctl` and `grype` |
 | `DOCKMESH_ASSET_DIR` | `<install-dir>/../share/dockmesh` | Agent installer and agent binaries |
-| `DOCKMESH_DATA_DIR` | the directory of an earlier install's `dockmesh.env`; otherwise `/data` if it exists and is writable (or the script runs as root), else `/var/lib/dockmesh` (Linux) or `/usr/local/var/dockmesh` (macOS) | Data root. Setting it to a different directory than an earlier install's stops the script |
+| `DOCKMESH_DATA_DIR` | the data root of an earlier install; otherwise `/var/lib/dockmesh` (Linux) or `/usr/local/var/dockmesh` (macOS) | Data root. Setting it to a different directory than an earlier install's stops the script |
 | `DOCKMESH_NO_SUDO` | `0` | `1` runs without `sudo` |
 | `DOCKMESH_FORCE` | `0` | `1` reinstalls even if the same version is installed |
 | `DOCKMESH_NO_SCANNER` | `0` | `1` skips installing Grype |
