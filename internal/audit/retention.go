@@ -95,8 +95,7 @@ func NewRetention(db *sql.DB, audit *Service, settings SettingsReader, targets T
 	}
 }
 
-// legacyLocalDir is where archive_local without a folder wrote before the
-// default followed the data directory: relative to the working directory.
+// legacyLocalDir is the old working-directory fallback.
 const legacyLocalDir = "data/audit-archive"
 
 // DefaultLocalDir is the folder archive_local writes to when none is set.
