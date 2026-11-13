@@ -87,7 +87,7 @@ Nothing checks that the tag input matches the "Use workflow from" ref. The run c
 publishes the tag from the input, but runs the `release.yml` of the selected ref, so a mismatch
 builds one release with another release's workflow. Choose the same tag in both.
 
-A re-run therefore uses the `release.yml` stored in the tag, not the one on `main`. A workflow fix
+A re-run uses the `release.yml` stored in the tag, not the one on `main`. A workflow fix
 made after the tag does not apply to a re-run; it needs a new tag.
 
 ## Signing keys
