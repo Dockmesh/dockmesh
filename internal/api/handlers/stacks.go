@@ -212,15 +212,6 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 			deployHostID = d.HostID
 		}
 	}
-	lockHost := deployHostID
-	if lockHost == "" && h.Deployments != nil {
-		lockHost, _ = h.Deployments.Target(r.Context(), name)
-	}
-	release, ok := h.lockStack(w, lockHost, name, stacklock.OpDelete)
-	if !ok {
-		return
-	}
-	defer release()
 	var target host.Host
 	if h.Hosts != nil {
 		t, err := h.Hosts.Pick(deployHostID)
@@ -899,15 +890,6 @@ func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
 			deployHostID = d.HostID
 		}
 	}
-	lockHost := deployHostID
-	if lockHost == "" && h.Deployments != nil {
-		lockHost, _ = h.Deployments.Target(r.Context(), name)
-	}
-	release, ok := h.lockStack(w, lockHost, name, stacklock.OpDelete)
-	if !ok {
-		return
-	}
-	defer release()
 	var target host.Host
 	if h.Hosts != nil {
 		target, _ = h.Hosts.Pick(deployHostID)
