@@ -93,3 +93,27 @@ func TestConcurrentDeletesOneWins(t *testing.T) {
 		t.Error("stack kept")
 	}
 }
+
+// Only the delete itself takes the stack lock; the dialog's preview and a
+// recover are not refused while a deploy runs.
+func TestOnlyDeleteTakesTheDeleteLock(t *testing.T) {
+	e, _, tok := newDeleteLockEnv(t)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Get("/stacks/{name}/cleanup-preview", e.h.CleanupPreview)
+		r.Post("/stacks/{name}/recover", e.h.RecoverStack)
+	})
+	release, err := e.h.StackLocks.TryLock(stacklock.HostKey("local", "web"), stacklock.OpDeploy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	for _, req := range []struct{ method, path string }{
+		{http.MethodGet, "/stacks/web/cleanup-preview"},
+		{http.MethodPost, "/stacks/web/recover"},
+	} {
+		if rr := e.do(req.method, req.path, tok, nil); rr.Code == http.StatusConflict {
+			t.Errorf("%s %s refused while a deploy runs: %s", req.method, req.path, rr.Body)
+		}
+	}
+}
