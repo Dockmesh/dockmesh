@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func TestUnlockUserClearsLoginLimit(t *testing.T) {
@@ -21,14 +21,11 @@ func TestUnlockUserClearsLoginLimit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			svc := auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))
 			const pw = "correct horse battery"
 			u, err := svc.CreateUser(ctx, "frank", "", pw, "viewer")

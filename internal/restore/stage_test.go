@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 // systemDB returns the contents of a migrated database with one admin
@@ -15,11 +16,8 @@ import (
 func systemDB(t *testing.T, user string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "src.db")
-	database, err := db.Open(p)
+	database, err := dbtest.Open(p)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, 'x');

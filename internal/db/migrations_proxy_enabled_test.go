@@ -8,6 +8,7 @@ import (
 // A fresh database has no saved proxy choice; an existing install keeps
 // its stored 'false', which may have been saved in the UI.
 func TestProxyEnabledUnsavedDefaultMigration(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		existing bool

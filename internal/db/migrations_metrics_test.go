@@ -7,6 +7,7 @@ import (
 
 // Upgrading keeps every stored sample and files it under the server host.
 func TestMetricsHostIDMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

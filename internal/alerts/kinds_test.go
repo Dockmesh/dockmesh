@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -344,14 +344,11 @@ func TestOneShotNotRestoredAsFiring(t *testing.T) {
 }
 
 func TestDefaultEventRules(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "defaults.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "defaults.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	s := NewService(database, nil)
 	rules, err := s.ListRules(context.Background())
 	if err != nil {
@@ -482,14 +479,11 @@ func TestValidateInputBounds(t *testing.T) {
 }
 
 func TestRuleChangesApplyToEventsAtOnce(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	s := NewService(database, nil)
 	in := RuleInput{Name: "crash", Kind: KindContainerStopped, ContainerFilter: "*", Enabled: true}

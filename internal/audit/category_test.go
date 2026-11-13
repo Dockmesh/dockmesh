@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 // dynamicActions lists the values of actions built at runtime, keyed by
@@ -215,14 +215,11 @@ func TestCategory(t *testing.T) {
 }
 
 func TestListFilteredByCategory(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "audit.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "audit.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	s := NewService(database, filepath.Join(t.TempDir(), "genesis"))
 	ctx := context.Background()
 	for _, a := range []string{ActionStackDeploy, ActionContainerReadFile, ActionLogin, "something.unknown"} {

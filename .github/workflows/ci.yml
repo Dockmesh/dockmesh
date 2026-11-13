@@ -75,10 +75,19 @@ jobs:
               - web/package.json
               - web/package-lock.json
 
-  changelog:
-    name: changelog
-    if: github.event_name == 'pull_request'
+  # The quick checks share one runner, one step each. Every step runs even
+  # when an earlier one failed, so one run reports all of them.
+  checks:
+    name: checks
+    needs: changes
     runs-on: ubuntu-24.04
+    env:
+      GO_CHANGED: ${{ needs.changes.outputs.go }}
+      DEPS_CHANGED: ${{ needs.changes.outputs.deps }}
+      DOCS_SCRIPTS: ${{ needs.changes.outputs.go != 'true' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true') }}
+      # AGPL-3.0 compatible SPDX identifiers. OFL-1.1 covers the bundled
+      # web fonts only (data, not linked code).
+      ALLOWED: MIT;MIT-0;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;MPL-2.0;0BSD;Unlicense;CC0-1.0;BlueOak-1.0.0;Python-2.0;OFL-1.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,18 +95,31 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: fragments
+      - if: env.DEPS_CHANGED == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: fetch the base commit
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: changelog fragments
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           OPTIONAL: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
           # An empty base file means the base branch has no changelog yet.
           git show "$BASE_SHA:CHANGELOG.md" > "$RUNNER_TEMP/base-CHANGELOG.md" 2>/dev/null || true
           git diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- .changes/unreleased/ > "$RUNNER_TEMP/changed.txt"
           go run ./scripts/relmanifest check -base "$RUNNER_TEMP/base-CHANGELOG.md" \
             -changed "$RUNNER_TEMP/changed.txt" -optional="$OPTIONAL"
       - name: CHANGELOG.md matches .changes
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         run: |
           go run github.com/miniscruff/changie@v1.26.0 merge --dry-run > "$RUNNER_TEMP/CHANGELOG.md"
           diff -u CHANGELOG.md "$RUNNER_TEMP/CHANGELOG.md" || {
@@ -105,19 +127,11 @@ jobs:
             exit 1
           }
 
-  migrations:
-    name: migrations
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - name: merged migrations are unchanged, new ones are timestamped
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
           dir=internal/db/migrations/
           # Installs record a migration by file name: a renamed one runs again.
           changed=$(git diff --no-renames --name-only --diff-filter=DMT "$BASE_SHA" HEAD -- "$dir")
@@ -130,6 +144,47 @@ jobs:
             echo "::error::new migrations are named YYYYMMDDHHMMSS_<slug>.sql (make migration name=<slug>):"; echo "$bad"; exit 1
           fi
 
+      # Only vulnerabilities our code actually calls count. Those with a fixed
+      # version fail the step; those without one are reported as notices.
+      - name: govulncheck
+        if: ${{ !cancelled() && env.GO_CHANGED == 'true' }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck -format json ./... > "$RUNNER_TEMP/vuln.json"
+          jq -r 'select(.finding) | .finding | select(.trace[0].function)
+                 | [.osv, (.fixed_version // "")] | @tsv' "$RUNNER_TEMP/vuln.json" | sort -u > "$RUNNER_TEMP/called.tsv"
+          while IFS=$'\t' read -r id fixed; do
+            if [ -z "$fixed" ]; then
+              echo "::notice::$id is reachable but has no fix yet: https://pkg.go.dev/vuln/$id"
+            else
+              echo "::error::$id is reachable, fixed in $fixed: https://pkg.go.dev/vuln/$id"
+            fi
+          done < "$RUNNER_TEMP/called.tsv"
+          ! awk -F'\t' '$2 != "" { found = 1 } END { exit !found }' "$RUNNER_TEMP/called.tsv"
+
+      # LGPL-3.0 is GPLv3 plus permissions, so it combines with AGPL-3.0;
+      # github.com/cloudsoda/sddl (pulled in by the SMB client) uses it.
+      - name: licenses of Go dependencies
+        if: ${{ !cancelled() && env.DEPS_CHANGED == 'true' }}
+        run: |
+          go install github.com/google/go-licenses/v2@v2.0.1
+          go-licenses check ./cmd/dockmesh ./cmd/dockmesh-agent ./cmd/dmctl \
+            --ignore github.com/dockmesh/dockmesh \
+            --allowed_licenses="${ALLOWED//;/,},LGPL-3.0"
+      - name: licenses of npm production dependencies
+        if: ${{ !cancelled() && env.DEPS_CHANGED == 'true' }}
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npx --yes license-checker-rseidelsohn@4.4.2 --production \
+            --excludePrivatePackages --onlyAllow "$ALLOWED" --summary
+
+      # docs/site is checked by a Go test, the install scripts by Go tests next
+      # to them; when Go code changed, go test runs both.
+      - name: docs and scripts
+        if: ${{ !cancelled() && env.DOCS_SCRIPTS == 'true' }}
+        run: go test -race ./scripts/...
+
   go-test:
     name: go test (${{ matrix.name }})
     needs: changes
@@ -141,9 +196,8 @@ jobs:
         include:
           # The handlers package takes most of the test time and is split by
           # test name; the other packages run as two groups.
-          - {name: handlers 1/3, shard: 1}
-          - {name: handlers 2/3, shard: 2}
-          - {name: handlers 3/3, shard: 3}
+          - {name: handlers 1/2, shard: 1}
+          - {name: handlers 2/2, shard: 2}
           - {name: heavy, group: heavy}
           - {name: rest, group: rest}
     env:
@@ -170,7 +224,7 @@ jobs:
           go test -race -c -o "$RUNNER_TEMP/handlers.test" ./internal/api/handlers/
           cd internal/api/handlers
           "$RUNNER_TEMP/handlers.test" -test.list '.*' | grep -E '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/all.txt"
-          awk -v s="$SHARD" 'NR % 3 == s % 3' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/mine.txt"
+          awk -v s="$SHARD" 'NR % 2 == s % 2' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/mine.txt"
           echo "$(wc -l < "$RUNNER_TEMP/mine.txt") of $(wc -l < "$RUNNER_TEMP/all.txt") tests"
           "$RUNNER_TEMP/handlers.test" -test.timeout 15m -test.run "^($(paste -sd'|' "$RUNNER_TEMP/mine.txt"))\$"
       - name: package group
@@ -233,36 +287,6 @@ jobs:
           install-mode: goinstall
           args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.created && github.sha || github.event.before }}
 
-  govulncheck:
-    name: govulncheck
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - run: go version
-      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-      # Only vulnerabilities our code actually calls count. Those with a fixed
-      # version fail the job; those without one are reported as notices.
-      - name: scan
-        run: |
-          govulncheck -format json ./... > vuln.json
-          jq -r 'select(.finding) | .finding | select(.trace[0].function)
-                 | [.osv, (.fixed_version // "")] | @tsv' vuln.json | sort -u > called.tsv
-          while IFS=$'\t' read -r id fixed; do
-            if [ -z "$fixed" ]; then
-              echo "::notice::$id is reachable but has no fix yet: https://pkg.go.dev/vuln/$id"
-            else
-              echo "::error::$id is reachable, fixed in $fixed: https://pkg.go.dev/vuln/$id"
-            fi
-          done < called.tsv
-          ! awk -F'\t' '$2 != "" { found = 1 } END { exit !found }' called.tsv
-
   web:
     name: web
     needs: changes
@@ -286,35 +310,11 @@ jobs:
       - run: npm run test:unit
       - run: npm run build
 
-  # docs/site is checked by a Go test, the install scripts by Go tests next
-  # to them; both are quick enough to run whole when only they change.
-  docs-scripts:
-    name: docs and scripts
-    needs: changes
-    if: needs.changes.outputs.go != 'true' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true')
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - run: go test -race ./scripts/...
-
   build:
-    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: build linux/amd64
     needs: changes
     if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {goos: linux,  goarch: amd64, runner: ubuntu-24.04,     smoke: true}
-          - {goos: linux,  goarch: arm64, runner: ubuntu-24.04-arm, smoke: true}
-          - {goos: darwin, goarch: arm64, runner: ubuntu-24.04,     smoke: false}
-          - {goos: darwin, goarch: amd64, runner: ubuntu-24.04,     smoke: false}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -334,7 +334,7 @@ jobs:
           echo "building with $got, go.mod toolchain $want"
           [ "$got" = "$want" ]
       - name: build frontend
-        run: |
+        run: &frontend |
           cd web
           npm ci
           npm run build
@@ -342,26 +342,63 @@ jobs:
           cp -r build/* ../cmd/dockmesh/web_dist/
       - name: build binaries
         env:
-          CGO_ENABLED: 0
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
+          TARGETS: linux/amd64
+        run: &binaries |
           VERSION="ci-${GITHUB_SHA::7}"
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           LDFLAGS="-s -w -X github.com/dockmesh/dockmesh/pkg/version.Version=${VERSION} \
                    -X github.com/dockmesh/dockmesh/pkg/version.Commit=${COMMIT} \
                    -X github.com/dockmesh/dockmesh/pkg/version.Date=${DATE}"
-          mkdir -p dist
-          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh       ./cmd/dockmesh
-          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh-agent ./cmd/dockmesh-agent
-          go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl          ./cmd/dmctl
+          for target in $TARGETS; do
+            echo "::group::$target"
+            out="dist/${target/\//-}"
+            mkdir -p "$out"
+            for cmd in dockmesh dockmesh-agent dmctl; do
+              CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
+                go build -trimpath -ldflags "$LDFLAGS" -o "$out/$cmd" "./cmd/$cmd"
+            done
+            echo "::endgroup::"
+          done
       - name: smoke test
-        if: matrix.smoke
         run: |
-          ./dist/dockmesh version
-          ./dist/dockmesh-agent --version
-          ./dist/dmctl --version
+          ./dist/linux-amd64/dockmesh version
+          ./dist/linux-amd64/dockmesh-agent --version
+          ./dist/linux-amd64/dmctl --version
+
+  # One runner cross-compiles the other targets in turn, so the frontend is
+  # built once and the targets share the Go build cache. The linux/arm64
+  # binaries are smoke-tested under qemu.
+  build-cross:
+    name: build darwin/amd64, darwin/arm64, linux/arm64
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build frontend
+        run: *frontend
+      - name: build binaries
+        env:
+          TARGETS: darwin/amd64 darwin/arm64 linux/arm64
+        run: *binaries
+      - name: smoke test linux/arm64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-user-static
+          qemu-aarch64-static ./dist/linux-arm64/dockmesh version
+          qemu-aarch64-static ./dist/linux-arm64/dockmesh-agent --version
+          qemu-aarch64-static ./dist/linux-arm64/dmctl --version
 
   smoke-macos:
     name: smoke darwin/arm64
@@ -419,46 +456,10 @@ jobs:
       - name: playwright (en + de) against a throwaway instance
         run: web/tests/run-ephemeral.sh
 
-  licenses:
-    name: licenses
-    needs: changes
-    if: needs.changes.outputs.deps == 'true'
-    runs-on: ubuntu-24.04
-    env:
-      # AGPL-3.0 compatible SPDX identifiers. OFL-1.1 covers the bundled
-      # web fonts only (data, not linked code).
-      ALLOWED: MIT;MIT-0;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;MPL-2.0;0BSD;Unlicense;CC0-1.0;BlueOak-1.0.0;Python-2.0;OFL-1.1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      # LGPL-3.0 is GPLv3 plus permissions, so it combines with AGPL-3.0;
-      # github.com/cloudsoda/sddl (pulled in by the SMB client) uses it.
-      - name: go dependencies
-        run: |
-          go install github.com/google/go-licenses/v2@v2.0.1
-          go-licenses check ./cmd/dockmesh ./cmd/dockmesh-agent ./cmd/dmctl \
-            --ignore github.com/dockmesh/dockmesh \
-            --allowed_licenses="${ALLOWED//;/,},LGPL-3.0"
-      - name: npm production dependencies
-        run: |
-          cd web
-          npm ci
-          npx --yes license-checker-rseidelsohn@4.4.2 --production \
-            --excludePrivatePackages --onlyAllow "$ALLOWED" --summary
-
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, changelog, migrations, go-test, integration, lint, govulncheck, web, docs-scripts, build, e2e, licenses]
+    needs: [changes, checks, go-test, integration, lint, web, build, build-cross, e2e]
     runs-on: ubuntu-24.04
     steps:
       - name: every job passed or was skipped

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func TestValidLanguage(t *testing.T) {
@@ -28,14 +28,11 @@ func TestValidLanguage(t *testing.T) {
 }
 
 func TestLanguageForEmail(t *testing.T) {
-	database, err := db.Open(filepath.Join(t.TempDir(), "prefs.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "prefs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, email, password) VALUES
 		('u1', 'anna', 'Anna@example.com', 'x'), ('u2', 'ben', 'ben@example.com', 'x'), ('u3', 'nomail', NULL, 'x')`); err != nil {
 		t.Fatal(err)

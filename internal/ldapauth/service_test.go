@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -72,14 +72,11 @@ func TestSearchAttributes(t *testing.T) {
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	return NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil), database
 }
 

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 // absPlaceholder is replaced by an absolute path on the test's platform.
@@ -37,14 +37,11 @@ func TestMigrateSystemJobPath(t *testing.T) {
 			if tt.path == absPlaceholder {
 				tt.path = filepath.Join(cwd, "elsewhere")
 			}
-			database, err := db.Open(filepath.Join(dataDir, "test.db"))
+			database, err := dbtest.Open(filepath.Join(dataDir, "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			svc := NewService(database, nil, nil, nil, SystemPaths{DBPath: filepath.Join(dataDir, "test.db"), StacksRoot: t.TempDir(), DataDir: dataDir})
 			id, err := svc.store.createJob(ctx, JobInput{
 				Name: DefaultSystemJobName, TargetType: "local",

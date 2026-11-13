@@ -8,6 +8,7 @@ import (
 // Existing runs get the host of their job; runs of a job that is gone
 // count as taken on the server.
 func TestBackupRunHostMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -18,14 +18,11 @@ import (
 // tokens the tests create.
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('owner', 'owner', 'x')`); err != nil {
 		t.Fatalf("user: %v", err)
 	}

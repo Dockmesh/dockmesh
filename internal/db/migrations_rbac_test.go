@@ -24,6 +24,7 @@ func hasPerm(t *testing.T, database *sql.DB, role, perm string) bool {
 // system.update from host-admin; custom roles that could restore keep
 // downloading, and admins are told which custom roles lost something.
 func TestBackupDownloadPermissionMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +97,7 @@ func TestBackupDownloadPermissionMigration(t *testing.T) {
 // A fresh install has no custom roles and no host-admin users, so the
 // upgrade raises nothing.
 func TestBackupDownloadPermissionMigrationQuietOnFreshInstall(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +118,7 @@ func TestBackupDownloadPermissionMigrationQuietOnFreshInstall(t *testing.T) {
 // Accounts that already signed in through SSO keep following the IdP's
 // role; local accounts count as manually managed.
 func TestSSOLinkingMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +149,7 @@ func TestSSOLinkingMigration(t *testing.T) {
 // Existing SAML accounts are marked for one re-key within 30 days; local
 // accounts are not.
 func TestSAMLRekeyMarkerMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +185,7 @@ func TestSAMLRekeyMarkerMigration(t *testing.T) {
 }
 
 func TestRBACSeedDriftMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

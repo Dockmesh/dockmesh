@@ -8,6 +8,7 @@ import (
 // Existing CPU rules keep their per-core meaning, everything else gets no
 // unit, and only installs that already have users are told about it.
 func TestAlertHistoryRetentionMigration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		withUser   bool

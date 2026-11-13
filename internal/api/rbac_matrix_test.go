@@ -17,7 +17,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -382,14 +382,11 @@ func newMatrixEnv(t *testing.T) (*auth.Service, *rbac.Store, *handlers.Handlers)
 // newMatrixEnvWith lets a test add dependencies that need the database.
 func newMatrixEnvWith(t *testing.T, extra func(*sql.DB, *handlers.Deps)) (*auth.Service, *rbac.Store, *handlers.Handlers) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	authSvc := auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))
 	roles := rbac.NewStore(database)

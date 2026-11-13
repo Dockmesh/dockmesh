@@ -14,7 +14,7 @@ import (
 	"github.com/moby/moby/api/types/image"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/scaling"
@@ -86,14 +86,11 @@ type migrationEnv struct {
 
 func newMigrationEnv(t *testing.T) *migrationEnv {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	mgr, err := stacks.NewManager(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -277,14 +274,11 @@ func TestMigrationRefusesUnconfirmedOverride(t *testing.T) {
 func busyStore(t *testing.T) (*Store, *sql.DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
-	database, err := db.Open(path)
+	database, err := dbtest.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.Exec(`INSERT INTO migrations (id, stack_name, source_host_id, target_host_id, status, phase, initiated_by)
 		VALUES ('m1', 'web', 'local', 'agent1', 'failed', 'rollback', 'u1')`); err != nil {
 		t.Fatal(err)

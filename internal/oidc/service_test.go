@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 func TestProviderChangeUnlinksAccounts(t *testing.T) {
@@ -26,14 +26,11 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			s := NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil, "")
 			p, err := s.CreateProvider(ctx, in)
 			if err != nil {
@@ -73,14 +70,11 @@ func TestScopesAcceptSpacesAndCommas(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			if err := db.Migrate(database); err != nil {
-				t.Fatal(err)
-			}
 			s := NewService(database, auth.NewService(database, []byte("0123456789abcdef0123456789abcdef")), nil, "")
 			p, err := s.CreateProvider(context.Background(), ProviderInput{Slug: "kc", DisplayName: "Keycloak",
 				IssuerURL: "https://sso.example/realms/main", ClientID: "c", ClientSecret: "s", Scopes: tt.in})

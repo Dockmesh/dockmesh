@@ -141,6 +141,7 @@ func oldAllows(f legacyFixture, u legacyUser, builtin map[string]map[rbac.Perm]b
 }
 
 func TestRBACAssignmentsMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -301,6 +302,7 @@ func TestRBACAssignmentsMigration(t *testing.T) {
 // A database with nothing to migrate gets no notice and keeps the
 // built-in roles.
 func TestRBACAssignmentsMigrationFreshInstall(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)

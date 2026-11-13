@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
 // DOCKMESH_PROXY_ENABLED only sets the first-start default: once the
@@ -13,14 +13,11 @@ import (
 func TestLoadEnvOnlyFillsUnsavedValues(t *testing.T) {
 	t.Setenv("DOCKMESH_PROXY_ENABLED", "true")
 	ctx := context.Background()
-	database, err := db.Open(filepath.Join(t.TempDir(), "s.db"))
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
 
 	st := NewStore(database)
 	if err := st.Load(ctx); err != nil {

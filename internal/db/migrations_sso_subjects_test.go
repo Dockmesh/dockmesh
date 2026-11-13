@@ -7,6 +7,7 @@ import (
 )
 
 func TestSSOImmutableSubjectsMigration(t *testing.T) {
+	t.Parallel()
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
