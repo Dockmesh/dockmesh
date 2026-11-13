@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
@@ -315,7 +316,7 @@
   </div>
   {#snippet footer()}
     <button type="button" class="dm-btn" onclick={() => (createOpen = false)}>{m.common_cancel()}</button>
-    <button type="button" class="dm-btn dm-btn-primary" disabled={cBusy || !cUser.trim() || cPass.length < 8} onclick={submitCreate}>{cBusy ? m.users_creating() : m.users_create_user()}</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={cBusy || !cUser.trim() || cPass.length < MIN_PASSWORD_LENGTH} onclick={submitCreate}>{cBusy ? m.users_creating() : m.users_create_user()}</button>
   {/snippet}
 </Modal>
 

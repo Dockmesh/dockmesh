@@ -203,7 +203,7 @@ paths:
               properties:
                 username: {type: string, minLength: 1}
                 email: {type: string, format: email}
-                password: {type: string, format: password, minLength: 8}
+                password: {type: string, format: password, minLength: 12}
                 role:
                   type: string
                   description: Role name — `admin`, `operator`, `viewer`, or a custom role.
@@ -285,7 +285,7 @@ paths:
       operationId: users.change_password
       tags: [users]
       summary: Admin-set a user's password
-      description: Minimum 8 chars. Admin-only — regular users change their own password via a (future) self-service endpoint.
+      description: Minimum 12 characters, or the policy minimum if higher. Admin-only — regular users change their own password via a (future) self-service endpoint.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       requestBody:
@@ -296,7 +296,7 @@ paths:
               type: object
               required: [password]
               properties:
-                password: {type: string, format: password, minLength: 8}
+                password: {type: string, format: password, minLength: 12}
       responses:
         "204": {description: Password updated.}
         "400": {$ref: "#/components/responses/BadRequest"}

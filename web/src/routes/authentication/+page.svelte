@@ -521,8 +521,8 @@
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
-                  min="6"
-                  max="128"
+                  min="12"
+                  max="256"
                   value={policy.min_length}
                   oninput={(e) => setPolicyField('min_length', parseInt((e.target as HTMLInputElement).value) || 0)}
                 />

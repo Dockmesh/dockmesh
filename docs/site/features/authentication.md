@@ -15,12 +15,12 @@ Under **Local password policy**:
 
 | Setting | Default |
 |---|---|
-| **Minimum length** | 8 |
+| **Minimum length** | 12 (it can't be set lower) |
 | upper + lower, digit, symbol | off |
 | **Lockout · max attempts** | 5 (0 turns the lockout off) |
 | **Lockout · duration (min)** | 15 |
 
-The policy applies when a password is set or changed.
+The policy applies when a password is set or changed: in the setup wizard, when a user is created or accepts an invite, on a password change or reset, and in `dockmesh admin create` and `reset-password`. A password set under an older, shorter minimum keeps working until it is changed.
 
 ### Reset a password
 
