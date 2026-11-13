@@ -1352,7 +1352,7 @@ components:
         deployed_at: {type: string, format: date-time}
         status:
           type: string
-          enum: [deployed, stopped, migrated_away, delete_pending]
+          enum: [deployed, stopped, migrating, migrated_away, delete_pending]
           description: "`delete_pending`: a delete waits for the offline agent host."
     StackListEntry:
       type: object

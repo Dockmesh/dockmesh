@@ -222,7 +222,7 @@ export interface StackDeployment {
   stack_name: string;
   host_id: string;
   host_name?: string;
-  status: 'deployed' | 'stopped' | 'migrated_away' | 'delete_pending';
+  status: 'deployed' | 'stopped' | 'migrating' | 'migrated_away' | 'delete_pending';
   deployed_at: string;
   updated_at: string;
 }

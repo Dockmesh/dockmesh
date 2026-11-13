@@ -802,13 +802,12 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The agent's copy goes first: a failure there leaves the stack in
-	// place on both sides, so it is never shown as deleted while its data
-	// is still on the host.
 	if deployHostID != "" && deployHostID != "local" && !h.Stacks.DirExists(name) {
 		writeStackError(w, stacks.ErrNotFound)
 		return
 	}
+	// Agent first, so a failure there never shows the stack as deleted
+	// while its data is still on the host.
 	agentState, hostName, err := h.deleteStackOnAgent(r.Context(), deployHostID, name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("deleting the stack on %s failed: %s", hostName, strings.TrimPrefix(err.Error(), "agent: ")))

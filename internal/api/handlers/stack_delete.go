@@ -28,9 +28,7 @@ const (
 )
 
 // deleteStackOnAgent removes the agent's copy of a stack and waits for the
-// answer. Every agent protocol version answers req.stack.delete with its
-// error, so the result is used as is. The host name is returned for
-// messages.
+// answer. It also returns the host's display name.
 func (h *Handlers) deleteStackOnAgent(ctx context.Context, hostID, name string) (agentStackDelete, string, error) {
 	if hostID == "" || hostID == "local" || h.Agents == nil {
 		return agentDeleteNone, hostID, nil
@@ -64,8 +62,8 @@ func (h *Handlers) deleteStackOnAgent(ctx context.Context, hostID, name string) 
 }
 
 // finishStackDelete removes the stack's files on the server and every row
-// that refers to it.
-// With missingOK, files that are already gone still count as deleted.
+// that refers to it. With missingOK, files that are already gone still
+// count as deleted.
 func (h *Handlers) finishStackDelete(ctx context.Context, name string, missingOK bool) error {
 	// A client that disconnects must not stop the delete half-way.
 	ctx = context.WithoutCancel(ctx)
