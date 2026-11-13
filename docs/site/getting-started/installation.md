@@ -29,8 +29,8 @@ curl -fsSL https://get.dockmesh.dev | sudo bash
 
 The script:
 
-1. Checks the OS, the architecture (`amd64` or `arm64`, from `uname -m`; anything else aborts), required tools, Docker, and whether ports 8080 and 8443 are free.
-2. Looks up the latest release on GitHub, downloads `dockmesh_<os>_<arch>.tar.gz` and verifies it against the release's `checksums.txt`. It aborts on a mismatch and when no checksum is published for the archive.
+1. Checks the OS, the architecture (`amd64` or `arm64`, from `uname -m`; anything else aborts), required tools (OpenSSL 3 among them, for the signature check), Docker, and whether ports 8080 and 8443 are free.
+2. Looks up the latest release on GitHub, downloads `dockmesh_<os>_<arch>.tar.gz`, checks the minisign signature of the release's `checksums.txt` and then the archive against `checksums.txt`. It aborts when the signature is missing or doesn't verify, on a checksum mismatch, and when no checksum is published for the archive ([Verify a release](../operations/verify-release.md)).
 3. Installs the binaries and agent assets (table below).
 4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group if that group exists. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine.
@@ -77,7 +77,8 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
-| `DOCKMESH_SKIP_CHECKSUM` | unset | `1` installs without checking the archive against `checksums.txt`. The binary runs as root, so skip the check only for a build you verified yourself. |
+| `DOCKMESH_SKIP_SIGNATURE` | unset | `1` trusts `checksums.txt` without checking its signature and prints a warning. Needed for releases before v0.6.0 (unsigned) and hosts without OpenSSL 3. |
+| `DOCKMESH_SKIP_CHECKSUM` | unset | `1` installs without checking the signature or the archive against `checksums.txt`. The binary runs as root, so skip the check only for a build you verified yourself. |
 | `NO_COLOR` | unset | Disables colored output. |
 
 ### The env file
@@ -150,13 +151,15 @@ Because `init` creates the admin itself, the server starts without setup mode an
 
 ## Manual install from a release archive
 
-Each release on [GitHub](https://github.com/dockmesh/dockmesh/releases) has `dockmesh_linux_amd64.tar.gz`, `dockmesh_linux_arm64.tar.gz`, `dockmesh_darwin_amd64.tar.gz`, `dockmesh_darwin_arm64.tar.gz` and a `checksums.txt`. Each archive contains `dockmesh`, `dmctl`, `install-agent.sh`, `LICENSE`, `README.md` and the agent: the Linux archives `dockmesh-agent-linux-amd64` and `dockmesh-agent-linux-arm64`, the macOS archives a single `dockmesh-agent`.
+Each release on [GitHub](https://github.com/dockmesh/dockmesh/releases) has `dockmesh_linux_amd64.tar.gz`, `dockmesh_linux_arm64.tar.gz`, `dockmesh_darwin_amd64.tar.gz`, `dockmesh_darwin_arm64.tar.gz` and a `checksums.txt`, from v0.6.0 on with its signature `checksums.txt.minisig`. Each archive contains `dockmesh`, `dmctl`, `install-agent.sh`, `LICENSE`, `README.md` and the agent: the Linux archives `dockmesh-agent-linux-amd64` and `dockmesh-agent-linux-arm64`, the macOS archives a single `dockmesh-agent`.
 
 ```bash
-VER=v0.5.3
+VER=v0.6.0
 ARCH=amd64   # or arm64
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/dockmesh_linux_$ARCH.tar.gz
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt
+curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt.minisig
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $VER checksums.txt" || { echo "bad signature, aborting"; exit 1; }
 sha256sum --ignore-missing -c checksums.txt
 tar -xzf dockmesh_linux_$ARCH.tar.gz
 sudo install -m 0755 dockmesh dmctl /usr/local/bin/
@@ -164,6 +167,8 @@ sudo install -D -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent
 sudo install -D -m 0755 -t /usr/local/share/dockmesh/bin dockmesh-agent-linux-amd64 dockmesh-agent-linux-arm64
 sudo dockmesh init
 ```
+
+The `minisign` line checks the signature and that its trusted comment names `$VER`. Details and the rotation key are in [Verify a release](../operations/verify-release.md).
 
 Install `grype` yourself if you want image scans ([grype installation](https://github.com/anchore/grype#installation)).
 

@@ -18,6 +18,8 @@
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
 #    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
+#    DOCKMESH_SKIP_SIGNATURE  1 to trust checksums.txt without its signature: releases
+#                             before v0.6.0, or hosts without OpenSSL 3 (default: verify)
 #    NO_COLOR                 1 to disable ANSI colors
 #
 #  What this script does:
@@ -25,7 +27,8 @@
 #    - Preflight checks every required tool (with distro-aware install hints
 #      for anything missing)
 #    - Resolves latest release via the GitHub Releases API
-#    - Downloads + sha256-verifies the release tarball
+#    - Downloads the release tarball, checks the signature of checksums.txt
+#      and the tarball's sha256
 #    - Installs the binary to $DOCKMESH_INSTALL_DIR
 #    - On upgrade: backs up the old binary, auto-restarts the systemd service
 #    - On fresh install: starts the service so you can finish setup in the web wizard
@@ -418,6 +421,63 @@ version_older() {
   [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$a" ]
 }
 
+# download_speed <bytes> <seconds>: awk gets the numbers as variables, so a
+# download that took 0.0 s doesn't make it divide by a constant zero.
+download_speed() {
+  awk -v b="$1" -v d="$2" 'BEGIN { if (d > 0) printf "%.1f MB/s", (b / 1048576) / d; else print "—" }'
+}
+
+# Minisign public keys of Dockmesh releases. The first signs every release;
+# the second stays offline and only signs the release that rotates the first.
+RELEASE_PUBKEYS="RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA"
+
+# signature_tool_ok: OpenSSL 3 verifies Ed25519 over raw input (pkeyutl
+# -rawin), which is what a legacy-mode minisign signature is. LibreSSL and
+# OpenSSL 1.1 can't, so they count as missing.
+signature_tool_ok() {
+  command -v openssl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && command -v od >/dev/null 2>&1 || return 1
+  case "$(openssl version 2>/dev/null)" in
+    "OpenSSL "[3-9].* | "OpenSSL "[1-9][0-9].*) return 0 ;;
+  esac
+  return 1
+}
+
+hex_of() { od -An -tx1 -v | tr -d ' \n'; }
+byte_count() { wc -c < "$1" | tr -d ' '; }
+
+# ed25519_verify <public key DER> <message> <raw signature>
+ed25519_verify() {
+  openssl pkeyutl -verify -pubin -keyform DER -inkey "$1" -rawin -in "$2" -sigfile "$3" >/dev/null 2>&1
+}
+
+# verify_release_signature <checksums.txt> <checksums.txt.minisig> <tag> <keys> <workdir>
+# Succeeds only if one of <keys> made the signature over the file and over the
+# trusted comment, and the trusted comment names <tag>. Prints the key id.
+verify_release_signature() {
+  local file="$1" minisig="$2" tag="$3" keys="$4" dir="$5" keyid trusted k
+  [ "$(wc -l < "$minisig" | tr -d ' ')" -le 4 ] || return 1
+  sed -n 2p "$minisig" | base64 -d > "$dir/sig.bin" 2>/dev/null || return 1
+  sed -n 4p "$minisig" | base64 -d > "$dir/global.sig" 2>/dev/null || return 1
+  trusted="$(sed -n 3p "$minisig")"
+  [ "$(byte_count "$dir/sig.bin")" = 74 ] && [ "$(byte_count "$dir/global.sig")" = 64 ] || return 1
+  [ "$(head -c 2 "$dir/sig.bin")" = "Ed" ] || return 1
+  [ "$trusted" = "trusted comment: dockmesh $tag checksums.txt" ] || return 1
+  keyid="$(head -c 10 "$dir/sig.bin" | tail -c 8 | hex_of)"
+  tail -c 64 "$dir/sig.bin" > "$dir/file.sig"
+  { cat "$dir/file.sig"; printf '%s' "${trusted#trusted comment: }"; } > "$dir/global.msg"
+  for k in $keys; do
+    printf '%s' "$k" | base64 -d > "$dir/key.bin" 2>/dev/null || continue
+    [ "$(byte_count "$dir/key.bin")" = 42 ] || continue
+    [ "$(head -c 10 "$dir/key.bin" | tail -c 8 | hex_of)" = "$keyid" ] || continue
+    { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; tail -c 32 "$dir/key.bin"; } > "$dir/key.der"
+    ed25519_verify "$dir/key.der" "$file" "$dir/file.sig" || return 1
+    ed25519_verify "$dir/key.der" "$dir/global.msg" "$dir/global.sig" || return 1
+    printf '%s\n' "$keyid" | sed -E 's/(..)(..)(..)(..)(..)(..)(..)(..)/\8\7\6\5\4\3\2\1/' | tr 'a-f' 'A-F'
+    return 0
+  done
+  return 1
+}
+
 # ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
@@ -640,6 +700,31 @@ else
     "Then re-run:" \
     "  curl -fsSL https://get.dockmesh.dev | sudo bash"
   exit 1
+fi
+
+# Release signatures are checked with OpenSSL 3. Without it the installer
+# stops here rather than downloading something it can't authenticate.
+if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" != "1" ] && [ "${DOCKMESH_SKIP_CHECKSUM:-0}" != "1" ] &&
+  [ "${DOCKMESH_SKIP_SIGNATURE:-0}" != "1" ]; then
+  if signature_tool_ok; then
+    ok "$(printf '%-16s %s' "openssl" "$(openssl version | awk '{print $2}')")"
+  else
+    fail "$(printf '%-16s %s' "openssl" "OpenSSL 3 not found")"
+    printf '\n' >&2
+    box "Cannot verify the release signature" \
+      "Dockmesh releases are signed; checking the signature needs" \
+      "OpenSSL 3 or newer ('openssl', plus 'base64' and 'od')." \
+      "" \
+      "Install on $DISTRO_NAME:" \
+      "  $(install_hint openssl)" \
+      "" \
+      "Or check the files with minisign and install them by hand:" \
+      "  https://dockmesh.dev/docs/operations/verify-release/" \
+      "" \
+      "DOCKMESH_SKIP_SIGNATURE=1 installs without the check (not" \
+      "recommended: the files are then trusted unchecked)."
+    exit 1
+  fi
 fi
 
 # Service manager preflight — systemd on Linux, launchd on macOS.
@@ -893,7 +978,7 @@ if command -v numfmt >/dev/null 2>&1; then
 else
   DL_HUMAN=$(awk "BEGIN { b=$DL_BYTES; if (b>1048576) printf \"%.1fMiB\", b/1048576; else if (b>1024) printf \"%.1fKiB\", b/1024; else printf \"%dB\", b }")
 fi
-DL_SPEED=$(awk "BEGIN { if ($DL_DUR>0) printf \"%.1f MB/s\", ($DL_BYTES / 1048576) / $DL_DUR; else print \"—\" }")
+DL_SPEED="$(download_speed "$DL_BYTES" "$DL_DUR")"
 
 ok "$DL_HUMAN in ${DL_DUR}s · $DL_SPEED"
 step_done
@@ -903,10 +988,25 @@ step_done
 # ------------------------------------------------------------------
 step 4 $TOTAL_STEPS "Verifying"
 if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
-  warn "checksum verification skipped — DOCKMESH_SKIP_CHECKSUM=1"
+  warn "checksum and signature verification skipped — DOCKMESH_SKIP_CHECKSUM=1"
 else
   if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
     die "no checksums.txt published for $DM_VERSION — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  fi
+  if [ "${DOCKMESH_SKIP_SIGNATURE:-0}" = "1" ]; then
+    warn "signature check skipped — DOCKMESH_SKIP_SIGNATURE=1; checksums.txt is not authenticated"
+  else
+    if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt.minisig" "$CHECKSUMS_URL.minisig" 2>/dev/null; then
+      if version_older "$DM_VERSION" v0.6.0; then
+        die "$DM_VERSION was released before signing existed and has no checksums.txt.minisig; install it with DOCKMESH_SKIP_SIGNATURE=1"
+      fi
+      die "$DM_VERSION has no checksums.txt.minisig, but every release from v0.6.0 on is signed: the release files may have been tampered with. Do not install it; report it to security@dockmesh.dev"
+    fi
+    mkdir -p "$TMP/sig"
+    if ! SIGNED_BY="$(verify_release_signature "$TMP/checksums.txt" "$TMP/checksums.txt.minisig" "$DM_VERSION" "$RELEASE_PUBKEYS" "$TMP/sig")"; then
+      die "the signature of checksums.txt does not verify for $DM_VERSION — refusing to install"
+    fi
+    ok "signature       key $SIGNED_BY"
   fi
   EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
   if [ -z "$EXPECTED" ]; then

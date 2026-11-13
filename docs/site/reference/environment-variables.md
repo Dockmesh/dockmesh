@@ -124,7 +124,8 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 | `DOCKMESH_NO_SUDO` | `0` | `1` runs without `sudo` |
 | `DOCKMESH_FORCE` | `0` | `1` reinstalls even if the same version is installed |
 | `DOCKMESH_NO_SCANNER` | `0` | `1` skips installing Grype |
-| `DOCKMESH_SKIP_CHECKSUM` | `0` | `1` installs without checking the release tarball against `checksums.txt`; the binary runs as root, so only for a build you verified yourself |
+| `DOCKMESH_SKIP_CHECKSUM` | `0` | `1` installs without checking the signature or the release tarball against `checksums.txt`; the binary runs as root, so only for a build you verified yourself |
+| `DOCKMESH_SKIP_SIGNATURE` | `0` | `1` trusts `checksums.txt` without checking its minisign signature and prints a warning; needed for releases before v0.6.0 and hosts without OpenSSL 3, see [Verify a release](../operations/verify-release.md) |
 | `DOCKMESH_SKIP_DOWNLOAD` | `0` | `1` uses the binary already in the install directory |
 | `DOCKMESH_NO_BOOTSTRAP` | `0` | `1` skips creating the service user, env file and service; run `dockmesh init` yourself |
 | `NO_COLOR` | unset | Any value disables colours |
