@@ -71,6 +71,51 @@ gh workflow run release-sync.yml -R Dockmesh/website -f tag=vX.Y.Z
 The trigger uses the `WEBSITE_DISPATCH_TOKEN` secret, a fine-grained token limited to
 `Dockmesh/website` with Contents read and write. It expires after a year; renew it before then.
 
+## Pre-releases
+
+A release candidate `vX.Y.Z-rc.N` is a real, installable build for testing the next release, the
+update path from one candidate to the next included, without offering it to anyone who didn't
+ask for it. Only the maintainer tags candidates; no release PR is needed and nothing in
+`.changes/` or `CHANGELOG.md` changes.
+
+```bash
+git fetch origin
+git tag v0.6.0-rc.1 origin/main && git push origin v0.6.0-rc.1
+```
+
+For a candidate the release workflow:
+
+- accepts only the form `vX.Y.Z-rc.N`; other pre-release tags such as `-beta.1` are refused,
+  and the commit must be on its release line like any other tag;
+- builds the notes and `release-manifest.json` from the fragments in `.changes/unreleased/` at
+  the tagged commit, with `"prerelease": true` in the manifest; the Highlights a minor needs
+  come with the release PR, so a candidate doesn't need them yet;
+- builds, packages and checksums every asset exactly as for a release;
+- publishes a GitHub pre-release that never becomes latest, whatever its number, and skips
+  the get.dockmesh.dev cache purge and the website sync.
+
+get.dockmesh.dev, `install.sh` without `--version` and the stable update channel therefore
+keep pointing at the latest stable release. A candidate is installed with its own installer:
+
+```bash
+curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/v0.6.0-rc.1/install.sh \
+  | sudo bash -s -- --version v0.6.0-rc.1
+```
+
+To test the update path from rc.N to rc.N+1:
+
+1. Install rc.N on a lab server as above (or upgrade the lab's current release to it) and
+   enroll the agents.
+2. In Settings › Updates set the update channel to Pre-release and save. The setting is
+   audited.
+3. Tag rc.N+1. After the workflow has published it, press Check now: the page offers rc.N+1
+   with the install command pinned to that version. Run it on the server, then update the
+   agents from the Hosts page; agents always move to the server's version.
+4. Check that a server on the Stable channel next to it is not offered the candidate.
+
+When the final `vX.Y.0` is out, installs on either channel are offered it, also those still
+running a candidate of it. Move lab servers back to Stable when testing is done.
+
 ## Patch releases from release/0.5.x
 
 While `main` moves toward the next minor, fixes for the previous one are released from its
