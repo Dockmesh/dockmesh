@@ -112,7 +112,7 @@ BANNER
 # ---------------------------------------------------------------------------
 
 # env_value FILE KEY prints the last value FILE assigns to KEY, without
-# quotes. Only the first 64 KiB are read.
+# quotes.
 env_value() {
   head -c 65536 "$1" 2>/dev/null | grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true
 }
