@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
@@ -33,8 +34,9 @@ func openStacksRoot(base string) (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
-// syncStack writes the compose+env+meta files to the agent's local
-// stacks directory so the agent can survive a server loss.
+// syncStack writes the compose and meta files to the agent's local stacks
+// directory so the agent can survive a server loss. The .env file is not
+// mirrored: it may hold secrets, and deploys bring their own copy.
 func syncStack(base string, req agents.StackSyncReq) error {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return err
@@ -51,20 +53,61 @@ func syncStack(base string, req agents.StackSyncReq) error {
 	if err := root.WriteFile(filepath.Join(req.Name, "compose.yaml"), []byte(req.Compose), 0o640); err != nil {
 		return fmt.Errorf("sync compose.yaml: %w", err)
 	}
-	envPath := filepath.Join(req.Name, ".env")
-	if req.Env != "" {
-		if err := root.WriteFile(envPath, []byte(req.Env), 0o640); err != nil {
-			return fmt.Errorf("sync .env: %w", err)
-		}
-	} else if err := root.Remove(envPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("sync remove .env: %w", err)
-	}
 	if req.Meta != "" {
 		if err := root.WriteFile(filepath.Join(req.Name, ".dockmesh.meta.json"), []byte(req.Meta), 0o640); err != nil {
 			return fmt.Errorf("sync meta: %w", err)
 		}
 	}
 	return nil
+}
+
+// hasMirroredEnv reports whether an older agent left a plaintext .env copy
+// in any stack directory.
+func hasMirroredEnv(base string) bool {
+	matches, err := filepath.Glob(filepath.Join(base, "stacks", "*", ".env"))
+	return err == nil && len(matches) > 0
+}
+
+// removeMirroredEnv deletes the .env copy an older agent left for stack
+// name, unless a container of the project bind-mounts it or a directory
+// holding it: then someone relies on that file. binds are the bind sources
+// of the deployed project and of its containers.
+func removeMirroredEnv(base, name string, binds []string) error {
+	if err := stacks.ValidateName(name); err != nil {
+		return err
+	}
+	root, err := openStacksRoot(base)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	rel := filepath.Join(name, ".env")
+	if _, err := root.Lstat(rel); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	env := filepath.Join(root.Name(), rel)
+	// Docker reports the real path of a bind source, which differs from
+	// env when the data directory lies behind a symlink.
+	realEnv, err := filepath.EvalSymlinks(env)
+	if err != nil {
+		return err
+	}
+	for _, src := range binds {
+		cands := []string{filepath.Clean(src)}
+		if real, err := filepath.EvalSymlinks(src); err == nil {
+			cands = append(cands, real)
+		}
+		for _, c := range cands {
+			for _, e := range []string{env, realEnv} {
+				if c == e || strings.HasPrefix(e, c+string(filepath.Separator)) {
+					return nil
+				}
+			}
+		}
+	}
+	return root.Remove(rel)
 }
 
 // deleteStack removes the agent's local copy of a stack's files. Bind data

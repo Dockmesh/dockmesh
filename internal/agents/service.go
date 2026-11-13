@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -89,9 +90,10 @@ type Service struct {
 	listenerOn bool
 	// lookup and dial replace the resolver and dialer of the reachability
 	// check in tests.
-	lookup func(ctx context.Context, host string) ([]string, error)
-	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
-	notifs *notifications.Service
+	lookup  func(ctx context.Context, host string) ([]string, error)
+	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
+	notifs  *notifications.Service
+	notices *notices.Service
 	// metricsSink stores agent history; nil turns it off.
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex

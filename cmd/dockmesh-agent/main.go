@@ -243,6 +243,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		DockerVersion:   dockerVersion,
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
+		MirroredEnv:     hasMirroredEnv(dataDir()),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -1147,7 +1148,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqStackDeploy:
 		var req agents.StackDeployReq
 		_ = json.Unmarshal(f.Payload, &req)
-		res, err := agentDeployStack(ctx, cs, req)
+		res, err := agentDeployStack(ctx, cli, cs, req)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqStackStop:
@@ -1233,7 +1234,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
 // shared executor against the local docker daemon.
-func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.StackDeployReq) (*compose.DeployResult, error) {
+func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Service, req agents.StackDeployReq) (*compose.DeployResult, error) {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return nil, err
 	}
@@ -1264,7 +1265,46 @@ func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.Stack
 	if req.ForcePull {
 		ctx = compose.WithForcePull(ctx)
 	}
-	return cs.DeployProject(ctx, proj)
+	res, err := cs.DeployProject(ctx, proj)
+	if err != nil {
+		return res, err
+	}
+	binds, berr := projectBinds(ctx, cli, proj)
+	if berr == nil {
+		berr = removeMirroredEnv(dataDir(), req.Name, binds)
+	}
+	if berr != nil {
+		slog.Warn("remove mirrored .env", "stack", req.Name, "err", berr)
+	}
+	return res, nil
+}
+
+// projectBinds lists the bind sources of the project and of every
+// container that carries its compose label.
+func projectBinds(ctx context.Context, cli *client.Client, proj *composetypes.Project) ([]string, error) {
+	var out []string
+	for _, svc := range proj.Services {
+		for _, v := range svc.Volumes {
+			if v.Type == composetypes.VolumeTypeBind {
+				out = append(out, v.Source)
+			}
+		}
+	}
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", compose.LabelProject+"="+proj.Name),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range list.Items {
+		for _, m := range c.Mounts {
+			if m.Type == "bind" {
+				out = append(out, m.Source)
+			}
+		}
+	}
+	return out, nil
 }
 
 // agentLoadStaged parses the staged compose file and points relative bind

@@ -399,6 +399,9 @@ type HelloPayload struct {
 	// negotiation.
 	ProtocolVersion int      `json:"protocol_version,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
+	// MirroredEnv is set by agents that no longer mirror stack .env files
+	// while plaintext copies from older versions are still on the host.
+	MirroredEnv bool `json:"mirrored_env,omitempty"`
 }
 
 // Has reports whether the agent advertised capability c.

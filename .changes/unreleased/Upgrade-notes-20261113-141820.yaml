@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Agents remove the plaintext .env copy an older agent left in a stack's directory at the next deploy of that stack, unless a container of the stack bind-mounts the file or its directory. If you run docker compose by hand on an agent host, keep your own copy of the .env file. A one-time notice per host says so
+time: 2026-11-13T14:18:20.00911039Z
+custom:
+    Audience: all
+    Id: agent-env-mirror
