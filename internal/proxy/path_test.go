@@ -22,7 +22,7 @@ func TestCheckURLPath(t *testing.T) {
 		{"double slash", "//x", ""},
 		{"trailing slash", "/ords/", ""},
 		{"dots inside a segment", "/v1.2/..x/a..", ""},
-		// Caddy 2.11.7 refuses these when it provisions the config.
+		// Caddy refuses these when it provisions the config.
 		{"invalid escape", "/%zz", "two hex digits"},
 		{"short escape", "/%2", "two hex digits"},
 		{"bare percent", "/%", "two hex digits"},
@@ -101,8 +101,6 @@ func TestCheckChangedPaths(t *testing.T) {
 	}
 }
 
-// A health path saved before the stricter check keeps loading and keeps
-// saving unchanged; only a changed value is refused.
 func TestSavedHealthPathSurvivesUpgrade(t *testing.T) {
 	ctx := context.Background()
 	s := newServiceDB(t)

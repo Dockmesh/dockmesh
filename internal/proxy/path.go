@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -21,7 +22,7 @@ func checkURLPath(p string) error {
 	case !strings.HasPrefix(p, "/"):
 		return errors.New("must start with /")
 	case len(p) > maxURLPathLen:
-		return errors.New("is longer than 256 characters")
+		return fmt.Errorf("is longer than %d characters", maxURLPathLen)
 	case strings.ContainsAny(p, " #?"):
 		return errors.New("must not contain spaces, # or ?")
 	case hasPlaceholderOrControl(p):
@@ -48,9 +49,8 @@ func isHex(c byte) bool {
 }
 
 // checkChangedPaths runs checkURLPath on every path in o that differs
-// from stored, the site's saved options (nil for a new site). A saved
-// path from before the check keeps loading as it did; the error shows
-// only once someone changes it.
+// from stored, the site's saved options (nil for a new site). A stored
+// path that fails the check keeps working until it is changed.
 func (o *SiteOptions) checkChangedPaths(stored *SiteOptions) error {
 	if hp := o.Routing.HealthPath; hp != "" && (stored == nil || hp != stored.Routing.HealthPath) {
 		path, _, _ := strings.Cut(hp, "?")
@@ -74,7 +74,7 @@ func (o *SiteOptions) checkChangedPaths(stored *SiteOptions) error {
 }
 
 // forwardAuthPath is the escaped path of a forward-auth URL, "/" when it
-// has none.
+// has none and "" when the URL doesn't parse.
 func forwardAuthPath(f *ForwardAuth) string {
 	u, err := url.Parse(f.URL)
 	if err != nil {
