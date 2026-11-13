@@ -421,6 +421,12 @@ version_older() {
   [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$a" ]
 }
 
+# download_speed <bytes> <seconds>: awk gets the numbers as variables, so a
+# download that took 0.0 s doesn't make it divide by a constant zero.
+download_speed() {
+  awk -v b="$1" -v d="$2" 'BEGIN { if (d > 0) printf "%.1f MB/s", (b / 1048576) / d; else print "—" }'
+}
+
 # Minisign public keys of Dockmesh releases. The first signs every release;
 # the second stays offline and only signs the release that rotates the first.
 RELEASE_PUBKEYS="RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA"
@@ -713,7 +719,10 @@ if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" != "1" ] && [ "${DOCKMESH_SKIP_CHECKSUM:-0}"
       "  $(install_hint openssl)" \
       "" \
       "Or check the files with minisign and install them by hand:" \
-      "  https://dockmesh.dev/docs/operations/verify-release/"
+      "  https://dockmesh.dev/docs/operations/verify-release/" \
+      "" \
+      "DOCKMESH_SKIP_SIGNATURE=1 installs without the check (not" \
+      "recommended: the files are then trusted unchecked)."
     exit 1
   fi
 fi
@@ -969,7 +978,7 @@ if command -v numfmt >/dev/null 2>&1; then
 else
   DL_HUMAN=$(awk "BEGIN { b=$DL_BYTES; if (b>1048576) printf \"%.1fMiB\", b/1048576; else if (b>1024) printf \"%.1fKiB\", b/1024; else printf \"%dB\", b }")
 fi
-DL_SPEED=$(awk "BEGIN { if ($DL_DUR>0) printf \"%.1f MB/s\", ($DL_BYTES / 1048576) / $DL_DUR; else print \"—\" }")
+DL_SPEED="$(download_speed "$DL_BYTES" "$DL_DUR")"
 
 ok "$DL_HUMAN in ${DL_DUR}s · $DL_SPEED"
 step_done
