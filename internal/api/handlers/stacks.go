@@ -814,7 +814,7 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if agentState == agentDeletePending {
-		marked, err := h.Deployments.MarkDeletePending(r.Context(), name, deployHostID)
+		marked, err := h.Deployments.MarkDeletePending(r.Context(), name, deployHostID, wantStop)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

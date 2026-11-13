@@ -50,16 +50,28 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 }
 
 // MarkDeletePending sets a stack's status to DeploymentDeletePending if it
-// is still deployed on hostID, and reports whether it did.
-func (s *DeploymentStore) MarkDeletePending(ctx context.Context, stackName, hostID string) (bool, error) {
+// is still deployed on hostID, and reports whether it did. stop records
+// whether the delete stops the containers first.
+func (s *DeploymentStore) MarkDeletePending(ctx context.Context, stackName, hostID string, stop bool) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE stack_deployments SET status = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE stack_name = ? AND host_id = ?`, DeploymentDeletePending, stackName, hostID)
+		UPDATE stack_deployments SET status = ?, delete_stop = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE stack_name = ? AND host_id = ?`, DeploymentDeletePending, stop, stackName, hostID)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// DeleteStops reports whether the pending delete of a stack stops its
+// containers first.
+func (s *DeploymentStore) DeleteStops(ctx context.Context, stackName string) (bool, error) {
+	var stop bool
+	err := s.db.QueryRowContext(ctx, `SELECT delete_stop FROM stack_deployments WHERE stack_name = ?`, stackName).Scan(&stop)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return stop, err
 }
 
 // Delete removes a deployment row. Called by DeleteStack.

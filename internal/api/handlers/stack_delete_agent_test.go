@@ -13,6 +13,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -24,6 +25,7 @@ type agentDeleteEnv struct {
 	token string
 
 	mu      sync.Mutex
+	frames  []string // every frame type the agent got
 	deletes []string
 	fail    string // the agent answers every delete with this error
 }
@@ -59,7 +61,12 @@ func (e *agentDeleteEnv) connect(t *testing.T) {
 	t.Helper()
 	ag, stop := agents.NewLoopback("agent-1", agents.HelloPayload{ProtocolVersion: agents.ProtocolVersion},
 		func(f agents.Frame, reply func(agents.Frame)) {
+			e.mu.Lock()
+			e.frames = append(e.frames, f.Type)
+			e.mu.Unlock()
 			if f.Type != agents.FrameReqStackDelete {
+				payload, _ := json.Marshal(agents.ResponseEnvelope{OK: true})
+				reply(agents.Frame{Type: agents.FrameRes, ID: f.ID, Payload: payload})
 				return
 			}
 			var req agents.StackNameReq
@@ -256,6 +263,36 @@ func TestAgentErrorText(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := agentErrorText(tt.err); got != tt.want {
 				t.Errorf("agentErrorText = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The stop the user asked for with an offline host runs on reconnect,
+// before the files go.
+func TestPendingStackDeleteStopsContainersFirst(t *testing.T) {
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"?stop=true", []string{agents.FrameReqStackStop, agents.FrameReqStackDelete}},
+		{"", []string{agents.FrameReqStackDelete}},
+	}
+	for _, tt := range tests {
+		t.Run("query "+tt.query, func(t *testing.T) {
+			e := newAgentDeleteEnv(t)
+			e.h.Hosts = host.NewRegistry(nil, e.h.Agents)
+			e.stack(t, "db")
+			if rr := e.do(http.MethodDelete, "/stacks/db"+tt.query, e.token, nil); rr.Code != http.StatusAccepted {
+				t.Fatalf("delete: %d %s", rr.Code, rr.Body)
+			}
+			e.connect(t)
+			e.h.ResumePendingStackDeletes(context.Background(), "agent-1")
+			if strings.Join(e.frames, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("agent frames = %v, want %v", e.frames, tt.want)
+			}
+			if e.mgr.DirExists("db") {
+				t.Error("stack kept")
 			}
 		})
 	}

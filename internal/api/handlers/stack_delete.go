@@ -122,6 +122,10 @@ func (h *Handlers) ResumePendingStackDeletes(ctx context.Context, hostID string)
 		if !h.deletePending(ctx, name, hostID) {
 			continue
 		}
+		if err := h.stopBeforePendingDelete(ctx, hostID, name); err != nil {
+			h.raiseStackDeleteNotice(ctx, name, h.hostDisplayName(ctx, hostID), "stop: "+agentErrorText(err))
+			continue
+		}
 		state, hostName, err := h.deleteStackOnAgent(ctx, hostID, name)
 		if err != nil {
 			h.raiseStackDeleteNotice(ctx, name, hostName, agentErrorText(err))
@@ -147,6 +151,27 @@ func (h *Handlers) ResumePendingStackDeletes(ctx context.Context, hostID string)
 		}
 		slog.Info("pending stack delete finished", "stack", name, "host", hostName)
 	}
+}
+
+// stopBeforePendingDelete stops the stack's containers on hostID when the
+// user asked for that with the delete.
+func (h *Handlers) stopBeforePendingDelete(ctx context.Context, hostID, name string) error {
+	stop, err := h.Deployments.DeleteStops(ctx, name)
+	if err != nil || !stop || h.Hosts == nil {
+		return err
+	}
+	target, err := h.Hosts.Pick(hostID)
+	if err != nil {
+		return err
+	}
+	return target.StopStack(ctx, name)
+}
+
+func (h *Handlers) hostDisplayName(ctx context.Context, hostID string) string {
+	if a, err := h.Agents.Get(ctx, hostID); err == nil {
+		return a.Name
+	}
+	return hostID
 }
 
 // deletePending reports whether name still waits for its delete on hostID;
