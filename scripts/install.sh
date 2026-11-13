@@ -211,7 +211,7 @@ env_file_trusted() {
   local f="$1" p meta uid mode owner
   [ "$(basename "$f")" = "dockmesh.env" ] || return 1
   for p in "$f" "$(dirname "$f")"; do
-    meta="$($USE_SUDO stat -c '%u %a' "$p" 2>/dev/null || $USE_SUDO stat -f '%u %Lp' "$p" 2>/dev/null)" || return 1
+    meta="$($USE_SUDO stat -L -c '%u %a' "$p" 2>/dev/null || $USE_SUDO stat -L -f '%u %Lp' "$p" 2>/dev/null)" || return 1
     uid="${meta%% *}"
     mode="${meta##* }"
     if owner="$(id -nu "$uid" 2>/dev/null)"; then
