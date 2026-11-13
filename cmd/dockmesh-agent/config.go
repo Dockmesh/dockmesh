@@ -9,8 +9,8 @@ import (
 const (
 	// defaultDataDir matches install-agent.sh.
 	defaultDataDir = "/var/lib/dockmesh-agent"
-	// legacyDataDir was the binary's default before it matched the
-	// installer; an agent enrolled there without the variable set keeps it.
+	// legacyDataDir is the default of older agent binaries; an agent
+	// enrolled only there keeps using it.
 	legacyDataDir = "/var/lib/dockmesh"
 	// agentEnvFile is the config install-agent.sh writes.
 	agentEnvFile = "/etc/dockmesh-agent/agent.env"
@@ -40,7 +40,6 @@ func loadAgentEnvFile(path string) {
 	}
 }
 
-// applyEnv sets the DOCKMESH_* KEY=VALUE lines of data that are not set.
 func applyEnv(data []byte) {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)

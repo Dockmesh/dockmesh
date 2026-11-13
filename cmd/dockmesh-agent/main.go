@@ -1459,13 +1459,6 @@ func dockerContainerCount(ctx context.Context) int32 {
 // helpers
 // -----------------------------------------------------------------------------
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
