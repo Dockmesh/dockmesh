@@ -189,9 +189,13 @@ func (e *pendingEnv) busySync(t *testing.T) *gitsource.SyncResult {
 	return res
 }
 
+// hold takes the stack lock, waiting while a deploy that just finished
+// still releases it.
 func (e *pendingEnv) hold(t *testing.T) func() {
 	t.Helper()
-	release, err := e.locks.TryLock(stacklock.HostKey("local", "web"), stacklock.OpImageUpdate)
+	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
+	defer cancel()
+	release, err := e.locks.Lock(ctx, stacklock.HostKey("local", "web"), stacklock.OpImageUpdate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,9 +256,19 @@ func TestGitCommitWhileBusyDeploysWhenStackFrees(t *testing.T) {
 	e.waitDeploy(t, `REV: "2"`)
 	e.waitNoPending(t)
 	e.noDeploy(t)
-	entries, err := stacks.NewHistoryStore(e.db).List(e.ctx, "web", 10)
-	if err != nil {
-		t.Fatal(err)
+	// The pending commit is cleared when its deploy starts; the history
+	// entry follows once the deploy is done.
+	var entries []stacks.DeployHistoryEntry
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		entries, err = stacks.NewHistoryStore(e.db).List(e.ctx, "web", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if len(entries) != 2 || entries[0].GitCommitSHA != res.NewSHA {
 		t.Fatalf("history = %+v, want the pending commit %s on top", entries, res.NewSHA)

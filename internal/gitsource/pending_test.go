@@ -59,6 +59,9 @@ func TestSyncPendingOnlyWhenHolderMissesCommit(t *testing.T) {
 				return nil, &stacklock.BusyError{Stack: "web", Operation: tt.op, Since: time.Now().Add(tt.sinceOffset)}
 			}
 			svc := New(database, nil, mgr, t.TempDir(), deploy)
+			// Without it the background retry after a busy deploy would
+			// drop the pending commit before the check below.
+			svc.SetDeployNow(deploy)
 			defer svc.Stop()
 			if _, err := svc.Configure(ctx, "web", Input{RepoURL: repoDir, AutoDeploy: true}); err != nil {
 				t.Fatal(err)
