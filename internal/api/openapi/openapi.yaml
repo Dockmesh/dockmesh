@@ -8165,7 +8165,7 @@ paths:
       operationId: users.change_password
       tags: [users]
       summary: Admin-set a user's password
-      description: Minimum 8 chars. Admin-only — regular users change their own password via a (future) self-service endpoint.
+      description: Minimum 12 characters, or the policy minimum if higher. Admin-only — regular users change their own password via a (future) self-service endpoint.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       requestBody:
@@ -8895,10 +8895,10 @@ components:
         Password-complexity + account-lockout + rotation config
         (P.12.1). All fields are optional — omitted values keep their
         current stored value on PUT. Defaults on a fresh install:
-        min_length=8, no class requirements, lockout_max_attempts=5
+        min_length=12, no class requirements, lockout_max_attempts=5
         after 15-minute window.
       properties:
-        min_length: {type: integer, minimum: 1, maximum: 256}
+        min_length: {type: integer, minimum: 12, maximum: 256}
         require_upper: {type: boolean}
         require_lower: {type: boolean}
         require_digit: {type: boolean}

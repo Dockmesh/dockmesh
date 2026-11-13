@@ -82,7 +82,7 @@
     }
   }
 
-  let canSubmit = $derived(!submitting && username.trim().length >= 2 && password.length >= 8);
+  let canSubmit = $derived(!submitting && username.trim().length >= 2 && password.length >= 12);
 </script>
 
 <div class="login-shell">

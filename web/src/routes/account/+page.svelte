@@ -84,7 +84,7 @@
   let newPassword = $state('');
   let confirmPassword = $state('');
   let passwordBusy = $state(false);
-  const minLen = $derived(policy?.min_length ?? 8);
+  const minLen = $derived(policy?.min_length ?? 12);
   const passwordStrength = $derived(scorePassword(newPassword));
   const canSubmitPassword = $derived(
     currentPassword.length > 0 &&

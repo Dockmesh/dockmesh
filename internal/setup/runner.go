@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/auth"
 )
 
 // CommitInput is the wizard's final submit payload — every field the
@@ -49,8 +50,8 @@ func (in *CommitInput) Validate() error {
 	if in.Admin.Username == "" {
 		return errors.New("admin username is required")
 	}
-	if len(in.Admin.Password) < 8 {
-		return errors.New("admin password must be at least 8 characters")
+	if len(in.Admin.Password) < auth.MinPasswordLength {
+		return fmt.Errorf("admin password must be at least %d characters", auth.MinPasswordLength)
 	}
 	if in.PublicURL == "" {
 		return errors.New("public_url is required")

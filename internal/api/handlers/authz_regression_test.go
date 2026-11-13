@@ -667,3 +667,30 @@ func TestWebSocketFilterFollowsScopeChange(t *testing.T) {
 		}
 	}
 }
+
+func TestPasswordChangeNeedsTwelveCharacters(t *testing.T) {
+	e := newAuthzEnv(t)
+	u := e.user("pat", "operator")
+	tok := e.login("pat").AccessToken
+	tests := []struct {
+		name     string
+		password string
+		want     int
+	}{
+		{name: "11 characters", password: "abcdefghijk", want: http.StatusBadRequest},
+		{name: "12 characters", password: "abcdefghijkl", want: http.StatusNoContent},
+	}
+	current := testPassword
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := e.do(http.MethodPut, "/users/"+u.ID+"/password", tok,
+				map[string]string{"current_password": current, "password": tt.password})
+			if rr.Code != tt.want {
+				t.Fatalf("status %d, want %d: %s", rr.Code, tt.want, rr.Body)
+			}
+			if rr.Code == http.StatusNoContent {
+				current = tt.password
+			}
+		})
+	}
+}

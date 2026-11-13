@@ -269,7 +269,7 @@
     return { score: s, label: ['—', m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][s] };
   }
   const strength = $derived(scorePassword(adminPassword));
-  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < 8);
+  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < 12);
 
   function generatePassword() {
     const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*';
@@ -711,7 +711,7 @@
             {/each}
             <span class="dm-num dm-dim">{strength.label}</span>
           </div>
-          <span class="hint">{m.setup_min_8()}</span>
+          <span class="hint">{m.setup_min_password()}</span>
         </div>
         <div class="dm-field">
           <label for="admin-email">{m.setup_email()} <span class="dm-dim">({m.common_optional()})</span></label>

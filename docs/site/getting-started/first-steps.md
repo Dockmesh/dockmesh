@@ -87,7 +87,7 @@ See [Containers](../features/containers.md).
 2. Optionally enter email addresses (one link each), pick a **Role**, choose what the role applies **On** (everything, a host, a host tag or a stack) and how long the link stays valid (1, 3 or 7 days).
 3. Click **Create invite links** and send each link to its recipient yourself. Dockmesh does not email them; the links are shown once.
 
-The recipient opens the link, picks a username and a password that meets the password policy (at least 8 characters by default) and is signed in with the role you chose. Links are single-use.
+The recipient opens the link, picks a username and a password that meets the password policy (at least 12 characters; an admin can raise the minimum) and is signed in with the role you chose. Links are single-use.
 
 The built-in roles are **Admin**, **Host Admin**, **Deployer**, **Operator** and **Viewer**; you can also create your own and give a user several assignments. See [Permissions](../concepts/permissions.md). For single sign-on instead of local accounts, see [SSO](../features/sso.md).
 

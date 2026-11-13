@@ -140,7 +140,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"out of scope: your role does not include this network", "out_of_scope_role_network"},
 	{"out of scope: your role does not include this volume", "out_of_scope_role_volume"},
 	{"parallelism must be >= 0", "parallelism_negative"},
-	{"password must be at least 8 chars", "password_must_be_at_least_8_chars"},
+	{"password must be at least 12 characters", "password_too_short"},
 	{"path is required", "path_is_required"},
 	{"provider not found", "provider_not_found"},
 	{"proxy not configured", "proxy_not_configured"},

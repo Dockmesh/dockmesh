@@ -576,7 +576,7 @@
   </div>
   {#snippet footer()}
     <button type="button" class="dm-btn" onclick={() => (pwOpen = false)}>{m.common_cancel()}</button>
-    <button type="button" class="dm-btn dm-btn-primary" disabled={pwBusy || pw1.length < 8} onclick={resetPassword}>{pwBusy ? m.users_resetting() : m.users_reset_password()}</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={pwBusy || pw1.length < 12} onclick={resetPassword}>{pwBusy ? m.users_resetting() : m.users_reset_password()}</button>
   {/snippet}
 </Modal>
 

@@ -236,8 +236,12 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var req changePasswordRequest
-	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 chars")
+	if err := decodeJSON(r, &req); err != nil || len(req.Password) < auth.MinPasswordLength {
+		writeError(w, http.StatusBadRequest, "password must be at least 12 characters")
+		return
+	}
+	if err := h.Auth.CheckPassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if isSelf {

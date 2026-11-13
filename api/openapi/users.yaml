@@ -285,7 +285,7 @@ paths:
       operationId: users.change_password
       tags: [users]
       summary: Admin-set a user's password
-      description: Minimum 8 chars. Admin-only — regular users change their own password via a (future) self-service endpoint.
+      description: Minimum 12 characters, or the policy minimum if higher. Admin-only — regular users change their own password via a (future) self-service endpoint.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       requestBody:
