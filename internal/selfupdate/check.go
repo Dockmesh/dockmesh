@@ -11,6 +11,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +69,35 @@ const (
 	ChannelStable     = "stable"
 	ChannelPrerelease = "prerelease"
 )
+
+// CacheKeys are the settings the update check keeps for itself. Only the
+// check writes them; the settings API neither lists nor accepts them.
+var CacheKeys = []string{
+	"update_last_check",
+	"update_latest_version",
+	"update_release_url",
+	"update_release_notes",
+	"update_published_at",
+	keyNotifiedVersion,
+	keyManifest,
+}
+
+// IsCacheKey reports whether key is one of CacheKeys.
+func IsCacheKey(key string) bool { return slices.Contains(CacheKeys, key) }
+
+// ReleaseURL returns u, re-encoded, if it is a page of a Dockmesh release on GitHub
+// and "" otherwise, so the UI never links anywhere else.
+func ReleaseURL(u string) string {
+	if strings.Contains(u, `\`) || strings.Contains(strings.ToLower(u), "%5c") {
+		return ""
+	}
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || p.Host != "github.com" || p.User != nil ||
+		!strings.HasPrefix(p.Path, "/Dockmesh/dockmesh/releases/") || path.Clean(p.Path) != strings.TrimSuffix(p.Path, "/") {
+		return ""
+	}
+	return p.String()
+}
 
 // ValidChannel reports whether v may be stored under ChannelKey; empty
 // stands for stable.
@@ -459,7 +491,7 @@ func (c *Checker) Status() Result {
 		Channel:          channel,
 		UpdateAvailable:  available,
 		IsDevBuild:       dev,
-		ReleaseURL:       c.settings.Get("update_release_url", ""),
+		ReleaseURL:       ReleaseURL(c.settings.Get("update_release_url", "")),
 		ReleaseNotes:     c.settings.Get("update_release_notes", ""),
 		PublishedAt:      publishedAt,
 		CheckedAt:        checkedAt,

@@ -201,3 +201,37 @@ func newStore(t *testing.T) *settings.Store {
 	}
 	return settings.NewStore(database)
 }
+
+func TestReleaseURL(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://github.com/Dockmesh/dockmesh/releases/tag/v0.6.0", "https://github.com/Dockmesh/dockmesh/releases/tag/v0.6.0"},
+		{"https://github.com/Dockmesh/dockmesh/releases/tag/v0.6.0-rc.1", "https://github.com/Dockmesh/dockmesh/releases/tag/v0.6.0-rc.1"},
+		{"javascript:alert(1)", ""},
+		{"http://github.com/Dockmesh/dockmesh/releases/tag/v0.6.0", ""},
+		{"https://github.com.evil.example/Dockmesh/dockmesh/releases/tag/v1", ""},
+		{"https://user@github.com/Dockmesh/dockmesh/releases/tag/v1", ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/../../evil/repo", ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/%2e%2e/%2e%2e/evil", ""},
+		{"https://github.com/evil/dockmesh/releases/tag/v1", ""},
+		{`https://github.com/Dockmesh/dockmesh/releases/x\..\..\..\..\evil\repo`, ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/x%5C..%5Cevil", ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/./tag/v1", ""},
+		{"/settings", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := ReleaseURL(tt.in); got != tt.want {
+			t.Errorf("ReleaseURL(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestStatusDropsForeignReleaseURL(t *testing.T) {
+	st := newStore(t)
+	if err := st.Set(context.Background(), "update_release_url", "javascript:alert(1)"); err != nil {
+		t.Fatal(err)
+	}
+	if got := New(st, "v0.5.3").Status().ReleaseURL; got != "" {
+		t.Errorf("release_url = %q, want empty", got)
+	}
+}
