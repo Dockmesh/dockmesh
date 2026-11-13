@@ -20,7 +20,7 @@ components:
         code: {type: string, enum: [stack_busy]}
         operation:
           type: string
-          description: What holds the stack, e.g. `deploy`, `scale`, `rolling update`, `image update`, `image rollback`, `git auto-deploy`, `auto-scaling`, `deploy of <stack>` or `maintenance`.
+          description: What holds the stack, e.g. `deploy`, `scale`, `rolling update`, `image update`, `image rollback`, `git auto-deploy`, `auto-scaling`, `dependency deploy` or `maintenance`.
         since: {type: string, format: date-time}
     HistoryReason:
       type: string

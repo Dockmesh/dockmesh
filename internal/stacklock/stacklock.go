@@ -1,7 +1,7 @@
 // Package stacklock holds one lock per stack and target, shared by every
-// operation that recreates a stack's containers (deploy, scale, rolling
-// update, image update), so two of them never fight over the same names and
-// replicas. A maintenance lock takes all stacks of a set of targets at once.
+// operation that recreates a stack's containers, so two of them never fight
+// over the same names and replicas. A maintenance lock takes all stacks of a
+// set of targets at once.
 package stacklock
 
 import (
@@ -14,13 +14,12 @@ import (
 	"time"
 )
 
-// TargetKind says what a stack is deployed to. Only hosts exist today; a
-// cluster target joins them once stacks can be deployed to a Swarm.
+// TargetKind says what a stack is deployed to.
 type TargetKind string
 
 const KindHost TargetKind = "host"
 
-// Target is the host (or later cluster) a stack runs on.
+// Target is what a stack runs on.
 type Target struct {
 	Kind TargetKind
 	ID   string
@@ -45,19 +44,18 @@ func HostKey(id, stack string) Key { return Key{Target: Host(id), Stack: stack} 
 
 // Operation names shown to whoever finds a stack busy.
 const (
-	OpDeploy       = "deploy"
-	OpScale        = "scale"
-	OpRolling      = "rolling update"
-	OpImageUpdate  = "image update"
-	OpRollback     = "image rollback"
-	OpGitDeploy    = "git auto-deploy"
-	OpAutoScale    = "auto-scaling"
-	OpMaintenance  = "maintenance"
-	opDependencyOf = "deploy of "
+	OpDeploy      = "deploy"
+	OpScale       = "scale"
+	OpRolling     = "rolling update"
+	OpImageUpdate = "image update"
+	OpRollback    = "image rollback"
+	OpGitDeploy   = "git auto-deploy"
+	OpAutoScale   = "auto-scaling"
+	OpMaintenance = "maintenance"
+	// OpDependency leaves out which stack needs the dependency: the caller
+	// who finds it busy may have no access to that stack.
+	OpDependency = "dependency deploy"
 )
-
-// DependencyOf names a deploy that runs as a dependency of stack.
-func DependencyOf(stack string) string { return opDependencyOf + stack }
 
 // ErrBusy matches every BusyError.
 var ErrBusy = errors.New("stack is busy")
@@ -160,6 +158,7 @@ func (l *Locks) Maintenance(ctx context.Context, targets []Target, op string, ti
 	if l == nil {
 		return noop, nil
 	}
+	targets = slices.Clone(targets)
 	l.mu.Lock()
 	for _, t := range targets {
 		if h, ok := l.maint[t]; ok {

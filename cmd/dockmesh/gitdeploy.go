@@ -32,12 +32,32 @@ type gitDeployer struct {
 
 // gitDeployLockWait is how long a git deploy waits for another operation on
 // the stack to finish. The sync has already recorded the commit, so giving
-// up at once would leave it undeployed until the next push.
-const gitDeployLockWait = 10 * time.Minute
+// up at once would leave it undeployed until the next push; the wait stays
+// short because it delays the polling of every other git stack and eats into
+// the webhook sync's time budget.
+const gitDeployLockWait = 2 * time.Minute
 
 // deploy runs on the stack's deployment host, or the host it was created
 // for, with the same globals and default override as a manual deploy.
 func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error) {
+	hostID, err := g.hostOf(ctx, stackName)
+	if err != nil {
+		return nil, err
+	}
+	lockCtx, cancel := context.WithTimeout(ctx, gitDeployLockWait)
+	release, err := g.locks.Lock(lockCtx, stacklock.HostKey(hostID, stackName), stacklock.OpGitDeploy)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	// Files and host are read under the lock, so a rollback or deploy that
+	// ran while this waited is not undone with a stale snapshot.
+	if now, err := g.hostOf(ctx, stackName); err != nil {
+		return nil, err
+	} else if now != hostID {
+		return nil, fmt.Errorf("stack %s moved to host %s while the deploy waited", stackName, now)
+	}
 	if err := g.stacks.CheckGitDeploy(ctx, stackName); err != nil {
 		return nil, err
 	}
@@ -56,20 +76,6 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	hostID, err := g.deployments.HostOf(ctx, stackName)
-	if err != nil {
-		return nil, err
-	}
-	if hostID == "" {
-		hostID = "local"
-	}
-	lockCtx, cancel := context.WithTimeout(ctx, gitDeployLockWait)
-	release, err := g.locks.Lock(lockCtx, stacklock.HostKey(hostID, stackName), stacklock.OpGitDeploy)
-	cancel()
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 	gitSHA := ""
 	if g.commit != nil {
 		gitSHA = g.commit(ctx, stackName)
@@ -123,6 +129,17 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 		return nil, deployErr
 	}
 	return res, nil
+}
+
+func (g *gitDeployer) hostOf(ctx context.Context, stackName string) (string, error) {
+	hostID, err := g.deployments.HostOf(ctx, stackName)
+	if err != nil {
+		return "", err
+	}
+	if hostID == "" {
+		hostID = "local"
+	}
+	return hostID, nil
 }
 
 func (g *gitDeployer) notify(ctx context.Context, stackName, hostID, gitSHA string, res *compose.DeployResult, deployErr error) {

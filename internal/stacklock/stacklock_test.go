@@ -76,15 +76,17 @@ func TestConcurrentOneWins(t *testing.T) {
 	l := New()
 	key := HostKey("local", "web")
 	var wins atomic.Int32
-	var wg sync.WaitGroup
+	var wg, tried sync.WaitGroup
 	start := make(chan struct{})
 	hold := make(chan struct{})
 	for _, op := range []string{OpDeploy, OpImageUpdate, OpScale, OpRolling} {
 		wg.Add(1)
+		tried.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
 			rel, err := l.TryLock(key, op)
+			tried.Done()
 			if err != nil {
 				if !errors.Is(err, ErrBusy) {
 					t.Errorf("%s: %v", op, err)
@@ -97,7 +99,7 @@ func TestConcurrentOneWins(t *testing.T) {
 		}()
 	}
 	close(start)
-	time.Sleep(50 * time.Millisecond)
+	tried.Wait()
 	close(hold)
 	wg.Wait()
 	if wins.Load() != 1 {
@@ -198,11 +200,13 @@ func TestMaintenance(t *testing.T) {
 		maintRelease = rel
 		got <- err
 	}()
-	time.Sleep(30 * time.Millisecond)
-
-	if _, err := l.TryLock(HostKey("local", "db"), OpDeploy); !errors.Is(err, ErrBusy) {
-		t.Fatalf("new lock during pending maintenance: %v, want busy", err)
-	}
+	waitFor(t, func() bool {
+		rel, err := l.TryLock(HostKey("local", "db"), OpDeploy)
+		if err == nil {
+			rel()
+		}
+		return errors.Is(err, ErrBusy)
+	})
 	rel, err := l.TryLock(HostKey("agent-1", "db"), OpDeploy)
 	if err != nil {
 		t.Fatalf("other host blocked by maintenance: %v", err)
@@ -252,4 +256,15 @@ func TestMaintenanceTimeout(t *testing.T) {
 		t.Fatalf("timed-out maintenance still blocks: %v", err)
 	}
 	rel()
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met within 5s")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
