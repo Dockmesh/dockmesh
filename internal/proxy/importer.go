@@ -336,7 +336,9 @@ func finishSite(site *ImportSite) {
 	var err error
 	if err = checkRouteHost(site.Host); err == nil {
 		if err = checkUpstream(site.Upstream); err == nil {
-			err = site.Options.validate(site.Host, site.TLSMode)
+			if err = site.Options.validate(site.Host, site.TLSMode); err == nil {
+				err = site.Options.checkChangedPaths(nil)
+			}
 		}
 	}
 	switch {
