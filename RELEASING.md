@@ -82,12 +82,17 @@ trusted comment is `dockmesh <tag> checksums.txt`, so a signature is valid for o
 | `01A0941E358E1C5A` (release key) | Encrypted secret key and password as `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` in the GitHub environment `release` (deployments from `v*` tags only), plus the maintainer's offline backup | Signs every release and release candidate |
 | `73BBC751F8715F03` (rotation key) | The maintainer only, offline. Never in CI | Signs the one release that replaces the release key |
 
+The `release` environment should require a reviewer and `v*` tags should be limited to the
+maintainer by a tag ruleset: the workflow runs from the tagged commit, so whoever can push a
+`v*` tag can otherwise run a workflow that reads both secrets. The secrets are passed only to
+the signing step's `env:`.
+
 `scripts/relsign` signs with the key from the environment and verifies against the built-in
 keys:
 
 ```bash
-MINISIGN_SECRET_KEY="$(cat release.key)" MINISIGN_PASSWORD=... \
-  go run ./scripts/relsign sign -tag vX.Y.Z -in checksums.txt -out checksums.txt.minisig
+read -rs MINISIGN_PASSWORD && export MINISIGN_PASSWORD
+MINISIGN_SECRET_KEY="$(cat release.key)" go run ./scripts/relsign sign -tag vX.Y.Z -in checksums.txt -out checksums.txt.minisig
 go run ./scripts/relsign verify -tag vX.Y.Z -in checksums.txt -sig checksums.txt.minisig -release-key
 ```
 
@@ -123,8 +128,11 @@ trusts it.
    nothing can sign with the leaked key from CI.
 2. Rotate as above, right away, and publish a security advisory with the rotation release: the
    leaked key ID, since when it is not trusted, and that installs must move to the rotation
-   release. Until they do, installs that only know the leaked key rely on GitHub's TLS and
-   repository access again, not on the signature.
+   release. Keys are never revoked in place: until an install moves past the rotation release,
+   it and every `install.sh` attached to an older release keep accepting the leaked key for any
+   tag, and rely on GitHub's TLS and repository access again, not on the signature. The
+   verifiers also accept the rotation key on any release; that it signs only rotations is a
+   rule for the maintainer, not something the code checks.
 3. If the rotation key leaks, do the same the other way round: a release signed with the
    release key replaces `RotationKey`. If both leak, publish the new keys in `SECURITY.md` and the
    advisory; `install.sh` from the new release trusts them and the one-liner upgrades every

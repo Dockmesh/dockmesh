@@ -159,7 +159,7 @@ ARCH=amd64   # or arm64
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/dockmesh_linux_$ARCH.tar.gz
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt
 curl -fLO https://github.com/dockmesh/dockmesh/releases/download/$VER/checksums.txt.minisig
-minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $VER checksums.txt" || { echo "bad signature, aborting"; exit 1; }
 sha256sum --ignore-missing -c checksums.txt
 tar -xzf dockmesh_linux_$ARCH.tar.gz
 sudo install -m 0755 dockmesh dmctl /usr/local/bin/
@@ -168,7 +168,7 @@ sudo install -D -m 0755 -t /usr/local/share/dockmesh/bin dockmesh-agent-linux-am
 sudo dockmesh init
 ```
 
-The `minisign` line checks the signature; its trusted comment must name `$VER`. Details and the rotation key are in [Verify a release](../operations/verify-release.md).
+The `minisign` line checks the signature and that its trusted comment names `$VER`. Details and the rotation key are in [Verify a release](../operations/verify-release.md).
 
 Install `grype` yourself if you want image scans ([grype installation](https://github.com/anchore/grype#installation)).
 

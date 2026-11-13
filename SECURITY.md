@@ -30,10 +30,11 @@ RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA
 ```
 
 `01A0941E358E1C5A` signs every release. `73BBC751F8715F03` is kept offline and only signs the
-release that replaces the first key; such a release says so in its notes. Check a download with
+release that replaces the first key; such a release says so in its notes. Check a download of release `$TAG` with
 
 ```bash
-minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 \
+  | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt"
 sha256sum -c --ignore-missing checksums.txt
 ```
 

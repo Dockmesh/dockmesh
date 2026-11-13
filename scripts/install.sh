@@ -712,9 +712,8 @@ if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" != "1" ] && [ "${DOCKMESH_SKIP_CHECKSUM:-0}"
       "Install on $DISTRO_NAME:" \
       "  $(install_hint openssl)" \
       "" \
-      "Or verify checksums.txt yourself with minisign (see" \
-      "https://dockmesh.dev/docs/operations/verify-release/) and re-run" \
-      "with DOCKMESH_SKIP_SIGNATURE=1."
+      "Or check the files with minisign and install them by hand:" \
+      "  https://dockmesh.dev/docs/operations/verify-release/"
     exit 1
   fi
 fi
@@ -989,7 +988,10 @@ else
     warn "signature check skipped — DOCKMESH_SKIP_SIGNATURE=1; checksums.txt is not authenticated"
   else
     if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt.minisig" "$CHECKSUMS_URL.minisig" 2>/dev/null; then
-      die "$DM_VERSION has no signature (checksums.txt.minisig). Releases before v0.6.0 are unsigned; install one with DOCKMESH_SKIP_SIGNATURE=1"
+      if version_older "$DM_VERSION" v0.6.0; then
+        die "$DM_VERSION was released before signing existed and has no checksums.txt.minisig; install it with DOCKMESH_SKIP_SIGNATURE=1"
+      fi
+      die "$DM_VERSION has no checksums.txt.minisig, but every release from v0.6.0 on is signed: the release files may have been tampered with. Do not install it; report it to security@dockmesh.dev"
     fi
     mkdir -p "$TMP/sig"
     if ! SIGNED_BY="$(verify_release_signature "$TMP/checksums.txt" "$TMP/checksums.txt.minisig" "$DM_VERSION" "$RELEASE_PUBKEYS" "$TMP/sig")"; then

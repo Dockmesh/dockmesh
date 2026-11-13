@@ -1,6 +1,6 @@
 // Command relsign signs and verifies the checksums.txt of a release with
 // minisign. The release workflow signs with the key from the environment and
-// then verifies the result against the keys embedded in Dockmesh.
+// then verifies the result against the keys in internal/releasesig.
 //
 //	relsign sign -tag v0.6.0 -in checksums.txt -out checksums.txt.minisig
 //	relsign verify -tag v0.6.0 -in checksums.txt -sig checksums.txt.minisig [-release-key | -key-id 01A0941E358E1C5A] [-pubkey <base64>]...

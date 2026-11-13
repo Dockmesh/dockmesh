@@ -80,7 +80,7 @@ ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt.minisig"
-minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 || { echo "bad signature, aborting"; exit 1; }
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt" || { echo "bad signature, aborting"; exit 1; }
 sha256sum -c --ignore-missing checksums.txt || { echo "checksum mismatch, aborting"; exit 1; }
 tar -xzf "dockmesh_linux_$ARCH.tar.gz"
 sudo cp -a /usr/local/bin/dockmesh /usr/local/bin/dockmesh.bak
@@ -177,8 +177,8 @@ ARCH=amd64   # or arm64
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_$ARCH.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt.minisig"
-minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1
-sha256sum -c --ignore-missing checksums.txt
+minisign -Vm checksums.txt -P RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1 | grep -Fqx "Trusted comment: dockmesh $TAG checksums.txt" || { echo "bad signature, aborting"; exit 1; }
+sha256sum -c --ignore-missing checksums.txt || { echo "checksum mismatch, aborting"; exit 1; }
 tar -xzf "dockmesh_linux_$ARCH.tar.gz" "dockmesh-agent-linux-$ARCH"
 sudo install -m 0755 -o dockmesh-agent -g dockmesh-agent "dockmesh-agent-linux-$ARCH" /var/lib/dockmesh-agent/bin/dockmesh-agent
 sudo systemctl restart dockmesh-agent

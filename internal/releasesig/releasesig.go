@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"aead.dev/minisign"
@@ -31,11 +32,14 @@ const (
 	RotationKey = "RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA"
 )
 
+var tagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
 var (
 	ErrSignature = errors.New("release signature does not verify")
 	ErrTag       = errors.New("release signature is for a different release")
 	ErrChecksum  = errors.New("artifact checksum does not match checksums.txt")
 	ErrNotListed = errors.New("artifact is not listed in checksums.txt")
+	ErrDuplicate = errors.New("artifact is listed more than once in checksums.txt")
 )
 
 // ReleaseKeyID returns the hex key ID of ReleaseKey as minisign prints it.
@@ -82,8 +86,12 @@ func New(keys ...string) (*Verifier, error) {
 
 // VerifyChecksums checks that sig is a valid signature of checksums by one of
 // the verifier's keys and that its trusted comment names tag. It returns the
-// ID of the key that signed.
+// ID of the key that signed. An older release verifies as well as a newer
+// one, so callers refuse tags that are not newer than what is installed.
 func (v *Verifier) VerifyChecksums(checksums, sig []byte, tag string) (uint64, error) {
+	if !tagPattern.MatchString(tag) {
+		return 0, fmt.Errorf("%w: %q is not a release tag", ErrTag, tag)
+	}
 	var s minisign.Signature
 	if err := s.UnmarshalText(sig); err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrSignature, err)
@@ -142,7 +150,7 @@ func Checksum(checksums []byte, name string) ([]byte, error) {
 			return nil, fmt.Errorf("releasesig: malformed checksum for %s", name)
 		}
 		if found != nil {
-			return nil, fmt.Errorf("releasesig: %s is listed twice", name)
+			return nil, fmt.Errorf("%w: %s", ErrDuplicate, name)
 		}
 		found = b
 	}

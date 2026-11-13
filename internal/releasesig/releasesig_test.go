@@ -92,6 +92,7 @@ func TestVerifyChecksums(t *testing.T) {
 		{"unknown key", checksums, sign(stranger, checksums, TrustedComment("v0.6.0")), "v0.6.0", 0, ErrSignature},
 		{"garbage", checksums, []byte("not a signature"), "v0.6.0", 0, ErrSignature},
 		{"empty", checksums, nil, "v0.6.0", 0, ErrSignature},
+		{"tag with a space", checksums, sign(release, checksums, TrustedComment("v0.6.0 x")), "v0.6.0 x", 0, ErrTag},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,24 +131,17 @@ func TestVerifyArtifact(t *testing.T) {
 		{"tampered artifact", checksums, sig, name, []byte("binarY"), ErrChecksum},
 		{"not listed", checksums, sig, "dockmesh_linux_arm64.tar.gz", artifact, ErrNotListed},
 		{"bad signature", checksums, sig[:len(sig)-10], name, artifact, ErrSignature},
-		{"listed twice", dup, minisign.SignWithComments(key.priv, dup, TrustedComment("v0.6.0"), ""), name, artifact, errAny},
+		{"listed twice", dup, minisign.SignWithComments(key.priv, dup, TrustedComment("v0.6.0"), ""), name, artifact, ErrDuplicate},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := v.VerifyArtifact(tt.checksums, tt.sig, "v0.6.0", tt.file, bytes.NewReader(tt.content))
-			switch {
-			case errors.Is(tt.wantErr, errAny):
-				if err == nil {
-					t.Fatal("want an error")
-				}
-			case !errors.Is(err, tt.wantErr):
+			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}
 }
-
-var errAny = errors.New("any error")
 
 func TestChecksum(t *testing.T) {
 	sum := strings.Repeat("ab", 32)
