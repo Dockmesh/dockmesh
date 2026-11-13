@@ -333,7 +333,6 @@ func TestReleaseRequiresHighlightsForMinor(t *testing.T) {
 	}{
 		{"0.4.0", 3, ""},
 		{"0.4.0", 0, "has 0"},
-		{"0.4.0-rc.1", 1, "has 1"},
 		{"0.3.4", 0, ""},
 	}
 	for _, tt := range tests {
@@ -429,5 +428,108 @@ func TestCheckCommand(t *testing.T) {
 				t.Errorf("err = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func writeFragments(t *testing.T, dir string, frags map[string]string) string {
+	t.Helper()
+	fd := filepath.Join(dir, "unreleased")
+	if err := os.MkdirAll(fd, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range frags {
+		writeFile(t, fd, name, content)
+	}
+	return fd
+}
+
+func TestReleasePreRelease(t *testing.T) {
+	dir := t.TempDir()
+	cl := writeFile(t, dir, "CHANGELOG.md", sample)
+	fd := writeFragments(t, dir, map[string]string{
+		"Fixed-20261101-100000.yaml":         "kind: Fixed\nbody: A fix.\n",
+		"Changed-20261101-090000.yaml":       "kind: Changed\nbody: First change.\n",
+		"Changed-20261102-090000.yaml":       "kind: Changed\nbody: Second change.\n",
+		"Upgrade-notes-20261101-090000.yaml": "kind: Upgrade notes\nbody: Re-save the targets\ncustom:\n    Audience: admins\n    Id: resave\n",
+		"header.md":                          "not a fragment\n",
+	})
+	notes, body, manifest := filepath.Join(dir, "n.md"), filepath.Join(dir, "b.md"), filepath.Join(dir, "m.json")
+	// A minor's candidate needs no highlights and no CHANGELOG.md section.
+	args := []string{"release", "-changelog", cl, "-fragments", fd, "-version", "v0.6.0-rc.1", "-notes", notes, "-body", body, "-manifest", manifest}
+	if err := run(args, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m changelog.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Version != "0.6.0-rc.1" || !m.Prerelease || m.Severity != "normal" || m.Summary != preReleaseSummary {
+		t.Errorf("manifest = %+v", m)
+	}
+	if want := []string{"First change.", "Second change."}; !reflect.DeepEqual(m.Changes.Changed, want) {
+		t.Errorf("changed = %v, want %v", m.Changes.Changed, want)
+	}
+	if len(m.Changes.Fixed) != 1 || len(m.Actions) != 1 || m.Actions[0].ID != "resave" || m.Actions[0].Audience != "admins" {
+		t.Errorf("fixed = %v, actions = %+v", m.Changes.Fixed, m.Actions)
+	}
+	rb, err := os.ReadFile(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(rb)
+	for _, want := range []string{
+		"curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/v0.6.0-rc.1/install.sh | sudo bash -s -- --version v0.6.0-rc.1",
+		"is 0.6.0-rc.1",
+		"### Changed\n\n- First change.\n- Second change.\n",
+		"- **Admins:** Re-save the targets\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("body lacks %q\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"curl -fsSL https://get.dockmesh.dev |", "CHANGELOG.md#"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("body contains %q\n%s", bad, got)
+		}
+	}
+}
+
+func TestReleasePreReleaseErrors(t *testing.T) {
+	dir := t.TempDir()
+	cl := writeFile(t, dir, "CHANGELOG.md", sample)
+	full := writeFragments(t, dir, map[string]string{"Fixed-1.yaml": "kind: Fixed\nbody: A fix.\n"})
+	empty := filepath.Join(dir, "none")
+	tests := []struct {
+		name, version, frags, wantErr string
+	}{
+		{"other pre-release kind", "v0.6.0-beta.1", full, "not a release candidate tag"},
+		{"rc without number", "v0.6.0-rc", full, "not a release candidate tag"},
+		{"no fragments", "v0.6.0-rc.1", empty, "no entries"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := run([]string{"release", "-changelog", cl, "-fragments", tt.frags, "-version", tt.version, "-notes", filepath.Join(dir, "n"), "-manifest", filepath.Join(dir, "m")}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestStableManifestIsNotPrerelease(t *testing.T) {
+	sections, err := changelog.Parse(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ManifestJSON(changelog.Find(sections, "0.3.4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"prerelease": false`) {
+		t.Errorf("manifest = %s", b)
 	}
 }

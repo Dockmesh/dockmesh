@@ -3,7 +3,7 @@
 // of pull requests. The changelog syntax is documented at the top of
 // CHANGELOG.md, which changie generates from .changes/.
 //
-//	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] -notes notes.md [-body body.md] -manifest release-manifest.json
+//	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] [-fragments .changes/unreleased] -notes notes.md [-body body.md] -manifest release-manifest.json
 //	relmanifest check -base base-CHANGELOG.md -changed changed.txt [-changelog CHANGELOG.md] [-fragments .changes/unreleased]
 //	relmanifest latest -version v0.5.4 -published published-tags.txt
 package main
@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/changelog"
 	"gopkg.in/yaml.v3"
@@ -53,25 +54,37 @@ func runRelease(args []string, stdout io.Writer) error {
 	notesOut := fl.String("notes", "", "write release notes (Markdown) here")
 	bodyOut := fl.String("body", "", "write the short release body (Markdown) here")
 	manifestOut := fl.String("manifest", "", "write release-manifest.json here")
+	fragDir := fl.String("fragments", ".changes/unreleased", "changie fragments a pre-release is built from")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
 	if *version == "" || *notesOut == "" || *manifestOut == "" {
 		return errors.New("release: -version, -notes and -manifest are required")
 	}
-	sections, err := parseFile(*changelogPath)
-	if err != nil {
-		return err
-	}
-	s := changelog.Find(sections, *version)
-	if s == nil || s.Version == changelog.Unreleased {
-		return fmt.Errorf("%s has no section for %s; rename [Unreleased] to the release version before tagging", *changelogPath, *version)
+	var s *changelog.Section
+	if strings.Contains(*version, "-") {
+		var err error
+		if s, err = preReleaseSection(*fragDir, *version, time.Now()); err != nil {
+			return err
+		}
+	} else {
+		sections, err := parseFile(*changelogPath)
+		if err != nil {
+			return err
+		}
+		s = changelog.Find(sections, *version)
+		if s == nil || s.Version == changelog.Unreleased {
+			return fmt.Errorf("%s has no section for %s; rename [Unreleased] to the release version before tagging", *changelogPath, *version)
+		}
 	}
 	if s.Empty() {
 		return fmt.Errorf("section [%s] has no entries", s.Version)
 	}
-	if err := s.CheckHighlights(); err != nil {
-		return err
+	// A candidate comes before the release PR that adds the highlights.
+	if !s.Prerelease() {
+		if err := s.CheckHighlights(); err != nil {
+			return err
+		}
 	}
 	manifest, err := ManifestJSON(s)
 	if err != nil {
@@ -178,9 +191,22 @@ func (f fragment) bullet(body string) (string, error) {
 // them together to catch clashes such as duplicate upgrade ids. It returns
 // the file names.
 func checkFragments(dir string) (map[string]bool, error) {
+	names, byKind, err := loadFragments(dir)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := changelog.Parse(renderSection("## [Unreleased]", byKind)); err != nil {
+		return nil, fmt.Errorf("fragments: %w", err)
+	}
+	return names, nil
+}
+
+// loadFragments reads the fragments in dir and returns their file names and
+// their bullets by kind, in file name order.
+func loadFragments(dir string) (map[string]bool, map[string][]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+		return nil, nil, err
 	}
 	names := map[string]bool{}
 	byKind := map[string][]string{}
@@ -190,43 +216,77 @@ func checkFragments(dir string) (map[string]bool, error) {
 		}
 		b, err := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // repository file
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var f fragment
 		if err := yaml.Unmarshal(b, &f); err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			return nil, nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		body := strings.TrimSpace(f.Body)
 		switch {
 		case !changelog.IsSubsection(f.Kind):
-			return nil, fmt.Errorf("%s: unknown kind %q", e.Name(), f.Kind)
+			return nil, nil, fmt.Errorf("%s: unknown kind %q", e.Name(), f.Kind)
 		case body == "":
-			return nil, fmt.Errorf("%s: body is empty", e.Name())
+			return nil, nil, fmt.Errorf("%s: body is empty", e.Name())
 		case strings.ContainsAny(body, "\r\n"):
-			return nil, fmt.Errorf("%s: body must be one line", e.Name())
+			return nil, nil, fmt.Errorf("%s: body must be one line", e.Name())
 		}
 		line, err := f.bullet(body)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			return nil, nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		if _, err := changelog.Parse("## [Unreleased]\n### " + f.Kind + "\n- " + line + "\n"); err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			return nil, nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		names[e.Name()] = true
 		byKind[f.Kind] = append(byKind[f.Kind], line)
 	}
-	var all strings.Builder
-	all.WriteString("## [Unreleased]\n")
-	for kind, bodies := range byKind {
-		all.WriteString("### " + kind + "\n")
-		for _, b := range bodies {
-			all.WriteString("- " + b + "\n")
+	return names, byKind, nil
+}
+
+// kindOrder is the subsection order changie writes.
+var kindOrder = []string{"Highlights", "Added", "Changed", "Fixed", "Security", "Upgrade notes"}
+
+// renderSection writes a changelog section with header and the bullets of
+// byKind, the way changie would batch them.
+func renderSection(header string, byKind map[string][]string) string {
+	var b strings.Builder
+	b.WriteString(header + "\n")
+	for _, kind := range kindOrder {
+		if len(byKind[kind]) == 0 {
+			continue
+		}
+		b.WriteString("\n### " + kind + "\n\n")
+		for _, line := range byKind[kind] {
+			b.WriteString("- " + line + "\n")
 		}
 	}
-	if _, err := changelog.Parse(all.String()); err != nil {
+	return b.String()
+}
+
+// preReleaseTag matches the release candidates the release workflow builds.
+var preReleaseTag = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$`)
+
+// preReleaseSummary opens the notes of every release candidate.
+const preReleaseSummary = "This is a pre-release for testing the next version. Don't install it on a production server; it is offered only to installations on the pre-release update channel."
+
+// preReleaseSection builds a release candidate's section from the fragments
+// that are not released yet: a candidate gets no section in CHANGELOG.md,
+// the final release does.
+func preReleaseSection(fragDir, version string, now time.Time) (*changelog.Section, error) {
+	if !preReleaseTag.MatchString(version) {
+		return nil, fmt.Errorf("%s is not a release candidate tag (want vX.Y.Z-rc.N)", version)
+	}
+	_, byKind, err := loadFragments(fragDir)
+	if err != nil {
+		return nil, err
+	}
+	header := fmt.Sprintf("## [%s] - %s [normal]\n\n%s", strings.TrimPrefix(version, "v"), now.UTC().Format("2006-01-02"), preReleaseSummary)
+	sections, err := changelog.Parse(renderSection(header, byKind))
+	if err != nil {
 		return nil, fmt.Errorf("fragments: %w", err)
 	}
-	return names, nil
+	return sections[0], nil
 }
 
 // changedFragments counts the paths listed in the file at path that name
