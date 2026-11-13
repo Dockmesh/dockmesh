@@ -43,6 +43,10 @@
 # deploys from v* tags: a manual re-run must be started from the tag
 # ("Use workflow from"), not from a branch.
 #
+# Signed output is built fresh: no job restores a Go, npm or actions/cache
+# cache, and dependencies come from go.sum and web/package-lock.json
+# (`go mod download`, `npm ci`). CI workflows keep their caches.
+#
 # Windows server binaries are NOT shipped yet — dmctl for Windows is
 # built by the Makefile but distributed via a separate channel.
 name: release
@@ -119,6 +123,10 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: download Go modules
+        run: go mod download
 
       - name: render notes + manifest
         env:
@@ -170,13 +178,15 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
 
       - name: setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: download Go modules
+        run: go mod download
 
       - name: check Go toolchain
         run: |
@@ -274,6 +284,9 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: download Go modules
+        run: go mod download
+
       # Built before any secret is in the environment.
       - name: build relsign
         run: go build -trimpath -o "$RUNNER_TEMP/relsign" ./scripts/relsign
@@ -344,6 +357,10 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+
+      - name: download Go modules
+        run: go mod download
 
       - name: check signature
         env:
