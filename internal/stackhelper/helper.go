@@ -104,6 +104,18 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 	// A direct delete that fails half-way would already have removed
 	// compose.yaml, so a tree the service cannot delete goes to the helper
 	// untouched; a failing helper then leaves the stack as it was.
+	name := filepath.Base(dir)
+	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return relErr(base, err)
+		}
+		if m, err := mountBelow(real); err != nil {
+			return err
+		} else if m != "" {
+			return fmt.Errorf("remove %s: %s is a mount point; unmount it first", name, m)
+		}
+	}
 	err := blocked(dir)
 	if err == nil {
 		err = os.RemoveAll(dir)
@@ -112,26 +124,20 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 		}
 	}
 	if !errors.Is(err, fs.ErrPermission) {
-		return err
+		return relErr(base, err)
 	}
 	if h == nil || h.cli == nil {
-		return fmt.Errorf("%w (files owned by another user need Docker to remove them)", err)
+		return fmt.Errorf("%w (files owned by another user need Docker to remove them)", relErr(base, err))
 	}
 	ctx, cancel := context.WithTimeout(ctx, removeTimeout)
 	defer cancel()
-	name := filepath.Base(dir)
 	// Pulled first, so the gap between the check and the mount stays short.
 	if err := h.ensureImage(ctx); err != nil {
 		return err
 	}
 	t, err := resolve(base, dir)
 	if err != nil {
-		return err
-	}
-	if m, err := mountBelow(t.path); err != nil {
-		return err
-	} else if m != "" {
-		return fmt.Errorf("remove %s: %s is a mount point; unmount it first", name, m)
+		return relErr(base, err)
 	}
 	if herr := h.empty(ctx, t); herr != nil {
 		return fmt.Errorf("remove %s: %w%s", name, herr, leftovers(dir))
@@ -147,6 +153,20 @@ func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
 		return fmt.Errorf("remove %s: directory still exists%s", name, leftovers(dir))
 	}
 	return nil
+}
+
+// relErr names the path of a *fs.PathError relative to base, so an error
+// shown to a user does not reveal where the stacks directory lives.
+func relErr(base string, err error) error {
+	var pe *fs.PathError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	rel, rerr := filepath.Rel(base, pe.Path)
+	if rerr != nil || strings.HasPrefix(rel, "..") {
+		rel = filepath.Base(pe.Path)
+	}
+	return &fs.PathError{Op: pe.Op, Path: rel, Err: pe.Err}
 }
 
 // blocked walks dir and returns a permission error for the first directory

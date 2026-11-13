@@ -211,6 +211,9 @@ func TestRemoveAllWithoutDocker(t *testing.T) {
 	if !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "need Docker") {
 		t.Fatalf("err = %v", err)
 	}
+	if strings.Contains(err.Error(), base) {
+		t.Errorf("error reveals the stacks directory: %v", err)
+	}
 }
 
 func TestResolve(t *testing.T) {

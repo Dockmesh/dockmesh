@@ -71,9 +71,17 @@ func unescapeMount(s string) string {
 
 // canDeleteIn reports a permission error when entries of dir cannot be
 // unlinked: that needs write and search access to dir.
+// In a sticky directory only the owner of an entry may unlink it.
 func canDeleteIn(dir string) error {
 	if err := unix.Access(dir, unix.W_OK|unix.X_OK); err != nil {
 		return &fs.PathError{Op: "access", Path: dir, Err: err}
+	}
+	var st unix.Stat_t
+	if err := unix.Lstat(dir, &st); err != nil {
+		return &fs.PathError{Op: "lstat", Path: dir, Err: err}
+	}
+	if st.Mode&unix.S_ISVTX != 0 {
+		return &fs.PathError{Op: "access", Path: dir, Err: unix.EACCES}
 	}
 	return nil
 }
