@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -87,12 +88,15 @@ func IsCacheKey(key string) bool { return slices.Contains(CacheKeys, key) }
 // ReleaseURL returns u if it is a page of a Dockmesh release on GitHub
 // and "" otherwise, so the UI never links anywhere else.
 func ReleaseURL(u string) string {
-	p, err := url.Parse(u)
-	if err != nil || p.Scheme != "https" || p.Host != "github.com" || p.User != nil ||
-		!strings.HasPrefix(p.Path, "/Dockmesh/dockmesh/releases/") || strings.Contains(p.Path, "/..") {
+	if strings.ContainsAny(u, `\`) || strings.Contains(strings.ToLower(u), "%5c") {
 		return ""
 	}
-	return u
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || p.Host != "github.com" || p.User != nil ||
+		!strings.HasPrefix(p.Path, "/Dockmesh/dockmesh/releases/") || path.Clean(p.Path) != strings.TrimSuffix(p.Path, "/") {
+		return ""
+	}
+	return p.String()
 }
 
 // ValidChannel reports whether v may be stored under ChannelKey; empty

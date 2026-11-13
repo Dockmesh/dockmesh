@@ -213,6 +213,9 @@ func TestReleaseURL(t *testing.T) {
 		{"https://github.com/Dockmesh/dockmesh/releases/../../evil/repo", ""},
 		{"https://github.com/Dockmesh/dockmesh/releases/%2e%2e/%2e%2e/evil", ""},
 		{"https://github.com/evil/dockmesh/releases/tag/v1", ""},
+		{`https://github.com/Dockmesh/dockmesh/releases/x\..\..\..\..\evil\repo`, ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/x%5C..%5Cevil", ""},
+		{"https://github.com/Dockmesh/dockmesh/releases/./tag/v1", ""},
 		{"/settings", ""},
 		{"", ""},
 	}
