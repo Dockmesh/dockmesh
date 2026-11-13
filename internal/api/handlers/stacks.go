@@ -426,7 +426,7 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.recordStackTarget(w, r, req.Name, req.HostID) {
-		if derr := h.Stacks.Delete(req.Name); derr != nil { //nolint:contextcheck // removes files only
+		if derr := h.Stacks.Delete(context.WithoutCancel(r.Context()), req.Name); derr != nil {
 			slog.Warn("create stack: roll back", "stack", req.Name, "err", derr)
 		}
 		return
@@ -656,7 +656,7 @@ func (h *Handlers) rollBackGitCreate(r *http.Request, name string, created bool)
 	cleanup := r.WithContext(context.WithoutCancel(r.Context()))
 	h.forgetStackTarget(cleanup, name)
 	if created {
-		if err := h.Stacks.Delete(name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // takes no context
+		if err := h.Stacks.Delete(cleanup.Context(), name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // must outlive the request
 			slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
 		}
 	}
@@ -802,7 +802,8 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.Stacks.Delete(name); err != nil {
+	// A client that disconnects must not stop the delete half-way.
+	if err := h.Stacks.Delete(context.WithoutCancel(r.Context()), name); err != nil {
 		writeStackError(w, err)
 		return
 	}

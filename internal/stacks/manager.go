@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -56,6 +57,7 @@ type Manager struct {
 
 	sums    *SumStore
 	notices *notices.Service
+	files   *stackhelper.Helper
 }
 
 // Event is emitted when a stack file changes on disk from outside Dockmesh
@@ -626,7 +628,11 @@ func (m *Manager) ReencryptAllBetween(oldSvc, newSvc *secrets.Service) (int, err
 	return count, nil
 }
 
-func (m *Manager) Delete(name string) error {
+// SetFileHelper lets Delete remove stack data owned by other users, such
+// as a database bind directory, through a helper container.
+func (m *Manager) SetFileHelper(h *stackhelper.Helper) { m.files = h }
+
+func (m *Manager) Delete(ctx context.Context, name string) error {
 	dir, err := m.safeDir(name)
 	if err != nil {
 		return err
@@ -634,7 +640,7 @@ func (m *Manager) Delete(name string) error {
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := m.files.RemoveAll(ctx, m.rootAbs, dir); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -645,7 +651,7 @@ func (m *Manager) Delete(name string) error {
 			slog.Warn("forget stack file checksums", "stack", name, "err", err)
 		}
 	}
-	m.resolveGitDeployHold(context.Background(), name)
+	m.resolveGitDeployHold(ctx, name)
 	return nil
 }
 

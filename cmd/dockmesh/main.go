@@ -61,6 +61,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
@@ -482,6 +483,7 @@ func main() {
 	}
 	defer stacksMgr.Close()
 	stacksMgr.SetSumStore(stacks.NewSumStore(database))
+	stacksMgr.SetFileHelper(stackhelper.New(dockerCli.Raw()))
 	stacksMgr.RecordUntrackedSums()
 
 	webFS, err := fs.Sub(webDist, "web_dist")

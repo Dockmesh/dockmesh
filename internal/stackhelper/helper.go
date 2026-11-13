@@ -1,0 +1,302 @@
+// Package stackhelper works on stack directories that hold data owned by
+// other users, such as a database bind directory created by the container
+// as uid 999 with mode 0700. The Dockmesh services run unprivileged and
+// cannot read or remove such files themselves, so a short-lived helper
+// container does it as root. Only the stack directory is mounted into the
+// helper, which keeps every operation inside it.
+package stackhelper
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
+)
+
+// Image is the helper image, the same pinned busybox the other helpers use,
+// so an air-gapped host needs only the one image it already pre-pulls.
+const Image = docker.BusyboxHelperImage
+
+// mountPoint is where the stack directory appears inside the helper.
+const mountPoint = "/stack"
+
+// API is the part of the Docker client the helper uses.
+type API interface {
+	client.ImageAPIClient
+	ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error)
+	ContainerStart(ctx context.Context, id string, options client.ContainerStartOptions) (client.ContainerStartResult, error)
+	docker.HelperAPI
+}
+
+// Helper runs the helper container. A nil *Helper is valid and means no
+// Docker is available: RemoveAll then only does the direct delete.
+type Helper struct {
+	cli API
+}
+
+// New returns a helper that talks to cli.
+func New(cli API) *Helper {
+	return &Helper{cli: cli}
+}
+
+// ErrOutside is returned for a target that is not a directory strictly
+// below its base after symlinks are resolved.
+var ErrOutside = errors.New("path is not a directory inside the stacks directory")
+
+// target is a directory that passed resolve: its real path and the
+// device:inode the helper checks again once it is mounted.
+type target struct {
+	path string
+	id   string
+}
+
+// resolve checks dir before it is mounted into a helper. dir itself must
+// be a directory, not a symlink, and its real path must lie strictly below
+// the real path of base.
+func resolve(base, dir string) (target, error) {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return target{}, err
+	}
+	if !fi.IsDir() {
+		return target{}, fmt.Errorf("%s: %w", filepath.Base(dir), ErrOutside)
+	}
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return target{}, err
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return target{}, err
+	}
+	rel, err := filepath.Rel(realBase, realDir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return target{}, fmt.Errorf("%s: %w", filepath.Base(dir), ErrOutside)
+	}
+	id, err := fileID(fi)
+	if err != nil {
+		return target{}, err
+	}
+	return target{path: realDir, id: id}, nil
+}
+
+// removeTimeout bounds a helper delete, so a stalled pull or a hung file
+// system cannot keep a request and a root container around for good.
+const removeTimeout = 30 * time.Minute
+
+// RemoveAll deletes dir, which must lie below base. It tries a normal
+// delete first. Only when that fails for lack of permission does it empty
+// the directory through the helper and then remove the empty directory
+// itself. Either way the directory must be gone afterwards; otherwise the
+// error lists what is left. Errors name the directory relative to base.
+func (h *Helper) RemoveAll(ctx context.Context, base, dir string) error {
+	// A direct delete that fails half-way would already have removed
+	// compose.yaml, so a tree the service cannot delete goes to the helper
+	// untouched; a failing helper then leaves the stack as it was.
+	name := filepath.Base(dir)
+	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return relErr(base, err)
+		}
+		if m, err := mountBelow(real); err != nil {
+			return err
+		} else if m != "" {
+			return fmt.Errorf("remove %s: %s is a mount point; unmount it first", name, m)
+		}
+	}
+	err := blocked(dir)
+	if err == nil {
+		err = os.RemoveAll(dir)
+		if err == nil {
+			return nil
+		}
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		return relErr(base, err)
+	}
+	if h == nil || h.cli == nil {
+		return fmt.Errorf("%w (files owned by another user need Docker to remove them)", relErr(base, err))
+	}
+	ctx, cancel := context.WithTimeout(ctx, removeTimeout)
+	defer cancel()
+	// Pulled first, so the gap between the check and the mount stays short.
+	if err := h.ensureImage(ctx); err != nil {
+		return err
+	}
+	t, err := resolve(base, dir)
+	if err != nil {
+		return relErr(base, err)
+	}
+	if herr := h.empty(ctx, t); herr != nil {
+		return fmt.Errorf("remove %s: %w%s", name, herr, leftovers(dir))
+	}
+	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return fmt.Errorf("remove %s: %w%s", name, err, leftovers(dir))
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove %s: directory still exists%s", name, leftovers(dir))
+	}
+	return nil
+}
+
+// relErr names the path of a *fs.PathError relative to base, so an error
+// shown to a user does not reveal where the stacks directory lives.
+func relErr(base string, err error) error {
+	var pe *fs.PathError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	rel, rerr := filepath.Rel(base, pe.Path)
+	if rerr != nil || strings.HasPrefix(rel, "..") {
+		rel = filepath.Base(pe.Path)
+	}
+	return &fs.PathError{Op: pe.Op, Path: rel, Err: pe.Err}
+}
+
+// blocked walks dir and returns a permission error for the first directory
+// whose entries the service could not delete. A missing dir is no error.
+func blocked(dir string) error {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return canDeleteIn(p)
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// leftovers names up to ten top-level entries still in dir, for an error
+// message that tells the user exactly what was not removed.
+func leftovers(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	more := ""
+	if len(names) > 10 {
+		more = fmt.Sprintf(" and %d more", len(names)-10)
+		names = names[:10]
+	}
+	return "; left behind: " + strings.Join(names, ", ") + more
+}
+
+// emptyScript removes everything below the mount point, dotfiles
+// included, after checking that the mounted directory is the one resolve
+// checked: the daemon mounts by path, and the path could have been swapped
+// for a symlink in between. Patterns that match nothing stay literal and
+// rm -f ignores them.
+const emptyScript = `[ "$(stat -c %d:%i ` + mountPoint + `)" = "$DOCKMESH_EXPECT" ] || exit 3; ` +
+	"rm -rf " + mountPoint + "/* " + mountPoint + "/.[!.]* " + mountPoint + "/..?*"
+
+// statusSwapped is emptyScript's exit status for a mount that is not the
+// checked directory.
+const statusSwapped = 3
+
+func (h *Helper) empty(ctx context.Context, t target) error {
+	id, err := h.create(ctx, t, []string{"sh", "-c", emptyScript},
+		// rm needs to enter and unlink in directories of other users,
+		// and FOWNER covers sticky directories.
+		[]string{"DAC_OVERRIDE", "FOWNER"})
+	if err != nil {
+		return err
+	}
+	defer h.remove(ctx, id)
+	if _, err := h.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("start helper: %w", err)
+	}
+	// A large data directory can take longer than docker.FinishHelper's
+	// fixed deadline, so the wait follows ctx; remove kills it if ctx ends.
+	wait := h.cli.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	select {
+	case s := <-wait.Result:
+		if s.StatusCode == statusSwapped {
+			return errors.New("the mounted directory is not the one that was checked")
+		}
+		if s.StatusCode != 0 {
+			return fmt.Errorf("helper exited with status %d", s.StatusCode)
+		}
+		return nil
+	case err := <-wait.Error:
+		return fmt.Errorf("helper wait: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (h *Helper) create(ctx context.Context, t target, cmd, caps []string) (string, error) {
+	resp, err := h.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image:  Image,
+			Cmd:    cmd,
+			Env:    []string{"DOCKMESH_EXPECT=" + t.id},
+			User:   "0:0",
+			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "stack-files-helper"},
+		},
+		HostConfig: &container.HostConfig{
+			// A typed bind mount fails on a missing source instead of
+			// creating it as root the way a -v bind would. Non-recursive,
+			// so a file system mounted below the stack dir stays out.
+			Mounts: []mount.Mount{{
+				Type: mount.TypeBind, Source: t.path, Target: mountPoint,
+				BindOptions: &mount.BindOptions{NonRecursive: true},
+			}},
+			NetworkMode:    "none",
+			CapDrop:        []string{"ALL"},
+			CapAdd:         caps,
+			SecurityOpt:    []string{"no-new-privileges"},
+			ReadonlyRootfs: true,
+			LogConfig:      docker.HelperLogConfig,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create helper: %w", err)
+	}
+	return resp.ID, nil
+}
+
+func (h *Helper) remove(ctx context.Context, id string) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
+	defer cancel()
+	_, _ = h.cli.ContainerRemove(rctx, id, client.ContainerRemoveOptions{Force: true})
+}
+
+// ensureImage pulls the pinned image when it is missing. On an air-gapped
+// host the error names the image, so the user knows what to load.
+func (h *Helper) ensureImage(ctx context.Context) error {
+	if _, err := h.cli.ImageInspect(ctx, Image); err == nil {
+		return nil
+	} else if !cerrdefs.IsNotFound(err) {
+		return err
+	}
+	if err := docker.PullAnonymous(ctx, h.cli, Image); err != nil {
+		return fmt.Errorf("pull %s: %w", Image, err)
+	}
+	return nil
+}

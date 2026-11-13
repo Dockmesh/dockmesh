@@ -118,7 +118,7 @@ func TestGitDeployHoldNotice(t *testing.T) {
 			return nil
 		}, false},
 		{"accept", func(m *Manager) error { return m.AcceptExternal(ctx, "web") }, false},
-		{"delete", func(m *Manager) error { return m.Delete("web") }, false},
+		{"delete", func(m *Manager) error { return m.Delete(ctx, "web") }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
