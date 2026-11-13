@@ -35,7 +35,7 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			st, err := setup.NewFromDB(context.Background(), database)
+			st, _, _, err := setup.NewForBoot(context.Background(), database, setup.Facts{})
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}

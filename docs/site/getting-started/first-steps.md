@@ -13,7 +13,7 @@ How you get the first admin account depends on how you installed:
 |---|---|
 | Installer script | You created it in the setup wizard at `/setup`. Its last step shows the **Login URL** and your username. |
 | `dockmesh init` | `init` printed the username and, if you left the password empty, the generated password. |
-| From source | The server created `admin` on first start and printed the password once, after the line `Bootstrap admin created`, in the terminal you started `./dockmesh` from. |
+| From source | You created it with `./dockmesh admin create --username <name> --role admin` before the first start, or in the setup wizard at `/setup`. |
 
 If you lose the admin password, reset it on the server:
 

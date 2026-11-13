@@ -51,12 +51,8 @@ type Config struct {
 	OTelEndpoint string
 	OTelInsecure bool
 	JWTSecret    []byte
-	// SetupForce disables the auto-bootstrap admin and keeps the
-	// server in setup-mode until the wizard runs. It is ignored once an
-	// admin exists.
-	// Set by the install script for the wizard install path; off by
-	// default so existing installs and `dockmesh init --yes` keep
-	// working unchanged.
+	// SetupForce marks an install whose setup wizard has not finished
+	// (DOCKMESH_SETUP_FORCE); see setup.Decide.
 	SetupForce bool
 	// UpdateRollbackKeep is how many rollback tags per image the
 	// container updater keeps (DOCKMESH_UPDATE_ROLLBACK_KEEP).

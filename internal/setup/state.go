@@ -1,9 +1,10 @@
 // Package setup tracks whether the server is in first-run setup mode.
 //
-// Setup mode is active only while the install has no user accounts at
-// all. An install with accounts but no admin stays closed: the wizard is
-// unauthenticated, so reopening it would hand the install to whoever
-// reaches it first; `dockmesh admin create` recovers it instead. While
+// Setup mode is active only for an install Decide places as never set up
+// or legacy unfinished. A configured install stays closed even without
+// accounts or without an admin: the wizard is unauthenticated, so opening
+// it on an install with data would hand that install to whoever reaches it
+// first; `dockmesh admin create` recovers it instead. While
 // active, the HTTP layer redirects all non-setup paths so an operator
 // who just installed dockmesh and visited the dashboard URL lands on
 // the install wizard rather than the login screen. After the wizard
@@ -44,7 +45,7 @@ type Status struct {
 }
 
 // State carries the live setup-mode flag for the lifetime of one
-// server process. Built by main at boot from the DB, then consulted
+// server process. Built by NewForBoot at server start, then consulted
 // by middleware on every request.
 type State struct {
 	mu         sync.RWMutex
@@ -56,20 +57,6 @@ type State struct {
 // NewForced returns a State pinned to active regardless of existing users.
 func NewForced() *State {
 	return &State{active: true, startedAt: time.Now()}
-}
-
-// NewFromDB decides whether setup mode is active: only when the users
-// table is empty. The returned State records "now" as the start of the
-// wizard window.
-func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
-	if db == nil {
-		return &State{active: true, startedAt: time.Now()}, nil
-	}
-	exists, err := UsersExist(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	return &State{active: !exists, startedAt: time.Now()}, nil
 }
 
 // UsersExist reports whether the install has any user account. The wizard
