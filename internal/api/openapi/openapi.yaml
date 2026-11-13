@@ -9877,7 +9877,7 @@ components:
               description: Empty is Caddy's default (random).
             health_path:
               type: string
-              description: Path for active health checks of every upstream, e.g. `/health`. Empty disables them.
+              description: "Path for active health checks of every upstream, e.g. `/health`, optionally with a query. Empty disables them. A new or changed path must start with a single `/`, may use only valid `%XX` escapes and has no spaces, braces, control characters, `#` or `.`/`..` segments; a path saved before these rules keeps working until it is changed."
             www_redirect:
               type: boolean
               description: Also serve `www.<host>` with a permanent redirect to `<host>`. Not allowed for wildcard, IP or `www.` hosts.

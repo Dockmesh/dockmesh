@@ -234,7 +234,7 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		hashes := opts
 		prev = &hashes
 	}
-	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev, false)
+	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +315,11 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	}
 	newUpstream := addsUpstream(append([]string{cur.Upstream}, cur.Options.Routing.ExtraUpstreams...),
 		append([]string{upstream}, next.Routing.ExtraUpstreams...))
-	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev, newUpstream)
+	var stored *SiteOptions
+	if cur.optionsErr == nil {
+		stored = &cur.Options
+	}
+	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev, stored, newUpstream)
 	if err != nil {
 		return nil, err
 	}
@@ -372,8 +376,9 @@ func addsUpstream(cur, next []string) bool {
 
 // prepareOptions hashes new passwords, fills kept secrets, validates the
 // options of the site with id (0 for a new one) and returns them encoded
-// for storage. newUpstream is set when the site gains an upstream address.
-func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions, newUpstream bool) (string, error) {
+// for storage. stored is the site's saved options (nil for a new site);
+// newUpstream is set when the site gains an upstream address.
+func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev, stored *SiteOptions, newUpstream bool) (string, error) {
 	if err := o.applyPasswords(prev); err != nil {
 		return "", err
 	}
@@ -382,6 +387,9 @@ func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode st
 	}
 	o.normalize()
 	if err := o.validate(host, tlsMode); err != nil {
+		return "", err
+	}
+	if err := o.checkChangedPaths(stored); err != nil {
 		return "", err
 	}
 	if err := s.checkWWWConflict(ctx, id, host, o.Routing.WWWRedirect); err != nil {
