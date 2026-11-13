@@ -79,18 +79,18 @@ func TestSyncKeepsOldEnvCopy(t *testing.T) {
 func TestRemoveMirroredEnv(t *testing.T) {
 	tests := []struct {
 		name  string
-		binds func(dir string) []string
+		binds func(t *testing.T, dir string) []string
 		keep  bool
 	}{
-		{"no binds", func(string) []string { return nil }, false},
-		{"other bind", func(dir string) []string { return []string{filepath.Join(dir, "data"), "/srv/media"} }, false},
-		{"env file bind", func(dir string) []string { return []string{filepath.Join(dir, ".env")} }, true},
-		{"stack dir bind", func(dir string) []string { return []string{dir + "/"} }, true},
-		{"sibling with same prefix", func(dir string) []string { return []string{filepath.Join(dir, ".env.d")} }, false},
-		{"stack dir through a symlink", func(dir string) []string {
+		{"no binds", func(*testing.T, string) []string { return nil }, false},
+		{"other bind", func(t *testing.T, dir string) []string { return []string{filepath.Join(dir, "data"), "/srv/media"} }, false},
+		{"env file bind", func(t *testing.T, dir string) []string { return []string{filepath.Join(dir, ".env")} }, true},
+		{"stack dir bind", func(t *testing.T, dir string) []string { return []string{dir + "/"} }, true},
+		{"sibling with same prefix", func(t *testing.T, dir string) []string { return []string{filepath.Join(dir, ".env.d")} }, false},
+		{"stack dir through a symlink", func(t *testing.T, dir string) []string {
 			link := filepath.Join(filepath.Dir(dir), "alias")
 			if err := os.Symlink(dir, link); err != nil {
-				panic(err)
+				t.Fatal(err)
 			}
 			return []string{link}
 		}, true},
@@ -106,7 +106,7 @@ func TestRemoveMirroredEnv(t *testing.T) {
 			if err := os.WriteFile(env, []byte("A=1\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			if err := removeMirroredEnv(base, "web", tt.binds(dir)); err != nil {
+			if err := removeMirroredEnv(base, "web", tt.binds(t, dir)); err != nil {
 				t.Fatal(err)
 			}
 			_, err := os.Stat(env)

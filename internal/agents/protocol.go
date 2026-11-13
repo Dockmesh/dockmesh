@@ -370,13 +370,16 @@ type ContainerExecRunRes struct {
 	ExitCode int    `json:"exit_code"`
 }
 
-// StackSyncReq carries the full compose + env + optional meta for
-// local storage on the agent. Used by compose-file mirroring (P.7).
+// StackSyncReq carries the compose file and optional meta for local
+// storage on the agent.
 type StackSyncReq struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
-	Env     string `json:"env,omitempty"`
-	Meta    string `json:"meta,omitempty"` // .dockmesh.meta.json content
+	// Env is still sent because agents before 0.6.0 remove their .env
+	// copy when it is empty, even one a container bind-mounts; current
+	// agents ignore it.
+	Env  string `json:"env,omitempty"`
+	Meta string `json:"meta,omitempty"` // .dockmesh.meta.json content
 }
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells
