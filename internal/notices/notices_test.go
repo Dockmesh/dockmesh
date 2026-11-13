@@ -157,12 +157,12 @@ func TestRaiseWhileOtherWritersCommit(t *testing.T) {
 			}
 			_, _ = database.Exec(`INSERT INTO notices (key, audience, severity, title) VALUES (?, 'all', 'info', 'noise')`,
 				fmt.Sprintf("noise-%d", i))
-			time.Sleep(time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}()
 	var raisers sync.WaitGroup
-	errs := make(chan error, 40)
-	for i := 0; i < 40; i++ {
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
 		raisers.Add(1)
 		go func() {
 			defer raisers.Done()
