@@ -5,7 +5,10 @@ package layout
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/config"
 )
 
 const (
@@ -91,6 +94,31 @@ func parseEnv(data []byte) map[string]string {
 			v = v[1 : len(v)-1]
 		}
 		out[k] = v
+	}
+	return out
+}
+
+// KnownDBPaths are where an install keeps its database when only the data
+// dir is configured: below the default data dir and below every directory
+// of LegacyEnvFiles.
+func KnownDBPaths() []string {
+	dirs := []string{config.DefaultDataDir}
+	for _, f := range LegacyEnvFiles {
+		dirs = append(dirs, filepath.Dir(f))
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, d := range dirs {
+		p := config.ResolvePaths(func(k string) string {
+			if k == "DOCKMESH_DATA_DIR" {
+				return d
+			}
+			return ""
+		}).DBPath
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
 	}
 	return out
 }

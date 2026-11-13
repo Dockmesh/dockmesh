@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -15,17 +16,18 @@ const ForceIgnoredNoticeKey = "setup.force-ignored"
 // DefaultEnvFile is where install.sh writes the env file on Linux.
 const DefaultEnvFile = "/var/lib/dockmesh/dockmesh.env"
 
-// NewForBoot builds the setup state for this server start. force is
-// DOCKMESH_SETUP_FORCE. It never opens setup by itself: the flag outlives
-// reinstalls in the env file, and honouring it over existing accounts would
-// hand the install to whoever reaches /setup first. forceIgnored reports
-// that the flag was set but overruled.
-func NewForBoot(ctx context.Context, db *sql.DB, force bool) (st *State, forceIgnored bool, err error) {
-	st, err = NewFromDB(ctx, db)
-	if err != nil {
-		return nil, false, err
+// NewForBoot counts the accounts in db, decides the Mode from f and builds
+// the setup state for this server start. forceIgnored reports that
+// DOCKMESH_SETUP_FORCE is set but setup mode stays closed: the flag
+// outlives reinstalls in the env file, so it never opens setup by itself.
+func NewForBoot(ctx context.Context, db *sql.DB, f Facts) (st *State, mode Mode, forceIgnored bool, err error) {
+	if db != nil {
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&f.Users); err != nil {
+			return nil, SetUp, false, err
+		}
 	}
-	return st, force && !st.Active(), nil
+	mode = Decide(f)
+	return &State{active: mode != SetUp, startedAt: time.Now()}, mode, f.Force && mode == SetUp, nil
 }
 
 // ForceNoticeCheck raises the admin notice when the force flag was ignored

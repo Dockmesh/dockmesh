@@ -23,7 +23,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 		{name: "flag with accounts but no admin", force: true, viewer: true, wantActive: false, wantIgnored: true, wantNotice: true},
 		{name: "flag without accounts", force: true, admin: false, wantActive: true},
 		{name: "flag removed resolves notice", force: false, admin: true, raisedBefore: true, wantActive: false},
-		{name: "no flag no accounts", force: false, admin: false, wantActive: true},
+		{name: "config without flag or accounts", force: false, admin: false, wantActive: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 				}
 			}
 
-			st, ignored, err := NewForBoot(ctx, database, tt.force)
+			st, _, ignored, err := NewForBoot(ctx, database, Facts{Config: true, DB: true, Force: tt.force})
 			if err != nil {
 				t.Fatalf("NewForBoot: %v", err)
 			}

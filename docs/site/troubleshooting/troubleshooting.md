@@ -74,12 +74,13 @@ sudo systemctl restart dockmesh
 
 ### The sign-in page appears instead of the setup wizard
 
-**Cause:** the wizard at `/setup` is only active while the database has no admin account. `install.sh` sets `DOCKMESH_SETUP_FORCE=true` so the server waits for the wizard. Without that flag (for example after `dockmesh init`), the first start creates a user named `admin` with a random password and prints it once to the console. The log shows `bootstrap admin created, the password was printed to the console once`.
+**Cause:** the wizard at `/setup` opens only on an install with no user accounts that was never set up: no env file and no database, or an env file with `DOCKMESH_SETUP_FORCE=true` from `install.sh`. Every other install starts normally, even without accounts, so a configured server is never handed to whoever opens `/setup` first. The server does not create an account by itself. If there is none, the log shows `this installation has no user accounts and is not a new install`.
 
-**Fix:** find the password in the first lines of the server log, or set a new one (see the next entry).
+**Fix:** create an admin on the server, restart the service and sign in.
 
 ```bash
-sudo journalctl -u dockmesh | grep -A3 'Bootstrap admin created'
+sudo dockmesh admin create --username <name> --role admin
+sudo systemctl restart dockmesh
 ```
 
 If an admin already exists and `DOCKMESH_SETUP_FORCE=true` is still in the env file, the wizard stays closed and admins get the notice **Setup flag ignored**. Delete the line from the env file and restart. The wizard removes the flag itself after a successful run; if it couldn't, it reports `could not scrub setup flag`.

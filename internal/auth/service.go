@@ -163,26 +163,6 @@ func (s *Service) enforceSessionCap(ctx context.Context, userID string, cap int)
 	return err
 }
 
-// Bootstrap creates an initial admin user if no users exist.
-// Returns the generated plaintext password so the caller can log it once.
-func (s *Service) Bootstrap(ctx context.Context) (username, password string, created bool, err error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		return "", "", false, err
-	}
-	if count > 0 {
-		return "", "", false, nil
-	}
-	pw, err := generatePassword(20)
-	if err != nil {
-		return "", "", false, err
-	}
-	if _, err := s.CreateUser(ctx, "admin", "", pw, "admin"); err != nil {
-		return "", "", false, err
-	}
-	return "admin", pw, true, nil
-}
-
 // CreateUser adds a local account. A non-empty role is assigned on
 // everything; pass "" to add assignments separately.
 func (s *Service) CreateUser(ctx context.Context, username, email, password, role string) (*User, error) {

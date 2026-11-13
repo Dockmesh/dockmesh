@@ -22,7 +22,7 @@ func newStateDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func TestNewFromDBOnlyWithoutUsers(t *testing.T) {
+func TestNewForBootOnlyWithoutUsers(t *testing.T) {
 	adminEquivalent := map[string]string{"settings": "manage", "users": "manage"}
 	tests := []struct {
 		name          string
@@ -73,9 +73,9 @@ func TestNewFromDBOnlyWithoutUsers(t *testing.T) {
 			}
 			// Every start decides again; a restart must not change the outcome.
 			for range 2 {
-				st, err := NewFromDB(ctx, database)
+				st, _, _, err := NewForBoot(ctx, database, Facts{})
 				if err != nil {
-					t.Fatalf("NewFromDB: %v", err)
+					t.Fatalf("NewForBoot: %v", err)
 				}
 				if st.Active() != tt.wantActive {
 					t.Fatalf("Active() = %v, want %v", st.Active(), tt.wantActive)
