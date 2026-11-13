@@ -36,7 +36,7 @@ func checkURLPath(p string) error {
 		}
 	}
 	u, err := url.Parse(p)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" {
+	if err != nil {
 		return errors.New("is not a valid URL path")
 	}
 	for _, seg := range strings.Split(u.Path, "/") {

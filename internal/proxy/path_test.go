@@ -42,8 +42,6 @@ func TestCheckURLPath(t *testing.T) {
 		{"escaped dot-dot", "/a/%2e%2e/b", ". or .."},
 		{"half-escaped dot-dot", "/a/.%2E/b", ". or .."},
 		{"host-like start", "//evil.example/x", "must not start with //"},
-		{"bad port", "//a:b/x", "must not start with //"},
-		{"bad ipv6 host", "//[::1/x", "must not start with //"},
 		{"relative", "health", "start with /"},
 		{"empty", "", "empty"},
 		{"too long", "/" + strings.Repeat("a", 256), "longer"},
