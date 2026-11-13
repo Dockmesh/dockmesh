@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 		if err := syncStack(base, agents.StackSyncReq{Name: name, Compose: "services: {}"}); err == nil {
 			t.Errorf("syncStack accepted %q", name)
 		}
-		if err := deleteStack(base, name); err == nil {
+		if err := deleteStack(context.Background(), nil, base, name); err == nil {
 			t.Errorf("deleteStack accepted %q", name)
 		}
 	}
@@ -46,13 +47,13 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(base, "stacks", "web", ".env")); !os.IsNotExist(err) {
 		t.Errorf("stale .env kept: %v", err)
 	}
-	if err := deleteStack(base, "web"); err != nil {
+	if err := deleteStack(context.Background(), nil, base, "web"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "stacks", "web")); !os.IsNotExist(err) {
 		t.Errorf("stack dir not removed: %v", err)
 	}
-	if err := deleteStack(base, "never-existed"); err != nil {
+	if err := deleteStack(context.Background(), nil, base, "never-existed"); err != nil {
 		t.Errorf("deleting a missing stack: %v", err)
 	}
 }
