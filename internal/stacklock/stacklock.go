@@ -52,6 +52,7 @@ const (
 	OpGitDeploy   = "git auto-deploy"
 	OpAutoScale   = "auto-scaling"
 	OpMaintenance = "maintenance"
+	OpDelete      = "delete"
 	// OpDependency leaves out which stack needs the dependency: the caller
 	// who finds it busy may have no access to that stack.
 	OpDependency = "dependency deploy"

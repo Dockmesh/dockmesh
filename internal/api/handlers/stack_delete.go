@@ -14,6 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -118,39 +119,53 @@ func (h *Handlers) ResumePendingStackDeletes(ctx context.Context, hostID string)
 		if d.Status != stacks.DeploymentDeletePending {
 			continue
 		}
-		name := d.StackName
-		if !h.deletePending(ctx, name, hostID) {
-			continue
-		}
-		if err := h.stopBeforePendingDelete(ctx, hostID, name); err != nil {
-			h.raiseStackDeleteNotice(ctx, name, h.hostDisplayName(ctx, hostID), "stop: "+agentErrorText(err))
-			continue
-		}
-		state, hostName, err := h.deleteStackOnAgent(ctx, hostID, name)
-		if err != nil {
-			h.raiseStackDeleteNotice(ctx, name, hostName, agentErrorText(err))
-			continue
-		}
-		if state == agentDeletePending {
+		if !h.resumeStackDelete(ctx, hostID, d.StackName) {
 			return
 		}
-		if !h.deletePending(ctx, name, hostID) {
-			continue
-		}
-		if err := h.finishStackDelete(ctx, name, true); err != nil {
-			h.raiseStackDeleteNotice(ctx, name, "Dockmesh server", err.Error())
-			continue
-		}
-		if h.Notices != nil {
-			if err := h.Notices.Resolve(ctx, stackDeleteNoticePrefix+name); err != nil {
-				slog.Warn("resolve stack delete notice", "stack", name, "err", err)
-			}
-		}
-		if h.Audit != nil {
-			h.Audit.Write(ctx, "", audit.ActionStackDelete, name, map[string]string{"completed_on": hostName})
-		}
-		slog.Info("pending stack delete finished", "stack", name, "host", hostName)
 	}
+}
+
+// resumeStackDelete finishes one pending delete under the stack lock; a
+// busy stack stays pending. It returns false when the agent went offline
+// again.
+func (h *Handlers) resumeStackDelete(ctx context.Context, hostID, name string) bool {
+	release, err := h.StackLocks.TryLock(stacklock.HostKey(hostID, name), stacklock.OpDelete)
+	if err != nil {
+		return true
+	}
+	defer release()
+	if !h.deletePending(ctx, name, hostID) {
+		return true
+	}
+	if err := h.stopBeforePendingDelete(ctx, hostID, name); err != nil {
+		h.raiseStackDeleteNotice(ctx, name, h.hostDisplayName(ctx, hostID), "stop: "+agentErrorText(err))
+		return true
+	}
+	state, hostName, err := h.deleteStackOnAgent(ctx, hostID, name)
+	if err != nil {
+		h.raiseStackDeleteNotice(ctx, name, hostName, agentErrorText(err))
+		return true
+	}
+	if state == agentDeletePending {
+		return false
+	}
+	if !h.deletePending(ctx, name, hostID) {
+		return true
+	}
+	if err := h.finishStackDelete(ctx, name, true); err != nil {
+		h.raiseStackDeleteNotice(ctx, name, "Dockmesh server", err.Error())
+		return true
+	}
+	if h.Notices != nil {
+		if err := h.Notices.Resolve(ctx, stackDeleteNoticePrefix+name); err != nil {
+			slog.Warn("resolve stack delete notice", "stack", name, "err", err)
+		}
+	}
+	if h.Audit != nil {
+		h.Audit.Write(ctx, "", audit.ActionStackDelete, name, map[string]string{"completed_on": hostName})
+	}
+	slog.Info("pending stack delete finished", "stack", name, "host", hostName)
+	return true
 }
 
 // stopBeforePendingDelete stops the stack's containers on hostID when the

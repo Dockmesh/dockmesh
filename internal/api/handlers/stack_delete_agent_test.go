@@ -16,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -295,5 +296,30 @@ func TestPendingStackDeleteStopsContainersFirst(t *testing.T) {
 				t.Error("stack kept")
 			}
 		})
+	}
+}
+
+// A stack another operation holds stays pending until a later connect.
+func TestPendingStackDeleteSkipsBusyStack(t *testing.T) {
+	e := newAgentDeleteEnv(t)
+	e.h.StackLocks = stacklock.New()
+	e.stack(t, "db")
+	ctx := context.Background()
+	if rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil); rr.Code != http.StatusAccepted {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body)
+	}
+	release, err := e.h.StackLocks.TryLock(stacklock.HostKey("agent-1", "db"), stacklock.OpDeploy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.connect(t)
+	e.h.ResumePendingStackDeletes(ctx, "agent-1")
+	if len(e.deletes) != 0 || !e.mgr.DirExists("db") || e.status(t, "db") != stacks.DeploymentDeletePending {
+		t.Fatalf("busy stack was deleted: deletes %v status %q", e.deletes, e.status(t, "db"))
+	}
+	release()
+	e.h.ResumePendingStackDeletes(ctx, "agent-1")
+	if e.mgr.DirExists("db") {
+		t.Fatal("stack not deleted once free")
 	}
 }
