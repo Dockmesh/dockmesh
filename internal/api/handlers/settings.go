@@ -42,7 +42,7 @@ var auditWebhookSettingKeys = map[string]bool{
 func publicSettings(all []settings.Entry) []settings.Entry {
 	out := make([]settings.Entry, 0, len(all))
 	for _, e := range all {
-		if !auditWebhookSettingKeys[e.Key] {
+		if !auditWebhookSettingKeys[e.Key] && !selfupdate.IsCacheKey(e.Key) {
 			out = append(out, e)
 		}
 	}
@@ -77,6 +77,14 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if auditWebhookSettingKeys[e.Key] {
 			writeError(w, http.StatusBadRequest, e.Key+" is managed via /audit/webhook")
 			return
+		}
+		// A page loaded before the upgrade may still send the cache back
+		// unchanged; that is skipped, not written.
+		if selfupdate.IsCacheKey(e.Key) {
+			if h.Settings.Stored(e.Key) != e.Value {
+				writeError(w, http.StatusBadRequest, e.Key+" is written by the update check and can't be set")
+				return
+			}
 		}
 		// The settings page sends every key back; only a change is refused.
 		if slices.Contains(proxy.ManagedSettingKeys, e.Key) && h.Settings.Get(e.Key, "") != e.Value {
@@ -130,6 +138,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, e := range entries {
+		if selfupdate.IsCacheKey(e.Key) {
+			continue
+		}
 		// Where local backups may be written is as powerful as replacing the
 		// server binary, so it needs that permission rather than settings
 		// access.

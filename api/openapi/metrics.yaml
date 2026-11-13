@@ -175,7 +175,7 @@ paths:
                   latest_prerelease: {type: boolean, description: True when latest_version is a release candidate.}
                   channel: {type: string, enum: [stable, prerelease]}
                   update_available: {type: boolean}
-                  release_url: {type: string}
+                  release_url: {type: string, description: "Page of the release on github.com/Dockmesh/dockmesh/releases; empty when the cached URL points anywhere else."}
                   release_notes: {type: string}
                   published_at: {type: string, format: date-time}
                   checked_at: {type: string, format: date-time}

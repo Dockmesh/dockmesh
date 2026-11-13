@@ -4,10 +4,12 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { notices } from '$lib/stores/notices.svelte';
   import { bannerNotice } from '$lib/notices';
+  import { releaseLink } from '$lib/links';
   import { Download, X, ExternalLink } from 'lucide-svelte';
 
   let status = $state<UpdateStatus | null>(null);
   let dismissedVersion = $state<string>('');
+  const releaseHref = $derived(releaseLink(status?.release_url));
 
   // Per-version dismiss: storing the dismissed LatestVersion means a
   // newer release (e.g. v0.1.1 after dismissing v0.1.0) surfaces the
@@ -70,9 +72,9 @@
           · {m.ui_update_running({ version: status.current_version })}
         </span>
       </div>
-      {#if status.release_url}
+      {#if releaseHref}
         <a
-          href={status.release_url}
+          href={releaseHref}
           target="_blank"
           rel="noopener"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors"

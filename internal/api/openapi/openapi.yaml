@@ -4016,7 +4016,7 @@ paths:
                   latest_prerelease: {type: boolean, description: True when latest_version is a release candidate.}
                   channel: {type: string, enum: [stable, prerelease]}
                   update_available: {type: boolean}
-                  release_url: {type: string}
+                  release_url: {type: string, description: "Page of the release on github.com/Dockmesh/dockmesh/releases; empty when the cached URL points anywhere else."}
                   release_notes: {type: string}
                   published_at: {type: string, format: date-time}
                   checked_at: {type: string, format: date-time}
@@ -5877,6 +5877,12 @@ paths:
         The audit webhook keys (`audit.webhook_url`,
         `audit.webhook_hmac_secret`, `audit.webhook_filter_actions`) are
         omitted; read them through `GET /audit/webhook`.
+
+        The update check's own cache (`update_last_check`,
+        `update_latest_version`, `update_release_url`, `update_release_notes`,
+        `update_published_at`, `update_last_notified_version`,
+        `update_release_manifest`) is omitted too; read it through
+        `GET /system/update-status`.
       responses:
         "200":
           description: Settings.
@@ -5924,6 +5930,10 @@ paths:
         `system.upgrade` on everything (403 otherwise), and every change
         writes a `settings.update_channel_update` audit entry with the old
         and new value.
+
+        The update check's cache keys (see `GET /settings`) are written only
+        by the update check: a changed value is rejected with 400 and nothing
+        is saved; the current value sent back unchanged is skipped.
       requestBody:
         required: true
         content:

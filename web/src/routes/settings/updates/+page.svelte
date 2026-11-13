@@ -5,6 +5,7 @@
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
+  import { releaseLink } from '$lib/links';
   import { Segmented, StatusChip, Switch } from '$lib/components/ui';
   import { Copy, RefreshCw } from 'lucide-svelte';
   import { createSettingsForm } from '../settingsForm.svelte';
@@ -13,6 +14,7 @@
   const form = createSettingsForm();
   let status = $state<UpdateStatus | null>(null);
   let checking = $state(false);
+  const releaseHref = $derived(releaseLink(status?.release_url));
   const stableOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
   // get.dockmesh.dev serves the latest stable installer, so a candidate is
   // installed with the installer published next to it.
@@ -108,8 +110,8 @@
         {#if status?.update_available}
           <div class="up-box">
             <b>{status.is_dev_build ? m.settings_release_available({ version: status.latest_version ?? '' }) : m.settings_update_to({ version: status.latest_version ?? '' })}</b>
-            {#if status.release_url}
-              <a href={status.release_url} target="_blank" rel="noopener">{m.settings_release_notes()}</a>
+            {#if releaseHref}
+              <a href={releaseHref} target="_blank" rel="noopener">{m.settings_release_notes()}</a>
             {/if}
             {#if showCommand}
               <span class="dm-sub">{status.latest_prerelease ? m.settings_run_prerelease({ version: status.latest_version }) : m.settings_run_on_host()}</span>

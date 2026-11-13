@@ -1,0 +1,3 @@
+kind: Security
+body: Internal update-check values can no longer be changed through the settings API, and the release notes link only opens Dockmesh release pages on GitHub
+time: 2026-11-13T08:16:56.771662273Z
