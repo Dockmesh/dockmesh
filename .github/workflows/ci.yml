@@ -196,9 +196,8 @@ jobs:
         include:
           # The handlers package takes most of the test time and is split by
           # test name; the other packages run as two groups.
-          - {name: handlers 1/3, shard: 1}
-          - {name: handlers 2/3, shard: 2}
-          - {name: handlers 3/3, shard: 3}
+          - {name: handlers 1/2, shard: 1}
+          - {name: handlers 2/2, shard: 2}
           - {name: heavy, group: heavy}
           - {name: rest, group: rest}
     env:
@@ -225,7 +224,7 @@ jobs:
           go test -race -c -o "$RUNNER_TEMP/handlers.test" ./internal/api/handlers/
           cd internal/api/handlers
           "$RUNNER_TEMP/handlers.test" -test.list '.*' | grep -E '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/all.txt"
-          awk -v s="$SHARD" 'NR % 3 == s % 3' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/mine.txt"
+          awk -v s="$SHARD" 'NR % 2 == s % 2' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/mine.txt"
           echo "$(wc -l < "$RUNNER_TEMP/mine.txt") of $(wc -l < "$RUNNER_TEMP/all.txt") tests"
           "$RUNNER_TEMP/handlers.test" -test.timeout 15m -test.run "^($(paste -sd'|' "$RUNNER_TEMP/mine.txt"))\$"
       - name: package group
