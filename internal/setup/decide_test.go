@@ -24,6 +24,12 @@ func rootedStat(root string) func(string) (fs.FileInfo, error) {
 	}
 }
 
+func rootedFollow(root string) func(string) (fs.FileInfo, error) {
+	return func(p string) (fs.FileInfo, error) {
+		return os.Stat(filepath.Join(root, p))
+	}
+}
+
 func rootedReadDir(root string) func(string) ([]fs.DirEntry, error) {
 	return func(p string) ([]fs.DirEntry, error) {
 		return os.ReadDir(filepath.Join(root, p))
@@ -35,6 +41,7 @@ func probe(root, dbPath string) Probe {
 	return Probe{
 		Paths:   config.Paths{DBPath: dbPath},
 		Lstat:   rootedStat(root),
+		Stat:    rootedFollow(root),
 		ReadDir: rootedReadDir(root),
 	}
 }
@@ -90,7 +97,7 @@ func seedAccounts(t *testing.T, root, dbPath string, users, admin bool) {
 // database, count accounts, decide.
 func boot(t *testing.T, root string, p Probe) Mode {
 	t.Helper()
-	p.Lstat, p.ReadDir = rootedStat(root), rootedReadDir(root)
+	p.Lstat, p.Stat, p.ReadDir = rootedStat(root), rootedFollow(root), rootedReadDir(root)
 	facts := p.Scan()
 	full := filepath.Join(root, p.Paths.DBPath)
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
@@ -333,6 +340,10 @@ func TestLeftoverDataKeepsSetupClosed(t *testing.T) {
 		{name: "agent CA key", file: dataDir + "/agents-ca.key"},
 		{name: "agent CA cert", file: dataDir + "/agents-ca.crt"},
 		{name: "a stack", file: paths.StacksRoot + "/web/compose.yaml"},
+		{name: "staged restore", file: dataDir + "/.restore-staged/x"},
+		{name: "replaced files of a restore", file: dataDir + "/.pre-restore/x"},
+		{name: "staged stacks", file: "/app/stacks.restore-staged/x"},
+		{name: "replaced stacks", file: "/app/stacks.pre-restore-20261113/x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -355,13 +366,14 @@ func TestLeftoverDataKeepsSetupClosed(t *testing.T) {
 
 func TestEmptyStacksRootIsNoData(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "/app/stacks"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "/app/stacks/lost+found"), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	touch(t, root, "/app/stacks/.gitkeep")
 	p := probe(root, "/app/data/dockmesh.db")
 	p.Paths.StacksRoot = "/app/stacks"
 	if f := p.Scan(); f.Data {
-		t.Fatal("an empty stacks root counts as data")
+		t.Fatal("a stacks root with only .gitkeep and lost+found counts as data")
 	}
 }
 
@@ -376,5 +388,21 @@ func TestDanglingDatabaseSymlinkIsPresent(t *testing.T) {
 	}
 	if f := probe(root, dbPath).Scan(); !f.DB {
 		t.Fatal("a database symlink to an unmounted disk counts as no database")
+	}
+}
+
+func TestDatabaseSymlinkToKnownPathIsNotForeign(t *testing.T) {
+	root := t.TempDir()
+	known := layout.KnownDBPaths()[0]
+	const active = "/srv/dm/data/dockmesh.db"
+	openAt(t, root, known)
+	if err := os.MkdirAll(filepath.Join(root, "/srv/dm/data"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, known), filepath.Join(root, active)); err != nil {
+		t.Fatal(err)
+	}
+	if f := probe(root, active).Scan(); f.ForeignDB || !f.DB {
+		t.Fatalf("facts = %+v, want the linked database as the active one", f)
 	}
 }

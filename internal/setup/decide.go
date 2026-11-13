@@ -5,10 +5,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/restore"
 )
 
 // Mode is what an install is, as far as setup is concerned. The zero
@@ -84,9 +86,10 @@ type Probe struct {
 	Force     bool
 	// Paths of the server; layout.KnownDBPaths are checked as well.
 	Paths config.Paths
-	// Lstat and ReadDir default to the os functions; tests root the
+	// Lstat, Stat and ReadDir default to the os functions; tests root the
 	// paths elsewhere.
 	Lstat   func(string) (fs.FileInfo, error)
+	Stat    func(string) (fs.FileInfo, error)
 	ReadDir func(string) ([]fs.DirEntry, error)
 }
 
@@ -94,9 +97,12 @@ type Probe struct {
 // db.Open, which create the secrets file and the database a fresh install
 // lacks. Users is left unknown for the caller to fill in.
 func (p Probe) Scan() Facts {
-	lstat, readDir := p.Lstat, p.ReadDir
+	lstat, stat, readDir := p.Lstat, p.Stat, p.ReadDir
 	if lstat == nil {
 		lstat = os.Lstat
+	}
+	if stat == nil {
+		stat = os.Stat
 	}
 	if readDir == nil {
 		readDir = os.ReadDir
@@ -127,7 +133,7 @@ func (p Probe) Scan() Facts {
 		if isNotExist(err) {
 			continue
 		}
-		if err != nil || active == nil || !os.SameFile(fi, active) {
+		if err != nil || active == nil || !sameFile(stat, fi, active, known, db) {
 			f.ForeignDB = true
 		}
 	}
@@ -140,19 +146,58 @@ func (p Probe) Scan() Facts {
 		p.Paths.AuditGenesisPath,
 		filepath.Join(dataDir, "agents-ca.key"),
 		filepath.Join(dataDir, "agents-ca.crt"),
+		filepath.Join(dataDir, restore.StagingDir),
+		filepath.Join(dataDir, restore.PreRestoreDir),
 	}
 	for _, d := range data {
 		if d != "" && present(lstat, d) {
 			f.Data = true
 		}
 	}
-	if p.Paths.StacksRoot != "" {
-		entries, err := readDir(p.Paths.StacksRoot)
-		if len(entries) > 0 || (err != nil && !isNotExist(err)) {
+	if stacks := p.Paths.StacksRoot; stacks != "" {
+		if hasStack(readDir, stacks) {
 			f.Data = true
+		}
+		if present(lstat, filepath.Clean(stacks)+restore.StagingDir) {
+			f.Data = true
+		}
+		parent, base := filepath.Split(filepath.Clean(stacks))
+		if entries, err := readDir(parent); err == nil {
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), base+restore.PreRestoreDir+"-") {
+					f.Data = true
+				}
+			}
 		}
 	}
 	return f
+}
+
+// hasStack reports a stack directory below root. Dot entries (.gitkeep)
+// and lost+found of a separate volume are not stacks; a root that cannot
+// be read may hold some.
+func hasStack(readDir func(string) ([]fs.DirEntry, error), root string) bool {
+	entries, err := readDir(root)
+	if err != nil {
+		return !isNotExist(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "lost+found" {
+			return true
+		}
+	}
+	return false
+}
+
+// sameFile compares two database paths, following symlinks only for the
+// comparison; Scan's Lstat keeps a dangling link counted as present.
+func sameFile(stat func(string) (fs.FileInfo, error), a, b fs.FileInfo, pathA, pathB string) bool {
+	if os.SameFile(a, b) {
+		return true
+	}
+	ta, errA := stat(pathA)
+	tb, errB := stat(pathB)
+	return errA == nil && errB == nil && os.SameFile(ta, tb)
 }
 
 // present counts any answer but "does not exist" as a file being there:
