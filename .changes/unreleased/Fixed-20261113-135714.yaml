@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a stack on an agent host that does not run as root no longer fails on bind data owned by another user; the agent removes it through the same helper container as the server
+time: 2026-11-13T13:57:14.238139986Z

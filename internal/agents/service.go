@@ -214,10 +214,11 @@ func (c *ConnectedAgent) enqueue(ctx context.Context, f Frame) error {
 // requestTimeout bounds the wait for an agent's answer when the caller's
 // context has no earlier deadline. Deploys and scale-ups pull images and
 // exec_run carries backup pre-hooks such as database dumps, so they get
-// far more room than plain reads.
+// far more room than plain reads. A stack delete may empty a large data
+// directory through a helper container, which a cancel would stop half-way.
 func requestTimeout(frameType string) time.Duration {
 	switch frameType {
-	case FrameReqContainerExecRun:
+	case FrameReqContainerExecRun, FrameReqStackDelete:
 		return 30 * time.Minute
 	case FrameReqStackDeploy, FrameReqStackScale:
 		return 15 * time.Minute

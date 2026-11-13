@@ -170,7 +170,7 @@ When a stack's `compose.yaml` is missing or empty, the stack page hides the tabs
 
 ## Deleting a stack
 
-**Delete stack…** (in the **More stack actions** menu, at the bottom of the **Settings** tab, or **Delete…** in the stack list) opens **Delete stack &lt;name&gt;**. Type the stack's name to confirm. Deleting always removes the stack directory, which on the server's host includes the data of relative bind mounts, and the stack's git source with its clone, so a later commit can't bring the stack back. Bind data owned by another user, such as a database directory the container created as its own user, is removed through a short-lived `busybox:1.38` helper container (pinned by digest) with only the stack directory mounted. If anything is left afterwards, the delete fails and names what is left. You choose what else is cleaned up:
+**Delete stack…** (in the **More stack actions** menu, at the bottom of the **Settings** tab, or **Delete…** in the stack list) opens **Delete stack &lt;name&gt;**. Type the stack's name to confirm. Deleting always removes the stack directory, which includes the data of relative bind mounts on the server's host and on agent hosts, and the stack's git source with its clone, so a later commit can't bring the stack back. Bind data owned by another user, such as a database directory the container created as its own user, is removed through a short-lived `busybox:1.38` helper container (pinned by digest) with only the stack directory mounted. If anything is left afterwards, the delete fails and names what is left. You choose what else is cleaned up:
 
 | Option | Default | Notes |
 |---|---|---|

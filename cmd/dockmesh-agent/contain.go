@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -21,7 +23,10 @@ func dataDir() string {
 // openStacksRoot opens <dataDir>/stacks as an os.Root, so the per-stack
 // operations below cannot leave it even through symlinks.
 func openStacksRoot(base string) (*os.Root, error) {
-	dir := filepath.Join(base, "stacks")
+	dir, err := filepath.Abs(filepath.Join(base, "stacks"))
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("stacks dir: %w", err)
 	}
@@ -62,8 +67,10 @@ func syncStack(base string, req agents.StackSyncReq) error {
 	return nil
 }
 
-// deleteStack removes the agent's local copy of a stack's files.
-func deleteStack(base, name string) error {
+// deleteStack removes the agent's local copy of a stack's files. Bind data
+// owned by another user goes through the helper, so an agent that does not
+// run as root can delete it too.
+func deleteStack(ctx context.Context, files *stackhelper.Helper, base, name string) error {
 	if err := stacks.ValidateName(name); err != nil {
 		return err
 	}
@@ -71,6 +78,7 @@ func deleteStack(base, name string) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-	return root.RemoveAll(name)
+	dir := filepath.Join(root.Name(), name)
+	_ = root.Close()
+	return files.RemoveAll(ctx, root.Name(), dir)
 }

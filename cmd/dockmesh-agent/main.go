@@ -50,6 +50,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/gorilla/websocket"
@@ -1222,7 +1223,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqStackDelete:
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
-		err := deleteStack(dataDir(), req.Name)
+		err := deleteStack(ctx, stackhelper.New(cli), dataDir(), req.Name)
 		respond(conn, f.ID, struct{}{}, err)
 
 	default:
