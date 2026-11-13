@@ -98,7 +98,7 @@ DOCKMESH_BINARY_DIR=/usr/local/share/dockmesh/bin
 DOCKMESH_SETUP_FORCE=true
 ```
 
-`DOCKMESH_SETUP_FORCE=true` keeps the server from creating an admin account by itself, so the web wizard can do it; the wizard removes the line when it finishes. The server opens the wizard only while no admin account exists. If the flag is still set on an install that has an admin, the server ignores it and shows admins a notice to remove it. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
+`DOCKMESH_SETUP_FORCE=true` marks an install whose setup wizard has not finished yet; the wizard removes the line when it finishes. The server opens the wizard only on an install with no user accounts that either has this flag or has no env file and no database at all. Any other install starts normally, even one without accounts. If the flag is still set on an install that has accounts, the server ignores it and shows admins a notice to remove it. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
 
 `dockmesh` subcommands such as `dockmesh admin list-users` load `/etc/dockmesh/dockmesh.env`, else the first `dockmesh.env` they find in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh`. If your data root is elsewhere, pass `--env-file <path>`. Run them as the service user (`sudo -u dockmesh dockmesh …`), because the data root is only readable by the service account and files they create keep the right owner.
 
@@ -182,7 +182,7 @@ cd dockmesh
 make build VERSION=v0.0.0-local
 ```
 
-`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. If one of the default env files (`/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env`, `/usr/local/var/dockmesh/dockmesh.env`) exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded instead. On first start it creates a user `admin` with a random password and prints both once to stderr, after the line `Bootstrap admin created`. The password is not written to the structured log.
+`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. If one of the default env files (`/var/lib/dockmesh/dockmesh.env`, `/data/dockmesh.env`, `/usr/local/var/dockmesh/dockmesh.env`) exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded instead. The server never creates an account by itself. Create the first admin before the first start with `./dockmesh admin create --username <name> --role admin` (it asks for the password), or open the setup wizard at `/setup` on a machine with no env file and no database.
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 

@@ -302,6 +302,15 @@ func main() {
 
 	slog.Info("starting dockmesh", "version", version.Version, "commit", version.Commit)
 
+	// Before config.Load and db.Open: they create the secrets file and the
+	// database a fresh install lacks.
+	setupFacts := setup.Probe{
+		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
+		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
+		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
+		Paths:       config.ResolvePaths(os.Getenv),
+	}.Scan()
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config load failed", "err", err)
@@ -367,42 +376,29 @@ func main() {
 	defer cancel()
 
 	authSvc := auth.NewService(database, cfg.JWTSecret)
-	// P.14.1: when DOCKMESH_SETUP_FORCE=true the install-wizard path is
-	// driving — let it own admin creation and skip the auto-bootstrap.
-	// Default behaviour (no flag) keeps the legacy auto-admin so
-	// `dockmesh init --yes` and existing installs are unchanged.
-	if !cfg.SetupForce {
-		if username, password, created, err := authSvc.Bootstrap(ctx); err != nil {
-			slog.Error("bootstrap failed", "err", err)
-			os.Exit(1)
-		} else if created {
-			// Straight to the console, not slog: structured logs get shipped
-			// to aggregators and kept, the password must not be.
-			slog.Warn("bootstrap admin created, the password was printed to the console once", "username", username)
-			fmt.Fprintf(os.Stderr, "\nBootstrap admin created. Store this password, it will not be shown again:\n  username: %s\n  password: %s\n\n", username, password)
-		}
-	}
 
-	// Setup-mode state. Active only while the DB has no user account; the
-	// force flag never reopens it over existing accounts. Used by the gating
-	// middleware to redirect a freshly-installed server's URL to /setup
-	// instead of the login screen.
-	setupState, setupForceIgnored, err := setup.NewForBoot(ctx, database, cfg.SetupForce)
+	setupState, setupMode, setupForceIgnored, err := setup.NewForBoot(ctx, database, setupFacts)
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
 	}
 	setupEnvFile := serverEnvFile(cfg.DBPath)
 	if setupForceIgnored {
-		slog.Warn("DOCKMESH_SETUP_FORCE ignored: user accounts exist, the setup wizard stays closed — remove the flag from the env file",
+		slog.Warn("DOCKMESH_SETUP_FORCE ignored: this installation is set up, so the setup wizard stays closed — remove the flag from the env file",
 			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
 		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
-			"window_min", int(setup.SetupWindow.Minutes()))
-	} else if need, err := setup.NeedsAdmin(ctx, database); err != nil {
+			"install", setupMode.String(), "window_min", int(setup.SetupWindow.Minutes()))
+	} else if exists, err := setup.UsersExist(ctx, database); err != nil {
+		slog.Warn("check for user accounts", "err", err)
+	} else if !exists {
+		slog.Error("this installation has no user accounts and is not a new install, so the setup wizard stays closed; create an admin on this server, then restart the service",
+			"command", setup.RecoveryCommand, "env_file", setupFacts.EnvFile,
+			"database", setupFacts.DB, "other_database", setupFacts.ForeignDB, "data", setupFacts.Data)
+	} else if admin, err := setup.AdminExists(ctx, database); err != nil {
 		slog.Warn("check for an admin account", "err", err)
-	} else if need {
+	} else if !admin {
 		slog.Error("no account holds an admin role, so nobody can manage users or settings; the setup wizard stays closed — create an admin on this server, then restart the service",
 			"command", setup.RecoveryCommand)
 	}

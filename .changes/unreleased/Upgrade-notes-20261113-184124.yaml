@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: The server no longer creates an admin account with a printed password on first start; on an install without accounts that is not new, create one with `sudo dockmesh admin create --username <name> --role admin`
+time: 2026-11-13T18:41:24.30468477Z
+custom:
+    Audience: admins
+    Id: no-bootstrap-admin
