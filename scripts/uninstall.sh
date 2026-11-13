@@ -170,7 +170,7 @@ done
 # into /etc.
 ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$BIN_DIR")/share/dockmesh}"
 case "$ASSET_DIR" in
-  /) die "DOCKMESH_ASSET_DIR must not be /" ;;
+  /|//*|*/..|*/../*|*/.|*/./*) die "DOCKMESH_ASSET_DIR must be a plain absolute path other than /" ;;
   /*) ;;
   *) die "DOCKMESH_ASSET_DIR must be an absolute path" ;;
 esac
@@ -197,7 +197,7 @@ ok "Binary              $BIN_PATH"
 ok "Data directory      $DATA_DIR"
 ok "Asset directory     $ASSET_DIR"
 if [ "$ASSET_DIR_DIFFERS" = "1" ]; then
-  warn "dockmesh.env names a different asset directory; it is not removed. Check DOCKMESH_BINARY_DIR there and remove that folder by hand."
+  warn "dockmesh.env names a different asset directory; it is not removed. Check DOCKMESH_BINARY_DIR there and remove that folder by hand, or re-run with: sudo DOCKMESH_ASSET_DIR=<folder> bash uninstall.sh"
 fi
 case "$OS" in
   linux)  ok "Service unit        $SYSTEMD_UNIT" ;;
