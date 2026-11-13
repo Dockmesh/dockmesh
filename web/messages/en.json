@@ -606,7 +606,6 @@
   "apierr_out_of_scope_role_network": "out of scope: your role does not include this network",
   "apierr_out_of_scope_role_volume": "out of scope: your role does not include this volume",
   "apierr_parallelism_negative": "parallelism must be >= 0",
-  "apierr_password_too_short": "password must be at least 12 characters",
   "apierr_path_is_required": "path is required",
   "apierr_project_inspect_failed": "could not inspect any of the project's containers",
   "apierr_provider_not_found": "provider not found",

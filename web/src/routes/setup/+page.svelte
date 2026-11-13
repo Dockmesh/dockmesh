@@ -261,8 +261,8 @@
   function scorePassword(pw: string): { score: number; label: string } {
     if (!pw) return { score: 0, label: '—' };
     let s = 0;
-    if (pw.length >= 8) s++;
-    if (pw.length >= 14) s++;
+    if (pw.length >= 12) s++;
+    if (pw.length >= 16) s++;
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw)) s++;
     if (/[^A-Za-z0-9]/.test(pw) && pw.length >= 12) s++;
     s = Math.min(4, s);

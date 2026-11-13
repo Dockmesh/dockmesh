@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -50,7 +51,7 @@ func (in *CommitInput) Validate() error {
 	if in.Admin.Username == "" {
 		return errors.New("admin username is required")
 	}
-	if len(in.Admin.Password) < auth.MinPasswordLength {
+	if utf8.RuneCountInString(in.Admin.Password) < auth.MinPasswordLength {
 		return fmt.Errorf("admin password must be at least %d characters", auth.MinPasswordLength)
 	}
 	if in.PublicURL == "" {

@@ -606,7 +606,6 @@
   "apierr_out_of_scope_role_network": "Außerhalb des Bereichs: die eigene Rolle umfasst dieses Netzwerk nicht",
   "apierr_out_of_scope_role_volume": "Außerhalb des Bereichs: die eigene Rolle umfasst dieses Volume nicht",
   "apierr_parallelism_negative": "parallelism muss >= 0 sein",
-  "apierr_password_too_short": "Passwort muss mindestens 12 Zeichen lang sein",
   "apierr_path_is_required": "Pfad erforderlich",
   "apierr_project_inspect_failed": "Keiner der Container des Projekts konnte inspiziert werden",
   "apierr_provider_not_found": "Anbieter nicht gefunden",

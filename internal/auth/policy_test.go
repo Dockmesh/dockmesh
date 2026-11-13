@@ -89,3 +89,13 @@ func TestShortExistingPasswordStillSignsIn(t *testing.T) {
 		t.Fatal("changed to an 8-character password")
 	}
 }
+
+func TestPasswordFloorCountsCharacters(t *testing.T) {
+	// Four 3-byte characters are 12 bytes but only 4 characters.
+	if err := ValidatePassword(PolicyConfig{}, "日本語日"); err == nil {
+		t.Fatal("4 characters passed the 12-character floor")
+	}
+	if err := ValidatePassword(PolicyConfig{}, "日本語日本語日本語日本語"); err != nil {
+		t.Fatalf("12 characters refused: %v", err)
+	}
+}

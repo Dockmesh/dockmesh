@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // MinPasswordLength is the floor for every new or changed local password;
@@ -107,7 +108,7 @@ func SavePolicy(ctx context.Context, s SettingsReader, p PolicyConfig) error {
 // with a now-too-short password doesn't get locked out retroactively;
 // they just won't be able to change TO another too-short one).
 func ValidatePassword(p PolicyConfig, password string) error {
-	if minLen := max(p.MinLength, MinPasswordLength); len(password) < minLen {
+	if minLen := max(p.MinLength, MinPasswordLength); utf8.RuneCountInString(password) < minLen {
 		return fmt.Errorf("password must be at least %d characters", minLen)
 	}
 	var hasUpper, hasLower, hasDigit, hasSymbol bool
