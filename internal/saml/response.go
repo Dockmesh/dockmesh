@@ -61,7 +61,9 @@ func parseResponse(sp *crewjam.ServiceProvider, r *http.Request, requestIDs []st
 		}
 		raw = artifact.buf.Bytes()
 	}
-	if err := checkNamespaces(raw, sp); err != nil {
+	if err := checkNamespaces(raw, sp); errors.Is(err, ErrLoginFailed) {
+		return nil, err
+	} else if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidAssertion, err)
 	}
 	return a, nil
