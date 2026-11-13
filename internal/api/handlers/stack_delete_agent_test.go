@@ -83,7 +83,8 @@ func (e *agentDeleteEnv) connect(t *testing.T) {
 	t.Cleanup(func() { detach(); stop() })
 }
 
-func (e *agentDeleteEnv) stack(t *testing.T, name string) {
+func (e *agentDeleteEnv) stack(t *testing.T) {
+	const name = "db"
 	t.Helper()
 	if _, err := e.mgr.Create(name, "services:\n  a:\n    image: busybox\n", ""); err != nil {
 		t.Fatal(err)
@@ -93,7 +94,8 @@ func (e *agentDeleteEnv) stack(t *testing.T, name string) {
 	}
 }
 
-func (e *agentDeleteEnv) status(t *testing.T, name string) string {
+func (e *agentDeleteEnv) status(t *testing.T) string {
+	const name = "db"
 	t.Helper()
 	d, err := e.h.Deployments.Get(context.Background(), name)
 	if err != nil {
@@ -130,7 +132,7 @@ func TestDeleteAgentStackWaitsForTheAgent(t *testing.T) {
 			e := newAgentDeleteEnv(t)
 			e.fail = tt.fail
 			e.connect(t)
-			e.stack(t, "db")
+			e.stack(t)
 
 			rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil)
 			if rr.Code != tt.wantCode {
@@ -142,7 +144,7 @@ func TestDeleteAgentStackWaitsForTheAgent(t *testing.T) {
 			if got := e.mgr.DirExists("db"); got != tt.wantKept {
 				t.Errorf("stack files kept on the server = %v, want %v", got, tt.wantKept)
 			}
-			if got := e.status(t, "db"); got != tt.wantStatus {
+			if got := e.status(t); got != tt.wantStatus {
 				t.Errorf("deployment status = %q, want %q", got, tt.wantStatus)
 			}
 			if len(e.deletes) != 1 || e.deletes[0] != "db" {
@@ -168,15 +170,15 @@ func TestDeleteAgentStackPendingUntilReconnect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newAgentDeleteEnv(t)
-			e.stack(t, "db")
+			e.stack(t)
 			ctx := context.Background()
 
 			rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil)
 			if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"pending_host_name":"edge-1"`) {
 				t.Fatalf("delete with the agent offline: %d %s", rr.Code, rr.Body)
 			}
-			if !e.mgr.DirExists("db") || e.status(t, "db") != stacks.DeploymentDeletePending {
-				t.Fatalf("pending delete removed the stack or did not mark it: status %q", e.status(t, "db"))
+			if !e.mgr.DirExists("db") || e.status(t) != stacks.DeploymentDeletePending {
+				t.Fatalf("pending delete removed the stack or did not mark it: status %q", e.status(t))
 			}
 			if rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil); rr.Code != http.StatusAccepted {
 				t.Fatalf("second delete while offline: %d %s", rr.Code, rr.Body)
@@ -194,7 +196,7 @@ func TestDeleteAgentStackPendingUntilReconnect(t *testing.T) {
 			if got := e.mgr.DirExists("db"); got != tt.wantKept {
 				t.Errorf("stack files kept = %v, want %v", got, tt.wantKept)
 			}
-			if got := e.status(t, "db"); got != tt.wantStatus {
+			if got := e.status(t); got != tt.wantStatus {
 				t.Errorf("deployment status = %q, want %q", got, tt.wantStatus)
 			}
 			if tt.redeploy && len(e.deletes) != 0 {
@@ -212,7 +214,7 @@ func TestDeleteAgentStackPendingUntilReconnect(t *testing.T) {
 // succeeds finishes it and resolves the notice.
 func TestPendingStackDeleteRetriedOnNextConnect(t *testing.T) {
 	e := newAgentDeleteEnv(t)
-	e.stack(t, "db")
+	e.stack(t)
 	ctx := context.Background()
 	if rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil); rr.Code != http.StatusAccepted {
 		t.Fatalf("delete: %d %s", rr.Code, rr.Body)
@@ -225,8 +227,8 @@ func TestPendingStackDeleteRetriedOnNextConnect(t *testing.T) {
 	}
 	e.fail = ""
 	e.h.ResumePendingStackDeletes(ctx, "agent-1")
-	if e.mgr.DirExists("db") || e.status(t, "db") != "" {
-		t.Fatalf("stack not deleted on the second attempt: status %q", e.status(t, "db"))
+	if e.mgr.DirExists("db") || e.status(t) != "" {
+		t.Fatalf("stack not deleted on the second attempt: status %q", e.status(t))
 	}
 	if n := e.openNotices(t); len(n) != 0 {
 		t.Errorf("notice not resolved: %+v", n)
@@ -237,7 +239,7 @@ func TestPendingStackDeleteRetriedOnNextConnect(t *testing.T) {
 // as before.
 func TestDeleteStackOfRemovedAgent(t *testing.T) {
 	e := newAgentDeleteEnv(t)
-	e.stack(t, "db")
+	e.stack(t)
 	if _, err := e.db.Exec(`DELETE FROM agents WHERE id = 'agent-1'`); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +285,7 @@ func TestPendingStackDeleteStopsContainersFirst(t *testing.T) {
 		t.Run("query "+tt.query, func(t *testing.T) {
 			e := newAgentDeleteEnv(t)
 			e.h.Hosts = host.NewRegistry(nil, e.h.Agents)
-			e.stack(t, "db")
+			e.stack(t)
 			if rr := e.do(http.MethodDelete, "/stacks/db"+tt.query, e.token, nil); rr.Code != http.StatusAccepted {
 				t.Fatalf("delete: %d %s", rr.Code, rr.Body)
 			}
@@ -303,7 +305,7 @@ func TestPendingStackDeleteStopsContainersFirst(t *testing.T) {
 func TestPendingStackDeleteSkipsBusyStack(t *testing.T) {
 	e := newAgentDeleteEnv(t)
 	e.h.StackLocks = stacklock.New()
-	e.stack(t, "db")
+	e.stack(t)
 	ctx := context.Background()
 	if rr := e.do(http.MethodDelete, "/stacks/db", e.token, nil); rr.Code != http.StatusAccepted {
 		t.Fatalf("delete: %d %s", rr.Code, rr.Body)
@@ -314,8 +316,8 @@ func TestPendingStackDeleteSkipsBusyStack(t *testing.T) {
 	}
 	e.connect(t)
 	e.h.ResumePendingStackDeletes(ctx, "agent-1")
-	if len(e.deletes) != 0 || !e.mgr.DirExists("db") || e.status(t, "db") != stacks.DeploymentDeletePending {
-		t.Fatalf("busy stack was deleted: deletes %v status %q", e.deletes, e.status(t, "db"))
+	if len(e.deletes) != 0 || !e.mgr.DirExists("db") || e.status(t) != stacks.DeploymentDeletePending {
+		t.Fatalf("busy stack was deleted: deletes %v status %q", e.deletes, e.status(t))
 	}
 	release()
 	e.h.ResumePendingStackDeletes(ctx, "agent-1")

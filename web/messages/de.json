@@ -643,6 +643,7 @@
   "apierr_stack_already_exists": "Stack existiert bereits",
   "apierr_stack_host_required": "Host für diesen Stack wählen: Stacks können nur auf bestimmten Hosts erstellt werden",
   "apierr_stack_name_is_required": "stack_name erforderlich",
+  "apierr_stack_moved_during_delete": "der Stack wurde inzwischen auf einem anderen Host deployt; erneut löschen",
   "apierr_stacks_manager_not_configured": "Stack-Verwaltung nicht konfiguriert",
   "apierr_stacks_or_hosts_not_configured": "Stacks oder Hosts nicht konfiguriert",
   "apierr_state_mismatch": "State stimmt nicht überein",
