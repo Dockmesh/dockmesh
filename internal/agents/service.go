@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -553,6 +554,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	s.disconnect(id)
 	s.deleteHistory(ctx, id)
+	if s.notices != nil {
+		if err := s.notices.Resolve(ctx, envMirrorNoticePrefix+id); err != nil {
+			slog.Warn("resolve agent .env notice", "agent", id, "err", err)
+		}
+	}
 	return nil
 }
 

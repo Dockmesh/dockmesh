@@ -87,6 +87,7 @@ func TestRemoveMirroredEnv(t *testing.T) {
 		{"env file bind", func(t *testing.T, dir string) []string { return []string{filepath.Join(dir, ".env")} }, true},
 		{"stack dir bind", func(t *testing.T, dir string) []string { return []string{dir + "/"} }, true},
 		{"sibling with same prefix", func(t *testing.T, dir string) []string { return []string{filepath.Join(dir, ".env.d")} }, false},
+		{"host root", func(*testing.T, string) []string { return []string{"/"} }, true},
 		{"stack dir through a symlink", func(t *testing.T, dir string) []string {
 			link := filepath.Join(filepath.Dir(dir), "alias")
 			if err := os.Symlink(dir, link); err != nil {
@@ -123,5 +124,15 @@ func TestRemoveMirroredEnv(t *testing.T) {
 	}
 	if err := removeMirroredEnv(t.TempDir(), "../x", nil); err == nil {
 		t.Error("invalid name accepted")
+	}
+}
+
+func TestHasMirroredEnvIgnoresDirectories(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "stacks", "web", ".env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if hasMirroredEnv(base) {
+		t.Error("a .env directory created by Docker counted as a copy")
 	}
 }

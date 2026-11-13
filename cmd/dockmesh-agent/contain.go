@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,17 @@ func syncStack(base string, req agents.StackSyncReq) error {
 // in any stack directory.
 func hasMirroredEnv(base string) bool {
 	matches, err := filepath.Glob(filepath.Join(base, "stacks", "*", ".env"))
-	return err == nil && len(matches) > 0
+	if err != nil {
+		return false
+	}
+	for _, m := range matches {
+		// A directory here is what Docker creates for a missing bind
+		// source, not a copy.
+		if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // removeMirroredEnv deletes the .env copy an older agent left for stack
@@ -92,7 +103,7 @@ func removeMirroredEnv(base, name string, binds []string) error {
 	// env when the data directory lies behind a symlink.
 	realEnv, err := filepath.EvalSymlinks(env)
 	if err != nil {
-		return err
+		realEnv = env
 	}
 	for _, src := range binds {
 		cands := []string{filepath.Clean(src)}
@@ -101,7 +112,9 @@ func removeMirroredEnv(base, name string, binds []string) error {
 		}
 		for _, c := range cands {
 			for _, e := range []string{env, realEnv} {
-				if c == e || strings.HasPrefix(e, c+string(filepath.Separator)) {
+				if rel, err := filepath.Rel(c, e); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					slog.Warn("kept the stack's old .env copy: a container bind-mounts it, and it is no longer updated",
+						"stack", name, "bind", src)
 					return nil
 				}
 			}

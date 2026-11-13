@@ -146,7 +146,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 5
+const ProtocolVersion = 6
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -180,6 +180,9 @@ const (
 	CapImageTransfer = "images.transfer"
 	// CapImageHistory, agent: answers req.images.history.
 	CapImageHistory = "images.history"
+	// CapNoEnvMirror, agent: keeps no .env copy, so req.stack.sync goes
+	// without the plaintext env.
+	CapNoEnvMirror = "stacks.no_env_mirror"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -375,9 +378,8 @@ type ContainerExecRunRes struct {
 type StackSyncReq struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
-	// Env is still sent because agents before 0.6.0 remove their .env
-	// copy when it is empty, even one a container bind-mounts; current
-	// agents ignore it.
+	// Env goes only to agents without CapNoEnvMirror: those remove their
+	// .env copy when it is empty, even one a container bind-mounts.
 	Env  string `json:"env,omitempty"`
 	Meta string `json:"meta,omitempty"` // .dockmesh.meta.json content
 }
