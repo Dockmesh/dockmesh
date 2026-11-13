@@ -871,7 +871,7 @@ func main() {
 			}
 			return ""
 		},
-		clearPending: func(ctx context.Context, stack string) { gitSourceSvc.ClearPending(ctx, stack) },
+		clearPending: func(ctx context.Context, stack string) error { return gitSourceSvc.ClearPending(ctx, stack) },
 	}
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy.deploy)
 	gitSourceSvc.SetDeployNow(gitDeploy.deployNow)

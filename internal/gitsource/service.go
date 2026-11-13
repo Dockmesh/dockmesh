@@ -126,6 +126,11 @@ type Service struct {
 
 	stop chan struct{}
 	wg   sync.WaitGroup
+	// runCtx bounds pending deploys started from lock releases; Stop
+	// cancels it and waits for them.
+	runCtx    context.Context
+	cancelRun context.CancelFunc
+	stopped   bool // under syncMu
 
 	syncMu    sync.Mutex
 	stackMu   map[string]*sync.Mutex
@@ -136,7 +141,10 @@ type Service struct {
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cacheDir string, deploy DeployFunc) *Service {
+	runCtx, cancelRun := context.WithCancel(context.Background())
 	return &Service{
+		runCtx:    runCtx,
+		cancelRun: cancelRun,
 		db:        db,
 		secrets:   secretsSvc,
 		stacks:    stacksMgr,
@@ -161,12 +169,30 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
-	go s.deployAllPending(ctx)
+	s.goPending(func(runCtx context.Context) { s.deployAllPending(runCtx) })
 }
 
 func (s *Service) Stop() {
+	s.syncMu.Lock()
+	s.stopped = true
+	s.syncMu.Unlock()
+	s.cancelRun()
 	close(s.stop)
 	s.wg.Wait()
+}
+
+// goPending runs fn in a goroutine that Stop cancels and waits for.
+func (s *Service) goPending(fn func(ctx context.Context)) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.stopped {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		fn(s.runCtx)
+	}()
 }
 
 // -----------------------------------------------------------------------------
@@ -486,6 +512,7 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 	res.Changed = newSHA != src.LastSyncSHA
 
 	created := false
+	var copiedAt time.Time
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
@@ -501,6 +528,7 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 			}
 		}
 		drift, justCreated, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName, firstSync)
+		copiedAt = time.Now()
 		created = justCreated
 		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
@@ -534,11 +562,13 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 		deployRes, derr := s.deploy(ctx, stackName)
 		var busy *stacklock.BusyError
 		switch {
+		case errors.As(derr, &busy) && deploysFiles(busy.Operation) && busy.Since.After(copiedAt):
+			slog.Info("git auto-deploy left to the running deploy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
 		case errors.As(derr, &busy):
 			s.setPending(ctx, stackName, newSHA, busy.Operation)
 			slog.Info("git auto-deploy pending: stack busy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
 			// The stack may have become free before the commit was stored.
-			go s.DeployPending(context.WithoutCancel(ctx), stackName)
+			s.goPending(func(runCtx context.Context) { s.DeployPending(runCtx, stackName) })
 		case derr != nil:
 			slog.Warn("git auto-deploy failed", "stack", stackName, "err", derr)
 		default:
@@ -552,6 +582,17 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 	return res, nil
 }
 
+// deploysFiles reports whether op deploys the stack's current files. Such an
+// operation that started after the sync copied a commit deploys that commit
+// itself, or a rollback the user chose over it.
+func deploysFiles(op string) bool {
+	switch op {
+	case stacklock.OpDeploy, stacklock.OpDependency, stacklock.OpGitDeploy:
+		return true
+	}
+	return false
+}
+
 // SetDeployNow sets the callback that deploys a pending commit. It must not
 // wait for a busy stack but return its *stacklock.BusyError, and it clears
 // the pending commit once it holds the stack.
@@ -560,7 +601,10 @@ func (s *Service) SetDeployNow(fn DeployFunc) { s.deployNow = fn }
 // StackReleased deploys the stack's pending commit, if any, now that its
 // lock was released; an empty stack name stands for every stack.
 func (s *Service) StackReleased(stackName string) {
-	ctx := context.Background()
+	s.goPending(func(ctx context.Context) { s.stackReleased(ctx, stackName) })
+}
+
+func (s *Service) stackReleased(ctx context.Context, stackName string) {
 	if stackName == "" {
 		s.deployAllPending(ctx)
 		return
@@ -600,7 +644,7 @@ func (s *Service) DeployPending(ctx context.Context, stackName string) {
 
 func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
 	if !src.AutoDeploy || s.deployNow == nil {
-		s.ClearPending(ctx, src.StackName)
+		_ = s.ClearPending(ctx, src.StackName)
 		return
 	}
 	_, err := s.deployNow(ctx, src.StackName)
@@ -609,7 +653,7 @@ func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
 	case errors.As(err, &busy):
 		s.setPending(ctx, src.StackName, src.PendingDeploy.SHA, busy.Operation)
 	case err != nil:
-		s.ClearPending(ctx, src.StackName)
+		_ = s.ClearPending(ctx, src.StackName)
 		slog.Warn("git pending deploy failed", "stack", src.StackName, "sha", src.PendingDeploy.SHA, "err", err)
 	}
 }
@@ -663,7 +707,7 @@ func (s *Service) setPending(ctx context.Context, stackName, sha, operation stri
 
 // ClearPending drops the stack's pending commit: whoever calls it is about
 // to deploy the stack's current files.
-func (s *Service) ClearPending(ctx context.Context, stackName string) {
+func (s *Service) ClearPending(ctx context.Context, stackName string) error {
 	_, err := s.db.ExecContext(context.WithoutCancel(ctx), `
 		UPDATE stack_git_sources
 		   SET pending_sha = NULL, pending_operation = NULL, pending_since = NULL
@@ -671,6 +715,7 @@ func (s *Service) ClearPending(ctx context.Context, stackName string) {
 	if err != nil {
 		slog.Warn("gitsource: clear pending deploy", "stack", stackName, "err", err)
 	}
+	return err
 }
 
 func syncFailure(err error, created bool) error {

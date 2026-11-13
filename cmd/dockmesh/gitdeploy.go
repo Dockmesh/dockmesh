@@ -29,7 +29,7 @@ type gitDeployer struct {
 	commit  func(ctx context.Context, stack string) string
 	// clearPending drops the stack's pending commit once the deploy holds
 	// the stack, since it deploys the stack's current files.
-	clearPending func(ctx context.Context, stack string)
+	clearPending func(ctx context.Context, stack string) error
 	locks        *stacklock.Locks
 	lockWait     time.Duration // gitDeployLockWait when zero
 }
@@ -77,8 +77,11 @@ func (g *gitDeployer) deployNow(ctx context.Context, stackName string) (any, err
 }
 
 func (g *gitDeployer) deployLocked(ctx context.Context, stackName, hostID string) (any, error) {
+	// A pending commit left behind would deploy again on this release.
 	if g.clearPending != nil {
-		g.clearPending(ctx, stackName)
+		if err := g.clearPending(ctx, stackName); err != nil {
+			return nil, fmt.Errorf("clear pending git deploy: %w", err)
+		}
 	}
 	// Files and host are read under the lock, so a rollback or deploy that
 	// ran while this waited is not undone with a stale snapshot.

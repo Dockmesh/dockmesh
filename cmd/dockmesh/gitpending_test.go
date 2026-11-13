@@ -141,7 +141,7 @@ func (e *pendingEnv) start(t *testing.T) {
 			}
 			return ""
 		},
-		clearPending: func(ctx context.Context, stack string) { svc.ClearPending(ctx, stack) },
+		clearPending: func(ctx context.Context, stack string) error { return svc.ClearPending(ctx, stack) },
 	}
 	svc = gitsource.New(e.db, nil, e.mgr, e.cache, g.deploy)
 	svc.SetDeployNow(g.deployNow)
@@ -344,7 +344,9 @@ func TestGitPendingClearedByManualDeploy(t *testing.T) {
 	e.commit(t, "2")
 	e.busySync(t)
 	// What a manual deploy does while it holds the stack.
-	e.svc.ClearPending(e.ctx, "web")
+	if err := e.svc.ClearPending(e.ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
 	release()
 	e.noDeploy(t)
 }

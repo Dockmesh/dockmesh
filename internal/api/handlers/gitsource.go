@@ -20,7 +20,7 @@ import (
 // the stack lock and deploys its current files, which include that commit.
 func (h *Handlers) clearGitPending(ctx context.Context, name string) {
 	if h.GitSource != nil {
-		h.GitSource.ClearPending(ctx, name)
+		_ = h.GitSource.ClearPending(ctx, name)
 	}
 }
 
