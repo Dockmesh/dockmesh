@@ -656,7 +656,7 @@ func (h *Handlers) rollBackGitCreate(r *http.Request, name string, created bool)
 	cleanup := r.WithContext(context.WithoutCancel(r.Context()))
 	h.forgetStackTarget(cleanup, name)
 	if created {
-		if err := h.Stacks.Delete(cleanup.Context(), name); err != nil && !errors.Is(err, stacks.ErrNotFound) {
+		if err := h.Stacks.Delete(cleanup.Context(), name); err != nil && !errors.Is(err, stacks.ErrNotFound) { //nolint:contextcheck // must outlive the request
 			slog.Warn("create stack from git: remove partial stack", "stack", name, "err", err)
 		}
 	}
