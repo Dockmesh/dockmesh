@@ -88,7 +88,7 @@ Valid until  16:05 (2 hours)
 Open http://192.168.10.50:8080/setup#K7QD-3MXA-9PRT
 ```
 
-The code is 12 characters of Crockford base32; case and dashes don't matter when you type it. It is in the link's fragment (after `#`), which browsers never send to the server, and the wizard fills the field from it without submitting. Only an argon2id hash of the code and its expiry are stored, in `/etc/dockmesh/setup-code.hash` (owner root, group `dockmesh`, mode 0640); the code itself is never stored or logged and can't be shown again. Each run replaces the previous code and ends a setup session opened with it.
+The code is 12 characters of Crockford base32; case and dashes don't matter when you type it. It is in the link's fragment (after `#`), which browsers never send to the server, and the wizard fills the field from it without submitting. Only an argon2id hash of the code and its expiry are stored, in `/etc/dockmesh/setup-code.hash` (owner root, the group of the data directory, mode 0640; if `/etc/dockmesh` belongs to another group, the command lets others enter it without listing it, and the files in it stay 0640 or 0600); the code itself is never stored or logged and can't be shown again. Each run replaces the previous code and ends a setup session opened with it.
 
 The command must run as root. It refuses on an install that is set up (`This server is already set up`); to get an admin there, use `dockmesh admin create`. It works only while the server runs in setup mode or before its first start on a host with no config, no database and no accounts. In a container, run it as root inside the container: `docker exec -u 0 <container> /app/dockmesh setup new-code`.
 
