@@ -10,9 +10,9 @@
 #
 #  Env vars:
 #    DOCKMESH_VERSION         tag to install, same as --version (default: latest
-#                             stable release; pre-releases only when named
-#                             or with DOCKMESH_CHANNEL=testing)
-#    DOCKMESH_CHANNEL         stable | testing      (default: stable)
+#                             stable release; pre-releases only when named)
+#    DOCKMESH_CHANNEL         stable | testing      (default: stable; testing
+#                             is deprecated and goes away in 0.7.0)
 #    DOCKMESH_INSTALL_DIR     bin directory         (default: /usr/local/bin)
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
@@ -400,6 +400,14 @@ valid_tag() {
   [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 }
 
+# channel_warning prints the deprecation notice for DOCKMESH_CHANNEL=testing,
+# which --version replaces.
+channel_warning() {
+  if [ "$1" = "testing" ]; then
+    warn "DOCKMESH_CHANNEL=testing is deprecated and will be removed in 0.7.0; install a pre-release with --version <tag>"
+  fi
+}
+
 # version_older A B: A's major.minor.patch is lower than B's. A release
 # candidate shares its release's numbers, so v0.6.0 is not older than
 # v0.6.0-rc.2.
@@ -783,6 +791,7 @@ if [ "${goto_bootstrap:-0}" != "1" ]; then
 # ------------------------------------------------------------------
 step 2 $TOTAL_STEPS "Resolving release"
 info "channel         $CHANNEL"
+channel_warning "$CHANNEL"
 
 if [ "$DM_VERSION" = "latest" ]; then
   META_URL="https://api.github.com/repos/$REPO/releases/latest"

@@ -117,7 +117,7 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 | Variable | Default | Meaning |
 |---|---|---|
 | `DOCKMESH_VERSION` | `latest` | Release tag to install (same as `--version`) |
-| `DOCKMESH_CHANNEL` | `stable` | `stable` or `testing` |
+| `DOCKMESH_CHANNEL` | `stable` | `stable` or `testing`; `testing` is deprecated and removed in 0.7.0, use `--version <tag>` |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Directory for `dockmesh`, `dmctl` and `grype` |
 | `DOCKMESH_ASSET_DIR` | `<install-dir>/../share/dockmesh` | Agent installer and agent binaries |
 | `DOCKMESH_DATA_DIR` | the directory of an earlier install's `dockmesh.env`; otherwise `/data` if it exists and is writable (or the script runs as root), else `/var/lib/dockmesh` (Linux) or `/usr/local/var/dockmesh` (macOS) | Data root. Setting it to a different directory than an earlier install's stops the script |
