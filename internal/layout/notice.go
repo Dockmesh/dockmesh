@@ -27,11 +27,12 @@ func LegacyEnvFile(envFile, configFile string) string {
 	return envFile
 }
 
-// ConfigNoticeCheck raises the admin notice while legacyFile is set and
-// resolves it otherwise. Nothing is required of the admin: the next
+// ConfigNoticeCheck raises the admin notice while envFile has not moved
+// and resolves it once it has. Nothing is required of the admin: the next
 // upgrade run moves the file.
-func ConfigNoticeCheck(legacyFile string) notices.Check {
+func ConfigNoticeCheck(envFile string) notices.Check {
 	return func(ctx context.Context, n *notices.Service) error {
+		legacyFile := LegacyEnvFile(envFile, ConfigFile)
 		return n.Set(ctx, legacyFile != "", notices.RaiseInput{
 			Key:      ConfigNoticeKey,
 			Audience: notices.Admins(),

@@ -1175,7 +1175,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
   # because the user who later runs them may not be root — "mv" without
   # sudo will silently fail to replace a 0755 root-owned binary.
   box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
-    "Data, stacks, and configuration are untouched." \
+    "Data and stacks are untouched." \
     "" \
     "Release notes:" \
     "  https://github.com/$REPO/releases/tag/$DM_VERSION" \

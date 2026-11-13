@@ -831,7 +831,7 @@ func main() {
 	})
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
-	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(layout.LegacyEnvFile(setupEnvFile, layout.ConfigFile)))
+	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an
