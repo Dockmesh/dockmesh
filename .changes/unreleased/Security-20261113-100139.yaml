@@ -1,0 +1,3 @@
+kind: Security
+body: SAML sign-in refuses a response whose NameID or attributes are outside the SAML assertion namespace, and a signed assertion missing elements the SAML library expects now ends in an "SSO login failed" error instead of an internal server error
+time: 2026-11-13T10:01:39.620872056Z

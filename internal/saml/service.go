@@ -37,6 +37,7 @@ var (
 	ErrProviderNotFound = errors.New("saml provider not found")
 	ErrInvalidMetadata  = errors.New("invalid SAML metadata XML")
 	ErrInvalidAssertion = errors.New("invalid SAML assertion")
+	ErrLoginFailed      = errors.New("SSO login failed")
 	ErrEmailRequired    = errors.New("provider did not return an email attribute")
 	ErrNameIDFormat     = errors.New("nameid_format must be persistent, unspecified or emailAddress")
 	errNoSigningCert    = errors.New("metadata has no signing cert")

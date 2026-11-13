@@ -258,12 +258,13 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 	if err != nil {
 		return nil, err
 	}
+	r.Body = http.MaxBytesReader(nil, r.Body, maxACSBody)
 	if err := r.ParseForm(); err != nil {
 		return nil, fmt.Errorf("parse acs form: %w", err)
 	}
-	assertion, err := sp.ParseResponse(r, []string{pending.RequestID})
+	assertion, err := parseResponse(sp, r, []string{pending.RequestID})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidAssertion, err)
+		return nil, err
 	}
 	// Each request is answered once, so a captured response and cookie
 	// can't be replayed.
