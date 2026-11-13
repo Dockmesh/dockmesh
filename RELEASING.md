@@ -71,6 +71,65 @@ gh workflow run release-sync.yml -R Dockmesh/website -f tag=vX.Y.Z
 The trigger uses the `WEBSITE_DISPATCH_TOKEN` secret, a fine-grained token limited to
 `Dockmesh/website` with Contents read and write. It expires after a year; renew it before then.
 
+## Signing keys
+
+Each release has a minisign signature over `checksums.txt`, `checksums.txt.minisig`. Its
+trusted comment is `dockmesh <tag> checksums.txt`, so a signature is valid for one tag only.
+`install.sh` and `internal/releasesig` hold two public keys and accept a signature from either:
+
+| Key | Holder | Use |
+|---|---|---|
+| `01A0941E358E1C5A` (release key) | Encrypted secret key and password as `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` in the GitHub environment `release` (deployments from `v*` tags only), plus the maintainer's offline backup | Signs every release and release candidate |
+| `73BBC751F8715F03` (rotation key) | The maintainer only, offline. Never in CI | Signs the one release that replaces the release key |
+
+`scripts/relsign` signs with the key from the environment and verifies against the built-in
+keys:
+
+```bash
+MINISIGN_SECRET_KEY="$(cat release.key)" MINISIGN_PASSWORD=... \
+  go run ./scripts/relsign sign -tag vX.Y.Z -in checksums.txt -out checksums.txt.minisig
+go run ./scripts/relsign verify -tag vX.Y.Z -in checksums.txt -sig checksums.txt.minisig -release-key
+```
+
+The `minisign` tool signs the same format in legacy mode, which `install.sh` checks with OpenSSL:
+`minisign -S -l -s release.key -m checksums.txt -t "dockmesh vX.Y.Z checksums.txt"`.
+
+### Rotating the release key
+
+1. Generate the new key pair offline: `minisign -G -p new.pub -s new.key`.
+2. In a PR, replace `ReleaseKey` in `internal/releasesig/releasesig.go`, the first key of
+   `RELEASE_PUBKEYS` in `scripts/install.sh`, and the keys in `SECURITY.md` and
+   `docs/site/operations/verify-release.md`. The rotation key stays. Say in a fragment that the
+   key changes, and add `Minimum upgrade from: <this version>` to the next release's header so
+   installs pick up the new key before they need it.
+3. Replace `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` in the `release` environment with the
+   new key, then cut the release as usual.
+4. When the workflow has published it, sign its `checksums.txt` by hand with the rotation key
+   and replace the signature, so installs that only know the old keys accept it:
+
+   ```bash
+   gh release download vX.Y.Z -p checksums.txt
+   minisign -S -l -s rotation.key -m checksums.txt -t "dockmesh vX.Y.Z checksums.txt"
+   go run ./scripts/relsign verify -tag vX.Y.Z -in checksums.txt -sig checksums.txt.minisig
+   gh release upload vX.Y.Z checksums.txt.minisig --clobber
+   ```
+
+From the next release on, the new key signs and every install from the rotation release on
+trusts it.
+
+### If the CI secret leaks
+
+1. Delete `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` from the `release` environment, so
+   nothing can sign with the leaked key from CI.
+2. Rotate as above, right away, and publish a security advisory with the rotation release: the
+   leaked key ID, since when it is not trusted, and that installs must move to the rotation
+   release. Until they do, installs that only know the leaked key rely on GitHub's TLS and
+   repository access again, not on the signature.
+3. If the rotation key leaks, do the same the other way round: a release signed with the
+   release key replaces `RotationKey`. If both leak, publish the new keys in `SECURITY.md` and the
+   advisory; `install.sh` from the new release trusts them and the one-liner upgrades every
+   install.
+
 ## Pre-releases
 
 A release candidate `vX.Y.Z-rc.N` is a real, installable build for testing the next release, the
@@ -154,7 +213,9 @@ get.dockmesh.dev, `install.sh` without `DOCKMESH_VERSION` and the in-app update 
 pointing at 0.6.x, and the workflow skips the cache purge and the website sync. Don't run
 `release-sync` by hand for such a patch: it would put the older version on dockmesh.dev. Users
 who stay on 0.5.x install the patch with `DOCKMESH_VERSION=v0.5.N`; the update check only ever
-offers the latest release.
+offers the latest release. A 0.5.x release is unsigned unless the signing step was backported
+to the branch; installing it with `install.sh` from 0.6 or later then needs
+`DOCKMESH_SKIP_SIGNATURE=1`.
 
 The workflows run from the tagged or pushed commit, so the branch must carry the current
 `.github/workflows/` and `scripts/relmanifest`; backport changes to either like any other fix.
