@@ -857,7 +857,7 @@ func main() {
 	// gitSourceSvc is set below; the deployer reads the synced commit
 	// from it.
 	var gitSourceSvc *gitsource.Service
-	gitDeploy := (&gitDeployer{
+	gitDeploy := &gitDeployer{
 		stacks:      stacksMgr,
 		deployments: deployStore,
 		history:     deployHistoryStore,
@@ -871,8 +871,11 @@ func main() {
 			}
 			return ""
 		},
-	}).deploy
-	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
+		clearPending: func(ctx context.Context, stack string) { gitSourceSvc.ClearPending(ctx, stack) },
+	}
+	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy.deploy)
+	gitSourceSvc.SetDeployNow(gitDeploy.deployNow)
+	stackLocks.OnRelease(func(k stacklock.Key) { gitSourceSvc.StackReleased(k.Stack) })
 	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()

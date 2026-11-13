@@ -268,3 +268,44 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestOnRelease(t *testing.T) {
+	l := New()
+	got := make(chan Key, 4)
+	l.OnRelease(func(k Key) { got <- k })
+	next := func() Key {
+		t.Helper()
+		select {
+		case k := <-got:
+			return k
+		case <-time.After(5 * time.Second):
+			t.Fatal("no release callback")
+			return Key{}
+		}
+	}
+
+	web := HostKey("agent1", "web")
+	release, err := l.TryLock(web, OpImageUpdate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	release()
+	if k := next(); k != web {
+		t.Fatalf("released %+v, want %+v", k, web)
+	}
+
+	maintRelease, err := l.Maintenance(context.Background(), []Target{Host("agent1")}, OpMaintenance, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintRelease()
+	if k := next(); k != (Key{Target: Host("agent1")}) {
+		t.Fatalf("maintenance released %+v, want the whole target", k)
+	}
+	select {
+	case k := <-got:
+		t.Fatalf("extra callback for %+v", k)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

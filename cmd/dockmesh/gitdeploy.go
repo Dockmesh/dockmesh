@@ -27,12 +27,15 @@ type gitDeployer struct {
 	globals deploy.GlobalVars
 	notifs  *notifications.Service
 	commit  func(ctx context.Context, stack string) string
-	locks   *stacklock.Locks
+	// clearPending drops the stack's pending commit once the deploy holds
+	// the stack, since it deploys the stack's current files.
+	clearPending func(ctx context.Context, stack string)
+	locks        *stacklock.Locks
+	lockWait     time.Duration // gitDeployLockWait when zero
 }
 
 // gitDeployLockWait is how long a git deploy waits for another operation on
-// the stack to finish. The sync has already recorded the commit, so giving
-// up at once would leave it undeployed until the next push; the wait stays
+// the stack to finish before its commit is stored as pending. The wait stays
 // short because it delays the polling of every other git stack and eats into
 // the webhook sync's time budget.
 const gitDeployLockWait = 2 * time.Minute
@@ -44,13 +47,39 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	lockCtx, cancel := context.WithTimeout(ctx, gitDeployLockWait)
+	wait := g.lockWait
+	if wait == 0 {
+		wait = gitDeployLockWait
+	}
+	lockCtx, cancel := context.WithTimeout(ctx, wait)
 	release, err := g.locks.Lock(lockCtx, stacklock.HostKey(hostID, stackName), stacklock.OpGitDeploy)
 	cancel()
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	return g.deployLocked(ctx, stackName, hostID)
+}
+
+// deployNow deploys a pending commit, or returns the *stacklock.BusyError
+// when the stack is still busy.
+func (g *gitDeployer) deployNow(ctx context.Context, stackName string) (any, error) {
+	hostID, err := g.hostOf(ctx, stackName)
+	if err != nil {
+		return nil, err
+	}
+	release, err := g.locks.TryLock(stacklock.HostKey(hostID, stackName), stacklock.OpGitDeploy)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return g.deployLocked(ctx, stackName, hostID)
+}
+
+func (g *gitDeployer) deployLocked(ctx context.Context, stackName, hostID string) (any, error) {
+	if g.clearPending != nil {
+		g.clearPending(ctx, stackName)
+	}
 	// Files and host are read under the lock, so a rollback or deploy that
 	// ran while this waited is not undone with a stale snapshot.
 	if now, err := g.hostOf(ctx, stackName); err != nil {
