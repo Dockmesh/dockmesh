@@ -50,6 +50,13 @@ func unreadable(dir string) error {
 }
 
 func walkDirect(dir string, fn func(hdr *tar.Header, r io.Reader) error) error {
+	// Files are opened through a root, so a symlink swapped in during the
+	// walk cannot lead outside dir.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -68,7 +75,7 @@ func walkDirect(dir string, fn func(hdr *tar.Header, r io.Reader) error) error {
 		link := ""
 		switch {
 		case d.Type()&fs.ModeSymlink != 0:
-			if link, err = os.Readlink(p); err != nil {
+			if link, err = root.Readlink(rel); err != nil {
 				return err
 			}
 		case !d.IsDir() && !d.Type().IsRegular():
@@ -82,7 +89,7 @@ func walkDirect(dir string, fn func(hdr *tar.Header, r io.Reader) error) error {
 		if !d.Type().IsRegular() {
 			return fn(hdr, nil)
 		}
-		f, err := os.Open(p)
+		f, err := root.Open(rel)
 		if err != nil {
 			return err
 		}
@@ -193,7 +200,8 @@ func (h *Helper) Extract(ctx context.Context, base, dir string, r io.Reader) err
 	if _, err := h.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{
 		DestinationPath: mountPoint,
 		Content:         r,
-		CopyUIDGID:      true,
+		// Without CopyUIDGID the daemon keeps each header's uid and gid;
+		// with it, it would give every file the helper's user.
 	}); err != nil {
 		return fmt.Errorf("write stack directory: %w", err)
 	}

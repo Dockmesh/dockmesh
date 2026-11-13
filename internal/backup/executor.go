@@ -23,6 +23,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -449,7 +450,7 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 		if err != nil {
 			return 0, fmt.Errorf("stack dir: %w", err)
 		}
-		return tarStackWithVolumes(ctx, hostTarget, dir, src.Name, w)
+		return tarStackWithVolumes(ctx, hostTarget, e.files(), dir, src.Name, w)
 	case "system":
 		// System backup always lives on the central server, not on any
 		// agent. Host routing is irrelevant here.
@@ -457,6 +458,14 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	default:
 		return 0, fmt.Errorf("%w: %s", ErrUnknownSourceType, src.Type)
 	}
+}
+
+// files reads stack directories that hold data of other users.
+func (e *Executor) files() *stackhelper.Helper {
+	if e.docker == nil {
+		return nil
+	}
+	return stackhelper.New(e.docker.Raw())
 }
 
 // runHooks runs the hooks in order and stops at the first failure.

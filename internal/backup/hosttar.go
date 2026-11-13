@@ -12,10 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 )
 
 // volumeTarSource is the minimum capability hosttar needs — a way to
@@ -25,92 +25,14 @@ type volumeTarSource interface {
 	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
 }
 
-// tarHostDir writes a gzipped tar of dir into w. Used to back up stack
-// directories on the host filesystem (compose.yaml, .env, .env.age,
-// .dockmesh.meta.json, …). Volumes that the stack references are NOT
-// included — the user backs those up via separate volume sources so we
-// keep restore semantics simple.
-func tarHostDir(dir string, w io.Writer) (int64, error) {
-	gz := gzip.NewWriter(w)
-	defer gz.Close()
-	tw := tar.NewWriter(gz)
-	defer tw.Close()
-
-	var total int64
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if hdr.Name == "." {
-			return nil
-		}
-		if d.IsDir() {
-			return tw.WriteHeader(hdr)
-		}
-		// Lock in size via the open fd — same race as tarSystem: walker
-		// saw stat-A, but a live writer can grow the file before we
-		// stream bytes, and tar errors out with "write too long". Use
-		// the at-open-time size; any later growth is ignored.
-		f, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			return err
-		}
-		hdr.Size = st.Size()
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		n, copyErr := io.CopyN(tw, f, st.Size())
-		total += n
-		if copyErr != nil && copyErr != io.EOF {
-			return copyErr
-		}
-		if n < st.Size() {
-			pad := make([]byte, st.Size()-n)
-			if _, err := tw.Write(pad); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return total, err
-	}
-	if err := tw.Close(); err != nil {
-		return total, err
-	}
-	if err := gz.Close(); err != nil {
-		return total, err
-	}
-	_ = strings.Trim // keep imported
-	return total, nil
-}
-
 // tarStackWithVolumes writes a single gzipped tar containing both the
 // stack directory AND every named docker volume referenced by the
 // stack's compose file. Layout:
 //
 //	dockmesh-backup.json      (manifest: the volumes expected below)
-//	stack/...                 (compose.yaml + .env + .dockmesh.meta.json)
+//	stack/...                 (the stack directory with owners, modes and times)
 //	volumes/<vol>.tar.gz      (each volume as a nested tar.gz stream)
-func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, stackDir, stackName string, w io.Writer) (int64, error) {
+func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, files *stackhelper.Helper, stackDir, stackName string, w io.Writer) (int64, error) {
 	// Without the compose file there is no way to tell which volumes
 	// belong to the stack, and an archive without them would look like a
 	// complete backup.
@@ -141,7 +63,8 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, stackDir, sta
 
 	var total int64
 
-	manifest, err := json.Marshal(stackManifest{Format: 1, Stack: stackName, Volumes: volumeNames})
+	uid := os.Getuid()
+	manifest, err := json.Marshal(stackManifest{Format: 1, Stack: stackName, Volumes: volumeNames, OwnerUID: &uid})
 	if err != nil {
 		return 0, err
 	}
@@ -156,54 +79,26 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, stackDir, sta
 	}
 
 	// --- Stack dir -> stack/<rel> ----------------------------------------
-	walkErr := filepath.WalkDir(stackDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(stackDir, p)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		hdr.Name = filepath.ToSlash(filepath.Join("stack", rel))
-		if d.IsDir() {
-			return tw.WriteHeader(hdr)
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			return err
-		}
-		hdr.Size = st.Size()
+	walkErr := files.Walk(ctx, filepath.Dir(stackDir), stackDir, func(hdr *tar.Header, r io.Reader) error {
+		hdr.Name = "stack/" + hdr.Name
+		hdr.Format = tar.FormatPAX
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		n, copyErr := io.CopyN(tw, f, st.Size())
+		if r == nil {
+			return nil
+		}
+		n, err := io.Copy(tw, r)
 		total += n
-		if copyErr != nil && copyErr != io.EOF {
-			return copyErr
+		if err != nil {
+			return err
 		}
-		if n < st.Size() {
-			pad := make([]byte, st.Size()-n)
-			if _, err := tw.Write(pad); err != nil {
-				return err
-			}
+		// A file that shrank since it was opened is padded to the size
+		// its header already promised.
+		if n < hdr.Size {
+			_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
 		}
-		return nil
+		return err
 	})
 	if walkErr != nil {
 		_ = tw.Close()
@@ -278,6 +173,17 @@ type stackManifest struct {
 	Format  int      `json:"format"`
 	Stack   string   `json:"stack"`
 	Volumes []string `json:"volumes"`
+	// OwnerUID is the uid the server ran as. Restore writes entries of
+	// other owners through the helper so they keep their owner; archives
+	// without it restore every file as the server's own.
+	OwnerUID *int `json:"owner_uid,omitempty"`
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func readStackManifest(r io.Reader) (*stackManifest, error) {
