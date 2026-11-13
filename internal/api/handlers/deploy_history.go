@@ -175,6 +175,7 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		}
 		deployYAML = merged
 	}
+	h.clearGitPending(r.Context(), name)
 	res, err := target.DeployStack(r.Context(), name, deployYAML, mergedEnv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "redeploy failed: "+err.Error()+

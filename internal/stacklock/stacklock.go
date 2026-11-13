@@ -80,11 +80,12 @@ type holder struct {
 
 // Locks is safe for concurrent use. A nil *Locks locks nothing.
 type Locks struct {
-	mu      sync.Mutex
-	held    map[Key]holder
-	maint   map[Target]holder
-	changed chan struct{}
-	now     func() time.Time
+	mu        sync.Mutex
+	held      map[Key]holder
+	maint     map[Target]holder
+	changed   chan struct{}
+	now       func() time.Time
+	onRelease []func(Key)
 }
 
 func New() *Locks {
@@ -97,6 +98,26 @@ func New() *Locks {
 }
 
 func noop() {}
+
+// OnRelease registers fn to run, in its own goroutine, after a stack lock
+// is released. When a maintenance lock ends, fn gets the target's key with
+// an empty Stack: every stack of that target became free.
+func (l *Locks) OnRelease(fn func(Key)) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.onRelease = append(l.onRelease, fn)
+	l.mu.Unlock()
+}
+
+func (l *Locks) releasedLocked(keys ...Key) {
+	for _, fn := range l.onRelease {
+		for _, k := range keys {
+			go fn(k)
+		}
+	}
+}
 
 // TryLock takes the lock for key or returns a *BusyError naming the
 // operation that holds it. The returned release may be called more than once.
@@ -123,6 +144,7 @@ func (l *Locks) tryLocked(key Key, op string) (func(), error) {
 			l.mu.Lock()
 			delete(l.held, key)
 			l.broadcastLocked()
+			l.releasedLocked(key)
 			l.mu.Unlock()
 		})
 	}, nil
@@ -176,10 +198,13 @@ func (l *Locks) Maintenance(ctx context.Context, targets []Target, op string, ti
 	release := func() {
 		once.Do(func() {
 			l.mu.Lock()
+			keys := make([]Key, 0, len(targets))
 			for _, t := range targets {
 				delete(l.maint, t)
+				keys = append(keys, Key{Target: t})
 			}
 			l.broadcastLocked()
+			l.releasedLocked(keys...)
 			l.mu.Unlock()
 		})
 	}

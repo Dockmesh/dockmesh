@@ -5121,6 +5121,8 @@
   "stacks_git_pat": "Personal Access Token",
   "stacks_git_pat_or": "ghp_… oder github_pat_…",
   "stacks_git_path": "Pfad im Repo",
+  "stacks_git_pending": "Deploy ausstehend – wartet auf {operation}",
+  "stacks_git_pending_desc": "Commit {sha} wird deployt, sobald der Stack frei ist.",
   "stacks_git_poll": "Abfrageintervall (Sekunden, 0 = nur Webhook / manuell)",
   "stacks_git_repo_url": "Repository-URL",
   "stacks_git_seed_after": "Verweise in der Compose-Datei werden am Ende angehängt.",

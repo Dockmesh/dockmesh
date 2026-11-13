@@ -16,6 +16,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// clearGitPending drops a git commit waiting for the stack: the caller holds
+// the stack lock and deploys its current files, which include that commit.
+func (h *Handlers) clearGitPending(ctx context.Context, name string) {
+	if h.GitSource != nil {
+		_ = h.GitSource.ClearPending(ctx, name)
+	}
+}
+
 // GetGitSource returns the configured git source for a stack (or 404).
 func (h *Handlers) GetGitSource(w http.ResponseWriter, r *http.Request) {
 	if h.GitSource == nil {

@@ -5121,6 +5121,8 @@
   "stacks_git_pat": "Personal access token",
   "stacks_git_pat_or": "ghp_… or github_pat_…",
   "stacks_git_path": "Path in repo",
+  "stacks_git_pending": "Deploy pending — waiting for {operation}",
+  "stacks_git_pending_desc": "Commit {sha} deploys as soon as the stack is free.",
   "stacks_git_poll": "Poll interval (seconds, 0 = webhook / manual only)",
   "stacks_git_repo_url": "Repository URL",
   "stacks_git_seed_after": "references in compose are appended at the end.",

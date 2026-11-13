@@ -29,6 +29,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
@@ -52,23 +53,32 @@ var ErrWebhookSecretShort = fmt.Errorf("webhook_secret must be at least %d chara
 // Source is the DB-backed row, returned to handlers with secrets
 // redacted via the Has* flags instead of raw values.
 type Source struct {
-	StackName        string     `json:"stack_name"`
-	RepoURL          string     `json:"repo_url"`
-	Branch           string     `json:"branch"`
-	PathInRepo       string     `json:"path_in_repo"`
-	AuthKind         string     `json:"auth_kind"`
-	Username         string     `json:"username,omitempty"`
-	HasPassword      bool       `json:"has_password"`
-	HasSSHKey        bool       `json:"has_ssh_key"`
-	AutoDeploy       bool       `json:"auto_deploy"`
-	PollIntervalSec  int        `json:"poll_interval_sec"`
-	HasWebhookSecret bool       `json:"has_webhook_secret"`
-	LastSyncSHA      string     `json:"last_sync_sha,omitempty"`
-	LastSyncAt       *time.Time `json:"last_sync_at,omitempty"`
-	LastSyncError    string     `json:"last_sync_error,omitempty"`
-	LastEnvDrift     *EnvDrift  `json:"last_env_drift,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	StackName        string         `json:"stack_name"`
+	RepoURL          string         `json:"repo_url"`
+	Branch           string         `json:"branch"`
+	PathInRepo       string         `json:"path_in_repo"`
+	AuthKind         string         `json:"auth_kind"`
+	Username         string         `json:"username,omitempty"`
+	HasPassword      bool           `json:"has_password"`
+	HasSSHKey        bool           `json:"has_ssh_key"`
+	AutoDeploy       bool           `json:"auto_deploy"`
+	PollIntervalSec  int            `json:"poll_interval_sec"`
+	HasWebhookSecret bool           `json:"has_webhook_secret"`
+	LastSyncSHA      string         `json:"last_sync_sha,omitempty"`
+	LastSyncAt       *time.Time     `json:"last_sync_at,omitempty"`
+	LastSyncError    string         `json:"last_sync_error,omitempty"`
+	LastEnvDrift     *EnvDrift      `json:"last_env_drift,omitempty"`
+	PendingDeploy    *PendingDeploy `json:"pending_deploy,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+// PendingDeploy is a synced commit whose auto-deploy found the stack busy.
+// It deploys as soon as the stack is free.
+type PendingDeploy struct {
+	SHA       string    `json:"sha"`
+	Operation string    `json:"operation"`
+	Since     time.Time `json:"since"`
 }
 
 // Input is the CRUD payload. Empty password / ssh_key on update = keep
@@ -111,9 +121,16 @@ type Service struct {
 	stacks   *stacks.Manager
 	cacheDir string
 	deploy   DeployFunc
+	// deployNow deploys a pending commit without waiting for the stack.
+	deployNow DeployFunc
 
 	stop chan struct{}
 	wg   sync.WaitGroup
+	// runCtx bounds pending deploys started from lock releases; Stop
+	// cancels it and waits for them.
+	runCtx    context.Context
+	cancelRun context.CancelFunc
+	stopped   bool // under syncMu
 
 	syncMu    sync.Mutex
 	stackMu   map[string]*sync.Mutex
@@ -124,7 +141,10 @@ type Service struct {
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cacheDir string, deploy DeployFunc) *Service {
+	runCtx, cancelRun := context.WithCancel(context.Background())
 	return &Service{
+		runCtx:    runCtx,
+		cancelRun: cancelRun,
 		db:        db,
 		secrets:   secretsSvc,
 		stacks:    stacksMgr,
@@ -149,11 +169,30 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
+	s.goPending(func(runCtx context.Context) { s.deployAllPending(runCtx) })
 }
 
 func (s *Service) Stop() {
+	s.syncMu.Lock()
+	s.stopped = true
+	s.syncMu.Unlock()
+	s.cancelRun()
 	close(s.stop)
 	s.wg.Wait()
+}
+
+// goPending runs fn in a goroutine that Stop cancels and waits for.
+func (s *Service) goPending(fn func(ctx context.Context)) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.stopped {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		fn(s.runCtx)
+	}()
 }
 
 // -----------------------------------------------------------------------------
@@ -172,6 +211,7 @@ func (s *Service) Get(ctx context.Context, stackName string) (*Source, error) {
 		       last_sync_at,
 		       COALESCE(last_sync_error, ''),
 		       COALESCE(last_env_drift, ''),
+		       COALESCE(pending_sha, ''), COALESCE(pending_operation, ''), pending_since,
 		       created_at, updated_at
 		  FROM stack_git_sources WHERE stack_name = ?`, stackName)
 	src, err := scanSource(row)
@@ -281,6 +321,9 @@ func (s *Service) Configure(ctx context.Context, stackName string, in Input) (*S
 		"repo_url = ?", "branch = ?", "path_in_repo = ?", "auth_kind = ?",
 		"username = ?", "auto_deploy = ?", "poll_interval_sec = ?",
 		"updated_at = CURRENT_TIMESTAMP",
+	}
+	if !in.AutoDeploy {
+		clauses = append(clauses, "pending_sha = NULL", "pending_operation = NULL", "pending_since = NULL")
 	}
 	args := []any{
 		in.RepoURL, branch, path, authKind,
@@ -469,6 +512,7 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 	res.Changed = newSHA != src.LastSyncSHA
 
 	created := false
+	var copiedAt time.Time
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
@@ -484,6 +528,7 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 			}
 		}
 		drift, justCreated, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName, firstSync)
+		copiedAt = time.Now()
 		created = justCreated
 		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
@@ -512,17 +557,165 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 
 	// Auto-deploy hook: only runs when the SHA actually changed AND
 	// the source opted in — avoids re-deploying on every poll.
-	if res.Changed && src.AutoDeploy && s.deploy != nil {
+	switch {
+	case res.Changed && src.AutoDeploy && s.deploy != nil:
 		deployRes, derr := s.deploy(ctx, stackName)
-		if derr != nil {
+		var busy *stacklock.BusyError
+		switch {
+		case errors.As(derr, &busy) && deploysFiles(busy.Operation) && busy.Since.After(copiedAt):
+			slog.Info("git auto-deploy left to the running deploy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
+		case errors.As(derr, &busy):
+			s.setPending(ctx, stackName, newSHA, busy.Operation)
+			slog.Info("git auto-deploy pending: stack busy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
+			// The stack may have become free before the commit was stored.
+			s.goPending(func(runCtx context.Context) { s.DeployPending(runCtx, stackName) })
+		case derr != nil:
 			slog.Warn("git auto-deploy failed", "stack", stackName, "err", derr)
-		} else {
+		default:
 			res.Deployed = true
 			res.DeployResult = deployRes
 		}
+	case src.PendingDeploy != nil:
+		s.deployPendingLocked(ctx, src)
 	}
 	res.DurationMS = time.Since(start).Milliseconds()
 	return res, nil
+}
+
+// deploysFiles reports whether op deploys the stack's current files. Such an
+// operation that started after the sync copied a commit deploys that commit
+// itself, or a rollback the user chose over it.
+func deploysFiles(op string) bool {
+	switch op {
+	case stacklock.OpDeploy, stacklock.OpDependency, stacklock.OpGitDeploy:
+		return true
+	}
+	return false
+}
+
+// SetDeployNow sets the callback that deploys a pending commit. It must not
+// wait for a busy stack but return its *stacklock.BusyError, and it clears
+// the pending commit once it holds the stack.
+func (s *Service) SetDeployNow(fn DeployFunc) { s.deployNow = fn }
+
+// StackReleased deploys the stack's pending commit, if any, now that its
+// lock was released; an empty stack name stands for every stack.
+func (s *Service) StackReleased(stackName string) {
+	s.goPending(func(ctx context.Context) { s.stackReleased(ctx, stackName) })
+}
+
+func (s *Service) stackReleased(ctx context.Context, stackName string) {
+	if stackName == "" {
+		s.deployAllPending(ctx)
+		return
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM stack_git_sources WHERE stack_name = ? AND pending_sha IS NOT NULL`, stackName).Scan(&n)
+	if err != nil {
+		slog.Warn("gitsource: read pending deploy", "stack", stackName, "err", err)
+		return
+	}
+	if n > 0 {
+		s.DeployPending(ctx, stackName)
+	}
+}
+
+// DeployPending deploys the stack's pending commit unless the stack is
+// still busy. A failed deploy is reported like any other and drops the
+// pending commit, so it is not retried on every lock release.
+func (s *Service) DeployPending(ctx context.Context, stackName string) {
+	ctx, cancel := context.WithTimeout(ctx, webhookSyncTimeout)
+	defer cancel()
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	src, err := s.Get(ctx, stackName)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			slog.Warn("gitsource: read pending deploy", "stack", stackName, "err", err)
+		}
+		return
+	}
+	if src.PendingDeploy != nil {
+		s.deployPendingLocked(ctx, src)
+	}
+}
+
+func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
+	if !src.AutoDeploy || s.deployNow == nil {
+		_ = s.ClearPending(ctx, src.StackName)
+		return
+	}
+	_, err := s.deployNow(ctx, src.StackName)
+	var busy *stacklock.BusyError
+	switch {
+	case errors.As(err, &busy):
+		s.setPending(ctx, src.StackName, src.PendingDeploy.SHA, busy.Operation)
+	case err != nil:
+		_ = s.ClearPending(ctx, src.StackName)
+		slog.Warn("git pending deploy failed", "stack", src.StackName, "sha", src.PendingDeploy.SHA, "err", err)
+	}
+}
+
+func (s *Service) deployAllPending(ctx context.Context) {
+	pending, err := s.PendingDeploys(ctx)
+	if err != nil {
+		slog.Warn("gitsource: list pending deploys", "err", err)
+		return
+	}
+	for name := range pending {
+		s.DeployPending(ctx, name)
+	}
+}
+
+// PendingDeploys returns the pending commit of every stack that has one.
+func (s *Service) PendingDeploys(ctx context.Context) (map[string]*PendingDeploy, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT stack_name, pending_sha, COALESCE(pending_operation, ''), pending_since
+		  FROM stack_git_sources WHERE pending_sha IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]*PendingDeploy{}
+	for rows.Next() {
+		var name string
+		var p PendingDeploy
+		var since sql.NullTime
+		if err := rows.Scan(&name, &p.SHA, &p.Operation, &since); err != nil {
+			return nil, err
+		}
+		p.Since = since.Time
+		out[name] = &p
+	}
+	return out, rows.Err()
+}
+
+// setPending stores sha as the stack's pending commit. A newer commit
+// replaces an older one; the time it has waited is kept.
+func (s *Service) setPending(ctx context.Context, stackName, sha, operation string) {
+	_, err := s.db.ExecContext(context.WithoutCancel(ctx), `
+		UPDATE stack_git_sources
+		   SET pending_sha = ?, pending_operation = ?,
+		       pending_since = COALESCE(pending_since, CURRENT_TIMESTAMP)
+		 WHERE stack_name = ?`, sha, operation, stackName)
+	if err != nil {
+		slog.Warn("gitsource: store pending deploy", "stack", stackName, "err", err)
+	}
+}
+
+// ClearPending drops the stack's pending commit: whoever calls it is about
+// to deploy the stack's current files.
+func (s *Service) ClearPending(ctx context.Context, stackName string) error {
+	_, err := s.db.ExecContext(context.WithoutCancel(ctx), `
+		UPDATE stack_git_sources
+		   SET pending_sha = NULL, pending_operation = NULL, pending_since = NULL
+		 WHERE stack_name = ? AND pending_sha IS NOT NULL`, stackName)
+	if err != nil {
+		slog.Warn("gitsource: clear pending deploy", "stack", stackName, "err", err)
+	}
+	return err
 }
 
 func syncFailure(err error, created bool) error {
@@ -930,15 +1123,19 @@ type rowScanner interface {
 
 func scanSource(r rowScanner) (*Source, error) {
 	var src Source
-	var username, lastSHA, lastErr, lastDriftJSON string
+	var username, lastSHA, lastErr, lastDriftJSON, pendingSHA, pendingOp string
 	var hasPassword, hasSSHKey, hasWebhook, autoDeploy int
-	var lastAt sql.NullTime
+	var lastAt, pendingSince sql.NullTime
 	if err := r.Scan(&src.StackName, &src.RepoURL, &src.Branch, &src.PathInRepo, &src.AuthKind,
 		&username, &hasPassword, &hasSSHKey,
 		&autoDeploy, &src.PollIntervalSec,
 		&hasWebhook, &lastSHA, &lastAt, &lastErr, &lastDriftJSON,
+		&pendingSHA, &pendingOp, &pendingSince,
 		&src.CreatedAt, &src.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if pendingSHA != "" {
+		src.PendingDeploy = &PendingDeploy{SHA: pendingSHA, Operation: pendingOp, Since: pendingSince.Time}
 	}
 	src.Username = username
 	src.HasPassword = hasPassword == 1

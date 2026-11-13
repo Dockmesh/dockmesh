@@ -1167,6 +1167,18 @@
     }
   }
 
+  // A pending git deploy runs once the busy operation ends; refresh until
+  // it has, so the notice goes away by itself.
+  $effect(() => {
+    if (!gitSource?.pending_deploy) return;
+    const id = setInterval(async () => {
+      try {
+        gitSource = await api.stacks.getGitSource(name);
+      } catch { /* poll-tolerant */ }
+    }, 5000);
+    return () => clearInterval(id);
+  });
+
   function openGitDialog() {
     if (gitSource) {
       gitForm = {
@@ -1732,6 +1744,16 @@
         </span>
       </div>
       <StatusChip tone="acc" label={activeMigration.status} />
+    </div>
+  {/if}
+
+  {#if gitSource?.pending_deploy}
+    <div class="stk-notice stk-notice-row" data-testid="git-pending">
+      <GitBranch size={15} />
+      <div class="stk-notice-t">
+        <b>{m.stacks_git_pending({ operation: gitSource.pending_deploy.operation })}</b>
+        <span>{m.stacks_git_pending_desc({ sha: gitSource.pending_deploy.sha.slice(0, 7) })}</span>
+      </div>
     </div>
   {/if}
 

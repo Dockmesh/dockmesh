@@ -10241,6 +10241,21 @@ components:
         target_host:
           type: string
           description: Host the stack was created for; applies until it is deployed.
+        pending_deploy: {$ref: "#/components/schemas/GitPendingDeploy"}
+    GitPendingDeploy:
+      type: object
+      description: |
+        A synced git commit whose auto-deploy found the stack busy with
+        another operation. It deploys as soon as that operation releases
+        the stack; a newer commit replaces it, and a manual deploy or a
+        later auto-deploy clears it. Absent when nothing is pending.
+      required: [sha, operation, since]
+      properties:
+        sha: {type: string, description: Commit waiting to be deployed.}
+        operation:
+          type: string
+          description: Operation that held the stack at the last attempt, e.g. `image update`.
+        since: {type: string, format: date-time, description: When the first pending commit was stored.}
     DiscoveredStack:
       type: object
       description: |
@@ -10524,6 +10539,7 @@ components:
         last_sync_sha: {type: string}
         last_sync_at: {type: string, format: date-time}
         last_sync_error: {type: string}
+        pending_deploy: {$ref: "#/components/schemas/GitPendingDeploy"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     StackGitSourceInput:

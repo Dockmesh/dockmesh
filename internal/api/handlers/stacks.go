@@ -82,6 +82,8 @@ type stackListEntry struct {
 	// `volumes:` key. Used by the host-detail editorial UI to mark
 	// stacks with persistent state.
 	HasVolumes bool `json:"has_volumes,omitempty"`
+	// PendingDeploy is a git commit waiting for the stack to be free.
+	PendingDeploy *gitsource.PendingDeploy `json:"pending_deploy,omitempty"`
 }
 
 func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +127,13 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var pending map[string]*gitsource.PendingDeploy
+	if h.GitSource != nil {
+		var err error
+		if pending, err = h.GitSource.PendingDeploys(r.Context()); err != nil {
+			slog.Warn("list stacks: pending git deploys", "err", err)
+		}
+	}
 	out := make([]stackListEntry, 0, len(list))
 	seen := make(map[string]bool, len(list))
 	for _, s := range list {
@@ -151,6 +160,7 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 			entry.Status = "needs_recovery"
 		}
 		entry.Containers = containerCounts[s.Name]
+		entry.PendingDeploy = pending[s.Name]
 		out = append(out, entry)
 	}
 	// Surface ghost deployments — a deployment row whose compose file
@@ -1180,6 +1190,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		composeYAML = mergedYAML
 	}
 
+	h.clearGitPending(r.Context(), name)
 	res, err := target.DeployStack(r.Context(), name, composeYAML, mergedEnv)
 	if err != nil {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
@@ -1354,6 +1365,7 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name strin
 	if err != nil {
 		return err
 	}
+	h.clearGitPending(r.Context(), name)
 	res, err := target.DeployStack(r.Context(), name, detail.Compose, mergedEnv)
 	if err != nil {
 		return err

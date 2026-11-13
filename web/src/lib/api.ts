@@ -245,6 +245,15 @@ export interface StackListEntry {
   // compose file.
   containers?: number;
   has_volumes?: boolean;
+  // A git commit whose auto-deploy found the stack busy.
+  pending_deploy?: GitPendingDeploy;
+}
+
+export interface GitPendingDeploy {
+  sha: string;
+  // Operation that held the stack at the last attempt, e.g. "image update".
+  operation: string;
+  since: string;
 }
 
 export interface DiscoveredStackService {
@@ -858,6 +867,7 @@ export interface StackGitSource {
   last_sync_at?: string;
   last_sync_error?: string;
   last_env_drift?: EnvDrift;
+  pending_deploy?: GitPendingDeploy;
   created_at: string;
   updated_at: string;
 }
