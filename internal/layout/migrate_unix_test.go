@@ -174,7 +174,7 @@ func TestMigrateOutcomes(t *testing.T) {
 			beforeData, _ := os.ReadFile(f.src)
 			res, err := Migrate(f.opts)
 			if tt.wantErr != nil {
-				if err == nil || (tt.wantErr != errAny && !errors.Is(err, tt.wantErr)) {
+				if err == nil || (!errors.Is(tt.wantErr, errAny) && !errors.Is(err, tt.wantErr)) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
 				}
 				after, _ := os.Lstat(f.src)

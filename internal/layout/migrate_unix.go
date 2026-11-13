@@ -80,7 +80,7 @@ func Migrate(opts MigrateOptions) (Result, error) {
 	}
 	if err := linkOldPlace(srcRoot, srcInfo, target); err != nil {
 		if rmErr := dstRoot.Remove(envFileName); rmErr != nil {
-			return Result{}, fmt.Errorf("%w; removing %s again failed too: %v", err, target, rmErr)
+			return Result{}, fmt.Errorf("%w; removing %s again failed too: %w", err, target, rmErr)
 		}
 		return Result{}, err
 	}
@@ -111,7 +111,7 @@ func readSource(root *os.Root, src string, selfUID, gid int) ([]byte, os.FileInf
 		return nil, nil, err
 	}
 	if err := checkTrusted(dirInfo, selfUID); err != nil {
-		return nil, nil, fmt.Errorf("%w: %s: %v", ErrUntrusted, filepath.Dir(src), err)
+		return nil, nil, fmt.Errorf("%w: %s: %w", ErrUntrusted, filepath.Dir(src), err)
 	}
 	f, err := root.OpenFile(envFileName, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -129,7 +129,7 @@ func readSource(root *os.Root, src string, selfUID, gid int) ([]byte, os.FileInf
 		return nil, nil, fmt.Errorf("%w: %s has more than one hard link", ErrUntrusted, src)
 	}
 	if err := checkTrusted(fi, selfUID); err != nil {
-		return nil, nil, fmt.Errorf("%w: %s: %v", ErrUntrusted, src, err)
+		return nil, nil, fmt.Errorf("%w: %s: %w", ErrUntrusted, src, err)
 	}
 	// A root file readable by some other group (/etc/shadow) is no config.
 	if st := fi.Sys().(*syscall.Stat_t); (int(st.Uid) == 0 || int(st.Uid) == selfUID) &&
@@ -173,15 +173,12 @@ func checkTrusted(fi os.FileInfo, selfUID int) error {
 	if uid == 0 || uid == selfUID {
 		return nil
 	}
-	u, err := user.LookupId(strconv.Itoa(uid))
-	if err != nil {
-		// uninstall.sh deletes the service user but keeps its data.
-		return nil
+	// A uid without an account is fine: uninstall.sh deletes the service
+	// user but keeps its data.
+	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil && u.Username != "dockmesh" {
+		return fmt.Errorf("owned by %s", u.Username)
 	}
-	if u.Username == "dockmesh" {
-		return nil
-	}
-	return fmt.Errorf("owned by %s", u.Username)
+	return nil
 }
 
 func ensureConfigDir(dir string, uid, gid int) error {
