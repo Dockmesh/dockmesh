@@ -46,7 +46,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 				}
 			}
 
-			st, _, ignored, err := NewForBoot(ctx, database, Facts{EnvFile: true, Config: true, DB: true, Force: tt.force})
+			st, _, ignored, err := NewForBoot(ctx, database, Facts{EnvFile: true, Config: true, DB: true, Force: tt.force}, "")
 			if err != nil {
 				t.Fatalf("NewForBoot: %v", err)
 			}
@@ -56,7 +56,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 			if ignored != tt.wantIgnored {
 				t.Errorf("forceIgnored = %v, want %v", ignored, tt.wantIgnored)
 			}
-			if !tt.wantActive && st.TryBeginCommit() {
+			if !tt.wantActive && st.TryBeginCommit("") {
 				t.Error("commit accepted while setup is closed")
 			}
 

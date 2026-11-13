@@ -17,17 +17,19 @@ const ForceIgnoredNoticeKey = "setup.force-ignored"
 const DefaultEnvFile = "/var/lib/dockmesh/dockmesh.env"
 
 // NewForBoot counts the accounts in db, decides the Mode from f and builds
-// the setup state for this server start. forceIgnored reports that
+// the setup state for this server start, with codes read from codeFile
+// (empty: CodeFile). forceIgnored reports that
 // DOCKMESH_SETUP_FORCE is set but setup mode stays closed: the flag
 // outlives reinstalls in the env file, so it never opens setup by itself.
-func NewForBoot(ctx context.Context, db *sql.DB, f Facts) (st *State, mode Mode, forceIgnored bool, err error) {
+func NewForBoot(ctx context.Context, db *sql.DB, f Facts, codeFile string) (st *State, mode Mode, forceIgnored bool, err error) {
 	if db != nil {
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&f.Users); err != nil {
 			return nil, SetUp, false, err
 		}
 	}
 	mode = Decide(f)
-	return &State{active: mode != SetUp, startedAt: time.Now()}, mode, f.Force && mode == SetUp, nil
+	st = &State{active: mode != SetUp, startedAt: time.Now(), codes: NewCodes(codeFile)}
+	return st, mode, f.Force && mode == SetUp, nil
 }
 
 // ForceNoticeCheck raises the admin notice when the force flag was ignored

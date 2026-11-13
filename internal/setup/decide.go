@@ -211,3 +211,18 @@ func present(lstat func(string) (fs.FileInfo, error), path string) bool {
 func isNotExist(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
+
+// CodeAllowed reports whether `dockmesh setup new-code` may create a code
+// for an install with facts f (Users filled in). serverInSetup asks the
+// running server; it is only asked when the files alone say set up,
+// because a server in setup mode creates its database and secrets on its
+// first start, and it can only add to what the files allow.
+func CodeAllowed(f Facts, serverInSetup func() bool) bool {
+	if f.Users != 0 || f.ForeignDB {
+		return false
+	}
+	if Decide(f) != SetUp {
+		return true
+	}
+	return serverInSetup()
+}

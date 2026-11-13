@@ -35,17 +35,22 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			st, _, _, err := setup.NewForBoot(context.Background(), database, setup.Facts{})
+			codeFile := setupCodeFile(t)
+			st, _, _, err := setup.NewForBoot(context.Background(), database, setup.Facts{}, codeFile)
 			if err != nil || !st.Active() {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}
+			token := openSetupSession(t, st, codeFile)
 			if tt.account != "" {
 				if _, err := database.Exec(tt.account); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if tt.slotTaken && !st.TryBeginCommit() {
-				t.Fatal("could not take the install slot")
+			if tt.slotTaken {
+				if !st.TryBeginCommit(token) {
+					t.Fatal("could not take the install slot")
+				}
+				token = openSetupSession(t, st, codeFile)
 			}
 			restarted := false
 			h := &Handlers{
@@ -57,6 +62,7 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/restore", strings.NewReader("--x--"))
 			req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+			req.AddCookie(&http.Cookie{Name: middleware.SetupCookie, Value: token})
 			h.SetupRestore(rec, req)
 			if rec.Code != http.StatusConflict || restarted {
 				t.Fatalf("got %d (restart %v), want 409 and no restart: %s", rec.Code, restarted, rec.Body)

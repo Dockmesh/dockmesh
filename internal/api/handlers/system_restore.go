@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -232,7 +233,7 @@ func (h *Handlers) DeleteRestoreLeftovers(w http.ResponseWriter, r *http.Request
 //
 //	POST /setup/restore
 func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
-	if !h.setupWindowOpen(w) {
+	if !h.setupWritable(w, r) {
 		return
 	}
 	if h.RestoreConfig == nil || h.RequestRestart == nil {
@@ -242,7 +243,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	// The install slot keeps this and the wizard's own install apart, and
 	// the upload may take long: the setup has to still be open, without
 	// any account, once the archive is in.
-	if !h.SetupState.TryBeginCommit() {
+	if !h.SetupState.TryBeginCommit(middleware.SetupToken(r)) {
 		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
 		return
 	}
@@ -272,11 +273,8 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		writeStageError(w, err, result)
 		return
 	}
-	if h.SetupState.Expired() || !h.setupStillFree(w, r) {
+	if !h.setupStillFree(w, r) {
 		h.discardSetupRestore()
-		if h.SetupState.Expired() {
-			writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
-		}
 		done = true
 		return
 	}

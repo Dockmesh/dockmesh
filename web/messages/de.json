@@ -638,7 +638,7 @@
   "apierr_setup_already_set_up": "Dieses Dockmesh ist bereits eingerichtet, stattdessen anmelden",
   "apierr_setup_install_unavailable": "Eine Installation läuft bereits, oder die Einrichtung ist abgeschlossen oder abgelaufen",
   "apierr_setup_mode_is_no_longer_active": "Einrichtungsmodus ist nicht mehr aktiv",
-  "apierr_setup_window_expired": "Einrichtungsfenster abgelaufen — den Dienst dockmesh neu starten, um ein neues Fenster zu öffnen",
+  "apierr_setup_code_required": "Ein Setup-Code ist erforderlich.",
   "apierr_source_must_be_manual_or_sso": "source muss manual oder sso sein",
   "apierr_stack_already_exists": "Stack existiert bereits",
   "apierr_stack_host_required": "Host für diesen Stack wählen: Stacks können nur auf bestimmten Hosts erstellt werden",

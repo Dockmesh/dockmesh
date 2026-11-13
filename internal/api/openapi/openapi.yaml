@@ -6092,8 +6092,14 @@ paths:
       operationId: setup.preflight
       tags: [setup]
       summary: Host + Docker preflight checks for the wizard's first page
-      security: []
+      security:
+        - setupSession: []
       responses:
+        "401":
+          description: No setup session (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "200":
           description: Preflight snapshot with one row per check.
           content:
@@ -6119,8 +6125,14 @@ paths:
       tags: [setup]
       summary: Top-bar facts (version · os · ip · docker)
       description: Polled by the wizard top-bar every ~10s while setup is open.
-      security: []
+      security:
+        - setupSession: []
       responses:
+        "401":
+          description: No setup session (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "200":
           description: Server info snapshot.
           content:
@@ -6138,7 +6150,8 @@ paths:
       operationId: setup.validate_data_dir
       tags: [setup]
       summary: Live-validate Step 2's data-directory input
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - $ref: "#/components/parameters/SetupHeader"
       requestBody:
@@ -6170,8 +6183,13 @@ paths:
                   parent_writable: {type: boolean}
                   status: {type: string, enum: [ok, warn, fail]}
                   message: {type: string}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "410":
-          description: Setup window expired or setup already complete.
+          description: Setup mode is no longer active.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6180,7 +6198,8 @@ paths:
       operationId: setup.validate_user
       tags: [setup]
       summary: Validate Step 3's service-user choice
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - $ref: "#/components/parameters/SetupHeader"
       requestBody:
@@ -6210,8 +6229,13 @@ paths:
                   in_docker_group: {type: boolean}
                   status: {type: string, enum: [ok, warn, fail]}
                   message: {type: string}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "410":
-          description: Setup window expired or setup already complete.
+          description: Setup mode is no longer active.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6226,7 +6250,8 @@ paths:
         link-local, cloud metadata, NAT64 and other private addresses
         are refused after DNS resolution and on every redirect hop; the
         result is then `status: fail` with a "not tested" message.
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - $ref: "#/components/parameters/SetupHeader"
       requestBody:
@@ -6253,8 +6278,13 @@ paths:
                   latency_ms: {type: integer}
                   status: {type: string, enum: [ok, warn, fail]}
                   message: {type: string}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "410":
-          description: Setup window expired or setup already complete.
+          description: Setup mode is no longer active.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6270,7 +6300,8 @@ paths:
         at a time. The service user is added to the `docker` group only
         when the wizard creates it (`mode: create`); existing accounts
         are never changed.
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - $ref: "#/components/parameters/SetupHeader"
       requestBody:
@@ -6316,8 +6347,13 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "410":
-          description: Setup window expired or setup already complete.
+          description: Setup mode is no longer active.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6340,7 +6376,8 @@ paths:
         Requests must carry `X-Dockmesh-Setup: 1`; browsers only send it
         from a same-origin page, so another site can't post a backup here.
         Archives may unpack to at most 8 GiB / 200,000 entries.
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - name: X-Dockmesh-Setup
           in: header
@@ -6381,8 +6418,13 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "410":
-          description: Setup mode is not active or its window expired.
+          description: Setup mode is no longer active.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -6405,7 +6447,8 @@ paths:
         Stays available after setup has ended, so a wizard that connects
         after a fast install still gets the full history; runs are
         dropped 10 minutes after they finish (then 404).
-      security: []
+      security:
+        - setupSession: []
       parameters:
         - in: path
           name: run_id
@@ -6428,16 +6471,12 @@ paths:
       tags: [setup]
       summary: Whether the server is in first-run setup mode
       description: |
-        Returns `active: true` when the install has no user account at all
-        and the install wizard is the only thing that should be reachable.
-        An install with accounts but no admin never reopens the wizard.
-        The wizard frontend polls this on every page load to decide
-        whether to redirect to the dashboard once setup is complete.
-
-        `expired: true` means the 30-minute setup window passed without
-        the wizard being completed — the operator restarts the service
-        to get a fresh window. Refusing to seed admins past the window
-        is a Portainer-style drive-by protection.
+        Answers without a setup session and says only what the code form
+        needs. `active` is true for an install that was never set up or
+        whose wizard never finished; any other install never opens setup
+        mode. `code` is the state of the current setup code and `session`
+        what the request's setup cookie is worth; both are left out when
+        setup mode is not active.
       security: []
       responses:
         "200":
@@ -6446,13 +6485,75 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [active, started_at, expires_at, expired, window_secs]
+                required: [active]
                 properties:
                   active: {type: boolean}
-                  started_at: {type: string, format: date-time}
-                  expires_at: {type: string, format: date-time}
-                  expired: {type: boolean}
-                  window_secs: {type: integer}
+                  code:
+                    type: string
+                    enum: [no_code, ready, expired, locked]
+                    description: "no_code: `dockmesh setup new-code` has not run; locked: 20 wrong attempts"
+                  session:
+                    type: string
+                    enum: [none, valid, read_only, replaced]
+                    description: "replaced: the code was entered in another browser, which took the session over"
+  /setup/code:
+    post:
+      operationId: setup.code
+      tags: [setup]
+      summary: Enter the setup code and open the setup session
+      description: |
+        The code is printed by `sudo dockmesh setup new-code` on the server
+        and is valid for 2 hours. Case, dashes and spaces are ignored. After
+        5 wrong codes from one address the address waits 15 minutes; after
+        20 wrong codes in total the code is locked until `new-code` runs
+        again. A right code sets the `dm_setup` cookie (httpOnly,
+        SameSite=Strict, Secure over HTTPS) and ends any earlier setup
+        session. Needs the `X-Dockmesh-Setup` header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, example: K7QD-3MXA-9PRT}
+      responses:
+        "204":
+          description: Right code; the setup session cookie is set.
+        "400":
+          description: Body is not JSON.
+        "401":
+          description: Wrong code.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SetupCodeError"}
+        "403":
+          description: The X-Dockmesh-Setup header is missing or the request is cross-site.
+        "409":
+          description: No setup code has been created yet.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SetupCodeError"}
+        "410":
+          description: The code expired, or setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SetupCodeError"}
+        "423":
+          description: The code is locked after 20 wrong attempts.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SetupCodeError"}
+        "429":
+          description: Too many wrong codes from this address.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SetupCodeError"}
   /stacks:
     get:
       operationId: stacks.list
@@ -8501,6 +8602,16 @@ components:
         Accepts either a user session JWT (from `POST /auth/login`) or an API
         token (prefix `dmt_`, from Settings → API Tokens). The route layer
         checks role permissions after authentication.
+    setupSession:
+      type: apiKey
+      in: cookie
+      name: dm_setup
+      description: |
+        Setup session, set by `POST /setup/code` when the setup code is
+        right. Only one exists; entering the code again takes it over. It
+        ends with the code (2 hours) or when `dockmesh setup new-code`
+        creates a new one; after the install starts it can only follow the
+        install's progress.
   schemas:
     AgentReachability:
       type: object
@@ -10173,6 +10284,13 @@ components:
         dismissible: {type: boolean, description: False for critical notices that are not blocking.}
         dismissed: {type: boolean}
         hidden_until: {type: string, format: date-time, description: "When a dismissed blocking notice comes back to the caller's banner."}
+    SetupCodeError:
+      type: object
+      properties:
+        error: {type: string}
+        code_state: {type: string, enum: [no_code, ready, expired, locked]}
+        attempts_left: {type: integer, description: "wrong codes left before this address waits or the code locks"}
+        retry_after_secs: {type: integer}
     StackInput:
       type: object
       required: [name, compose]

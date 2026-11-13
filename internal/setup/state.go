@@ -11,12 +11,8 @@
 // completes (admin user gets seeded), the in-memory state flips to
 // inactive without restart, and the regular routes start answering.
 //
-// A 30-minute window from server start protects against drive-by
-// attacks where someone in the LAN beats the legitimate operator to
-// the wizard. After the window expires, the wizard's "create admin"
-// endpoint returns 410 and refuses to seed; the operator restarts the
-// service to get a fresh window. This matches Portainer's first-run
-// safety pattern.
+// Nothing but the code form answers before a setup code from root
+// (`dockmesh setup new-code`) opened a setup session; see Codes.
 package setup
 
 import (
@@ -29,19 +25,12 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// SetupWindow is how long after server start the wizard accepts a
-// "complete setup" request. After this, the operator restarts the
-// service to get a fresh window.
-const SetupWindow = 30 * time.Minute
-
-// Status is the JSON shape returned to the wizard frontend so it can
-// decide what to render.
+// Status is what the code form needs, and nothing more: it answers
+// before any code was entered.
 type Status struct {
-	Active     bool      `json:"active"`
-	StartedAt  time.Time `json:"started_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Expired    bool      `json:"expired"`
-	WindowSecs int       `json:"window_secs"`
+	Active  bool         `json:"active"`
+	Code    CodeState    `json:"code,omitempty"`
+	Session SessionState `json:"session,omitempty"`
 }
 
 // State carries the live setup-mode flag for the lifetime of one
@@ -52,11 +41,18 @@ type State struct {
 	active     bool
 	committing bool
 	startedAt  time.Time
+	codes      *Codes
 }
 
-// NewForced returns a State pinned to active regardless of existing users.
-func NewForced() *State {
-	return &State{active: true, startedAt: time.Now()}
+// NewForced returns a State pinned to active regardless of existing users,
+// with codes read from codeFile.
+func NewForced(codeFile string) *State {
+	return &State{active: true, startedAt: time.Now(), codes: NewCodes(codeFile)}
+}
+
+// Codes returns the setup codes of this state.
+func (s *State) Codes() *Codes {
+	return s.codes
 }
 
 // UsersExist reports whether the install has any user account. The wizard
@@ -112,39 +108,22 @@ func (s *State) StartedAt() time.Time {
 	return s.startedAt
 }
 
-// Expired returns true when the setup window has elapsed without the
-// wizard being completed. The window protects against drive-by
-// admin-creation if the legitimate operator wandered off.
-func (s *State) Expired() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if !s.active {
-		return false
+// SnapshotStatus returns the status for a request carrying token.
+func (s *State) SnapshotStatus(token string) Status {
+	if !s.Active() {
+		return Status{}
 	}
-	return time.Since(s.startedAt) > SetupWindow
+	return Status{Active: true, Code: s.codes.State(), Session: s.codes.Session(token)}
 }
 
-// SnapshotStatus returns a JSON-friendly status struct.
-func (s *State) SnapshotStatus() Status {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	exp := s.startedAt.Add(SetupWindow)
-	return Status{
-		Active:     s.active,
-		StartedAt:  s.startedAt,
-		ExpiresAt:  exp,
-		Expired:    s.active && time.Now().After(exp),
-		WindowSecs: int(SetupWindow.Seconds()),
-	}
-}
-
-// TryBeginCommit claims the single install slot. It returns false while
-// another commit is running or once setup has finished or expired, so two
-// concurrent wizard submits can't both create an admin.
-func (s *State) TryBeginCommit() bool {
+// TryBeginCommit claims the single install slot for the session of
+// token. It returns false while another commit is running, once setup has
+// finished, or when token may not write, so two concurrent wizard submits
+// can't both create an admin.
+func (s *State) TryBeginCommit(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.committing || !s.active || time.Since(s.startedAt) > SetupWindow {
+	if s.committing || !s.active || !s.codes.BeginCommit(token) {
 		return false
 	}
 	s.committing = true
@@ -158,6 +137,7 @@ func (s *State) EndCommit(success bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.committing = false
+	s.codes.EndCommit(success)
 	if success {
 		s.active = false
 	}

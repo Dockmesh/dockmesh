@@ -108,7 +108,7 @@ func boot(t *testing.T, root string, p Probe) Mode {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	st, mode, _, err := NewForBoot(context.Background(), conn, facts)
+	st, mode, _, err := NewForBoot(context.Background(), conn, facts, "")
 	if err != nil {
 		t.Fatal(err)
 	}
