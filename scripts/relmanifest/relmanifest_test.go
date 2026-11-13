@@ -509,6 +509,9 @@ func TestReleasePreReleaseErrors(t *testing.T) {
 		{"other pre-release kind", "v0.6.0-beta.1", full, "not a release candidate tag"},
 		{"rc without number", "v0.6.0-rc", full, "not a release candidate tag"},
 		{"no fragments", "v0.6.0-rc.1", empty, "no entries"},
+		{"advisory as upgrade note id", "v0.6.0-rc.1", writeFragments(t, filepath.Join(dir, "ghsa"), map[string]string{
+			"Upgrade-notes-1.yaml": "kind: Upgrade notes\nbody: Re-login\ncustom:\n    Audience: all\n    Id: ghsa-2c4m-59x9-fr2g\n",
+		}), "names an advisory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -531,5 +534,60 @@ func TestStableManifestIsNotPrerelease(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"prerelease": false`) {
 		t.Errorf("manifest = %s", b)
+	}
+}
+
+func TestReleasePreReleaseLeavesOutAdvisories(t *testing.T) {
+	dir := t.TempDir()
+	cl := writeFile(t, dir, "CHANGELOG.md", sample)
+	fd := writeFragments(t, dir, map[string]string{
+		"Security-20261101-100000.yaml": "kind: Security\nbody: 'GHSA-2c4m-59x9-fr2g (high): Agent install command fetched the installer over the web port'\n",
+		"Security-20261101-110000.yaml": "kind: Security\nbody: Session cookies are refreshed on sign-in (GHSA-3x5p-7q8r-9v2w)\n",
+		"Security-20261101-120000.yaml": "kind: Security\nbody: Stricter upload checks, see [GHSA-4w6x-8j9h-2m3c](https://github.com/Dockmesh/dockmesh/security/advisories/GHSA-4w6x-8j9h-2m3c)\n",
+		"Fixed-20261101-130000.yaml":    "kind: Fixed\nbody: A fix.\n",
+	})
+	notes, body, manifest := filepath.Join(dir, "n.md"), filepath.Join(dir, "b.md"), filepath.Join(dir, "m.json")
+	args := []string{"release", "-changelog", cl, "-fragments", fd, "-version", "v0.6.0-rc.1", "-notes", notes, "-body", body, "-manifest", manifest}
+	if err := run(args, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{notes, body, manifest} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(b)
+		for _, bad := range []string{"GHSA", "ghsa", "security/advisories"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s contains %q\n%s", filepath.Base(path), bad, got)
+			}
+		}
+		for _, want := range []string{
+			"Agent install command fetched the installer over the web port",
+			"Session cookies are refreshed on sign-in",
+			"Stricter upload checks, see",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s lacks %q\n%s", filepath.Base(path), want, got)
+			}
+		}
+	}
+}
+
+func TestStripAdvisoryRefs(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Plain text", "Plain text"},
+		{"Fix (GHSA-2c4m-59x9-fr2g)", "Fix"},
+		{"GHSA-2c4m-59x9-fr2g: Fix", "Fix"},
+		{"See [the advisory](https://github.com/Dockmesh/dockmesh/security/advisories/GHSA-2c4m-59x9-fr2g) now", "See the advisory now"},
+		{"Fix, https://github.com/Dockmesh/dockmesh/security/advisories/GHSA-2c4m-59x9-fr2g", "Fix,"},
+		{"GHSA-2c4m-59x9-fr2g", ""},
+		{"Fix path traversal in restore (CVE-2026-12345)", "Fix path traversal in restore"},
+		{"cve-2026-1234: Fix", "Fix"},
+	}
+	for _, tt := range tests {
+		if got := stripAdvisoryRefs(tt.in); got != tt.want {
+			t.Errorf("stripAdvisoryRefs(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
