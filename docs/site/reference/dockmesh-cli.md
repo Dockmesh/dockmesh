@@ -227,7 +227,7 @@ Any other argument is rejected with status 2. After a lost connection the agent 
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` | Certificate, key, CA, saved server URL, stack copies |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent`, or `/var/lib/dockmesh` when the agent is enrolled there and not in the default | Certificate, key, CA, saved server URL, stack copies |
 | `DOCKMESH_ENROLL_URL` | none | `https://<server>:8443/enroll` on the agent port; required for the first start |
 | `DOCKMESH_TOKEN` | none | One-time enrollment token; required for the first start |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA; required to enroll over `https://` |
@@ -237,8 +237,4 @@ Any other argument is rejected with status 2. After a lost connection the agent 
 
 The agent's client certificate is valid for 365 days. The agent renews it over its connection once less than 30 days are left (it checks every 12 hours), and the host keeps its ID. If the certificate has expired anyway, the agent logs how to re-enroll: issue a new enrollment token on the host page and run the installer again. Check the remaining time with `dockmesh-agent status`, which marks a certificate as expiring soon when less than 14 days are left.
 
-`dockmesh-agent status` reads only `DOCKMESH_DATA_DIR` and `DOCKMESH_AGENT_URL` from the environment. Under systemd, run it with the same environment file:
-
-```bash
-sudo bash -c 'set -a; . /etc/dockmesh-agent/agent.env; dockmesh-agent status'
-```
+The agent reads the `DOCKMESH_*` lines of `/etc/dockmesh-agent/agent.env` itself, for variables not already set and only when root owns the file and nobody else may write it. So `sudo dockmesh-agent status` finds the same data directory as the service. `status` uses only `DOCKMESH_DATA_DIR` and `DOCKMESH_AGENT_URL`.

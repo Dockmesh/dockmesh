@@ -6,7 +6,7 @@
 //
 //	docker run -d --name dockmesh-agent --restart unless-stopped \
 //	  -v /var/run/docker.sock:/var/run/docker.sock \
-//	  -v dockmesh-agent:/var/lib/dockmesh \
+//	  -v dockmesh-agent:/var/lib/dockmesh-agent \
 //	  -v ./agents-ca.crt:/etc/dockmesh/enroll-ca.pem:ro \
 //	  -e DOCKMESH_ENROLL_URL=https://main:8443/enroll \
 //	  -e DOCKMESH_AGENT_URL=wss://main:8443/connect \
@@ -72,6 +72,7 @@ type agentConfig struct {
 }
 
 func main() {
+	loadAgentEnvFile(agentEnvFile)
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v", "version":

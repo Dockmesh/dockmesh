@@ -107,7 +107,7 @@ Two cases fail instead of being ignored: a service with `build:` and no `image:`
 The compose file is parsed inside a temporary staging directory that is deleted after the deploy. Relative bind mounts are pointed back at the stack's persistent directory, as `docker compose` would mount them:
 
 - On the server's host, `./data:/data` mounts `<stacks root>/<stack>/data`.
-- On an agent host, it mounts the agent's copy of the stack directory, `/var/lib/dockmesh/stacks/<stack>/data` with the agent's default data directory.
+- On an agent host, it mounts the agent's copy of the stack directory, `/var/lib/dockmesh-agent/stacks/<stack>/data` with the agent's default data directory.
 
 Data in such a directory on the server's host is part of every stack and system backup, because both archive the stack directory. Data on an agent host is not backed up; use named volumes there.
 

@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'dockmesh-agent status run by hand finds the agent''s data directory: the agent defaults to /var/lib/dockmesh-agent like its installer and reads /etc/dockmesh-agent/agent.env'
+time: 2026-11-13T15:16:49.548087802Z

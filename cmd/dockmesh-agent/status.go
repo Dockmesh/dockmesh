@@ -19,7 +19,7 @@ import (
 // cert/key/ca files, prints cert expiry, and tries a quick TLS dial to
 // the server to confirm reachability.
 func runStatusCmd() {
-	dataDir := envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh")
+	dataDir := dataDir()
 	certPath := filepath.Join(dataDir, "agent.crt")
 	keyPath := filepath.Join(dataDir, "agent.key")
 	caPath := filepath.Join(dataDir, "ca.crt")

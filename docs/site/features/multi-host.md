@@ -143,7 +143,7 @@ The upgrade policy decides whether the server upgrades agents on its own. It's e
 |---|---|
 | `manual` (default) | Nothing happens until you start an upgrade. |
 | `auto` | Every connected agent that's behind is upgraded. |
-| `staged` | Each evaluation upgrades `stage_percent` of the outdated agents (default 10 %, at least one). `stage_gap_sec` is stored but not applied; waves are spaced by the 60-second evaluation. |
+| `staged` | Each evaluation upgrades `stage_percent` of the outdated agents (default 10 %, at least one). The next wave starts once `stage_gap_sec` (default 300) has passed since the previous one; evaluations run every 60 seconds, so a shorter gap acts as 60 seconds. |
 
 In `auto` and `staged` mode, the server stops trying an agent after three attempts with the same binary that didn't leave it up to date, at least 5 minutes apart. The upgrade buttons always try.
 
