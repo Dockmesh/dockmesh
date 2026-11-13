@@ -21,6 +21,8 @@ func checkURLPath(p string) error {
 		return errors.New("is empty")
 	case !strings.HasPrefix(p, "/"):
 		return errors.New("must start with /")
+	case strings.HasPrefix(p, "//"):
+		return errors.New("must not start with //, which reads as a host name")
 	case len(p) > maxURLPathLen:
 		return fmt.Errorf("is longer than %d characters", maxURLPathLen)
 	case strings.ContainsAny(p, " #?"):
@@ -33,13 +35,14 @@ func checkURLPath(p string) error {
 			return errors.New("has a % that is not followed by two hex digits; write a literal % as %25")
 		}
 	}
-	for _, seg := range strings.Split(p, "/") {
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" {
+		return errors.New("is not a valid URL path")
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
 		if seg == "." || seg == ".." {
 			return errors.New("must not contain . or .. segments")
 		}
-	}
-	if _, err := url.ParseRequestURI(p); err != nil {
-		return errors.New("is not a valid URL path")
 	}
 	return nil
 }
