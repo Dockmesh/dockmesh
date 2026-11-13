@@ -21,7 +21,7 @@ Only one of `.env` and `.env.age` exists at a time; saving the environment in th
 
 Keep `secrets.age-key` in the data directory backed up. Without it, every `.env.age` is unreadable.
 
-The encryption covers the stack's `.env` at rest in the stacks directory. Plaintext copies of the environment still exist in other places: in the temporary staging directory during a deploy, and in the copy an agent keeps of each stack deployed on its host. Template placeholders used in `compose.yaml`, generated secrets included, are written into `compose.yaml` in plain text.
+The encryption covers the stack's `.env` at rest in the stacks directory. Plaintext copies of the environment still exist in other places: in the temporary staging directory during a deploy (mode `0600`, removed afterwards), and in the container configuration Docker keeps on the host (`docker inspect` shows it). Agents keep only `compose.yaml` and `.dockmesh.meta.json` of a stack; a `.env` copy left by an agent before 0.6.0 is removed at the next deploy of that stack, unless a container of the stack bind-mounts it or its directory. Template placeholders used in `compose.yaml`, generated secrets included, are written into `compose.yaml` in plain text.
 
 The full directory tree is in [Filesystem layout](../reference/filesystem-layout.md).
 

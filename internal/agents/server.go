@@ -106,6 +106,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.recordCert(r.Context(), agent.ID, fp, peer.NotAfter); err != nil {
 		slog.Warn("agent cert record", "agent", agent.Name, "err", err)
 	}
+	if hello.MirroredEnv {
+		h.svc.raiseEnvMirrorNotice(r.Context(), agent.ID, agent.Name)
+	}
 
 	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname,
 		"version", hello.Version, "protocol", hello.ProtocolVersion)

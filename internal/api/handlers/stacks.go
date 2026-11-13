@@ -1483,7 +1483,10 @@ func (h *Handlers) syncStackToAgent(ctx context.Context, hostID, name, compose, 
 			meta = string(b)
 		}
 	}
-	req := agents.StackSyncReq{Name: name, Compose: compose, Env: env, Meta: meta}
+	req := agents.StackSyncReq{Name: name, Compose: compose, Meta: meta}
+	if !ag.Hello.Has(agents.CapNoEnvMirror) {
+		req.Env = env
+	}
 	ctx, cancel := mirrorContext(ctx)
 	go func() {
 		defer cancel()

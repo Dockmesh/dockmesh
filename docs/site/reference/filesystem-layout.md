@@ -101,7 +101,7 @@ The server writes its log to stdout and stderr, so on Linux read it with `journa
 | `/var/lib/dockmesh-agent/enroll-ca.pem` | Server CA written by the installer, used to check the server during enrollment |
 | `/var/lib/dockmesh-agent/agent.url` | Saved `wss://` server URL |
 | `/var/lib/dockmesh-agent/bin/dockmesh-agent` | Agent binary; self-upgrades replace it in place |
-| `/var/lib/dockmesh-agent/stacks/<stack>/` | Mirror of stacks deployed to this host, with a plaintext `.env` |
+| `/var/lib/dockmesh-agent/stacks/<stack>/` | Mirror of stacks deployed to this host: `compose.yaml` and `.dockmesh.meta.json`, plus relative bind-mount data |
 | `/var/lib/dockmesh-agent/staging/` | Temporary deploy directories |
 | `/usr/local/bin/dockmesh-agent` | Root-owned copy of the binary, refreshed at every service start |
 | `/etc/dockmesh-agent/agent.env` | Environment file, including the enrollment token (0640) |

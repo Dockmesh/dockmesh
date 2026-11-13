@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -89,9 +91,10 @@ type Service struct {
 	listenerOn bool
 	// lookup and dial replace the resolver and dialer of the reachability
 	// check in tests.
-	lookup func(ctx context.Context, host string) ([]string, error)
-	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
-	notifs *notifications.Service
+	lookup  func(ctx context.Context, host string) ([]string, error)
+	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
+	notifs  *notifications.Service
+	notices *notices.Service
 	// metricsSink stores agent history; nil turns it off.
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex
@@ -551,6 +554,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	s.disconnect(id)
 	s.deleteHistory(ctx, id)
+	if s.notices != nil {
+		if err := s.notices.Resolve(ctx, envMirrorNoticePrefix+id); err != nil {
+			slog.Warn("resolve agent .env notice", "agent", id, "err", err)
+		}
+	}
 	return nil
 }
 

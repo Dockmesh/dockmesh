@@ -204,3 +204,34 @@ func TestCertRenewalRefusedAfterReenroll(t *testing.T) {
 		t.Fatalf("renewal on a session with a replaced cert: %v", err)
 	}
 }
+
+func TestEnvMirrorNoticeOncePerHost(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	n := notices.NewService(svc.db)
+	svc.SetNotices(n)
+	ag, _ := enrolledAgent(t, svc)
+
+	count := func() int {
+		t.Helper()
+		open, err := n.Open(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := 0
+		for _, o := range open {
+			if o.Key == envMirrorNoticePrefix+ag.ID {
+				if o.Severity != notices.SevInfo || o.Blocking {
+					t.Errorf("notice = %+v, want a non-blocking info notice", o)
+				}
+				c++
+			}
+		}
+		return c
+	}
+	svc.raiseEnvMirrorNotice(ctx, ag.ID, ag.Name)
+	svc.raiseEnvMirrorNotice(ctx, ag.ID, ag.Name)
+	if got := count(); got != 1 {
+		t.Fatalf("%d notices after two connects, want 1", got)
+	}
+}

@@ -920,6 +920,7 @@ func main() {
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
 	agentUpgrade.Start(ctx)
+	agentsSvc.SetNotices(noticesSvc)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
 	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})

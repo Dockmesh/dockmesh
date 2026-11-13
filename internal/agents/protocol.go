@@ -146,7 +146,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 5
+const ProtocolVersion = 6
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -180,6 +180,9 @@ const (
 	CapImageTransfer = "images.transfer"
 	// CapImageHistory, agent: answers req.images.history.
 	CapImageHistory = "images.history"
+	// CapNoEnvMirror, agent: keeps no .env copy, so req.stack.sync goes
+	// without the plaintext env.
+	CapNoEnvMirror = "stacks.no_env_mirror"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -370,13 +373,15 @@ type ContainerExecRunRes struct {
 	ExitCode int    `json:"exit_code"`
 }
 
-// StackSyncReq carries the full compose + env + optional meta for
-// local storage on the agent. Used by compose-file mirroring (P.7).
+// StackSyncReq carries the compose file and optional meta for local
+// storage on the agent.
 type StackSyncReq struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
-	Env     string `json:"env,omitempty"`
-	Meta    string `json:"meta,omitempty"` // .dockmesh.meta.json content
+	// Env goes only to agents without CapNoEnvMirror: those remove their
+	// .env copy when it is empty, even one a container bind-mounts.
+	Env  string `json:"env,omitempty"`
+	Meta string `json:"meta,omitempty"` // .dockmesh.meta.json content
 }
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells
@@ -399,6 +404,9 @@ type HelloPayload struct {
 	// negotiation.
 	ProtocolVersion int      `json:"protocol_version,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
+	// MirroredEnv is set by agents that no longer mirror stack .env files
+	// while plaintext copies from older versions are still on the host.
+	MirroredEnv bool `json:"mirrored_env,omitempty"`
 }
 
 // Has reports whether the agent advertised capability c.
