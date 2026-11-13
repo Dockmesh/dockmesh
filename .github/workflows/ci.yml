@@ -24,7 +24,7 @@ permissions:
 jobs:
   changes:
     name: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -78,7 +78,7 @@ jobs:
   changelog:
     name: changelog
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,7 +108,7 @@ jobs:
   migrations:
     name: migrations
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,7 +134,7 @@ jobs:
     name: go test (${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -190,7 +190,7 @@ jobs:
     name: integration
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -213,7 +213,7 @@ jobs:
     name: lint
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -237,7 +237,7 @@ jobs:
     name: govulncheck
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -267,7 +267,7 @@ jobs:
     name: web
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
@@ -292,7 +292,7 @@ jobs:
     name: docs and scripts
     needs: changes
     if: needs.changes.outputs.go != 'true' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,10 +311,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {goos: linux,  goarch: amd64, runner: ubuntu-latest,    smoke: true}
+          - {goos: linux,  goarch: amd64, runner: ubuntu-24.04,     smoke: true}
           - {goos: linux,  goarch: arm64, runner: ubuntu-24.04-arm, smoke: true}
-          - {goos: darwin, goarch: arm64, runner: ubuntu-latest,    smoke: false}
-          - {goos: darwin, goarch: amd64, runner: ubuntu-latest,    smoke: false}
+          - {goos: darwin, goarch: arm64, runner: ubuntu-24.04,     smoke: false}
+          - {goos: darwin, goarch: amd64, runner: ubuntu-24.04,     smoke: false}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -392,7 +392,7 @@ jobs:
     name: e2e
     needs: changes
     if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -423,7 +423,7 @@ jobs:
     name: licenses
     needs: changes
     if: needs.changes.outputs.deps == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # AGPL-3.0 compatible SPDX identifiers. OFL-1.1 covers the bundled
       # web fonts only (data, not linked code).
@@ -459,7 +459,7 @@ jobs:
     name: ci-ok
     if: always()
     needs: [changes, changelog, migrations, go-test, integration, lint, govulncheck, web, docs-scripts, build, e2e, licenses]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every job passed or was skipped
         env:

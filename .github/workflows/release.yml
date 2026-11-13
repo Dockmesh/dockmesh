@@ -60,7 +60,7 @@ permissions:
 jobs:
   notes:
     name: release notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Later jobs check out this exact commit, so a branch named like the tag
     # or a moved tag can't change what gets built.
     outputs:
@@ -132,7 +132,7 @@ jobs:
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: notes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -234,7 +234,7 @@ jobs:
   release:
     name: publish release
     needs: [notes, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write  # create the release and attach assets
     steps:
