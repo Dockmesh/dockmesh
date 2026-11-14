@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
@@ -46,8 +49,26 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
 		return
 	}
+	var req struct {
+		ConfirmHooks map[string]string `json:"confirm_hooks"`
+	}
+	if r.ContentLength != 0 {
+		if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+	}
 	userID := middleware.UserID(r.Context())
-	d, err := h.Drains.Execute(r.Context(), hostID, userID)
+	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks)
+	var unconfirmed *migration.DrainHooksUnconfirmedError
+	if errors.As(err, &unconfirmed) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   err.Error(),
+			"code":    "hooks_unconfirmed",
+			"entries": unconfirmed.Entries,
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -56,6 +77,7 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		"action":   "drain",
 		"drain_id": d.ID,
 		"stacks":   len(d.Plan),
+		"hooks":    req.ConfirmHooks,
 	})
 	writeJSON(w, http.StatusAccepted, d)
 }

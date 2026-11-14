@@ -4284,24 +4284,24 @@ paths:
       tags: [migrations]
       summary: Start the drain — migrate stacks off the source host
       description: |
-        Kicks off sequential stack migrations according to the plan (or
-        a computed default plan). Returns a drain id for progress polling.
+        Plans the drain again and migrates the stacks one after another.
+        Every stack in the plan with hook commands needs their digest in
+        `confirm_hooks` (from `entries[].hooks.digest` of the plan);
+        otherwise the drain is refused (409 `hooks_unconfirmed`, listing
+        those entries) and nothing runs.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
               properties:
-                plan: {$ref: "#/components/schemas/DrainPlan"}
-                target_host_ids:
-                  type: array
-                  items: {type: string, format: uuid}
-                strategy:
-                  type: string
-                  enum: [least-loaded, explicit, round-robin]
+                confirm_hooks:
+                  type: object
+                  description: Stack name to the digest of its confirmed hook commands.
+                  additionalProperties: {type: string}
       responses:
         "202":
           description: Drain accepted — poll `/hosts/{id}/drain/{drain_id}`.
@@ -4315,10 +4315,18 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A drain is already running for this host.
+          description: Hook commands in the plan were not confirmed or changed (`code` `hooks_unconfirmed`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: object
+                required: [error, code, entries]
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [hooks_unconfirmed]}
+                  entries:
+                    type: array
+                    items: {$ref: "#/components/schemas/DrainPlanEntry"}
   /hosts/{id}/drain/{drain_id}:
     parameters:
       - $ref: "#/components/parameters/HostIDPath"
@@ -7488,6 +7496,12 @@ paths:
         `modified_outside`) until the request confirms them. A change
         after the start fails the migration, and a stopped source is not
         redeployed with the changed files.
+
+        A stack with hook commands (`pre_dump`, `post_restore`) needs
+        `confirm_hooks` set to their digest from the preflight; without it,
+        or after the commands changed, the request is refused (409
+        `hooks_unconfirmed`) and nothing runs. The migration runs the
+        confirmed commands.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/ConfirmExternalQuery"
@@ -7501,6 +7515,9 @@ paths:
               properties:
                 target_host_id: {type: string, format: uuid}
                 include_volumes: {type: boolean, default: true}
+                confirm_hooks:
+                  type: string
+                  description: Digest of the stack's hook commands (`hooks.digest` of the preflight). Required when the stack has any.
       responses:
         "202":
           description: Migration accepted — poll `/migrate/{id}` for progress.
@@ -7521,7 +7538,8 @@ paths:
             yet, the same as the failing `named_volumes` preflight check),
             or its compose.yaml or .env changed outside Dockmesh
             (`code: modified_outside`; repeat with `confirm_external=1`
-            after reviewing them).
+            after reviewing them), or its hook commands were not confirmed
+            or changed (`code: hooks_unconfirmed`, with the current `hooks`).
           content:
             application/json:
               schema:
@@ -7536,6 +7554,12 @@ paths:
                       files:
                         type: array
                         items: {type: string}
+                  - type: object
+                    required: [error, code, hooks]
+                    properties:
+                      error: {type: string}
+                      code: {type: string, enum: [hooks_unconfirmed]}
+                      hooks: {$ref: "#/components/schemas/MigrationHookCommands"}
   /stacks/{name}/migrate/preflight:
     post:
       operationId: stacks.migrate_preflight
@@ -7582,6 +7606,9 @@ paths:
                           enum: [pass, fail, unknown]
                           description: "`unknown`: the check could not be evaluated (e.g. an agent too old to report its architecture); reported, but doesn't block."
                         detail: {type: string}
+                  hooks:
+                    $ref: "#/components/schemas/MigrationHookCommands"
+                    description: Hook commands the migration would run; absent when the stack has none.
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -9328,6 +9355,18 @@ components:
         total_bytes: {type: integer, format: int64}
         free_bytes: {type: integer, format: int64}
         error: {type: string}
+    MigrationHookCommands:
+      type: object
+      description: |
+        Hook commands from the stack's `.dockmesh.meta.json` that a
+        migration runs with `sh -c` in a running container of the stack.
+        `digest` names exactly these commands; a migration or drain runs
+        them only when the request sends it back.
+      required: [digest]
+      properties:
+        pre_dump: {type: string, description: Runs on the source host before the stack stops.}
+        post_restore: {type: string, description: Runs on the target host after the stack starts.}
+        digest: {type: string, description: SHA-256 hex of the commands.}
     ModifiedOutsideError:
       type: object
       description: An error, or with `code` `modified_outside` the stack files changed outside Dockmesh (`files`).
@@ -9792,23 +9831,28 @@ components:
         error: {type: string, description: Set when usage could not be read (for example a hung network mount).}
     DrainPlan:
       type: object
-      description: |
-        Map of source-host stacks to target hosts. Returned by
-        `/hosts/{id}/drain/plan` and accepted as the input to
-        `/hosts/{id}/drain/execute`.
+      description: Map of source-host stacks to target hosts, returned by `/hosts/{id}/drain/plan`.
+      required: [source_host_id, source_name, entries, feasible]
       properties:
-        source_host_id: {type: string, format: uuid}
-        strategy: {type: string, enum: [least-loaded, explicit, round-robin]}
-        assignments:
+        source_host_id: {type: string}
+        source_name: {type: string}
+        feasible: {type: boolean, description: Every entry is feasible.}
+        entries:
           type: array
-          items:
-            type: object
-            required: [stack, target_host_id]
-            properties:
-              stack: {type: string}
-              target_host_id: {type: string, format: uuid}
-              target_host_name: {type: string}
-              volume_bytes: {type: integer, format: int64}
+          items: {$ref: "#/components/schemas/DrainPlanEntry"}
+    DrainPlanEntry:
+      type: object
+      required: [stack_name, target_host_id, target_name, weight_bytes, feasible]
+      properties:
+        stack_name: {type: string}
+        target_host_id: {type: string}
+        target_name: {type: string}
+        weight_bytes: {type: integer, format: int64}
+        feasible: {type: boolean}
+        detail: {type: string}
+        hooks:
+          $ref: "#/components/schemas/MigrationHookCommands"
+          description: Hook commands the stack's migration would run; absent when it has none.
     DrainStatus:
       type: object
       required: [id, source_host_id, status]
@@ -9818,7 +9862,9 @@ components:
         status:
           type: string
           enum: [pending, running, paused, completed, failed, aborted]
-        plan: {$ref: "#/components/schemas/DrainPlan"}
+        plan:
+          type: array
+          items: {$ref: "#/components/schemas/DrainPlanEntry"}
         progress:
           type: object
           properties:

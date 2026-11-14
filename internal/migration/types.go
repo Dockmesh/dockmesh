@@ -59,6 +59,9 @@ type Progress struct {
 // MigrateRequest is the API payload to initiate a migration.
 type MigrateRequest struct {
 	TargetHostID string `json:"target_host_id"`
+	// ConfirmHooks is the digest of the hook commands the caller was
+	// shown; needed when the stack has any.
+	ConfirmHooks string `json:"confirm_hooks,omitempty"`
 }
 
 // PreflightCheck is one item in the pre-flight report.
@@ -81,6 +84,8 @@ const (
 type PreflightResult struct {
 	Passed bool             `json:"passed"`
 	Checks []PreflightCheck `json:"checks"`
+	// Hooks are the commands the migration would run, nil without any.
+	Hooks *HookCommands `json:"hooks,omitempty"`
 }
 
 // IsTerminal returns true if the migration is in a final state.

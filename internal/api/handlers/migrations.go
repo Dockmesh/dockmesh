@@ -45,7 +45,16 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := middleware.UserID(r.Context())
-	m, err := h.Migrations.Initiate(r.Context(), name, req.TargetHostID, userID)
+	m, err := h.Migrations.Initiate(r.Context(), name, req.TargetHostID, userID, req.ConfirmHooks)
+	var unconfirmed *migration.HooksUnconfirmedError
+	if errors.As(err, &unconfirmed) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": err.Error(),
+			"code":  "hooks_unconfirmed",
+			"hooks": unconfirmed.Hooks,
+		})
+		return
+	}
 	if errors.Is(err, migration.ErrNamedVolumes) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -59,6 +68,7 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		"migration_id": m.ID,
 		"source":       m.SourceHostID,
 		"target":       m.TargetHostID,
+		"hooks_digest": req.ConfirmHooks,
 	})
 	writeJSON(w, http.StatusAccepted, m)
 }

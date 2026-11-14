@@ -73,24 +73,24 @@ paths:
       tags: [migrations]
       summary: Start the drain — migrate stacks off the source host
       description: |
-        Kicks off sequential stack migrations according to the plan (or
-        a computed default plan). Returns a drain id for progress polling.
+        Plans the drain again and migrates the stacks one after another.
+        Every stack in the plan with hook commands needs their digest in
+        `confirm_hooks` (from `entries[].hooks.digest` of the plan);
+        otherwise the drain is refused (409 `hooks_unconfirmed`, listing
+        those entries) and nothing runs.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
               properties:
-                plan: {$ref: "#/components/schemas/DrainPlan"}
-                target_host_ids:
-                  type: array
-                  items: {type: string, format: uuid}
-                strategy:
-                  type: string
-                  enum: [least-loaded, explicit, round-robin]
+                confirm_hooks:
+                  type: object
+                  description: Stack name to the digest of its confirmed hook commands.
+                  additionalProperties: {type: string}
       responses:
         "202":
           description: Drain accepted — poll `/hosts/{id}/drain/{drain_id}`.
@@ -104,10 +104,18 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A drain is already running for this host.
+          description: Hook commands in the plan were not confirmed or changed (`code` `hooks_unconfirmed`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: object
+                required: [error, code, entries]
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [hooks_unconfirmed]}
+                  entries:
+                    type: array
+                    items: {$ref: "#/components/schemas/DrainPlanEntry"}
   /hosts/{id}/drain/{drain_id}:
     parameters:
       - $ref: "#/components/parameters/HostIDPath"
@@ -184,23 +192,28 @@ components:
   schemas:
     DrainPlan:
       type: object
-      description: |
-        Map of source-host stacks to target hosts. Returned by
-        `/hosts/{id}/drain/plan` and accepted as the input to
-        `/hosts/{id}/drain/execute`.
+      description: Map of source-host stacks to target hosts, returned by `/hosts/{id}/drain/plan`.
+      required: [source_host_id, source_name, entries, feasible]
       properties:
-        source_host_id: {type: string, format: uuid}
-        strategy: {type: string, enum: [least-loaded, explicit, round-robin]}
-        assignments:
+        source_host_id: {type: string}
+        source_name: {type: string}
+        feasible: {type: boolean, description: Every entry is feasible.}
+        entries:
           type: array
-          items:
-            type: object
-            required: [stack, target_host_id]
-            properties:
-              stack: {type: string}
-              target_host_id: {type: string, format: uuid}
-              target_host_name: {type: string}
-              volume_bytes: {type: integer, format: int64}
+          items: {$ref: "#/components/schemas/DrainPlanEntry"}
+    DrainPlanEntry:
+      type: object
+      required: [stack_name, target_host_id, target_name, weight_bytes, feasible]
+      properties:
+        stack_name: {type: string}
+        target_host_id: {type: string}
+        target_name: {type: string}
+        weight_bytes: {type: integer, format: int64}
+        feasible: {type: boolean}
+        detail: {type: string}
+        hooks:
+          $ref: "#/components/schemas/MigrationHookCommands"
+          description: Hook commands the stack's migration would run; absent when it has none.
     DrainStatus:
       type: object
       required: [id, source_host_id, status]
@@ -210,7 +223,9 @@ components:
         status:
           type: string
           enum: [pending, running, paused, completed, failed, aborted]
-        plan: {$ref: "#/components/schemas/DrainPlan"}
+        plan:
+          type: array
+          items: {$ref: "#/components/schemas/DrainPlanEntry"}
         progress:
           type: object
           properties:

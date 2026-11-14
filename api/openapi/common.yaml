@@ -1,5 +1,17 @@
 components:
   schemas:
+    MigrationHookCommands:
+      type: object
+      description: |
+        Hook commands from the stack's `.dockmesh.meta.json` that a
+        migration runs with `sh -c` in a running container of the stack.
+        `digest` names exactly these commands; a migration or drain runs
+        them only when the request sends it back.
+      required: [digest]
+      properties:
+        pre_dump: {type: string, description: Runs on the source host before the stack stops.}
+        post_restore: {type: string, description: Runs on the target host after the stack starts.}
+        digest: {type: string, description: SHA-256 hex of the commands.}
     ModifiedOutsideError:
       type: object
       description: An error, or with `code` `modified_outside` the stack files changed outside Dockmesh (`files`).

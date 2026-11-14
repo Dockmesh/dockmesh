@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: API clients that start migrations or drains for stacks with migration hooks must send the hooks' digest from the preflight or drain plan (confirm_hooks); requests without it are refused with 409 hooks_unconfirmed
+time: 2026-11-14T14:13:47.045073981Z
+custom:
+    Audience: all
+    Id: migration-hook-confirm

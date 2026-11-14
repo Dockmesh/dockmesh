@@ -18,6 +18,8 @@ type PlanEntry struct {
 	// Whether the assignment passed capacity check.
 	Feasible     bool   `json:"feasible"`
 	Detail       string `json:"detail,omitempty"`
+	// Hooks are the commands the stack's migration would run.
+	Hooks *HookCommands `json:"hooks,omitempty"`
 }
 
 // DrainPlan is the result of PlanDrain.

@@ -3,6 +3,7 @@
   import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
+  import HookCommandsConfirm from '$lib/components/HookCommandsConfirm.svelte';
   import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
@@ -1046,6 +1047,7 @@
   let migratePreflight = $state<PreflightResult | null>(null);
   let migratePreflightLoading = $state(false);
   let migrateBusy = $state(false);
+  let migrateHooksConfirmed = $state(false);
   let activeMigration = $state<Migration | null>(null);
 
   async function openMigrate() {
@@ -1058,6 +1060,7 @@
     if (!migrateTarget) return;
     migratePreflightLoading = true;
     migratePreflight = null;
+    migrateHooksConfirmed = false;
     try {
       migratePreflight = await api.migrations.preflight(name, migrateTarget);
     } catch (err) {
@@ -1071,18 +1074,24 @@
     migrateBusy = true;
     try {
       let mig;
+      const hooks = migrateHooksConfirmed ? migratePreflight?.hooks?.digest : undefined;
       try {
-        mig = await api.migrations.initiate(name, migrateTarget);
+        mig = await api.migrations.initiate(name, migrateTarget, false, hooks);
       } catch (err) {
         if (!(await confirmExternalChanges(err))) throw err;
-        mig = await api.migrations.initiate(name, migrateTarget, true);
+        mig = await api.migrations.initiate(name, migrateTarget, true, hooks);
       }
       activeMigration = mig;
       showMigrate = false;
       toast.success(m.stacks_d_migration_started(), `${name} → ${migrateTarget}`);
       pollMigration(mig.id);
     } catch (err) {
-      toast.error(m.stacks_d_migration_failed(), err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 409 && err.body?.code === 'hooks_unconfirmed') {
+        toast.error(m.stacks_d_migration_failed(), m.migration_hooks_changed());
+        runPreflight();
+      } else {
+        toast.error(m.stacks_d_migration_failed(), err instanceof ApiError ? err.message : undefined);
+      }
     } finally {
       migrateBusy = false;
     }
@@ -2546,6 +2555,10 @@
         {/each}
       </div>
 
+      {#if migratePreflight.hooks}
+        <HookCommandsConfirm items={[{ stack: name, hooks: migratePreflight.hooks }]} bind:confirmed={migrateHooksConfirmed} />
+      {/if}
+
       {#if !migratePreflight.passed}
         <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)]">
           {m.stacks_d_preflight_failed_hint()}
@@ -2563,7 +2576,7 @@
     <Button
       variant="primary"
       loading={migrateBusy}
-      disabled={migrateBusy || !migrateTarget || migratePreflightLoading || (migratePreflight && !migratePreflight.passed)}
+      disabled={migrateBusy || !migrateTarget || migratePreflightLoading || (migratePreflight && !migratePreflight.passed) || (!!migratePreflight?.hooks && !migrateHooksConfirmed)}
       onclick={startMigration}
     >
       <ArrowRightLeft class="w-4 h-4" />

@@ -1,0 +1,3 @@
+kind: Changed
+body: Migrating a stack or draining a host shows the hook commands (pre_dump, post_restore) from the stack's .dockmesh.meta.json and runs them only after you confirm them
+time: 2026-11-14T14:13:46.658538462Z

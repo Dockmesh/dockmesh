@@ -475,8 +475,16 @@ export interface MigrationProgress {
   images_total: number;
 }
 
+// Hook commands a migration would run; digest confirms exactly these.
+export interface HookCommands {
+  pre_dump?: string;
+  post_restore?: string;
+  digest: string;
+}
+
 export interface PreflightResult {
   passed: boolean;
+  hooks?: HookCommands;
   // status 'unknown': could not be evaluated (e.g. an older agent); doesn't block.
   checks: Array<{ name: string; passed: boolean; status?: 'pass' | 'fail' | 'unknown'; detail?: string }>;
 }
@@ -496,6 +504,7 @@ export interface DrainPlanEntry {
   weight_bytes: number;
   feasible: boolean;
   detail?: string;
+  hooks?: HookCommands;
 }
 
 export interface Drain {
@@ -2002,10 +2011,10 @@ export const api = {
     active: () => request<Migration[]>('/migrations/active'),
     get: (name: string, id: string) =>
       request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate/${id}`),
-    initiate: (name: string, targetHostId: string, confirmExternal = false) =>
+    initiate: (name: string, targetHostId: string, confirmExternal = false, confirmHooks?: string) =>
       request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate${confirmExternal ? '?confirm_external=1' : ''}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_host_id: targetHostId })
+        body: JSON.stringify({ target_host_id: targetHostId, confirm_hooks: confirmHooks })
       }),
     preflight: (name: string, targetHostId: string) =>
       request<PreflightResult>(`/stacks/${encodeURIComponent(name)}/migrate/preflight`, {
@@ -2021,8 +2030,11 @@ export const api = {
   drains: {
     plan: (hostId: string) =>
       request<DrainPlan>(`/hosts/${encodeURIComponent(hostId)}/drain/plan`, { method: 'POST' }),
-    execute: (hostId: string) =>
-      request<Drain>(`/hosts/${encodeURIComponent(hostId)}/drain/execute`, { method: 'POST' }),
+    execute: (hostId: string, confirmHooks?: Record<string, string>) =>
+      request<Drain>(`/hosts/${encodeURIComponent(hostId)}/drain/execute`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm_hooks: confirmHooks ?? {} })
+      }),
     get: (hostId: string, drainId: string) =>
       request<Drain>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}`),
     pause: (hostId: string, drainId: string) =>

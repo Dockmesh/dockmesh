@@ -2,7 +2,10 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -105,4 +108,61 @@ func outputTail(b []byte) string {
 		s = "…" + strings.ToValidUTF8(s[len(s)-max:], "")
 	}
 	return s
+}
+
+// HookCommands are the hook commands a migration of a stack would run, as
+// shown for confirmation. Digest names exactly these commands; a caller
+// confirms by sending it back.
+type HookCommands struct {
+	PreDump     string `json:"pre_dump,omitempty"`
+	PostRestore string `json:"post_restore,omitempty"`
+	Digest      string `json:"digest"`
+}
+
+func hookCommands(h *MigrationHooks) *HookCommands {
+	if h == nil || (h.PreDump == "" && h.PostRestore == "") {
+		return nil
+	}
+	b, _ := json.Marshal([]string{h.PreDump, h.PostRestore})
+	sum := sha256.Sum256(b)
+	return &HookCommands{PreDump: h.PreDump, PostRestore: h.PostRestore, Digest: hex.EncodeToString(sum[:])}
+}
+
+// HookCommands returns the hook commands in the stack's meta file, nil
+// when it has none.
+func (s *Service) HookCommands(stackName string) (*HookCommands, error) {
+	h, err := s.loadHooks(stackName)
+	if err != nil {
+		return nil, fmt.Errorf("read migration hooks: %w", err)
+	}
+	return hookCommands(h), nil
+}
+
+// ErrHooksUnconfirmed matches a HooksUnconfirmedError.
+var ErrHooksUnconfirmed = errors.New("the migration would run hook commands that were not confirmed")
+
+// HooksUnconfirmedError refuses a migration whose hook commands the
+// caller didn't confirm, or that changed since they were shown.
+type HooksUnconfirmedError struct {
+	Stack string
+	Hooks *HookCommands
+}
+
+func (e *HooksUnconfirmedError) Error() string {
+	return fmt.Sprintf("stack %s: %s", e.Stack, ErrHooksUnconfirmed)
+}
+
+func (e *HooksUnconfirmedError) Is(target error) bool { return target == ErrHooksUnconfirmed }
+
+// checkHooksConfirmed returns the stack's hook commands when confirm is
+// their digest, or a HooksUnconfirmedError.
+func (s *Service) checkHooksConfirmed(stackName, confirm string) (*HookCommands, error) {
+	cmds, err := s.HookCommands(stackName)
+	if err != nil {
+		return nil, err
+	}
+	if cmds != nil && cmds.Digest != confirm {
+		return nil, &HooksUnconfirmedError{Stack: stackName, Hooks: cmds}
+	}
+	return cmds, nil
 }
