@@ -4753,7 +4753,7 @@
   "stacks_d_delete_stack": "Delete stack…",
   "stacks_d_delete_this": "Delete this stack",
   "stacks_d_dependencies": "Dependencies",
-  "stacks_d_replicas_ignored": "`deploy.replicas` is not applied on host stacks yet",
+  "stacks_d_replicas_ignored": "deploy.replicas is not applied on host stacks yet",
   "stacks_d_replicas_ignored_services": "Services: {services}. Each keeps the number of containers it runs; use Scale… to change it.",
   "stacks_d_deployed_on": "{count} service(s) on {host}",
   "stacks_d_deploying": "deploying…",
