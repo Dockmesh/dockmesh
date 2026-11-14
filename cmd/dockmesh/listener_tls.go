@@ -23,7 +23,7 @@ func listenerTLS(cfg *config.Config, m *pki.Manager) (*tls.Config, *x509.Certifi
 			return nil, nil, err
 		}
 		slog.Info("web listener serves the internal certificate", "sha256", pki.Fingerprint(cert.Leaf.Raw))
-		return webtls.ServerConfig(cert, nil), cert.Leaf, nil
+		return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*cert}}, cert.Leaf, nil
 	case webtls.File:
 		r, err := webtls.NewReloader(cfg.TLSCertFile, cfg.TLSKeyFile)
 		if err != nil {
@@ -31,9 +31,9 @@ func listenerTLS(cfg *config.Config, m *pki.Manager) (*tls.Config, *x509.Certifi
 		}
 		leaf := r.Certificate().Leaf
 		slog.Info("web listener serves the configured certificate, reloaded when the files change", "cert", cfg.TLSCertFile, "not_after", leaf.NotAfter)
-		return webtls.ServerConfig(nil, r), leaf, nil
+		return webtls.ServerConfig(r), leaf, nil
 	}
-	if mode.BehindProxy() && os.Getenv("DOCKMESH_TRUSTED_PROXIES") == "" {
+	if os.Getenv("DOCKMESH_TRUSTED_PROXIES") == "" {
 		if def := webtls.DefaultTrustedProxies(mode, cfg.HTTPAddr); def != "" {
 			if err := os.Setenv("DOCKMESH_TRUSTED_PROXIES", def); err != nil {
 				return nil, nil, err

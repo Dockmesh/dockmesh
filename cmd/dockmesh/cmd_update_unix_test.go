@@ -28,7 +28,7 @@ func TestHealthURL(t *testing.T) {
 		{"garbage", "http://127.0.0.1:8080/api/v1/health"},
 	}
 	for _, tt := range tests {
-		if got := healthURL(tt.addr); got != tt.want {
+		if got := healthURL("http", tt.addr); got != tt.want {
 			t.Errorf("healthURL(%q) = %q, want %q", tt.addr, got, tt.want)
 		}
 	}
@@ -95,12 +95,12 @@ func TestHealthProbeFollowsListener(t *testing.T) {
 		ok     bool
 		scheme string
 	}{
-		{name: "plain", serve: nil, ok: true, scheme: "http"},
-		{name: "proxy", mode: "proxy", serve: nil, ok: true, scheme: "http"},
+		{name: "plain", ok: true, scheme: "http"},
+		{name: "proxy", mode: "proxy", ok: true, scheme: "http"},
 		{name: "internal", mode: "internal", serve: internal, ok: true, scheme: "https"},
 		{name: "file", mode: "file", serve: own, ok: true, scheme: "https"},
 		{name: "internal mode, other certificate served", mode: "internal", serve: own, ok: false, scheme: "https"},
-		{name: "file mode, plain listener", mode: "file", serve: nil, ok: false, scheme: "https"},
+		{name: "file mode, plain listener", mode: "file", ok: false, scheme: "https"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

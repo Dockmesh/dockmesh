@@ -21,8 +21,7 @@ import (
 type Mode string
 
 const (
-	// Plain is plain HTTP on DOCKMESH_HTTP_ADDR: installs from before the
-	// TLS options, and anything without the variable.
+	// Plain is plain HTTP on DOCKMESH_HTTP_ADDR.
 	Plain Mode = ""
 	// Internal serves a certificate from the internal PKI.
 	Internal Mode = "internal"
@@ -75,7 +74,6 @@ func DefaultTrustedProxies(m Mode, addr string) string {
 	return ip.String()
 }
 
-// maxPEMFile bounds a certificate or key file.
 const maxPEMFile = 1 << 20
 
 // LoadPair reads and parses a certificate and key file, and says what is
@@ -202,17 +200,21 @@ func (r *Reloader) Certificate() *tls.Certificate {
 	return r.cert
 }
 
-// ServerConfig is the listener config for a fixed certificate (nil for
-// none) or a Reloader.
-func ServerConfig(fixed *tls.Certificate, r *Reloader) *tls.Config {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	switch {
-	case r != nil:
-		cfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return r.Certificate(), nil }
-	case fixed != nil:
-		cfg.Certificates = []tls.Certificate{*fixed}
-	default:
-		return nil
+// ServerConfig is the listener config serving the pair of r.
+func ServerConfig(r *Reloader) *tls.Config {
+	return &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return r.Certificate(), nil },
 	}
-	return cfg
+}
+
+// ListenAddr is the listen address of mode m for DOCKMESH_HTTP_ADDR addr.
+func ListenAddr(m Mode, addr string) string {
+	switch {
+	case addr != "":
+		return addr
+	case m.BehindProxy():
+		return DefaultProxyAddr
+	}
+	return ":8080"
 }

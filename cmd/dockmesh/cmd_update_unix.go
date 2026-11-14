@@ -138,12 +138,9 @@ func healthProbe(env map[string]string, paths config.Paths) (string, *http.Clien
 	if err != nil {
 		return "", nil, err
 	}
-	addr := env["DOCKMESH_HTTP_ADDR"]
-	if addr == "" && mode.BehindProxy() {
-		addr = webtls.DefaultProxyAddr
-	}
+	addr := webtls.ListenAddr(mode, env["DOCKMESH_HTTP_ADDR"])
 	transport := &http.Transport{Proxy: nil}
-	url := healthURL(addr)
+	scheme := "http"
 	if mode.TLS() {
 		var leaf *x509.Certificate
 		if mode == webtls.Internal {
@@ -155,9 +152,9 @@ func healthProbe(env map[string]string, paths config.Paths) (string, *http.Clien
 			return "", nil, fmt.Errorf("certificate for the health check: %w", err)
 		}
 		transport.TLSClientConfig = pinnedTLS(leaf)
-		url = "https" + strings.TrimPrefix(url, "http")
+		scheme = "https"
 	}
-	return url, &http.Client{
+	return healthURL(scheme, addr), &http.Client{
 		Timeout:       3 * time.Second,
 		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -167,7 +164,7 @@ func healthProbe(env map[string]string, paths config.Paths) (string, *http.Clien
 // healthURL is the health endpoint on the address the server listens on.
 // An unspecified or named host is probed on loopback; only an IP literal
 // is used as given, so the config cannot point root's probe elsewhere.
-func healthURL(addr string) string {
+func healthURL(scheme, addr string) string {
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -182,7 +179,7 @@ func healthURL(addr string) string {
 	case ip.IsUnspecified():
 		host = "::1"
 	}
-	return "http://" + net.JoinHostPort(host, port) + "/api/v1/health"
+	return scheme + "://" + net.JoinHostPort(host, port) + "/api/v1/health"
 }
 
 // serverService is the server's side of rootupdate.Service.

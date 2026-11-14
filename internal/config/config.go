@@ -57,7 +57,8 @@ type Config struct {
 	// (DOCKMESH_SETUP_FORCE); see setup.Decide.
 	SetupForce bool
 	// TLSMode is what the web listener serves (DOCKMESH_TLS_MODE, see
-	// webtls.Mode); empty is plain HTTP.
+	// webtls.Mode); empty is plain HTTP. TLSCertFile and TLSKeyFile are
+	// DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE for mode file.
 	TLSMode     string
 	TLSCertFile string
 	TLSKeyFile  string
@@ -69,8 +70,7 @@ type Config struct {
 func Load() (*Config, error) {
 	paths := ResolvePaths(os.Getenv)
 	cfg := &Config{
-		HTTPAddr:          envOr("DOCKMESH_HTTP_ADDR", ":8080"),
-		DataDir:           paths.DataDir,
+				DataDir:           paths.DataDir,
 		DBPath:            paths.DBPath,
 		StacksRoot:        paths.StacksRoot,
 		SecretsPath:       paths.SecretsPath,
@@ -104,9 +104,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if mode.BehindProxy() && os.Getenv("DOCKMESH_HTTP_ADDR") == "" {
-		cfg.HTTPAddr = webtls.DefaultProxyAddr
-	}
+	cfg.HTTPAddr = webtls.ListenAddr(mode, os.Getenv("DOCKMESH_HTTP_ADDR"))
 	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
 	cfg.UpdateRollbackKeep = 3
 	if v := os.Getenv("DOCKMESH_UPDATE_ROLLBACK_KEEP"); v != "" {

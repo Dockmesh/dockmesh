@@ -41,7 +41,7 @@ func TestLoadTLSMode(t *testing.T) {
 		{"tls", "", "", false},
 	}
 	for _, c := range cases {
-		t.Run(c.mode+c.addr, func(t *testing.T) {
+		t.Run(c.mode+"/"+c.addr, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("DOCKMESH_DATA_DIR", dir)
 			t.Setenv("DOCKMESH_TLS_MODE", c.mode)
