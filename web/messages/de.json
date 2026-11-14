@@ -6157,7 +6157,7 @@
   "settings_update_step_applying": "Release geht an den Root-Updater …",
   "settings_update_step_restarting": "Der Server startet neu …",
   "settings_update_step_checking": "Neue Version wird geprüft (bis zu 3 Minuten) …",
-  "settings_update_keep_open": "Du kannst diesen Dialog schließen; das Update läuft weiter und das Ergebnis erscheint auch als Hinweis.",
+  "settings_update_keep_open": "Du kannst diesen Dialog schließen; das Update läuft weiter.",
   "settings_update_not_installed": "Update nicht installiert",
   "settings_update_done": "Auf {version} aktualisiert",
   "settings_update_done_body": "Lade die Seite neu, um die neue Version der Oberfläche zu laden.",

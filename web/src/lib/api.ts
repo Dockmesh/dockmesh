@@ -215,7 +215,6 @@ export interface UpdateStatus {
   checked_at?: string;
   enabled: boolean;
   error?: string;
-  // From the newer release's manifest.
   severity?: 'security' | 'recommended' | 'normal';
   security?: string[];
 }

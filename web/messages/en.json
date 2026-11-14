@@ -6157,7 +6157,7 @@
   "settings_update_step_applying": "Handing the release to the root updater…",
   "settings_update_step_restarting": "The server is restarting…",
   "settings_update_step_checking": "Checking the new version (up to 3 minutes)…",
-  "settings_update_keep_open": "You can close this dialog; the update goes on and the result also shows as a notice.",
+  "settings_update_keep_open": "You can close this dialog; the update goes on.",
   "settings_update_not_installed": "Update not installed",
   "settings_update_done": "Updated to {version}",
   "settings_update_done_body": "Reload the page to load the new version of the UI.",

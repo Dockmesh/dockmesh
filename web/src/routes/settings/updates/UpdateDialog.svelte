@@ -11,7 +11,7 @@
     security: string[];
     // Set when the page opened on an install that was already running.
     resume?: UpdateInstallState | null;
-    ondone?: (res: UpdateResult | null) => void;
+    ondone?: () => void;
   }
 
   let { open = $bindable(false), version, security, resume = null, ondone }: Props = $props();
@@ -88,13 +88,8 @@
           return;
         }
     }
-    if (st.pending) {
-      step = 'checking';
-    } else if (step === 'restarting') {
-      // Up again without a result for this version: the request was never
-      // taken, or the result went to an earlier process.
-      step = 'checking';
-    }
+    // Up again without a result: the updater still checks the new version.
+    if (st.pending || step === 'restarting') step = 'checking';
   }
 
   function finish(res: UpdateResult | null, err: string) {
@@ -102,7 +97,7 @@
     result = res;
     error = err;
     step = 'result';
-    ondone?.(res);
+    ondone?.();
   }
 
   // Closing while an install runs only hides the dialog; the poll goes on

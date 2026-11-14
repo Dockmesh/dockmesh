@@ -27,7 +27,6 @@ func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *
 		Locks:   locks,
 		Notices: n,
 		Channel: channel,
-		// Same check the proxy uses: a marker file or the daemon's answer.
 		InContainer: proxy.DetectContainer(host.SelfContainerID),
 		Audit: func(ctx context.Context, res rootupdate.Result) error {
 			return auditUpdateResult(ctx, auditSvc, res)

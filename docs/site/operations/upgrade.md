@@ -98,7 +98,7 @@ sudo systemctl restart dockmesh
 The button is only shown when the server can install updates itself:
 
 - On a server that runs in a container, the page says to pull the new image and recreate the container instead.
-- Before the root updater is installed, the page says to run the installer once; the first v0.6.0 install sets it up.
+- Before the root updater is installed, the page says to run the installer once to set it up.
 - A pre-release is only installed on the **Pre-release** channel.
 
 ### Install through the API (root updater)
@@ -116,7 +116,7 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: applicatio
 
 After the restart the new version serves the UI and API at once, but starts no background job that changes containers or files (backup schedules, git polling and the pending git deploys a freed stack would start, auto-scaling, agent upgrades, audit retention, migration cleanup) until the root updater confirmed the update. A rollback within that window therefore never meets containers or files the new version already changed. A normal restart, without an update in flight, starts them right away. If an update stays unconfirmed for over an hour, for example because the updater was killed, admins get a critical banner and the jobs stay paused until `sudo systemctl start dockmesh-update.service` finishes or rolls back the update.
 
-`GET /api/v1/system/update/install` shows how far an install got until the server restarts. Afterwards admins see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
+`GET /api/v1/system/update/install` shows how far an install got and, after the restart, the root updater's result (`last_result`). Admins also see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
 
 > **Note:** A rollback puts back the database as it was before the update. Everything changed in Dockmesh while the new version was running, at most about 180 seconds, is lost, audit entries included.
 
