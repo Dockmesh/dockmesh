@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'The upgrade rewrites `dockmesh.service`; edits made to that file are replaced (the old unit is kept as `/etc/dockmesh/dockmesh.service.prev`), so move them into `/etc/systemd/system/dockmesh.service.d/`. The service may now only write to its data, stack and backup directories: after adding a directory to `backups.local_roots`, run `sudo dockmesh system write-unit` and restart'
+time: 2026-11-14T10:02:05.16895551Z
+custom:
+    Audience: admins
+    Id: unit-template

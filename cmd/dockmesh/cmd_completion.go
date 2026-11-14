@@ -49,7 +49,7 @@ _dockmesh_complete() {
         secrets)     COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
         import)      COMPREPLY=( $(compgen -W "compose-dir" -- "$cur") ) ;;
         config)      COMPREPLY=( $(compgen -W "show" -- "$cur") ) ;;
-        system)      COMPREPLY=( $(compgen -W "migrate-layout" -- "$cur") ) ;;
+        system)      COMPREPLY=( $(compgen -W "migrate-layout write-unit" -- "$cur") ) ;;
         completion)  COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;
     esac
 }
@@ -89,7 +89,7 @@ _dockmesh() {
         secrets)    _values 'secrets subcommand' rotate ;;
         import)     _values 'import source' compose-dir ;;
         config)     _values 'config subcommand' show ;;
-        system)     _values 'system subcommand' migrate-layout ;;
+        system)     _values 'system subcommand' migrate-layout write-unit ;;
         completion) _values 'shell' bash zsh fish ;;
     esac
 }
@@ -121,6 +121,6 @@ complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke l
 complete -c dockmesh -n '__fish_seen_subcommand_from secrets' -a 'rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from import' -a 'compose-dir'
 complete -c dockmesh -n '__fish_seen_subcommand_from config' -a 'show'
-complete -c dockmesh -n '__fish_seen_subcommand_from system' -a 'migrate-layout'
+complete -c dockmesh -n '__fish_seen_subcommand_from system' -a 'migrate-layout write-unit'
 complete -c dockmesh -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 `

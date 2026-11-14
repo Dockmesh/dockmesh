@@ -27,7 +27,7 @@ func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, s
 	if st.Get(targets.LocalRootsSeededSetting, "") != "" {
 		return nil
 	}
-	defaults := []string{"/srv/backups", filepath.Join(dataDir, "backups")}
+	defaults := targets.DefaultRoots(dataDir)
 	var used []string
 	add := func(cfg any) {
 		var lc targets.LocalConfig

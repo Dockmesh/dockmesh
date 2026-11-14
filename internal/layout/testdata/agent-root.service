@@ -1,0 +1,32 @@
+# Written by `dockmesh-agent` on install and upgrade.
+# Local changes go into /etc/systemd/system/dockmesh-agent.service.d/*.conf,
+# which Dockmesh never touches; edits to this file are overwritten.
+[Unit]
+Description=Dockmesh Agent
+Documentation=https://dockmesh.dev/docs
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dockmesh-agent/agent.env
+ExecStart=/usr/local/bin/dockmesh-agent
+Restart=always
+RestartSec=10s
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths="/var/lib/dockmesh-agent"
+
+[Install]
+WantedBy=multi-user.target

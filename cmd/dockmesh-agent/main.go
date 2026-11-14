@@ -45,6 +45,7 @@ import (
 	"time"
 
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/layout"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -122,11 +123,15 @@ func main() {
 	// Step 1: enrollment, only if no cert on disk yet.
 	if !fileExists(certPath) || !fileExists(keyPath) || !fileExists(caPath) {
 		if cfg.enrollURL == "" || cfg.token == "" {
-			slog.Error("first run: DOCKMESH_ENROLL_URL and DOCKMESH_TOKEN are required")
-			os.Exit(1)
+			slog.Error("first run: DOCKMESH_ENROLL_URL and DOCKMESH_TOKEN are required", "hint", reenrollHint)
+			os.Exit(layout.AgentExitEnrollRejected)
 		}
 		slog.Info("enrolling", "url", cfg.enrollURL)
 		if err := enroll(cfg, certPath, keyPath, caPath, urlPath); err != nil {
+			if errors.Is(err, errEnrollRejected) {
+				slog.Error("enrollment failed", "err", err, "hint", reenrollHint)
+				os.Exit(layout.AgentExitEnrollRejected)
+			}
 			slog.Error("enrollment failed", "err", err)
 			os.Exit(1)
 		}

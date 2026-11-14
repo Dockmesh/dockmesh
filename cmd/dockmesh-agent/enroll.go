@@ -114,6 +114,10 @@ func normalizeFingerprint(fp string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(fp), ":", ""))
 }
 
+// errEnrollRejected is the server refusing the token: invalid, expired or
+// already used. Retrying cannot succeed.
+var errEnrollRejected = errors.New("enrollment token rejected")
+
 func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	httpClient, err := enrollClient(cfg)
 	if err != nil {
@@ -142,7 +146,11 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("enroll http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		err := fmt.Errorf("enroll http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("%w: %w", errEnrollRejected, err)
+		}
+		return err
 	}
 	var er agents.EnrollResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxEnrollResponse)).Decode(&er); err != nil {
@@ -177,3 +185,7 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	slog.Info("cert persisted", "agent_id", er.AgentID, "cn", er.AgentName)
 	return nil
 }
+
+// reenrollHint is what the journal says when enrollment cannot succeed;
+// the unit stops restarting on AgentExitEnrollRejected.
+const reenrollHint = "the token is invalid, expired or already used; copy a new install command in Dockmesh (Hosts > Add host, or the host's Maintenance > Re-issue) and run it on this host"

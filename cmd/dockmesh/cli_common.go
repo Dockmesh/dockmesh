@@ -125,6 +125,9 @@ Disaster recovery:
 Host:
   system migrate-layout  Move the config to /etc/dockmesh and leave a symlink
                          (root; the installer runs it on upgrade)
+  system write-unit      Write dockmesh.service from the built-in template
+                         (root; the installer runs it; --restore puts the
+                         previous unit back)
 
 Diagnostics:
   config show            Print effective config (secrets redacted)

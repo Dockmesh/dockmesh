@@ -32,6 +32,13 @@ const (
 	EmptyPathSetting = "backups.empty_path_dir"
 )
 
+// DefaultRoots are the allowed roots of an install whose setting was never
+// written: /srv/backups and <dataDir>/backups, dataDir being the directory
+// of the database.
+func DefaultRoots(dataDir string) []string {
+	return []string{"/srv/backups", filepath.Join(dataDir, "backups")}
+}
+
 var emptyPathDir string
 
 // SetEmptyPathDir sets the directory an unset local path means.

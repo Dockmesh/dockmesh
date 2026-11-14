@@ -1,0 +1,34 @@
+# Written by `dockmesh system write-unit` on every install and upgrade.
+# Local changes go into /etc/systemd/system/dockmesh.service.d/*.conf,
+# which Dockmesh never touches; edits to this file are overwritten.
+[Unit]
+Description=Dockmesh container management
+Documentation=https://dockmesh.dev/docs
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dockmesh
+Group=dockmesh
+SupplementaryGroups=docker
+EnvironmentFile=/etc/dockmesh/dockmesh.env
+ExecStart=/usr/local/bin/dockmesh serve
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths="/var/lib/dockmesh"
+ReadWritePaths="-/srv/backups"
+
+[Install]
+WantedBy=multi-user.target

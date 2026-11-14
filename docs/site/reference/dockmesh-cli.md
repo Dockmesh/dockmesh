@@ -19,6 +19,10 @@ If your config lives elsewhere, pass `--env-file <path>` explicitly.
 
 `sudo dockmesh system migrate-layout` moves the config of an install from before 0.6 to `/etc/dockmesh/dockmesh.env` (directory 0750, file 0640, owner root, group `dockmesh`), adds `DOCKMESH_DATA_DIR` for the data root the install already uses, and replaces the old file with a symlink to the new one. The data stays where it is. It takes the env file named in `dockmesh.service`, else the first of the old default places; `--from <path>` names it instead. It does nothing when `/etc/dockmesh/dockmesh.env` already exists, and leaves the file in place while it still contains `DOCKMESH_SETUP_FORCE` (the setup wizard removes that line). On an error the old file stays as it was. The installer runs it on every upgrade, so you normally never call it yourself. Linux only.
 
+### system write-unit
+
+`sudo dockmesh system write-unit` writes `/etc/systemd/system/dockmesh.service` from the template built into the binary and reloads systemd. The service runs as user `dockmesh`, group `dockmesh`, with the `docker` group added, and loads `/etc/dockmesh/dockmesh.env` (an install whose config was not moved yet keeps its old env file; `--env-file <path>` names it). With `ProtectSystem=strict` it may only write to the data root, the stacks directory, the directories of the database and secrets when the path variables move them, every directory in `backups.local_roots` (`/srv/backups` and `<data directory>/backups` until the setting is saved), the audit archive directory and `backups.empty_path_dir`. A value that is not a clean absolute path, or contains a control character, a quote or a backslash, stops the command with an error and leaves the unit as it was. The unit it replaces is kept as `/etc/dockmesh/dockmesh.service.prev`; `--restore` puts it back. Local changes go into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never writes or removes. The installer runs it on every install and upgrade; run it yourself after you add a directory to `backups.local_roots`, then `sudo systemctl restart dockmesh`. Linux only.
+
 Commands that write files (`admin`, `enroll`, `db`, `ca`, `secrets`, `import`, `restore`) create them as the user that runs the command. On a systemd install the service runs as `dockmesh`, so `sudo -u dockmesh dockmesh <command>` keeps file ownership consistent.
 
 Most commands open the database and apply pending migrations first. Loading the configuration creates `secrets.env` with a new JWT secret if it is missing, and commands that load the agent PKI (`ca export`, `doctor`, `enroll create`) create a CA if none exists yet.
@@ -76,7 +80,7 @@ A command-line alternative to the web setup wizard. It walks through six steps (
 
 The agent URL defaults to the base URL's host with `wss://`, port `8443` and path `/connect`. init writes it as `DOCKMESH_AGENT_PUBLIC_URL`, which then wins over the agent URL on the **Settings** page, and derives `DOCKMESH_AGENT_SANS` from both URLs and the hostname. If the admin user already exists, init leaves its password unchanged and says so.
 
-The systemd unit init writes runs as user `dockmesh`, group `docker`, with `ProtectSystem=strict` and write access limited to the data root and `/var/run/docker.sock`. init creates the `dockmesh` user if needed, adds it to the `docker` group and hands the data root to it. A copy of the unit is kept at `<data-dir>/dockmesh.service`.
+init creates the `dockmesh` user if needed, adds it to the `docker` group, hands the data root to it and writes the unit the same way as [`system write-unit`](#system-write-unit).
 
 ## setup new-code
 

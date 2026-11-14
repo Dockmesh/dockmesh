@@ -1,0 +1,3 @@
+kind: Changed
+body: An agent whose enrollment token was refused stops instead of retrying forever, and its unit gives the agent 30 seconds to stop
+time: 2026-11-14T10:02:03.741260873Z

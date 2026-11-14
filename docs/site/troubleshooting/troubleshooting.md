@@ -281,7 +281,7 @@ To point an agent at a new address, edit `DOCKMESH_AGENT_URL` in `/etc/dockmesh-
 
 | Agent log error | Meaning |
 |---|---|
-| `enroll http 401: invalid or expired enrollment token` | The token expired (1 hour by default, `DOCKMESH_AGENT_ENROLL_TOKEN_TTL`), was already used, or was replaced by a newer one. Revoked hosts can't enroll at all. |
+| `enroll http 401: invalid or expired enrollment token` | The token expired (1 hour by default, `DOCKMESH_AGENT_ENROLL_TOKEN_TTL`), was already used, or was replaced by a newer one. Revoked hosts can't enroll at all. The agent exits with status 78 and systemd stops restarting it. |
 | `DOCKMESH_CA_FINGERPRINT is required to enroll over https` | The install command was copied incompletely or the agent was started by hand without it. |
 | `refusing to enroll over plain http` | The agent URL is `ws://`. Enrollment sends the token and the client key, so plain http needs `--insecure-enroll`, for isolated labs only. |
 | `x509: certificate signed by unknown authority` | Something between the agent and port 8443 presents its own certificate, usually a proxy or load balancer that terminates TLS. |
@@ -399,7 +399,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 
 **Cause:** local targets may only write below the directories in the `backups.local_roots` setting, by default `/srv/backups` and `<data directory>/backups`.
 
-**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs Settings & audit: Manage on everything (`system.upgrade` and `system.update`). If the server runs under the unit `dockmesh init` writes (`ProtectSystem=strict`), the path also has to be in `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.
+**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs Settings & audit: Manage on everything (`system.upgrade` and `system.update`). The service may only write to the directories its unit lists in `ReadWritePaths`; after changing the list, run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh`. Until then a backup to a new directory fails with "read-only file system".
 
 ### "this job is already running"
 
