@@ -31,6 +31,7 @@ type Service struct {
 	db          *sql.DB
 	notifs      *notifications.Service
 	globals     deploy.GlobalVars
+	usage       ContainerUsage
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel

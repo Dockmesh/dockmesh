@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -25,10 +26,13 @@ import (
 
 type fakeHost struct {
 	host.Host
-	id        string
-	stopErr   error
-	deployErr error
-	daemon    *agents.DaemonInfo
+	id         string
+	stopErr    error
+	deployErr  error
+	daemon     *agents.DaemonInfo
+	metrics    system.Metrics
+	images     []image.Summary
+	containers []container.Summary
 
 	mu       sync.Mutex
 	stops    int
@@ -39,9 +43,12 @@ type fakeHost struct {
 func (f *fakeHost) ID() string   { return f.id }
 func (f *fakeHost) Name() string { return f.id }
 func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
-	return system.Metrics{}, nil
+	return f.metrics, nil
 }
-func (f *fakeHost) ListImages(context.Context, bool) ([]image.Summary, error) { return nil, nil }
+func (f *fakeHost) ListImages(context.Context, bool) ([]image.Summary, error) { return f.images, nil }
+func (f *fakeHost) ListContainers(context.Context, bool) ([]container.Summary, error) {
+	return f.containers, nil
+}
 func (f *fakeHost) StopStack(context.Context, string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

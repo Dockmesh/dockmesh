@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/compose-spec/compose-go/v2/types"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 )
@@ -78,41 +80,30 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		add("source_metrics", true, fmt.Sprintf("CPU: %.0f%%, Mem: %.0f%%", srcMetrics.CPUPercent, srcMetrics.MemPercent))
 	}
 
-	// 4. Target capacity check (20% headroom).
-	tgtMetrics, err := target.SystemMetrics(ctx)
+	// 4. The stack's needs against what the target has free.
+	proj, projErr := s.loadProject(ctx, m.StackName)
+	tgtImages, err := target.ListImages(ctx, false)
 	if err != nil {
+		slog.Warn("migration preflight target images", "id", m.ID, "err", err)
+	}
+	tgtMetrics, err := target.SystemMetrics(ctx)
+	switch {
+	case err != nil:
 		add("target_capacity", false, fmt.Sprintf("cannot read target metrics: %v", err))
-	} else {
-		memFree := tgtMetrics.MemTotal - tgtMetrics.MemUsed
-		memNeeded := srcMetrics.MemUsed
-		if memNeeded > 0 {
-			headroom := float64(memFree) / float64(memNeeded)
-			if headroom < 1.2 {
-				add("target_capacity", false,
-					fmt.Sprintf("target has %.0f MB free, needs %.0f MB (source used + 20%% headroom)",
-						float64(memFree)/(1024*1024), float64(memNeeded)*1.2/(1024*1024)))
-			} else {
-				add("target_capacity", true,
-					fmt.Sprintf("%.0f MB free (%.0fx source usage)", float64(memFree)/(1024*1024), headroom))
-			}
-		} else {
-			add("target_capacity", true, "source memory usage unknown — skipping check")
+	case projErr != nil:
+		add("target_capacity", false, fmt.Sprintf("cannot read the stack's compose file: %v", projErr))
+	default:
+		srcList, err := source.ListContainers(ctx, false)
+		if err != nil {
+			slog.Warn("migration preflight source containers", "id", m.ID, "err", err)
 		}
-
-		// Disk check: need source disk usage * 1.1 free on target.
-		diskFree := tgtMetrics.DiskTotal - tgtMetrics.DiskUsed
-		diskNeeded := srcMetrics.DiskUsed
-		if diskNeeded > 0 {
-			if float64(diskFree) < float64(diskNeeded)*1.1 {
-				add("target_disk", false,
-					fmt.Sprintf("target has %.0f GB free, needs %.0f GB (source + 10%%)",
-						float64(diskFree)/(1024*1024*1024), float64(diskNeeded)*1.1/(1024*1024*1024)))
-			} else {
-				add("target_disk", true,
-					fmt.Sprintf("%.0f GB free", float64(diskFree)/(1024*1024*1024)))
-			}
-		} else {
-			add("target_disk", true, "source disk usage unknown — skipping check")
+		srcImages, err := source.ListImages(ctx, false)
+		if err != nil {
+			slog.Warn("migration preflight source images", "id", m.ID, "err", err)
+		}
+		usage := s.measuredUsage(ctx, m.SourceHostID, m.StackName, srcList, srcMetrics.CPUCores)
+		for _, c := range capacityChecks(computeNeeds(proj, usage, srcImages, tgtImages), tgtMetrics) {
+			addStatus(c.Name, c.Status, c.Detail)
 		}
 	}
 
@@ -126,35 +117,27 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 	addStatus("arch_match", status, archDetail)
 
 	// 6. Images available on target.
-	detail, err := s.stacks.Get(m.StackName)
-	if err != nil {
-		add("images", false, fmt.Sprintf("cannot read stack: %v", err))
+	if projErr != nil {
+		add("images", false, fmt.Sprintf("cannot parse compose: %v", projErr))
 	} else {
-		dir, _ := s.stacks.Dir(m.StackName)
-		proj, err := compose.LoadProject(ctx, dir, m.StackName, detail.Env)
-		if err != nil {
-			add("images", false, fmt.Sprintf("cannot parse compose: %v", err))
+		var missing []string
+		tgtImageSet := make(map[string]bool)
+		for _, img := range tgtImages {
+			for _, tag := range img.RepoTags {
+				tgtImageSet[tag] = true
+			}
+		}
+		for _, svc := range proj.Services {
+			if svc.Image != "" && !tgtImageSet[svc.Image] {
+				missing = append(missing, svc.Image)
+			}
+		}
+		if len(missing) > 0 {
+			// Not a hard failure — images will be pulled in prepare phase.
+			add("images", true,
+				fmt.Sprintf("%d image(s) to pull on target: %v", len(missing), missing))
 		} else {
-			var missing []string
-			tgtImages, _ := target.ListImages(ctx, false)
-			tgtImageSet := make(map[string]bool)
-			for _, img := range tgtImages {
-				for _, tag := range img.RepoTags {
-					tgtImageSet[tag] = true
-				}
-			}
-			for _, svc := range proj.Services {
-				if svc.Image != "" && !tgtImageSet[svc.Image] {
-					missing = append(missing, svc.Image)
-				}
-			}
-			if len(missing) > 0 {
-				// Not a hard failure — images will be pulled in prepare phase.
-				add("images", true,
-					fmt.Sprintf("%d image(s) to pull on target: %v", len(missing), missing))
-			} else {
-				add("images", true, "all images present on target")
-			}
+			add("images", true, "all images present on target")
 		}
 	}
 
@@ -162,6 +145,18 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		"id", m.ID, "stack", m.StackName,
 		"passed", result.Passed, "checks", len(result.Checks))
 	return result, nil
+}
+
+func (s *Service) loadProject(ctx context.Context, stackName string) (*types.Project, error) {
+	detail, err := s.stacks.Get(stackName)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.stacks.Dir(stackName)
+	if err != nil {
+		return nil, err
+	}
+	return compose.LoadProject(ctx, dir, stackName, detail.Env)
 }
 
 // archCheck compares the platforms the two daemons report. A host whose

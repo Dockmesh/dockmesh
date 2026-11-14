@@ -1,0 +1,3 @@
+kind: Security
+body: The migration preflight needs the right to deploy the stack on the target host, like the migration itself; before, it showed a host-scoped user the free memory, disk and images of hosts outside their scope
+time: 2026-11-14T14:07:19.356884502Z
