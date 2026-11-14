@@ -62,6 +62,14 @@ paths:
         Stored in the settings table. Takes effect on the next scheduled
         run (03:00 server-local) or immediately via
         `POST /audit/retention/run`.
+
+        Changing `local_dir` needs `system.upgrade` on everything (403
+        otherwise), because the server unit makes that directory writable.
+        It must be an absolute path without control characters, quotes or
+        backslashes, outside the system directories and not containing the
+        data dir (400 otherwise). Sending the current value or
+        `default_local_dir` back, or an empty value, needs no extra
+        permission.
       requestBody:
         required: true
         content:
@@ -216,7 +224,7 @@ components:
           description: backup_targets.id — required when mode=archive_target.
         local_dir:
           type: string
-          description: Filesystem directory for `archive_local`. Default `./data/audit-archive`.
+          description: Absolute directory for `archive_local`; empty uses `default_local_dir`.
     AuditRetentionPreview:
       type: object
       properties:

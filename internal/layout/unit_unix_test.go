@@ -308,3 +308,42 @@ func TestWriteUpdateUnits(t *testing.T) {
 		t.Fatal("symlinked unit read")
 	}
 }
+
+func TestCheckWritablePath(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	toEtc := filepath.Join(dir, "to-etc")
+	if err := os.Symlink("/etc", toEtc); err != nil {
+		t.Fatal(err)
+	}
+	toParent := filepath.Join(dir, "to-parent")
+	if err := os.Symlink(dir, toParent); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, path string
+		ok         bool
+	}{
+		{"absolute folder", filepath.Join(dir, "audit"), true},
+		{"not created yet", "/srv/not-there-yet/audit", true},
+		{"relative", "audit-archive", false},
+		{"root", "/", false},
+		{"system tree", "/usr/local/audit", false},
+		{"contains the data dir", dir, false},
+		{"quote", `/srv/a"b`, false},
+		{"newline", "/srv/a\nb", false},
+		{"symlink into a system tree", toEtc, false},
+		{"symlink to a parent of the data dir", toParent, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckWritablePath(tt.path, dataDir)
+			if (err == nil) != tt.ok {
+				t.Fatalf("CheckWritablePath(%q) = %v, want ok = %v", tt.path, err, tt.ok)
+			}
+		})
+	}
+}

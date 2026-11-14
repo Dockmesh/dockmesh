@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -49,5 +50,45 @@ func TestUnlockUserClearsLoginLimit(t *testing.T) {
 				t.Fatalf("after unlock: %v", err)
 			}
 		})
+	}
+}
+
+func TestCLIAuthServiceUsesStoredPolicy(t *testing.T) {
+	ctx := context.Background()
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`INSERT INTO settings (key, value) VALUES (?, '16'), (?, 'true')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, auth.PolicyMinLengthKey, auth.PolicyRequireDigitKey); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := cliAuthService(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, password string
+		ok             bool
+	}{
+		{"shorter than the stored minimum", "fourteen chars", false},
+		{"long enough without a digit", "sixteen characters", false},
+		{"meets the stored policy", "sixteen characters 1", true},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.CreateUser(ctx, fmt.Sprintf("new%d", i), "", tt.password, "viewer")
+			if (err == nil) != tt.ok {
+				t.Fatalf("admin create: err = %v, want ok = %v", err, tt.ok)
+			}
+		})
+	}
+	u, err := svc.CreateUser(ctx, "reset", "", "sixteen characters 2", "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ChangePassword(ctx, u.ID, "fourteen chars"); err == nil {
+		t.Fatal("reset-password accepted a password below the stored minimum")
 	}
 }

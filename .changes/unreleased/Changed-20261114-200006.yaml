@@ -1,0 +1,3 @@
+kind: Changed
+body: Changing the audit archive directory needs the permission to install updates, and a relative path, a system directory or a path containing the data directory is refused when saved
+time: 2026-11-14T20:00:06.457071377Z

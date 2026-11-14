@@ -250,14 +250,11 @@ func readWritePaths(dataDir string, extra []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c == "/" {
-			return nil, fmt.Errorf("%w: %s is the root directory", ErrBadUnitValue, what)
-		}
-		var dataDir string
+		dataDir := ""
 		if i > 0 {
 			dataDir = dirs[0]
 		}
-		if err := checkLocation(what, p, c, dataDir); err != nil {
+		if err := checkWritable(what, p, c, dataDir); err != nil {
 			return nil, err
 		}
 		dirs = append(dirs, c)
@@ -288,6 +285,44 @@ func checkLocation(what, p, c, dataDir string) error {
 		return fmt.Errorf("%w: %s %q contains the data dir", ErrBadUnitValue, what, p)
 	}
 	return nil
+}
+
+// CheckWritablePath applies the rules the unit writer uses for a writable
+// path taken from a setting, so a value it would refuse is refused when
+// it is saved. dataDir may be empty when it is not known.
+func CheckWritablePath(p, dataDir string) error {
+	const what = "writable path"
+	c, err := checkPath(what, p)
+	if err != nil {
+		return err
+	}
+	if dataDir != "" {
+		dataDir = filepath.Clean(dataDir)
+	}
+	if err := checkWritable(what, p, c, dataDir); err != nil {
+		return err
+	}
+	// Like the unit writer: systemd follows symlinks when it mounts the
+	// path. One that can't be resolved, e.g. not created yet, is checked
+	// as written.
+	r, err := filepath.EvalSymlinks(c)
+	if err == nil {
+		if dataDir != "" {
+			if rd, err := filepath.EvalSymlinks(dataDir); err == nil {
+				dataDir = rd
+			}
+		}
+		return checkWritable(what, p, r, dataDir)
+	}
+	return nil
+}
+
+// checkWritable refuses the root directory and what checkLocation refuses.
+func checkWritable(what, p, c, dataDir string) error {
+	if c == "/" {
+		return fmt.Errorf("%w: %s is the root directory", ErrBadUnitValue, what)
+	}
+	return checkLocation(what, p, c, dataDir)
 }
 
 // hasLaterParent reports whether an entry of dirs is a strict parent of d.

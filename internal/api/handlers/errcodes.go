@@ -35,6 +35,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it", "base_url_needs_users_create"},
 	{"changing agent_public_url needs the hosts.create permission as well, because install commands use it", "agent_url_needs_hosts_create"},
 	{"changing update_channel needs the system.upgrade permission", "update_channel_needs_system_upgrade"},
+	{"changing local_dir needs the system.upgrade permission", "audit_dir_needs_system_upgrade"},
 	{"the stack was deployed elsewhere meanwhile; delete it again", "stack_moved_during_delete"},
 	{"topology needs one host, not all hosts", "topology_needs_one_host"},
 	{"update_channel must be stable or prerelease", "update_channel_invalid"},
