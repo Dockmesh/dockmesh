@@ -68,6 +68,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
+	"github.com/dockmesh/dockmesh/internal/updategate"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -564,6 +565,8 @@ func main() {
 	ldapSvc := ldapauth.NewService(database, authSvc, secretsSvc)
 	oauth2Svc := oauth2auth.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 
+	jobGate := updategate.New(config.ResolvePaths(os.Getenv).UpdateDir)
+
 	metricsCol := metrics.NewCollector(database, dockerCli, 30*time.Second, metrics.DefaultRetention)
 	metricsCol.Start(ctx)
 	defer metricsCol.Stop()
@@ -602,9 +605,14 @@ func main() {
 	}
 	backupSvc := backup.NewService(database, dockerCli, stacksMgr, secretsSvc, backupPaths)
 	backupSvc.SetOperations(opsSvc)
-	if err := backupSvc.Start(ctx); err != nil {
-		slog.Warn("backup scheduler start", "err", err)
-	}
+	// Before the gate: a manual run started during an update window must
+	// not be taken for one the previous process left behind.
+	backupSvc.FailInterruptedRuns(ctx)
+	jobGate.Run(ctx, "backup scheduler", func() {
+		if err := backupSvc.Start(ctx); err != nil {
+			slog.Warn("backup scheduler start", "err", err)
+		}
+	})
 	// P.13.2: backup defaults are now opt-in. New installs never get a
 	// default job created on boot; the user has to set one up
 	// explicitly (Backups → New job, or the "Enable daily system
@@ -651,7 +659,7 @@ func main() {
 		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
 		return err
 	})
-	scaleController.Start(ctx)
+	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
 	defer scaleController.Stop()
 
 	// Remote-agent PKI + service. The mTLS listener starts only if the
@@ -896,9 +904,16 @@ func main() {
 	}
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy.deploy)
 	gitSourceSvc.SetDeployNow(gitDeploy.deployNow)
-	stackLocks.OnRelease(func(k stacklock.Key) { gitSourceSvc.StackReleased(k.Stack, gitTargetMatcher(gitDeploy, k.Target)) })
+	stackLocks.OnRelease(func(k stacklock.Key) {
+		// Pending git deploys are background work too; the gated start
+		// of gitSourceSvc deploys them once the update is confirmed.
+		if jobGate.Pending() {
+			return
+		}
+		gitSourceSvc.StackReleased(k.Stack, gitTargetMatcher(gitDeploy, k.Target))
+	})
 	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
-	gitSourceSvc.Start(ctx)
+	jobGate.Run(ctx, "git polling", func() { gitSourceSvc.Start(ctx) })
 	defer gitSourceSvc.Stop()
 
 	// Stack templates (P.11.12). Seeds the built-in library from
@@ -923,7 +938,7 @@ func main() {
 	backupTargetStore := backupSvc.Targets()
 	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
 	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter, cfg.DataDir)
-	auditRetention.Start(ctx)
+	jobGate.Run(ctx, "audit retention", func() { auditRetention.Start(ctx) })
 	defer auditRetention.Stop()
 
 	// Audit webhook (P.11.14). Posts each audit entry to a configured
@@ -938,7 +953,7 @@ func main() {
 	// rollout modes. Starts a 60s evaluator loop that pushes
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
-	agentUpgrade.Start(ctx)
+	jobGate.Run(ctx, "agent upgrades", func() { agentUpgrade.Start(ctx) })
 	agentsSvc.SetNotices(noticesSvc)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
@@ -955,7 +970,9 @@ func main() {
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
 	}
-	migrationSvc.StartCleaner(ctx)
+	jobGate.Run(ctx, "migration cleaner", func() { migrationSvc.StartCleaner(ctx) })
+	// Deferred after every gated start, so it runs before their Stops.
+	defer jobGate.Close()
 	drainSvc := migration.NewDrainService(migrationSvc, database)
 
 	// Bell-icon producer wire-up. All services that emit notifications
@@ -974,6 +991,11 @@ func main() {
 	})
 	// After the repair above, which seals the last plaintext credentials.
 	noticesSvc.Register("db.plaintext-snapshots", func(ctx context.Context, n *notices.Service) error {
+		// The snapshots are the manual way back while an update is
+		// unconfirmed; the next start removes them.
+		if jobGate.Pending() {
+			return nil
+		}
 		return removePlaintextSnapshots(ctx, database, secretsSvc, n)
 	})
 	updateWatcher.SetNotifier(notifSvc)

@@ -76,14 +76,18 @@ func (s *Service) SetTimezone(ctx context.Context, name string) error {
 	return s.scheduleAll(ctx)
 }
 
-// Start fails runs a previous process left in state running, then
-// schedules the enabled jobs.
-func (s *Service) Start(ctx context.Context) error {
+// FailInterruptedRuns fails the runs a previous process left in state
+// running. Call it at boot, before any run of this process starts.
+func (s *Service) FailInterruptedRuns(ctx context.Context) {
 	if n, err := s.store.failInterruptedRuns(ctx); err != nil {
 		slog.Warn("backup: reconcile interrupted runs", "err", err)
 	} else if n > 0 {
 		slog.Warn("backup: marked runs interrupted by a restart as failed", "count", n)
 	}
+}
+
+// Start schedules the enabled jobs.
+func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = true
 	s.cron.Start()

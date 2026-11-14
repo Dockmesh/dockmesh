@@ -107,10 +107,7 @@ func TestStartFailsInterruptedRuns(t *testing.T) {
 	if err := svc.store.setRunPath(ctx, id, "jobs/x/partial.tar.gz"); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer svc.Stop()
+	svc.FailInterruptedRuns(ctx)
 	r, _ := svc.GetRun(ctx, id)
 	if r.Status != StatusFailed || r.FinishedAt == nil {
 		t.Fatalf("interrupted run: %+v", r)
