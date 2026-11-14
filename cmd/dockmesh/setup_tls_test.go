@@ -35,11 +35,7 @@ func TestSelfProbePinsCertificate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			leaf := tt.leaf.Leaf
-			if leaf == nil {
-				t.Skip("httptest certificate has no parsed leaf")
-			}
-			base, client := selfProbe(":"+port, &tls.Config{Certificates: []tls.Certificate{{Leaf: leaf}}})
+			base, client := selfProbe(":"+port, tt.leaf.Leaf)
 			if base != "https://127.0.0.1:"+port {
 				t.Fatalf("base = %s", base)
 			}

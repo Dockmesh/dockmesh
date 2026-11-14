@@ -21,7 +21,7 @@ const (
 	uiKeyFile  = "ui-server.key"
 )
 
-// maxCertFile bounds what UIFingerprint reads.
+// maxCertFile bounds what ReadUICert reads.
 const maxCertFile = 64 << 10
 
 // EnsureUICert loads the web UI certificate, or issues one signed by the CA
@@ -38,7 +38,6 @@ func (m *Manager) EnsureUICert(hosts []string) (*tls.Certificate, error) {
 		if cert, err := parseCertPEM(certPEM); err == nil && m.pairProblem(cert, keyPEM) == "" {
 			pair, err := tls.X509KeyPair(certPEM, keyPEM)
 			if err == nil {
-				pair.Leaf = cert
 				return &pair, nil
 			}
 		}
@@ -59,7 +58,7 @@ func (m *Manager) EnsureUICert(hosts []string) (*tls.Certificate, error) {
 	if len(dns)+len(ips) > maxServerSANs {
 		return nil, fmt.Errorf("the web certificate would carry %d names and IPs, more than %d", len(dns)+len(ips), maxServerSANs)
 	}
-	cert, newCert, newKey, err := m.issueLeaf("dockmesh-web", dns, ips, nil)
+	_, newCert, newKey, err := m.issueLeaf("dockmesh-web", dns, ips, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +72,6 @@ func (m *Manager) EnsureUICert(hosts []string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	pair.Leaf = cert
 	return &pair, nil
 }
 
@@ -98,22 +96,12 @@ func Fingerprint(der []byte) string {
 	return strings.Join(parts, ":")
 }
 
-// UIFingerprint reads the web UI certificate in dir and returns its
-// Fingerprint. A symlink or anything but a small regular file is refused:
-// root reads this file from a directory the service owns.
-func UIFingerprint(dir string) (string, error) {
-	cert, err := ReadUICert(dir)
-	if err != nil {
-		return "", err
-	}
-	return Fingerprint(cert.Raw), nil
-}
-
-// ReadUICert parses the web UI certificate in dir with the checks of
-// UIFingerprint.
+// ReadUICert parses the web UI certificate in dir. A symlink or anything
+// but a small regular file is refused: root reads this file from a
+// directory the service owns.
 func ReadUICert(dir string) (*x509.Certificate, error) {
 	path := filepath.Join(dir, UICertFile)
-	f, err := os.OpenFile(path, os.O_RDONLY|oNoFollow, 0) // #nosec G304 -- fixed name below the data dir
+	f, err := os.OpenFile(path, os.O_RDONLY|oSafeRead, 0) // #nosec G304 -- fixed name below the data dir
 	if err != nil {
 		return nil, err
 	}

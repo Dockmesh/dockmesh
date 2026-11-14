@@ -39,10 +39,11 @@ func TestEnsureUICertIsKept(t *testing.T) {
 	if Fingerprint(first.Leaf.Raw) != Fingerprint(again.Leaf.Raw) {
 		t.Error("fingerprint changed across starts")
 	}
-	got, err := UIFingerprint(dir)
+	read, err := ReadUICert(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := Fingerprint(read.Raw)
 	if got != Fingerprint(first.Leaf.Raw) {
 		t.Errorf("UIFingerprint = %s, want %s", got, Fingerprint(first.Leaf.Raw))
 	}
@@ -89,7 +90,7 @@ func TestUIFingerprintRefusesLinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, UICertFile), filepath.Join(linked, UICertFile)); err != nil {
 		t.Skip("no symlinks:", err)
 	}
-	if _, err := UIFingerprint(linked); err == nil {
+	if _, err := ReadUICert(linked); err == nil {
 		t.Error("a symlinked certificate was read")
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"embed"
 	"errors"
 	"fmt"
@@ -401,6 +402,7 @@ func main() {
 			"env_file", setupEnvFile)
 	}
 	var webTLS *tls.Config
+	var webLeaf *x509.Certificate
 	if setupState.Active() {
 		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
 		if setup.ServesTLS(setupFacts, cfg.DataDir) {
@@ -413,6 +415,7 @@ func main() {
 			setupState.SetTLSFingerprint(fp)
 			slog.Info("setup mode serves HTTPS only; compare this fingerprint with the one your browser shows", "sha256", fp)
 			webTLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*cert}}
+			webLeaf = cert.Leaf
 		}
 	} else if exists, err := setup.UsersExist(ctx, database); err != nil {
 		slog.Warn("check for user accounts", "err", err)
@@ -1114,7 +1117,7 @@ func main() {
 
 		// Step 5 — health probe
 		emit("health", "probing /api/v1/health", "info")
-		probeURL, probe := selfProbe(cfg.HTTPAddr, webTLS)
+		probeURL, probe := selfProbe(cfg.HTTPAddr, webLeaf)
 		probeCtx, probeCancel := context.WithTimeout(commitCtx, 3*time.Second)
 		defer probeCancel()
 		req, _ := http.NewRequestWithContext(probeCtx, "GET", probeURL+"/api/v1/health", nil)

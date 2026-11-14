@@ -49,5 +49,10 @@ func EnsureStateDir(dataDir string) (string, error) {
 	case !fi.IsDir():
 		return "", fmt.Errorf("%s is not a directory", dir)
 	}
-	return filepath.Join(dir, "data"), nil
+	return PKIDir(dataDir), nil
+}
+
+// PKIDir is where setup mode keeps its PKI, below StateDir.
+func PKIDir(dataDir string) string {
+	return filepath.Join(StateDir(dataDir), "data")
 }

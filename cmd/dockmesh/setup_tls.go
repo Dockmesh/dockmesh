@@ -62,8 +62,9 @@ func setupCertHosts(baseURL string) []string {
 }
 
 // selfProbe returns the loopback base URL of this server's own web
-// listener and a client for it that trusts only the certificate it serves.
-func selfProbe(httpAddr string, webTLS *tls.Config) (string, *http.Client) {
+// listener and a client for it; with leaf set, over HTTPS trusting only
+// that certificate.
+func selfProbe(httpAddr string, leaf *x509.Certificate) (string, *http.Client) {
 	host, port, err := net.SplitHostPort(httpAddr)
 	if err != nil {
 		port = "8080"
@@ -71,12 +72,13 @@ func selfProbe(httpAddr string, webTLS *tls.Config) (string, *http.Client) {
 	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
 		host = "127.0.0.1"
 	}
-	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	if webTLS == nil || len(webTLS.Certificates) == 0 || webTLS.Certificates[0].Leaf == nil {
-		return "http://" + net.JoinHostPort(host, port), client
+	transport := &http.Transport{Proxy: nil}
+	scheme := "http://"
+	if leaf != nil {
+		transport.TLSClientConfig = pinnedTLS(leaf)
+		scheme = "https://"
 	}
-	client.Transport = &http.Transport{Proxy: nil, TLSClientConfig: pinnedTLS(webTLS.Certificates[0].Leaf)}
-	return "https://" + net.JoinHostPort(host, port), client
+	return scheme + net.JoinHostPort(host, port), &http.Client{Timeout: 3 * time.Second, Transport: transport}
 }
 
 // pinnedTLS accepts exactly the certificate leaf, whatever name it is

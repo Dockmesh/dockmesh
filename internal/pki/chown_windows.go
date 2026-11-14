@@ -4,4 +4,4 @@ import "os"
 
 func chownLike(*os.File, string) error { return nil }
 
-const oNoFollow = 0
+const oSafeRead = 0

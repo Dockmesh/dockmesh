@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/json"
@@ -10,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -59,7 +57,7 @@ func setupNewCode(now time.Time) error {
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	webCert, _ := pki.ReadUICert(filepath.Join(setup.StateDir(paths.DataDir), "data"))
+	webCert, _ := pki.ReadUICert(setup.PKIDir(paths.DataDir))
 	if !setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr, webCert) }) {
 		return errSetUpAlready
 	}
@@ -116,11 +114,7 @@ func serverInSetup(httpAddr string, webCert *x509.Certificate) bool {
 	if _, _, err := net.SplitHostPort(httpAddr); err != nil {
 		return false
 	}
-	var tlsCfg *tls.Config
-	if webCert != nil {
-		tlsCfg = &tls.Config{Certificates: []tls.Certificate{{Leaf: webCert}}}
-	}
-	base, client := selfProbe(httpAddr, tlsCfg)
+	base, client := selfProbe(httpAddr, webCert)
 	resp, err := client.Get(base + "/api/v1/setup/status") // #nosec G704 -- this host's own listen address from the server config
 	if err != nil {
 		return false
@@ -133,7 +127,8 @@ func serverInSetup(httpAddr string, webCert *x509.Certificate) bool {
 }
 
 // setupBaseURL is where the operator opens the wizard: the configured
-// base URL, else this host's first LAN address on the web port.
+// base URL, else this host's first LAN address on the web port, with the
+// scheme setup mode serves.
 func setupBaseURL(httpAddr string, https bool) string {
 	scheme := "http://"
 	if https {
