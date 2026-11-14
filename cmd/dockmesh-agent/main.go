@@ -984,7 +984,11 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		if maxOut <= 0 {
 			maxOut = 1 << 20
 		}
-		out, exitCode, err := dockerwrap.RunExec(ctx, cli, req.Container, req.Cmd, maxOut)
+		// The server's request timeout; its cancel frame can be dropped
+		// when the send queue is full.
+		execCtx, cancelExec := context.WithTimeout(ctx, 30*time.Minute)
+		out, exitCode, err := dockerwrap.RunExec(execCtx, cli, req.Container, req.Cmd, maxOut)
+		cancelExec()
 		if err != nil {
 			respond(conn, f.ID, nil, err)
 			break
