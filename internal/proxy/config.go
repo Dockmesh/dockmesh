@@ -465,17 +465,30 @@ func mainProxy(r Route, port string) caddyReverseProxy {
 			TLS:          tls,
 		}
 	}
-	p.Headers = requestHeaderOps(o, o.Routing.UpstreamTLS.HostHeader == "upstream", port)
+	p.Headers = requestHeaderOps(o, hostHeader(&o.Routing.UpstreamTLS), port)
 	return p
 }
 
+// hostHeader is the Host Dockmesh sets on requests to a backend, "" for
+// none. Over TLS Caddy sends the dialed address unless told otherwise,
+// so keeping the visitor's host needs an explicit value there.
+func hostHeader(t *UpstreamTLS) string {
+	switch {
+	case t.HostHeader == "upstream":
+		return "{http.reverse_proxy.upstream.hostport}"
+	case t.TLS:
+		return "{http.request.hostport}"
+	}
+	return ""
+}
+
 // requestHeaderOps is what the site sets on requests to its backend:
-// the Host of the dialed upstream and X-Forwarded-Port when asked for,
-// then the site's own headers, which replace either on the same name.
-func requestHeaderOps(o *SiteOptions, upstreamHost bool, port string) *caddyHeaderOps {
+// host as Host and X-Forwarded-Port when asked for, then the site's own
+// headers, which replace either on the same name.
+func requestHeaderOps(o *SiteOptions, host, port string) *caddyHeaderOps {
 	set := map[string][]string{}
-	if upstreamHost {
-		set["Host"] = []string{"{http.reverse_proxy.upstream.hostport}"}
+	if host != "" {
+		set["Host"] = []string{host}
 	}
 	if o.Headers.ForwardedPort {
 		set["X-Forwarded-Port"] = []string{port}

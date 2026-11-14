@@ -38,6 +38,15 @@
                     "tls": {
                       "insecure_skip_verify": true
                     }
+                  },
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "Host": [
+                          "{http.request.hostport}"
+                        ]
+                      }
+                    }
                   }
                 }
               ],

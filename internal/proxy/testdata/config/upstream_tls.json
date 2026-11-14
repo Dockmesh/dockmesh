@@ -36,6 +36,15 @@
                   "transport": {
                     "protocol": "http",
                     "tls": {}
+                  },
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "Host": [
+                          "{http.request.hostport}"
+                        ]
+                      }
+                    }
                   }
                 }
               ],
