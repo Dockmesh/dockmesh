@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/layout"
 )
 
 // Retention setting keys (P.11.13). Stored in the `settings` table.
@@ -108,6 +110,20 @@ func (r *Retention) DefaultLocalDir() string {
 		}
 	}
 	return filepath.Join(r.dataDir, "audit-archive")
+}
+
+// CheckLocalDir refuses an archive directory the server unit could not be
+// written with: the unit writer adds it to ReadWritePaths.
+// A nil Retention checks without the data dir.
+func (r *Retention) CheckLocalDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	var dataDir string
+	if r != nil {
+		dataDir = r.dataDir
+	}
+	return layout.CheckWritablePath(dir, dataDir)
 }
 
 // Start launches the daily ticker. Runs at 03:00 local time each day.

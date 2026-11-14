@@ -290,6 +290,24 @@ func checkLocation(what, p, c, dataDir string) error {
 	return nil
 }
 
+// CheckWritablePath applies the rules the unit writer uses for a writable
+// path taken from a setting, so a value it would refuse is refused when
+// it is saved. dataDir may be empty when it is not known.
+func CheckWritablePath(p, dataDir string) error {
+	const what = "writable path"
+	c, err := checkPath(what, p)
+	if err != nil {
+		return err
+	}
+	if c == "/" {
+		return fmt.Errorf("%w: %s is the root directory", ErrBadUnitValue, what)
+	}
+	if dataDir != "" {
+		dataDir = filepath.Clean(dataDir)
+	}
+	return checkLocation(what, p, c, dataDir)
+}
+
 // hasLaterParent reports whether an entry of dirs is a strict parent of d.
 func hasLaterParent(d string, dirs []string) bool {
 	for _, p := range dirs {

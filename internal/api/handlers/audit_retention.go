@@ -3,7 +3,9 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // GetAuditRetention returns the current retention config + a preview
@@ -37,6 +39,18 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 	if err := decodeJSON(r, &cfg); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	// The unit writer makes this directory writable for the service, like
+	// the backup roots, so changing it needs the same permission.
+	if cfg.LocalDir != h.Settings.Get(audit.RetentionLocalDir, "") {
+		if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+			writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
+			return
+		}
+		if err := h.AuditRetention.CheckLocalDir(cfg.LocalDir); err != nil {
+			writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
+			return
+		}
 	}
 	if err := audit.SaveConfig(r.Context(), h.Settings.Set, cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

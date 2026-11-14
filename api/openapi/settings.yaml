@@ -62,6 +62,12 @@ paths:
         writes a `settings.update_channel_update` audit entry with the old
         and new value.
 
+        `audit.retention_local_dir` becomes writable for the service through
+        its systemd unit, so changing it also needs `system.upgrade` on
+        everything (403 otherwise). It must be an absolute path without
+        control characters, quotes or backslashes, outside the system
+        directories and not containing the data dir (400 otherwise).
+
         The update check's cache keys (see `GET /settings`) are written only
         by the update check: a changed value is rejected with 400 and nothing
         is saved; the current value sent back unchanged is skipped.
