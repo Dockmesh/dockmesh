@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,6 +85,9 @@ type InstallerConfig struct {
 	// operations the server drives on agents too.
 	Targets func(ctx context.Context) ([]stacklock.Target, error)
 	Notices *notices.Service
+	// Audit records the outcome of an update. It is called once per
+	// result, again on the next read when it returned an error.
+	Audit func(ctx context.Context, res rootupdate.Result) error
 	// UpdaterInstalled reports whether the root updater's units exist.
 	UpdaterInstalled func() bool
 
@@ -450,6 +454,7 @@ func (i *Installer) CheckResult(ctx context.Context) rootupdate.Result {
 		return res
 	}
 	slog.Info("update result", "status", res.Status, "from", res.From, "to", res.To, "step", res.Step, "reason", res.Reason)
+	i.auditOnce(ctx, data, res)
 	if i.cfg.Notices != nil {
 		if err := i.cfg.Notices.Resolve(ctx, ResultNoticeKey); err != nil {
 			slog.Warn("resolve update notice", "err", err)
@@ -466,6 +471,28 @@ func (i *Installer) CheckResult(ctx context.Context) rootupdate.Result {
 		}
 	}
 	return res
+}
+
+// auditedFile holds the hash of the last result passed to Audit. A failed
+// result stays in place for the next root run, so every start reads it
+// again.
+const auditedFile = ".result-audited"
+
+func (i *Installer) auditOnce(ctx context.Context, data []byte, res rootupdate.Result) {
+	if i.cfg.Audit == nil {
+		return
+	}
+	sum := sha256.Sum256(data)
+	mark := []byte(hex.EncodeToString(sum[:]))
+	if prev, err := readSmallFile(i.cfg.Dir, auditedFile, 128); err == nil && bytes.Equal(prev, mark) {
+		return
+	}
+	if err := i.cfg.Audit(ctx, res); err != nil {
+		return
+	}
+	if err := writeFileAtomic(i.cfg.Dir, auditedFile, mark); err != nil {
+		slog.Warn("remember audited update result", "err", err)
+	}
 }
 
 // resultNotice is the admin notice for res; an update that went through
