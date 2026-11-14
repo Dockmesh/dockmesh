@@ -861,7 +861,7 @@ func main() {
 			}
 			return scaling.NewHostTarget(h, stack, service), nil
 		},
-		scaling.CheckedScale(stacksMgr, stackLocks))
+		scaling.CheckedScale(stacksMgr, stackLocks, deployStore))
 	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
 	defer scaleController.Stop()
 

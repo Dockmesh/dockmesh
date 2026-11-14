@@ -222,3 +222,18 @@ func TestIgnoredReplicas(t *testing.T) {
 		t.Fatalf("ignored = %v, want [api]", got)
 	}
 }
+
+func TestDeployRefusesNameOfOtherStack(t *testing.T) {
+	d := newFakeDaemon()
+	d.add("demo-web-1", map[string]string{LabelProject: "demo-web", LabelService: "1"})
+	cli := fakeClient(t, d)
+	svc := composetypes.ServiceConfig{Name: "web", Image: "web:2"}
+	proj := &composetypes.Project{Name: "demo", Services: composetypes.Services{"web": svc}}
+	_, err := (&Service{}).deployService(context.Background(), cli, proj, svc, nil, 1)
+	if err == nil || !strings.Contains(err.Error(), "taken by service 1 of stack demo-web") {
+		t.Fatalf("err = %v, want a name conflict", err)
+	}
+	if len(d.removed) != 0 {
+		t.Fatalf("removed %v", d.removed)
+	}
+}

@@ -105,7 +105,7 @@ func (s *Service) CheckScale(ctx context.Context, proj *composetypes.Project, se
 // ScaleService itself only enforces hard blocks (container_name, hard
 // ports) and trusts the caller for soft warnings (stateful).
 func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, serviceName string, replicas int) (*ScaleResult, error) {
-	if replicas < 0 || replicas > 100 {
+	if replicas < 0 || replicas > maxReplicas {
 		return nil, errors.New("replicas must be between 0 and 100")
 	}
 	if err := s.refuseStagedMounts(ctx, proj); err != nil {
@@ -179,6 +179,9 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 			}
 			// Remove stale container with the same name if it exists.
 			if old, inspErr := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{}); inspErr == nil {
+				if err := ownedBy(old.Container.Config, proj.Name, serviceName); err != nil {
+					return nil, fmt.Errorf("replica %d (%s): %w", i, name, err)
+				}
 				_, _ = cli.ContainerStop(ctx, old.Container.ID, client.ContainerStopOptions{})
 				_, _ = cli.ContainerRemove(ctx, old.Container.ID, client.ContainerRemoveOptions{Force: true})
 			}

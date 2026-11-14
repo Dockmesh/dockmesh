@@ -24,8 +24,9 @@ type sampler interface {
 	Query(ctx context.Context, q metrics.Query) ([]metrics.Sample, error)
 }
 
-// errCountChanged means the replica count changed between evaluating a
-// rule and taking the stack lock, e.g. by a manual scale.
+// errCountChanged means the replica count or the deployment changed
+// between evaluating a rule and taking the stack lock, e.g. by a manual
+// scale.
 var errCountChanged = errors.New("replica count changed")
 
 // Controller is the auto-scaling goroutine that polls metrics every
@@ -318,13 +319,22 @@ func cpuValue(s metrics.Sample, unit string) float64 {
 // CheckedScale scales under the stack lock, from the stack files as they
 // are now, and only while the files allow the auto-scaler to act and the
 // service still runs from replicas.
-func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks) ScaleFunc {
+func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks, deployments *stacks.DeploymentStore) ScaleFunc {
 	return func(ctx context.Context, stack string, t Target, from, to int) error {
 		release, err := locks.TryLock(t.LockKey(), stacklock.OpAutoScale)
 		if err != nil {
 			return err
 		}
 		defer release()
+		// A migration or delete doesn't take the stack lock; its status does
+		// tell, and so does a move to another host since the evaluation.
+		d, err := deployments.Get(ctx, stack)
+		if err != nil {
+			return err
+		}
+		if d == nil || d.Status != "deployed" || stacklock.Host(d.HostID) != t.LockKey().Target {
+			return fmt.Errorf("%w: stack %s is not deployed there", errCountChanged, stack)
+		}
 		v, err := Check(sm, stack)
 		if err != nil {
 			return err

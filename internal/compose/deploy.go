@@ -563,7 +563,7 @@ func replicaPlan(ctx context.Context, cli *client.Client, proj *composetypes.Pro
 		return nil, err
 	}
 	sortByReplicaIndex(existing, proj.Name, svc.Name)
-	n := max(len(existing), 1)
+	n := min(max(len(existing), 1), maxReplicas)
 	plan := make([]plannedReplica, n)
 	for i := range plan {
 		plan[i].name = replicaName(proj.Name, svc.Name, i+1)
@@ -572,6 +572,26 @@ func replicaPlan(ctx context.Context, cli *client.Client, proj *composetypes.Pro
 		}
 	}
 	return plan, nil
+}
+
+// maxReplicas is the most replicas a service runs on a host.
+const maxReplicas = 100
+
+// ownedBy refuses a container that compose labels as part of another
+// stack or service: replica names of different stacks can collide
+// ("a" + "b-c" and "a-b" + "c" both give "a-b-c-1").
+func ownedBy(cfg *container.Config, stack, service string) error {
+	if cfg == nil {
+		return nil
+	}
+	p, ok := cfg.Labels[LabelProject]
+	if !ok {
+		return nil
+	}
+	if p != stack || cfg.Labels[LabelService] != service {
+		return fmt.Errorf("name is taken by service %s of stack %s", cfg.Labels[LabelService], p)
+	}
+	return nil
 }
 
 // removeContainer stops and removes a container; one already gone is fine.
@@ -597,6 +617,9 @@ func (s *Service) replaceReplica(ctx context.Context, cli *client.Client, proj *
 		}
 	}
 	if existing, err := cli.ContainerInspect(ctx, rp.name, client.ContainerInspectOptions{}); err == nil {
+		if err := ownedBy(existing.Container.Config, proj.Name, svc.Name); err != nil {
+			return "", fmt.Errorf("%s: %w", rp.name, err)
+		}
 		if err := removeContainer(ctx, cli, existing.Container.ID); err != nil {
 			return "", fmt.Errorf("remove existing %s: %w", rp.name, err)
 		}
