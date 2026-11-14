@@ -3,6 +3,8 @@
   import { TriangleAlert, Plus, X } from 'lucide-svelte';
   import type { TLSMode } from './_site';
   import { GROUPS, warnings, isDefault, groupOfField, type OptionsForm, type GroupKey, type HeaderRow } from './_options';
+  import UpstreamTLSFields from './_UpstreamTLSFields.svelte';
+  import FallbackFields from './_FallbackFields.svelte';
 
   // Per-site options, grouped. With `collapsible` each group is a closed
   // section unless it differs from Caddy's defaults or has an error.
@@ -24,6 +26,7 @@
 
   const warn = $derived(Object.fromEntries(warnings(form, tls).map((w) => [w.field, w.text])));
   const errGroups = $derived(new Set(Object.keys(errors).map(groupOfField).filter(Boolean) as GroupKey[]));
+  const ownFwdPort = $derived(form.headers.requestSet.some((h) => h.name.trim().toLowerCase() === 'x-forwarded-port'));
   const wwwPossible = $derived(!/^(www\.|\*\.)/i.test(host) && !/^[\d.:[\]]+$/.test(host));
 
   const SECRET_HINT = m.proxy_oe_secret_hint();
@@ -105,6 +108,8 @@
       {@render check('o-www', m.proxy_oe_www({ host }), wwwPossible ? m.proxy_oe_www_hint({ host }) : m.proxy_oe_www_na())}
     </div>
     {@render err('routing.www_redirect')}
+    <UpstreamTLSFields bind:tls={form.routing.upstreamTLS} {host} field="routing.upstream_tls" idp="o-ut" {errors} {readonly} />
+    <FallbackFields bind:fb={form.routing.fallback} idp="o-fb" {errors} warning={warn['routing.fallback'] ?? ''} {readonly} />
   {:else if key === 'https'}
     <div class="ck">
       <input id="o-ah" type="checkbox" bind:checked={form.https.allowHTTP} disabled={readonly || tls === 'none'} />
@@ -237,6 +242,15 @@
       <input id="o-sh" type="checkbox" bind:checked={form.headers.security} disabled={readonly} />
       {@render check('o-sh', m.proxy_oe_security(), m.proxy_oe_security_hint())}
     </div>
+    <div class="ck">
+      <input id="o-fp" type="checkbox" bind:checked={form.headers.forwardedPort} disabled={readonly} />
+      <span class="ck-l">
+        <label for="o-fp">{m.proxy_fwd_port()}</label>
+        <span class="hint">{m.proxy_fwd_port_hint()}</span>
+        <span class="hint">{m.proxy_fwd_port_hint2()}</span>
+        {#if form.headers.forwardedPort && ownFwdPort}<span class="note">{m.proxy_fwd_port_replaced()}</span>{/if}
+      </span>
+    </div>
     {@render headerRows(form.headers.requestSet, 'headers.request_set', m.proxy_oe_req_set(), true)}
     <div class="dm-field wide">
       <label for="o-rqr">{m.proxy_oe_req_remove()}</label>
@@ -300,6 +314,7 @@
   .risk :global(svg) { flex: none; margin-top: 2px; color: var(--warn); }
   .risk.on { color: var(--warn); }
   .ferr { color: var(--bad); font-size: var(--fs-xs); font-weight: 400; }
+  .note { font-size: var(--fs-xs); color: var(--muted); font-style: italic; }
   .grp { border: 1px solid var(--border); border-radius: var(--r); padding: 0 12px; }
   .grp + .grp { margin-top: 6px; }
   .grp summary { cursor: pointer; padding: 9px 0; font-size: var(--fs-sm); }

@@ -529,6 +529,22 @@ components:
             www_redirect:
               type: boolean
               description: Also serve `www.<host>` with a permanent redirect to `<host>`. Not allowed for wildcard, IP or `www.` hosts.
+            upstream_tls: {$ref: "#/components/schemas/ProxyUpstreamTLS"}
+            fallback:
+              type: object
+              description: What the site does with requests no path route takes. Empty `mode` proxies them to the site's upstreams.
+              properties:
+                mode:
+                  type: string
+                  enum: ["", proxy, redirect, "404"]
+                to:
+                  type: string
+                  example: /ords/r/app/home
+                  description: "Redirect target, only with `mode: redirect`: an absolute path (optionally with a query) or an http(s) URL. No braces, spaces or control characters."
+                code:
+                  type: integer
+                  enum: [301, 302, 307, 308]
+                  description: "Redirect status, only with `mode: redirect`."
         https:
           type: object
           properties:
@@ -612,6 +628,9 @@ components:
             security:
               type: boolean
               description: "Adds `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`."
+            forwarded_port:
+              type: boolean
+              description: Send `X-Forwarded-Port` to the backend with the port of the listener that took the request (`443` or `80`). A request header of the same name in `request_set` replaces it.
             request_set:
               type: array
               items: {$ref: "#/components/schemas/ProxyHeader"}
@@ -630,6 +649,26 @@ components:
             access_log:
               type: boolean
               description: Write an access log line per request of this site to the proxy container's log.
+    ProxyUpstreamTLS:
+      type: object
+      description: How the proxy talks to a backend. The zero value is plain HTTP with the visitor's Host header.
+      properties:
+        tls: {type: boolean, description: Dial the backend over HTTPS.}
+        server_name:
+          type: string
+          example: backend.example.com
+          description: SNI and certificate name, a host name without scheme or port. Needs `tls`.
+        host_header:
+          type: string
+          enum: ["", keep, upstream]
+          description: "`keep` (default) passes the visitor's Host on, `upstream` sends the dialed `host:port`."
+        ca_pem:
+          type: string
+          maxLength: 65536
+          description: "PEM with one or more CA certificates to trust instead of the public roots. Only `CERTIFICATE` blocks; a private key is rejected. Needs `tls`."
+        skip_verify:
+          type: boolean
+          description: Don't check the backend's certificate. Needs `tls`, excludes `ca_pem`. Each save that leaves it on writes a `proxy.route_tls_unverified` audit entry.
     ProxyImportResult:
       type: object
       required: [sites, global_unsupported, warnings]

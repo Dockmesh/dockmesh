@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -222,6 +223,9 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		details["options"] = orNone(proxy.ChangedGroups(proxy.SiteOptions{}, *opts))
 	}
 	h.audit(r, "proxy.route_create", req.Host, details)
+	if route.Options.SkipsVerify() {
+		h.audit(r, "proxy.route_tls_unverified", route.Host, nil)
+	}
 	writeJSON(w, http.StatusCreated, route)
 }
 
@@ -260,6 +264,9 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if route.Options.SkipsVerify() && slices.Contains(changed, "options.routing") {
+		h.audit(r, "proxy.route_tls_unverified", route.Host, nil)
 	}
 	writeJSON(w, http.StatusOK, route)
 }

@@ -169,3 +169,45 @@ func TestProxyRouteOptionsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// Saving a site whose backend certificate is not checked leaves an
+// audit entry of its own; other saves don't.
+func TestProxyRouteSkipVerifyAudited(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.Proxy = proxy.NewService(e.db, nil, false)
+	e.h.Audit = audit.NewService(e.db, "")
+	auth := middleware.NewAuth(e.h.Auth)
+	e.router.With(auth, middleware.RequirePerm(rbac.PermProxyUpdate)).Put("/proxy/routes/{id}", e.h.UpdateProxyRoute)
+	route, err := e.h.Proxy.CreateRoute(context.Background(), proxy.RouteSpec{Host: "apex.example.com", Upstream: "10.0.0.2:443", TLSMode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.role("proxyeditor", []rbac.Perm{rbac.PermProxyView, rbac.PermProxyUpdate})
+	e.user("editor1", "proxyeditor")
+	tok := e.login("editor1").AccessToken
+	path := "/proxy/routes/" + strconv.FormatInt(route.ID, 10)
+
+	tests := []struct {
+		name    string
+		options string
+		entries int
+	}{
+		{"https with ca check", `{"routing":{"upstream_tls":{"tls":true}}}`, 0},
+		{"skip verify", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}}}`, 1},
+		{"other group changed", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}},"logs":{"access_log":true}}`, 1},
+		{"skip verify off", `{"routing":{"upstream_tls":{"tls":true}}}`, 1},
+	}
+	for _, tt := range tests {
+		rr := e.do(http.MethodPut, path, tok, map[string]any{"upstream": "10.0.0.2:443", "tls_mode": "auto", "options": json.RawMessage(tt.options)})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", tt.name, rr.Code, rr.Body)
+		}
+		var n int
+		if err := e.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'proxy.route_tls_unverified' AND target = 'apex.example.com'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != tt.entries {
+			t.Errorf("%s: %d tls_unverified entries, want %d", tt.name, n, tt.entries)
+		}
+	}
+}

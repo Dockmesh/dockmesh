@@ -25,8 +25,8 @@ export function auditTargetHref(action: string, target: string | undefined): str
   const area = action.split('.')[0];
   const verb = action.split('.')[1] ?? '';
   if (/(^|_)(delete|remove|prune)$/.test(verb)) return undefined;
-  // Proxy actions other than create record the route id, not its name.
-  if (area === 'proxy' && verb !== 'route_create') return undefined;
+  // Most proxy actions record the route id, not its name.
+  if (area === 'proxy' && verb !== 'route_create' && verb !== 'route_tls_unverified') return undefined;
   return PAGES[area]?.(target);
 }
 

@@ -4,8 +4,18 @@ export type TLSMode = 'auto' | 'internal' | 'none';
 
 export interface SiteHeader { name: string; value?: string; secret?: boolean; value_set?: boolean }
 
+export interface UpstreamTLS { tls?: boolean; server_name?: string; host_header?: string; ca_pem?: string; skip_verify?: boolean }
+export interface Fallback { mode?: string; to?: string; code?: number }
+
 export interface SiteOptions {
-  routing?: { extra_upstreams?: string[]; lb_policy?: string; health_path?: string; www_redirect?: boolean };
+  routing?: {
+    extra_upstreams?: string[];
+    lb_policy?: string;
+    health_path?: string;
+    www_redirect?: boolean;
+    upstream_tls?: UpstreamTLS;
+    fallback?: Fallback;
+  };
   https?: { allow_http?: boolean; hsts?: boolean };
   performance?: {
     flush_immediately?: boolean;
@@ -25,6 +35,7 @@ export interface SiteOptions {
   };
   headers?: {
     security?: boolean;
+    forwarded_port?: boolean;
     request_set?: SiteHeader[];
     request_remove?: string[];
     response_set?: SiteHeader[];
@@ -46,6 +57,13 @@ export interface Site {
   cert_valid_from?: string;
   cert_valid_to?: string;
   cert_days_left?: number;
+}
+
+// skipsVerify is true when the site dials a backend over HTTPS without
+// checking its certificate.
+export function skipsVerify(s: Site): boolean {
+  const t = s.options?.routing?.upstream_tls;
+  return !!(t?.tls && t.skip_verify);
 }
 
 export interface ProxyStatus {
@@ -93,6 +111,9 @@ export function optionSummary(o?: SiteOptions): string[] {
   if (r.extra_upstreams?.length) out.push(`${m.proxy_opt_load_balanced({ n: r.extra_upstreams.length + 1 })}${r.lb_policy ? ` (${r.lb_policy})` : ''}`);
   if (r.health_path) out.push(m.proxy_opt_health_check({ path: r.health_path }));
   if (r.www_redirect) out.push(m.proxy_opt_www_redirect());
+  if (r.upstream_tls?.tls) out.push(m.proxy_opt_upstream_https());
+  if (r.fallback?.mode === 'redirect') out.push(m.proxy_opt_fallback_redirect({ to: r.fallback.to ?? '' }));
+  if (r.fallback?.mode === '404') out.push(m.proxy_opt_fallback_404());
   const h = o.https ?? {};
   if (h.allow_http) out.push(m.proxy_opt_allow_http());
   if (h.hsts) out.push('HSTS');
@@ -110,6 +131,7 @@ export function optionSummary(o?: SiteOptions): string[] {
   if (a.forward_auth?.url) out.push(m.proxy_opt_forward_auth());
   const hd = o.headers ?? {};
   if (hd.security) out.push(m.proxy_opt_security_headers());
+  if (hd.forwarded_port) out.push('X-Forwarded-Port');
   const set = (hd.request_set?.length ?? 0) + (hd.response_set?.length ?? 0);
   const rm = (hd.request_remove?.length ?? 0) + (hd.response_remove?.length ?? 0);
   if (set || rm) out.push(m.proxy_opt_header_rules({ count: set + rm }));

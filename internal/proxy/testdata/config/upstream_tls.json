@@ -1,0 +1,71 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    }
+                  ],
+                  "transport": {
+                    "protocol": "http",
+                    "tls": {}
+                  }
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "app.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
