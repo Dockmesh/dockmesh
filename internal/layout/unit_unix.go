@@ -196,15 +196,14 @@ func checkResolved(u ServerUnit) error {
 // each of them is root, or reads secrets or raw disks, on its own.
 var privilegedGroups = map[string]bool{
 	"root": true, "wheel": true, "sudo": true, "admin": true, "adm": true, "shadow": true, "disk": true,
-	"kmem": true, "lxd": true, "libvirt": true, "systemd-journal": true,
+	"kmem": true, "lxd": true, "incus": true, "incus-admin": true, "libvirt": true, "kvm": true,
+	"microk8s": true, "systemd-journal": true, "tty": true, "input": true, "video": true,
 }
 
 // SocketGroups returns the supplementary groups a service needs for Docker:
 // "docker" when that group exists (dockerGID >= 0), and the numeric gid of
-// the socket when another group owns it, as on Synology or with Podman.
-// The gid is only added for a real socket owned by root on a path only root
-// may change, and never for a privileged group; warn says why it was not.
-// A missing socket adds nothing.
+// the socket when another group owns it, as on Synology or with Podman;
+// warn says why the socket's group was not added.
 func SocketGroups(socket string, dockerGID int) (groups []string, warn string) {
 	if dockerGID >= 0 {
 		groups = append(groups, "docker")
@@ -224,8 +223,9 @@ func SocketGroups(socket string, dockerGID int) (groups []string, warn string) {
 	if !ok || int(st.Gid) == dockerGID {
 		return groups, ""
 	}
-	name := strconv.FormatUint(uint64(st.Gid), 10)
-	if g, err := user.LookupGroupId(name); err == nil {
+	gid := strconv.FormatUint(uint64(st.Gid), 10)
+	name := gid
+	if g, err := user.LookupGroupId(gid); err == nil {
 		name = g.Name
 	}
 	switch {
@@ -236,7 +236,7 @@ func SocketGroups(socket string, dockerGID int) (groups []string, warn string) {
 	case st.Gid == 0 || privilegedGroups[name]:
 		return groups, fmt.Sprintf("%q belongs to group %s, which is never given to the service", socket, name)
 	}
-	return append(groups, strconv.FormatUint(uint64(st.Gid), 10)), ""
+	return append(groups, gid), ""
 }
 
 // rootOnlyPath reports whether root owns every component of p, without
@@ -257,13 +257,14 @@ func rootOnlyPath(p string) bool {
 	}
 }
 
-// RootOwnedFile reports whether root owns path and nobody else may write
-// it, so values read from it may steer what root writes.
+// RootOwnedFile reports whether root owns path and its directories and
+// nobody else may write them, so values read from it may steer what root
+// writes; a file in a directory another account owns could be swapped.
 func RootOwnedFile(path string) bool {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return false
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && st.Uid == 0 && fi.Mode().Perm()&0o022 == 0
+	return ok && st.Uid == 0 && fi.Mode().Perm()&0o022 == 0 && rootOnlyPath(filepath.Dir(path))
 }

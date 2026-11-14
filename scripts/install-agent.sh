@@ -422,7 +422,7 @@ else
   USER_LINES="User=$RUN_USER
 Group=$RUN_GROUP"
   # A socket owned by another group than docker (Synology, Podman) is
-  # reached through its gid; group root is never handed out.
+  # reached through its gid.
   SOCK_GID="$(stat -Lc %g /var/run/docker.sock 2>/dev/null || true)"
   DOCKER_GID="$(getent group docker | cut -d: -f3)"
   if [[ -n "$SOCK_GID" && "$SOCK_GID" != "0" && "$SOCK_GID" != "$DOCKER_GID" ]]; then

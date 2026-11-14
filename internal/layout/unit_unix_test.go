@@ -213,8 +213,11 @@ func TestWriteServerUnitRefusesSymlinkIntoSystemTree(t *testing.T) {
 }
 
 // A socket the test can create is never root's, so only the refusals and
-// the docker group run here; the accepted case needs root (lab).
+// the docker group run here; the accepted case needs root.
 func TestSocketGroups(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("runs as root: the test sockets would be root's")
+	}
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file.sock")
 	if err := os.WriteFile(file, nil, 0o660); err != nil {
@@ -244,9 +247,6 @@ func TestSocketGroups(t *testing.T) {
 		{"symlink to a socket not owned by root", link, -1, nil, true},
 		{"no socket", filepath.Join(dir, "missing.sock"), other, []string{"docker"}, false},
 		{"DOCKER_HOST is not a unix socket", "", -1, nil, false},
-	}
-	if os.Geteuid() == 0 {
-		t.Skip("runs as root: the test sockets would be root's")
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
