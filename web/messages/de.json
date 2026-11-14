@@ -6014,6 +6014,7 @@
   "settings_channel_needs_upgrade": "Nur Benutzer, die Dockmesh-Updates installieren dürfen, können den Kanal ändern.",
   "settings_run_prerelease": "{version} ist eine Vorabversion, die get.dockmesh.dev nicht ausliefert. Führe ihren eigenen Installer auf diesem Host aus:",
   "apierr_update_channel_needs_system_upgrade": "Zum Ändern des Update-Kanals ist die Berechtigung nötig, Dockmesh-Updates zu installieren",
+  "apierr_audit_dir_needs_system_upgrade": "Zum Wählen eines anderen Archivordners für das Audit-Log ist die Berechtigung nötig, Dockmesh-Updates zu installieren",
   "apierr_update_channel_invalid": "Der Update-Kanal muss stable oder prerelease sein",
   "setup_code_title": "Dockmesh einrichten",
   "setup_code_sub": "Gib den Setup-Code ein, den sudo dockmesh setup new-code auf dem Server ausgegeben hat. Du brauchst ihn einmal, um zu zeigen, dass du Zugriff auf diesen Server hast.",

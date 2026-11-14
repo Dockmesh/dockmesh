@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
 // runAdminCmd handles `dockmesh admin <subcommand>`. Bootstrap recovery
@@ -123,13 +124,28 @@ func adminCreate(args []string) error {
 	}
 	defer database.Close()
 
-	authSvc := auth.NewService(database, make([]byte, 32))
+	authSvc, err := cliAuthService(database)
+	if err != nil {
+		return err
+	}
 	user, err := authSvc.CreateUser(context.Background(), *username, *email, pw, *role)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("created user: id=%s username=%s role=%s (on everything)\n", user.ID, user.Username, *role)
 	return nil
+}
+
+// cliAuthService is an auth service with the stored password policy, so a
+// password set from the CLI meets the same rules as one set in the UI.
+func cliAuthService(database *sql.DB) (*auth.Service, error) {
+	st := settings.NewStore(database)
+	if err := st.Load(context.Background()); err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	svc := auth.NewService(database, make([]byte, 32))
+	svc.SetSettings(st)
+	return svc, nil
 }
 
 func adminResetPassword(args []string) error {
@@ -167,7 +183,10 @@ func adminResetPassword(args []string) error {
 		return fmt.Errorf("lookup user: %w", err)
 	}
 
-	authSvc := auth.NewService(database, make([]byte, 32))
+	authSvc, err := cliAuthService(database)
+	if err != nil {
+		return err
+	}
 	if err := authSvc.ChangePassword(context.Background(), userID, pw); err != nil {
 		return err
 	}

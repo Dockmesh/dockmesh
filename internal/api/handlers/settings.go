@@ -127,7 +127,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if e.Key == audit.RetentionLocalDir && h.Settings.Get(e.Key, "") != e.Value {
+		if e.Key == audit.RetentionLocalDir && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
 			if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
 				writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
 				return

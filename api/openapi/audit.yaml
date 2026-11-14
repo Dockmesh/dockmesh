@@ -67,7 +67,9 @@ paths:
         otherwise), because the server unit makes that directory writable.
         It must be an absolute path without control characters, quotes or
         backslashes, outside the system directories and not containing the
-        data dir (400 otherwise). Sending the current value back is allowed.
+        data dir (400 otherwise). Sending the current value or
+        `default_local_dir` back, or an empty value, needs no extra
+        permission.
       requestBody:
         required: true
         content:

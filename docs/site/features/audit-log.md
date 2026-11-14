@@ -59,6 +59,8 @@ Click **Audit settings** on the **Audit log** page and open the **Retention** ta
 | **Archive to a folder** | Older entries are written to an NDJSON file in a folder on the server, then deleted. The page pre-fills `audit-archive` in the server's data directory (`/var/lib/dockmesh/audit-archive` by default), which is also where the server writes when no folder is set |
 | **Archive to a backup target** | Older entries are written to a saved backup target as NDJSON, then deleted |
 
+The server's systemd unit makes the folder writable for the service, so choosing a folder other than the default needs the permission to install Dockmesh updates. It must be an absolute path outside the system directories (`/etc`, `/usr` and the like) that doesn't contain the data directory. Run `sudo dockmesh system write-unit` and restart the service after changing it.
+
 Up to v0.5.3 the server wrote to `data/audit-archive` below its working directory when no folder was set (`/data/audit-archive` for the systemd service). A server that finds that folder keeps archiving there, so old and new archives stay together.
 
 Retention runs daily at 03:00 server time, or right away with **Run now…**. The tab shows how many entries the next run would remove. After removing entries, Dockmesh writes an `audit.chain_bridge` entry so the remaining chain still verifies. The backup target the log is archived to is hidden from non-admins, and only admins can change, delete or pick it for a job.

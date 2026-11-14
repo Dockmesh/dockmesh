@@ -41,8 +41,10 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// The unit writer makes this directory writable for the service, like
-	// the backup roots, so changing it needs the same permission.
-	if cfg.LocalDir != h.Settings.Get(audit.RetentionLocalDir, "") {
+	// the backup roots, so pointing it elsewhere needs the same permission.
+	// The page sends the default folder back, and clearing the setting
+	// falls back to it.
+	if cfg.LocalDir != "" && cfg.LocalDir != h.Settings.Get(audit.RetentionLocalDir, "") && cfg.LocalDir != h.AuditRetention.DefaultLocalDir() {
 		if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
 			writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
 			return
