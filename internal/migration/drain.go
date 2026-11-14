@@ -142,7 +142,7 @@ func NewDrainOrchestrator(migSvc *Service, ds *DrainStore) *DrainOrchestrator {
 
 // Execute runs the drain plan sequentially. Blocks until all stacks
 // are migrated, the drain is aborted, or the context is cancelled.
-func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID string) {
+func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID string, confirmHooks map[string]string) {
 	slog.Info("drain executing",
 		"id", drain.ID, "host", drain.SourceHostID,
 		"stacks", len(drain.Plan))
@@ -180,7 +180,7 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 		}
 
 		// Initiate migration for this stack.
-		m, err := o.migSvc.Initiate(ctx, entry.StackName, entry.TargetHostID, userID)
+		m, err := o.migSvc.Initiate(ctx, entry.StackName, entry.TargetHostID, userID, confirmHooks[entry.StackName])
 		if err != nil {
 			slog.Warn("drain: migration initiate failed",
 				"stack", entry.StackName, "err", err)
@@ -276,22 +276,71 @@ func NewDrainService(migSvc *Service, db *sql.DB) *DrainService {
 
 func (s *DrainService) Store() *DrainStore { return s.drainStore }
 
+// Plan assigns the host's stacks to targets and lists each stack's hook
+// commands, which the drain would run.
 func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPlan, error) {
-	return PlanDrain(ctx, sourceHostID, s.migSvc.hosts, s.migSvc.deployments, s.migSvc.stacks)
+	plan, err := PlanDrain(ctx, sourceHostID, s.migSvc.hosts, s.migSvc.deployments, s.migSvc.stacks)
+	if err != nil {
+		return nil, err
+	}
+	for i := range plan.Entries {
+		e := &plan.Entries[i]
+		hooks, err := s.migSvc.HookCommands(e.StackName)
+		if err != nil {
+			e.Feasible, e.Detail = false, err.Error()
+			plan.Feasible = false
+			continue
+		}
+		e.Hooks = hooks
+	}
+	return plan, nil
 }
 
-func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string) (*Drain, error) {
+// DrainHooksUnconfirmedError refuses a drain whose plan runs hook
+// commands that confirmHooks doesn't name by their digest.
+type DrainHooksUnconfirmedError struct {
+	Entries []PlanEntry
+}
+
+func (e *DrainHooksUnconfirmedError) Error() string {
+	return fmt.Sprintf("%d stack(s): %s", len(e.Entries), ErrHooksUnconfirmed)
+}
+
+func (e *DrainHooksUnconfirmedError) Is(target error) bool { return target == ErrHooksUnconfirmed }
+
+// Execute plans the drain again and runs it. confirmHooks maps a stack
+// name to the digest of the hook commands the caller was shown; every
+// stack in the plan with hooks needs its current digest there.
+func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string, confirmHooks map[string]string) (*Drain, error) {
 	plan, err := s.Plan(ctx, sourceHostID)
 	if err != nil {
 		return nil, err
 	}
+	var unconfirmed []PlanEntry
+	for _, e := range plan.Entries {
+		if e.Feasible && e.Hooks != nil && confirmHooks[e.StackName] != e.Hooks.Digest {
+			unconfirmed = append(unconfirmed, e)
+		}
+	}
+	if len(unconfirmed) > 0 {
+		return nil, &DrainHooksUnconfirmedError{Entries: unconfirmed}
+	}
 
+	// The drain record keeps only the digests: the commands can hold
+	// secrets and would outlive a change of the meta file in the DB.
+	stored := make([]PlanEntry, len(plan.Entries))
+	for i, e := range plan.Entries {
+		if e.Hooks != nil {
+			e.Hooks = &HookCommands{Digest: e.Hooks.Digest}
+		}
+		stored[i] = e
+	}
 	now := time.Now()
 	d := &Drain{
 		ID:           uuid.NewString(),
 		SourceHostID: sourceHostID,
 		Status:       DrainPlanning,
-		Plan:         plan.Entries,
+		Plan:         stored,
 		StartedAt:    &now,
 		InitiatedBy:  userID,
 	}
@@ -305,7 +354,7 @@ func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string)
 	s.mu.Unlock()
 
 	go func() {
-		orch.Execute(context.Background(), d, userID)
+		orch.Execute(context.Background(), d, userID, confirmHooks)
 		s.mu.Lock()
 		delete(s.active, d.ID)
 		s.mu.Unlock()

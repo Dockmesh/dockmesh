@@ -881,6 +881,12 @@ paths:
         `modified_outside`) until the request confirms them. A change
         after the start fails the migration, and a stopped source is not
         redeployed with the changed files.
+
+        A stack with hook commands (`pre_dump`, `post_restore`) needs
+        `confirm_hooks` set to their digest from the preflight; without it,
+        or after the commands changed, the request is refused (409
+        `hooks_unconfirmed`) and nothing runs. The migration runs the
+        confirmed commands.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/ConfirmExternalQuery"
@@ -894,6 +900,9 @@ paths:
               properties:
                 target_host_id: {type: string, format: uuid}
                 include_volumes: {type: boolean, default: true}
+                confirm_hooks:
+                  type: string
+                  description: Digest of the stack's hook commands (`hooks.digest` of the preflight). Required when the stack has any.
       responses:
         "202":
           description: Migration accepted — poll `/migrate/{id}` for progress.
@@ -914,7 +923,8 @@ paths:
             yet, the same as the failing `named_volumes` preflight check),
             or its compose.yaml or .env changed outside Dockmesh
             (`code: modified_outside`; repeat with `confirm_external=1`
-            after reviewing them).
+            after reviewing them), or its hook commands were not confirmed
+            or changed (`code: hooks_unconfirmed`, with the current `hooks`).
           content:
             application/json:
               schema:
@@ -929,6 +939,12 @@ paths:
                       files:
                         type: array
                         items: {type: string}
+                  - type: object
+                    required: [error, code, hooks]
+                    properties:
+                      error: {type: string}
+                      code: {type: string, enum: [hooks_unconfirmed]}
+                      hooks: {$ref: "#/components/schemas/MigrationHookCommands"}
   /stacks/{name}/migrate/preflight:
     post:
       operationId: stacks.migrate_preflight
@@ -975,6 +991,9 @@ paths:
                           enum: [pass, fail, unknown]
                           description: "`unknown`: the check could not be evaluated (e.g. an agent too old to report its architecture); reported, but doesn't block."
                         detail: {type: string}
+                  hooks:
+                    $ref: "#/components/schemas/MigrationHookCommands"
+                    description: Hook commands the migration would run; absent when the stack has none.
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}

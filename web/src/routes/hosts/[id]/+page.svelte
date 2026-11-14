@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HookCommandsConfirm from '$lib/components/HookCommandsConfirm.svelte';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel, hostStatusLabel } from '$lib/labels';
   import { untrack } from 'svelte';
@@ -59,6 +60,8 @@
   let drainPlan = $state<DrainPlan | null>(null);
   let drainLoading = $state(false);
   let drainBusy = $state(false);
+  let drainHooksConfirmed = $state(false);
+  let drainHooks = $derived((drainPlan?.entries ?? []).filter((e) => e.feasible && e.hooks).map((e) => ({ stack: e.stack_name, hooks: e.hooks! })));
 
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
@@ -253,6 +256,7 @@
   async function openDrain() {
     showDrain = true;
     drainPlan = null;
+    drainHooksConfirmed = false;
     drainLoading = true;
     try { drainPlan = await api.drains.plan(id); }
     catch (err) { toast.error(m.hosts_plan_failed(), err instanceof ApiError ? err.message : undefined); }
@@ -261,11 +265,17 @@
   async function executeDrain() {
     drainBusy = true;
     try {
-      const d = await api.drains.execute(id);
+      const confirmHooks = drainHooksConfirmed ? Object.fromEntries(drainHooks.map((h) => [h.stack, h.hooks.digest])) : {};
+      const d = await api.drains.execute(id, confirmHooks);
       toast.success(m.hosts_drain_started(), m.hosts_drain_queued({ n: d.plan.length }));
       showDrain = false;
     } catch (err) {
-      toast.error(m.hosts_drain_failed(), err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 409 && err.body?.code === 'hooks_unconfirmed') {
+        toast.error(m.hosts_drain_failed(), m.migration_hooks_changed());
+        openDrain();
+      } else {
+        toast.error(m.hosts_drain_failed(), err instanceof ApiError ? err.message : undefined);
+      }
     } finally { drainBusy = false; }
   }
   async function upgradeAgent() {
@@ -628,11 +638,14 @@
           </div>
         {/each}
       </div>
+      {#if drainHooks.length > 0}
+        <div class="mt-3"><HookCommandsConfirm items={drainHooks} bind:confirmed={drainHooksConfirmed} /></div>
+      {/if}
     {/if}
   {/if}
   {#snippet footer()}
     <button type="button" class="dm-btn" onclick={() => (showDrain = false)}>{m.common_cancel()}</button>
-    <button type="button" class="dm-btn dm-btn-primary" disabled={drainBusy || !drainPlan?.feasible} onclick={executeDrain}>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={drainBusy || !drainPlan?.feasible || (drainHooks.length > 0 && !drainHooksConfirmed)} onclick={executeDrain}>
       <ArrowDownToLine size={13} strokeWidth={1.8} /> {drainBusy ? m.hosts_starting() : m.hosts_begin_drain()}
     </button>
   {/snippet}

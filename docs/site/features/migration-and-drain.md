@@ -74,6 +74,8 @@ A running migration can't be cancelled. A server restart during a migration mark
 
 Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. The migration fails if the hook exits with a non-zero code (the end of its output goes to the server log, not to the migration error, which other stack viewers see), if no running container is found, or if the command can't be started. A failing `post_restore` rolls the migration back. A hook that runs longer than 30 minutes fails the migration; Docker can't stop it, so the command keeps running in its container. A git sync doesn't copy `.dockmesh.meta.json` from the repository, so hooks can't come from a push.
 
+The migrate dialog shows a stack's hook commands with a **Run these commands** checkbox; **Start migration** stays disabled until it is ticked. The API needs `confirm_hooks` with the digest the preflight returns (`hooks.digest`); without it, or when the commands changed since the preflight, the migration is refused with 409 `hooks_unconfirmed` and nothing runs. A started migration runs the commands that were confirmed, even if the file changes while it runs.
+
 ### Roll back and clean up
 
 A completed migration can be rolled back with `POST /api/v1/stacks/{name}/migrate/{id}/rollback`. Dockmesh stops the stack on the target and deploys it on the source again. There is no button for this in the UI.
@@ -85,10 +87,11 @@ A completed migration can be rolled back with `POST /api/v1/stacks/{name}/migrat
 A drain migrates every stack deployed on a host to the other online hosts.
 
 1. Open the host and click **Drain…** in the header, or **Plan drain…** on the **Maintenance** tab.
-2. Review the plan: each stack with its proposed target.
-3. Click **Begin drain**. The button is only enabled when the plan has room for every stack.
+2. Review the plan: each stack with its proposed target, and the hook commands of every stack that has any.
+3. If hook commands are listed, tick **Run these commands**.
+4. Click **Begin drain**. The button is only enabled when the plan has room for every stack and listed hook commands are confirmed.
 
-The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
+The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one, and for each stack with hook commands the right to deploy it or to read container environments on this host, since the commands are shown for confirmation. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
 
 ### How the plan is made
 
@@ -96,7 +99,7 @@ Each stack is assumed to need 500 MB, whatever it actually uses. The candidates 
 
 ### What happens during a drain
 
-- Starting the drain makes the plan again on the server. Stacks migrate one at a time, in that order; stacks that don't fit in it are skipped (the API starts a drain even then).
+- Starting the drain makes the plan again on the server. Through the API, every stack in it with hook commands needs its digest in `confirm_hooks` (stack name to `entries[].hooks.digest` from the plan), otherwise the drain is refused with 409 `hooks_unconfirmed`. Stacks migrate one at a time, in that order; stacks that don't fit in it are skipped (the API starts a drain even then).
 - If a migration fails or can't start, the drain pauses and waits. Resuming continues with the next stack; the failed one isn't tried again. Resume or abort it with `POST /api/v1/hosts/{id}/drain/{drain_id}/resume` or `/abort`; `/pause` pauses it before the next stack. There are no buttons for pause, resume or abort in the UI.
 - A drain doesn't mark the host as unschedulable. You can still deploy to it during and after the drain.
 - Stacks aren't moved back afterwards. Migrate them back one by one if you want them on the original host.

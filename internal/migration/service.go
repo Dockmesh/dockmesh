@@ -35,6 +35,9 @@ type Service struct {
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel
+	// hooks are the commands confirmed for each active migration; the
+	// hook phases run these, not what the meta file says by then.
+	hooks map[string]*HookCommands
 }
 
 // Hosts is the part of host.Registry migrations use.
@@ -60,6 +63,7 @@ func NewService(db *sql.DB, hr Hosts, sm *stacks.Manager, ds *stacks.DeploymentS
 		deployments: ds,
 		db:          db,
 		active:      make(map[string]context.CancelFunc),
+		hooks:       make(map[string]*HookCommands),
 	}
 }
 
@@ -83,8 +87,9 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 // Initiate starts a new migration. Returns the migration record.
-// The actual work happens asynchronously in a goroutine.
-func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID string) (*Migration, error) {
+// The actual work happens asynchronously in a goroutine. A stack with
+// hook commands needs their digest in confirmHooks.
+func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID, confirmHooks string) (*Migration, error) {
 	// Validate stack exists.
 	if _, err := s.stacks.Get(stackName); err != nil {
 		return nil, fmt.Errorf("stack %q: %w", stackName, err)
@@ -108,6 +113,11 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID 
 	}
 	if len(vols) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
+	}
+
+	hooks, err := s.checkHooksConfirmed(stackName, confirmHooks)
+	if err != nil {
+		return nil, err
 	}
 
 	// Single-concurrency per stack.
@@ -137,6 +147,7 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID 
 	mctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.active[m.ID] = cancel
+	s.hooks[m.ID] = hooks
 	s.mu.Unlock()
 	go s.run(mctx, m.ID)
 
@@ -148,6 +159,7 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.active, migrationID)
+		delete(s.hooks, migrationID)
 		s.mu.Unlock()
 	}()
 
@@ -340,11 +352,14 @@ func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	return nil
 }
 
+func (s *Service) confirmedHooks(id string) *HookCommands {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hooks[id]
+}
+
 func (s *Service) phasePreDump(ctx context.Context, m *Migration) error {
-	hooks, err := s.loadHooks(m.StackName)
-	if err != nil {
-		return err
-	}
+	hooks := s.confirmedHooks(m.ID)
 	if hooks == nil || hooks.PreDump == "" {
 		slog.Info("migration pre-dump: no hooks configured", "id", m.ID)
 		return nil
@@ -434,10 +449,7 @@ func (s *Service) phaseStarting(ctx context.Context, m *Migration) error {
 }
 
 func (s *Service) phasePostRestore(ctx context.Context, m *Migration) error {
-	hooks, err := s.loadHooks(m.StackName)
-	if err != nil {
-		return err
-	}
+	hooks := s.confirmedHooks(m.ID)
 	if hooks == nil || hooks.PostRestore == "" {
 		slog.Info("migration post-restore: no hooks configured", "id", m.ID)
 		return nil
@@ -555,7 +567,16 @@ func (s *Service) Preflight(ctx context.Context, stackName, targetHostID string)
 		SourceHostID: dep.HostID,
 		TargetHostID: targetHostID,
 	}
-	return s.runPreflight(ctx, m)
+	res, err := s.runPreflight(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	res.Hooks, err = s.HookCommands(stackName)
+	if err != nil {
+		res.Passed = false
+		res.Checks = append(res.Checks, PreflightCheck{Name: "hooks", Status: CheckFail, Detail: err.Error()})
+	}
+	return res, nil
 }
 
 // Rollback triggers a manual rollback for a completed migration.

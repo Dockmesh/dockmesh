@@ -38,6 +38,7 @@ type fakeHost struct {
 	stops    int
 	deploys  []string // compose + "\n---\n" + env per deploy
 	deployed bool
+	execs    []string
 }
 
 func (f *fakeHost) ID() string   { return f.id }
@@ -74,7 +75,14 @@ func (f *fakeHost) StackStatus(context.Context, string) ([]compose.StatusEntry, 
 	if !f.deployed {
 		return nil, nil
 	}
-	return []compose.StatusEntry{{Service: "web", State: "running"}}, nil
+	return []compose.StatusEntry{{Service: "web", State: "running", ContainerID: f.id + "-web"}}, nil
+}
+
+func (f *fakeHost) ContainerExec(_ context.Context, id string, cmd []string) ([]byte, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.execs = append(f.execs, id+": "+strings.Join(cmd, " "))
+	return nil, 0, nil
 }
 
 type fakeHosts map[string]*fakeHost
@@ -85,7 +93,13 @@ func (h fakeHosts) Pick(id string) (host.Host, error) {
 	}
 	return nil, host.ErrUnknownHost
 }
-func (h fakeHosts) List(context.Context) ([]host.Info, error) { return nil, nil }
+func (h fakeHosts) List(context.Context) ([]host.Info, error) {
+	var out []host.Info
+	for id := range h {
+		out = append(out, host.Info{ID: id, Name: id, Status: "online"})
+	}
+	return out, nil
+}
 func (h fakeHosts) DaemonInfo(_ context.Context, id string) (*agents.DaemonInfo, error) {
 	if f, ok := h[id]; ok {
 		return f.daemon, nil
@@ -150,7 +164,13 @@ func newMigrationEnv(t *testing.T) *migrationEnv {
 // migrate runs one migration to the end and returns its final record.
 func (e *migrationEnv) migrate(t *testing.T) *Migration {
 	t.Helper()
-	m, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1")
+	return e.migrateConfirmed(t, "")
+}
+
+// migrateConfirmed is migrate with the digest of confirmed hooks.
+func (e *migrationEnv) migrateConfirmed(t *testing.T, hooks string) *Migration {
+	t.Helper()
+	m, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", hooks)
 	if err != nil {
 		t.Fatal(err)
 	}
