@@ -89,9 +89,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("agent hello payload", "agent", agent.Name, "err", err)
 		return
 	}
+	hello.Daemon = hello.Daemon.Sanitize()
 	// The upgrade controller compares the reported commit, and stream /
 	// cancel features depend on the advertised capabilities.
-	hello.Daemon = hello.Daemon.Sanitize()
 	ag.Hello = hello
 
 	if err := h.svc.markOnline(r.Context(), ag, hello); err != nil {

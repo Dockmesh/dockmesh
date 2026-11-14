@@ -2532,7 +2532,7 @@
         {#each migratePreflight.checks as check}
           <div class="flex items-center gap-2 text-xs">
             {#if check.status === 'unknown'}
-              <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)] shrink-0" aria-label={m.stacks_d_preflight_unknown()} />
+              <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)] shrink-0" />
             {:else if check.passed}
               <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)] shrink-0" />
             {:else}
