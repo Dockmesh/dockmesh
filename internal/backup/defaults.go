@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
@@ -70,10 +71,12 @@ func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 }
 
 // MigrateSystemJobPath gives a local system job that still has a relative
-// path an absolute one. Earlier versions resolved it against the working
-// directory, "/" under systemd. If archives of the job are already there the
-// job keeps that directory, otherwise it moves to <data>/backups. It returns
-// the old and new path when it changed the job.
+// inline path an absolute one. Earlier versions resolved it against the
+// working directory, "/" under systemd. If archives of the job are already
+// there the job keeps that directory, otherwise it moves to <data>/backups.
+// A job on a saved target keeps it: its inline config is empty, so its
+// path is not known here. It returns the old and new path when it changed
+// the job.
 func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, err error) {
 	if s.paths.DataDir == "" {
 		return "", "", nil
@@ -83,7 +86,7 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 		return "", "", err
 	}
 	j := systemJob(jobs)
-	if j == nil || j.TargetType != "local" {
+	if j == nil || j.TargetType != "local" || j.TargetID > 0 {
 		return "", "", nil
 	}
 	var cfg map[string]any
@@ -120,6 +123,62 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 	}
 	slog.Info("system backup job path made absolute", "job", j.Name, "from", from, "to", to)
 	return from, to, nil
+}
+
+// MovedSystemTarget finds a system job that earlier versions moved off its
+// saved local target: MigrateSystemJobPath took the empty inline config of
+// such a job for the old relative default on every start, so the job ended
+// up on a new target at <data>/backups while the one it was created with
+// stayed saved under the job's name. It returns the job's name and the
+// paths of those left-behind targets, or no paths when nothing points to
+// such a move.
+func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
+	if s.paths.DataDir == "" {
+		return "", nil, nil
+	}
+	jobs, err := s.store.listJobs(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	j := systemJob(jobs)
+	if j == nil || j.TargetType != "local" || j.TargetID == 0 {
+		return "", nil, nil
+	}
+	all, err := s.store.targets().List(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	moved := filepath.Join(s.paths.DataDir, "backups")
+	current := ""
+	for _, t := range all {
+		if t.ID == j.TargetID {
+			current = localTargetPath(t.Config)
+		}
+	}
+	if current != moved {
+		return "", nil, nil
+	}
+	for _, t := range all {
+		if t.Type != "local" || t.ID == j.TargetID || (t.JobCount != nil && *t.JobCount > 0) {
+			continue
+		}
+		if t.Name != j.Name && !strings.HasPrefix(t.Name, j.Name+" (") {
+			continue
+		}
+		if p := localTargetPath(t.Config); p != "" && p != moved {
+			previous = append(previous, p)
+		}
+	}
+	return j.Name, previous, nil
+}
+
+func localTargetPath(cfg any) string {
+	var lc targets.LocalConfig
+	b, err := json.Marshal(cfg)
+	if err != nil || json.Unmarshal(b, &lc) != nil || lc.Path == "" {
+		return ""
+	}
+	return filepath.Clean(lc.Path)
 }
 
 func hasFiles(dir string) bool {

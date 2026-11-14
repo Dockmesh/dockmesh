@@ -775,6 +775,9 @@ func main() {
 	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
 		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})
+	noticesSvc.Register("backups.system-target-moved", func(ctx context.Context, n *notices.Service) error {
+		return syncMovedSystemTargetNotice(ctx, n, backupSvc)
+	})
 	noticesSvc.Register(restore.LeftoverNoticeKey, func(ctx context.Context, n *notices.Service) error {
 		return restore.SyncLeftoverNotice(ctx, cfg, n)
 	})
