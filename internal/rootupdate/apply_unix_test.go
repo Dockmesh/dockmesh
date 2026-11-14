@@ -825,3 +825,60 @@ func (s *stopFailsSecond) Stop(ctx context.Context) error {
 	}
 	return s.fakeService.Stop(ctx)
 }
+
+// TestApplyInterruptedRollbackIsFinished covers a rollback that failed on
+// the binary while the new version still answers: the next run must
+// finish the rollback, not keep the update.
+func TestApplyInterruptedRollbackIsFinished(t *testing.T) {
+	f := newFixture(t)
+	f.release("v0.6.1", "v0.6.1", goodTarball(t, "v0.6.1"))
+	// The new version starts too slowly for the first health check but
+	// answers once the rollback is under way.
+	rollbackBegan := false
+	prev := filepath.Join(f.binDir, "dockmesh.prev")
+	f.svc.healthy = func(v string) bool {
+		// The binary's backup cannot be read, so its restore fails.
+		_ = os.Chmod(prev, 0)
+		for _, c := range f.svc.calls {
+			if c == "restore-unit" {
+				rollbackBegan = true
+			}
+		}
+		return rollbackBegan && f.svc.running && f.svc.version() == v
+	}
+	if res := f.apply(); res.Status != StatusFailed {
+		t.Fatalf("first run %+v", res)
+	}
+	if got := f.read(filepath.Join(f.binDir, "dockmesh")); got != "bin v0.6.1" {
+		t.Fatalf("binary after the failed rollback = %q, want the new one still in place", got)
+	}
+	f.svc.healthy = func(v string) bool {
+		return f.svc.running && f.svc.version() == v
+	}
+	if err := os.Chmod(prev, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.calls = nil
+	res := f.apply()
+	if res.Status != StatusRolledBack || res.Step != StepRecover {
+		t.Fatalf("second run %+v, want the rollback finished", res)
+	}
+	f.assertOldRunning(true)
+}
+
+func TestApplyRecoversWithUnusableUpdateDir(t *testing.T) {
+	f := newFixture(t)
+	f.release("v0.6.1", "v0.6.1", tarball(t, entry{name: "dockmesh", content: "crashes"}))
+	f.svc.failAt = map[string]error{"restore-snapshot": errors.New("disk full")}
+	if res := f.apply(); res.Status != StatusFailed {
+		t.Fatalf("first run %+v", res)
+	}
+	f.svc.failAt = nil
+	if err := os.Chmod(f.reqDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(context.Background(), f.config())
+	if err != nil || res.Status != StatusRolledBack {
+		t.Fatalf("recovery with a world-writable update dir: %+v, %v", res, err)
+	}
+}

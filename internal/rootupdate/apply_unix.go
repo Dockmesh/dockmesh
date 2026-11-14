@@ -69,9 +69,13 @@ func Apply(ctx context.Context, cfg Config) (Result, error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist) && !haveJournal:
 		return Result{}, nil
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
+	case err != nil && !haveJournal:
 		return Result{}, fmt.Errorf("request dir: %w", err)
-	case err == nil:
+	case err != nil:
+		// The recovery does not need the directory; the service's account
+		// must not be able to block it.
+		cfg.Log.Warn("update dir unusable, recovering without it", "err", err)
+	default:
 		defer req.Close()
 		u.req = req
 	}
@@ -232,6 +236,9 @@ func (u *updater) swap(ctx context.Context, j *journal, files []staged) error {
 	if err := u.saveJournal(j); err != nil {
 		return failed(StepSnapshot, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return failed(StepSnapshot, err)
+	}
 	for i, f := range files {
 		if err := u.install(j, i, f); err != nil {
 			return failed(StepInstall, err)
@@ -313,6 +320,14 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 	svc := u.cfg.Service
 	res := u.result(StatusRolledBack, j.To, cause)
 	res.From = j.From
+	// Once a rollback began, no later run may keep the new version, even
+	// if it answers: some files may already be the old ones again.
+	j.Installed = false
+	if err := u.saveJournal(j); err != nil {
+		res.Status = StatusFailed
+		res.Reason += "; rollback: " + err.Error()
+		return res
+	}
 	var errs []error
 	// With nothing changed yet a failed stop is harmless: the old version
 	// may still run, which its health check below shows. Otherwise files
