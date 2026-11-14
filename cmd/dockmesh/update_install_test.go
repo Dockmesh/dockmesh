@@ -30,7 +30,9 @@ func TestAuditUpdateResult(t *testing.T) {
 			}
 			t.Cleanup(func() { database.Close() })
 			a := audit.NewService(database, filepath.Join(t.TempDir(), "genesis"))
-			auditUpdateResult(ctx, a, rootupdate.Result{Status: tt.status, From: "v0.6.0", To: "v0.6.1", Step: "health", Reason: "why"})
+			if err := auditUpdateResult(ctx, a, rootupdate.Result{Status: tt.status, From: "v0.6.0", To: "v0.6.1", Step: "health", Reason: "why"}); err != nil {
+				t.Fatal(err)
+			}
 			entries, err := a.ListFiltered(ctx, audit.ListFilter{Action: tt.action})
 			if err != nil {
 				t.Fatal(err)

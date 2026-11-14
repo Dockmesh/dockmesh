@@ -24,8 +24,8 @@ func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *
 		Current: version.Version,
 		Locks:   locks,
 		Notices: n,
-		Audit: func(ctx context.Context, res rootupdate.Result) {
-			auditUpdateResult(ctx, auditSvc, res)
+		Audit: func(ctx context.Context, res rootupdate.Result) error {
+			return auditUpdateResult(ctx, auditSvc, res)
 		},
 		Targets: func(ctx context.Context) ([]stacklock.Target, error) {
 			list, err := agentsSvc.List(ctx)
@@ -55,18 +55,19 @@ func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *
 
 // auditUpdateResult records the outcome of a server update as a system
 // entry.
-func auditUpdateResult(ctx context.Context, a *audit.Service, res rootupdate.Result) {
+func auditUpdateResult(ctx context.Context, auditSvc *audit.Service, res rootupdate.Result) error {
 	details := map[string]any{"from": res.From, "to": res.To, "step": res.Step, "reason": res.Reason}
 	switch res.Status {
 	case rootupdate.StatusUpdated:
-		a.Write(ctx, "", audit.ActionUpdateApplied, res.To, details)
+		return auditSvc.WriteErr(ctx, "", audit.ActionUpdateApplied, res.To, details)
 	case rootupdate.StatusRefused:
-		a.Write(ctx, "", audit.ActionUpdateRefused, res.To, details)
+		return auditSvc.WriteErr(ctx, "", audit.ActionUpdateRefused, res.To, details)
 	case rootupdate.StatusRolledBack:
-		a.Write(ctx, "", audit.ActionUpdateRolledBack, res.To, details)
+		return auditSvc.WriteErr(ctx, "", audit.ActionUpdateRolledBack, res.To, details)
 	case rootupdate.StatusFailed:
-		a.Write(ctx, "", audit.ActionUpdateFailed, res.To, details)
+		return auditSvc.WriteErr(ctx, "", audit.ActionUpdateFailed, res.To, details)
 	}
+	return nil
 }
 
 // gitTargetMatcher reports whether a stack's git deploys run on target,

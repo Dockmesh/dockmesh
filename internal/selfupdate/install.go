@@ -85,8 +85,9 @@ type InstallerConfig struct {
 	// operations the server drives on agents too.
 	Targets func(ctx context.Context) ([]stacklock.Target, error)
 	Notices *notices.Service
-	// Audit records the outcome of an update; it is called once per result.
-	Audit func(ctx context.Context, res rootupdate.Result)
+	// Audit records the outcome of an update. It is called once per
+	// result, again on the next read when it returned an error.
+	Audit func(ctx context.Context, res rootupdate.Result) error
 	// UpdaterInstalled reports whether the root updater's units exist.
 	UpdaterInstalled func() bool
 
@@ -486,7 +487,9 @@ func (i *Installer) auditOnce(ctx context.Context, data []byte, res rootupdate.R
 	if prev, err := readSmallFile(i.cfg.Dir, auditedFile, 128); err == nil && bytes.Equal(prev, mark) {
 		return
 	}
-	i.cfg.Audit(ctx, res)
+	if err := i.cfg.Audit(ctx, res); err != nil {
+		return
+	}
 	if err := writeFileAtomic(i.cfg.Dir, auditedFile, mark); err != nil {
 		slog.Warn("remember audited update result", "err", err)
 	}

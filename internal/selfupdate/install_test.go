@@ -39,14 +39,15 @@ func (s *releaseServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type installFixture struct {
-	t       *testing.T
-	dir     string
-	srv     *releaseServer
-	key     minisign.PrivateKey
-	inst    *Installer
-	locks   *stacklock.Locks
-	notices *notices.Service
-	audited []rootupdate.Result
+	t        *testing.T
+	dir      string
+	srv      *releaseServer
+	key      minisign.PrivateKey
+	inst     *Installer
+	locks    *stacklock.Locks
+	notices  *notices.Service
+	audited  []rootupdate.Result
+	auditErr error
 }
 
 func newInstallFixture(t *testing.T) *installFixture {
@@ -75,8 +76,11 @@ func newInstallFixture(t *testing.T) *installFixture {
 		Targets: func(context.Context) ([]stacklock.Target, error) {
 			return []stacklock.Target{stacklock.Host("local")}, nil
 		},
-		Notices:          f.notices,
-		Audit:            func(_ context.Context, res rootupdate.Result) { f.audited = append(f.audited, res) },
+		Notices: f.notices,
+		Audit: func(_ context.Context, res rootupdate.Result) error {
+			f.audited = append(f.audited, res)
+			return f.auditErr
+		},
 		UpdaterInstalled: func() bool { return true },
 		BaseURL:          hs.URL + "/",
 		Verifier:         v,
@@ -321,6 +325,22 @@ func TestCheckResultNotices(t *testing.T) {
 				t.Fatalf("audited %d times, want once", len(f.audited))
 			}
 		})
+	}
+}
+
+func TestCheckResultRetriesFailedAudit(t *testing.T) {
+	f := newInstallFixture(t)
+	f.auditErr = errors.New("database is locked")
+	b, _ := json.Marshal(rootupdate.Result{Status: rootupdate.StatusFailed, From: "v0.6.0", To: "v0.6.1", Reason: "why"})
+	if err := os.WriteFile(filepath.Join(f.dir, rootupdate.ResultFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.inst.CheckResult(context.Background())
+	f.auditErr = nil
+	f.inst.CheckResult(context.Background())
+	f.inst.CheckResult(context.Background())
+	if len(f.audited) != 2 {
+		t.Fatalf("audit called %d times, want a retry after the failed write and nothing after", len(f.audited))
 	}
 }
 

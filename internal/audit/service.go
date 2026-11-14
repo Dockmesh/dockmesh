@@ -231,6 +231,12 @@ func (s *Service) loadOrCreateGenesisHash() (string, error) {
 // Write records a chained audit entry. Failures are logged but never
 // block the caller.
 func (s *Service) Write(ctx context.Context, userID, action, target string, details any) {
+	_ = s.WriteErr(ctx, userID, action, target, details)
+}
+
+// WriteErr is Write for a caller that retries when the entry was not
+// stored.
+func (s *Service) WriteErr(ctx context.Context, userID, action, target string, details any) error {
 	var detailStr string
 	if details != nil {
 		if b, err := json.Marshal(details); err == nil {
@@ -257,7 +263,7 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 		ts, nullable(userID), action, nullable(target), nullable(detailStr), prev, rowHash)
 	if err != nil {
 		slog.Warn("audit write failed", "err", err, "action", action)
-		return
+		return err
 	}
 	s.lastRowHash = rowHash
 	if s.prom != nil {
@@ -277,6 +283,7 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 			RowHash: rowHash,
 		})
 	}
+	return nil
 }
 
 // List returns the most recent entries, newest first.

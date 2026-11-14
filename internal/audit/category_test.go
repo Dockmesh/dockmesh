@@ -153,7 +153,7 @@ func actionArg(call *ast.CallExpr) (ast.Expr, bool) {
 	if idx, ok := forwarders[sel.Sel.Name]; ok && len(call.Args) > idx {
 		return call.Args[idx], true
 	}
-	if sel.Sel.Name == "Write" && len(call.Args) == 5 && strings.Contains(strings.ToLower(exprString(sel.X)), "audit") {
+	if (sel.Sel.Name == "Write" || sel.Sel.Name == "WriteErr") && len(call.Args) == 5 && strings.Contains(strings.ToLower(exprString(sel.X)), "audit") {
 		return call.Args[2], true
 	}
 	return nil, false
