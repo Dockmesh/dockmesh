@@ -202,7 +202,8 @@ func pathHandler(r Route, p PathRoute, port string) any {
 // top: the route wins on the same name, also over Host and
 // X-Forwarded-Port. A secret site header goes only to the site's own
 // backend: its value was entered for those addresses, and a static
-// target could otherwise hand it to any host an editor names.
+// target could otherwise hand it to any host an editor names. Other
+// backends get the name removed, so a visitor can't send their own.
 func pathRequestHeaders(o *SiteOptions, p PathRoute, host, port string) *caddyHeaderOps {
 	h := newHeaderSet()
 	if host != "" {
@@ -213,6 +214,7 @@ func pathRequestHeaders(o *SiteOptions, p PathRoute, host, port string) *caddyHe
 	}
 	for _, hd := range o.Headers.RequestSet {
 		if hd.Secret && p.Target.Kind != TargetSite {
+			h.remove(hd.Name)
 			continue
 		}
 		h.put(hd.Name, hd.Value)

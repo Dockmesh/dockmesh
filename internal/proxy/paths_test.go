@@ -278,7 +278,8 @@ func TestSiteSecretsStayWithSiteBackend(t *testing.T) {
 	sub := pathSubroute(r, portHTTPS)
 	static, _ := json.Marshal(sub.Routes[0])
 	own, _ := json.Marshal(sub.Routes[1])
-	if !strings.Contains(string(static), "other.example.net") || strings.Contains(string(static), "site-s3cret") || !strings.Contains(string(static), "X-Env") {
+	if !strings.Contains(string(static), "other.example.net") || strings.Contains(string(static), "site-s3cret") ||
+		!strings.Contains(string(static), "X-Env") || !strings.Contains(string(static), `"delete":["Authorization"]`) {
 		t.Errorf("static path: %s", static)
 	}
 	if !strings.Contains(string(own), "site-s3cret") {
