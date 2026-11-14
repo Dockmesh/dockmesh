@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
@@ -324,6 +325,21 @@ func (h *LocalHost) ListNetworks(ctx context.Context) ([]network.Inspect, error)
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListNetworks(ctx)
+}
+
+func (h *LocalHost) Topology(ctx context.Context) (topology.Graph, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return topology.Graph{}, ErrNoDocker
+	}
+	nets, err := h.cli.ListNetworks(ctx)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	containers, err := h.cli.ListContainers(ctx, true)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	return topology.Build(nets, containers), nil
 }
 
 func (h *LocalHost) InspectNetwork(ctx context.Context, id string) (network.Inspect, error) {

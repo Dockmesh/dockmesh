@@ -53,11 +53,14 @@ const (
 	FrameReqNetworkCreate  = "req.networks.create"
 	FrameReqNetworkRemove  = "req.networks.remove"
 	FrameReqNetworkPrune   = "req.networks.prune"
-	FrameReqVolumeList     = "req.volumes.list"
-	FrameReqVolumeInspect  = "req.volumes.inspect"
-	FrameReqVolumeCreate   = "req.volumes.create"
-	FrameReqVolumeRemove   = "req.volumes.remove"
-	FrameReqVolumePrune    = "req.volumes.prune"
+	// FrameReqNetworkTopology asks for the host's topology.Graph; only
+	// sent to agents advertising CapNetworkTopology.
+	FrameReqNetworkTopology = "req.networks.topology"
+	FrameReqVolumeList      = "req.volumes.list"
+	FrameReqVolumeInspect   = "req.volumes.inspect"
+	FrameReqVolumeCreate    = "req.volumes.create"
+	FrameReqVolumeRemove    = "req.volumes.remove"
+	FrameReqVolumePrune     = "req.volumes.prune"
 	// Volume content browsing (P.11.8). Read-only: list one directory
 	// level or read a single file capped at the caller's maxBytes.
 	// The stream frame for large-file download is deferred — the UI
@@ -146,7 +149,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 6
+const ProtocolVersion = 7
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -183,6 +186,8 @@ const (
 	// CapNoEnvMirror, agent: keeps no .env copy, so req.stack.sync goes
 	// without the plaintext env.
 	CapNoEnvMirror = "stacks.no_env_mirror"
+	// CapNetworkTopology, agent: answers req.networks.topology.
+	CapNetworkTopology = "networks.topology"
 )
 
 // Stream control ops beyond the exec "resize".
