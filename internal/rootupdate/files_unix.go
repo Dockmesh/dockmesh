@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"syscall"
+	"time"
 )
 
 // rootOwners are the owners rootOnlyDir accepts; tests add their own uid.
@@ -177,4 +178,32 @@ func ensureStateDir(dir string) error {
 		return err
 	}
 	return os.Chmod(dir, 0o700)
+}
+
+// ReadServiceFile reads a small file the service wrote into its update
+// directory, with the same checks Apply uses for the request, and returns
+// it with its modification time.
+func ReadServiceFile(dir string, uid uint32, name string, max int64) ([]byte, time.Time, error) {
+	root, err := openRequestDir(dir, uid)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer root.Close()
+	f, err := openUntrusted(root, name, max)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if int64(len(data)) > max {
+		return nil, time.Time{}, fmt.Errorf("%s is larger than %d bytes", name, max)
+	}
+	return data, fi.ModTime(), nil
 }

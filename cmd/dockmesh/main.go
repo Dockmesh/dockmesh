@@ -53,6 +53,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/saml"
@@ -942,6 +943,14 @@ func main() {
 	// rollout modes. Starts a 60s evaluator loop that pushes
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
+	agentUpgrade.SetLocks(stackLocks)
+	agentRelease := &agents.ReleaseCache{
+		Dir:      filepath.Join(config.ResolvePaths(os.Getenv).DataDir, "agent-release"),
+		Version:  version.Version,
+		BaseURL:  selfupdate.ReleaseBaseURL(),
+		Verifier: releasesig.Default(),
+	}
+	agentUpgrade.SetReleaseCache(agentRelease)
 	jobGate.Run(ctx, "agent upgrades", func() { agentUpgrade.Start(ctx) })
 	agentsSvc.SetNotices(noticesSvc)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
@@ -1239,6 +1248,7 @@ func main() {
 			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc, handlers.NewLoginLimiter()))
 			agentMux.Handle(agents.InstallBinaryPrefix, agents.InstallHandler(agentsSvc, handlers.NewLoginLimiter()))
 			agentMux.Handle(agents.BinaryPath, agents.BinaryHandler(agentsSvc))
+			agentMux.Handle(agents.ReleasePath, agentRelease.Handler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,
 				Handler:           agentMux,

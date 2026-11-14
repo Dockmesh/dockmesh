@@ -54,7 +54,10 @@ const (
 	OpMaintenance = "maintenance"
 	// OpServerUpdate holds every stack while the server installs a new version.
 	OpServerUpdate = "server update"
-	OpDelete       = "delete"
+	// OpAgentUpdate holds a host's stacks while its agent restarts into
+	// a new version.
+	OpAgentUpdate = "agent update"
+	OpDelete      = "delete"
 	// OpDependency leaves out which stack needs the dependency: the caller
 	// who finds it busy may have no access to that stack.
 	OpDependency = "dependency deploy"

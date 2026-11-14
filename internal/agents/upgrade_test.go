@@ -31,7 +31,7 @@ func TestBuildUpgradeReqCarriesChecksumPerArch(t *testing.T) {
 	c := NewUpgradeController(&Service{endpoints: Endpoints{BaseURL: "http://srv:8080"}}, nil)
 
 	for arch, content := range bins {
-		req, err := c.buildUpgradeReq(&ConnectedAgent{Hello: HelloPayload{Arch: arch}})
+		req, err := c.buildUpgradeReq(context.Background(), &ConnectedAgent{Hello: HelloPayload{Arch: arch}})
 		if err != nil {
 			t.Fatalf("%s: %v", arch, err)
 		}
@@ -44,13 +44,13 @@ func TestBuildUpgradeReqCarriesChecksumPerArch(t *testing.T) {
 		}
 	}
 
-	if _, err := c.buildUpgradeReq(&ConnectedAgent{Hello: HelloPayload{Arch: "../../etc"}}); err == nil {
+	if _, err := c.buildUpgradeReq(context.Background(), &ConnectedAgent{Hello: HelloPayload{Arch: "../../etc"}}); err == nil {
 		t.Error("unsupported arch accepted")
 	}
 	if err := os.Remove(filepath.Join(dir, "dockmesh-agent-linux-arm64")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.buildUpgradeReq(&ConnectedAgent{Hello: HelloPayload{Arch: "arm64"}}); !errors.Is(err, ErrNoAgentBinary) {
+	if _, err := c.buildUpgradeReq(context.Background(), &ConnectedAgent{Hello: HelloPayload{Arch: "arm64"}}); !errors.Is(err, ErrNoAgentBinary) {
 		t.Errorf("missing binary: want ErrNoAgentBinary, got %v", err)
 	}
 }

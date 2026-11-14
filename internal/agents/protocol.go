@@ -265,8 +265,10 @@ type ContainerKillReq struct {
 }
 
 // AgentUpgradeReq tells the agent to download a new binary and restart.
-// Current agents fetch the binary from the agent listener over mTLS and
+// Legacy agents fetch the binary from the agent listener over mTLS and
 // verify SHA256; BinaryURL is only used by agents that predate that.
+// Managed agents get only Version: they fetch the signed release of that
+// version and verify it with their own keys.
 type AgentUpgradeReq struct {
 	BinaryURL string `json:"binary_url"` // https://server/install/dockmesh-agent-linux-amd64
 	Version   string `json:"version"`    // expected version after upgrade
@@ -415,6 +417,40 @@ type HelloPayload struct {
 	// Daemon is nil from agents that predate it, and when the daemon
 	// could not be asked.
 	Daemon *DaemonInfo `json:"daemon,omitempty"`
+	// Layout is LayoutLegacy or LayoutManaged; agents that predate it
+	// are legacy.
+	Layout string `json:"layout,omitempty"`
+	// UpdateResult is the root updater's result of the last managed
+	// update, sent until a server welcomed it.
+	UpdateResult *AgentUpdateResult `json:"update_result,omitempty"`
+}
+
+// Install layouts an agent reports in its hello.
+const (
+	// LayoutLegacy: the binary lives in the data dir, owned by the
+	// service account, and the agent replaces it itself.
+	LayoutLegacy = "legacy"
+	// LayoutManaged: the binary is root-owned and a root oneshot
+	// (dockmesh-agent update apply) installs what the agent staged.
+	LayoutManaged = "managed"
+)
+
+// AgentUpdateResult mirrors rootupdate.Result without importing it into
+// the protocol.
+type AgentUpdateResult struct {
+	Status string `json:"status"`
+	From   string `json:"from"`
+	To     string `json:"to,omitempty"`
+	Step   string `json:"step,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// HelloLayout returns the agent's layout, legacy when it sent none.
+func (h HelloPayload) HelloLayout() string {
+	if h.Layout == LayoutManaged {
+		return LayoutManaged
+	}
+	return LayoutLegacy
 }
 
 // Has reports whether the agent advertised capability c.

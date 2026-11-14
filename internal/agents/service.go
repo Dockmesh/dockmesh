@@ -53,10 +53,12 @@ type Agent struct {
 	CertExpiresAt   *time.Time `json:"cert_expires_at,omitempty"`
 	// ProtocolVersion and UpdateRecommended describe the live session
 	// and are only set while the agent is online.
-	ProtocolVersion   int       `json:"protocol_version,omitempty"`
-	UpdateRecommended bool      `json:"update_recommended,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ProtocolVersion   int  `json:"protocol_version,omitempty"`
+	UpdateRecommended bool `json:"update_recommended,omitempty"`
+	// Layout is the install layout the connected agent reports.
+	Layout    string    `json:"layout,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CreateResult is what the admin sees right after creating an agent — the
@@ -596,6 +598,7 @@ func (s *Service) fillStatus(a *Agent) {
 		a.Status = "online"
 		a.ProtocolVersion = ag.Hello.ProtocolVersion
 		a.UpdateRecommended = ag.UpdateRecommended()
+		a.Layout = ag.Hello.HelloLayout()
 	} else if a.Status != "pending" {
 		a.Status = "offline"
 	}

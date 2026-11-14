@@ -9,7 +9,9 @@ var (
 	labLockWait    func() time.Duration
 )
 
-func releaseBaseURL() string {
+// ReleaseBaseURL is where release assets are downloaded from, one
+// directory per tag.
+func ReleaseBaseURL() string {
 	if labReleaseBase != nil {
 		if b := labReleaseBase(); b != "" {
 			return b
