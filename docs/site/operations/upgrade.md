@@ -9,7 +9,7 @@ An upgrade replaces the `dockmesh` binary and restarts the service. On the first
 
 Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, every signed-in user gets an **Update available** banner with a **Release notes** link, and users with Settings & audit: Manage on everything get a notification in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
 
-**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version and the command to run, with a copy button. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
+**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version, an **Update now** button (see [Update from the UI](#update-from-the-ui)) and the installer command as an alternative, with a copy button. A security release is marked **Security release** and lists its advisories and security fixes. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
 
 ### Update channel
 
@@ -91,6 +91,16 @@ sudo install -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent.sh
 sudo systemctl restart dockmesh
 ```
 
+### Update from the UI
+
+**Update now** on **Settings → Updates** installs the newer release through the root updater described below. A dialog asks for confirmation, then shows each step: download and signature check, the wait for running stack operations, the restart, and the check of the new version. At the end it shows the result the root updater wrote: **Updated**, **rolled back** (with the reason, the old version runs again) or **refused** (nothing was changed). The outcome is also written to the audit log as a system entry. You can close the dialog while it runs; the update goes on, and reopening the page shows its progress again.
+
+The button is only shown when the server can install updates itself:
+
+- On a server that runs in a container, the page says to pull the new image and recreate the container instead.
+- Before the root updater is installed, the page says to run the installer once to set it up.
+- A pre-release is only installed on the **Pre-release** channel.
+
 ### Install through the API (root updater)
 
 From v0.6.0 the installer also sets up a root updater on Linux with systemd (`dockmesh-update.path` and `dockmesh-update.service`, see [`dockmesh update apply`](../reference/dockmesh-cli.md#update-apply)). Once it is there, a user with Settings & audit: Manage on everything can install a newer release through the API:
@@ -106,7 +116,7 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: applicatio
 
 After the restart the new version serves the UI and API at once, but starts no background job that changes containers or files (backup schedules, git polling and the pending git deploys a freed stack would start, auto-scaling, agent upgrades, audit retention, migration cleanup) until the root updater confirmed the update. A rollback within that window therefore never meets containers or files the new version already changed. A normal restart, without an update in flight, starts them right away. If an update stays unconfirmed for over an hour, for example because the updater was killed, admins get a critical banner and the jobs stay paused until `sudo systemctl start dockmesh-update.service` finishes or rolls back the update.
 
-`GET /api/v1/system/update/install` shows how far an install got until the server restarts. Afterwards admins see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
+`GET /api/v1/system/update/install` shows how far an install got and, after the restart, the root updater's result (`last_result`). Admins also see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
 
 > **Note:** A rollback puts back the database as it was before the update. Everything changed in Dockmesh while the new version was running, at most about 180 seconds, is lost, audit entries included.
 

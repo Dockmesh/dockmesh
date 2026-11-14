@@ -1,0 +1,3 @@
+kind: Changed
+body: The installer command on Settings › Updates no longer restarts the service a second time; the installer already restarts it
+time: 2026-11-14T20:58:01.075306951Z
