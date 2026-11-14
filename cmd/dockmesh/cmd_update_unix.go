@@ -224,13 +224,13 @@ func (s *serverService) WriteUnit(ctx context.Context, binary string) error {
 // Snapshot and RestoreSnapshot run the installed binary as the dockmesh
 // account. Both run while the old version is installed: before the swap,
 // and after the rollback put it back.
-func (s *serverService) Snapshot(context.Context) error {
-	_, err := runAsService(s.binary, dbStepTimeout, "update", updateSnapshotCmd, "--db", s.dbPath)
+func (s *serverService) Snapshot(ctx context.Context) error {
+	_, err := runAsService(ctx, s.binary, dbStepTimeout, "update", updateSnapshotCmd, "--db", s.dbPath)
 	return err
 }
 
-func (s *serverService) RestoreSnapshot(context.Context) error {
-	_, err := runAsService(s.binary, dbStepTimeout, "update", updateRestoreCmd, "--db", s.dbPath)
+func (s *serverService) RestoreSnapshot(ctx context.Context) error {
+	_, err := runAsService(ctx, s.binary, dbStepTimeout, "update", updateRestoreCmd, "--db", s.dbPath)
 	return err
 }
 

@@ -45,7 +45,7 @@ func settingsWritablePaths(dbPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := runAsService(self, 30*time.Second, "system", unitPathsCmd, "--db", dbPath)
+	data, err := runAsService(context.Background(), self, 30*time.Second, "system", unitPathsCmd, "--db", dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -78,12 +78,12 @@ func serviceAccount() (uint32, uint32, error) {
 // session, with a minimal environment, and returns at most
 // maxUnitPathsOutput bytes of its stdout. Root uses it for anything that
 // parses or rewrites files that account owns.
-func runAsService(binary string, timeout time.Duration, args ...string) ([]byte, error) {
+func runAsService(ctx context.Context, binary string, timeout time.Duration, args ...string) ([]byte, error) {
 	uid, gid, err := serviceAccount()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = "/"
