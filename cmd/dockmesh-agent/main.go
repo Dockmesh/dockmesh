@@ -250,6 +250,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
 		MirroredEnv:     hasMirroredEnv(dataDir()),
+		Daemon:          dockerDaemonInfo(ctx),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -1445,6 +1446,20 @@ func dockerDaemonVersion(ctx context.Context) string {
 		return ""
 	}
 	return v.Version
+}
+
+func dockerDaemonInfo(ctx context.Context) *agents.DaemonInfo {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+	res, err := cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		slog.Warn("docker info for hello", "err", err)
+		return nil
+	}
+	return agents.DaemonInfoFrom(res.Info)
 }
 
 func dockerContainerCount(ctx context.Context) int32 {

@@ -4930,6 +4930,7 @@
   "stacks_d_poll_sec": "Poll interval (sec)",
   "stacks_d_preflight": "Pre-flight checks",
   "stacks_d_preflight_failed": "Preflight failed",
+  "stacks_d_preflight_unknown": "Not checked",
   "stacks_d_preflight_failed_hint": "Pre-flight checks failed. Fix the issues above before migrating.",
   "stacks_d_private_key_pem": "Private key (PEM)",
   "stacks_d_pull_update_image": "Pull and update image…",

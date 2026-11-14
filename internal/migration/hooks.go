@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/host"
 )
@@ -43,7 +44,7 @@ func (s *Service) loadHooks(stackName string) (*MigrationHooks, error) {
 
 // executeHook runs a shell command via docker exec on the first running
 // container of the stack on the given host. This is how pre_dump and
-// post_restore hooks are executed.
+// post_restore hooks are executed. A non-zero exit fails the phase.
 func (s *Service) executeHook(ctx context.Context, h host.Host, stackName, hookName, cmd string) error {
 	if cmd == "" {
 		return nil
@@ -51,7 +52,6 @@ func (s *Service) executeHook(ctx context.Context, h host.Host, stackName, hookN
 	slog.Info("migration hook executing",
 		"stack", stackName, "hook", hookName, "cmd", cmd)
 
-	// Find the first running container for this stack.
 	status, err := h.StackStatus(ctx, stackName)
 	if err != nil {
 		return fmt.Errorf("hook %s: stack status: %w", hookName, err)
@@ -67,30 +67,29 @@ func (s *Service) executeHook(ctx context.Context, h host.Host, stackName, hookN
 		return fmt.Errorf("hook %s: no running container found for stack %s", hookName, stackName)
 	}
 
-	// Execute via host's StartExec.
-	session, err := h.StartExec(ctx, containerID, []string{"sh", "-c", cmd})
+	output, exitCode, err := h.ContainerExec(ctx, containerID, []string{"sh", "-c", cmd})
 	if err != nil {
-		return fmt.Errorf("hook %s: exec start: %w", hookName, err)
-	}
-	defer session.Close()
-
-	// Read output (but don't block forever).
-	buf := make([]byte, 64*1024)
-	var output []byte
-	for {
-		n, rerr := session.Read(buf)
-		if n > 0 {
-			output = append(output, buf[:n]...)
-		}
-		if rerr != nil {
-			break
-		}
-		if len(output) > 1024*1024 {
-			break // cap at 1MB
-		}
+		return fmt.Errorf("hook %s: exec: %w", hookName, err)
 	}
 	slog.Info("migration hook completed",
 		"stack", stackName, "hook", hookName,
-		"output_bytes", len(output))
+		"exit_code", exitCode, "output_bytes", len(output))
+	if exitCode != 0 {
+		return fmt.Errorf("hook %s exited with code %d: %s", hookName, exitCode, outputTail(output))
+	}
 	return nil
+}
+
+// outputTail is the end of a hook's output for the error message, where
+// the reason for a failure usually is.
+func outputTail(b []byte) string {
+	const max = 500
+	s := strings.TrimSpace(strings.ToValidUTF8(string(b), "?"))
+	if s == "" {
+		return "no output"
+	}
+	if len(s) > max {
+		s = "…" + strings.ToValidUTF8(s[len(s)-max:], "")
+	}
+	return s
 }

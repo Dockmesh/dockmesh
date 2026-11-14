@@ -36,7 +36,7 @@ The target gets the same deploy as a manual one: global environment variables an
 | `source_metrics` | The source host's CPU and memory can be read |
 | `target_capacity` | Free memory on the target is at least 1.2× the memory in use on the source host |
 | `target_disk` | Free disk on the target is at least 1.1× the disk in use on the source host |
-| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never compared |
+| `arch_match` | Both Docker daemons report the same platform, for example `linux/amd64`. If an agent is too old to report it, the check shows as not checked and doesn't block; update the agent to have it compared |
 | `images` | The stack's compose file can be read and parsed. Images missing on the target are listed but don't fail the check |
 
 The capacity and disk checks compare against the whole source host, not only the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
@@ -71,7 +71,7 @@ A running migration can't be cancelled. A server restart during a migration mark
 
 ### Hooks
 
-Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. Its exit code isn't checked, but the migration fails if no running container is found or the command can't be started. A git sync doesn't copy `.dockmesh.meta.json` from the repository, so hooks can't come from a push.
+Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. The migration fails if the hook exits with a non-zero code (the error shows the end of its output), if no running container is found, or if the command can't be started. A failing `post_restore` rolls the migration back. A git sync doesn't copy `.dockmesh.meta.json` from the repository, so hooks can't come from a push.
 
 ### Roll back and clean up
 

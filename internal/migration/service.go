@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -39,6 +40,7 @@ type Service struct {
 type Hosts interface {
 	Pick(id string) (host.Host, error)
 	List(ctx context.Context) ([]host.Info, error)
+	DaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error)
 }
 
 // SetGlobalEnv makes migration deploys use the global variables like a

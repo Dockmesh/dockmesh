@@ -4930,6 +4930,7 @@
   "stacks_d_poll_sec": "Abfrageintervall (s)",
   "stacks_d_preflight": "Vorabprüfungen",
   "stacks_d_preflight_failed": "Vorabprüfung fehlgeschlagen",
+  "stacks_d_preflight_unknown": "Nicht geprüft",
   "stacks_d_preflight_failed_hint": "Vorabprüfungen fehlgeschlagen. Die Probleme oben vor der Migration beheben.",
   "stacks_d_private_key_pem": "Privater Schlüssel (PEM)",
   "stacks_d_pull_update_image": "Image pullen und aktualisieren…",

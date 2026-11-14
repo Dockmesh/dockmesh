@@ -700,6 +700,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 	s.connected[ag.ID] = ag
 	s.mu.Unlock()
 
+	d := hello.Daemon
 	// Set online_since on the transition; preserve a previous value if
 	// the agent reconnected within a short window (briefly flapped) by
 	// only setting it when currently NULL. The fingerprint is checked
@@ -714,13 +715,24 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       arch = ?,
 		       version = ?,
 		       docker_version = ?,
+		       daemon_os = ?,
+		       daemon_arch = ?,
+		       swarm_node_id = ?,
+		       swarm_node_state = ?,
+		       swarm_role = ?,
+		       swarm_cluster_id = ?,
 		       last_seen_at = CURRENT_TIMESTAMP,
 		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?
 		   AND status NOT IN ('revoked', 'pending')
 		   AND (cert_fingerprint = ? OR pending_cert_fingerprint = ?)`,
-		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID, ag.certFP, ag.certFP)
+		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion,
+		d.osCol(), d.archCol(), d.swarmCol(func(s *SwarmState) string { return s.NodeID }),
+		d.swarmCol(func(s *SwarmState) string { return s.NodeState }),
+		d.swarmCol(func(s *SwarmState) string { return s.Role }),
+		d.swarmCol(func(s *SwarmState) string { return s.ClusterID }),
+		ag.ID, ag.certFP, ag.certFP)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n != 1 {
 			err = ErrCertReplaced

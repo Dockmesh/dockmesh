@@ -104,3 +104,26 @@ func (r *Registry) List(ctx context.Context) ([]Info, error) {
 	}
 	return out, nil
 }
+
+// DaemonInfo is what the Docker daemon of host id reports about itself:
+// asked live for the local daemon, from the agent's hello otherwise. Nil
+// with no error means unknown (an agent version that doesn't report it).
+func (r *Registry) DaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error) {
+	if r.fixed != nil {
+		return nil, nil
+	}
+	if id == "" || id == "local" {
+		if r.local == nil || r.local.cli == nil || !r.local.cli.Connected() {
+			return nil, ErrNoDocker
+		}
+		info, err := r.local.cli.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return agents.DaemonInfoFrom(info), nil
+	}
+	if r.agents == nil {
+		return nil, ErrUnknownHost
+	}
+	return r.agents.DaemonInfo(ctx, id)
+}
