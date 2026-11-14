@@ -55,7 +55,7 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			next := SiteOptions{Routing: RoutingOptions{ExtraUpstreams: tt.extra}, Headers: HeaderOptions{RequestSet: tt.req, ResponseSet: tt.rsp}}
-			_, err := s.UpdateRoute(ctx, r.ID, tt.upstream, "auto", nil, &next)
+			_, err := s.UpdateRoute(ctx, r.ID, tt.upstream, "auto", nil, &next, nil)
 			if tt.wantErr != "" {
 				var oe *OptionError
 				if !errors.As(err, &oe) || oe.Field != tt.wantErr {
@@ -75,7 +75,7 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 				t.Errorf("value_set stored: %s", raw)
 			}
 			reset := opts
-			if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &reset); err != nil {
+			if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &reset, nil); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -92,11 +92,11 @@ func TestSecretHeaderNotKeptForNewUpstreamWithoutOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "internal", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "internal", nil, nil, nil); err != nil {
 		t.Fatalf("same upstream: %v", err)
 	}
 	var oe *OptionError
-	if _, err := s.UpdateRoute(ctx, r.ID, "attacker.example:80", "auto", nil, nil); !errors.As(err, &oe) || oe.Field != "headers.request_set" {
+	if _, err := s.UpdateRoute(ctx, r.ID, "attacker.example:80", "auto", nil, nil, nil); !errors.As(err, &oe) || oe.Field != "headers.request_set" {
 		t.Fatalf("new upstream without options: err = %v", err)
 	}
 	got, _ := s.getRoute(ctx, r.ID)
@@ -139,7 +139,7 @@ func TestForwardAuthQueryWriteOnly(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			in := tt.in
 			next := SiteOptions{Access: AccessOptions{ForwardAuth: &in}}
-			_, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &next)
+			_, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &next, nil)
 			if tt.wantErr {
 				var oe *OptionError
 				if !errors.As(err, &oe) || oe.Field != "access.forward_auth.url" {
@@ -156,7 +156,7 @@ func TestForwardAuthQueryWriteOnly(t *testing.T) {
 				t.Errorf("stored %+v, want url %s", fa, tt.want)
 			}
 			reset := SiteOptions{Access: AccessOptions{ForwardAuth: &ForwardAuth{URL: full}}}
-			if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &reset); err != nil {
+			if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &reset, nil); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -225,7 +225,7 @@ func TestUpdateRouteReportsChanges(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := s.UpdateRoute(ctx, r.ID, tt.upstream, tt.tls, tt.enabled, tt.opts)
+			got, err := s.UpdateRoute(ctx, r.ID, tt.upstream, tt.tls, tt.enabled, tt.opts, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

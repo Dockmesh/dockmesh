@@ -1,0 +1,3 @@
+kind: Added
+body: 'Proxy sites can have up to 50 path routes (API): a path prefix or exact path goes to the site''s backend or other backends, a redirect or a 403/404, with its own request and response headers, timeouts and optional prefix stripping, behind the site''s access rules'
+time: 2026-11-14T13:02:30.847763927Z

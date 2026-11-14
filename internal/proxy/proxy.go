@@ -37,7 +37,10 @@ type Route struct {
 	// disabled routes stay in the table.
 	Enabled bool `json:"enabled"`
 	// Options are returned without basic-auth hashes (see Public).
-	Options   SiteOptions `json:"options"`
+	Options SiteOptions `json:"options"`
+	// Paths are sorted in the order Caddy tries them; secret header
+	// values are returned empty (see publicPaths).
+	Paths     []PathRoute `json:"paths"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	// Cert metadata — populated by Service.EnrichWithCertInfo() for
@@ -50,10 +53,26 @@ type Route struct {
 	// optionsErr is set when the stored options can't be read; such a
 	// route is not served rather than served without its access rules.
 	optionsErr error
-	// stored is the options column as stored; appliedHash the stateHash
-	// of the row at Caddy's last successful load of it.
+	pathsErr   error
+	// stored and storedPaths are the options and paths columns as
+	// stored; appliedHash the stateHash of the row at Caddy's last
+	// successful load of it.
 	stored      string
+	storedPaths string
 	appliedHash string
+}
+
+// SkipsVerify reports whether the site dials any backend over HTTPS
+// without checking its certificate.
+func (r Route) SkipsVerify() bool {
+	return r.Options.SkipsVerify() || pathsSkipVerify(r.Paths)
+}
+
+// Mask hides header values and credentials of the route for callers
+// without proxy.update.
+func (r *Route) Mask() {
+	r.Options = r.Options.Masked()
+	r.Paths = maskedPaths(r.Paths)
 }
 
 // RouteSpec is the input for a new route. Nil Options means defaults.
@@ -62,6 +81,7 @@ type RouteSpec struct {
 	Upstream string
 	TLSMode  string
 	Options  *SiteOptions
+	Paths    []PathRoute
 	Disabled bool
 	// hashed marks options whose basic-auth users carry bcrypt hashes
 	// instead of passwords (imported from a Caddyfile).
@@ -197,6 +217,7 @@ func (s *Service) ListRoutes(ctx context.Context) ([]Route, error) {
 	}
 	for i := range routes {
 		routes[i].Options = routes[i].Options.Public()
+		routes[i].Paths = publicPaths(routes[i].Paths)
 	}
 	return routes, nil
 }
@@ -208,6 +229,7 @@ func (s *Service) GetRoute(ctx context.Context, id int64) (*Route, error) {
 		return nil, err
 	}
 	r.Options = r.Options.Public()
+	r.Paths = publicPaths(r.Paths)
 	return r, nil
 }
 
@@ -229,6 +251,8 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	op := operations.FromContext(ctx)
 	// Before prepareOptions, which replaces basic-auth passwords by hashes.
 	op.AddSecrets(opts.SecretValues()...)
+	paths := append([]PathRoute{}, spec.Paths...)
+	op.AddSecrets(pathSecretValues(paths)...)
 	var prev *SiteOptions
 	if spec.hashed {
 		hashes := opts
@@ -239,11 +263,15 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		return nil, err
 	}
 	op.AddSecrets(opts.SecretValues()...)
+	rawPaths, err := preparePaths(paths, nil, false)
+	if err != nil {
+		return nil, err
+	}
 	op.StepStart(StepSave, "")
 	id, outcome, err := s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, ?, ?)`,
-			spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw)
+			`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options, paths) VALUES (?, ?, ?, ?, ?, ?)`,
+			spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw, rawPaths)
 		if err != nil {
 			// SQLite unique constraint code is vendor-specific; the string
 			// "UNIQUE constraint" is stable enough.
@@ -281,12 +309,12 @@ func reportApply(op *operations.Op, outcome applyOutcome) {
 }
 
 // UpdateRoute replaces the upstream and TLS mode of an existing route,
-// its enabled state unless enabled is nil and its options unless opts is
-// nil. A disabled route stays in the table but is left out of the
+// its enabled state unless enabled is nil, its options unless opts is
+// nil and its path routes unless paths is nil. A disabled route stays in the table but is left out of the
 // generated config, so traffic stops without losing config. It returns
 // what changed (upstream, tls_mode, enabled, options.<group>) once the
 // change is saved; a change Caddy refuses is not saved.
-func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) ([]string, error) {
+func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions, paths *[]PathRoute) ([]string, error) {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
 	}
@@ -323,14 +351,29 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if err != nil {
 		return nil, err
 	}
+	var nextPaths []PathRoute
+	switch {
+	case paths != nil:
+		nextPaths = append([]PathRoute{}, *paths...)
+	case cur.pathsErr != nil:
+		return nil, fmt.Errorf("%w: stored paths can't be read (%w); send new paths", ErrInvalidOptions, cur.pathsErr)
+	default:
+		// Kept paths go through the same refill as sent ones, like kept
+		// options above.
+		nextPaths = pathsWithEmptySecrets(cur.Paths)
+	}
+	rawPaths, err := preparePaths(nextPaths, cur.Paths, newUpstream)
+	if err != nil {
+		return nil, err
+	}
 	on := cur.Enabled
 	if enabled != nil {
 		on = *enabled
 	}
 	_, _, err = s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			upstream, tlsMode, boolToInt(on), raw, id)
+			`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, paths = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			upstream, tlsMode, boolToInt(on), raw, rawPaths, id)
 		if err != nil {
 			return 0, err
 		}
@@ -356,6 +399,9 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 		changed = append(changed, "options")
 	} else {
 		changed = append(changed, ChangedGroups(cur.Options, next)...)
+	}
+	if cur.pathsErr != nil || changedPaths(cur.Paths, nextPaths) {
+		changed = append(changed, "paths")
 	}
 	return changed, nil
 }
@@ -396,6 +442,25 @@ func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode st
 		return "", err
 	}
 	raw, err := json.Marshal(o)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// preparePaths fills kept secrets of the path routes, sorts and
+// validates them and returns them encoded for storage. prev are the
+// stored paths; siteGained is set when the site gains an upstream
+// address.
+func preparePaths(p, prev []PathRoute, siteGained bool) (string, error) {
+	if err := applyPathSecrets(p, prev, siteGained); err != nil {
+		return "", err
+	}
+	normalizePaths(p)
+	if err := validatePaths(p); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(orEmpty(p))
 	if err != nil {
 		return "", err
 	}
@@ -462,8 +527,10 @@ func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePre
 	}
 	g := s.ProxySettings()
 	one.Options = one.Options.withoutSecrets()
+	one.Paths = pathsWithoutSecrets(one.Paths)
 	if mask {
 		one.Options = one.Options.Masked()
+		one.Paths = maskedPaths(one.Paths)
 		g = g.Masked()
 	}
 	cfg, blocked := buildConfigWith([]Route{one}, g, true)
@@ -493,6 +560,12 @@ func (s *Service) SetRouteEnabled(ctx context.Context, id int64, enabled bool) e
 			if err := r.Options.validate(r.Host, r.TLSMode); err != nil {
 				return err
 			}
+			if r.pathsErr != nil {
+				return fmt.Errorf("%w: stored paths can't be read; edit the site", ErrInvalidOptions)
+			}
+			if err := validatePaths(r.Paths); err != nil {
+				return err
+			}
 		}
 	}
 	_, _, err := s.applyChange(ctx, func(tx *sql.Tx) (int64, error) {
@@ -513,7 +586,7 @@ func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
 	return err
 }
 
-const routeColumns = `id, host, upstream, tls_mode, enabled, options, applied_hash, created_at, updated_at`
+const routeColumns = `id, host, upstream, tls_mode, enabled, options, paths, applied_hash, created_at, updated_at`
 
 func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
 	return queryRoutes(ctx, s.db, "")
@@ -548,13 +621,17 @@ func (s *Service) getRoute(ctx context.Context, id int64) (*Route, error) {
 func scanRoute(row interface{ Scan(...any) error }) (*Route, error) {
 	var r Route
 	var enabledInt int
-	if err := row.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &r.stored, &r.appliedHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &r.stored, &r.storedPaths, &r.appliedHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
 	r.Enabled = enabledInt != 0
 	r.Options, r.optionsErr = decodeOptions([]byte(r.stored))
 	if r.optionsErr != nil {
 		slog.Warn("proxy: stored route options unreadable, route not served", "host", r.Host, "err", r.optionsErr)
+	}
+	r.Paths, r.pathsErr = decodePaths(r.storedPaths)
+	if r.pathsErr != nil {
+		slog.Warn("proxy: stored route paths unreadable, route not served", "host", r.Host, "err", r.pathsErr)
 	}
 	return &r, nil
 }

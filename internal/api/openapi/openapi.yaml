@@ -10037,6 +10037,10 @@ components:
         cert_valid_to: {type: string, format: date-time}
         cert_days_left: {type: integer}
         options: {$ref: "#/components/schemas/ProxySiteOptions"}
+        paths:
+          type: array
+          items: {$ref: "#/components/schemas/ProxyPathRoute"}
+          description: Path routes in the order Caddy tries them. Callers without `proxy.update` get every header value as `********`.
     ProxyRouteInput:
       type: object
       required: [upstream]
@@ -10072,6 +10076,19 @@ components:
             query again or set `clear_query`). Invalid options are rejected with 400
             naming the field (`options.<section>.<field>: ...`); a www redirect
             onto a name that is a site of its own is rejected with 409.
+        paths:
+          type: array
+          maxItems: 50
+          items: {$ref: "#/components/schemas/ProxyPathRoute"}
+          description: |
+            Path routes of the site. Omitted on update: the stored paths are kept;
+            sent: they replace them (`[]` removes all). They are stored sorted
+            (exact paths first, then longer prefixes first), a trailing `/` is
+            dropped, and a site without paths is served exactly as before. Secret
+            request header values work as in `options` and are matched by the
+            route's match type and path; a route whose backend gains an address
+            needs them sent again (400). Errors name the field as
+            `paths[<i>].<field>: ...`, `i` being the position after sorting.
     ProxySitePreview:
       type: object
       required: [route_id, enabled, blocked, config]
@@ -10230,6 +10247,85 @@ components:
             access_log:
               type: boolean
               description: Write an access log line per request of this site to the proxy container's log.
+    ProxyPathRoute:
+      type: object
+      required: [match, action]
+      description: |
+        Requests to the site whose path matches go here instead of the site's
+        fallback. IP filter, basic and forward auth, compression, body limit
+        and the site's response headers apply first.
+      properties:
+        match:
+          type: object
+          required: [type, path]
+          properties:
+            type:
+              type: string
+              enum: [prefix, exact]
+              description: "`prefix /ords` matches `/ords` and everything below it, not `/ordsfoo`; `exact` only the path itself. Paths are compared case-insensitively."
+            path:
+              type: string
+              maxLength: 256
+              example: /ords
+              description: Starts with `/`; not `/` alone (that is the fallback); no `*`, braces, control characters, spaces, `#`, `?` or `.`/`..` segments; only valid `%XX` escapes.
+        action:
+          type: string
+          enum: [proxy, redirect, respond]
+        target:
+          type: object
+          description: "Proxy only. `site` uses the site's upstreams with their load balancing, health check and upstream TLS; `static` uses the fields below."
+          properties:
+            kind: {type: string, enum: [site, static]}
+            upstreams:
+              type: array
+              maxItems: 17
+              items: {type: string}
+              description: "`static` only: `host:port` addresses, same rules as the site's upstream."
+            lb_policy:
+              type: string
+              enum: ["", round_robin, least_conn, first, client_ip_hash]
+            health_path: {type: string, description: "`static` only: active health check path."}
+            tls: {$ref: "#/components/schemas/ProxyUpstreamTLS"}
+        strip_prefix:
+          type: boolean
+          description: Prefix routes only. Removes exactly the prefix before proxying (`/ords` → `/`, `/ords/x` → `/x`, query kept).
+        headers:
+          type: object
+          description: Proxy only. Applied after the site's headers of the same kind; on the same name the route's set or remove wins, also over the site's security headers, Host and X-Forwarded-Port. Response headers can't be secret.
+          properties:
+            request_set:
+              type: array
+              items: {$ref: "#/components/schemas/ProxyHeader"}
+            request_remove:
+              type: array
+              items: {type: string}
+            response_set:
+              type: array
+              items: {$ref: "#/components/schemas/ProxyHeader"}
+            response_remove:
+              type: array
+              items: {type: string}
+        transport:
+          type: object
+          description: Proxy only. Set fields replace the site's performance settings for this route; empty or null ones keep the site's.
+          properties:
+            dial_timeout: {type: string, example: 5s}
+            read_timeout: {type: string, example: 10m}
+            write_timeout: {type: string, example: 10m}
+            flush_immediately: {type: [boolean, "null"]}
+            buffer_requests: {type: [boolean, "null"]}
+            stream_close_delay: {type: string, example: 5m}
+        to:
+          type: string
+          description: "Redirect only: an absolute path (optionally with a query) or an http(s) URL."
+        code:
+          type: integer
+          enum: [301, 302, 307, 308]
+          description: Redirect only.
+        status:
+          type: integer
+          enum: [403, 404]
+          description: Respond only.
     ProxyUpstreamTLS:
       type: object
       description: How the proxy talks to a backend. The zero value is plain HTTP with the visitor's Host header.
