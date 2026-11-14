@@ -1,0 +1,3 @@
+kind: Added
+body: 'The audit log records how a server update ended: installed, refused, rolled back or failed, with the versions and the reason'
+time: 2026-11-14T19:55:06.299396206Z
