@@ -213,3 +213,34 @@ func setServerVersion(t *testing.T, v string) func() {
 	version.Version = v
 	return func() { version.Version = old }
 }
+
+func TestReleaseCacheBacksOffAfterAFailedFetch(t *testing.T) {
+	f := newReleaseFixture(t, "v0.6.1", []byte("release archive"))
+	f.files["v0.6.1/dockmesh_linux_amd64.tar.gz"] = []byte("other archive")
+	for range 3 {
+		if err := f.cache.Ensure(context.Background(), "amd64"); err == nil {
+			t.Fatal("bad archive accepted")
+		}
+	}
+	if n := f.hits["v0.6.1/dockmesh_linux_amd64.tar.gz"]; n != 1 {
+		t.Errorf("archive fetched %d times within the retry gap, want once", n)
+	}
+}
+
+func TestClipAgentText(t *testing.T) {
+	tests := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"a\nb\x1bc", 10, "a b c"},
+		{"äöüäöü", 3, "äöü…"},
+		{"ok\xffbad", 10, "ok\uFFFDbad"},
+	}
+	for _, tt := range tests {
+		if got := clip(tt.in, tt.n); got != tt.want {
+			t.Errorf("clip(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
+		}
+	}
+}

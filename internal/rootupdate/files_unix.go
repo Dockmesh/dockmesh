@@ -207,3 +207,14 @@ func ReadServiceFile(dir string, uid uint32, name string, max int64) ([]byte, ti
 	}
 	return data, fi.ModTime(), nil
 }
+
+// RemoveServiceFile removes name from the service's update directory
+// through the same checked handle ReadServiceFile uses.
+func RemoveServiceFile(dir string, uid uint32, name string) error {
+	root, err := openRequestDir(dir, uid)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return removeEntry(root, name)
+}

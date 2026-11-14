@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -78,6 +80,9 @@ func updateApply(args []string) error {
 	if binary != pathBinary || !rootOwnedBinary(binary) {
 		return fmt.Errorf("the managed agent binary must be the root-owned %s, not %s", pathBinary, binary)
 	}
+	if err := legacyCopyStep(filepath.Clean(*data)); err != nil {
+		return fmt.Errorf("not a managed agent: %w", err)
+	}
 	u, err := user.Lookup(agentAccount)
 	if err != nil {
 		return fmt.Errorf("look up %s: %w", agentAccount, err)
@@ -126,8 +131,7 @@ type agentService struct {
 	started time.Time
 }
 
-// agentUnits are the units a rollback restores. Until the installer
-// writes them, they are not rewritten by an update.
+// agentUnits are the units a rollback restores.
 var agentUnits = []string{agentUnitFile, managedPathUnit, managedServiceUnit}
 
 func agentSystemctl(ctx context.Context, args ...string) error {
@@ -145,6 +149,10 @@ func (s *agentService) Stop(ctx context.Context) error {
 }
 
 func (s *agentService) Start(ctx context.Context) error {
+	// A health file from before this start must not count.
+	if err := rootupdate.RemoveServiceFile(s.reqDir, s.uid, runningFile); err != nil {
+		return err
+	}
 	s.started = time.Now()
 	return agentSystemctl(ctx, "start", agentUnitName)
 }
@@ -215,20 +223,33 @@ func readRootOwnedUnit(p string) ([]byte, error) {
 }
 
 func putUnit(p string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".*")
+	return agents.WriteFileAtomic(filepath.Dir(p), filepath.Base(p), bytes.NewReader(data), 0o644)
+}
+
+// legacyCopyStep reports a leftover of the legacy layout. Its root
+// ExecStartPre copies a binary the agent account can write over
+// pathBinary, so with it in place root would run whatever that account
+// put there.
+func legacyCopyStep(dataDir string) error {
+	return legacyCopyStepAt(dataDir, legacyRefreshScript, agentUnitFile)
+}
+
+func legacyCopyStepAt(dataDir, script, unitFile string) error {
+	if _, err := os.Lstat(script); err == nil {
+		return fmt.Errorf("%s still exists", script)
+	}
+	if _, err := os.Lstat(filepath.Join(dataDir, "bin", "dockmesh-agent")); err == nil {
+		return fmt.Errorf("%s still exists", filepath.Join(dataDir, "bin", "dockmesh-agent"))
+	}
+	unit, err := readRootOwnedUnit(unitFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", unitFile, err)
 	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(data)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
+	for _, line := range strings.Split(string(unit), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ExecStartPre=") || strings.Contains(line, "refresh-path-copy") {
+			return fmt.Errorf("%s still has %q", unitFile, line)
+		}
 	}
-	if err == nil {
-		err = os.Chmod(tmp.Name(), 0o644)
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), p)
+	return nil
 }

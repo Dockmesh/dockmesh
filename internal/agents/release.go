@@ -16,6 +16,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/releasesig"
+	"github.com/dockmesh/dockmesh/internal/rootupdate"
 )
 
 // ReleasePath is the prefix under which the agent listener serves the
@@ -23,13 +24,16 @@ import (
 // <ReleasePath><tag>/<file>.
 const ReleasePath = "/agent-release/"
 
-// Size caps for the release files the server fetches and serves; they
-// match what the agent's root updater accepts.
+// Size caps for the release files the server fetches and serves.
 const (
-	maxReleaseChecksums = 64 << 10
-	maxReleaseSignature = 4 << 10
-	maxReleaseArchive   = 512 << 20
+	maxReleaseChecksums = rootupdate.MaxChecksumsSize
+	maxReleaseSignature = rootupdate.MaxSignatureSize
+	maxReleaseArchive   = rootupdate.DefaultMaxArtifactSize
 )
+
+// fetchRetryGap is how long a failed fetch keeps Ensure from fetching that
+// version again.
+const fetchRetryGap = 10 * time.Minute
 
 // ReleaseArchive is the release tarball holding the agent binary for arch.
 func ReleaseArchive(arch string) (string, error) {
@@ -49,7 +53,9 @@ type ReleaseCache struct {
 	Client   *http.Client
 	Verifier *releasesig.Verifier
 
-	mu sync.Mutex
+	mu         sync.Mutex
+	failedAt   time.Time
+	failedWith error
 }
 
 // ErrNoRelease means a managed agent can't be updated from this build.
@@ -67,6 +73,18 @@ func (c *ReleaseCache) Ensure(ctx context.Context, arch string) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.failedWith != nil && time.Since(c.failedAt) < fetchRetryGap {
+		return c.failedWith
+	}
+	if err := c.ensure(ctx, archive); err != nil {
+		c.failedAt, c.failedWith = time.Now(), err
+		return err
+	}
+	c.failedWith = nil
+	return nil
+}
+
+func (c *ReleaseCache) ensure(ctx context.Context, archive string) error {
 	dir := filepath.Join(c.Dir, c.Version)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
@@ -112,7 +130,7 @@ func (c *ReleaseCache) file(ctx context.Context, dir, name string, max int64) ([
 	if int64(len(data)) > max {
 		return nil, fmt.Errorf("download %s: larger than %d bytes", name, max)
 	}
-	if err := writeAtomic(dir, name, bytes.NewReader(data)); err != nil {
+	if err := WriteFileAtomic(dir, name, bytes.NewReader(data), 0o640); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -276,7 +294,9 @@ func fileHasSHA256(p string, want []byte) (bool, error) {
 	return bytes.Equal(h.Sum(nil), want), nil
 }
 
-func writeAtomic(dir, name string, r io.Reader) error {
+// WriteFileAtomic replaces name in dir with the content of r through a
+// temp file and a rename.
+func WriteFileAtomic(dir, name string, r io.Reader, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(dir, "."+name+".*")
 	if err != nil {
 		return err
@@ -287,7 +307,7 @@ func writeAtomic(dir, name string, r io.Reader) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Chmod(tmp.Name(), 0o640)
+		err = os.Chmod(tmp.Name(), mode)
 	}
 	if err != nil {
 		return err

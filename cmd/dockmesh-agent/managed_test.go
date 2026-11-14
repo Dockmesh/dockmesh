@@ -205,3 +205,71 @@ func TestReleaseURL(t *testing.T) {
 		t.Error("plain ws accepted for a managed update")
 	}
 }
+
+func TestLegacyCopyStep(t *testing.T) {
+	const managedUnit = "[Service]\nUser=dockmesh-agent\nExecStart=/usr/local/bin/dockmesh-agent\n"
+	tests := []struct {
+		name    string
+		unit    string
+		script  bool
+		dataBin bool
+		legacy  bool
+	}{
+		{"managed unit", managedUnit, false, false, false},
+		{"root copy step in the unit", "[Service]\nExecStartPre=-+/etc/dockmesh-agent/refresh-path-copy\n" + managedUnit, false, false, true},
+		{"refresh script left", managedUnit, true, false, true},
+		{"binary left in the data dir", managedUnit, false, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			data := filepath.Join(dir, "data")
+			unit := filepath.Join(dir, "dockmesh-agent.service")
+			script := filepath.Join(dir, "refresh-path-copy")
+			if err := os.MkdirAll(filepath.Join(data, "bin"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(unit, []byte(tt.unit), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.script {
+				if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.dataBin {
+				if err := os.WriteFile(filepath.Join(data, "bin", "dockmesh-agent"), []byte("x"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := legacyCopyStepAt(data, script, unit); (err != nil) != tt.legacy {
+				t.Errorf("legacyCopyStepAt = %v, want legacy=%v", err, tt.legacy)
+			}
+		})
+	}
+}
+
+func TestRefusedRequestFreesTheUpgradeLock(t *testing.T) {
+	data := t.TempDir()
+	if err := os.MkdirAll(updateDir(data), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if !upgradeMu.TryLock() {
+		t.Fatal("upgrade lock already held")
+	}
+	b, _ := json.Marshal(rootupdate.Result{Status: rootupdate.StatusRefused, From: "v0.6.0", To: "v0.6.1", Reason: "verify"})
+	if err := os.WriteFile(filepath.Join(updateDir(data), rootupdate.ResultFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { releaseWhenTaken(data); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("lock still held after a refusal")
+	}
+	if !upgradeMu.TryLock() {
+		t.Fatal("upgrade lock not freed")
+	}
+	upgradeMu.Unlock()
+}

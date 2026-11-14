@@ -34,16 +34,14 @@ const (
 	// runningFile tells the root oneshot which version connected to the
 	// server; it is the agent's health check.
 	runningFile = "running"
+	// legacyRefreshScript is the legacy unit's root ExecStartPre that
+	// copies the agent-owned data dir binary to pathBinary.
+	legacyRefreshScript = "/etc/dockmesh-agent/refresh-path-copy"
 )
 
-// Sizes the agent accepts from the server for a managed update; the root
-// oneshot applies the same caps again.
-const (
-	maxManagedArchive = rootupdate.DefaultMaxArtifactSize
-	// stagedRequestLimit is how long a request may wait for the root
-	// oneshot before the agent drops it and takes new requests again.
-	stagedRequestLimit = 5 * time.Minute
-)
+// stagedRequestLimit is how long a request may wait for the root oneshot
+// before the agent drops it and takes new requests again.
+const stagedRequestLimit = 5 * time.Minute
 
 var errNotNewer = errors.New("the requested version is not newer than this agent")
 
@@ -58,10 +56,10 @@ var agentLayout = agents.LayoutLegacy
 func updateDir(dataDir string) string { return filepath.Join(dataDir, "update") }
 
 // detectLayout reports managed when the running binary is the root-owned
-// pathBinary, which this account can't write, and the oneshot's path unit
-// is installed. Everything else, including agents running as root, keeps
-// replacing itself.
-func detectLayout() string {
+// pathBinary, which this account can't write, the oneshot's path unit is
+// installed and nothing of the legacy copy step is left. Everything else,
+// including agents running as root, keeps replacing itself.
+func detectLayout(dataDir string) string {
 	exe, err := os.Executable()
 	if err != nil {
 		return agents.LayoutLegacy
@@ -73,6 +71,10 @@ func detectLayout() string {
 		return agents.LayoutLegacy
 	}
 	if _, err := os.Stat(managedPathUnit); err != nil {
+		return agents.LayoutLegacy
+	}
+	if err := legacyCopyStep(dataDir); err != nil {
+		slog.Warn("agent keeps the legacy update path", "err", err)
 		return agents.LayoutLegacy
 	}
 	return agents.LayoutManaged
@@ -92,7 +94,7 @@ func managedUpgrade(dataDir string, req agents.AgentUpgradeReq) error {
 		return err
 	}
 	slog.Info("agent upgrade: release staged for the root updater", "version", req.Version)
-	go releaseWhenTaken(updateDir(dataDir))
+	go releaseWhenTaken(dataDir)
 	return nil
 }
 
@@ -154,14 +156,26 @@ func stageManaged(dataDir, tag string) error {
 
 // releaseWhenTaken frees the upgrade lock when the oneshot never took the
 // request, e.g. because its path unit is stopped, and drops the request.
-func releaseWhenTaken(dir string) {
+// It also frees it when the oneshot refused the request, which leaves this
+// process running.
+func releaseWhenTaken(dataDir string) {
+	dir := updateDir(dataDir)
 	deadline := time.Now().Add(stagedRequestLimit)
+	taken := false
 	for time.Now().Before(deadline) {
-		if _, err := os.Lstat(filepath.Join(dir, rootupdate.RequestFile)); errors.Is(err, os.ErrNotExist) {
-			// Taken: the oneshot stops this process.
+		time.Sleep(2 * time.Second)
+		if _, err := os.Lstat(filepath.Join(dir, rootupdate.RequestFile)); err == nil {
+			continue
+		}
+		taken = true
+		if res := lastUpdateResult(dataDir); res != nil && res.Status == string(rootupdate.StatusRefused) {
+			slog.Warn("agent upgrade: the root updater refused the update", "version", res.To, "step", res.Step, "reason", res.Reason)
+			upgradeMu.Unlock()
 			return
 		}
-		time.Sleep(2 * time.Second)
+	}
+	if taken {
+		return
 	}
 	slog.Warn("agent upgrade: the root updater did not take the request; check dockmesh-agent-update.path")
 	for _, name := range []string{rootupdate.RequestFile, managedArchive(), releasesig.ChecksumsFile, releasesig.SignatureFile} {
@@ -170,7 +184,10 @@ func releaseWhenTaken(dir string) {
 	upgradeMu.Unlock()
 }
 
-func managedArchive() string { return "dockmesh_linux_" + runtime.GOARCH + ".tar.gz" }
+func managedArchive() string {
+	name, _ := agents.ReleaseArchive(runtime.GOARCH)
+	return name
+}
 
 // releaseURL maps the wss:// agent URL to the listener's release files of
 // tag.
@@ -219,15 +236,15 @@ func fetchArchive(client *http.Client, u, dir, name string, want []byte) error {
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, maxManagedArchive+1))
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, rootupdate.DefaultMaxArtifactSize+1))
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
 		return fmt.Errorf("download %s: %w", name, err)
 	}
-	if n > maxManagedArchive {
-		return fmt.Errorf("download %s: larger than %d bytes", name, maxManagedArchive)
+	if n > rootupdate.DefaultMaxArtifactSize {
+		return fmt.Errorf("download %s: larger than %d bytes", name, rootupdate.DefaultMaxArtifactSize)
 	}
 	if !bytes.Equal(h.Sum(nil), want) {
 		return fmt.Errorf("download %s: %w", name, releasesig.ErrChecksum)
@@ -239,22 +256,7 @@ func fetchArchive(client *http.Client, u, dir, name string, want []byte) error {
 }
 
 func writeStaged(dir, name string, data []byte) error {
-	tmp, err := os.CreateTemp(dir, "."+name+".*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(data)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Chmod(tmp.Name(), 0o640)
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, name))
+	return agents.WriteFileAtomic(dir, name, bytes.NewReader(data), 0o640)
 }
 
 // markRunning tells the root oneshot that this version is connected.

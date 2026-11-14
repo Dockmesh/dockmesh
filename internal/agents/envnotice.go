@@ -39,6 +39,8 @@ const updateResultNoticePrefix = "agents.update-result."
 // refused or rolled back an update; a later update that went through
 // resolves it.
 func (s *Service) updateResultNotice(ctx context.Context, id, name string, res AgentUpdateResult) {
+	// The agent writes these fields; keep them to one short line each.
+	res.To, res.From, res.Step, res.Reason = clip(res.To, 64), clip(res.From, 64), clip(res.Step, 32), clip(res.Reason, 300)
 	if res.From != "" {
 		slog.Info("agent update result", "agent", name, "status", res.Status, "from", res.From, "to", res.To, "step", res.Step, "reason", res.Reason)
 	}
@@ -46,8 +48,6 @@ func (s *Service) updateResultNotice(ctx context.Context, id, name string, res A
 		return
 	}
 	key := updateResultNoticePrefix + id
-	// The agent writes these fields; keep them to one short line each.
-	res.To, res.From, res.Reason = clip(res.To, 64), clip(res.From, 64), clip(res.Reason, 300)
 	var title, body i18n.Text
 	sev := notices.SevWarning
 	switch res.Status {
@@ -86,8 +86,8 @@ func clip(s string, n int) string {
 		}
 		return r
 	}, s)
-	if len(s) > n {
-		return s[:n] + "…"
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
 	}
 	return s
 }

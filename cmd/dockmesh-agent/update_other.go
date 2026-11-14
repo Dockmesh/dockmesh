@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
@@ -15,3 +16,5 @@ func runUpdateCmd([]string) {
 	fmt.Fprintln(os.Stderr, "update apply: updates are applied by systemd on Linux only")
 	os.Exit(1)
 }
+
+func legacyCopyStep(string) error { return errors.New("managed agents need Linux") }

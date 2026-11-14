@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
@@ -315,9 +314,6 @@ func (c *UpgradeController) buildUpgradeReq(ctx context.Context, ag *ConnectedAg
 		arch = runtime.GOARCH
 	}
 	if ag.Hello.HelloLayout() == LayoutManaged {
-		if !releasesig.ValidTag(version.Version) {
-			return nil, ErrNoRelease
-		}
 		if err := c.release.Ensure(ctx, arch); err != nil {
 			return nil, err
 		}
@@ -399,11 +395,11 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 	if err != nil {
 		release()
 		// The agent answers refusals with a request error.
-		if r := upgradeRefusal(err.Error()); errors.Is(r, ErrAgentCurrent) || errors.Is(r, ErrAgentUpgrading) {
-			return req, r
+		r := upgradeRefusal(err.Error())
+		if !errors.Is(r, ErrAgentCurrent) && !errors.Is(r, ErrAgentUpgrading) {
+			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", err)
 		}
-		slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", err)
-		return req, upgradeRefusal(err.Error())
+		return req, r
 	}
 	go c.holdUntilBack(ag, release)
 	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version, "layout", ag.Hello.HelloLayout())
