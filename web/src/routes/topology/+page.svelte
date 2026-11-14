@@ -198,6 +198,7 @@
       if (err instanceof ApiError && err.status === 503 && err.body?.code === 'topology_agent_outdated') {
         topo = null;
         outdated = true;
+        lastLoaded = Date.now();
         return;
       }
       toast.error(m.topology_load_failed(), err instanceof ApiError ? err.message : undefined);
