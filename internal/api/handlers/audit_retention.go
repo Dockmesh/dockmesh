@@ -3,7 +3,9 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // GetAuditRetention returns the current retention config + a preview
@@ -38,6 +40,9 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.checkAuditLocalDir(w, r, cfg.LocalDir) {
+		return
+	}
 	if err := audit.SaveConfig(r.Context(), h.Settings.Set, cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -47,6 +52,28 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 		"target_id": cfg.TargetID,
 	})
 	h.GetAuditRetention(w, r)
+}
+
+// checkAuditLocalDir refuses an audit archive folder the unit writer
+// would refuse, and a new one from a caller without system.upgrade: it
+// becomes writable for the service like the backup roots. The page sends
+// the default folder back, so that one needs no extra permission.
+func (h *Handlers) checkAuditLocalDir(w http.ResponseWriter, r *http.Request, dir string) bool {
+	if dir == "" {
+		return true
+	}
+	if err := h.AuditRetention.CheckLocalDir(dir); err != nil {
+		writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
+		return false
+	}
+	if dir == h.Settings.Stored(audit.RetentionLocalDir) || (h.AuditRetention != nil && dir == h.AuditRetention.DataDirDefault()) {
+		return true
+	}
+	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+		writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
+		return false
+	}
+	return true
 }
 
 // RunAuditRetention kicks off a one-shot retention pass. Admins can

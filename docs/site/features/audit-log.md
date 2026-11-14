@@ -18,7 +18,7 @@ Every action belongs to one of four categories. The page shows them as tabs and 
 | **Changes** | `changes` | something was created, changed, deployed or removed | `stack.deploy`, `stack.update`, `container.restart`, `container.write_file`, `image.pull`, `volume.remove`, `backup.run`, `backup.restore`, `backup.job_create`, `agent.create`, `host.drain`, `proxy.route_update`, `alerts.rule_create`, `notify.channel_update`, `registry.update`, `template.deploy`, `user.create`, `user.invite_created` |
 | **Access** | `access` | data was read, or who may access what changed | `container.exec_start`, `container.browse`, `container.read_file`, `volume.browse`, `backup.download`, `backup.key_export`, `role.create`, `role.update`, `assignment.add`, `assignment.remove`, `api_token.create` |
 | **Sign-in & security** | `auth` | sign-in, sessions, tokens, 2FA, identity providers, denied requests | `auth.login`, `auth.login_failed`, `auth.lockout`, `auth.sso_login`, `auth.session_revoke`, `auth.policy_update`, `auth.scope_denied`, `api_token.revoke`, `user.password`, `user.unlock`, `user.mfa_enroll`, `user.mfa_reset`, `oidc.provider_update`, `auth.sso_rekey` |
-| **System** | `system` | the server itself and the audit trail | `audit.genesis`, `audit.chain_bridge`, `audit.retention_configure`, `audit.webhook_configure`, `secrets.rotate`, `system.update_check`, `system.update_install`, `system.restore_apply` |
+| **System** | `system` | the server itself and the audit trail | `audit.genesis`, `audit.chain_bridge`, `audit.retention_configure`, `audit.webhook_configure`, `secrets.rotate`, `system.update_check`, `system.update_install`, `system.update_applied`, `system.update_refused`, `system.update_rolled_back`, `system.update_failed`, `system.restore_apply` |
 
 Actions the server doesn't know, for example ones a newer or older version wrote, count as system. `auth.scope_denied` is a request that a user's assignments didn't allow.
 
@@ -58,6 +58,8 @@ Click **Audit settings** on the **Audit log** page and open the **Retention** ta
 | **Remove old entries** | Entries older than **Older than (days)** are deleted |
 | **Archive to a folder** | Older entries are written to an NDJSON file in a folder on the server, then deleted. The page pre-fills `audit-archive` in the server's data directory (`/var/lib/dockmesh/audit-archive` by default), which is also where the server writes when no folder is set |
 | **Archive to a backup target** | Older entries are written to a saved backup target as NDJSON, then deleted |
+
+The server's systemd unit makes the folder writable for the service, so choosing a folder other than the default needs the permission to install Dockmesh updates. It must be an absolute path outside the system directories (`/etc`, `/usr` and the like) that doesn't contain the data directory. Run `sudo dockmesh system write-unit` and restart the service after changing it.
 
 Up to v0.5.3 the server wrote to `data/audit-archive` below its working directory when no folder was set (`/data/audit-archive` for the systemd service). A server that finds that folder keeps archiving there, so old and new archives stay together.
 

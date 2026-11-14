@@ -127,6 +127,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if e.Key == audit.RetentionLocalDir && !h.checkAuditLocalDir(w, r, e.Value) {
+			return
+		}
 		if e.Key == settings.KeyTrustedProxies {
 			if _, err := clientip.ParseList(e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "trusted proxies: "+err.Error())
