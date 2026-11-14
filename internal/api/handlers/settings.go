@@ -127,15 +127,8 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if e.Key == audit.RetentionLocalDir && e.Value != "" && h.Settings.Get(e.Key, "") != e.Value {
-			if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
-				writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
-				return
-			}
-			if err := h.AuditRetention.CheckLocalDir(e.Value); err != nil {
-				writeError(w, http.StatusBadRequest, e.Key+": "+err.Error())
-				return
-			}
+		if e.Key == audit.RetentionLocalDir && !h.checkAuditLocalDir(w, r, e.Value) {
+			return
 		}
 		if e.Key == settings.KeyTrustedProxies {
 			if _, err := clientip.ParseList(e.Value); err != nil {

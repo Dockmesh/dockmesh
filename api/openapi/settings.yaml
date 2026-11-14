@@ -63,10 +63,11 @@ paths:
         and new value.
 
         `audit.retention_local_dir` becomes writable for the service through
-        its systemd unit, so setting it to another directory also needs
-        `system.upgrade` on everything (403 otherwise); clearing it does not. It must be an absolute path without
-        control characters, quotes or backslashes, outside the system
-        directories and not containing the data dir (400 otherwise).
+        its systemd unit, so setting it to another folder than the current
+        one or the default needs `system.upgrade` on everything (403
+        otherwise); clearing it does not. It must be an absolute path
+        without control characters, quotes or backslashes, outside the
+        system directories and not containing the data dir (400 otherwise).
 
         The update check's cache keys (see `GET /settings`) are written only
         by the update check: a changed value is rejected with 400 and nothing

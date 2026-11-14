@@ -32,10 +32,8 @@ func TestAuditRetentionLocalDir(t *testing.T) {
 	ctx := context.Background()
 	adminToken := signIn(t, authSvc, roles, "u-admin", rbac.RoleAdmin, rbac.Global)
 	router := NewRouter(h, authSvc, nil, true, nil)
-	const adminID = "u-restricted"
-	// What a caller with audit.write and settings access but without
-	// system.upgrade holds; no built-in level grants that today.
-	noUpgrade := roles.AccessForAssignments([]rbac.Assignment{{UserID: adminID, Role: rbac.RoleAdmin, Scope: rbac.Global}}).Restrict(map[rbac.Perm]bool{
+	const restrictedID = "u-restricted"
+	noUpgrade := roles.AccessForAssignments([]rbac.Assignment{{UserID: restrictedID, Role: rbac.RoleAdmin, Scope: rbac.Global}}).Restrict(map[rbac.Perm]bool{
 		rbac.PermAuditView: true, rbac.PermAuditWrite: true, rbac.PermSystemUpdate: true,
 	}, rbac.Global)
 
@@ -78,7 +76,7 @@ func TestAuditRetentionLocalDir(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 			if tt.restricted {
-				req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: adminID, Access: noUpgrade}))
+				req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: restrictedID, Access: noUpgrade}))
 				if tt.path == "/api/v1/settings" {
 					h.UpdateSettings(rr, req)
 				} else {

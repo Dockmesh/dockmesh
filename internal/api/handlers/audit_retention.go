@@ -40,19 +40,8 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	// The unit writer makes this directory writable for the service, like
-	// the backup roots, so pointing it elsewhere needs the same permission.
-	// The page sends the default folder back, and clearing the setting
-	// falls back to it.
-	if cfg.LocalDir != "" && cfg.LocalDir != h.Settings.Get(audit.RetentionLocalDir, "") && cfg.LocalDir != h.AuditRetention.DefaultLocalDir() {
-		if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
-			writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
-			return
-		}
-		if err := h.AuditRetention.CheckLocalDir(cfg.LocalDir); err != nil {
-			writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
-			return
-		}
+	if !h.checkAuditLocalDir(w, r, cfg.LocalDir) {
+		return
 	}
 	if err := audit.SaveConfig(r.Context(), h.Settings.Set, cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -63,6 +52,28 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 		"target_id": cfg.TargetID,
 	})
 	h.GetAuditRetention(w, r)
+}
+
+// checkAuditLocalDir refuses a new audit archive folder from a caller
+// without system.upgrade, or one the unit writer would refuse: it becomes
+// writable for the service like the backup roots. The page sends the
+// default folder back, and an empty value falls back to it.
+func (h *Handlers) checkAuditLocalDir(w http.ResponseWriter, r *http.Request, dir string) bool {
+	if dir == "" || dir == h.Settings.Stored(audit.RetentionLocalDir) {
+		return true
+	}
+	if h.AuditRetention != nil && dir == h.AuditRetention.DefaultLocalDir() {
+		return true
+	}
+	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+		writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
+		return false
+	}
+	if err := h.AuditRetention.CheckLocalDir(dir); err != nil {
+		writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
+		return false
+	}
+	return true
 }
 
 // RunAuditRetention kicks off a one-shot retention pass. Admins can
