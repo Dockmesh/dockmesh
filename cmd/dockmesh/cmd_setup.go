@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -57,7 +58,10 @@ func setupNewCode(now time.Time) error {
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	webCert, _ := pki.ReadUICert(setup.PKIDir(paths.DataDir))
+	webCert, err := pki.ReadUICert(setup.PKIDir(paths.DataDir))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("setup certificate: %w", err)
+	}
 	if !setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr, webCert) }) {
 		return errSetUpAlready
 	}

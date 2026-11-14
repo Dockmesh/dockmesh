@@ -324,6 +324,15 @@ func main() {
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
 	}.Scan()
+	// The database is created below; a start that dies after that must
+	// still find the state dir, or the next one would serve setup mode
+	// over plain HTTP.
+	if !setupFacts.DB {
+		if _, err := setup.EnsureStateDir(config.ResolvePaths(os.Getenv).DataDir); err != nil {
+			slog.Error("setup state dir", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -416,6 +425,8 @@ func main() {
 			slog.Info("setup mode serves HTTPS only; compare this fingerprint with the one your browser shows", "sha256", fp)
 			webTLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*cert}}
 			webLeaf = cert.Leaf
+		} else {
+			slog.Warn("setup mode serves plain HTTP: this install was started before Dockmesh served setup over HTTPS; use it only on a trusted network")
 		}
 	} else if exists, err := setup.UsersExist(ctx, database); err != nil {
 		slog.Warn("check for user accounts", "err", err)

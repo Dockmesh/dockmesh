@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -35,8 +36,8 @@ func setupCertificate(cfg *config.Config) (*tls.Certificate, error) {
 }
 
 // setupCertHosts are the names a browser on the LAN may use for this
-// host: the configured base URL host, the host name and every global
-// interface address.
+// host: the configured base URL host, the host name and the global
+// addresses of its physical interfaces.
 func setupCertHosts(baseURL string) []string {
 	var hosts []string
 	if baseURL != "" && baseURL != config.DefaultBaseURL {
@@ -47,7 +48,15 @@ func setupCertHosts(baseURL string) []string {
 	if h, err := os.Hostname(); err == nil && h != "" {
 		hosts = append(hosts, h)
 	}
-	if addrs, err := net.InterfaceAddrs(); err == nil {
+	ifaces, _ := net.Interfaces()
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || virtualInterface(ifc.Name) {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
 		for _, a := range addrs {
 			n, ok := a.(*net.IPNet)
 			if ok && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() && !n.IP.IsLinkLocalMulticast() {
@@ -59,6 +68,18 @@ func setupCertHosts(baseURL string) []string {
 		hosts = hosts[:maxSetupCertHosts]
 	}
 	return hosts
+}
+
+// virtualInterface names container and VM bridges: a browser never uses
+// their addresses, and the certificate shows its names to anyone who
+// connects.
+func virtualInterface(name string) bool {
+	for _, p := range []string{"docker", "br-", "veth", "virbr", "cni", "flannel", "lxc"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // selfProbe returns the loopback base URL of this server's own web
