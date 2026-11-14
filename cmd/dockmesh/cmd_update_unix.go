@@ -152,9 +152,11 @@ func systemctl(ctx context.Context, args ...string) error {
 func (s *serverService) Stop(ctx context.Context) error {
 	return systemctl(ctx, "stop", serverUnitName)
 }
+
 func (s *serverService) Start(ctx context.Context) error {
 	return systemctl(ctx, "start", serverUnitName)
 }
+
 func (s *serverService) DaemonReload(ctx context.Context) error {
 	return systemctl(ctx, "daemon-reload")
 }

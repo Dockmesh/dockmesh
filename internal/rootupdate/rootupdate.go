@@ -1,5 +1,5 @@
 // Package rootupdate is the privileged half of a Dockmesh binary update:
-// the root oneshot behind `dockmesh update apply` (and later the agent's).
+// the root oneshot behind `dockmesh update apply`.
 //
 // The unprivileged service downloads a release into its request directory
 // and writes RequestFile there. Everything in that directory is untrusted:
@@ -54,8 +54,7 @@ type Request struct {
 }
 
 // Pending is written to PendingFile from the stop of the old version until
-// the update is confirmed or rolled back. The service holds back its
-// background jobs while it exists.
+// the update is confirmed or rolled back.
 type Pending struct {
 	From    string    `json:"from"`
 	To      string    `json:"to"`
@@ -108,7 +107,7 @@ type File struct {
 type Service interface {
 	Stop(ctx context.Context) error
 	Start(ctx context.Context) error
-	// ReadUnit returns the current unit file, nil when there is none.
+	// ReadUnit returns the current unit files as an opaque blob.
 	ReadUnit() ([]byte, error)
 	// RestoreUnit puts back what ReadUnit returned.
 	RestoreUnit(data []byte) error

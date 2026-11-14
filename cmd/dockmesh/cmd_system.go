@@ -203,7 +203,7 @@ func writeServerUnit(envFlag string) (bool, error) {
 // (re)starts the path unit so it watches for requests from now on.
 func enableUpdater(restart bool) error {
 	path, service := filepath.Base(layout.UpdatePathUnitFile), filepath.Base(layout.UpdateServiceUnitFile)
-	if out, err := exec.Command("systemctl", "enable", path, service).CombinedOutput(); err != nil {
+	if out, err := exec.Command("systemctl", "enable", path, service).CombinedOutput(); err != nil { // #nosec G204 -- constant arguments
 		return fmt.Errorf("systemctl enable %s %s: %w: %s", path, service, err, strings.TrimSpace(string(out)))
 	}
 	verb := "start"

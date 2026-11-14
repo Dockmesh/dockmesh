@@ -25,7 +25,7 @@ If your config lives elsewhere, pass `--env-file <path>` explicitly.
 
 ### update apply
 
-`dockmesh update apply --data-dir <dir>` installs a release the server staged in `<data directory>/update/` and is run as root by `dockmesh-update.service`; you don't run it yourself. `system write-unit` writes that service and `dockmesh-update.path`, which starts it as soon as `<data directory>/update/request` appears, and enables both (the service also runs once at boot, to finish an update a crash or power cut interrupted). Everything in `<data directory>/update/` is treated as untrusted:
+`dockmesh update apply --data-dir <dir>` installs a release staged in `<data directory>/update/` and is run as root by `dockmesh-update.service`; you don't run it yourself. `system write-unit` writes that service and `dockmesh-update.path`, which starts it as soon as `<data directory>/update/request` appears, and enables both (the service also runs once at boot, to finish an update a crash or power cut interrupted). Everything in `<data directory>/update/` is treated as untrusted:
 
 - Only the target version is read from `request`, and the request is removed. A version that is not newer than the installed one is refused, so the updater never downgrades (a release candidate counts as older than its release).
 - `request`, `checksums.txt`, `checksums.txt.minisig` and the archive must be regular files with a single link; symlinks, FIFOs, devices, directories and hard links are refused, and so are files above a size limit.

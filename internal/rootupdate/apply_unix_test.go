@@ -289,7 +289,7 @@ func (f *fixture) apply() Result {
 	return res
 }
 
-// assertUntouched checks the old version runs as before the run.
+// assertOldRunning checks the old version runs as before the run.
 func (f *fixture) assertOldRunning(stopped bool) {
 	f.t.Helper()
 	if got := f.read(filepath.Join(f.binDir, "dockmesh")); got != "bin v0.6.0" {
@@ -330,6 +330,16 @@ func (f *fixture) assertOldRunning(stopped bool) {
 	left, _ := filepath.Glob(filepath.Join(f.binDir, ".*"))
 	if len(left) > 0 {
 		f.t.Errorf("staged files left behind: %v", left)
+	}
+}
+
+func (f *fixture) assertServiceUntouched() {
+	f.t.Helper()
+	if got := f.read(filepath.Join(f.binDir, "dockmesh")); got != "bin v0.6.0" {
+		f.t.Errorf("binary = %q", got)
+	}
+	if len(f.svc.calls) > 0 {
+		f.t.Errorf("service touched: %v", f.svc.calls)
 	}
 }
 
@@ -541,17 +551,7 @@ func TestApplyRequestDirOfAnotherAccount(t *testing.T) {
 	if _, err := Apply(context.Background(), cfg); err == nil {
 		t.Fatal("request dir of another account accepted")
 	}
-	f.assertOldRunningNoRequestCheck()
-}
-
-func (f *fixture) assertOldRunningNoRequestCheck() {
-	f.t.Helper()
-	if got := f.read(filepath.Join(f.binDir, "dockmesh")); got != "bin v0.6.0" {
-		f.t.Errorf("binary = %q", got)
-	}
-	if len(f.svc.calls) > 0 {
-		f.t.Errorf("service touched: %v", f.svc.calls)
-	}
+	f.assertServiceUntouched()
 }
 
 func TestApplyRollsBack(t *testing.T) {
@@ -620,11 +620,6 @@ func checkRolledBack(t *testing.T, f *fixture, res Result, step string) {
 	}
 	if got := f.storedResult(); got.Status != StatusRolledBack || got.Reason == "" {
 		t.Errorf("stored result %+v", got)
-	}
-	if step == StepInstall {
-		// The broken .prev blocks the backup, so nothing was swapped.
-		f.assertOldRunning(true)
-		return
 	}
 	f.assertOldRunning(true)
 }

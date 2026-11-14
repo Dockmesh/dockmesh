@@ -87,7 +87,6 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/etc/systemd/system/dockmesh-update.path`, `dockmesh-update.service` | `dockmesh system write-unit` | Root updater: the path unit starts the oneshot `dockmesh update apply` when the server writes an update request; rewritten on every upgrade |
 | `/var/lib/dockmesh-update/` | `dockmesh update apply` | Root-only working directory of the updater: the verified copy of the release archive, its journal and the files it replaced, until the update is confirmed |
 | `/usr/local/bin/dockmesh.prev` | `dockmesh update apply` | The binary the last update replaced |
-| `<data directory>/update/` | the server | Release files the server downloaded and the request for the updater; the updater writes `pending` while an update runs and `result.json` when it ends |
 | `<database>.pre-update.bak` | `dockmesh update apply` | Database as it was before the last update, put back on a rollback |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |
 
