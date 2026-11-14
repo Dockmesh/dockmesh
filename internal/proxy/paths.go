@@ -249,8 +249,10 @@ func checkRoutePath(p string) error {
 	if p == "/" {
 		return fmt.Errorf("use the fallback for /, not a path")
 	}
-	if strings.Contains(p, "*") {
-		return fmt.Errorf("must not contain *")
+	// Caddy reads a matcher path without * as a glob pattern, where
+	// brackets and backslashes change what it matches.
+	if strings.ContainsAny(p, "*[]\\") {
+		return fmt.Errorf("must not contain *, [, ] or \\")
 	}
 	return checkURLPath(p)
 }

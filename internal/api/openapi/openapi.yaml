@@ -10267,7 +10267,7 @@ components:
               type: string
               maxLength: 256
               example: /ords
-              description: Starts with `/`; not `/` alone (that is the fallback); no `*`, braces, control characters, spaces, `#`, `?` or `.`/`..` segments; only valid `%XX` escapes.
+              description: Starts with `/`; not `/` alone (that is the fallback); no `*`, `[`, `]`, `\`, braces, control characters, spaces, `#`, `?` or `.`/`..` segments; only valid `%XX` escapes.
         action:
           type: string
           enum: [proxy, redirect, respond]
@@ -10291,7 +10291,7 @@ components:
           description: Prefix routes only. Removes exactly the prefix before proxying (`/ords` → `/`, `/ords/x` → `/x`, query kept).
         headers:
           type: object
-          description: Proxy only. Applied after the site's headers of the same kind; on the same name the route's set or remove wins, also over the site's security headers, Host and X-Forwarded-Port. Response headers can't be secret.
+          description: Proxy only. Applied after the site's headers of the same kind; on the same name the route's set or remove wins, also over the site's security headers, Host and X-Forwarded-Port. Secret site request headers are sent only on routes with target `site`; set them on the route for a `static` target. Response headers can't be secret.
           properties:
             request_set:
               type: array
@@ -10325,7 +10325,7 @@ components:
         status:
           type: integer
           enum: [403, 404]
-          description: Respond only.
+          description: Respond only. Blocks the matched path at the proxy; it is not access control, since a backend may serve the same content under another form of the path (e.g. a trailing `/` after an exact path). Use the site's access rules to protect content.
     ProxyUpstreamTLS:
       type: object
       description: How the proxy talks to a backend. The zero value is plain HTTP with the visitor's Host header.

@@ -121,6 +121,8 @@ func TestValidatePaths(t *testing.T) {
 		{"root", []PathRoute{toSite(prefix("/"))}, "paths[0].match.path"},
 		{"no slash", []PathRoute{toSite(prefix("ords"))}, "paths[0].match.path"},
 		{"wildcard", []PathRoute{toSite(prefix("/ords*"))}, "paths[0].match.path"},
+		{"glob bracket", []PathRoute{toSite(exact("/[a]dmin"))}, "paths[0].match.path"},
+		{"backslash", []PathRoute{toSite(prefix("/admin\\"))}, "paths[0].match.path"},
 		{"placeholder", []PathRoute{toSite(prefix("/{env.X}"))}, "paths[0].match.path"},
 		{"dot segment", []PathRoute{toSite(prefix("/a/../b"))}, "paths[0].match.path"},
 		{"too long", []PathRoute{toSite(prefix("/" + strings.Repeat("a", 256)))}, "paths[0].match.path"},
@@ -260,6 +262,27 @@ func TestStateHashIgnoresEmptyPaths(t *testing.T) {
 	r.storedPaths = `[{"match":{"type":"prefix","path":"/x"}}]`
 	if stateHash(&r) == before {
 		t.Fatal("paths not in the hash")
+	}
+}
+
+// A secret site header is not sent to a path's own backend, so naming a
+// new address on a path can't hand it out.
+func TestSiteSecretsStayWithSiteBackend(t *testing.T) {
+	r := site("auto", SiteOptions{Headers: HeaderOptions{RequestSet: []Header{
+		{Name: "Authorization", Value: "Bearer site-s3cret", Secret: true}, {Name: "X-Env", Value: "lab"}}}})
+	r.Paths = []PathRoute{
+		{Match: prefix("/x"), Action: ActionProxy, Target: PathTarget{Kind: TargetStatic, Upstreams: []string{"other.example.net:80"}}},
+		toSite(prefix("/y")),
+	}
+	normalizePaths(r.Paths)
+	sub := pathSubroute(r, portHTTPS)
+	static, _ := json.Marshal(sub.Routes[0])
+	own, _ := json.Marshal(sub.Routes[1])
+	if !strings.Contains(string(static), "other.example.net") || strings.Contains(string(static), "site-s3cret") || !strings.Contains(string(static), "X-Env") {
+		t.Errorf("static path: %s", static)
+	}
+	if !strings.Contains(string(own), "site-s3cret") {
+		t.Errorf("site path lost the site's secret: %s", own)
 	}
 }
 

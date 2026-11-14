@@ -200,7 +200,9 @@ func pathHandler(r Route, p PathRoute, port string) any {
 
 // pathRequestHeaders are the site's request headers with the route's on
 // top: the route wins on the same name, also over Host and
-// X-Forwarded-Port.
+// X-Forwarded-Port. A secret site header goes only to the site's own
+// backend: its value was entered for those addresses, and a static
+// target could otherwise hand it to any host an editor names.
 func pathRequestHeaders(o *SiteOptions, p PathRoute, host, port string) *caddyHeaderOps {
 	h := newHeaderSet()
 	if host != "" {
@@ -210,6 +212,9 @@ func pathRequestHeaders(o *SiteOptions, p PathRoute, host, port string) *caddyHe
 		h.put("X-Forwarded-Port", port)
 	}
 	for _, hd := range o.Headers.RequestSet {
+		if hd.Secret && p.Target.Kind != TargetSite {
+			continue
+		}
 		h.put(hd.Name, hd.Value)
 	}
 	for _, n := range o.Headers.RequestRemove {
