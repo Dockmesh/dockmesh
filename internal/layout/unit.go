@@ -198,13 +198,13 @@ func plainPath(what, p string) (string, error) {
 
 // systemTrees may never become writable for the service: a path below
 // one, set through a setting, would undo ProtectSystem= for it.
-var systemTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr"}
+var systemTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var/lib/docker"}
 
 // readWritePaths returns one ReadWritePaths= value per directory: the
 // data dir first and required, the rest prefixed with '-' so a missing
 // one does not stop the service. A path below another is dropped. Every
-// value is quoted, so spaces stay inside it. Paths other than the data
-// dir may neither lie in a system tree nor contain the data dir.
+// value is quoted, so spaces stay inside it. No path may lie in a system
+// tree, and paths other than the data dir may not contain it.
 func readWritePaths(dataDir string, extra []string) ([]string, error) {
 	var dirs []string
 	for i, p := range append([]string{dataDir}, extra...) {
@@ -219,15 +219,12 @@ func readWritePaths(dataDir string, extra []string) ([]string, error) {
 		if c == "/" {
 			return nil, fmt.Errorf("%w: %s is the root directory", ErrBadUnitValue, what)
 		}
+		var dataDir string
 		if i > 0 {
-			for _, sys := range systemTrees {
-				if within(sys, c) {
-					return nil, fmt.Errorf("%w: %s %q lies in %s", ErrBadUnitValue, what, p, sys)
-				}
-			}
-			if c != dirs[0] && within(c, dirs[0]) {
-				return nil, fmt.Errorf("%w: %s %q contains the data dir", ErrBadUnitValue, what, p)
-			}
+			dataDir = dirs[0]
+		}
+		if err := checkLocation(what, p, c, dataDir); err != nil {
+			return nil, err
 		}
 		dirs = append(dirs, c)
 	}
@@ -243,6 +240,20 @@ func readWritePaths(dataDir string, extra []string) ([]string, error) {
 		out = append(out, `"`+prefix+escapeSpecifiers(d)+`"`)
 	}
 	return out, nil
+}
+
+// checkLocation refuses a writable path c (spelled p in the error) in a
+// system tree, or one containing dataDir when that is set.
+func checkLocation(what, p, c, dataDir string) error {
+	for _, sys := range systemTrees {
+		if within(sys, c) {
+			return fmt.Errorf("%w: %s %q lies in %s", ErrBadUnitValue, what, p, sys)
+		}
+	}
+	if dataDir != "" && c != dataDir && within(c, dataDir) {
+		return fmt.Errorf("%w: %s %q contains the data dir", ErrBadUnitValue, what, p)
+	}
+	return nil
 }
 
 // hasLaterParent reports whether an entry of dirs is a strict parent of d.

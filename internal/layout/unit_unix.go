@@ -36,6 +36,9 @@ func WriteServerUnit(u ServerUnit, opts UnitWriteOptions) (changed bool, err err
 	if err != nil {
 		return false, err
 	}
+	if err := checkResolved(u); err != nil {
+		return false, err
+	}
 	unitPath, prevPath := opts.paths()
 	old, err := readUnit(unitPath)
 	switch {
@@ -151,4 +154,38 @@ func ReadEnvFile(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("%w: %s is larger than %d bytes", ErrUntrusted, path, maxEnvFileSize)
 	}
 	return parseEnv(data), nil
+}
+
+// CheckServerUnit refuses u for the same reasons WriteServerUnit does,
+// without writing anything.
+func CheckServerUnit(u ServerUnit) error {
+	if _, err := RenderServerUnit(u); err != nil {
+		return err
+	}
+	return checkResolved(u)
+}
+
+// checkResolved applies the location rules of readWritePaths to the
+// paths behind symlinks too, since systemd follows them when it mounts
+// ReadWritePaths=. A path that does not exist yet is skipped.
+func checkResolved(u ServerUnit) error {
+	resolve := func(p string) (string, bool) {
+		r, err := filepath.EvalSymlinks(p)
+		return r, err == nil
+	}
+	dataDir, ok := resolve(u.DataDir)
+	if !ok {
+		dataDir = filepath.Clean(u.DataDir)
+	}
+	if err := checkLocation("data dir", u.DataDir, dataDir, ""); err != nil {
+		return err
+	}
+	for _, p := range u.WritablePaths {
+		if r, ok := resolve(p); ok {
+			if err := checkLocation("writable path", p, r, dataDir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

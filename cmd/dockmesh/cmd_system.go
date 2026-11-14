@@ -170,7 +170,7 @@ func writeServerUnit(envFlag string) (bool, error) {
 		SupplementaryGroups: supplementaryGroups(),
 	}
 	// Render first: a refused value must leave /etc/dockmesh as it was too.
-	if _, err := layout.RenderServerUnit(unit); err != nil {
+	if err := layout.CheckServerUnit(unit); err != nil {
 		return false, fmt.Errorf("%w (the unit was not changed)", err)
 	}
 	if err := layout.PrepareConfigDir(gid); err != nil {

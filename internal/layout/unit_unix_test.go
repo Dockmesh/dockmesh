@@ -3,6 +3,7 @@
 package layout
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,5 +191,22 @@ func TestWriteServerUnitDropsStalePrev(t *testing.T) {
 	}
 	if err := RestoreServerUnit(opts); err == nil {
 		t.Error("restore after a fresh write must fail")
+	}
+}
+
+func TestWriteServerUnitRefusesSymlinkIntoSystemTree(t *testing.T) {
+	opts, _ := unitOpts(t)
+	dir := t.TempDir()
+	link := filepath.Join(dir, "audit")
+	if err := os.Symlink("/etc", link); err != nil {
+		t.Fatal(err)
+	}
+	u := testUnit()
+	u.WritablePaths = []string{link}
+	if _, err := WriteServerUnit(u, opts); !errors.Is(err, ErrBadUnitValue) {
+		t.Fatalf("want ErrBadUnitValue, got %v", err)
+	}
+	if _, err := os.Lstat(opts.UnitFile); !os.IsNotExist(err) {
+		t.Errorf("unit written: %v", err)
 	}
 }

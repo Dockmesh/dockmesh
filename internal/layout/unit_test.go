@@ -130,6 +130,8 @@ func TestRenderServerUnitRefuses(t *testing.T) {
 		{"below a system tree", func(u *ServerUnit) { u.WritablePaths = []string{"/usr/local/bin"} }},
 		{"proc", func(u *ServerUnit) { u.WritablePaths = []string{"/proc/sys"} }},
 		{"parent of the data dir", func(u *ServerUnit) { u.WritablePaths = []string{"/var/lib"} }},
+		{"data dir in a system tree", func(u *ServerUnit) { u.DataDir = "/etc" }},
+		{"docker's data", func(u *ServerUnit) { u.WritablePaths = []string{"/var/lib/docker/volumes"} }},
 		{"empty data dir", func(u *ServerUnit) { u.DataDir = "" }},
 		{"overlong path", func(u *ServerUnit) { u.WritablePaths = []string{"/" + strings.Repeat("a", 4096)} }},
 		{"space in env file", func(u *ServerUnit) { u.EnvFile = "/data dir/dockmesh.env" }},
