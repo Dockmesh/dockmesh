@@ -371,7 +371,7 @@
               {:else}—{/each}
             </dd>
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}">{m.topology_open_network()}</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}?host={encodeURIComponent(target)}">{m.topology_open_network()}</a>
         {:else}
           {@const domains = routesFor(sel.ct)}
           <h2 class="dm-h2 dm-mono">{sel.ct.name}</h2>
@@ -389,7 +389,7 @@
             <dt>{m.topology_domain()}</dt><dd>{domains.join(', ') || '—'}</dd>
             {#if sel.ct.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.ct.stack)}">{sel.ct.stack}</a></dd>{/if}
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{sel.ct.id}">{m.topology_open_container()}</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{encodeURIComponent(sel.ct.id)}?host={encodeURIComponent(target)}">{m.topology_open_container()}</a>
         {/if}
       </aside>
     </div>

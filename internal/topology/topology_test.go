@@ -64,3 +64,18 @@ func TestBuildEmptyListsAreNotNull(t *testing.T) {
 		t.Fatalf("nil slice in %+v", g)
 	}
 }
+
+func TestNormalize(t *testing.T) {
+	g := Graph{
+		Networks:   []Network{{ID: "n1"}},
+		Containers: []Container{{ID: "c1"}},
+		Links:      []Link{{NetworkID: "n1", ContainerID: "c1"}, {NetworkID: "n1", ContainerID: "ghost"}, {NetworkID: "nx", ContainerID: "c1"}},
+	}.Normalize()
+	if len(g.Links) != 1 || g.Links[0].ContainerID != "c1" {
+		t.Errorf("links = %+v", g.Links)
+	}
+	empty := Graph{}.Normalize()
+	if empty.Networks == nil || empty.Containers == nil || empty.Links == nil {
+		t.Errorf("nil slice in %+v", empty)
+	}
+}

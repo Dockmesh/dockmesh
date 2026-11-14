@@ -110,6 +110,32 @@ func Build(nets []network.Inspect, containers []container.Summary) Graph {
 	return g
 }
 
+// Normalize makes a graph from another process safe to render: nil lists
+// become empty and links to unknown nodes are dropped.
+func (g Graph) Normalize() Graph {
+	out := Graph{Networks: g.Networks, Containers: g.Containers, Links: []Link{}}
+	if out.Networks == nil {
+		out.Networks = []Network{}
+	}
+	if out.Containers == nil {
+		out.Containers = []Container{}
+	}
+	nets := make(map[string]bool, len(out.Networks))
+	for _, n := range out.Networks {
+		nets[n.ID] = true
+	}
+	cts := make(map[string]bool, len(out.Containers))
+	for _, c := range out.Containers {
+		cts[c.ID] = true
+	}
+	for _, l := range g.Links {
+		if nets[l.NetworkID] && cts[l.ContainerID] {
+			out.Links = append(out.Links, l)
+		}
+	}
+	return out
+}
+
 // publishedPorts drops unpublished ports and the second entry Docker
 // reports per port when it binds both 0.0.0.0 and ::.
 func publishedPorts(in []container.PortSummary) []Port {

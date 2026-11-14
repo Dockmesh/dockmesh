@@ -347,7 +347,7 @@ func (h *RemoteHost) Topology(ctx context.Context) (topology.Graph, error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return topology.Graph{}, fmt.Errorf("decode topology: %w", err)
 	}
-	return out, nil
+	return out.Normalize(), nil
 }
 
 func (h *RemoteHost) ListNetworks(ctx context.Context) ([]network.Inspect, error) {
