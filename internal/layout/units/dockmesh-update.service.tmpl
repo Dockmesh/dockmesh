@@ -8,7 +8,11 @@ After=dockmesh.service
 [Service]
 Type=oneshot
 ExecStart={{.Binary}} update apply --data-dir={{.DataDir}}
-TimeoutStartSec=30min
+TimeoutStartSec=60min
+# Time to roll back after a stop or a start timeout.
+TimeoutStopSec=20min
+# Whatever happened to this run, the server must not stay stopped.
+ExecStopPost=-systemctl start --no-block dockmesh.service
 PrivateTmp=true
 
 [Install]

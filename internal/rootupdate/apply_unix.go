@@ -26,11 +26,14 @@ const journalName = "journal.json"
 // run that dies half-way can be rolled back by the next one (the update
 // service also runs once at boot).
 type journal struct {
-	From      string        `json:"from"`
-	To        string        `json:"to"`
-	Started   time.Time     `json:"started"`
-	Snapshot  bool          `json:"snapshot"`
-	UnitSaved bool          `json:"unit_saved"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	Started   time.Time `json:"started"`
+	Snapshot  bool      `json:"snapshot"`
+	UnitSaved bool      `json:"unit_saved"`
+	// Installed is set once every file and the unit are in place; only
+	// then may a recovery keep the new version.
+	Installed bool          `json:"installed"`
 	Unit      []byte        `json:"unit,omitempty"`
 	Files     []journalFile `json:"files,omitempty"`
 }
@@ -54,20 +57,30 @@ func Apply(ctx context.Context, cfg Config) (Result, error) {
 	if err := ensureStateDir(cfg.StateDir); err != nil {
 		return Result{}, fmt.Errorf("state dir: %w", err)
 	}
-	req, err := openRequestDir(cfg.RequestDir, cfg.ServiceUID)
-	if err != nil {
-		return Result{}, fmt.Errorf("request dir: %w", err)
-	}
-	defer req.Close()
-	u := &updater{cfg: cfg, req: req}
+	u := &updater{cfg: cfg}
 	removeStale(cfg.Files)
+	j, haveJournal, err := u.loadJournal()
+	if err != nil {
+		return Result{}, err
+	}
+	// The boot run finds no update directory on a server that never
+	// staged an update; only a recovery goes on without one.
+	req, err := openRequestDir(cfg.RequestDir, cfg.ServiceUID)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && !haveJournal:
+		return Result{}, nil
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return Result{}, fmt.Errorf("request dir: %w", err)
+	case err == nil:
+		defer req.Close()
+		u.req = req
+	}
 
 	var res Result
-	if j, ok, err := u.loadJournal(); err != nil {
-		return Result{}, err
-	} else if ok {
+	if haveJournal {
 		res = u.recover(ctx, j)
 	} else {
+		var ok bool
 		res, ok = u.run(ctx)
 		if !ok {
 			return Result{}, nil
@@ -231,6 +244,10 @@ func (u *updater) swap(ctx context.Context, j *journal, files []staged) error {
 	if err := svc.DaemonReload(ctx); err != nil {
 		return failed(StepUnit, err)
 	}
+	j.Installed = true
+	if err := u.saveJournal(j); err != nil {
+		return failed(StepUnit, err)
+	}
 	if err := svc.Start(ctx); err != nil {
 		return failed(StepStart, err)
 	}
@@ -290,9 +307,17 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 	res := u.result(StatusRolledBack, j.To, cause)
 	res.From = j.From
 	var errs []error
-	// A failed stop is not fatal by itself: whether the old version runs
-	// in the end is decided by its health check below.
+	// With nothing changed yet a failed stop is harmless: the old version
+	// may still run, which its health check below shows. Otherwise files
+	// and data are never restored under a running service; the journal
+	// stays for the next run.
 	if err := svc.Stop(ctx); err != nil {
+		if len(j.Files) > 0 || j.Snapshot {
+			res.Status = StatusFailed
+			res.Reason += "; rollback: stop: " + err.Error()
+			u.cfg.Log.Error("update rollback could not stop the service", "err", err)
+			return res
+		}
 		u.cfg.Log.Warn("stop before rollback", "err", err)
 	}
 	for i := len(j.Files) - 1; i >= 0; i-- {
@@ -345,7 +370,14 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 // new version answers, else rolled back.
 func (u *updater) recover(ctx context.Context, j *journal) Result {
 	u.cfg.Log.Warn("finishing an interrupted update", "from", j.From, "to", j.To)
-	if len(j.Files) > 0 && u.waitHealthy(ctx, j.To) {
+	// A request made meanwhile is moot; left in place it would start the
+	// next run right away.
+	if u.req != nil {
+		if err := removeEntry(u.req, RequestFile); err != nil {
+			u.cfg.Log.Warn("remove update request", "err", err)
+		}
+	}
+	if j.Installed && u.waitHealthy(ctx, j.To) {
 		u.finish()
 		r := u.result(StatusUpdated, j.To, nil)
 		r.From, r.Step = j.From, StepRecover
@@ -357,8 +389,10 @@ func (u *updater) recover(ctx context.Context, j *journal) Result {
 // finish drops the journal, the backups and the pending marker. The
 // <binary>.prev copy stays.
 func (u *updater) finish() {
-	if err := removeEntry(u.req, PendingFile); err != nil {
-		u.cfg.Log.Warn("remove pending marker", "err", err)
+	if u.req != nil {
+		if err := removeEntry(u.req, PendingFile); err != nil {
+			u.cfg.Log.Warn("remove pending marker", "err", err)
+		}
 	}
 	matches, _ := filepath.Glob(filepath.Join(u.cfg.StateDir, "backup-*"))
 	for _, m := range matches {
@@ -401,6 +435,9 @@ func (u *updater) writeJSON(name string, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
+	}
+	if u.req == nil {
+		return errors.New("no update directory")
 	}
 	return writeServiceFile(u.req, name, append(data, '\n'))
 }

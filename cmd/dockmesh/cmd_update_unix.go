@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -28,6 +30,10 @@ import (
 )
 
 const serverUnitName = "dockmesh.service"
+
+// dbStepTimeout bounds the database snapshot and its restore, so a whole
+// run including a rollback stays inside the unit's TimeoutStartSec.
+const dbStepTimeout = 10 * time.Minute
 
 func updateApply(args []string) error {
 	fs := flag.NewFlagSet("update apply", flag.ExitOnError)
@@ -67,7 +73,11 @@ func updateApply(args []string) error {
 	paths := config.ResolvePaths(func(k string) string { return env[k] })
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	res, err := rootupdate.Apply(context.Background(), rootupdate.Config{
+	// A stop or timeout from systemd ends the update early; Apply still
+	// rolls back before it returns.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	res, err := rootupdate.Apply(ctx, rootupdate.Config{
 		Installed:  version.Version,
 		RequestDir: layout.UpdateRequestDir(filepath.Clean(*dataDir)),
 		ServiceUID: int(uid),
@@ -80,7 +90,13 @@ func updateApply(args []string) error {
 			binary: binary,
 			dbPath: paths.DBPath,
 			health: healthURL(env["DOCKMESH_HTTP_ADDR"]),
-			client: &http.Client{Timeout: 3 * time.Second},
+			client: &http.Client{
+				Timeout:   3 * time.Second,
+				Transport: &http.Transport{Proxy: nil},
+				// A redirect from whatever answers on the port must not
+				// send root's probe anywhere else.
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			},
 		},
 	})
 	if err != nil {
@@ -209,12 +225,12 @@ func (s *serverService) WriteUnit(ctx context.Context, binary string) error {
 // account. Both run while the old version is installed: before the swap,
 // and after the rollback put it back.
 func (s *serverService) Snapshot(context.Context) error {
-	_, err := runAsService(s.binary, 30*time.Minute, "update", updateSnapshotCmd, "--db", s.dbPath)
+	_, err := runAsService(s.binary, dbStepTimeout, "update", updateSnapshotCmd, "--db", s.dbPath)
 	return err
 }
 
 func (s *serverService) RestoreSnapshot(context.Context) error {
-	_, err := runAsService(s.binary, 30*time.Minute, "update", updateRestoreCmd, "--db", s.dbPath)
+	_, err := runAsService(s.binary, dbStepTimeout, "update", updateRestoreCmd, "--db", s.dbPath)
 	return err
 }
 

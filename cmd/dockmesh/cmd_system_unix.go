@@ -92,6 +92,9 @@ func runAsService(binary string, timeout time.Duration, args ...string) ([]byte,
 		Setsid:     true,
 		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}},
 	}
+	// The child's account can hold its pipes open; the deadline must
+	// still end the call.
+	cmd.WaitDelay = 10 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

@@ -707,8 +707,9 @@ func TestApplyRecoversAfterCrash(t *testing.T) {
 				}
 			}
 			j.Unit, j.UnitSaved = []byte(oldUnit), true
-			_ = u.saveJournal(j)
 			_ = f.svc.WriteUnit(context.Background(), cfg.Files[0].Dest)
+			j.Installed = true
+			_ = u.saveJournal(j)
 			if healthy {
 				_ = f.svc.Start(context.Background())
 			}
@@ -734,4 +735,93 @@ func TestApplyRecoversAfterCrash(t *testing.T) {
 			f.assertOldRunning(true)
 		})
 	}
+}
+
+// TestApplyRollsBackHalfInstalled covers power loss after the binary was
+// swapped but before the other files and the unit: the new binary may
+// answer at boot, but the update is incomplete and is rolled back.
+func TestApplyRollsBackHalfInstalled(t *testing.T) {
+	f := newFixture(t)
+	f.release("v0.6.1", "v0.6.1", goodTarball(t, "v0.6.1"))
+	cfg := f.config()
+	if err := cfg.defaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureStateDir(cfg.StateDir); err != nil {
+		t.Fatal(err)
+	}
+	req, err := openRequestDir(cfg.RequestDir, cfg.ServiceUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &updater{cfg: cfg, req: req}
+	to, _ := u.readRequest()
+	files, err := u.stage(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &journal{From: "v0.6.0", To: to, Snapshot: true}
+	_ = f.svc.Stop(context.Background())
+	_ = f.svc.Snapshot(context.Background())
+	if err := u.install(j, 0, files[0]); err != nil {
+		t.Fatal(err)
+	}
+	discard(files[1:])
+	_ = f.svc.Start(context.Background())
+	req.Close()
+	// A request written meanwhile must not start another run.
+	f.request("v0.6.2")
+
+	res := f.apply()
+	if res.Status != StatusRolledBack || res.Step != StepRecover {
+		t.Fatalf("result %+v", res)
+	}
+	f.assertOldRunning(true)
+}
+
+func TestApplyBootWithoutUpdateDir(t *testing.T) {
+	f := newFixture(t)
+	if err := os.RemoveAll(f.reqDir); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(context.Background(), f.config())
+	if err != nil || res.Status != "" {
+		t.Fatalf("boot run without an update dir: %+v, %v", res, err)
+	}
+}
+
+func TestApplyNoRestoreUnderRunningService(t *testing.T) {
+	f := newFixture(t)
+	f.release("v0.6.1", "v0.6.1", tarball(t, entry{name: "dockmesh", content: "crashes"}))
+	stops := 0
+	svc := &stopFailsSecond{fakeService: f.svc, stops: &stops}
+	cfg := f.config()
+	cfg.Service = svc
+	res, err := Apply(context.Background(), cfg)
+	if err != nil || res.Status != StatusFailed {
+		t.Fatalf("result %+v, %v", res, err)
+	}
+	for _, c := range f.svc.calls {
+		if c == "restore-snapshot" || c == "restore-unit" {
+			t.Fatalf("%s while the service may still run (calls %v)", c, f.svc.calls)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(f.stateDir, journalName)); err != nil {
+		t.Fatal("journal gone; the next run could not finish the rollback")
+	}
+}
+
+// stopFailsSecond fails every stop after the first (the rollback's).
+type stopFailsSecond struct {
+	*fakeService
+	stops *int
+}
+
+func (s *stopFailsSecond) Stop(ctx context.Context) error {
+	*s.stops++
+	if *s.stops > 1 {
+		s.calls = append(s.calls, "stop")
+		return errors.New("stop timed out")
+	}
+	return s.fakeService.Stop(ctx)
 }
