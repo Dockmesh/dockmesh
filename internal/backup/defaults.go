@@ -129,8 +129,9 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 // MovedSystemTarget reports a local system job that a start of an earlier
 // version moved to a migrated target at <data>/backups, while the target it
 // was created with is still saved and unused. That target is saved under
-// the job's name no later than the job; anything created afterwards, by
-// whoever may save targets, is not taken for it. It returns the job's name
+// the job's name no later than the job and not edited since the move;
+// anything created or changed later, by whoever may save targets, is not
+// taken for it. It returns the job's name
 // and the paths of those targets.
 func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
 	if s.paths.DataDir == "" {
@@ -164,7 +165,8 @@ func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous [
 		if t.Type != "local" || t.ID == j.TargetID || (t.JobCount != nil && *t.JobCount > 0) {
 			continue
 		}
-		if !hasNameOrSuffix(t.Name, j.Name) || t.CreatedAt.After(j.CreatedAt) || !current.CreatedAt.After(t.CreatedAt) {
+		if !hasNameOrSuffix(t.Name, j.Name) || t.CreatedAt.After(j.CreatedAt) || !current.CreatedAt.After(t.CreatedAt) ||
+			t.UpdatedAt.After(current.CreatedAt) {
 			continue
 		}
 		p := localTargetPath(t.Config)

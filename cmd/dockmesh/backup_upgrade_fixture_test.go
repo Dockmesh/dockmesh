@@ -180,7 +180,15 @@ func TestMovedSystemTargetNotice(t *testing.T) {
 	if _, err := conn.Exec(`INSERT INTO backup_targets (name, type, config_json) VALUES ('sys-abs (old)', 'local', '{"path":"/srv/elsewhere"}')`); err != nil {
 		t.Fatal(err)
 	}
+	// An older unused target renamed after the move doesn't count either.
+	if _, err := conn.Exec(`INSERT INTO backup_targets (name, type, config_json, created_at, updated_at)
+		VALUES ('spare', 'local', '{"path":"/srv/spare"}', '2026-01-01 00:00:00', '2026-01-01 00:00:00')`); err != nil {
+		t.Fatal(err)
+	}
 	svc, n := startBackups(t, conn, dataDir)
+	if _, err := conn.Exec(`UPDATE backup_targets SET name = 'sys-abs (2)', updated_at = datetime('now', '+1 minute') WHERE name = 'spare'`); err != nil {
+		t.Fatal(err)
+	}
 	job, previous, err := svc.MovedSystemTarget(ctx)
 	if err != nil {
 		t.Fatal(err)
