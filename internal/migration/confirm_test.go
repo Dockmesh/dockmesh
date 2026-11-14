@@ -104,4 +104,13 @@ func TestDrainNeedsHookConfirmation(t *testing.T) {
 		t.Fatalf("confirmed drain: %v", err)
 	}
 	_ = drains.AbortDrain(d.ID)
+	stored, err := drains.Get(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []*Drain{d, stored} {
+		if h := got.Plan[0].Hooks; h == nil || h.Digest != digest || h.PreDump != "" || h.PostRestore != "" {
+			t.Fatalf("drain record keeps %+v, want only the digest", h)
+		}
+	}
 }

@@ -138,7 +138,8 @@ func (s *Service) HookCommands(stackName string) (*HookCommands, error) {
 	return hookCommands(h), nil
 }
 
-// ErrHooksUnconfirmed matches a HooksUnconfirmedError.
+// ErrHooksUnconfirmed matches HooksUnconfirmedError and
+// DrainHooksUnconfirmedError.
 var ErrHooksUnconfirmed = errors.New("the migration would run hook commands that were not confirmed")
 
 // HooksUnconfirmedError refuses a migration whose hook commands the

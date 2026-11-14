@@ -1,6 +1,6 @@
 <script lang="ts">
   import { AlertTriangle } from 'lucide-svelte';
-  import * as m from '$lib/paraglide/messages.js';
+  import { m } from '$lib/paraglide/messages.js';
   import type { HookCommands } from '$lib/api';
 
   // One row per stack whose migration would run hook commands.

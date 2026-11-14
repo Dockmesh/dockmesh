@@ -91,7 +91,7 @@ A drain migrates every stack deployed on a host to the other online hosts.
 3. If hook commands are listed, tick **Run these commands**.
 4. Click **Begin drain**. The button is only enabled when the plan has room for every stack and listed hook commands are confirmed.
 
-The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
+The host must be online. The server's own host has no drain button. Draining needs `hosts.update` on every host, not only this one, and for each stack with hook commands the right to deploy it or to read container environments on this host, since the commands are shown for confirmation. Each migration in it has the same rules as a manual one, so a stack with named volumes stops the drain.
 
 ### How the plan is made
 

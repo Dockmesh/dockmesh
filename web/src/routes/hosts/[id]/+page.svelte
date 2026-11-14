@@ -638,7 +638,9 @@
           </div>
         {/each}
       </div>
-      <div class="mt-3"><HookCommandsConfirm items={drainHooks} bind:confirmed={drainHooksConfirmed} /></div>
+      {#if drainHooks.length > 0}
+        <div class="mt-3"><HookCommandsConfirm items={drainHooks} bind:confirmed={drainHooksConfirmed} /></div>
+      {/if}
     {/if}
   {/if}
   {#snippet footer()}

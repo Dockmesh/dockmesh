@@ -326,12 +326,21 @@ func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string,
 		return nil, &DrainHooksUnconfirmedError{Entries: unconfirmed}
 	}
 
+	// The drain record keeps only the digests: the commands can hold
+	// secrets and would outlive a change of the meta file in the DB.
+	stored := make([]PlanEntry, len(plan.Entries))
+	for i, e := range plan.Entries {
+		if e.Hooks != nil {
+			e.Hooks = &HookCommands{Digest: e.Hooks.Digest}
+		}
+		stored[i] = e
+	}
 	now := time.Now()
 	d := &Drain{
 		ID:           uuid.NewString(),
 		SourceHostID: sourceHostID,
 		Status:       DrainPlanning,
-		Plan:         plan.Entries,
+		Plan:         stored,
 		StartedAt:    &now,
 		InitiatedBy:  userID,
 	}

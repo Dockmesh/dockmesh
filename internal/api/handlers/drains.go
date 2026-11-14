@@ -29,7 +29,27 @@ func (h *Handlers) PlanDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !h.checkDrainHooksReadable(w, r, hostID, plan.Entries) {
+		return
+	}
 	writeJSON(w, http.StatusOK, plan)
+}
+
+// checkDrainHooksReadable refuses a drain whose stacks run hook commands
+// the caller may not read: they are shown for confirmation and can hold
+// the same secrets as the stack's .env.
+func (h *Handlers) checkDrainHooksReadable(w http.ResponseWriter, r *http.Request, hostID string, entries []migration.PlanEntry) bool {
+	for _, e := range entries {
+		if e.Hooks == nil {
+			continue
+		}
+		res := h.stackScopeReq(hostID, e.StackName)
+		if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
+			h.writeScopeDenied(w, r, rbac.PermStacksDeploy, res, "hook commands of stack "+e.StackName)
+			return false
+		}
+	}
+	return true
 }
 
 // ExecuteDrain runs a drain plan.
@@ -49,9 +69,18 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
 		return
 	}
+	plan, err := h.Drains.Plan(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !h.checkDrainHooksReadable(w, r, hostID, plan.Entries) {
+		return
+	}
 	var req struct {
 		ConfirmHooks map[string]string `json:"confirm_hooks"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -74,10 +103,10 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionHostDrain, hostID, map[string]any{
-		"action":   "drain",
-		"drain_id": d.ID,
-		"stacks":   len(d.Plan),
-		"hooks":    req.ConfirmHooks,
+		"action":       "drain",
+		"drain_id":     d.ID,
+		"stacks":       len(d.Plan),
+		"hooks_digest": confirmedDigests(d.Plan),
 	})
 	writeJSON(w, http.StatusAccepted, d)
 }
@@ -171,4 +200,16 @@ func (h *Handlers) requireDrainAccess(w http.ResponseWriter, r *http.Request) bo
 	}
 	writeError(w, http.StatusForbidden, "draining a host moves its stacks to other hosts and needs Hosts: Manage on everything")
 	return false
+}
+
+// confirmedDigests maps each stack of a started drain with hook commands
+// to the digest that was checked.
+func confirmedDigests(plan []migration.PlanEntry) map[string]string {
+	out := map[string]string{}
+	for _, e := range plan {
+		if e.Hooks != nil {
+			out[e.StackName] = e.Hooks.Digest
+		}
+	}
+	return out
 }

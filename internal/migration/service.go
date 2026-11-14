@@ -352,7 +352,6 @@ func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	return nil
 }
 
-// confirmedHooks are the hook commands confirmed for migration id.
 func (s *Service) confirmedHooks(id string) *HookCommands {
 	s.mu.Lock()
 	defer s.mu.Unlock()
