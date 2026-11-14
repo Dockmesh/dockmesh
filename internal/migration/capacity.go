@@ -43,7 +43,8 @@ type stackNeeds struct {
 	MemUnknown, CPUUnknown []string
 	// Images to pull whose size the source doesn't know.
 	DiskUnknown []string
-	Measured    bool
+	// Declared and Measured say where the counted needs came from.
+	Declared, Measured bool
 }
 
 // serviceUsage is the measured usage of one service's containers.
@@ -90,6 +91,7 @@ func computeNeeds(proj *types.Project, usage map[string]serviceUsage, srcImages,
 		switch mem := declaredMem(svc); {
 		case mem > 0:
 			n.MemBytes = addSat(n.MemBytes, mulSat(mem, uint64(replicas))) //nolint:gosec // replicas >= 0
+			n.Declared = true
 		case u.sampled > 0 && u.sampled == u.containers:
 			n.MemBytes = addSat(n.MemBytes, u.mem)
 			n.Measured = true
@@ -99,6 +101,7 @@ func computeNeeds(proj *types.Project, usage map[string]serviceUsage, srcImages,
 		switch cpus := declaredCPUs(svc); {
 		case cpus > 0:
 			n.CPUs += cpus * float64(replicas)
+			n.Declared = true
 		case u.sampled > 0 && u.sampled == u.containers:
 			n.CPUs += u.cpus
 			n.Measured = true
@@ -263,8 +266,11 @@ func capacityChecks(n stackNeeds, tgt system.Metrics) []PreflightCheck {
 }
 
 func needSource(n stackNeeds) string {
-	if n.Measured {
+	switch {
+	case n.Declared && n.Measured:
 		return "declared resources and current usage"
+	case n.Measured:
+		return "current usage"
 	}
 	return "declared resources"
 }

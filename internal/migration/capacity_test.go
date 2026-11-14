@@ -45,10 +45,11 @@ func TestComputeNeeds(t *testing.T) {
 		MemUnknown:  []string{"cron"},
 		CPUUnknown:  []string{"cron"},
 		DiskUnknown: []string{"app:1"},
+		Declared:    true,
 		Measured:    true,
 	}
 	if got.MemBytes != want.MemBytes || got.DiskBytes != want.DiskBytes || !reflect.DeepEqual(got.MemUnknown, want.MemUnknown) ||
-		!reflect.DeepEqual(got.CPUUnknown, want.CPUUnknown) || !reflect.DeepEqual(got.DiskUnknown, want.DiskUnknown) || !got.Measured ||
+		!reflect.DeepEqual(got.CPUUnknown, want.CPUUnknown) || !reflect.DeepEqual(got.DiskUnknown, want.DiskUnknown) || !got.Measured || !got.Declared ||
 		got.CPUs < want.CPUs-0.001 || got.CPUs > want.CPUs+0.001 {
 		t.Fatalf("computeNeeds =\n%+v\nwant\n%+v", got, want)
 	}
