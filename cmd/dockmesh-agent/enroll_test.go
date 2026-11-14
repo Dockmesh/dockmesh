@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -150,5 +151,34 @@ func TestEnrollClientTransportRules(t *testing.T) {
 				t.Errorf("%s: client skips TLS verification", c.name)
 			}
 		}
+	}
+}
+
+// Only a refused token stops the unit from restarting; anything else may
+// pass on a later try.
+func TestEnrollRejectedTokenIsFinal(t *testing.T) {
+	tests := []struct {
+		status    int
+		wantFinal bool
+	}{
+		{http.StatusUnauthorized, true},
+		{http.StatusTooManyRequests, false},
+		{http.StatusInternalServerError, false},
+		{http.StatusBadGateway, false},
+	}
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "no", tt.status)
+			}))
+			t.Cleanup(srv.Close)
+			_, err := runEnroll(t, agentConfig{enrollURL: srv.URL + "/enroll", token: "tok", insecureEnroll: true})
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if got := errors.Is(err, errEnrollRejected); got != tt.wantFinal {
+				t.Errorf("errors.Is(errEnrollRejected) = %v, want %v (%v)", got, tt.wantFinal, err)
+			}
+		})
 	}
 }

@@ -76,7 +76,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/j
   https://dockmesh.example.com/api/v1/settings
 ```
 
-The endpoint needs Settings & audit: Manage. A time zone that is not a valid IANA name is rejected.
+The endpoint needs Settings & audit: Manage. A time zone that is not a valid IANA name is rejected. After adding a directory to `backups.local_roots`, run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh` on the server, so its unit lets the service write there.
 
 ## Creating a job
 

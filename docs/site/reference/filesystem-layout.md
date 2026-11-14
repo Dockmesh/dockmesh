@@ -12,7 +12,6 @@ Dockmesh keeps stack definitions as files and runtime state in one SQLite databa
 ```text
 /var/lib/dockmesh/
 ├── dockmesh.env                 environment file loaded by the service (0600), or a symlink to /etc/dockmesh/dockmesh.env
-├── dockmesh.service             copy of the systemd unit (dockmesh init only)
 ├── data/                        data directory = directory of DOCKMESH_DB_PATH
 │   ├── dockmesh.db              SQLite database (+ -wal, -shm while running)
 │   ├── dockmesh.db.pre-migrate-<time>.bak   database snapshot taken before migrations (newest 3)
@@ -68,7 +67,7 @@ Deploys do not run from this directory. Dockmesh writes `compose.yaml` and the d
 
 A local backup target without a path writes to `backups/` in the data directory (`/var/lib/dockmesh/data/backups` on an installer setup). An install that already had archives in `./data/backups` below the server's working directory keeps writing there; the directory is chosen once and saved as the `backups.empty_path_dir` setting.
 
-Local targets can only write below allowed directories, the `backups.local_roots` setting. By default these are `/srv/backups` and `<data directory>/backups`; on upgrade, directories that existing jobs already used are added, and admins get a notice to review them. A path outside every allowed directory is refused. The `dockmesh` service user must be able to write the target directory.
+Local targets can only write below allowed directories, the `backups.local_roots` setting. By default these are `/srv/backups` and `<data directory>/backups`; on upgrade, directories that existing jobs already used are added, and admins get a notice to review them. A path outside every allowed directory is refused. The `dockmesh` service user must be able to write the target directory, and the unit only lets the service write to the allowed directories it knew when it was written: after adding one, run `sudo dockmesh system write-unit` and restart the service.
 
 Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`, with `.age` appended when encrypted. Archives of older versions stay where they are and are still managed there. A system backup archive contains `dockmesh.db`, `stacks/...` and `data/...`; it leaves out `data/backups/`, database snapshots and the staged and replaced files of a system restore. See [Backups](../operations/backups.md).
 
@@ -82,7 +81,9 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/usr/local/bin/grype` | `install.sh` unless `DOCKMESH_NO_SCANNER=1` | Vulnerability scanner |
 | `/usr/local/share/dockmesh/install-agent.sh` | `install.sh` (`DOCKMESH_ASSET_DIR`) | Served at `/install/agent.sh` on the agent port |
 | `/usr/local/share/dockmesh/bin/dockmesh-agent-linux-amd64`, `dockmesh-agent-linux-arm64` | `install.sh` | Agent binaries, served at `/install/{name}` and to agent upgrades (`DOCKMESH_BINARY_DIR`) |
-| `/etc/systemd/system/dockmesh.service` | `install.sh` or `dockmesh init` | Service unit, user `dockmesh`, group `docker` |
+| `/etc/systemd/system/dockmesh.service` | `dockmesh system write-unit`, run by `install.sh` and `dockmesh init` | Service unit, user `dockmesh`, group `dockmesh` plus `docker`; rewritten on every upgrade |
+| `/etc/systemd/system/dockmesh.service.d/*.conf` | you | Local changes to the unit; Dockmesh never writes or removes them |
+| `/etc/dockmesh/dockmesh.service.prev` | `dockmesh system write-unit` | The unit the last write replaced (`write-unit --restore`) |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |
 
 Linux release archives contain the agent for both architectures, and `install.sh` installs both, whatever the server's own architecture. On macOS, the archive has one agent binary, which `install.sh` installs as `dockmesh-agent-darwin-<arch>`; the agent installer only enrolls Linux hosts and needs the Linux binaries, so copy them from a Linux archive into the asset `bin/` directory if a macOS server should enroll agents.

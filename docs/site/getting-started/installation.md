@@ -56,7 +56,7 @@ Since 0.6 the installer no longer picks `/data` by itself; set `DOCKMESH_DATA_DI
 
 If the script finds the `dockmesh.env` of an earlier install (in `/var/lib/dockmesh`, `/data`, `/usr/local/var/dockmesh`, the one named in an existing unit, or at `$DOCKMESH_DATA_DIR/dockmesh.env`, also as the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves), it keeps that file and uses its data root, so a reinstall over kept data picks up the existing database, stacks and keys. It then does not open the setup wizard; you sign in with your existing account.
 
-The repository also contains `scripts/dockmesh.service`. That is a sample unit for running from a checkout in `/home/dockmesh/dockmesh`; neither the installer nor `dockmesh init` uses it.
+The installer writes the systemd unit with `dockmesh system write-unit` on every install and upgrade, so changes made directly to `/etc/systemd/system/dockmesh.service` are replaced. Put local changes into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never touches.
 
 ### Installer options
 

@@ -1,0 +1,3 @@
+kind: Changed
+body: Every install and upgrade writes the server unit from a template in the binary, with the hardening of the old `dockmesh init` unit; local changes belong in a drop-in, which Dockmesh never touches
+time: 2026-11-14T10:02:02.333510392Z

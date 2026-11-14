@@ -28,10 +28,9 @@ func trustCodeFile(fi fs.FileInfo) error {
 	return nil
 }
 
-// ensureCodeDir creates dir root:gid 0750, or lets gid traverse an
-// existing one: the server reads the code file with its own group, which
-// on older units is not the group of /etc/dockmesh. Others may only
-// traverse, never list; the config next to it stays 0640.
+// ensureCodeDir creates dir root:gid 0750 or resets an existing one to
+// that, so the server's group may read the code file and nobody else may
+// enter; the config next to it is read by systemd as root.
 func ensureCodeDir(dir string, gid int) error {
 	fi, err := os.Lstat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -47,8 +46,13 @@ func ensureCodeDir(dir string, gid int) error {
 	if !fi.IsDir() || !ok || st.Uid != 0 {
 		return fmt.Errorf("%s is not a directory owned by root", dir)
 	}
-	if int(st.Gid) != gid && fi.Mode().Perm()&0o001 == 0 {
-		return os.Chmod(dir, fi.Mode().Perm()|0o001)
+	if int(st.Gid) != gid {
+		if err := os.Lchown(dir, 0, gid); err != nil {
+			return err
+		}
+	}
+	if fi.Mode().Perm() != 0o750 {
+		return os.Chmod(dir, 0o750)
 	}
 	return nil
 }

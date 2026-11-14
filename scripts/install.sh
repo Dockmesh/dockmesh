@@ -349,6 +349,44 @@ systemd_unit_loaded() {
   [ "$(systemctl show -p LoadState --value dockmesh.service 2>/dev/null)" = "loaded" ]
 }
 
+# wait_for_service waits up to 5 s for dockmesh.service to be active.
+wait_for_service() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    systemctl is-active --quiet dockmesh && return 0
+  done
+  return 1
+}
+
+# write_unit writes dockmesh.service from the template in the new binary
+# (extra arguments go to `dockmesh system write-unit`). UNIT_REWRITTEN=1
+# when it replaced the unit, so a failed start can put the old one back.
+UNIT_REWRITTEN=0
+write_unit() {
+  local out
+  if ! out="$($USE_SUDO "$INSTALL_DIR/dockmesh" system write-unit "$@" 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  case "$out" in wrote*) UNIT_REWRITTEN=1 ;; esac
+  ok "systemd unit    /etc/systemd/system/dockmesh.service"
+}
+
+# start_service runs `systemctl $1 dockmesh` and waits for it. If the
+# service does not come up and write_unit replaced the unit in this run,
+# the earlier unit is restored and the service started once more.
+start_service() {
+  $USE_SUDO systemctl $1 dockmesh || true
+  wait_for_service && return 0
+  [ "$UNIT_REWRITTEN" = "1" ] || return 1
+  warn "dockmesh did not start with the new unit — restoring the earlier unit"
+  $USE_SUDO "$INSTALL_DIR/dockmesh" system write-unit --restore >&2 || return 1
+  UNIT_REWRITTEN=0
+  $USE_SUDO systemctl restart dockmesh || true
+  wait_for_service || return 1
+  warn "running with the earlier unit — see: journalctl -u dockmesh --since '5 min ago'"
+}
+
 # service_runs_new_binary succeeds when dockmesh.service has a main process
 # that is not $1 (the PID from before the restart) and whose executable was
 # not replaced underneath it.
@@ -1140,22 +1178,18 @@ if [ "$IS_UPGRADE" = "1" ]; then
     if ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout; then
       warn "config left at its old place; Dockmesh keeps using it"
     fi
+    if ! write_unit; then
+      warn "unit kept as it was; Dockmesh keeps running with it"
+    fi
     info "restarting dockmesh.service..."
     RESTART_T0=$(get_time)
-    if ! $USE_SUDO systemctl restart dockmesh; then
-      die "restart failed — the new binary is installed but the old one may still be running. Run: $USE_SUDO systemctl restart dockmesh"
-    fi
     # Probe the systemd state rather than HTTP because the listen port is
     # whatever the user configured.
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      sleep 0.5
-      systemctl is-active --quiet dockmesh && break
-    done
-    RESTART_T1=$(get_time)
-    DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
-    if ! systemctl is-active --quiet dockmesh; then
+    if ! start_service restart; then
       die "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
     fi
+    RESTART_T1=$(get_time)
+    DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
     if ! service_runs_new_binary "$SYSTEMD_PID"; then
       die "dockmesh.service is still running the old binary — run: $USE_SUDO systemctl restart dockmesh"
     fi
@@ -1341,34 +1375,15 @@ else
 
   # Service unit. Linux = systemd; macOS = launchd.
   if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-    UNIT_PATH="/etc/systemd/system/dockmesh.service"
-    $USE_SUDO tee "$UNIT_PATH" >/dev/null <<EOF
-[Unit]
-Description=Dockmesh container management
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=dockmesh
-Group=docker
-EnvironmentFile=$ENV_FILE
-ExecStart=$INSTALL_DIR/dockmesh serve
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    $USE_SUDO systemctl daemon-reload
-    ok "systemd unit    $UNIT_PATH"
-    $USE_SUDO systemctl enable --now dockmesh
+    if ! write_unit --env-file "$ENV_FILE"; then
+      if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ]; then
+        warn "unit kept as it was"
+      else
+        die "could not write /etc/systemd/system/dockmesh.service"
+      fi
+    fi
     # Wait for it to come up before printing the wizard URL.
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      sleep 0.5
-      systemctl is-active --quiet dockmesh && break
-    done
-    if systemctl is-active --quiet dockmesh; then
+    if start_service "enable --now"; then
       ok "service         active"
     else
       fail "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"

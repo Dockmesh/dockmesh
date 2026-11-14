@@ -440,6 +440,9 @@ ExecStart=$AGENT_BIN
 Restart=always
 RestartSec=10s
 StartLimitInterval=0
+# 78: the server refused the enrollment token; retrying cannot succeed.
+RestartPreventExitStatus=78
+TimeoutStopSec=30
 
 # Hardening
 NoNewPrivileges=yes
