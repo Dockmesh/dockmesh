@@ -896,7 +896,7 @@ func main() {
 	}
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy.deploy)
 	gitSourceSvc.SetDeployNow(gitDeploy.deployNow)
-	stackLocks.OnRelease(func(k stacklock.Key) { gitSourceSvc.StackReleased(k.Stack) })
+	stackLocks.OnRelease(func(k stacklock.Key) { gitSourceSvc.StackReleased(k.Stack, gitTargetMatcher(gitDeploy, k.Target)) })
 	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()
@@ -941,6 +941,11 @@ func main() {
 	agentUpgrade.Start(ctx)
 	agentsSvc.SetNotices(noticesSvc)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
+
+	updateInstaller, err := newUpdateInstaller(ctx, stackLocks, agentsSvc, noticesSvc)
+	if err != nil {
+		slog.Warn("update installer unavailable", "err", err)
+	}
 
 	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})
 
@@ -1104,61 +1109,62 @@ func main() {
 	handlers.SetSetupVersionString(version.Version)
 
 	h := handlers.New(handlers.Deps{
-		DB:             database,
-		Auth:           authSvc,
-		Audit:          auditSvc,
-		Docker:         dockerCli,
-		Stacks:         stacksMgr,
-		Deployments:    deployStore,
-		DeployHistory:  deployHistoryStore,
-		DeployTracker:  deployTracker,
-		Notifications:  notifSvc,
-		Notices:        noticesSvc,
-		Dependencies:   depStore,
-		Compose:        composeSvc,
-		LoginLimiter:   loginLimiter,
-		Scanner:        scannerCLI,
-		ScanStore:      scanStore,
-		Proxy:          proxySvc,
-		Updater:        updaterSvc,
-		StackLocks:     stackLocks,
-		Operations:     opsSvc,
-		UpdateWatcher:  updateWatcher,
-		OIDC:           oidcSvc,
-		SAML:           samlSvc,
-		LDAP:           ldapSvc,
-		OAuth2:         oauth2Svc,
-		Metrics:        metricsCol,
-		Notify:         notifySvc,
-		Alerts:         alertsSvc,
-		Backups:        backupSvc,
-		BackupTargets:  backupTargetStore,
-		Secrets:        secretsSvc,
-		Migrations:     migrationSvc,
-		Drains:         drainSvc,
-		Agents:         agentsSvc,
-		Hosts:          hostRegistry,
-		HostTags:       hostTagsSvc,
-		Roles:          rolesStore,
-		Settings:       settingsStore,
-		GlobalEnv:      globalEnvStore,
-		APITokens:      apiTokensSvc,
-		Registries:     registriesSvc,
-		GitSource:      gitSourceSvc,
-		Templates:      templatesSvc,
-		Invites:        invitesSvc,
-		AuditRetention: auditRetention,
-		AuditWebhook:   auditWebhook,
-		AgentUpgrade:   agentUpgrade,
-		Prom:           promMetrics,
-		SelfUpdate:     selfUpdateChk,
-		UserPrefs:      userprefs.New(database),
-		Changelog:      dockmesh.Changelog,
-		SetupState:     setupState,
-		SetupCommit_:   setupCommit,
-		RestoreConfig:  cfg,
-		PublicURLs:     func() agents.Endpoints { return agentEndpoints(cfg, settingsStore) },
-		RequestRestart: requestRestart,
+		DB:              database,
+		Auth:            authSvc,
+		Audit:           auditSvc,
+		Docker:          dockerCli,
+		Stacks:          stacksMgr,
+		Deployments:     deployStore,
+		DeployHistory:   deployHistoryStore,
+		DeployTracker:   deployTracker,
+		Notifications:   notifSvc,
+		Notices:         noticesSvc,
+		Dependencies:    depStore,
+		Compose:         composeSvc,
+		LoginLimiter:    loginLimiter,
+		Scanner:         scannerCLI,
+		ScanStore:       scanStore,
+		Proxy:           proxySvc,
+		Updater:         updaterSvc,
+		StackLocks:      stackLocks,
+		Operations:      opsSvc,
+		UpdateWatcher:   updateWatcher,
+		OIDC:            oidcSvc,
+		SAML:            samlSvc,
+		LDAP:            ldapSvc,
+		OAuth2:          oauth2Svc,
+		Metrics:         metricsCol,
+		Notify:          notifySvc,
+		Alerts:          alertsSvc,
+		Backups:         backupSvc,
+		BackupTargets:   backupTargetStore,
+		Secrets:         secretsSvc,
+		Migrations:      migrationSvc,
+		Drains:          drainSvc,
+		Agents:          agentsSvc,
+		Hosts:           hostRegistry,
+		HostTags:        hostTagsSvc,
+		Roles:           rolesStore,
+		Settings:        settingsStore,
+		GlobalEnv:       globalEnvStore,
+		APITokens:       apiTokensSvc,
+		Registries:      registriesSvc,
+		GitSource:       gitSourceSvc,
+		Templates:       templatesSvc,
+		Invites:         invitesSvc,
+		AuditRetention:  auditRetention,
+		AuditWebhook:    auditWebhook,
+		AgentUpgrade:    agentUpgrade,
+		Prom:            promMetrics,
+		SelfUpdate:      selfUpdateChk,
+		UpdateInstaller: updateInstaller,
+		UserPrefs:       userprefs.New(database),
+		Changelog:       dockmesh.Changelog,
+		SetupState:      setupState,
+		SetupCommit_:    setupCommit,
+		RestoreConfig:   cfg,
+		PublicURLs:      func() agents.Endpoints { return agentEndpoints(cfg, settingsStore) },
+		RequestRestart:  requestRestart,
 		FinishSetup: func() error {
 			envPath := serverEnvFile(cfg.DBPath)
 			if envPath == "" {

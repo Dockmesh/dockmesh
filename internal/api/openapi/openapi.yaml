@@ -4093,6 +4093,60 @@ paths:
                 type: object
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /system/update/install:
+    get:
+      operationId: system.update_install_state
+      tags: [metrics]
+      summary: State of the update install started last
+      description: |
+        In-memory state of the install this server process started;
+        `idle` after a restart. The outcome of an install that restarted
+        the server is reported as an admin notice instead. Needs
+        `system.upgrade`.
+      responses:
+        "200":
+          description: Install state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UpdateInstallState"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: system.update_install
+      tags: [metrics]
+      summary: Install a newer release through the root updater
+      description: |
+        Downloads the release archive, `checksums.txt` and its minisign
+        signature into the update directory and checks them, then waits up
+        to 10 minutes for running stack operations on every host, holds all
+        stacks and asks the root updater (`dockmesh-update.service`) to
+        install the release. The updater checks everything again, restarts
+        the server on the new version and rolls back binary, units and
+        database when the new version does not report healthy within 180 s.
+        Returns as soon as the download started. Needs `system.upgrade`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: {type: string, description: "Release tag, e.g. v0.6.1; must be newer than the running version.", example: v0.6.1}
+      responses:
+        "202":
+          description: Install started.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UpdateInstallState"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Another install is running, or the root updater is not installed on this host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /system/backup-key/export:
     get:
       operationId: system.backup_key_export
@@ -9676,6 +9730,14 @@ components:
               fixed_in: {type: string}
               type: {type: string}
               url: {type: string}
+    UpdateInstallState:
+      type: object
+      required: [phase]
+      properties:
+        phase: {type: string, enum: [idle, downloading, waiting_for_stacks, applying, failed]}
+        version: {type: string}
+        error: {type: string}
+        started: {type: string, format: date-time}
     HostMetricsSample:
       type: object
       required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]

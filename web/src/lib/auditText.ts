@@ -133,6 +133,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'system.restore_discard': [m.audit_act_system_restore_discard, m.audit_sen_system_restore_discard],
   'system.restore_stage': [m.audit_act_system_restore_stage, m.audit_sen_system_restore_stage],
   'system.update_check': [m.audit_act_system_update_check, m.audit_sen_system_update_check],
+  'system.update_install': [m.audit_act_system_update_install, m.audit_sen_system_update_install],
   'template.create': [m.audit_act_template_create, m.audit_sen_template_create],
   'template.update': [m.audit_act_template_update, m.audit_sen_template_update],
   'template.delete': [m.audit_act_template_delete, m.audit_sen_template_delete],

@@ -1,0 +1,3 @@
+kind: Added
+body: 'POST /api/v1/system/update/install installs a newer release through the root updater: the server downloads and checks it, waits up to 10 minutes for running stack operations, and admins get a notice when the update is refused or rolled back'
+time: 2026-11-14T11:14:16.00944155Z

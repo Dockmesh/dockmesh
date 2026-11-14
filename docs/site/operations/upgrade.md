@@ -91,6 +91,25 @@ sudo install -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent.sh
 sudo systemctl restart dockmesh
 ```
 
+### Install through the API (root updater)
+
+From v0.6.0 the installer also sets up a root updater on Linux with systemd (`dockmesh-update.path` and `dockmesh-update.service`, see [`dockmesh update apply`](../reference/dockmesh-cli.md#update-apply)). Once it is there, a user with Settings & audit: Manage on everything can install a newer release through the API:
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"version":"v0.6.1"}' https://dockmesh.example.com/api/v1/system/update/install
+```
+
+1. The server downloads the archive, `checksums.txt` and its signature into `<data directory>/update/` and checks them. A bad signature or checksum stops here.
+2. It waits up to 10 minutes for running deploys, scales, image updates and other stack operations on every host to finish; new ones are refused with "server update" in the meantime. If a stack is still busy after 10 minutes, nothing is installed.
+3. It asks the root updater to install the release. The updater checks the files again on its own copy, stops the server, snapshots the database, installs the new binaries and units and starts the server. If the new version does not answer within 180 seconds, it puts back the old binaries, units and database and starts the old version.
+
+`GET /api/v1/system/update/install` shows how far an install got until the server restarts. Afterwards admins see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
+
+> **Note:** A rollback puts back the database as it was before the update. Everything changed in Dockmesh while the new version was running, at most about 180 seconds, is lost, audit entries included.
+
+The installer one-liner keeps working as before and is the only way to install the first v0.6.0 release.
+
 ## What happens on the first start
 
 Before it serves requests, the server brings the database up to date:

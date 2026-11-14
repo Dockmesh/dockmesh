@@ -166,6 +166,7 @@ var categories = map[string]string{
 	"settings.agent_public_url_update": CategorySystem,
 	"settings.update_channel_update":   CategorySystem,
 	"system.update_check":              CategorySystem,
+	"system.update_install":            CategorySystem,
 	"system.restore_stage":             CategorySystem,
 	"system.restore_apply":             CategorySystem,
 	"system.restore_discard":           CategorySystem,

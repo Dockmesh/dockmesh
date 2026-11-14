@@ -169,7 +169,7 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
-	s.goPending(func(runCtx context.Context) { s.deployAllPending(runCtx) })
+	s.goPending(func(runCtx context.Context) { s.deployAllPending(runCtx, nil) })
 }
 
 func (s *Service) Stop() {
@@ -600,13 +600,16 @@ func (s *Service) SetDeployNow(fn DeployFunc) { s.deployNow = fn }
 
 // StackReleased deploys the stack's pending commit, if any, now that its
 // lock was released; an empty stack name stands for every stack.
-func (s *Service) StackReleased(stackName string) {
-	s.goPending(func(ctx context.Context) { s.stackReleased(ctx, stackName) })
+func (s *Service) StackReleased(stackName string, onTarget func(context.Context, string) bool) {
+	s.goPending(func(ctx context.Context) { s.stackReleased(ctx, stackName, onTarget) })
 }
 
-func (s *Service) stackReleased(ctx context.Context, stackName string) {
+// stackReleased deploys the pending commit of stackName. An empty name
+// means a maintenance lock ended: every pending stack onTarget accepts is
+// tried.
+func (s *Service) stackReleased(ctx context.Context, stackName string, onTarget func(context.Context, string) bool) {
 	if stackName == "" {
-		s.deployAllPending(ctx)
+		s.deployAllPending(ctx, onTarget)
 		return
 	}
 	var n int
@@ -658,13 +661,16 @@ func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
 	}
 }
 
-func (s *Service) deployAllPending(ctx context.Context) {
+func (s *Service) deployAllPending(ctx context.Context, onTarget func(context.Context, string) bool) {
 	pending, err := s.PendingDeploys(ctx)
 	if err != nil {
 		slog.Warn("gitsource: list pending deploys", "err", err)
 		return
 	}
 	for name := range pending {
+		if onTarget != nil && !onTarget(ctx, name) {
+			continue
+		}
 		s.DeployPending(ctx, name)
 	}
 }
