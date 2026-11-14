@@ -46,6 +46,7 @@ type installFixture struct {
 	inst    *Installer
 	locks   *stacklock.Locks
 	notices *notices.Service
+	audited []rootupdate.Result
 }
 
 func newInstallFixture(t *testing.T) *installFixture {
@@ -75,6 +76,7 @@ func newInstallFixture(t *testing.T) *installFixture {
 			return []stacklock.Target{stacklock.Host("local")}, nil
 		},
 		Notices:          f.notices,
+		Audit:            func(_ context.Context, res rootupdate.Result) { f.audited = append(f.audited, res) },
 		UpdaterInstalled: func() bool { return true },
 		BaseURL:          hs.URL + "/",
 		Verifier:         v,
@@ -308,6 +310,15 @@ func TestCheckResultNotices(t *testing.T) {
 			_, err := os.Stat(filepath.Join(f.dir, rootupdate.ResultFile))
 			if tt.keep != (err == nil) {
 				t.Fatalf("result file kept = %v, want %v", err == nil, tt.keep)
+			}
+			if len(f.audited) != 1 || f.audited[0].Status != tt.status || f.audited[0].From != "v0.6.0" ||
+				f.audited[0].To != "v0.6.1" || f.audited[0].Reason != "why" {
+				t.Fatalf("audited %+v, want the result once", f.audited)
+			}
+			// A kept result is read again on the next start; it is audited once.
+			f.inst.CheckResult(context.Background())
+			if len(f.audited) != 1 {
+				t.Fatalf("audited %d times, want once", len(f.audited))
 			}
 		})
 	}

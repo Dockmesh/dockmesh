@@ -90,6 +90,12 @@ const (
 	ActionBackupRun          = "backup.run"
 	ActionBackupRestore      = "backup.restore"
 
+	// Outcomes of a server update, written from the root updater's result.
+	ActionUpdateApplied    = "system.update_applied"
+	ActionUpdateRefused    = "system.update_refused"
+	ActionUpdateRolledBack = "system.update_rolled_back"
+	ActionUpdateFailed     = "system.update_failed"
+
 	// ActionScopeDenied is logged when none of the caller's assignments
 	// allows the request on the resource it acts on.
 	ActionScopeDenied = "auth.scope_denied"
