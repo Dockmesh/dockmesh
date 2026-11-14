@@ -1258,6 +1258,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if len(depsDeployed) > 0 {
 		out["dependencies_deployed"] = depsDeployed
 	}
+	if len(res.ReplicasIgnored) > 0 {
+		out["replicas_ignored"] = res.ReplicasIgnored
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
