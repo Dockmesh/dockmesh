@@ -4458,6 +4458,8 @@
   "setup_add_docker_before": "Add to the",
   "setup_add_docker_hint": "needed to talk to the Docker daemon",
   "setup_tls_fingerprint_hint": "The certificate of this page has this fingerprint. It must match the one the installer printed and the one your browser shows; if it does not, stop here.",
+  "setup_restarting": "Dockmesh restarts with its new configuration…",
+  "setup_restart_timeout": "Dockmesh did not come back within 3 minutes. Check the service on the server: sudo journalctl -u dockmesh -n 50",
   "setup_admin_hint": "A local admin with full rights, which you can disable once single sign-on works.",
   "setup_aria_service_user": "Service user",
   "setup_aria_steps": "Setup steps",

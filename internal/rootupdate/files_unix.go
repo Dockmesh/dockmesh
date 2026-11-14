@@ -218,3 +218,14 @@ func RemoveServiceFile(dir string, uid uint32, name string) error {
 	defer root.Close()
 	return removeEntry(root, name)
 }
+
+// WriteServiceFile replaces name in the service's update directory with
+// data, through the same checked handle ReadServiceFile uses.
+func WriteServiceFile(dir string, uid uint32, name string, data []byte) error {
+	root, err := openRequestDir(dir, uid)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return writeServiceFile(root, name, data)
+}

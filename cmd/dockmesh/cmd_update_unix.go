@@ -65,7 +65,23 @@ func updateApply(args []string) error {
 	if err := checkUnitBinary(binary); err != nil {
 		return err
 	}
+	reqDir := layout.UpdateRequestDir(filepath.Clean(*dataDir))
+	if requestType(reqDir, uid) == rootupdate.RequestSetupApply {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		_, gid, err := serviceAccount()
+		if err != nil {
+			return err
+		}
+		a := &setupApplier{dataDir: filepath.Clean(*dataDir), reqDir: reqDir, uid: uid, gid: gid, binary: binary,
+			log: slog.New(slog.NewTextHandler(os.Stderr, nil)), now: time.Now}
+		return a.run(ctx)
+	}
 	envFile, err := unitConfigFile("")
+	if errors.Is(err, errNoConfig) {
+		// A server in setup mode has nothing to update yet.
+		return nil
+	}
 	if err != nil {
 		return err
 	}

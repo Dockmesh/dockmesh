@@ -21,6 +21,13 @@ import (
 
 // runSetupCmd handles `dockmesh setup <subcommand>`.
 func runSetupCmd(args []string) {
+	if len(args) > 0 && args[0] == "materialize" {
+		if err := runSetupMaterialize(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) == 0 || args[0] != "new-code" {
 		fmt.Fprintln(os.Stderr, "usage: dockmesh setup new-code")
 		os.Exit(2)

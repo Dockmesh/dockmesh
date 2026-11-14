@@ -1365,6 +1365,11 @@ else
     fi
     warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
     ok "env file        $ENV_FILE (kept)"
+  elif [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$DATA_DIR" = "/var/lib/dockmesh" ]; then
+    # A new install has no config: setup mode runs on the defaults and
+    # the setup wizard writes $ETC_ENV_FILE.
+    ENV_FILE=""
+    ok "config          $ETC_ENV_FILE, written by the setup wizard"
   else
     if [ "$OS" = "linux" ]; then
       write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
@@ -1376,7 +1381,7 @@ else
 
   # Service unit. Linux = systemd; macOS = launchd.
   if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-    if ! write_unit --env-file "$ENV_FILE"; then
+    if ! write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
       if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ]; then
         warn "unit kept as it was"
       else

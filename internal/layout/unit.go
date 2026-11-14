@@ -68,6 +68,9 @@ var ErrBadUnitValue = errors.New("value not allowed in a systemd unit")
 type ServerUnit struct {
 	Binary  string
 	EnvFile string
+	// EnvOptional starts the service while EnvFile does not exist yet: a
+	// new install runs setup mode until setup writes it.
+	EnvOptional bool
 	// DataDir must exist when the service starts.
 	DataDir string
 	// WritablePaths are further directories the service writes: stacks,
@@ -94,6 +97,7 @@ type AgentUnit struct {
 type unitValues struct {
 	Binary              string
 	EnvFile             string
+	EnvOptional         bool
 	User                string
 	ReadWritePaths      []string
 	SupplementaryGroups []string
@@ -107,6 +111,7 @@ func RenderServerUnit(u ServerUnit) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	v.EnvOptional = u.EnvOptional
 	return render("dockmesh.service.tmpl", v)
 }
 

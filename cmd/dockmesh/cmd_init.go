@@ -188,7 +188,7 @@ func runInitCmd(args []string) {
 	if err := writeEnvFile(dd, cfg); err != nil {
 		die("write env file", err)
 	}
-	initOK("env file written           " + filepath.Join(dd, "dockmesh.env"))
+	initOK("env file written           " + initEnvPath(dd))
 
 	// Show the generated password in a bordered box, positioned so it
 	// can't get lost in subsequent log lines. We only print this when
@@ -273,7 +273,7 @@ func runInitCmd(args []string) {
 			"    Dashboard   " + accent(bURL),
 			"    Login       " + admin + "  /  " + passwordForSummary(password, generated),
 			"",
-			"    Start       " + accent("sudo dockmesh serve --env-file "+filepath.Join(dd, "dockmesh.env")),
+			"    Start       " + accent("sudo dockmesh serve --env-file "+initEnvPath(dd)),
 			"",
 		}
 	}
@@ -671,7 +671,13 @@ func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error)
 	if err := db.Migrate(database); err != nil {
 		return false, err
 	}
-	authSvc := auth.NewService(database, nil)
+	// The service only creates the account here and never signs a token;
+	// the server reads its own secret from secrets.env.
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return false, err
+	}
+	authSvc := auth.NewService(database, secret)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := authSvc.CreateUser(ctx, username, "", password, "admin"); err != nil {
@@ -693,7 +699,7 @@ func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error)
 // find its own JWT-secret file and crash-looped. Fixed by writing
 // every path explicitly.
 func writeEnvFile(dataDir string, cfg *config.Config) error {
-	envPath := filepath.Join(dataDir, "dockmesh.env")
+	envPath := initEnvPath(dataDir)
 	assetDir := resolveAssetDir()
 	agentSANs := deriveAgentSANs(cfg.BaseURL, cfg.AgentPublicURL)
 	body := fmt.Sprintf(strings.Join([]string{
@@ -726,7 +732,44 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 		cfg.SecretsPath, cfg.SecretsKeyPath, cfg.AuditGenesisPath,
 		assetDir, assetDir, agentSANs,
 	)
-	return os.WriteFile(envPath, []byte(body), 0o600)
+	if envPath != layout.ConfigFile {
+		return os.WriteFile(envPath, []byte(body), 0o600)
+	}
+	gid := configGID()
+	if err := layout.PrepareConfigDir(gid); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(layout.ConfigDir, ".dockmesh.env.init-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(body)
+	if err == nil {
+		err = tmp.Chmod(0o640)
+	}
+	if err == nil {
+		err = tmp.Chown(0, gid)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), envPath)
+}
+
+// initEnvPath is where init writes the config: the root-owned file in
+// /etc on Linux as root, else next to the data dir.
+func initEnvPath(dataDir string) string {
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		return layout.ConfigFile
+	}
+	return filepath.Join(dataDir, "dockmesh.env")
 }
 
 // deriveAgentSANs pulls the hostnames + IPs that need to end up in the
@@ -995,10 +1038,16 @@ func installSystemdUnitFile(dataDir string) (string, error) {
 		}
 	}
 	_ = runSilent("usermod", "-aG", "docker", "dockmesh")
+	// The config was written before the account existed.
+	if initEnvPath(dataDir) == layout.ConfigFile {
+		if gid := configGID(); gid != 0 {
+			_ = os.Chown(layout.ConfigFile, 0, gid)
+		}
+	}
 	_ = runSilent("chown", "-R", "dockmesh:dockmesh", dataDir)
 	_ = runSilent("chmod", "700", dataDir)
 
-	if _, err := writeServerUnit(filepath.Join(dataDir, "dockmesh.env")); err != nil {
+	if _, err := writeServerUnit(initEnvPath(dataDir)); err != nil {
 		return "", fmt.Errorf("%w (run dockmesh init as root)", err)
 	}
 	return layout.UnitFile, nil

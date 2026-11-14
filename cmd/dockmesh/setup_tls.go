@@ -23,8 +23,8 @@ const maxSetupCertHosts = 24
 
 // setupCertificate loads or issues the certificate setup mode serves, from
 // the PKI in the setup state directory.
-func setupCertificate(cfg *config.Config) (*tls.Certificate, error) {
-	dir, err := setup.EnsureStateDir(cfg.DataDir)
+func setupCertificate(dataDir, baseURL string) (*tls.Certificate, error) {
+	dir, err := setup.EnsureStateDir(dataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func setupCertificate(cfg *config.Config) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.EnsureUICert(setupCertHosts(cfg.BaseURL))
+	return m.EnsureUICert(setupCertHosts(baseURL))
 }
 
 // setupCertHosts are the names a browser on the LAN may use for this

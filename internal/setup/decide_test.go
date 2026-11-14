@@ -437,3 +437,60 @@ func TestCodeAllowed(t *testing.T) {
 		})
 	}
 }
+
+// TestRestartBeforeSetupFinished: a new install keeps everything setup mode
+// creates in its state dir, so a restart before setup-apply still decides
+// never set up, while that state dir never turns an install with data into
+// a new one.
+func TestRestartBeforeSetupFinished(t *testing.T) {
+	paths := config.ResolvePaths(func(k string) string {
+		if k == "DOCKMESH_DATA_DIR" {
+			return config.DefaultDataDir
+		}
+		return ""
+	})
+	state := StateDir(config.DefaultDataDir)
+	staged := []string{
+		filepath.Join(state, "data", "dockmesh.db"),
+		filepath.Join(state, "data", "secrets.env"),
+		filepath.Join(state, "data", "agents-ca.key"),
+		filepath.Join(state, "code-counters.json"),
+		filepath.Join(state, "stacks", "x", "compose.yaml"),
+		filepath.Join(config.DefaultDataDir, "update", "request"),
+	}
+	tests := []struct {
+		name  string
+		files []string
+		users int
+		want  Mode
+		fresh bool
+	}{
+		{name: "first start", want: NeverSetUp, fresh: true},
+		{name: "restart in setup mode", files: staged, want: NeverSetUp, fresh: true},
+		{name: "set up, state dir left", files: append([]string{paths.DBPath}, staged...), users: 1, want: SetUp},
+		{name: "config, state dir left", files: append([]string{layout.ConfigFile}, staged...), want: SetUp},
+		{name: "data without users, state dir left", files: append([]string{paths.SecretsPath}, staged...), want: SetUp},
+		{name: "failed apply set aside", files: append([]string{paths.DBPath + ".failed-20261114T220000Z", layout.ConfigFile + ".failed-20261114T220000Z"}, staged...), want: NeverSetUp, fresh: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, f := range tt.files {
+				touch(t, root, f)
+			}
+			p := probe(root, paths.DBPath)
+			p.Paths = paths
+			f := p.Scan()
+			if Fresh(f) != tt.fresh {
+				t.Errorf("Fresh = %v, want %v (%+v)", Fresh(f), tt.fresh, f)
+			}
+			f.Users = tt.users
+			if !f.DB {
+				f.Users = 0
+			}
+			if got := Decide(f); got != tt.want {
+				t.Errorf("Decide = %v, want %v (%+v)", got, tt.want, f)
+			}
+		})
+	}
+}

@@ -30,6 +30,14 @@ type CommitInput struct {
 		Password string `json:"password"`
 	} `json:"admin"`
 	PublicURL string `json:"public_url"`
+	// TLS is what a new install serves after setup; empty is the
+	// internal certificate on :8080.
+	TLS struct {
+		Mode     string `json:"mode,omitempty"`
+		HTTPAddr string `json:"http_addr,omitempty"`
+		CertFile string `json:"cert_file,omitempty"`
+		KeyFile  string `json:"key_file,omitempty"`
+	} `json:"tls,omitempty"`
 }
 
 // Validate returns the first user-input issue or nil. Cheaper than the

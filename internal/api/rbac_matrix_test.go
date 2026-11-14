@@ -44,6 +44,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/setup/code", gatePublic},
 	{"GET", "/api/v1/setup/preflight", gatePublic},
 	{"GET", "/api/v1/setup/server-info", gatePublic},
+	{"GET", "/api/v1/setup/disks", gatePublic},
 	{"GET", "/api/v1/setup/stream/{run_id}", gatePublic},
 	{"GET", "/api/v1/openapi.json", gatePublic},
 	{"GET", "/api/v1/openapi.yaml", gatePublic},
