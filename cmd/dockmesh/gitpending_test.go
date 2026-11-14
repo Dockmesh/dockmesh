@@ -145,7 +145,7 @@ func (e *pendingEnv) start(t *testing.T) {
 	}
 	svc = gitsource.New(e.db, nil, e.mgr, e.cache, g.deploy)
 	svc.SetDeployNow(g.deployNow)
-	e.locks.OnRelease(func(k stacklock.Key) { svc.StackReleased(k.Stack) })
+	e.locks.OnRelease(func(k stacklock.Key) { svc.StackReleased(k.Stack, gitTargetMatcher(g, k.Target)) })
 	e.svc = svc
 }
 
@@ -363,4 +363,37 @@ func TestGitPendingClearedByManualDeploy(t *testing.T) {
 	}
 	release()
 	e.noDeploy(t)
+}
+
+// TestGitPendingAfterMaintenanceOnlyOnItsHost covers the end of a
+// maintenance lock: only pending deploys on the released host are tried.
+func TestGitPendingAfterMaintenanceOnlyOnItsHost(t *testing.T) {
+	e := newPendingEnv(t)
+	release := e.hold(t)
+	e.commit(t, "2")
+	e.busySync(t)
+	release()
+	e.waitDeploy(t, `REV: "2"`)
+	e.waitNoPending(t)
+
+	e.hold(t)
+	e.commit(t, "3")
+	e.busySync(t)
+	// A fresh lock table, as after a restart, holds the pending commit
+	// without anything waking it up.
+	e.start(t)
+
+	other, err := e.locks.Maintenance(e.ctx, []stacklock.Target{stacklock.Host("agent-1")}, stacklock.OpServerUpdate, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other()
+	e.noDeploy(t)
+
+	local, err := e.locks.Maintenance(e.ctx, []stacklock.Target{stacklock.Host("local")}, stacklock.OpServerUpdate, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local()
+	e.waitDeploy(t, `REV: "3"`)
 }

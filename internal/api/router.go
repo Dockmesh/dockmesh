@@ -796,6 +796,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermSystemUpgrade))
 				r.Post("/system/secrets/rotate", h.RotateSecretsKey)
 				r.Post("/system/update-check", h.CheckUpdateNow)
+				r.Get("/system/update/install", h.GetUpdateInstall)
+				r.Post("/system/update/install", h.InstallUpdate)
 				// Restoring the whole system replaces every user, key and
 				// stack, so it needs the same permission.
 				r.Get("/restore/system", h.GetStagedRestore)

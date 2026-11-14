@@ -10,15 +10,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/semver"
 )
-
-var tagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 const journalName = "journal.json"
 
@@ -168,7 +165,7 @@ func (u *updater) readRequest() (string, error) {
 		return "", refused(StepRequest, "request is not valid JSON")
 	}
 	to := r.Version
-	if !tagPattern.MatchString(to) {
+	if !releasesig.ValidTag(to) {
 		return "", refused(StepRequest, "%q is not a release tag", to)
 	}
 	if _, ok := semver.Parse(u.cfg.Installed); !ok {

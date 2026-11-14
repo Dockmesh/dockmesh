@@ -34,6 +34,10 @@ const (
 
 var tagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
+// ValidTag reports whether tag has the form of a release tag, v1.2.3 or
+// v1.2.3-rc.1.
+func ValidTag(tag string) bool { return tagPattern.MatchString(tag) }
+
 var (
 	ErrSignature = errors.New("release signature does not verify")
 	ErrTag       = errors.New("release signature is for a different release")
