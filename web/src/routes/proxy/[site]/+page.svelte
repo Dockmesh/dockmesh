@@ -18,6 +18,7 @@
   import { ExternalLink } from 'lucide-svelte';
   import SiteModal from '../_SiteModal.svelte';
   import OptionsEditor from '../_OptionsEditor.svelte';
+  import PathsTab from '../_PathsTab.svelte';
   import { TLS_LABEL, certNeedsAttention, optionSummary, type Site, type ACMEEvent } from '../_site';
   import { toForm, toPayload, changedGroups, parseFieldError, type OptionsForm } from '../_options';
 
@@ -33,8 +34,8 @@
   let previewErr = $state('');
   let showEdit = $state(false);
 
-  type TabKey = 'overview' | 'options' | 'config';
-  const TAB_KEYS: TabKey[] = ['overview', 'options', 'config'];
+  type TabKey = 'overview' | 'paths' | 'options' | 'config';
+  const TAB_KEYS: TabKey[] = ['overview', 'paths', 'options', 'config'];
   const initialTab = page.url.searchParams.get('tab') as TabKey | null;
   let tab = $state<TabKey>(initialTab && TAB_KEYS.includes(initialTab) ? initialTab : 'overview');
 
@@ -250,6 +251,7 @@
       label={m.proxy_site_sections()}
       tabs={[
         { key: 'overview', label: m.common_overview() },
+        { key: 'paths', label: m.proxy_tab_paths(), count: site.paths?.length || null },
         { key: 'options', label: m.proxy_col_options(), count: opts.length || null, dot: changed.length > 0 },
         { key: 'config', label: m.proxy_tab_config() }
       ]}
@@ -277,6 +279,10 @@
           {/if}
           <dt>{m.proxy_col_options()}</dt>
           <dd>{opts.length ? opts.join(' · ') : m.proxy_oe_defaults()} <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tab = 'options')}>{canUpdate ? m.common_edit() : m.proxy_show()}</button></dd>
+          {#if site.paths?.length}
+            <dt>{m.proxy_tab_paths()}</dt>
+            <dd><button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tab = 'paths')}>{m.proxy_paths_overview({ n: site.paths.length })}</button></dd>
+          {/if}
           <dt>{m.common_created()}</dt><dd title={site.created_at ? fmtDateTime(site.created_at) : ''}>{site.created_at ? fmtAgo(site.created_at) : '—'}</dd>
           {#if site.updated_at && site.updated_at !== site.created_at}
             <dt>{m.proxy_changed()}</dt><dd title={fmtDateTime(site.updated_at)}>{fmtAgo(site.updated_at)}</dd>
@@ -311,6 +317,14 @@
       </section>
     </div>
 
+    {:else if tab === 'paths'}
+      <PathsTab {site} readonly={!canUpdate} onoptions={() => (tab = 'options')} onsaved={(u) => {
+        const clean = changed.length === 0;
+        site = { ...site!, ...u };
+        base = toForm(u.options);
+        if (clean) form = toForm(u.options);
+        resetPreview();
+      }} />
     {:else if tab === 'options'}
       <section>
         <div class="sec-h">

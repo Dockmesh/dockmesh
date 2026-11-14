@@ -357,8 +357,8 @@
               {#if op && isActive(op)}
                 <OpProgress {op} compact />
               {:else}
-                <span class="px-tls">{TLS_LABEL[r.tls_mode]}{#if skipsVerify(r)} <span class="dm-badge dm-badge-warning" title={m.proxy_tls_unverified_title()}>{m.proxy_tls_unverified()}</span>{/if}</span>
-                <small class:warn={r.enabled && certNeedsAttention(r)}>{httpsNote(r)}</small>
+                <span class="px-tls">{TLS_LABEL[r.tls_mode]}</span>
+                <small class:warn={r.enabled && certNeedsAttention(r)}>{#if skipsVerify(r)}<span class="px-unv" title={m.proxy_tls_unverified_title()}>{m.proxy_tls_unverified()}</span> · {/if}{httpsNote(r)}</small>
               {/if}
             </span>
             <span role="cell" class="dm-dim" title={opts.join(', ')}>
@@ -447,6 +447,7 @@
   .px-notice p { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-sm); }
   .px-up { font-size: 12.5px; }
   .px-tls { font-weight: 500; }
+  .px-unv { color: var(--warn); font-weight: 600; }
   .dm-nm small.warn, .dm-num.warn { color: var(--warn); }
   .num-h, .num-c { text-align: right; }
   .px-foot { margin: 8px 0 0; }

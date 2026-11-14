@@ -5,6 +5,7 @@
   import { GROUPS, warnings, isDefault, groupOfField, type OptionsForm, type GroupKey, type HeaderRow } from './_options';
   import UpstreamTLSFields from './_UpstreamTLSFields.svelte';
   import FallbackFields from './_FallbackFields.svelte';
+  import HeaderRows from './_HeaderRows.svelte';
 
   // Per-site options, grouped. With `collapsible` each group is a closed
   // section unless it differs from Caddy's defaults or has an error.
@@ -32,10 +33,6 @@
   const SECRET_HINT = m.proxy_oe_secret_hint();
   // Keeps password managers from storing these as a Dockmesh login.
   const NO_MANAGER = { 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-bwignore': '' };
-
-  function addHeader(list: HeaderRow[]) {
-    list.push({ name: '', value: '', secret: false, valueSet: false });
-  }
 </script>
 
 {#snippet err(field: string)}
@@ -53,26 +50,7 @@
 {#snippet headerRows(list: HeaderRow[], field: string, label: string, secrets: boolean)}
   <div class="dm-field wide">
     <span class="lbl">{label}</span>
-    {#each list as h, i (i)}
-      <div class="hrow" class:nosecret={!secrets}>
-        <input class="dm-input dm-mono" bind:value={h.name} placeholder={m.proxy_oe_header_name_ph()} aria-label={m.proxy_oe_row_name({ label })} disabled={readonly} autocomplete="off" />
-        {#if h.secret}
-          <input class="dm-input dm-mono" type="password" bind:value={h.value} aria-label={m.proxy_oe_row_value({ label })}
-            placeholder={h.valueSet ? SECRET_HINT : m.proxy_oe_value_ph()} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
-        {:else}
-          <input class="dm-input dm-mono" bind:value={h.value} placeholder={m.proxy_oe_value_ph()} aria-label={m.proxy_oe_row_value({ label })} disabled={readonly} autocomplete="off" />
-        {/if}
-        {#if secrets}<label class="chk sm" title={h.secret && h.valueSet && !h.value ? m.proxy_oe_secret_reenter() : m.proxy_oe_secret_writeonly()}>
-          <input type="checkbox" bind:checked={h.secret} disabled={readonly || (h.secret && h.valueSet && !h.value)} /> {m.proxy_oe_secret()}
-        </label>{/if}
-        {#if !readonly}
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label={m.proxy_oe_remove_header()} onclick={() => list.splice(i, 1)}><X size={13} /></button>
-        {/if}
-      </div>
-    {/each}
-    {#if !readonly}
-      <button type="button" class="dm-btn dm-btn-sm" onclick={() => addHeader(list)}><Plus size={13} /> {m.proxy_oe_add_header()}</button>
-    {:else if !list.length}<span class="dm-dim">{m.common_none()}</span>{/if}
+    <HeaderRows bind:list={() => list, () => {}} {label} {secrets} {readonly} />
     {@render err(field)}
   </div>
 {/snippet}
@@ -306,7 +284,6 @@
   .chk { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); white-space: nowrap; }
   .chk.sm { font-size: var(--fs-xs); color: var(--muted); }
   .hrow { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
-  .hrow.nosecret { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto; }
   .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .size { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 6px; }
   .ta { resize: vertical; min-height: 0; }
