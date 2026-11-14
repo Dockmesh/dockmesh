@@ -1,0 +1,3 @@
+kind: Changed
+body: Server and agent units add the group of the Docker socket when that is not `docker` (Synology, Podman), so the service reaches Docker without running as root
+time: 2026-11-14T10:30:18.219278236Z

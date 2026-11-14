@@ -167,7 +167,7 @@ func writeServerUnit(envFlag string) (bool, error) {
 		EnvFile:             envFile,
 		DataDir:             paths.DataDir,
 		WritablePaths:       layout.ServerWritablePaths(paths, extra...),
-		SupplementaryGroups: supplementaryGroups(),
+		SupplementaryGroups: supplementaryGroups(envFile, env),
 	}
 	// Render first: a refused value must leave /etc/dockmesh as it was too.
 	if err := layout.CheckServerUnit(unit); err != nil {
@@ -221,12 +221,24 @@ func ensureServiceGroup() (int, error) {
 }
 
 // supplementaryGroups gives the service the docker group even when the
-// account was created before Docker was installed.
-func supplementaryGroups() []string {
-	if _, ok := lookupGID("docker"); ok {
-		return []string{"docker"}
+// account was created before Docker was installed, and the group of the
+// Docker socket when that is not docker. DOCKER_HOST is only followed when
+// it comes from a file only root may write: in the legacy env file it is
+// the service account's choice.
+func supplementaryGroups(envFile string, env map[string]string) []string {
+	dockerGID, ok := lookupGID("docker")
+	if !ok {
+		dockerGID = -1
 	}
-	return nil
+	socket := layout.DefaultDockerSocket
+	if layout.RootOwnedFile(envFile) {
+		socket = layout.DockerSocketPath(env)
+	}
+	groups, warn := layout.SocketGroups(socket, dockerGID)
+	if warn != "" {
+		fmt.Fprintln(os.Stderr, "warning:", warn)
+	}
+	return groups
 }
 
 func lookupGID(name string) (int, bool) {

@@ -10,7 +10,7 @@ The recommended path is the installer script on a Linux host that already runs D
 | Requirement | Details |
 |---|---|
 | Operating system | Linux on amd64 or arm64. macOS (amd64 or arm64) is also handled by the installer but is less tested; the setup wizard warns on anything other than Linux. The server and agent do not run on Windows. |
-| Docker | A running Docker Engine reachable at `/var/run/docker.sock`. 20.10 or newer is recommended. The installer does not install Docker; it prints the command for your distribution if Docker is missing. On macOS, enable **Allow the default Docker socket to be used** in Docker Desktop's advanced settings. |
+| Docker | A running Docker Engine reachable at `/var/run/docker.sock`. 20.10 or newer is recommended. The installer does not install Docker; it prints the command for your distribution if Docker is missing. When the socket belongs to another group than `docker` (Synology, Podman), the server and agent units get that group as well. On macOS, enable **Allow the default Docker socket to be used** in Docker Desktop's advanced settings. |
 | Tools | `curl`, `tar`, and `sha256sum` (or `shasum` on macOS). systemd is optional; without it the server has to be started by hand. |
 | Privileges | root or `sudo`. |
 | Ports | `8080/tcp` for the web UI and API. `8443/tcp` for remote agents, only needed if you add remote hosts. If you enable the reverse proxy, its Caddy container binds `80` and `443` on the host. See [Ports](../reference/ports.md). |

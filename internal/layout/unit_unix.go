@@ -9,7 +9,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -188,4 +190,81 @@ func checkResolved(u ServerUnit) error {
 		}
 	}
 	return nil
+}
+
+// privilegedGroups are never handed to a service through its socket:
+// each of them is root, or reads secrets or raw disks, on its own.
+var privilegedGroups = map[string]bool{
+	"root": true, "wheel": true, "sudo": true, "admin": true, "adm": true, "shadow": true, "disk": true,
+	"kmem": true, "lxd": true, "incus": true, "incus-admin": true, "libvirt": true, "kvm": true,
+	"microk8s": true, "systemd-journal": true, "tty": true, "input": true, "video": true,
+}
+
+// SocketGroups returns the supplementary groups a service needs for Docker:
+// "docker" when that group exists (dockerGID >= 0), and the numeric gid of
+// the socket when another group owns it, as on Synology or with Podman;
+// warn says why the socket's group was not added.
+func SocketGroups(socket string, dockerGID int) (groups []string, warn string) {
+	if dockerGID >= 0 {
+		groups = append(groups, "docker")
+	}
+	if socket == "" {
+		return groups, ""
+	}
+	resolved, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		return groups, ""
+	}
+	fi, err := os.Lstat(resolved)
+	if err != nil {
+		return groups, ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Gid) == dockerGID {
+		return groups, ""
+	}
+	gid := strconv.FormatUint(uint64(st.Gid), 10)
+	name := gid
+	if g, err := user.LookupGroupId(gid); err == nil {
+		name = g.Name
+	}
+	switch {
+	case fi.Mode()&os.ModeSocket == 0 || st.Uid != 0:
+		return groups, fmt.Sprintf("%q is not a socket owned by root; its group is not added", socket)
+	case !rootOnlyPath(socket) || !rootOnlyPath(resolved):
+		return groups, fmt.Sprintf("%q lies on a path other accounts may change; its group is not added", socket)
+	case st.Gid == 0 || privilegedGroups[name]:
+		return groups, fmt.Sprintf("%q belongs to group %s, which is never given to the service", socket, name)
+	}
+	return append(groups, gid), ""
+}
+
+// rootOnlyPath reports whether root owns every component of p, without
+// following symlinks, and no directory on it is writable by others.
+func rootOnlyPath(p string) bool {
+	for c := filepath.Clean(p); ; c = filepath.Dir(c) {
+		fi, err := os.Lstat(c)
+		if err != nil {
+			return false
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != 0 || fi.IsDir() && fi.Mode().Perm()&0o022 != 0 {
+			return false
+		}
+		if c == "/" {
+			return true
+		}
+	}
+}
+
+// RootOwnedFile reports whether root owns path and its directories and
+// nobody else may write them, so values read from it may steer what root
+// writes; a file in a directory another account owns could be swapped.
+func RootOwnedFile(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == 0 && fi.Mode().Perm()&0o022 == 0 && rootOnlyPath(filepath.Dir(path))
 }

@@ -182,3 +182,20 @@ func TestServerWritablePathsFollowOverrides(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestDockerSocketPath(t *testing.T) {
+	tests := []struct {
+		host, want string
+	}{
+		{"", DefaultDockerSocket},
+		{"unix:///run/podman/podman.sock", "/run/podman/podman.sock"},
+		{"unix:///var/run/../run/docker.sock", "/var/run/docker.sock"},
+		{"unix://relative.sock", ""},
+		{"tcp://10.0.0.1:2375", ""},
+	}
+	for _, tt := range tests {
+		if got := DockerSocketPath(map[string]string{"DOCKER_HOST": tt.host}); got != tt.want {
+			t.Errorf("DOCKER_HOST=%q: got %q, want %q", tt.host, got, tt.want)
+		}
+	}
+}

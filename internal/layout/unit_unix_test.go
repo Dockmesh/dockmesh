@@ -4,6 +4,7 @@ package layout
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,5 +209,70 @@ func TestWriteServerUnitRefusesSymlinkIntoSystemTree(t *testing.T) {
 	}
 	if _, err := os.Lstat(opts.UnitFile); !os.IsNotExist(err) {
 		t.Errorf("unit written: %v", err)
+	}
+}
+
+// A socket the test can create is never root's, so only the refusals and
+// the docker group run here; the accepted case needs root.
+func TestSocketGroups(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("runs as root: the test sockets would be root's")
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file.sock")
+	if err := os.WriteFile(file, nil, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(dir, "real.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	link := filepath.Join(dir, "link.sock")
+	if err := os.Symlink(sock, link); err != nil {
+		t.Fatal(err)
+	}
+	other := os.Getgid() + 1
+	tests := []struct {
+		name      string
+		socket    string
+		dockerGID int
+		want      []string
+		wantWarn  bool
+	}{
+		{"socket owned by docker", sock, os.Getgid(), []string{"docker"}, false},
+		{"regular file", file, other, []string{"docker"}, true},
+		{"socket not owned by root", sock, other, []string{"docker"}, true},
+		{"symlink to a socket not owned by root", link, -1, nil, true},
+		{"no socket", filepath.Join(dir, "missing.sock"), other, []string{"docker"}, false},
+		{"DOCKER_HOST is not a unix socket", "", -1, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, warn := SocketGroups(tt.socket, tt.dockerGID)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+			if (warn != "") != tt.wantWarn {
+				t.Errorf("warn = %q", warn)
+			}
+		})
+	}
+}
+
+func TestRootOwnedFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("runs as root")
+	}
+	f := filepath.Join(t.TempDir(), "dockmesh.env")
+	if err := os.WriteFile(f, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if RootOwnedFile(f) {
+		t.Error("a file of the test user counts as root's")
+	}
+	if !RootOwnedFile("/etc/passwd") {
+		t.Error("/etc/passwd does not count as root's")
 	}
 }
