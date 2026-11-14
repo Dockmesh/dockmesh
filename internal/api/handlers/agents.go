@@ -203,7 +203,11 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "this host's agent is still installing an earlier upgrade; try again once it has reconnected")
 		return
 	}
-	if errors.Is(err, agents.ErrNoAgentBinary) {
+	if errors.Is(err, agents.ErrHostBusy) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, agents.ErrNoAgentBinary) || errors.Is(err, agents.ErrNoRelease) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}

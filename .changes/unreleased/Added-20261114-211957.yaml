@@ -1,0 +1,3 @@
+kind: Added
+body: GET /api/v1/agents reports each connected agent's install layout (legacy or managed)
+time: 2026-11-14T21:19:57.324375602Z

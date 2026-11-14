@@ -110,9 +110,14 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hello.MirroredEnv {
 		h.svc.raiseEnvMirrorNotice(r.Context(), agent.ID, agent.Name)
 	}
+	if hello.UpdateResult != nil && hello.HelloLayout() == LayoutManaged {
+		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, *hello.UpdateResult)
+	} else if agentIsUpToDate(ag) {
+		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, AgentUpdateResult{Status: "updated"})
+	}
 
 	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname,
-		"version", hello.Version, "protocol", hello.ProtocolVersion)
+		"version", hello.Version, "protocol", hello.ProtocolVersion, "layout", hello.HelloLayout())
 
 	welcome, _ := json.Marshal(WelcomePayload{
 		AgentID:         agent.ID,

@@ -83,6 +83,9 @@ func main() {
 		case "status":
 			runStatusCmd()
 			return
+		case "update":
+			runUpdateCmd(os.Args[2:])
+			return
 		}
 	}
 	insecureEnroll := os.Getenv("DOCKMESH_INSECURE_ENROLL") == "true"
@@ -113,6 +116,7 @@ func main() {
 		slog.Error("data dir", "err", err)
 		os.Exit(1)
 	}
+	agentLayout = detectLayout(cfg.dataDir)
 	legacyOpenBinDir(cfg.dataDir)
 
 	certPath := filepath.Join(cfg.dataDir, "agent.crt")
@@ -256,6 +260,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		Capabilities:    agentCapabilities,
 		MirroredEnv:     hasMirroredEnv(dataDir()),
 		Daemon:          daemonInfo,
+		Layout:          agentLayout,
+		UpdateResult:    lastUpdateResult(dataDir()),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -275,12 +281,19 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	var welcome agents.WelcomePayload
 	_ = json.Unmarshal(f.Payload, &welcome)
 	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName,
-		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion)
+		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion, "layout", agentLayout)
+	clearUpdateResult(dataDir(), hello.UpdateResult)
+	if agentLayout == agents.LayoutManaged {
+		markRunning(dataDir())
+	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(serverSilence))
 
 	ctxConn, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if agentLayout == agents.LayoutManaged {
+		go reconnectForResult(ctxConn, conn, dataDir())
+	}
 	// A failed write closes the socket so the read loop doesn't wait on
 	// a dead connection.
 	go func() {
@@ -1206,6 +1219,11 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqAgentUpgrade:
 		var req agents.AgentUpgradeReq
 		_ = json.Unmarshal(f.Payload, &req)
+		if agentLayout == agents.LayoutManaged {
+			// The root oneshot stops and restarts this process.
+			respond(conn, f.ID, map[string]string{"status": "upgrading"}, managedUpgrade(dataDir(), req))
+			break
+		}
 		err := agentSelfUpgrade(req)
 		respond(conn, f.ID, map[string]string{"status": "upgrading"}, err)
 		if err == nil {

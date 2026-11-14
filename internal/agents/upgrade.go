@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -67,7 +68,30 @@ type UpgradeController struct {
 	lastWaveAt time.Time
 	attempts   map[string]upgradeAttempt
 	now        func() time.Time
+
+	locks   *stacklock.Locks
+	release *ReleaseCache
+	// lockWait bounds the wait for running stack operations on the host;
+	// holdMax how long new ones stay refused after the dispatch while the
+	// agent restarts.
+	lockWait       time.Duration
+	manualLockWait time.Duration
+	holdMax        time.Duration
 }
+
+// Waits around an agent update; see UpgradeController.lockWait.
+const (
+	agentUpdateLockWait       = 10 * time.Minute
+	agentUpdateManualLockWait = 30 * time.Second
+	agentUpdateHoldMax        = 5 * time.Minute
+)
+
+// SetLocks makes every agent update wait for running stack operations on
+// its host and hold new ones until the agent is back.
+func (c *UpgradeController) SetLocks(l *stacklock.Locks) { c.locks = l }
+
+// SetReleaseCache sets where managed agents get the signed release from.
+func (c *UpgradeController) SetReleaseCache(r *ReleaseCache) { c.release = r }
 
 // Automatic upgrades stop for an agent after maxAutoUpgradeAttempts
 // dispatches of the same target binary that didn't leave it up to date,
@@ -88,6 +112,9 @@ var (
 	// ErrAgentUpgrading is returned while the agent is still replacing
 	// itself after an earlier request.
 	ErrAgentUpgrading = errors.New("the agent is already upgrading")
+	// ErrHostBusy is returned when stack operations on the agent's host
+	// were still running after the wait.
+	ErrHostBusy = errors.New("stack operations are running on this host; the agent is updated once they finished")
 	// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
 	errUpgradeBackoff = errors.New("automatic upgrade backed off")
 )
@@ -104,6 +131,10 @@ func NewUpgradeController(svc *Service, settings SettingsStore) *UpgradeControll
 		settings: settings,
 		attempts: map[string]upgradeAttempt{},
 		now:      time.Now,
+
+		lockWait:       agentUpdateLockWait,
+		manualLockWait: agentUpdateManualLockWait,
+		holdMax:        agentUpdateHoldMax,
 	}
 }
 
@@ -274,12 +305,19 @@ func (c *UpgradeController) UpgradeOne(ctx context.Context, id string) (*AgentUp
 }
 
 // buildUpgradeReq picks the bundled binary for the agent's architecture
-// and attaches its SHA-256, which the agent verifies before replacing
-// itself.
-func (c *UpgradeController) buildUpgradeReq(ag *ConnectedAgent) (*AgentUpgradeReq, error) {
+// and attaches its SHA-256, which a legacy agent verifies before replacing
+// itself. A managed agent gets only the version; the signed release it
+// fetches is put in the release cache first.
+func (c *UpgradeController) buildUpgradeReq(ctx context.Context, ag *ConnectedAgent) (*AgentUpgradeReq, error) {
 	arch := ag.Hello.Arch
 	if arch == "" {
 		arch = runtime.GOARCH
+	}
+	if ag.Hello.HelloLayout() == LayoutManaged {
+		if err := c.release.Ensure(ctx, arch); err != nil {
+			return nil, err
+		}
+		return &AgentUpgradeReq{Version: version.Version}, nil
 	}
 	name, err := AgentBinaryName(arch)
 	if err != nil {
@@ -294,6 +332,15 @@ func (c *UpgradeController) buildUpgradeReq(ag *ConnectedAgent) (*AgentUpgradeRe
 		Version:   version.Version,
 		SHA256:    sum,
 	}, nil
+}
+
+// attemptTarget identifies what an attempt dispatched, so a new build
+// resets the back-off.
+func attemptTarget(req *AgentUpgradeReq) string {
+	if req.SHA256 != "" {
+		return req.SHA256
+	}
+	return req.Version
 }
 
 // allowAttempt records an upgrade dispatch for the agent and reports
@@ -322,33 +369,60 @@ func (c *UpgradeController) allowAttempt(agentID, target string, manual bool) bo
 }
 
 func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, manual bool) (*AgentUpgradeReq, error) {
-	req, err := c.buildUpgradeReq(ag)
+	req, err := c.buildUpgradeReq(ctx, ag)
 	if err != nil {
-		slog.Warn("agent upgrade: no binary to offer", "agent", ag.ID, "arch", ag.Hello.Arch, "err", err)
+		slog.Warn("agent upgrade: nothing to offer", "agent", ag.ID, "arch", ag.Hello.Arch, "layout", ag.Hello.HelloLayout(), "err", err)
 		return nil, err
 	}
-	if !c.allowAttempt(ag.ID, req.SHA256, manual) {
+	if !c.allowAttempt(ag.ID, attemptTarget(req), manual) {
 		return nil, errUpgradeBackoff
+	}
+	// The agent restarts, which would cut off a deploy it is running.
+	wait := c.lockWait
+	if manual {
+		wait = c.manualLockWait
+	}
+	release, err := c.locks.Maintenance(ctx, []stacklock.Target{stacklock.Host(ag.ID)}, stacklock.OpAgentUpdate, wait)
+	if err != nil {
+		slog.Info("agent upgrade waits for stacks", "agent", ag.ID, "err", err)
+		return req, ErrHostBusy
 	}
 	payload, _ := json.Marshal(req)
 	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
+	if err == nil && !resp.OK {
+		err = errors.New(resp.Error)
+	}
 	if err != nil {
+		release()
 		// The agent answers refusals with a request error.
-		if r := upgradeRefusal(err.Error()); errors.Is(r, ErrAgentCurrent) || errors.Is(r, ErrAgentUpgrading) {
-			return req, r
+		r := upgradeRefusal(err.Error())
+		if !errors.Is(r, ErrAgentCurrent) && !errors.Is(r, ErrAgentUpgrading) {
+			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", err)
 		}
-		slog.Warn("agent upgrade push failed", "agent", ag.ID, "err", err)
-		return req, err
+		return req, r
 	}
-	if !resp.OK {
-		err := upgradeRefusal(resp.Error)
-		if !errors.Is(err, ErrAgentCurrent) && !errors.Is(err, ErrAgentUpgrading) {
-			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
-		}
-		return req, err
-	}
-	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version)
+	go c.holdUntilBack(ag, release)
+	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version, "layout", ag.Hello.HelloLayout())
 	return req, nil
+}
+
+// holdUntilBack keeps the host's stacks held until the agent connected
+// again, or holdMax passed.
+func (c *UpgradeController) holdUntilBack(ag *ConnectedAgent, release func()) {
+	defer release()
+	deadline := time.After(c.holdMax)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-deadline:
+			return
+		case <-tick.C:
+			if cur := c.agents.GetConnected(ag.ID); cur != nil && cur != ag {
+				return
+			}
+		}
+	}
 }
 
 // upgradeRefusal maps an agent's refusal to an error, by the texts of

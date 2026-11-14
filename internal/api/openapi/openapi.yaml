@@ -192,12 +192,19 @@ paths:
       tags: [agents]
       summary: Trigger a self-upgrade on a connected agent
       description: |
-        The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
-        from the agent listener over mTLS (agents older than this release
-        use the server's `/install/` path), verifies it against the SHA-256
-        sent over the mTLS channel and restarts its systemd unit. Agent
-        must be currently connected. Automatic upgrades back off after
-        three attempts per target binary; this endpoint always dispatches.
+        A `legacy` agent downloads a fresh `dockmesh-agent-linux-<arch>`
+        binary from the agent listener over mTLS (agents older than this
+        release use the server's `/install/` path), verifies it against the
+        SHA-256 sent over the mTLS channel and restarts its systemd unit. A
+        `managed` agent gets only the server's version: it downloads that
+        signed release from the agent listener, checks the signature with
+        its own keys and hands it to its root updater, which installs it and
+        rolls back when the new agent does not connect within 180 s. Before
+        the dispatch the server waits up to 30 s for running stack
+        operations on the host and refuses new ones until the agent is back
+        (at most 5 minutes). Agent must be currently connected. Automatic
+        upgrades back off after three attempts per target; this endpoint
+        always dispatches.
       parameters:
         - name: id
           in: path
@@ -217,7 +224,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: The agent already runs the build this server offers, or is still installing an earlier upgrade.
+          description: The agent already runs the build this server offers, is still installing an earlier upgrade, or stack operations on its host were still running after 30 s.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -227,7 +234,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "503":
-          description: Agent is not currently connected, or no agent binary for its architecture is bundled.
+          description: Agent is not currently connected, no agent binary for its architecture is bundled, or (managed agents) this server build has no signed release.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8806,6 +8813,10 @@ components:
         update_recommended:
           type: boolean
           description: True while online if the agent speaks an older protocol than the server and lacks some features.
+        layout:
+          type: string
+          enum: [legacy, managed]
+          description: Install layout of the live session; only set while online. `legacy` agents replace their own binary, `managed` agents are updated by their root updater (`dockmesh-agent update apply`).
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     AgentCreateResult:

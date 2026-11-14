@@ -88,6 +88,7 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/var/lib/dockmesh-update/` | `dockmesh update apply` | Root-only working directory of the updater: the verified copy of the release archive, its journal and the files it replaced, until the update is confirmed |
 | `/usr/local/bin/dockmesh.prev` | `dockmesh update apply` | The binary the last update replaced |
 | `<data directory>/update/` | the server | Release files the server downloaded and the request for the root updater; the updater writes `pending` while an update runs and `result.json` when it ends |
+| `<data directory>/agent-release/<version>/` | the server | Signed release of the server's own version (`checksums.txt`, its signature, the archive per agent architecture), fetched once and served to managed agents |
 | `<database>.pre-update.bak` | `dockmesh update apply` | Database as it was before the last update, put back on a rollback |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |
 
@@ -109,7 +110,9 @@ The server writes its log to stdout and stderr, so on Linux read it with `journa
 | `/var/lib/dockmesh-agent/bin/dockmesh-agent` | Agent binary; self-upgrades replace it in place |
 | `/var/lib/dockmesh-agent/stacks/<stack>/` | Mirror of stacks deployed to this host: `compose.yaml` and `.dockmesh.meta.json`, plus relative bind-mount data |
 | `/var/lib/dockmesh-agent/staging/` | Temporary deploy directories |
-| `/usr/local/bin/dockmesh-agent` | Root-owned copy of the binary, refreshed at every service start |
+| `/usr/local/bin/dockmesh-agent` | Root-owned copy of the binary, refreshed at every service start; on a managed agent the binary itself, replaced only by its root updater (old one kept as `dockmesh-agent.prev`) |
+| `/var/lib/dockmesh-agent/update/` | Managed agents: release staged for the root updater, its `request`, `pending` and `result.json`, and `running` (the version that connected last) |
+| `/var/lib/dockmesh-agent-update/` | Managed agents: the root updater's own working directory (root only) |
 | `/etc/dockmesh-agent/agent.env` | Environment file, including the enrollment token (0640) |
 | `/etc/dockmesh-agent/refresh-path-copy` | Script the service runs to refresh the copy in `/usr/local/bin` |
 | `/etc/systemd/system/dockmesh-agent.service` | Service unit |

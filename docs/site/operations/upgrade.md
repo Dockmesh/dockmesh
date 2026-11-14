@@ -197,7 +197,52 @@ curl -X PUT -H "Authorization: Bearer dmt_xxxxxxxx" -H "Content-Type: applicatio
 
 `POST /api/v1/agents/upgrade-policy/run` runs a check right away.
 
-During an upgrade the server sends the agent the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin` on installs made by `install.sh`, `./bin` when the variable is unset). The agent downloads that file from the server's agent listener over HTTPS with its client certificate, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there.
+Before it tells an agent to upgrade, the server waits for running deploys, scales, image updates and other stack operations on that host: up to 10 minutes in `auto` and `staged` mode, 30 seconds for **Upgrade agent**, which then answers that the host is busy. From then until the agent is connected again (at most 5 minutes) new stack operations on that host are refused with "agent update". In `staged` mode the next wave starts `stage_gap_sec` seconds (default 300) after the previous one.
+
+How the agent updates depends on its install layout, which the host's details show as **legacy** or **managed** (`layout` in `GET /api/v1/agents`):
+
+- **Legacy** (what `install-agent.sh` sets up, so every agent installed so far): the agent binary lives in its data directory and belongs to the agent's account. The server sends the SHA-256 of `dockmesh-agent-linux-<arch>` for the agent's architecture, taken from `DOCKMESH_BINARY_DIR` (`/usr/local/share/dockmesh/bin` on installs made by `install.sh`, `./bin` when the variable is unset). The agent downloads that file from the server's agent listener over HTTPS with its client certificate, checks it against the checksum, replaces its own binary and restarts. If the file for an architecture is missing from `DOCKMESH_BINARY_DIR`, agents of that architecture cannot be upgraded until you put it there. These agents keep updating this way; nothing has to change on the host.
+- **Managed**: `/usr/local/bin/dockmesh-agent` belongs to root and the agent can't write it; a root updater (`dockmesh-agent-update.path` and `dockmesh-agent-update.service`, see below) installs new versions. The server only sends its version. The agent downloads that release's archive, `checksums.txt` and minisign signature from the server's agent listener over HTTPS with its client certificate, checks the signature with the keys built into the agent binary and the archive's checksum, and stages them in `/var/lib/dockmesh-agent/update/`. The root updater checks them again on its own copy, keeps the old binary as `dockmesh-agent.prev`, installs the new one and restarts the agent. If the new agent has not connected to the server within 180 seconds, it puts the old binary back and starts it. Only the binary is rolled back: the agent's certificate, key and enrollment are never touched. Admins get a notice for the host when an update was refused or rolled back, and a critical one when the rollback itself failed.
+
+For a managed agent the server needs the signed release of its own version. It downloads it from the GitHub release once into `<data directory>/agent-release/<version>/` and serves it from there; an air-gapped server needs the release's `checksums.txt`, `checksums.txt.minisig` and `dockmesh_linux_<arch>.tar.gz` placed in that directory (owned by the `dockmesh` account). A build that is not a release (`dev`) can't update managed agents.
+
+### Root updater units of a managed agent
+
+```ini
+# /etc/systemd/system/dockmesh-agent-update.path
+[Unit]
+Description=Watch for Dockmesh agent update requests
+ConditionPathExists=!/etc/dockmesh-agent/refresh-path-copy
+
+[Path]
+PathExists=/var/lib/dockmesh-agent/update/request
+Unit=dockmesh-agent-update.service
+
+[Install]
+WantedBy=paths.target
+```
+
+```ini
+# /etc/systemd/system/dockmesh-agent-update.service
+[Unit]
+Description=Apply a Dockmesh agent update
+After=dockmesh-agent.service
+# The legacy copy step would put a file the agent account can write here.
+ConditionPathExists=!/etc/dockmesh-agent/refresh-path-copy
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dockmesh-agent update apply --data-dir=/var/lib/dockmesh-agent
+TimeoutStartSec=60min
+TimeoutStopSec=30min
+ExecStopPost=-/bin/systemctl start --no-block dockmesh-agent.service
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`dockmesh-agent.service` of a managed agent runs `/usr/local/bin/dockmesh-agent` as `dockmesh-agent`, without any `ExecStartPre` step. Remove the `ExecStartPre` line (also from drop-ins), `/etc/dockmesh-agent/refresh-path-copy` and `/var/lib/dockmesh-agent/bin/` before you enable the updater units: the legacy step copies a file the agent's account can write over `/usr/local/bin/dockmesh-agent` as root. While the script exists, systemd does not start the updater units at all; while any `ExecStartPre` or the binary in the data directory is left, the agent reports itself as legacy and `update apply` refuses to run. Enable both updater units with `sudo systemctl enable --now dockmesh-agent-update.path dockmesh-agent-update.service`. `dockmesh-agent update apply` only runs as root, refuses a binary other than the root-owned `/usr/local/bin/dockmesh-agent`, reads only the version from the request, and refuses symlinks and anything that is not a regular file in the update directory as well as a version that is not newer.
 
 ### Upgrade an agent by hand
 
