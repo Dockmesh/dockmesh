@@ -106,6 +106,7 @@ func systemWriteUnit(args []string) error {
 	envFlag := fs.String("env-file", "", "config to write the unit for when "+layout.ConfigFile+" does not exist yet")
 	restore := fs.Bool("restore", false, "put back the unit the last write replaced")
 	_ = fs.Parse(args)
+	*envFlag = unitEnvFlag(*envFlag, loadedEnvFile, explicitEnvFile)
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("systemd units are only written on Linux")
 	}
@@ -130,6 +131,16 @@ func systemWriteUnit(args []string) error {
 		fmt.Printf("%s is up to date\n", layout.UnitFile)
 	}
 	return nil
+}
+
+// unitEnvFlag is the env file write-unit was given. main takes an
+// explicit --env-file out of the arguments before the subcommand parses
+// them, so it comes back from there.
+func unitEnvFlag(flag, loaded string, explicit bool) string {
+	if flag == "" && explicit {
+		return loaded
+	}
+	return flag
 }
 
 // writeServerUnit writes the server's unit for the given config (see

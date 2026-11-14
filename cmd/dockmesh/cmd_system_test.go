@@ -64,3 +64,21 @@ func TestReadUnitPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestUnitEnvFlag(t *testing.T) {
+	tests := []struct {
+		flag, loaded string
+		explicit     bool
+		want         string
+	}{
+		{"", "/srv/dm/dockmesh.env", true, "/srv/dm/dockmesh.env"},
+		{"", "/var/lib/dockmesh/dockmesh.env", false, ""},
+		{"/given.env", "/srv/dm/dockmesh.env", true, "/given.env"},
+		{"", "", false, ""},
+	}
+	for _, tt := range tests {
+		if got := unitEnvFlag(tt.flag, tt.loaded, tt.explicit); got != tt.want {
+			t.Errorf("unitEnvFlag(%q, %q, %v) = %q, want %q", tt.flag, tt.loaded, tt.explicit, got, tt.want)
+		}
+	}
+}

@@ -82,6 +82,9 @@ var webDist embed.FS
 // environment came from elsewhere (systemd's EnvironmentFile=, a shell).
 var loadedEnvFile string
 
+// explicitEnvFile is true when loadedEnvFile came from --env-file.
+var explicitEnvFile bool
+
 // serverEnvFile names the env file this server most likely runs with: the
 // one loaded from --env-file or the default location, then the config in
 // /etc/dockmesh, else the file older installs keep next to the data dir.
@@ -168,6 +171,7 @@ func loadEnvFileFromArgs() error {
 		}
 	} else {
 		os.Args = keep
+		explicitEnvFile = true
 	}
 	var data []byte
 	var err error
