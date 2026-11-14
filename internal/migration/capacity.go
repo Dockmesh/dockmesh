@@ -3,6 +3,9 @@ package migration
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"math"
+	"math/bits"
 	"sort"
 	"strings"
 
@@ -86,9 +89,9 @@ func computeNeeds(proj *types.Project, usage map[string]serviceUsage, srcImages,
 
 		switch mem := declaredMem(svc); {
 		case mem > 0:
-			n.MemBytes += mem * uint64(replicas) //nolint:gosec // replicas >= 0
+			n.MemBytes = addSat(n.MemBytes, mulSat(mem, uint64(replicas))) //nolint:gosec // replicas >= 0
 		case u.sampled > 0 && u.sampled == u.containers:
-			n.MemBytes += u.mem
+			n.MemBytes = addSat(n.MemBytes, u.mem)
 			n.Measured = true
 		case replicas > 0:
 			n.MemUnknown = append(n.MemUnknown, name)
@@ -108,7 +111,7 @@ func computeNeeds(proj *types.Project, usage map[string]serviceUsage, srcImages,
 		}
 		pulled[svc.Image] = true
 		if size, ok := srcSize[svc.Image]; ok && size > 0 {
-			n.DiskBytes += uint64(size)
+			n.DiskBytes = addSat(n.DiskBytes, uint64(size))
 		} else {
 			n.DiskUnknown = append(n.DiskUnknown, svc.Image)
 		}
@@ -154,7 +157,10 @@ func declaredCPUs(svc types.ServiceConfig) float64 {
 			return float64(r.NanoCPUs)
 		}
 	}
-	return float64(svc.CPUS)
+	if c := float64(svc.CPUS); c > 0 {
+		return c
+	}
+	return 0
 }
 
 // measuredUsage sums the newest metrics samples of the stack's containers
@@ -163,10 +169,12 @@ func (s *Service) measuredUsage(ctx context.Context, hostID, stack string, list 
 	out := map[string]serviceUsage{}
 	byName := map[string]metrics.Latest{}
 	if s.usage != nil {
-		if latest, err := s.usage.LatestPerContainer(ctx, hostID, usageMaxAge, cores); err == nil {
-			for _, l := range latest {
-				byName[l.Name] = l
-			}
+		latest, err := s.usage.LatestPerContainer(ctx, hostID, usageMaxAge, cores)
+		if err != nil {
+			slog.Warn("migration preflight container usage", "host", hostID, "err", err)
+		}
+		for _, l := range latest {
+			byName[l.Name] = l
 		}
 	}
 	for _, c := range list {
@@ -201,22 +209,20 @@ func capacityChecks(n stackNeeds, tgt system.Metrics) []PreflightCheck {
 
 	memFree := sub(tgt.MemTotal, tgt.MemUsed)
 	memNeed := float64(n.MemBytes) * 1.2
+	memDetail := fmt.Sprintf("stack needs %.0f MB memory (%s + 20%%), target has %.0f MB free",
+		memNeed/mb, needSource(n), float64(memFree)/mb)
 	switch {
 	case n.MemBytes == 0 && len(n.MemUnknown) > 0:
 		out = append(out, check("target_capacity", CheckUnknown,
 			fmt.Sprintf("memory need unknown (no limits/reservations and no current usage for %s); target has %.0f MB free",
 				strings.Join(n.MemUnknown, ", "), float64(memFree)/mb)))
 	case memNeed > float64(memFree):
-		out = append(out, check("target_capacity", CheckFail,
-			fmt.Sprintf("stack needs %.0f MB memory (%s + 20%%), target has %.0f MB free",
-				memNeed/mb, needSource(n), float64(memFree)/mb)))
+		out = append(out, check("target_capacity", CheckFail, memDetail))
 	default:
-		detail := fmt.Sprintf("stack needs %.0f MB memory (%s + 20%%), target has %.0f MB free",
-			memNeed/mb, needSource(n), float64(memFree)/mb)
 		if len(n.MemUnknown) > 0 {
-			detail += "; not counted: " + strings.Join(n.MemUnknown, ", ")
+			memDetail += "; not counted: " + strings.Join(n.MemUnknown, ", ")
 		}
-		out = append(out, check("target_capacity", CheckPass, detail))
+		out = append(out, check("target_capacity", CheckPass, memDetail))
 	}
 
 	cpuFree := float64(tgt.CPUCores) - tgt.CPUUsed
@@ -231,7 +237,7 @@ func capacityChecks(n stackNeeds, tgt system.Metrics) []PreflightCheck {
 			fmt.Sprintf("stack needs %.2f cores (%s), target has %.1f free", n.CPUs, needSource(n), cpuFree)))
 	default:
 		out = append(out, check("target_cpu", CheckPass,
-			fmt.Sprintf("stack needs %.2f cores, target has %.1f free", n.CPUs, cpuFree)))
+			fmt.Sprintf("stack needs %.2f cores (%s), target has %.1f free", n.CPUs, needSource(n), cpuFree)))
 	}
 
 	diskFree := sub(tgt.DiskTotal, tgt.DiskUsed)
@@ -268,4 +274,22 @@ func sub(a, b uint64) uint64 {
 		return 0
 	}
 	return a - b
+}
+
+// addSat and mulSat saturate instead of wrapping, so absurd declarations
+// in a compose file make the need huge rather than tiny.
+func addSat(a, b uint64) uint64 {
+	sum, carry := bits.Add64(a, b, 0)
+	if carry != 0 {
+		return math.MaxUint64
+	}
+	return sum
+}
+
+func mulSat(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	if hi != 0 {
+		return math.MaxUint64
+	}
+	return lo
 }

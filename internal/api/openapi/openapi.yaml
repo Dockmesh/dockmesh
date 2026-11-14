@@ -7541,6 +7541,7 @@ paths:
       operationId: stacks.migrate_preflight
       tags: [stacks, migrations]
       summary: Dry-run migration check — returns blockers without starting
+      description: Needs `stacks.migrate` on the stack and `stacks.deploy` for the stack on the target host, like the migration itself.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
       requestBody:
@@ -7583,6 +7584,7 @@ paths:
                         detail: {type: string}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
   /stacks/{name}/migrate/{id}:
     parameters:

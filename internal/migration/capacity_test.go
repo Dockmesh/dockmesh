@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"testing"
 
@@ -129,5 +130,20 @@ func TestMeasuredUsage(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("measuredUsage = %+v, want %+v", got, want)
+	}
+}
+
+func TestComputeNeedsSaturates(t *testing.T) {
+	huge := types.UnitBytes(1 << 62)
+	proj := &types.Project{Services: types.Services{
+		"a": {Name: "a", MemLimit: huge, Scale: intp(8)},
+		"b": {Name: "b", MemLimit: huge, CPUS: -4},
+	}}
+	got := computeNeeds(proj, nil, nil, nil)
+	if got.MemBytes != math.MaxUint64 {
+		t.Fatalf("MemBytes = %d, want saturated", got.MemBytes)
+	}
+	if got.CPUs != 0 || !reflect.DeepEqual(got.CPUUnknown, []string{"a", "b"}) {
+		t.Fatalf("negative cpus counted: %+v", got)
 	}
 }

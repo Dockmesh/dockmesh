@@ -180,6 +180,16 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if req.TargetHostID == "" {
+		writeError(w, http.StatusBadRequest, "target_host_id required")
+		return
+	}
+	// The result describes the target host, so it needs the same right
+	// there as the migration itself.
+	if target := h.stackScopeReq(req.TargetHostID, name); !h.allowedOn(r, target, rbac.PermStacksDeploy) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name+" on the target host")
+		return
+	}
 	result, err := h.Migrations.Preflight(r.Context(), name, req.TargetHostID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

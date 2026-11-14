@@ -82,6 +82,10 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 
 	// 4. The stack's needs against what the target has free.
 	proj, projErr := s.loadProject(ctx, m.StackName)
+	tgtImages, err := target.ListImages(ctx, false)
+	if err != nil {
+		slog.Warn("migration preflight target images", "id", m.ID, "err", err)
+	}
 	tgtMetrics, err := target.SystemMetrics(ctx)
 	switch {
 	case err != nil:
@@ -93,8 +97,10 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		if err != nil {
 			slog.Warn("migration preflight source containers", "id", m.ID, "err", err)
 		}
-		srcImages, _ := source.ListImages(ctx, false)
-		tgtImages, _ := target.ListImages(ctx, false)
+		srcImages, err := source.ListImages(ctx, false)
+		if err != nil {
+			slog.Warn("migration preflight source images", "id", m.ID, "err", err)
+		}
 		usage := s.measuredUsage(ctx, m.SourceHostID, m.StackName, srcList, srcMetrics.CPUCores)
 		for _, c := range capacityChecks(computeNeeds(proj, usage, srcImages, tgtImages), tgtMetrics) {
 			addStatus(c.Name, c.Status, c.Detail)
@@ -115,7 +121,6 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		add("images", false, fmt.Sprintf("cannot parse compose: %v", projErr))
 	} else {
 		var missing []string
-		tgtImages, _ := target.ListImages(ctx, false)
 		tgtImageSet := make(map[string]bool)
 		for _, img := range tgtImages {
 			for _, tag := range img.RepoTags {
