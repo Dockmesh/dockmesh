@@ -170,7 +170,7 @@ func (c *Checker) SetNotifier(n *notifications.Service) { c.notifs = n }
 // version string from pkg/version — pass "dev" for local builds and
 // "v0.1.1"-style tags for releases.
 func New(s *settings.Store, currentVersion string) *Checker {
-	return &Checker{
+	c := &Checker{
 		settings: s,
 		current:  currentVersion,
 		client:   &http.Client{Timeout: 10 * time.Second},
@@ -178,6 +178,12 @@ func New(s *settings.Store, currentVersion string) *Checker {
 		assetPrefix: assetPrefix,
 		apiBase:     apiBase,
 	}
+	if labAPIBase != nil {
+		if b := labAPIBase(); b != "" {
+			c.apiBase, c.assetPrefix = b, ReleaseBaseURL()
+		}
+	}
+	return c
 }
 
 // Start spins off the polling goroutine. Returns immediately.

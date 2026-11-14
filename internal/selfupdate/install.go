@@ -135,7 +135,7 @@ type Installer struct {
 // it is missing.
 func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = releaseBaseURL()
+		cfg.BaseURL = ReleaseBaseURL()
 	}
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Timeout: 10 * time.Minute}
