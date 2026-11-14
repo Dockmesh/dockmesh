@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: An audit archive folder chosen before this release stays writable for the server. Check it under Audit log > Retention if people without the permission to install updates could change it
+time: 2026-11-14T20:07:19.642472577Z
+custom:
+    Audience: admins
+    Id: audit-archive-folder

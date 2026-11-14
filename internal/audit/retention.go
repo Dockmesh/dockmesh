@@ -109,8 +109,11 @@ func (r *Retention) DefaultLocalDir() string {
 			return legacy
 		}
 	}
-	return filepath.Join(r.dataDir, "audit-archive")
+	return r.DataDirDefault()
 }
+
+// DataDirDefault is the default archive folder below the data dir.
+func (r *Retention) DataDirDefault() string { return filepath.Join(r.dataDir, "audit-archive") }
 
 // CheckLocalDir refuses an archive directory the server unit could not be
 // written with: the unit writer adds it to ReadWritePaths.

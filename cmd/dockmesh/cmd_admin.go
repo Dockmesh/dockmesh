@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
 // runAdminCmd handles `dockmesh admin <subcommand>`. Bootstrap recovery
@@ -139,13 +139,45 @@ func adminCreate(args []string) error {
 // cliAuthService is an auth service with the stored password policy, so a
 // password set from the CLI meets the same rules as one set in the UI.
 func cliAuthService(database *sql.DB) (*auth.Service, error) {
-	st := settings.NewStore(database)
-	if err := st.Load(context.Background()); err != nil {
-		return nil, fmt.Errorf("load settings: %w", err)
+	st, err := readSettings(database)
+	if err != nil {
+		return nil, err
 	}
 	svc := auth.NewService(database, make([]byte, 32))
 	svc.SetSettings(st)
 	return svc, nil
+}
+
+// storedSettings reads the settings table without writing to it, unlike
+// settings.Store.Load, which saves values from the caller's environment.
+type storedSettings map[string]string
+
+func readSettings(database *sql.DB) (storedSettings, error) {
+	rows, err := database.Query(`SELECT key, value FROM settings`)
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	defer rows.Close()
+	st := storedSettings{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("load settings: %w", err)
+		}
+		st[k] = v
+	}
+	return st, rows.Err()
+}
+
+func (s storedSettings) Get(key, def string) string {
+	if v := s[key]; v != "" {
+		return v
+	}
+	return def
+}
+
+func (s storedSettings) Set(context.Context, string, string) error {
+	return errors.New("settings are read-only here")
 }
 
 func adminResetPassword(args []string) error {

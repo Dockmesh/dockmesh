@@ -299,7 +299,21 @@ func CheckWritablePath(p, dataDir string) error {
 	if dataDir != "" {
 		dataDir = filepath.Clean(dataDir)
 	}
-	return checkWritable(what, p, c, dataDir)
+	if err := checkWritable(what, p, c, dataDir); err != nil {
+		return err
+	}
+	// Like the unit writer: systemd follows symlinks when it mounts the
+	// path. A path that does not exist yet is checked as written.
+	r, err := filepath.EvalSymlinks(c)
+	if err != nil {
+		return nil
+	}
+	if dataDir != "" {
+		if rd, err := filepath.EvalSymlinks(dataDir); err == nil {
+			dataDir = rd
+		}
+	}
+	return checkWritable(what, p, r, dataDir)
 }
 
 // checkWritable refuses the root directory and what checkLocation refuses.

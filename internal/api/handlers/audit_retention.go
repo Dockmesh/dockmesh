@@ -54,23 +54,23 @@ func (h *Handlers) UpdateAuditRetention(w http.ResponseWriter, r *http.Request) 
 	h.GetAuditRetention(w, r)
 }
 
-// checkAuditLocalDir refuses a new audit archive folder from a caller
-// without system.upgrade, or one the unit writer would refuse: it becomes
-// writable for the service like the backup roots. The page sends the
-// default folder back, and an empty value falls back to it.
+// checkAuditLocalDir refuses an audit archive folder the unit writer
+// would refuse, and a new one from a caller without system.upgrade: it
+// becomes writable for the service like the backup roots. The page sends
+// the default folder back, so that one needs no extra permission.
 func (h *Handlers) checkAuditLocalDir(w http.ResponseWriter, r *http.Request, dir string) bool {
-	if dir == "" || dir == h.Settings.Stored(audit.RetentionLocalDir) {
+	if dir == "" {
 		return true
 	}
-	if h.AuditRetention != nil && dir == h.AuditRetention.DefaultLocalDir() {
+	if err := h.AuditRetention.CheckLocalDir(dir); err != nil {
+		writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
+		return false
+	}
+	if dir == h.Settings.Stored(audit.RetentionLocalDir) || (h.AuditRetention != nil && dir == h.AuditRetention.DataDirDefault()) {
 		return true
 	}
 	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
 		writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
-		return false
-	}
-	if err := h.AuditRetention.CheckLocalDir(dir); err != nil {
-		writeError(w, http.StatusBadRequest, "local_dir: "+err.Error())
 		return false
 	}
 	return true
