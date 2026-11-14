@@ -72,11 +72,14 @@ func TestAuditRetentionLocalDir(t *testing.T) {
 			if err := store.Set(ctx, audit.RetentionLocalDir, tt.start); err != nil {
 				t.Fatal(err)
 			}
-			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body(tt.value)))
+			reqCtx := ctx
+			if tt.restricted {
+				reqCtx = middleware.WithIdentity(ctx, middleware.Identity{UserID: restrictedID, Access: noUpgrade})
+			}
+			req := httptest.NewRequestWithContext(reqCtx, tt.method, tt.path, strings.NewReader(tt.body(tt.value)))
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
 			if tt.restricted {
-				req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: restrictedID, Access: noUpgrade}))
 				if tt.path == "/api/v1/settings" {
 					h.UpdateSettings(rr, req)
 				} else {

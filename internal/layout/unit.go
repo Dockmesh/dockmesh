@@ -303,17 +303,18 @@ func CheckWritablePath(p, dataDir string) error {
 		return err
 	}
 	// Like the unit writer: systemd follows symlinks when it mounts the
-	// path. A path that does not exist yet is checked as written.
+	// path. One that can't be resolved, e.g. not created yet, is checked
+	// as written.
 	r, err := filepath.EvalSymlinks(c)
-	if err != nil {
-		return nil
-	}
-	if dataDir != "" {
-		if rd, err := filepath.EvalSymlinks(dataDir); err == nil {
-			dataDir = rd
+	if err == nil {
+		if dataDir != "" {
+			if rd, err := filepath.EvalSymlinks(dataDir); err == nil {
+				dataDir = rd
+			}
 		}
+		return checkWritable(what, p, r, dataDir)
 	}
-	return checkWritable(what, p, r, dataDir)
+	return nil
 }
 
 // checkWritable refuses the root directory and what checkLocation refuses.
