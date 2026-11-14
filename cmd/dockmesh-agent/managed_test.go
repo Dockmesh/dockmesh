@@ -185,6 +185,10 @@ func TestUpdateResultReportedUntilWelcomed(t *testing.T) {
 		if err := os.WriteFile(p, b, 0o644); err != nil {
 			t.Fatal(err)
 		}
+		staged := filepath.Join(updateDir(data), managedArchive())
+		if err := os.WriteFile(staged, []byte("archive"), 0o640); err != nil {
+			t.Fatal(err)
+		}
 		res := lastUpdateResult(data)
 		if res == nil || res.Status != string(tt.status) || res.To != "v0.6.1" {
 			t.Fatalf("result %+v", res)
@@ -192,6 +196,9 @@ func TestUpdateResultReportedUntilWelcomed(t *testing.T) {
 		clearUpdateResult(data, res)
 		if _, err := os.Stat(p); (err == nil) != tt.kept {
 			t.Errorf("%s: result kept = %v, want %v", tt.status, err == nil, tt.kept)
+		}
+		if _, err := os.Stat(staged); (err == nil) != tt.kept {
+			t.Errorf("%s: staged archive kept = %v, want %v", tt.status, err == nil, tt.kept)
 		}
 	}
 }

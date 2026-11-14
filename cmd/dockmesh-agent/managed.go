@@ -321,11 +321,14 @@ func lastUpdateResult(dataDir string) *agents.AgentUpdateResult {
 	return &agents.AgentUpdateResult{Status: string(res.Status), From: res.From, To: res.To, Step: res.Step, Reason: res.Reason}
 }
 
-// clearUpdateResult removes the result once a server got it. A failed
-// rollback stays, so every connect reports it until someone finishes it.
+// clearUpdateResult removes the result and the staged release once a
+// server got the result. A failed rollback stays, so every connect reports
+// it until someone finishes it.
 func clearUpdateResult(dataDir string, res *agents.AgentUpdateResult) {
 	if res == nil || res.Status == string(rootupdate.StatusFailed) {
 		return
 	}
-	_ = os.Remove(filepath.Join(updateDir(dataDir), rootupdate.ResultFile))
+	for _, name := range []string{rootupdate.ResultFile, managedArchive(), releasesig.ChecksumsFile, releasesig.SignatureFile} {
+		_ = os.Remove(filepath.Join(updateDir(dataDir), name))
+	}
 }
