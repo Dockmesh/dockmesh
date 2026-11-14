@@ -23,3 +23,7 @@ func chownLike(f *os.File, ref string) error {
 	}
 	return f.Chown(int(st.Uid), int(st.Gid))
 }
+
+// oSafeRead does not follow a final symlink and opens without blocking, so a FIFO planted in place of the
+// file fails the regular-file check instead of hanging the reader.
+const oSafeRead = syscall.O_NOFOLLOW | syscall.O_NONBLOCK

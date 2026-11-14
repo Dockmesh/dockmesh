@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"embed"
 	"errors"
 	"fmt"
@@ -322,6 +324,15 @@ func main() {
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
 	}.Scan()
+	// The database is created below; a start that dies after that must
+	// still find the state dir, or the next one would serve setup mode
+	// over plain HTTP.
+	if !setupFacts.DB {
+		if _, err := setup.EnsureStateDir(config.ResolvePaths(os.Getenv).DataDir); err != nil {
+			slog.Error("setup state dir", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -399,8 +410,24 @@ func main() {
 		slog.Warn("DOCKMESH_SETUP_FORCE ignored: this installation is set up, so the setup wizard stays closed — remove the flag from the env file",
 			"env_file", setupEnvFile)
 	}
+	var webTLS *tls.Config
+	var webLeaf *x509.Certificate
 	if setupState.Active() {
 		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
+		if setup.ServesTLS(setupFacts, cfg.DataDir) {
+			cert, err := setupCertificate(cfg)
+			if err != nil {
+				slog.Error("setup certificate", "err", err)
+				os.Exit(1)
+			}
+			fp := pki.Fingerprint(cert.Leaf.Raw)
+			setupState.SetTLSFingerprint(fp)
+			slog.Info("setup mode serves HTTPS only; compare this fingerprint with the one your browser shows", "sha256", fp)
+			webTLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*cert}}
+			webLeaf = cert.Leaf
+		} else {
+			slog.Warn("setup mode serves plain HTTP: this install was started before Dockmesh served setup over HTTPS; use it only on a trusted network")
+		}
 	} else if exists, err := setup.UsersExist(ctx, database); err != nil {
 		slog.Warn("check for user accounts", "err", err)
 	} else if !exists {
@@ -1101,14 +1128,11 @@ func main() {
 
 		// Step 5 — health probe
 		emit("health", "probing /api/v1/health", "info")
-		probeURL := "http://127.0.0.1" + cfg.HTTPAddr
-		if strings.HasPrefix(cfg.HTTPAddr, ":") {
-			probeURL = "http://127.0.0.1" + cfg.HTTPAddr
-		}
+		probeURL, probe := selfProbe(cfg.HTTPAddr, webLeaf)
 		probeCtx, probeCancel := context.WithTimeout(commitCtx, 3*time.Second)
 		defer probeCancel()
 		req, _ := http.NewRequestWithContext(probeCtx, "GET", probeURL+"/api/v1/health", nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := probe.Do(req)
 		if err != nil {
 			emit("health", "probe failed: "+err.Error(), "warn")
 		} else {
@@ -1282,11 +1306,19 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           tracedRouter,
 		ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig:         webTLS,
 	}
 
 	go func() {
-		slog.Info("http listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if webTLS != nil {
+			slog.Info("https listening", "addr", srv.Addr)
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			slog.Info("http listening", "addr", srv.Addr)
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http server error", "err", err)
 			os.Exit(1)
 		}

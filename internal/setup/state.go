@@ -42,6 +42,7 @@ type State struct {
 	committing bool
 	startedAt  time.Time
 	codes      *Codes
+	tlsFP      string
 }
 
 // NewForced returns a State pinned to active regardless of existing users,
@@ -92,6 +93,22 @@ func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// SetTLSFingerprint records the fingerprint of the certificate setup mode
+// serves, for the wizard to show next to the one the installer printed.
+func (s *State) SetTLSFingerprint(fp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tlsFP = fp
+}
+
+// TLSFingerprint is the fingerprint set by SetTLSFingerprint, empty when
+// setup mode serves plain HTTP.
+func (s *State) TLSFingerprint() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tlsFP
 }
 
 // Active reports whether requests should be gated to /setup paths.

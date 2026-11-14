@@ -4457,6 +4457,7 @@
   "setup_add_docker_after": " hinzufügen",
   "setup_add_docker_before": "Zur Gruppe",
   "setup_add_docker_hint": "nötig für den Zugriff auf den Docker-Daemon",
+  "setup_tls_fingerprint_hint": "Das Zertifikat dieser Seite hat diesen Fingerabdruck. Er muss mit dem übereinstimmen, den das Installationsskript ausgegeben hat und den Ihr Browser anzeigt; sonst brechen Sie hier ab.",
   "setup_admin_hint": "Ein lokaler Admin mit vollen Rechten, der sich deaktivieren lässt, sobald Single Sign-on funktioniert.",
   "setup_aria_service_user": "Service-Benutzer",
   "setup_aria_steps": "Einrichtungsschritte",

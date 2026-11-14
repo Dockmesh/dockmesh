@@ -119,6 +119,9 @@ func (h *Handlers) SetupServerInfo(w http.ResponseWriter, r *http.Request) {
 		host = "localhost"
 	}
 	si := setup.CollectServerInfo(r.Context(), wizardServerVersion(), h.Docker, host, startedAt)
+	if h.SetupState != nil {
+		si.TLSFingerprint = h.SetupState.TLSFingerprint()
+	}
 	writeJSON(w, http.StatusOK, si)
 }
 

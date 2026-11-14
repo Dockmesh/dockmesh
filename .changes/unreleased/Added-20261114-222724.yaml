@@ -1,0 +1,3 @@
+kind: Added
+body: A new install serves its setup page over HTTPS only, with a certificate from the built-in CA; `dockmesh setup new-code` and the wizard show its SHA-256 fingerprint to compare with the browser
+time: 2026-11-14T22:27:24.938272924Z
