@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
@@ -70,10 +72,12 @@ func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 }
 
 // MigrateSystemJobPath gives a local system job that still has a relative
-// path an absolute one. Earlier versions resolved it against the working
-// directory, "/" under systemd. If archives of the job are already there the
-// job keeps that directory, otherwise it moves to <data>/backups. It returns
-// the old and new path when it changed the job.
+// inline path an absolute one. Earlier versions resolved it against the
+// working directory, "/" under systemd. If archives of the job are already
+// there the job keeps that directory, otherwise it moves to <data>/backups.
+// A job on a saved target keeps it: its inline config is empty, so its
+// path is not known here. It returns the old and new path when it changed
+// the job.
 func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, err error) {
 	if s.paths.DataDir == "" {
 		return "", "", nil
@@ -83,7 +87,7 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 		return "", "", err
 	}
 	j := systemJob(jobs)
-	if j == nil || j.TargetType != "local" {
+	if j == nil || j.TargetType != "local" || j.TargetID > 0 {
 		return "", "", nil
 	}
 	var cfg map[string]any
@@ -120,6 +124,76 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 	}
 	slog.Info("system backup job path made absolute", "job", j.Name, "from", from, "to", to)
 	return from, to, nil
+}
+
+// MovedSystemTarget reports a local system job that a start of an earlier
+// version moved to a migrated target at <data>/backups, while the target it
+// was created with is still saved and unused. That target is saved under
+// the job's name no later than the job and not edited since the move;
+// anything created or changed later, by whoever may save targets, is not
+// taken for it. It returns the job's name
+// and the paths of those targets.
+func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
+	if s.paths.DataDir == "" {
+		return "", nil, nil
+	}
+	jobs, err := s.store.listJobs(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	j := systemJob(jobs)
+	if j == nil || j.TargetType != "local" || j.TargetID == 0 {
+		return "", nil, nil
+	}
+	all, err := s.store.targets().List(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	moved := filepath.Join(s.paths.DataDir, "backups")
+	var current *targets.StoredTarget
+	for i := range all {
+		if all[i].ID == j.TargetID {
+			current = &all[i]
+			break
+		}
+	}
+	if current == nil || localTargetPath(current.Config) != moved ||
+		!hasNameOrSuffix(current.Name, migratedTargetName("local", map[string]any{"path": moved})) {
+		return "", nil, nil
+	}
+	for _, t := range all {
+		if t.Type != "local" || t.ID == j.TargetID || (t.JobCount != nil && *t.JobCount > 0) {
+			continue
+		}
+		if !hasNameOrSuffix(t.Name, j.Name) || t.CreatedAt.After(j.CreatedAt) || !current.CreatedAt.After(t.CreatedAt) ||
+			t.UpdatedAt.After(current.CreatedAt) {
+			continue
+		}
+		p := localTargetPath(t.Config)
+		if p == "" || p == moved || strings.ContainsFunc(p, unicode.IsControl) {
+			continue
+		}
+		previous = append(previous, p)
+	}
+	return j.Name, previous, nil
+}
+
+// hasNameOrSuffix reports whether name is base or base with the " (n)"
+// suffix insertTarget adds when base is taken.
+func hasNameOrSuffix(name, base string) bool {
+	return name == base || strings.HasPrefix(name, base+" (")
+}
+
+func localTargetPath(cfg any) string {
+	m, err := configToMap(cfg)
+	if err != nil {
+		return ""
+	}
+	p, _ := m["path"].(string)
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
 }
 
 func hasFiles(dir string) bool {
