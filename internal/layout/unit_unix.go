@@ -77,6 +77,61 @@ func RestoreServerUnit(opts UnitWriteOptions) error {
 	return writeRootFileAtomic(unitPath, old, 0o644)
 }
 
+// WriteUpdateUnits writes the root updater's path and service units for
+// binary and dataDir; changed reports whether either file changed. dir
+// defaults to the directory of UpdatePathUnitFile.
+func WriteUpdateUnits(binary, dataDir, dir string) (changed bool, err error) {
+	pathUnit, serviceUnit, err := RenderUpdateUnits(binary, dataDir)
+	if err != nil {
+		return false, err
+	}
+	if dir == "" {
+		dir = filepath.Dir(UpdatePathUnitFile)
+	}
+	for _, f := range []struct {
+		path string
+		data []byte
+	}{
+		{filepath.Join(dir, filepath.Base(UpdatePathUnitFile)), pathUnit},
+		{filepath.Join(dir, filepath.Base(UpdateServiceUnitFile)), serviceUnit},
+	} {
+		old, err := readUnit(f.path)
+		if err == nil && bytes.Equal(old, f.data) {
+			continue
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return changed, err
+		}
+		if err := writeRootFileAtomic(f.path, f.data, 0o644); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// ReadUnitFile returns the unit file at path, nil when it does not exist.
+// A symlink or anything but a regular file is refused.
+func ReadUnitFile(path string) ([]byte, error) {
+	data, err := readUnit(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
+}
+
+// PutUnitFile replaces the unit file at path with data, or removes it
+// when data is nil; for putting back what ReadUnitFile returned.
+func PutUnitFile(path string, data []byte) error {
+	if data == nil {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeRootFileAtomic(path, data, 0o644)
+}
+
 // readUnit reads a regular file without following a symlink.
 func readUnit(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)

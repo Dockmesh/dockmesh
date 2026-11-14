@@ -33,7 +33,18 @@ const (
 	// ServiceGroup is the group the server runs with; it may read
 	// ConfigDir.
 	ServiceGroup = "dockmesh"
+
+	// UpdatePathUnitFile watches for an update request and starts
+	// UpdateServiceUnitFile, the root oneshot that applies it.
+	UpdatePathUnitFile    = "/etc/systemd/system/dockmesh-update.path"
+	UpdateServiceUnitFile = "/etc/systemd/system/dockmesh-update.service"
+	// UpdateStateDir is the oneshot's root-only working directory.
+	UpdateStateDir = "/var/lib/dockmesh-update"
 )
+
+// UpdateRequestDir is the directory below the data dir where the server
+// stages a release and asks the oneshot to install it (config.Paths.UpdateDir).
+func UpdateRequestDir(dataDir string) string { return filepath.Join(dataDir, "update") }
 
 //go:embed units/*.tmpl
 var unitFS embed.FS
@@ -113,6 +124,29 @@ func RenderAgentUnit(u AgentUnit) ([]byte, error) {
 	}
 	v.EnrollRejectedExit = AgentExitEnrollRejected
 	return render("dockmesh-agent.service.tmpl", v)
+}
+
+// RenderUpdateUnits returns the path unit and the oneshot service of the
+// root updater for the server binary and data dir. Both values go into
+// settings systemd takes as one unquoted word.
+func RenderUpdateUnits(binary, dataDir string) (pathUnit, serviceUnit []byte, err error) {
+	bin, err := plainPath("binary", binary)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err := plainPath("data dir", dataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	v := struct{ Binary, DataDir, RequestFile string }{bin, dir, UpdateRequestDir(dir) + "/request"}
+	var p, s bytes.Buffer
+	if err := unitTemplates.ExecuteTemplate(&p, "dockmesh-update.path.tmpl", v); err != nil {
+		return nil, nil, err
+	}
+	if err := unitTemplates.ExecuteTemplate(&s, "dockmesh-update.service.tmpl", v); err != nil {
+		return nil, nil, err
+	}
+	return p.Bytes(), s.Bytes(), nil
 }
 
 func render(name string, v unitValues) ([]byte, error) {

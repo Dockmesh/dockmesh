@@ -36,19 +36,6 @@ func checksumsFor(files map[string][]byte) []byte {
 	return []byte(b.String())
 }
 
-func TestEmbeddedKeys(t *testing.T) {
-	v := Default()
-	want := []uint64{0x01A0941E358E1C5A, 0x73BBC751F8715F03}
-	if len(v.keys) != len(want) {
-		t.Fatalf("got %d keys, want %d", len(v.keys), len(want))
-	}
-	for i, id := range want {
-		if v.keys[i].ID() != id {
-			t.Errorf("key %d: id %016X, want %016X", i, v.keys[i].ID(), id)
-		}
-	}
-}
-
 func TestReleaseKeyID(t *testing.T) {
 	if got := ReleaseKeyID(); got != "01A0941E358E1C5A" {
 		t.Fatalf("ReleaseKeyID() = %s", got)

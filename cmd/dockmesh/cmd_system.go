@@ -106,6 +106,7 @@ func systemWriteUnit(args []string) error {
 	envFlag := fs.String("env-file", "", "config to write the unit for when "+layout.ConfigFile+" does not exist yet")
 	restore := fs.Bool("restore", false, "put back the unit the last write replaced")
 	_ = fs.Parse(args)
+	*envFlag = unitEnvFlag(*envFlag, loadedEnvFile, explicitEnvFile)
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("systemd units are only written on Linux")
 	}
@@ -130,6 +131,16 @@ func systemWriteUnit(args []string) error {
 		fmt.Printf("%s is up to date\n", layout.UnitFile)
 	}
 	return nil
+}
+
+// unitEnvFlag is the env file write-unit was given. main takes an
+// explicit --env-file out of the arguments before the subcommand parses
+// them, so it comes back from there.
+func unitEnvFlag(flag, loaded string, explicit bool) string {
+	if flag == "" && explicit {
+		return loaded
+	}
+	return flag
 }
 
 // writeServerUnit writes the server's unit for the given config (see
@@ -180,10 +191,40 @@ func writeServerUnit(envFlag string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%w (the unit was not changed)", err)
 	}
-	if !changed {
-		return false, nil
+	// Without the updater units the server cannot update itself, but it
+	// runs as before, so a refused value only warns.
+	updaterChanged, uerr := layout.WriteUpdateUnits(binary, paths.DataDir, "")
+	if uerr != nil {
+		fmt.Fprintln(os.Stderr, "warning: updater units not written:", uerr)
 	}
-	return true, daemonReload()
+	if changed || updaterChanged {
+		if err := daemonReload(); err != nil {
+			return changed, err
+		}
+	}
+	if uerr == nil {
+		if err := enableUpdater(updaterChanged); err != nil {
+			fmt.Fprintln(os.Stderr, "warning:", err)
+		}
+	}
+	return changed, nil
+}
+
+// enableUpdater enables the updater's path unit and its boot run, and
+// (re)starts the path unit so it watches for requests from now on.
+func enableUpdater(restart bool) error {
+	path, service := filepath.Base(layout.UpdatePathUnitFile), filepath.Base(layout.UpdateServiceUnitFile)
+	if out, err := exec.Command("systemctl", "enable", path, service).CombinedOutput(); err != nil { // #nosec G204 -- constant arguments
+		return fmt.Errorf("systemctl enable %s %s: %w: %s", path, service, err, strings.TrimSpace(string(out)))
+	}
+	verb := "start"
+	if restart {
+		verb = "restart"
+	}
+	if out, err := exec.Command("systemctl", verb, path).CombinedOutput(); err != nil { // #nosec G204 -- constant arguments
+		return fmt.Errorf("systemctl %s %s: %w: %s", verb, path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // unitConfigFile is the env file the unit loads: the root-owned file in

@@ -26,3 +26,12 @@ func ReadEnvFile(string) (map[string]string, error) { return nil, errNoSystemd }
 
 // PrepareConfigDir fails off Unix.
 func PrepareConfigDir(int) error { return errNoSystemd }
+
+// WriteUpdateUnits fails off Unix.
+func WriteUpdateUnits(string, string, string) (bool, error) { return false, errNoSystemd }
+
+// ReadUnitFile fails off Unix.
+func ReadUnitFile(string) ([]byte, error) { return nil, errNoSystemd }
+
+// PutUnitFile fails off Unix.
+func PutUnitFile(string, []byte) error { return errNoSystemd }

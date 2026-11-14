@@ -59,9 +59,13 @@ type Verifier struct {
 	keys []minisign.PublicKey
 }
 
+// extraKeys are trusted on top of the release keys. Only lab builds
+// (build tag labkeys) add one; release builds leave it empty.
+var extraKeys []string
+
 // Default returns a Verifier holding the embedded release and rotation keys.
 func Default() *Verifier {
-	v, err := New(ReleaseKey, RotationKey)
+	v, err := New(append([]string{ReleaseKey, RotationKey}, extraKeys...)...)
 	if err != nil {
 		panic(err)
 	}

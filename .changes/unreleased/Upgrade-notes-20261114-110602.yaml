@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'When an update installed by the root updater rolls back, the database goes back to its state before the update: changes made while the new version ran, at most about 180 seconds, are lost, audit entries included'
+time: 2026-11-14T11:06:02.168186922Z
+custom:
+    Audience: admins
+    Id: update-rollback-window

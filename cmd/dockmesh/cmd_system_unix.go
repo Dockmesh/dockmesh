@@ -41,28 +41,60 @@ func settingsWritablePaths(dbPath string) ([]string, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	acct, err := user.Lookup(layout.ServiceGroup)
-	if err != nil {
-		return nil, fmt.Errorf("look up the dockmesh account: %w", err)
-	}
-	uid, uidErr := strconv.ParseUint(acct.Uid, 10, 32)
-	gid, gidErr := strconv.ParseUint(acct.Gid, 10, 32)
-	if uidErr != nil || gidErr != nil || uid == 0 || gid == 0 {
-		return nil, fmt.Errorf("the dockmesh account has uid %s, gid %s; refusing to read the database as root", acct.Uid, acct.Gid)
-	}
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	data, err := runAsService(context.Background(), self, 30*time.Second, "system", unitPathsCmd, "--db", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	var out unitPathsOutput
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	if !out.RootsSet {
+		out.Paths = append(out.Paths, targets.DefaultRoots(dataDir)...)
+	}
+	return out.Paths, nil
+}
+
+// serviceAccount returns the uid and gid of the dockmesh account, refusing
+// root.
+func serviceAccount() (uint32, uint32, error) {
+	acct, err := user.Lookup(layout.ServiceGroup)
+	if err != nil {
+		return 0, 0, fmt.Errorf("look up the dockmesh account: %w", err)
+	}
+	uid, uidErr := strconv.ParseUint(acct.Uid, 10, 32)
+	gid, gidErr := strconv.ParseUint(acct.Gid, 10, 32)
+	if uidErr != nil || gidErr != nil || uid == 0 || gid == 0 {
+		return 0, 0, fmt.Errorf("the dockmesh account has uid %s, gid %s; refusing to act on its files as root", acct.Uid, acct.Gid)
+	}
+	return uint32(uid), uint32(gid), nil
+}
+
+// runAsService runs binary with args as the dockmesh account in its own
+// session, with a minimal environment, and returns at most
+// maxUnitPathsOutput bytes of its stdout. Root uses it for anything that
+// parses or rewrites files that account owns.
+func runAsService(ctx context.Context, binary string, timeout time.Duration, args ...string) ([]byte, error) {
+	uid, gid, err := serviceAccount()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, self, "system", unitPathsCmd, "--db", dbPath)
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:     true,
-		Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: []uint32{}},
+		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}},
 	}
+	// The child's account can hold its pipes open; the deadline must
+	// still end the call.
+	cmd.WaitDelay = 10 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -81,17 +113,7 @@ func settingsWritablePaths(dbPath string) ([]string, error) {
 	if err := cmd.Wait(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	if readErr != nil {
-		return nil, readErr
-	}
-	var out unitPathsOutput
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	if !out.RootsSet {
-		out.Paths = append(out.Paths, targets.DefaultRoots(dataDir)...)
-	}
-	return out.Paths, nil
+	return data, readErr
 }
 
 // limitedBuffer keeps the first left bytes written to it.

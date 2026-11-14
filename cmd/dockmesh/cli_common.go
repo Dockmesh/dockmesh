@@ -128,6 +128,8 @@ Host:
   system write-unit      Write dockmesh.service from the built-in template
                          (root; the installer runs it; --restore puts the
                          previous unit back)
+  update apply           Install the release the server staged, roll back if
+                         it does not come up (root; run by dockmesh-update.service)
 
 Diagnostics:
   config show            Print effective config (secrets redacted)
