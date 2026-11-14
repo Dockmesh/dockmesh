@@ -71,7 +71,7 @@ A running migration can't be cancelled. A server restart during a migration mark
 
 ### Hooks
 
-Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. The migration fails if the hook exits with a non-zero code (the error shows the end of its output), if no running container is found, or if the command can't be started. A failing `post_restore` rolls the migration back. A git sync doesn't copy `.dockmesh.meta.json` from the repository, so hooks can't come from a push.
+Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. The migration fails if the hook exits with a non-zero code (the end of its output goes to the server log, not to the migration error, which other stack viewers see), if no running container is found, or if the command can't be started. A failing `post_restore` rolls the migration back. A git sync doesn't copy `.dockmesh.meta.json` from the repository, so hooks can't come from a push.
 
 ### Roll back and clean up
 

@@ -71,17 +71,22 @@ func (s *Service) executeHook(ctx context.Context, h host.Host, stackName, hookN
 	if err != nil {
 		return fmt.Errorf("hook %s: exec: %w", hookName, err)
 	}
-	slog.Info("migration hook completed",
-		"stack", stackName, "hook", hookName,
-		"exit_code", exitCode, "output_bytes", len(output))
 	if exitCode != 0 {
-		return fmt.Errorf("hook %s exited with code %d: %s", hookName, exitCode, outputTail(output))
+		// The output stays in the server log: the migration error is shown
+		// to stack viewers on both hosts and may not see the container's
+		// environment.
+		slog.Warn("migration hook failed",
+			"stack", stackName, "hook", hookName,
+			"exit_code", exitCode, "output", outputTail(output))
+		return fmt.Errorf("hook %s exited with code %d (output in the server log)", hookName, exitCode)
 	}
+	slog.Info("migration hook completed",
+		"stack", stackName, "hook", hookName, "output_bytes", len(output))
 	return nil
 }
 
-// outputTail is the end of a hook's output for the error message, where
-// the reason for a failure usually is.
+// outputTail is the end of a hook's output, where the reason for a
+// failure usually is.
 func outputTail(b []byte) string {
 	const max = 500
 	s := strings.TrimSpace(strings.ToValidUTF8(string(b), "?"))

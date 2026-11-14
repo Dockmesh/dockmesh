@@ -22,6 +22,8 @@ type DaemonInfo struct {
 
 // SwarmState is the host's local Swarm membership as the daemon sees it.
 // NodeState "inactive" means the host is not part of a Swarm.
+// The values are the agent's own claim: membership is only established by
+// finding NodeID in a trusted manager's node list.
 type SwarmState struct {
 	NodeID    string `json:"node_id,omitempty"`
 	NodeState string `json:"node_state,omitempty"`

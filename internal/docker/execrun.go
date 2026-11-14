@@ -3,31 +3,30 @@ package docker
 import (
 	"bytes"
 	"context"
-	"errors"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 )
 
-var errOutputFull = errors.New("exec output limit reached")
-
-// cappedBuffer stops the copy once max bytes are kept.
+// cappedBuffer keeps the first max bytes and discards the rest, so the
+// copy reads the stream to its end and the exec has finished when its
+// exit code is read.
 type cappedBuffer struct {
 	bytes.Buffer
 	max int64
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
-	room := b.max - int64(b.Len())
-	if room <= 0 {
-		return 0, errOutputFull
+	if room := b.max - int64(b.Len()); room > 0 {
+		b.Buffer.Write(p[:min(int64(len(p)), room)])
 	}
-	if int64(len(p)) > room {
-		b.Buffer.Write(p[:room])
-		return int(room), errOutputFull
-	}
-	return b.Buffer.Write(p)
+	return len(p), nil
 }
+
+// execExitPoll is how often RunExec re-reads an exec that still shows as
+// running after its output stream closed.
+var execExitPoll = 50 * time.Millisecond
 
 // RunExec runs cmd in a container without a TTY and returns up to max bytes
 // of its stdout and stderr, interleaved as written, plus the exit code.
@@ -49,9 +48,18 @@ func RunExec(ctx context.Context, cli client.ExecAPIClient, containerID string, 
 	defer attach.Close()
 	out := &cappedBuffer{max: max}
 	_, _ = stdcopy.StdCopy(out, out, attach.Reader)
-	insp, err := cli.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
-	if err != nil {
-		return out.Bytes(), -1, err
+	for {
+		insp, err := cli.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
+		if err != nil {
+			return out.Bytes(), -1, err
+		}
+		if !insp.Running {
+			return out.Bytes(), insp.ExitCode, nil
+		}
+		select {
+		case <-ctx.Done():
+			return out.Bytes(), -1, ctx.Err()
+		case <-time.After(execExitPoll):
+		}
 	}
-	return out.Bytes(), insp.ExitCode, nil
 }

@@ -239,7 +239,12 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 
 	// Send hello
 	hostname, _ := os.Hostname()
-	dockerVersion := dockerDaemonVersion(ctx)
+	// The server waits 15 s for the hello; a slow daemon leaves the
+	// fields empty instead of failing the connection.
+	infoCtx, cancelInfo := context.WithTimeout(ctx, 5*time.Second)
+	dockerVersion := dockerDaemonVersion(infoCtx)
+	daemonInfo := dockerDaemonInfo(infoCtx)
+	cancelInfo()
 	hello := agents.HelloPayload{
 		Version:         version.Version,
 		Commit:          version.Commit,
@@ -250,7 +255,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
 		MirroredEnv:     hasMirroredEnv(dataDir()),
-		Daemon:          dockerDaemonInfo(ctx),
+		Daemon:          daemonInfo,
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {

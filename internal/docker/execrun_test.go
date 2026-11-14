@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
@@ -16,6 +18,9 @@ type fakeExecClient struct {
 	client.ExecAPIClient
 	stream []byte
 	exit   int
+	// running is how many inspects still report the exec as running.
+	running  int
+	inspects int
 }
 
 func (f *fakeExecClient) ExecCreate(context.Context, string, client.ExecCreateOptions) (client.ExecCreateResult, error) {
@@ -29,6 +34,10 @@ func (f *fakeExecClient) ExecAttach(context.Context, string, client.ExecAttachOp
 }
 
 func (f *fakeExecClient) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
+	f.inspects++
+	if f.inspects <= f.running {
+		return client.ExecInspectResult{Running: true}, nil
+	}
 	return client.ExecInspectResult{ExitCode: f.exit}, nil
 }
 
@@ -71,5 +80,18 @@ func TestRunExecDemultiplexes(t *testing.T) {
 				t.Fatalf("got %q exit %d, want %q exit 3", got, code, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunExecWaitsForExit(t *testing.T) {
+	execExitPoll = time.Millisecond
+	big := strings.Repeat("x", 64)
+	f := &fakeExecClient{stream: muxed("out", big, "out", big, "err", "failed"), exit: 2, running: 3}
+	got, code, err := RunExec(context.Background(), f, "c1", []string{"sh"}, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != big[:16] || code != 2 || f.inspects != 4 {
+		t.Fatalf("got %q exit %d after %d inspects, want the first 16 bytes, exit 2 after 4", got, code, f.inspects)
 	}
 }

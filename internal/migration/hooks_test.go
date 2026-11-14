@@ -34,8 +34,7 @@ func TestExecuteHookChecksExitCode(t *testing.T) {
 		wantErr string
 	}{
 		{"exit 0", &hookHost{output: "dumped"}, ""},
-		{"non-zero exit fails with the output", &hookHost{exitCode: 3, output: "pg_dump: connection refused\n"}, "exited with code 3: pg_dump: connection refused"},
-		{"no output", &hookHost{exitCode: 1}, "exited with code 1: no output"},
+		{"non-zero exit fails", &hookHost{exitCode: 3, output: "PGPASSWORD=secret pg_dump: connection refused\n"}, "exited with code 3 (output in the server log)"},
 		{"exec error", &hookHost{execErr: errors.New("agent gone")}, "exec: agent gone"},
 	}
 	s := &Service{}
@@ -46,8 +45,8 @@ func TestExecuteHookChecksExitCode(t *testing.T) {
 				if err != nil {
 					t.Fatalf("err = %v", err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), c.wantErr) {
-				t.Fatalf("err = %v, want it to contain %q", err, c.wantErr)
+			} else if err == nil || !strings.Contains(err.Error(), c.wantErr) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("err = %v, want it to contain %q and no hook output", err, c.wantErr)
 			}
 			if len(c.host.ran) != 1 || c.host.ran[0] != "c1: sh -c pg_dump -f /dump" {
 				t.Fatalf("ran %q", c.host.ran)
