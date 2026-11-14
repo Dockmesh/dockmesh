@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -208,5 +209,40 @@ func TestWriteServerUnitRefusesSymlinkIntoSystemTree(t *testing.T) {
 	}
 	if _, err := os.Lstat(opts.UnitFile); !os.IsNotExist(err) {
 		t.Errorf("unit written: %v", err)
+	}
+}
+
+// The socket stands in as a regular file owned by the test's own group, so
+// its "owner" is chosen by which gid the test calls docker.
+func TestSocketGroups(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "docker.sock")
+	if err := os.WriteFile(sock, nil, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	own := os.Getgid()
+	ownStr := strconv.Itoa(own)
+	tests := []struct {
+		name      string
+		socket    string
+		dockerGID int
+		want      []string
+	}{
+		{"socket owned by docker", sock, own, []string{"docker"}},
+		{"socket owned by another group", sock, own + 1, []string{"docker", ownStr}},
+		{"no docker group", sock, -1, []string{ownStr}},
+		{"no socket", filepath.Join(t.TempDir(), "missing.sock"), own + 1, []string{"docker"}},
+		{"DOCKER_HOST is not a unix socket", "", own + 1, []string{"docker"}},
+	}
+	if own == 0 {
+		tests = tests[2:3]
+		tests[0].want = []string(nil)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := SocketGroups(tt.socket, tt.dockerGID)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

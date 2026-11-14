@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -188,4 +189,30 @@ func checkResolved(u ServerUnit) error {
 		}
 	}
 	return nil
+}
+
+// SocketGroups returns the supplementary groups a service needs for Docker:
+// "docker" when that group exists (dockerGID >= 0), and the numeric gid of
+// the socket when another group owns it, as on Synology or with Podman. A
+// socket owned by group root is not added: that would hand the service
+// group root; warn says so. A missing socket adds nothing.
+func SocketGroups(socket string, dockerGID int) (groups []string, warn string) {
+	if dockerGID >= 0 {
+		groups = append(groups, "docker")
+	}
+	if socket == "" {
+		return groups, ""
+	}
+	fi, err := os.Stat(socket)
+	if err != nil {
+		return groups, ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Gid) == dockerGID {
+		return groups, ""
+	}
+	if st.Gid == 0 {
+		return groups, fmt.Sprintf("%s belongs to group root; the service gets no access to it through a group", socket)
+	}
+	return append(groups, strconv.FormatUint(uint64(st.Gid), 10)), ""
 }

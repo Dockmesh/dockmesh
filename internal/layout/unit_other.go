@@ -15,6 +15,9 @@ func RestoreServerUnit(UnitWriteOptions) error { return errNoSystemd }
 // CheckServerUnit fails off Unix.
 func CheckServerUnit(ServerUnit) error { return errNoSystemd }
 
+// SocketGroups gives no groups off Unix.
+func SocketGroups(string, int) ([]string, string) { return nil, "" }
+
 // ReadEnvFile fails off Unix.
 func ReadEnvFile(string) (map[string]string, error) { return nil, errNoSystemd }
 

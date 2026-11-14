@@ -368,7 +368,8 @@ write_unit() {
     printf '%s\n' "$out" >&2
     return 1
   fi
-  case "$out" in wrote*) UNIT_REWRITTEN=1 ;; esac
+  case "$out" in *"wrote /etc/systemd/system/dockmesh.service"*) UNIT_REWRITTEN=1 ;; esac
+  printf '%s\n' "$out" | sed -n 's/^warning: //p' | while IFS= read -r line; do warn "$line"; done
   ok "systemd unit    /etc/systemd/system/dockmesh.service"
 }
 

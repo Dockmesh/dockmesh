@@ -294,3 +294,19 @@ func ServerWritablePaths(p config.Paths, extra ...string) []string {
 	}
 	return append(out, extra...)
 }
+
+// DefaultDockerSocket is where the Docker SDK connects without DOCKER_HOST.
+const DefaultDockerSocket = "/var/run/docker.sock"
+
+// DockerSocketPath is the socket a service with env connects to, empty
+// when DOCKER_HOST names something other than a unix socket.
+func DockerSocketPath(env map[string]string) string {
+	host := env["DOCKER_HOST"]
+	if host == "" {
+		return DefaultDockerSocket
+	}
+	if p, ok := strings.CutPrefix(host, "unix://"); ok && filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return ""
+}
