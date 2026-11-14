@@ -40,7 +40,7 @@ const updateResultNoticePrefix = "agents.update-result."
 // resolves it.
 func (s *Service) updateResultNotice(ctx context.Context, id, name string, res AgentUpdateResult) {
 	// The agent writes these fields; keep them to one short line each.
-	res.To, res.From, res.Step, res.Reason = clip(res.To, 64), clip(res.From, 64), clip(res.Step, 32), clip(res.Reason, 300)
+	res.Status, res.To, res.From, res.Step, res.Reason = clip(res.Status, 16), clip(res.To, 64), clip(res.From, 64), clip(res.Step, 32), clip(res.Reason, 300)
 	if res.From != "" {
 		slog.Info("agent update result", "agent", name, "status", res.Status, "from", res.From, "to", res.To, "step", res.Step, "reason", res.Reason)
 	}

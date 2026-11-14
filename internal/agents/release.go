@@ -53,9 +53,13 @@ type ReleaseCache struct {
 	Client   *http.Client
 	Verifier *releasesig.Verifier
 
-	mu         sync.Mutex
-	failedAt   time.Time
-	failedWith error
+	mu     sync.Mutex
+	failed map[string]fetchFailure
+}
+
+type fetchFailure struct {
+	at  time.Time
+	err error
 }
 
 // ErrNoRelease means a managed agent can't be updated from this build.
@@ -73,15 +77,20 @@ func (c *ReleaseCache) Ensure(ctx context.Context, arch string) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.failedWith != nil && time.Since(c.failedAt) < fetchRetryGap {
-		return c.failedWith
+	if f, ok := c.failed[arch]; ok && time.Since(f.at) < fetchRetryGap {
+		return f.err
 	}
-	if err := c.ensure(ctx, archive); err != nil {
-		c.failedAt, c.failedWith = time.Now(), err
-		return err
+	err = c.ensure(ctx, archive)
+	switch {
+	case err == nil:
+		delete(c.failed, arch)
+	case ctx.Err() == nil:
+		if c.failed == nil {
+			c.failed = map[string]fetchFailure{}
+		}
+		c.failed[arch] = fetchFailure{at: time.Now(), err: err}
 	}
-	c.failedWith = nil
-	return nil
+	return err
 }
 
 func (c *ReleaseCache) ensure(ctx context.Context, archive string) error {

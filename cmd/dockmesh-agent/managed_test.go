@@ -220,6 +220,9 @@ func TestLegacyCopyStep(t *testing.T) {
 		{"refresh script left", managedUnit, true, false, true},
 		{"binary left in the data dir", managedUnit, false, true, true},
 	}
+	old := execStartPre
+	execStartPre = func() string { return "" }
+	t.Cleanup(func() { execStartPre = old })
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -247,6 +250,17 @@ func TestLegacyCopyStep(t *testing.T) {
 			}
 		})
 	}
+	t.Run("ExecStartPre in a drop-in", func(t *testing.T) {
+		execStartPre = func() string { return "{ path=/etc/dockmesh-agent/refresh-path-copy ; argv[]=… }" }
+		dir := t.TempDir()
+		unit := filepath.Join(dir, "dockmesh-agent.service")
+		if err := os.WriteFile(unit, []byte(managedUnit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := legacyCopyStepAt(dir, filepath.Join(dir, "none"), unit); err == nil {
+			t.Error("ExecStartPre from systemd not seen")
+		}
+	})
 }
 
 func TestRefusedRequestFreesTheUpgradeLock(t *testing.T) {

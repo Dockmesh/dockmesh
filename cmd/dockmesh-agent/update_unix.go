@@ -149,9 +149,11 @@ func (s *agentService) Stop(ctx context.Context) error {
 }
 
 func (s *agentService) Start(ctx context.Context) error {
-	// A health file from before this start must not count.
+	// A health file from before this start must not count. The agent
+	// account must not be able to keep a rollback from starting the agent,
+	// so a failure only means the health check fails.
 	if err := rootupdate.RemoveServiceFile(s.reqDir, s.uid, runningFile); err != nil {
-		return err
+		slog.Warn("remove agent health file", "err", err)
 	}
 	s.started = time.Now()
 	return agentSystemctl(ctx, "start", agentUnitName)
@@ -241,6 +243,10 @@ func legacyCopyStepAt(dataDir, script, unitFile string) error {
 	if _, err := os.Lstat(filepath.Join(dataDir, "bin", "dockmesh-agent")); err == nil {
 		return fmt.Errorf("%s still exists", filepath.Join(dataDir, "bin", "dockmesh-agent"))
 	}
+	// Drop-ins and every spelling systemd accepts count, so ask systemd.
+	if pre := execStartPre(); pre != "" {
+		return fmt.Errorf("%s runs ExecStartPre %s", agentUnitName, pre)
+	}
 	unit, err := readRootOwnedUnit(unitFile)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", unitFile, err)
@@ -252,4 +258,16 @@ func legacyCopyStepAt(dataDir, script, unitFile string) error {
 		}
 	}
 	return nil
+}
+
+// execStartPre is the ExecStartPre systemd has for the agent unit,
+// drop-ins included; empty without one or without systemd.
+var execStartPre = func() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/bin/systemctl", "show", "-p", "ExecStartPre", "--value", agentUnitName).Output() // #nosec G204 -- fixed unit name
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
