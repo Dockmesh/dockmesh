@@ -1,0 +1,108 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/health"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.5:8080"
+                            }
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/old"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": 308,
+                          "headers": {
+                            "Location": [
+                              "https://new.example.com/"
+                            ]
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/admin",
+                            "/admin/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": 403
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "status_code": 404
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -130,15 +130,15 @@ func TestSavedHealthPathSurvivesUpgrade(t *testing.T) {
 		t.Fatalf("enable with saved path: %v", err)
 	}
 	kept := SiteOptions{Routing: RoutingOptions{HealthPath: "/a/../health"}, Performance: PerformanceOptions{Compression: true}}
-	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &kept); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &kept, nil); err != nil {
 		t.Fatalf("save with the health path unchanged: %v", err)
 	}
-	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, nil, nil); err != nil {
 		t.Fatalf("save without options: %v", err)
 	}
 	changed := SiteOptions{Routing: RoutingOptions{HealthPath: "/b/../health"}}
 	var oe *OptionError
-	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &changed); !errors.As(err, &oe) || oe.Field != "routing.health_path" {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &changed, nil); !errors.As(err, &oe) || oe.Field != "routing.health_path" {
 		t.Fatalf("changed health path: err = %v", err)
 	}
 }

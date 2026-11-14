@@ -58,6 +58,7 @@ type caddyRoute struct {
 
 type caddyMatch struct {
 	Host     []string            `json:"host,omitempty"`
+	Path     []string            `json:"path,omitempty"`
 	Not      []caddyMatch        `json:"not,omitempty"`
 	ClientIP *caddyRanges        `json:"client_ip,omitempty"`
 	Vars     map[string][]string `json:"vars,omitempty"`
@@ -243,7 +244,8 @@ func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []s
 			continue
 		}
 		if checkRouteHost(r.Host) != nil || checkUpstream(r.Upstream) != nil ||
-			r.optionsErr != nil || r.Options.validate(r.Host, r.TLSMode) != nil {
+			r.optionsErr != nil || r.Options.validate(r.Host, r.TLSMode) != nil ||
+			r.pathsErr != nil || validatePaths(r.Paths) != nil {
 			blocked = append(blocked, r.Host)
 			continue
 		}
@@ -360,7 +362,7 @@ func siteRoutes(r Route, wwwHost, port string, redact bool) []caddyRoute {
 	}
 
 	var handle []any
-	if resp := responseHeaderOp(o, r.TLSMode); resp != nil {
+	if resp := frontResponseOp(r); resp != nil {
 		handle = append(handle, caddyHeadersHandler{Handler: "headers", Response: resp})
 	}
 	if o.Performance.Compression {
@@ -388,7 +390,11 @@ func siteRoutes(r Route, wwwHost, port string, redact bool) []caddyRoute {
 	if o.Access.ForwardAuth != nil {
 		handle = append(handle, forwardAuthHandler(o.Access.ForwardAuth))
 	}
-	handle = append(handle, fallbackHandler(r, port))
+	if len(r.Paths) > 0 {
+		handle = append(handle, pathSubroute(r, port))
+	} else {
+		handle = append(handle, fallbackHandler(r, port))
+	}
 
 	return append(out, caddyRoute{
 		Match:    []caddyMatch{{Host: []string{r.Host}}},
@@ -437,17 +443,41 @@ func fallbackHandler(r Route, port string) any {
 
 func mainProxy(r Route, port string) caddyReverseProxy {
 	o := &r.Options
-	p := caddyReverseProxy{Handler: "reverse_proxy", Upstreams: []caddyUpstream{{Dial: r.Upstream}}}
-	for _, u := range o.Routing.ExtraUpstreams {
+	return siteBackend(r).proxy(requestHeaderOps(o, hostHeader(&o.Routing.UpstreamTLS), port))
+}
+
+// backend is what a reverse_proxy handler dials and how.
+type backend struct {
+	upstreams []string
+	lbPolicy  string
+	health    string
+	tls       *UpstreamTLS
+	perf      PerformanceOptions
+}
+
+func siteBackend(r Route) backend {
+	o := &r.Options
+	return backend{
+		upstreams: append([]string{r.Upstream}, o.Routing.ExtraUpstreams...),
+		lbPolicy:  o.Routing.LBPolicy,
+		health:    o.Routing.HealthPath,
+		tls:       &o.Routing.UpstreamTLS,
+		perf:      o.Performance,
+	}
+}
+
+func (b backend) proxy(headers *caddyHeaderOps) caddyReverseProxy {
+	p := caddyReverseProxy{Handler: "reverse_proxy"}
+	for _, u := range b.upstreams {
 		p.Upstreams = append(p.Upstreams, caddyUpstream{Dial: u})
 	}
-	if o.Routing.LBPolicy != "" {
-		p.LoadBalancing = &caddyLoadBalancing{SelectionPolicy: map[string]string{"policy": o.Routing.LBPolicy}}
+	if b.lbPolicy != "" {
+		p.LoadBalancing = &caddyLoadBalancing{SelectionPolicy: map[string]string{"policy": b.lbPolicy}}
 	}
-	if o.Routing.HealthPath != "" {
-		p.HealthChecks = &caddyHealthChecks{Active: map[string]string{"uri": o.Routing.HealthPath}}
+	if b.health != "" {
+		p.HealthChecks = &caddyHealthChecks{Active: map[string]string{"uri": b.health}}
 	}
-	perf := &o.Performance
+	perf := &b.perf
 	if perf.FlushImmediately {
 		p.FlushInterval = -1
 	}
@@ -455,7 +485,7 @@ func mainProxy(r Route, port string) caddyReverseProxy {
 		p.RequestBuffers = requestBufferSize
 	}
 	p.StreamCloseDelay = durationNanos(perf.StreamCloseDelay)
-	tls := o.Routing.UpstreamTLS.caddyTLS()
+	tls := b.tls.caddyTLS()
 	if perf.DialTimeout != "" || perf.ReadTimeout != "" || perf.WriteTimeout != "" || tls != nil {
 		p.Transport = &caddyTransport{
 			Protocol:     "http",
@@ -465,7 +495,7 @@ func mainProxy(r Route, port string) caddyReverseProxy {
 			TLS:          tls,
 		}
 	}
-	p.Headers = requestHeaderOps(o, hostHeader(&o.Routing.UpstreamTLS), port)
+	p.Headers = headers
 	return p
 }
 

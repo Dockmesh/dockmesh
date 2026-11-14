@@ -1,0 +1,137 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/api",
+                            "/api/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "rewrite",
+                          "strip_path_prefix": "/api"
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.30:443"
+                            },
+                            {
+                              "dial": "10.0.0.31:443"
+                            }
+                          ],
+                          "load_balancing": {
+                            "selection_policy": {
+                              "policy": "first"
+                            }
+                          },
+                          "health_checks": {
+                            "active": {
+                              "uri": "/healthz"
+                            }
+                          },
+                          "request_buffers": 4194304,
+                          "transport": {
+                            "protocol": "http",
+                            "dial_timeout": 3000000000,
+                            "tls": {
+                              "insecure_skip_verify": true
+                            }
+                          },
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "Authorization": [
+                                  "Bearer x"
+                                ],
+                                "Host": [
+                                  "{http.reverse_proxy.upstream.hostport}"
+                                ]
+                              },
+                              "delete": [
+                                "Cookie"
+                              ]
+                            }
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.5:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "app.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

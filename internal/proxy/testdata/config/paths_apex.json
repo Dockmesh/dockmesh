@@ -1,0 +1,392 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "apex.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "headers",
+                  "response": {
+                    "set": {
+                      "Referrer-Policy": [
+                        "strict-origin-when-cross-origin"
+                      ],
+                      "X-Content-Type-Options": [
+                        "nosniff"
+                      ]
+                    },
+                    "deferred": true
+                  }
+                },
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/ords",
+                            "/ords/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "X-Frame-Options": [
+                                "SAMEORIGIN"
+                              ]
+                            },
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.20:8443"
+                            }
+                          ],
+                          "flush_interval": -1,
+                          "transport": {
+                            "protocol": "http",
+                            "read_timeout": 600000000000,
+                            "tls": {
+                              "server_name": "apex.internal"
+                            }
+                          },
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "Host": [
+                                  "{http.request.hostport}"
+                                ],
+                                "X-Env": [
+                                  "ords"
+                                ],
+                                "X-Forwarded-Port": [
+                                  "443"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/i",
+                            "/i/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "public, max-age=86400"
+                              ]
+                            },
+                            "delete": [
+                              "X-Frame-Options"
+                            ],
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.20:8443"
+                            }
+                          ],
+                          "transport": {
+                            "protocol": "http",
+                            "tls": {
+                              "server_name": "apex.internal"
+                            }
+                          },
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "Host": [
+                                  "{http.request.hostport}"
+                                ],
+                                "X-Env": [
+                                  "site"
+                                ],
+                                "X-Forwarded-Port": [
+                                  "443"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "X-Frame-Options": [
+                                "SAMEORIGIN"
+                              ]
+                            },
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "static_response",
+                          "status_code": 302,
+                          "headers": {
+                            "Location": [
+                              "/ords/r/app/home"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "apex.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "headers",
+                  "response": {
+                    "set": {
+                      "Referrer-Policy": [
+                        "strict-origin-when-cross-origin"
+                      ],
+                      "X-Content-Type-Options": [
+                        "nosniff"
+                      ]
+                    },
+                    "deferred": true
+                  }
+                },
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/ords",
+                            "/ords/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "X-Frame-Options": [
+                                "SAMEORIGIN"
+                              ]
+                            },
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.20:8443"
+                            }
+                          ],
+                          "flush_interval": -1,
+                          "transport": {
+                            "protocol": "http",
+                            "read_timeout": 600000000000,
+                            "tls": {
+                              "server_name": "apex.internal"
+                            }
+                          },
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "Host": [
+                                  "{http.request.hostport}"
+                                ],
+                                "X-Env": [
+                                  "ords"
+                                ],
+                                "X-Forwarded-Port": [
+                                  "80"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/i",
+                            "/i/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "public, max-age=86400"
+                              ]
+                            },
+                            "delete": [
+                              "X-Frame-Options"
+                            ],
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "10.0.0.20:8443"
+                            }
+                          ],
+                          "transport": {
+                            "protocol": "http",
+                            "tls": {
+                              "server_name": "apex.internal"
+                            }
+                          },
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "Host": [
+                                  "{http.request.hostport}"
+                                ],
+                                "X-Env": [
+                                  "site"
+                                ],
+                                "X-Forwarded-Port": [
+                                  "80"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Cache-Control": [
+                                "no-store"
+                              ],
+                              "X-Frame-Options": [
+                                "SAMEORIGIN"
+                              ]
+                            },
+                            "deferred": true
+                          }
+                        },
+                        {
+                          "handler": "static_response",
+                          "status_code": 302,
+                          "headers": {
+                            "Location": [
+                              "/ords/r/app/home"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "apex.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

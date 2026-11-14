@@ -140,7 +140,7 @@ func TestRejectedChangeIsRolledBack(t *testing.T) {
 			return err
 		}},
 		{"update", func() error {
-			_, err := s.UpdateRoute(ctx, a.ID, badUpstream, "auto", nil, nil)
+			_, err := s.UpdateRoute(ctx, a.ID, badUpstream, "auto", nil, nil, nil)
 			return err
 		}},
 	}
@@ -253,7 +253,7 @@ func TestOtherSitesStillChangeWithUnloadableRow(t *testing.T) {
 		t.Fatalf("offline notice = %+v", n)
 	}
 
-	if _, err := s.UpdateRoute(ctx, b.ID, "10.0.0.2:80", "auto", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, b.ID, "10.0.0.2:80", "auto", nil, nil, nil); err != nil {
 		t.Fatalf("fix b: %v", err)
 	}
 	running, _ = f.state()
@@ -429,7 +429,7 @@ func TestBackfillMarkerOnUnappliedChange(t *testing.T) {
 	f.mu.Lock()
 	f.down = true
 	f.mu.Unlock()
-	if _, err := s.UpdateRoute(ctx, a.ID, "10.0.0.9:80", "auto", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, a.ID, "10.0.0.9:80", "auto", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	ra, _ := s.getRoute(ctx, a.ID)

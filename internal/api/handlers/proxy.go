@@ -27,6 +27,7 @@ type proxyRouteRequest struct {
 	// Options stay raw so an omitted object (keep on update) can be
 	// told apart from an empty one (defaults).
 	Options json.RawMessage `json:"options,omitempty"`
+	Paths   json.RawMessage `json:"paths,omitempty"`
 }
 
 // maxProxyRouteBody bounds route create/update bodies; options are small.
@@ -165,7 +166,7 @@ func (h *Handlers) ListProxyRoutes(w http.ResponseWriter, r *http.Request) {
 	routes = h.Proxy.EnrichWithCertInfo(ctx, routes)
 	if !canEditProxy(r) {
 		for i := range routes {
-			routes[i].Options = routes[i].Options.Masked()
+			routes[i].Mask()
 		}
 	}
 	writeJSON(w, http.StatusOK, routes)
@@ -194,6 +195,15 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	paths, err := proxy.ParsePaths(req.Paths)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	spec := proxy.RouteSpec{Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts}
+	if paths != nil {
+		spec.Paths = *paths
+	}
 	started := time.Now()
 	op := h.Operations.Start(r.Context(), operations.Spec{
 		Kind:   opProxySite,
@@ -202,9 +212,7 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		Actor:  opActor(r.Context()),
 		Steps:  proxy.NewSiteSteps,
 	})
-	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), proxy.RouteSpec{
-		Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts,
-	})
+	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), spec)
 	if err != nil {
 		op.Finish(err)
 	} else {
@@ -221,8 +229,11 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if opts != nil {
 		details["options"] = orNone(proxy.ChangedGroups(proxy.SiteOptions{}, *opts))
 	}
+	if len(route.Paths) > 0 {
+		details["paths"] = len(route.Paths)
+	}
 	h.audit(r, "proxy.route_create", req.Host, details)
-	if route.Options.SkipsVerify() {
+	if route.SkipsVerify() {
 		h.audit(r, "proxy.route_tls_unverified", route.Host, nil)
 	}
 	writeJSON(w, http.StatusCreated, route)
@@ -250,7 +261,12 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	changed, err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts)
+	paths, err := proxy.ParsePaths(req.Paths)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	changed, err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts, paths)
 	if writeProxyRouteError(w, err) {
 		return
 	}
@@ -264,7 +280,7 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if route.Options.SkipsVerify() && len(changed) > 0 {
+	if route.SkipsVerify() && len(changed) > 0 {
 		h.audit(r, "proxy.route_tls_unverified", route.Host, nil)
 	}
 	writeJSON(w, http.StatusOK, route)

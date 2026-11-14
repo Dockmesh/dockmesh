@@ -64,10 +64,15 @@ const (
 )
 
 // stateHash identifies a row's stored state: what decides its part of the
-// Caddy config. It covers the stored options text, secrets included, so a
-// changed secret counts as a change.
+// Caddy config. It covers the stored options and paths text, secrets
+// included, so a changed secret counts as a change.
 func stateHash(r *Route) string {
-	b, _ := json.Marshal([]any{r.Host, r.Upstream, r.TLSMode, r.Enabled, r.stored})
+	state := []any{r.Host, r.Upstream, r.TLSMode, r.Enabled, r.stored}
+	// Rows without paths keep the hash they had before paths existed.
+	if r.storedPaths != "" && r.storedPaths != "[]" {
+		state = append(state, r.storedPaths)
+	}
+	b, _ := json.Marshal(state)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

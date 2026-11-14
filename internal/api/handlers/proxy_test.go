@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -211,5 +212,66 @@ func TestProxyRouteSkipVerifyAudited(t *testing.T) {
 		if n != tt.entries {
 			t.Errorf("%s: %d tls_unverified entries, want %d", tt.name, n, tt.entries)
 		}
+	}
+}
+
+// Paths are sent with the route, refused with a field path when invalid,
+// kept when omitted, named in the audit entry and masked for viewers.
+func TestProxyRoutePaths(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.Proxy = proxy.NewService(e.db, nil, false)
+	e.h.Audit = audit.NewService(e.db, "")
+	auth := middleware.NewAuth(e.h.Auth)
+	e.router.With(auth, middleware.RequirePerm(rbac.PermProxyView)).Get("/proxy/routes", e.h.ListProxyRoutes)
+	e.router.With(auth, middleware.RequirePerm(rbac.PermProxyUpdate)).Put("/proxy/routes/{id}", e.h.UpdateProxyRoute)
+	route, err := e.h.Proxy.CreateRoute(context.Background(), proxy.RouteSpec{Host: "apex.example.com", Upstream: "10.0.0.2:80", TLSMode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.role("proxyeditor", []rbac.Perm{rbac.PermProxyView, rbac.PermProxyUpdate})
+	e.user("editor1", "proxyeditor")
+	e.role("proxyviewer", []rbac.Perm{rbac.PermProxyView})
+	e.user("viewer1", "proxyviewer")
+	tok := e.login("editor1").AccessToken
+	path := "/proxy/routes/" + strconv.FormatInt(route.ID, 10)
+	put := func(body map[string]any) *httptest.ResponseRecorder {
+		body["upstream"], body["tls_mode"] = "10.0.0.2:80", "auto"
+		return e.do(http.MethodPut, path, tok, body)
+	}
+
+	rr := put(map[string]any{"paths": json.RawMessage(`[{"match":{"type":"prefix","path":"/"},"action":"respond","status":404}]`)})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "paths[0].match.path") {
+		t.Fatalf("root path: %d %s", rr.Code, rr.Body)
+	}
+	rr = put(map[string]any{"paths": json.RawMessage(`[
+		{"match":{"type":"prefix","path":"/i/"},"action":"proxy","target":{"kind":"site"},"headers":{"request_set":[{"name":"X-Key","value":"path-s3cret","secret":true}]}},
+		{"match":{"type":"exact","path":"/old"},"action":"redirect","to":"/new","code":301}]`)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("paths: %d %s", rr.Code, rr.Body)
+	}
+	var got struct {
+		Paths []proxy.PathRoute `json:"paths"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || len(got.Paths) != 2 || got.Paths[0].Match.Path != "/old" || got.Paths[1].Match.Path != "/i" {
+		t.Fatalf("stored order/normalization: %v %s", err, rr.Body)
+	}
+	if strings.Contains(rr.Body.String(), "path-s3cret") {
+		t.Fatal("secret path header returned")
+	}
+	var details string
+	if err := e.db.QueryRow(`SELECT details FROM audit_log WHERE action = 'proxy.route_update' ORDER BY id DESC LIMIT 1`).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(details, `"paths"`) || strings.Contains(details, "path-s3cret") {
+		t.Errorf("audit details: %s", details)
+	}
+
+	if rr = put(map[string]any{}); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"/old"`) {
+		t.Fatalf("omitted paths not kept: %d %s", rr.Code, rr.Body)
+	}
+
+	rr = e.do(http.MethodGet, "/proxy/routes", e.login("viewer1").AccessToken, nil)
+	if !strings.Contains(rr.Body.String(), `"X-Key"`) || strings.Contains(rr.Body.String(), "path-s3cret") || !strings.Contains(rr.Body.String(), "********") {
+		t.Errorf("viewer list: %s", rr.Body)
 	}
 }
