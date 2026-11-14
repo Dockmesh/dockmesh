@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Files of the web UI certificate, next to the CA. It is issued once and
@@ -20,6 +21,10 @@ const (
 	UICertFile = "ui-server.crt"
 	uiKeyFile  = "ui-server.key"
 )
+
+// uiRenewBefore re-issues the certificate this long before it expires; the
+// fingerprint changes then, which the start log shows.
+const uiRenewBefore = 30 * 24 * time.Hour
 
 // maxCertFile bounds what ReadUICert reads.
 const maxCertFile = 64 << 10
@@ -35,7 +40,7 @@ func (m *Manager) EnsureUICert(hosts []string) (*tls.Certificate, error) {
 	certPEM, cErr := os.ReadFile(certPath)
 	keyPEM, kErr := os.ReadFile(keyPath)
 	if cErr == nil && kErr == nil {
-		if cert, err := parseCertPEM(certPEM); err == nil && m.pairProblem(cert, keyPEM) == "" {
+		if cert, err := parseCertPEM(certPEM); err == nil && m.pairProblem(cert, keyPEM) == "" && time.Until(cert.NotAfter) > uiRenewBefore {
 			pair, err := tls.X509KeyPair(certPEM, keyPEM)
 			if err == nil {
 				return &pair, nil

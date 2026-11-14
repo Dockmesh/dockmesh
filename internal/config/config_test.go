@@ -26,3 +26,34 @@ func TestParseEnrollTokenTTL(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadTLSMode(t *testing.T) {
+	cases := []struct {
+		mode, addr string
+		wantAddr   string
+		ok         bool
+	}{
+		{"", "", ":8080", true},
+		{"internal", "", ":8080", true},
+		{"proxy", "", "127.0.0.1:8080", true},
+		{"caddy", "", "127.0.0.1:8080", true},
+		{"proxy", "10.0.0.5:9000", "10.0.0.5:9000", true},
+		{"tls", "", "", false},
+		{"file", "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.mode+"/"+c.addr, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("DOCKMESH_DATA_DIR", dir)
+			t.Setenv("DOCKMESH_TLS_MODE", c.mode)
+			t.Setenv("DOCKMESH_HTTP_ADDR", c.addr)
+			cfg, err := Load()
+			if (err == nil) != c.ok {
+				t.Fatalf("Load: %v, want ok=%v", err, c.ok)
+			}
+			if err == nil && cfg.HTTPAddr != c.wantAddr {
+				t.Errorf("HTTPAddr = %q, want %q", cfg.HTTPAddr, c.wantAddr)
+			}
+		})
+	}
+}

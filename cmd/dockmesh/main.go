@@ -1302,6 +1302,14 @@ func main() {
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			return r.Method + " " + r.URL.Path
 		}))
+	if !setupState.Active() {
+		var err error
+		if webTLS, webLeaf, err = listenerTLS(cfg, pkiMgr); err != nil {
+			slog.Error("web listener TLS", "mode", cfg.TLSMode, "err", err)
+			os.Exit(1)
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           tracedRouter,

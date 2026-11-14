@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/webtls"
 )
 
 // DefaultBaseURL is the public address used when neither DOCKMESH_BASE_URL
@@ -54,6 +56,12 @@ type Config struct {
 	// SetupForce marks an install whose setup wizard has not finished
 	// (DOCKMESH_SETUP_FORCE); see setup.Decide.
 	SetupForce bool
+	// TLSMode is what the web listener serves (DOCKMESH_TLS_MODE, see
+	// webtls.Mode); empty is plain HTTP. TLSCertFile and TLSKeyFile are
+	// DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE for mode file.
+	TLSMode     string
+	TLSCertFile string
+	TLSKeyFile  string
 	// UpdateRollbackKeep is how many rollback tags per image the
 	// container updater keeps (DOCKMESH_UPDATE_ROLLBACK_KEEP).
 	UpdateRollbackKeep int
@@ -62,7 +70,6 @@ type Config struct {
 func Load() (*Config, error) {
 	paths := ResolvePaths(os.Getenv)
 	cfg := &Config{
-		HTTPAddr:          envOr("DOCKMESH_HTTP_ADDR", ":8080"),
 		DataDir:           paths.DataDir,
 		DBPath:            paths.DBPath,
 		StacksRoot:        paths.StacksRoot,
@@ -89,6 +96,17 @@ func Load() (*Config, error) {
 		OTelEndpoint:   envOr("DOCKMESH_OTEL_ENDPOINT", ""),
 		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
+		TLSMode:        os.Getenv("DOCKMESH_TLS_MODE"),
+		TLSCertFile:    os.Getenv("DOCKMESH_TLS_CERT_FILE"),
+		TLSKeyFile:     os.Getenv("DOCKMESH_TLS_KEY_FILE"),
+	}
+	mode, err := webtls.ParseMode(cfg.TLSMode)
+	if err != nil {
+		return nil, err
+	}
+	cfg.HTTPAddr = webtls.ListenAddr(mode, os.Getenv("DOCKMESH_HTTP_ADDR"))
+	if mode == webtls.File && (!filepath.IsAbs(cfg.TLSCertFile) || !filepath.IsAbs(cfg.TLSKeyFile)) {
+		return nil, errors.New("DOCKMESH_TLS_MODE=file needs absolute paths in DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE")
 	}
 	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
 	cfg.UpdateRollbackKeep = 3

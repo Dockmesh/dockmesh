@@ -1,0 +1,3 @@
+kind: Added
+body: 'The web listener can serve HTTPS after setup: `DOCKMESH_TLS_MODE` picks the built-in certificate, your own certificate files (reloaded when they change), the managed Caddy proxy, or plain HTTP behind your own reverse proxy, which is trusted on the bind address only'
+time: 2026-11-14T22:38:07.341671836Z
