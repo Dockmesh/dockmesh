@@ -1,0 +1,3 @@
+kind: Added
+body: Agents installed with a root-owned binary and the agent root updater (managed layout) update to the server's signed release through that updater, which checks the signature with the agent's own keys and puts the old binary back when the new agent does not connect within 3 minutes; certificates are never rolled back
+time: 2026-11-14T21:19:56.498821986Z

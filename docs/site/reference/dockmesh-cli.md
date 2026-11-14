@@ -255,6 +255,7 @@ The agent is configured through environment variables, which `install-agent.sh` 
 | `dockmesh-agent --insecure-enroll` | Same, but allow enrollment over plain `http://` (lab setups only) |
 | `dockmesh-agent status` | Print enrollment state, certificate subject and expiry, server URL, and whether a TLS handshake to the server succeeds |
 | `dockmesh-agent version` | Print version, OS/arch, commit and build date (`--version`, `-v` also work) |
+| `sudo dockmesh-agent update apply --data-dir <dir>` | Root updater of a managed agent, run by `dockmesh-agent-update.service`: installs the release the agent staged in `<dir>/update/` after checking its signature again, restarts the agent and rolls back to `dockmesh-agent.prev` when the new agent does not connect within 180 seconds ([Upgrading agents](../operations/upgrade.md#upgrading-agents)) |
 
 Any other argument is rejected with status 2. After a lost connection the agent retries at once, then backs off from one second doubling up to 60 seconds; it treats the server as gone after 90 seconds without traffic.
 
