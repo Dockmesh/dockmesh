@@ -1,0 +1,3 @@
+kind: Added
+body: 'The proxy site page has a Paths tab: add, edit and delete path routes with their backend, upstream TLS, headers and timeouts, see them in the order Caddy applies them, and edit the fallback for requests that match no path'
+time: 2026-11-14T13:14:31.996523775Z

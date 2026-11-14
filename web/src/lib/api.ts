@@ -2810,10 +2810,16 @@ export const api = {
     // defaults on create.
     createRoute: (host: string, upstream: string, tls_mode: string, options?: object) =>
       request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode, ...(options ? { options } : {}) }) }),
-    updateRoute: (id: number, upstream: string, tls_mode: string, enabled?: boolean, options?: object) =>
+    updateRoute: (id: number, upstream: string, tls_mode: string, enabled?: boolean, options?: object, paths?: object[]) =>
       request<any>(`/proxy/routes/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ upstream, tls_mode, ...(enabled !== undefined ? { enabled } : {}), ...(options ? { options } : {}) })
+        body: JSON.stringify({
+          upstream,
+          tls_mode,
+          ...(enabled !== undefined ? { enabled } : {}),
+          ...(options ? { options } : {}),
+          ...(paths ? { paths } : {})
+        })
       }),
     // Row-level toggle — flip just the enabled flag without round-tripping
     // upstream + tls_mode unchanged. Disabling stops traffic but keeps
