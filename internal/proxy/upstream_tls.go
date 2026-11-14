@@ -68,6 +68,9 @@ func parseCAPEM(s string) ([][]byte, *OptionError) {
 	if len(s) > maxCAPEMBytes {
 		return nil, &OptionError{Msg: "the certificate is larger than 64 KB"}
 	}
+	if strings.Contains(s, "PRIVATE KEY") {
+		return nil, errPEMPrivateKey
+	}
 	rest := []byte(s)
 	var out [][]byte
 	for {
@@ -75,9 +78,6 @@ func parseCAPEM(s string) ([][]byte, *OptionError) {
 		b, rest = pem.Decode(rest)
 		if b == nil {
 			break
-		}
-		if strings.Contains(b.Type, "PRIVATE KEY") {
-			return nil, errPEMPrivateKey
 		}
 		if b.Type != "CERTIFICATE" {
 			return nil, errPEMNotCert
@@ -88,12 +88,23 @@ func parseCAPEM(s string) ([][]byte, *OptionError) {
 		out = append(out, b.Bytes)
 	}
 	if len(out) == 0 || strings.TrimSpace(string(rest)) != "" {
-		if strings.Contains(string(rest), "PRIVATE KEY") {
-			return nil, errPEMPrivateKey
-		}
 		return nil, errPEMNotCert
 	}
 	return out, nil
+}
+
+// normalizeCAPEM re-encodes the certificates of a valid PEM, so text
+// around the blocks is not stored and shown to viewers.
+func normalizeCAPEM(s string) string {
+	ders, err := parseCAPEM(s)
+	if err != nil {
+		return s
+	}
+	var b strings.Builder
+	for _, d := range ders {
+		b.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: d}))
+	}
+	return b.String()
 }
 
 // caddyTLS is the transport TLS block for t, nil for plain HTTP.

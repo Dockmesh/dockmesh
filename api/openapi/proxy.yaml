@@ -665,10 +665,10 @@ components:
         ca_pem:
           type: string
           maxLength: 65536
-          description: "PEM with one or more CA certificates to trust instead of the public roots. Only `CERTIFICATE` blocks; a private key is rejected. Needs `tls`."
+          description: "PEM with one or more CA certificates to trust instead of the public roots. Only `CERTIFICATE` blocks; a private key is rejected. Stored as the certificates' PEM blocks only, without surrounding text. Needs `tls`."
         skip_verify:
           type: boolean
-          description: Don't check the backend's certificate. Needs `tls`, excludes `ca_pem`. Each save that leaves it on writes a `proxy.route_tls_unverified` audit entry.
+          description: Don't check the backend's certificate. Needs `tls`, excludes `ca_pem`. Each save that changes the site and leaves it on writes a `proxy.route_tls_unverified` audit entry.
     ProxyImportResult:
       type: object
       required: [sites, global_unsupported, warnings]

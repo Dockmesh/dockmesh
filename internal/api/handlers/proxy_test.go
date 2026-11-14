@@ -171,7 +171,8 @@ func TestProxyRouteOptionsRoundTrip(t *testing.T) {
 }
 
 // Saving a site whose backend certificate is not checked leaves an
-// audit entry of its own; other saves don't.
+// audit entry of its own, also when another field changed; saves
+// without skip-verify or without a change don't.
 func TestProxyRouteSkipVerifyAudited(t *testing.T) {
 	e := newAuthzEnv(t)
 	e.h.Proxy = proxy.NewService(e.db, nil, false)
@@ -194,8 +195,9 @@ func TestProxyRouteSkipVerifyAudited(t *testing.T) {
 	}{
 		{"https with ca check", `{"routing":{"upstream_tls":{"tls":true}}}`, 0},
 		{"skip verify", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}}}`, 1},
-		{"other group changed", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}},"logs":{"access_log":true}}`, 1},
-		{"skip verify off", `{"routing":{"upstream_tls":{"tls":true}}}`, 1},
+		{"unchanged", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}}}`, 1},
+		{"other group changed", `{"routing":{"upstream_tls":{"tls":true,"skip_verify":true}},"logs":{"access_log":true}}`, 2},
+		{"skip verify off", `{"routing":{"upstream_tls":{"tls":true}}}`, 2},
 	}
 	for _, tt := range tests {
 		rr := e.do(http.MethodPut, path, tok, map[string]any{"upstream": "10.0.0.2:443", "tls_mode": "auto", "options": json.RawMessage(tt.options)})

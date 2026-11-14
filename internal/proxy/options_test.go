@@ -255,6 +255,15 @@ func TestCAPEM(t *testing.T) {
 	if _, err := parseCAPEM(ca + "trailing"); err == nil {
 		t.Error("text after the certificate accepted")
 	}
+	broken := strings.Replace(testKeyPEM, "AAAA", "!!", 1)
+	if _, err := parseCAPEM(broken + ca); err != errPEMPrivateKey {
+		t.Errorf("damaged key before a certificate: %v", err)
+	}
+	o := SiteOptions{Routing: RoutingOptions{UpstreamTLS: UpstreamTLS{TLS: true, CAPEM: "notes: hunter2\n" + ca}}}
+	o.normalize()
+	if strings.Contains(o.Routing.UpstreamTLS.CAPEM, "hunter2") || o.Routing.UpstreamTLS.CAPEM != ca {
+		t.Errorf("normalized PEM = %q", o.Routing.UpstreamTLS.CAPEM)
+	}
 	_, err = parseCAPEM(ca + testKeyPEM)
 	if err == nil || !strings.Contains(err.Msg, "private key") {
 		t.Errorf("certificate + key: %v", err)

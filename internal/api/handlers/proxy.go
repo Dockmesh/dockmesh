@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -265,7 +264,7 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if route.Options.SkipsVerify() && slices.Contains(changed, "options.routing") {
+	if route.Options.SkipsVerify() && len(changed) > 0 {
 		h.audit(r, "proxy.route_tls_unverified", route.Host, nil)
 	}
 	writeJSON(w, http.StatusOK, route)

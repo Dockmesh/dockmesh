@@ -687,8 +687,12 @@ func (o SiteOptions) canonical() SiteOptions {
 	return o
 }
 
-// normalize stores IP ranges in canonical CIDR form.
+// normalize stores IP ranges in canonical CIDR form and a CA PEM as
+// its certificates only.
 func (o *SiteOptions) normalize() {
+	if t := &o.Routing.UpstreamTLS; t.CAPEM != "" {
+		t.CAPEM = normalizeCAPEM(t.CAPEM)
+	}
 	for i, r := range o.Access.IPRanges {
 		if p, err := parseIPRange(r); err == nil {
 			o.Access.IPRanges[i] = p.String()
