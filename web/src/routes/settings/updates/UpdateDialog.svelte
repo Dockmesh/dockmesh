@@ -158,7 +158,7 @@
       {/if}
     {:else if step === 'result'}
       <div class="ud-res" data-testid="update-result" data-status={result?.status ?? 'error'}>
-        <StatusChip tone={outcome.tone} label={outcome.title} />
+        <b class="ud-title {outcome.tone}">{outcome.title}</b>
         {#if outcome.body}<p>{outcome.body}</p>{/if}
         {#if result && allowed('audit.view')}
           <a href="/audit?category=system" data-testid="update-audit">{m.settings_update_audit_link()}</a>
@@ -204,6 +204,9 @@
     border-radius: var(--r);
   }
   .ud-sec ul { margin: 0; padding-left: 18px; font-size: var(--fs-sm); }
+  .ud-title.ok { color: var(--ok); }
+  .ud-title.warn { color: var(--warn); }
+  .ud-title.bad { color: var(--bad); }
   .ud-res { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
   .ud-steps { display: flex; gap: 4px; }
   .ud-steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
