@@ -129,7 +129,7 @@ type Config struct {
 	Installed string
 	// RequestDir is the service's update directory, owned by ServiceUID.
 	RequestDir string
-	ServiceUID int
+	ServiceUID uint32
 	// StateDir is root-only; it holds the tarball copy, the journal and
 	// the backups of replaced files.
 	StateDir string

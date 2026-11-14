@@ -195,7 +195,7 @@ func (f *fixture) config() Config {
 	return Config{
 		Installed:      "v0.6.0",
 		RequestDir:     f.reqDir,
-		ServiceUID:     os.Getuid(),
+		ServiceUID:     uint32(os.Getuid()),
 		StateDir:       f.stateDir,
 		Asset:          testAsset,
 		Verifier:       f.verifier,
@@ -547,7 +547,7 @@ func TestApplyRequestDirOfAnotherAccount(t *testing.T) {
 	f := newFixture(t)
 	f.release("v0.6.1", "v0.6.1", goodTarball(t, "v0.6.1"))
 	cfg := f.config()
-	cfg.ServiceUID = os.Getuid() + 1
+	cfg.ServiceUID = uint32(os.Getuid()) + 1
 	if _, err := Apply(context.Background(), cfg); err == nil {
 		t.Fatal("request dir of another account accepted")
 	}

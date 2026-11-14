@@ -21,7 +21,7 @@ var rootOwners = []uint32{0}
 // openRequestDir opens the service's update directory. It must be a
 // directory owned by uid that nobody else may write, so a path swapped for
 // a symlink to some other place is refused before root writes into it.
-func openRequestDir(path string, uid int) (*os.Root, error) {
+func openRequestDir(path string, uid uint32) (*os.Root, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%s is not an absolute path", path)
 	}
@@ -35,7 +35,7 @@ func openRequestDir(path string, uid int) (*os.Root, error) {
 		return nil, err
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || !fi.IsDir() || int(st.Uid) != uid || fi.Mode().Perm()&0o002 != 0 {
+	if !ok || !fi.IsDir() || st.Uid != uid || fi.Mode().Perm()&0o002 != 0 {
 		root.Close()
 		return nil, fmt.Errorf("%s must be a directory owned by uid %d and not writable by others", path, uid)
 	}

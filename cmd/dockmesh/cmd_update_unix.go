@@ -80,7 +80,7 @@ func updateApply(args []string) error {
 	res, err := rootupdate.Apply(ctx, rootupdate.Config{
 		Installed:  version.Version,
 		RequestDir: layout.UpdateRequestDir(filepath.Clean(*dataDir)),
-		ServiceUID: int(uid),
+		ServiceUID: uid,
 		StateDir:   layout.UpdateStateDir,
 		Asset:      fmt.Sprintf("dockmesh_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH),
 		Files:      serverFiles(binary),
