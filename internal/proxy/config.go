@@ -94,9 +94,9 @@ type caddyHealthChecks struct {
 }
 
 type caddyTransport struct {
-	Protocol     string    `json:"protocol"`
-	DialTimeout  int64     `json:"dial_timeout,omitempty"`
-	ReadTimeout  int64     `json:"read_timeout,omitempty"`
+	Protocol     string             `json:"protocol"`
+	DialTimeout  int64              `json:"dial_timeout,omitempty"`
+	ReadTimeout  int64              `json:"read_timeout,omitempty"`
 	WriteTimeout int64              `json:"write_timeout,omitempty"`
 	TLS          *caddyTransportTLS `json:"tls,omitempty"`
 }
@@ -422,8 +422,8 @@ func responseHeaderOp(o *SiteOptions, tlsMode string) *caddyHeaderOp {
 	return op
 }
 
-// fallbackHandler answers what no path route takes: the site's upstream
-// unless the fallback redirects or answers 404.
+// fallbackHandler is the site's final handler: its upstreams, a redirect
+// or a 404.
 func fallbackHandler(r Route, port string) any {
 	f := r.Options.Routing.Fallback
 	switch f.Mode {

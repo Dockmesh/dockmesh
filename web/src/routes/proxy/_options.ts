@@ -11,7 +11,8 @@ export interface HeaderRow { name: string; value: string; secret: boolean; value
 export type SizeUnit = 'B' | 'MB' | 'GB';
 export type CertCheck = 'public' | 'ca' | 'skip';
 export interface TLSForm { tls: boolean; serverName: string; hostHeader: 'keep' | 'upstream'; check: CertCheck; caPEM: string }
-export type RedirectCode = 301 | 302 | 307 | 308;
+export const REDIRECT_CODES = [301, 302, 307, 308] as const;
+export type RedirectCode = (typeof REDIRECT_CODES)[number];
 export interface FallbackForm { mode: 'proxy' | 'redirect' | '404'; to: string; code: RedirectCode }
 
 export interface OptionsForm {
@@ -101,7 +102,7 @@ export function toTLSPayload(f: TLSForm): UpstreamTLS {
 
 export function toFallbackForm(f?: Fallback | null): FallbackForm {
   const mode = f?.mode === 'redirect' || f?.mode === '404' ? f.mode : 'proxy';
-  const code = [301, 302, 307, 308].includes(f?.code ?? 0) ? (f!.code as RedirectCode) : 301;
+  const code = (REDIRECT_CODES as readonly number[]).includes(f?.code ?? 0) ? (f!.code as RedirectCode) : 301;
   return { mode, to: f?.to ?? '', code };
 }
 

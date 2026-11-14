@@ -5,11 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"net"
-	"net/url"
 	"strings"
 )
 
 const maxCAPEMBytes = 64 << 10
+
+var (
+	errPEMPrivateKey = &OptionError{Msg: "this is a private key; paste the CA certificate instead"}
+	errPEMNotCert    = &OptionError{Msg: "paste one or more PEM certificates (-----BEGIN CERTIFICATE-----)"}
+)
 
 // isHostname accepts a DNS name as an SNI value: letters, digits, hyphens and
 // dots, no scheme, port or wildcard.
@@ -73,10 +77,10 @@ func parseCAPEM(s string) ([][]byte, *OptionError) {
 			break
 		}
 		if strings.Contains(b.Type, "PRIVATE KEY") {
-			return nil, &OptionError{Msg: "this is a private key; paste the CA certificate instead"}
+			return nil, errPEMPrivateKey
 		}
 		if b.Type != "CERTIFICATE" {
-			return nil, &OptionError{Msg: "paste one or more PEM certificates (-----BEGIN CERTIFICATE-----)"}
+			return nil, errPEMNotCert
 		}
 		if _, err := x509.ParseCertificate(b.Bytes); err != nil {
 			return nil, &OptionError{Msg: "a certificate in the PEM can't be read"}
@@ -85,9 +89,9 @@ func parseCAPEM(s string) ([][]byte, *OptionError) {
 	}
 	if len(out) == 0 || strings.TrimSpace(string(rest)) != "" {
 		if strings.Contains(string(rest), "PRIVATE KEY") {
-			return nil, &OptionError{Msg: "this is a private key; paste the CA certificate instead"}
+			return nil, errPEMPrivateKey
 		}
-		return nil, &OptionError{Msg: "paste one or more PEM certificates (-----BEGIN CERTIFICATE-----)"}
+		return nil, errPEMNotCert
 	}
 	return out, nil
 }
@@ -107,45 +111,4 @@ func (t *UpstreamTLS) caddyTLS() *caddyTransportTLS {
 		out.CA = ca
 	}
 	return out
-}
-
-func (f *Fallback) validate(field string) error {
-	switch f.Mode {
-	case "", FallbackProxy, FallbackNotFound:
-		if f.To != "" || f.Code != 0 {
-			return optErr(field+".to", "only a redirect has a target")
-		}
-		return nil
-	case FallbackRedirect:
-		return checkRedirect(field, f.To, f.Code)
-	}
-	return optErr(field+".mode", "must be proxy, redirect or 404")
-}
-
-var redirectCodes = map[int]bool{301: true, 302: true, 307: true, 308: true}
-
-// checkRedirect accepts an absolute path (with an optional query) or an
-// http(s) URL, and one of the redirect status codes. Caddy expands
-// placeholders in the Location header, so braces are refused.
-func checkRedirect(field, to string, code int) error {
-	if !redirectCodes[code] {
-		return optErr(field+".code", "must be 301, 302, 307 or 308")
-	}
-	bad := func() error { return optErr(field+".to", "use a path starting with / or an http(s) URL") }
-	if to == "" || len(to) > 2048 || hasPlaceholderOrControl(to) || strings.ContainsAny(to, " \\") {
-		return bad()
-	}
-	if strings.HasPrefix(to, "/") {
-		path, _, _ := strings.Cut(to, "?")
-		path, _, _ = strings.Cut(path, "#")
-		if err := checkURLPath(path); err != nil {
-			return optErr(field+".to", "path %v", err)
-		}
-		return nil
-	}
-	u, err := url.Parse(to)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Opaque != "" {
-		return bad()
-	}
-	return nil
 }

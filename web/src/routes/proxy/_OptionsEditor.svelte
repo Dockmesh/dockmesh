@@ -247,7 +247,7 @@
       <span class="ck-l">
         <label for="o-fp">{m.proxy_fwd_port()}</label>
         <span class="hint">{m.proxy_fwd_port_hint()}</span>
-        <span class="hint">{m.proxy_fwd_port_hint2()}</span>
+        <span class="hint">{m.proxy_fwd_port_override_hint()}</span>
         {#if form.headers.forwardedPort && ownFwdPort}<span class="note">{m.proxy_fwd_port_replaced()}</span>{/if}
       </span>
     </div>

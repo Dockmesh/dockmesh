@@ -35,8 +35,7 @@ type RoutingOptions struct {
 	WWWRedirect    bool     `json:"www_redirect"`
 	// UpstreamTLS is how Caddy talks to the site's own upstreams.
 	UpstreamTLS UpstreamTLS `json:"upstream_tls"`
-	// Fallback answers requests no path route matches.
-	Fallback Fallback `json:"fallback"`
+	Fallback    Fallback    `json:"fallback"`
 }
 
 // UpstreamTLS makes Caddy dial a backend over HTTPS. The zero value is
@@ -59,8 +58,8 @@ const (
 	FallbackNotFound = "404"
 )
 
-// Fallback is what a site does with requests no path route takes: proxy
-// them to its upstream (the default), redirect them or answer 404.
+// Fallback is how a site answers requests: proxy them to its upstream
+// (the default), redirect them or answer 404.
 type Fallback struct {
 	Mode string `json:"mode"`
 	To   string `json:"to"`

@@ -3,9 +3,8 @@
   import { TriangleAlert } from 'lucide-svelte';
   import { pemCount, type TLSForm } from './_options';
 
-  // How the proxy talks to one backend: the site's own upstreams or a
-  // path route's other backend. `field` is the API field path of the
-  // block, so server errors land next to their input.
+  // `field` is the API field path of the block, so server errors land
+  // next to their input.
   let {
     tls = $bindable(),
     host,

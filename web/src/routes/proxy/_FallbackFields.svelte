@@ -1,10 +1,8 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
   import { TriangleAlert } from 'lucide-svelte';
-  import type { FallbackForm } from './_options';
+  import { REDIRECT_CODES, type FallbackForm, type RedirectCode } from './_options';
 
-  // What a site does with requests no path route takes. Edited on the
-  // Options tab and on the Paths tab's fallback row.
   let {
     fb = $bindable(),
     idp,
@@ -20,6 +18,12 @@
   } = $props();
 
   const F = 'routing.fallback';
+  const CODE_LABEL: Record<RedirectCode, () => string> = {
+    301: m.proxy_redir_301,
+    302: m.proxy_redir_302,
+    307: m.proxy_redir_307,
+    308: m.proxy_redir_308
+  };
 </script>
 
 {#snippet err(f: string)}
@@ -43,24 +47,19 @@
     <div class="dm-field">
       <label for="{idp}-code">{m.proxy_redir_code()}</label>
       <select id="{idp}-code" class="dm-input" bind:value={fb.code} disabled={readonly}>
-        <option value={301}>{m.proxy_redir_301()}</option>
-        <option value={302}>{m.proxy_redir_302()}</option>
-        <option value={307}>{m.proxy_redir_307()}</option>
-        <option value={308}>{m.proxy_redir_308()}</option>
+        {#each REDIRECT_CODES as c (c)}<option value={c}>{CODE_LABEL[c]()}</option>{/each}
       </select>
       {@render err('code')}
     </div>
   </div>
   {#if warning}<span class="risk"><TriangleAlert size={12} strokeWidth={1.8} /> {warning}</span>{/if}
 {/if}
-<span class="hint">{m.proxy_fb_hint()}</span>
 
 <style>
   .radios { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
   .radios legend { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 4px; }
   .radios label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
   .redir { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 10px; }
-  .hint { font-size: var(--fs-xs); color: var(--subtle); }
   .risk { display: inline-flex; align-items: flex-start; gap: 4px; font-size: var(--fs-xs); color: var(--warn); }
   .risk :global(svg) { flex: none; margin-top: 2px; }
   .ferr { color: var(--bad); font-size: var(--fs-xs); }
