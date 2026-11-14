@@ -215,6 +215,27 @@ export interface UpdateStatus {
   checked_at?: string;
   enabled: boolean;
   error?: string;
+  severity?: 'security' | 'recommended' | 'normal';
+  security?: string[];
+}
+
+export interface UpdateResult {
+  status: 'updated' | 'refused' | 'rolled_back' | 'failed';
+  from: string;
+  to?: string;
+  step?: string;
+  reason?: string;
+  finished: string;
+}
+
+export interface UpdateInstallState {
+  phase: 'idle' | 'downloading' | 'waiting_for_stacks' | 'applying' | 'failed';
+  version?: string;
+  error?: string;
+  started?: string;
+  pending?: boolean;
+  unavailable?: 'container' | 'no_updater' | 'unsupported';
+  last_result?: UpdateResult;
 }
 
 // StackDeployment tracks which host a stack is deployed on (P.7).
@@ -2602,7 +2623,14 @@ export const api = {
     // Self-update check: cached status (24h poll) + manual recheck.
     updateStatus: () => request<UpdateStatus>('/system/update-status'),
     checkUpdateNow: () =>
-      request<UpdateStatus>('/system/update-check', { method: 'POST' })
+      request<UpdateStatus>('/system/update-check', { method: 'POST' }),
+    updateInstallState: () => request<UpdateInstallState>('/system/update/install'),
+    installUpdate: (version: string) =>
+      request<UpdateInstallState>('/system/update/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version })
+      })
   },
 
   audit: {

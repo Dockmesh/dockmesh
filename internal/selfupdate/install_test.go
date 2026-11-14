@@ -160,10 +160,32 @@ func TestInstallStartRefuses(t *testing.T) {
 			t.Errorf("Start(%q) = %v, want %v", tt.version, err, tt.want)
 		}
 	}
+	if err := f.inst.Start(context.Background(), "v0.6.1-rc.1"); !errors.Is(err, ErrChannel) {
+		t.Errorf("pre-release on the stable channel: %v", err)
+	}
 	f.inst.cfg.UpdaterInstalled = func() bool { return false }
 	if err := f.inst.Start(context.Background(), "v0.6.1"); !errors.Is(err, ErrUpdaterMissing) {
 		t.Errorf("without the updater: %v", err)
 	}
+	if got := f.inst.State().Unavailable; got != UnavailableNoUpdater {
+		t.Errorf("unavailable %q without the updater", got)
+	}
+	f.inst.cfg.InContainer = func() bool { return true }
+	if err := f.inst.Start(context.Background(), "v0.6.1"); !errors.Is(err, ErrInContainer) {
+		t.Errorf("in a container: %v", err)
+	}
+	if got := f.inst.State().Unavailable; got != UnavailableContainer {
+		t.Errorf("unavailable %q in a container", got)
+	}
+}
+
+func TestInstallPrereleaseOnPrereleaseChannel(t *testing.T) {
+	f := newInstallFixture(t)
+	f.inst.cfg.Channel = func() string { return ChannelPrerelease }
+	if err := f.inst.Start(context.Background(), "v0.6.1-rc.1"); err != nil {
+		t.Fatalf("pre-release on the pre-release channel: %v", err)
+	}
+	f.wait(PhaseFailed)
 }
 
 func TestInstallWritesRequestAfterChecks(t *testing.T) {
@@ -183,6 +205,9 @@ func TestInstallWritesRequestAfterChecks(t *testing.T) {
 	st := f.wait(PhaseFailed)
 	if !strings.Contains(st.Error, "test refusal") {
 		t.Errorf("state %+v", st)
+	}
+	if st.LastResult == nil || st.LastResult.Status != rootupdate.StatusRefused || st.LastResult.To != "v0.6.1" {
+		t.Errorf("last result %+v", st.LastResult)
 	}
 	open, err := f.notices.Open(context.Background())
 	if err != nil || len(open) != 1 || open[0].Key != ResultNoticeKey || !strings.Contains(open[0].Body, "test refusal") {

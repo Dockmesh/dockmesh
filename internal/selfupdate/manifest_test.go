@@ -78,3 +78,37 @@ func TestFetchManifest(t *testing.T) {
 		t.Error("LatestManifest returned the running version's manifest")
 	}
 }
+
+func TestStatusCarriesSecuritySeverity(t *testing.T) {
+	ctx := context.Background()
+	manifest := `{"version":"0.5.1","severity":"security","advisories":[{"id":"GHSA-xxxx","severity":"high","title":"token leak"}],"changes":{"security":["Session cookies are bound to the host"]}}`
+	tests := []struct {
+		name     string
+		running  string
+		latest   string
+		severity string
+		entries  int
+	}{
+		{"newer security release", "v0.5.0", "v0.5.1", "security", 2},
+		{"already on it", "v0.5.1", "v0.5.1", "", 0},
+		{"manifest of another release", "v0.5.0", "v0.5.2", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newStore(t)
+			if err := st.Set(ctx, "update_latest_version", tt.latest); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Set(ctx, keyManifest, manifest); err != nil {
+				t.Fatal(err)
+			}
+			got := New(st, tt.running).Status()
+			if got.Severity != tt.severity || len(got.Security) != tt.entries {
+				t.Fatalf("severity %q entries %v, want %q and %d", got.Severity, got.Security, tt.severity, tt.entries)
+			}
+			if tt.entries > 0 && got.Security[0] != "GHSA-xxxx (high): token leak" {
+				t.Errorf("first entry %q", got.Security[0])
+			}
+		})
+	}
+}

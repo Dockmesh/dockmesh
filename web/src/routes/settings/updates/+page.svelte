@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { api, ApiError, type UpdateStatus } from '$lib/api';
+  import { api, ApiError, type UpdateInstallState, type UpdateStatus } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -10,25 +10,58 @@
   import { Copy, RefreshCw } from 'lucide-svelte';
   import { createSettingsForm } from '../settingsForm.svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import UpdateDialog from './UpdateDialog.svelte';
 
   const form = createSettingsForm();
   let status = $state<UpdateStatus | null>(null);
   let checking = $state(false);
   const releaseHref = $derived(releaseLink(status?.release_url));
-  const stableOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
+  const stableOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash';
   // get.dockmesh.dev serves the latest stable installer, so a candidate is
   // installed with the installer published next to it.
   const tagPattern = /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
   const prereleaseTag = $derived(status?.latest_prerelease ? (status.latest_version ?? '') : '');
   const upgradeOneLiner = $derived(
     prereleaseTag
-      ? `curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/${prereleaseTag}/install.sh | sudo bash -s -- --version ${prereleaseTag} && sudo systemctl restart dockmesh`
+      ? `curl -fsSL https://github.com/Dockmesh/dockmesh/releases/download/${prereleaseTag}/install.sh | sudo bash -s -- --version ${prereleaseTag}`
       : stableOneLiner
   );
   const showCommand = $derived(!prereleaseTag || tagPattern.test(prereleaseTag));
   const canChangeChannel = $derived(allowed('system.upgrade'));
   let savedChannel = $state('stable');
   const channel = $derived(form.get('update_channel') || 'stable');
+
+  let install = $state<UpdateInstallState | null>(null);
+  let dialogOpen = $state(false);
+  let resume = $state<UpdateInstallState | null>(null);
+  const securityRelease = $derived(status?.severity === 'security');
+  const canInstall = $derived(
+    allowed('system.upgrade') && !!install && !install.unavailable && !!status?.update_available && !status.is_dev_build && showCommand
+  );
+
+  // Picks up an install that was started before the page was opened.
+  async function loadInstall() {
+    if (!allowed('system.upgrade')) return;
+    try {
+      install = await api.system.updateInstallState();
+    } catch {
+      return;
+    }
+    const running = install.phase === 'downloading' || install.phase === 'waiting_for_stacks' || install.phase === 'applying' || install.pending;
+    if (running && install.version) {
+      resume = install;
+      dialogOpen = true;
+    }
+  }
+
+  async function installDone() {
+    try {
+      status = await api.system.updateStatus();
+    } catch {
+      /* the dialog shows the result either way */
+    }
+    loadInstall();
+  }
 
   onMount(() => {
     if (!allowed('system.update')) {
@@ -40,6 +73,7 @@
       .updateStatus()
       .then((s) => (status = s))
       .catch(() => {});
+    loadInstall();
   });
 
   async function checkNow() {
@@ -108,13 +142,34 @@
           <span class="up-err" role="alert">{status.error}</span>
         {/if}
         {#if status?.update_available}
-          <div class="up-box">
-            <b>{status.is_dev_build ? m.settings_release_available({ version: status.latest_version ?? '' }) : m.settings_update_to({ version: status.latest_version ?? '' })}</b>
+          <div class="up-box" class:up-box-sec={securityRelease} data-testid="update-box">
+            <div class="up-head">
+              <b>{status.is_dev_build ? m.settings_release_available({ version: status.latest_version ?? '' }) : m.settings_update_to({ version: status.latest_version ?? '' })}</b>
+              {#if securityRelease}
+                <StatusChip tone="bad" label={m.settings_security_release()} />
+              {/if}
+            </div>
+            {#if securityRelease && status.security?.length}
+              <ul class="up-sec">
+                {#each status.security as s (s)}<li>{s}</li>{/each}
+              </ul>
+            {/if}
             {#if releaseHref}
               <a href={releaseHref} target="_blank" rel="noopener">{m.settings_release_notes()}</a>
             {/if}
-            {#if showCommand}
-              <span class="dm-sub">{status.latest_prerelease ? m.settings_run_prerelease({ version: status.latest_version }) : m.settings_run_on_host()}</span>
+            {#if canInstall}
+              <div>
+                <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" data-testid="update-now" onclick={() => { resume = null; dialogOpen = true; }}>
+                  {m.settings_update_now()}
+                </button>
+              </div>
+            {:else if install?.unavailable === 'container'}
+              <span class="dm-sub" data-testid="update-container">{m.settings_update_container()}</span>
+            {:else if install?.unavailable === 'no_updater'}
+              <span class="dm-sub" data-testid="update-no-updater">{m.settings_update_no_updater()}</span>
+            {/if}
+            {#if showCommand && install?.unavailable !== 'container'}
+              <span class="dm-sub">{status.latest_prerelease ? m.settings_run_prerelease({ version: status.latest_version }) : canInstall ? m.settings_run_on_host_alt() : m.settings_run_on_host()}</span>
               <div class="up-cmd">
                 <code class="dm-mono">{upgradeOneLiner}</code>
                 <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(upgradeOneLiner, m.settings_command_copied())}>
@@ -177,6 +232,16 @@
     </div>
   </div>
 
+  {#if status?.latest_version}
+    <UpdateDialog
+      bind:open={dialogOpen}
+      version={resume?.version ?? status.latest_version}
+      security={securityRelease ? (status.security ?? []) : []}
+      {resume}
+      ondone={installDone}
+    />
+  {/if}
+
   <div class="set-bar">
     <button type="button" class="dm-btn" onclick={form.discard} disabled={!form.dirty || form.busy}>{m.settings_discard()}</button>
     <button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={!form.dirty || form.busy}>
@@ -198,6 +263,9 @@
     border-radius: var(--r);
     width: min(620px, 100%);
   }
+  .up-box-sec { border-color: var(--bad); }
+  .up-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .up-sec { margin: 0; padding-left: 18px; font-size: var(--fs-sm); }
   .up-cmd { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .up-cmd code {
     flex: 1;
