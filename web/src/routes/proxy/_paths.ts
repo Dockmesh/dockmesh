@@ -1,9 +1,9 @@
 import { m } from '$lib/paraglide/messages.js';
 import type { PathRoute } from './_site';
-import { REDIRECT_CODES, toTLSForm, toTLSPayload, type HeaderRow, type RedirectCode, type TLSForm } from './_options';
-
-// Editable form of one path route. Upstreams are one per line like the
-// site's extra upstreams; header rows keep their write-only secrets.
+import {
+  REDIRECT_CODES, toTLSForm, toTLSPayload, lines, fromLines, headerRows, sendRows,
+  type HeaderRow, type RedirectCode, type TLSForm
+} from './_options';
 
 export const MAX_PATHS = 50;
 
@@ -32,14 +32,8 @@ export interface PathForm {
   status: 403 | 404;
 }
 
-const lines = (l?: string[] | null) => (l ?? []).join('\n');
-const fromLines = (s: string) => [...new Set(s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean))];
 const tri = (b?: boolean | null): '' | 'on' | 'off' => (b == null ? '' : b ? 'on' : 'off');
 const fromTri = (t: '' | 'on' | 'off') => (t === '' ? null : t === 'on');
-
-function rows(l?: { name: string; value?: string; secret?: boolean; value_set?: boolean }[]): HeaderRow[] {
-  return (l ?? []).map((h) => ({ name: h.name, value: h.value ?? '', secret: !!h.secret, valueSet: !!h.value_set }));
-}
 
 export function newPathForm(): PathForm {
   return toPathForm({ match: { type: 'prefix', path: '' }, action: 'proxy', target: { kind: 'site' } });
@@ -59,9 +53,9 @@ export function toPathForm(r: PathRoute): PathForm {
     healthPath: t.health_path ?? '',
     tls: toTLSForm(t.tls),
     stripPrefix: !!r.strip_prefix,
-    requestSet: rows(h.request_set),
+    requestSet: headerRows(h.request_set),
     requestRemove: lines(h.request_remove),
-    responseSet: rows(h.response_set),
+    responseSet: headerRows(h.response_set),
     responseRemove: lines(h.response_remove),
     dialTimeout: tr.dial_timeout ?? '',
     readTimeout: tr.read_timeout ?? '',
@@ -87,8 +81,6 @@ export function toPathPayload(f: PathForm): PathRoute {
   const out: PathRoute = { match: { type: f.type, path: cleanPath(f.path) }, action: f.action };
   if (f.action === 'redirect') return { ...out, to: f.to.trim(), code: f.code };
   if (f.action === 'respond') return { ...out, status: f.status };
-  const sendRows = (rs: HeaderRow[]) =>
-    rs.filter((r) => r.name.trim()).map((r) => ({ name: r.name.trim(), value: r.value, ...(r.secret ? { secret: true } : {}) }));
   return {
     ...out,
     target:
@@ -128,7 +120,7 @@ export function sortForms<T extends { form: PathForm }>(list: T[]): T[] {
 // server; the server's answer still decides.
 export function pathError(f: PathForm, all: PathForm[]): string {
   const p = cleanPath(f.path);
-  if (!p || !p.startsWith('/')) return m.proxy_path_err_slash();
+  if (!p) return m.proxy_path_err_slash();
   if (p === '/') return m.proxy_path_err_root();
   if (/[*{}[\]\\]|\/\.\.?(\/|$)/.test(p)) return m.proxy_path_err_chars();
   if (p.length > 256) return m.proxy_path_err_long();

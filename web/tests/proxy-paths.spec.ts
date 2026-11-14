@@ -11,7 +11,7 @@ async function token(page: Page): Promise<string> {
 async function storedPaths(page: Page, host: string) {
   const res = await page.request.get('/api/v1/proxy/routes', { headers: { Authorization: `Bearer ${await token(page)}` } });
   const site = (await res.json()).find((r: { host: string }) => r.host === host);
-  return (site.paths as { match: { type: string; path: string }; action: string; to?: string }[]).map((p) => `${p.match.type} ${p.match.path} ${p.action}`);
+  return (site.paths as { match: { type: string; path: string }; action: string }[]).map((p) => `${p.match.type} ${p.match.path} ${p.action}`);
 }
 
 async function addPath(page: Page, type: 'prefix' | 'exact', path: string) {

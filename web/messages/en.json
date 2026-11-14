@@ -6073,7 +6073,7 @@
   "proxy_paths_exact": "exact",
   "proxy_paths_everything_else": "everything else",
   "proxy_paths_count": "{n} of {max} paths",
-  "proxy_paths_full": "A site can have at most 50 paths.",
+  "proxy_paths_full": "A site can have at most {max} paths.",
   "proxy_paths_fwd_port": "X-Forwarded-Port is sent to all paths (Options › Headers).",
   "proxy_paths_save": "Save paths",
   "proxy_paths_saved": "Paths saved",
@@ -6123,6 +6123,5 @@
   "proxy_path_chip_resp": "response headers {n}",
   "proxy_path_chip_timeouts": "timeouts",
   "proxy_path_chip_skip": "skip verify",
-  "proxy_path_rejected": "Caddy rejected the configuration. Nothing was changed.",
-  "proxy_path_check_row": "Check this path"
+  "proxy_path_rejected": "Caddy rejected the configuration. Nothing was changed."
 }

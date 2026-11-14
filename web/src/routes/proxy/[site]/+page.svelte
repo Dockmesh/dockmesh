@@ -318,7 +318,13 @@
     </div>
 
     {:else if tab === 'paths'}
-      <PathsTab {site} readonly={!canUpdate} onsaved={(u) => { site = { ...site!, ...u }; base = toForm(u.options); form = toForm(u.options); resetPreview(); }} />
+      <PathsTab {site} readonly={!canUpdate} onoptions={() => (tab = 'options')} onsaved={(u) => {
+        const clean = changed.length === 0;
+        site = { ...site!, ...u };
+        base = toForm(u.options);
+        if (clean) form = toForm(u.options);
+        resetPreview();
+      }} />
     {:else if tab === 'options'}
       <section>
         <div class="sec-h">

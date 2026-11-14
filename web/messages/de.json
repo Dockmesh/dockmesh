@@ -6073,7 +6073,7 @@
   "proxy_paths_exact": "exakt",
   "proxy_paths_everything_else": "alles andere",
   "proxy_paths_count": "{n} von {max} Pfaden",
-  "proxy_paths_full": "Eine Site kann höchstens 50 Pfade haben.",
+  "proxy_paths_full": "Eine Site kann höchstens {max} Pfade haben.",
   "proxy_paths_fwd_port": "X-Forwarded-Port wird an alle Pfade gesendet (Optionen › Header).",
   "proxy_paths_save": "Pfade speichern",
   "proxy_paths_saved": "Pfade gespeichert",
@@ -6123,6 +6123,5 @@
   "proxy_path_chip_resp": "Response-Header {n}",
   "proxy_path_chip_timeouts": "Timeouts",
   "proxy_path_chip_skip": "ohne Prüfung",
-  "proxy_path_rejected": "Caddy hat die Konfiguration abgelehnt. Es wurde nichts geändert.",
-  "proxy_path_check_row": "Diesen Pfad prüfen"
+  "proxy_path_rejected": "Caddy hat die Konfiguration abgelehnt. Es wurde nichts geändert."
 }

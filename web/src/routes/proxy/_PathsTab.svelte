@@ -7,13 +7,18 @@
   import FallbackFields from './_FallbackFields.svelte';
   import HeaderRows from './_HeaderRows.svelte';
   import type { Site } from './_site';
-  import { toForm, toPayload, toFallbackForm, type FallbackForm } from './_options';
+  import { toForm, toPayload, toFallbackForm, parseFieldError, fromLines, REDIRECT_CODES, type FallbackForm } from './_options';
   import {
     MAX_PATHS, newPathForm, toPathForm, toPathPayload, sortForms, pathError, cleanPath,
     actionLabel, detailChips, parsePathError, type PathForm
   } from './_paths';
 
-  let { site, readonly = false, onsaved }: { site: Site; readonly?: boolean; onsaved: (s: Site) => void } = $props();
+  let {
+    site,
+    readonly = false,
+    onsaved,
+    onoptions
+  }: { site: Site; readonly?: boolean; onsaved: (s: Site) => void; onoptions: () => void } = $props();
 
   // Rows carry a stable key so the expanded row survives re-sorting.
   type Row = { key: number; form: PathForm };
@@ -100,11 +105,17 @@
         return;
       }
     }
-    const opts = toForm(site.options);
     const fbChanged = JSON.stringify(fallback) !== JSON.stringify(toFallbackForm(site.options?.routing?.fallback));
-    const options = fbChanged ? toPayload({ ...opts, routing: { ...opts.routing, fallback } }) : undefined;
     saving = true;
     try {
+      // The fallback lives in the options, which go back whole: read them
+      // fresh, so a change saved meanwhile on the Options tab is kept.
+      let options: object | undefined;
+      if (fbChanged) {
+        const fresh = ((await api.proxy.listRoutes()) as Site[]).find((s) => s.id === site.id) ?? site;
+        const opts = toForm(fresh.options);
+        options = toPayload({ ...opts, routing: { ...opts.routing, fallback } });
+      }
       const updated = (await api.proxy.updateRoute(site.id, site.upstream, site.tls_mode, undefined, options, order.map((r) => toPathPayload(r.form)))) as Site;
       baseline = '';
       onsaved(updated);
@@ -112,18 +123,19 @@
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : String(e);
       const pe = parsePathError(msg);
-      const fe = /options\.(routing\.fallback\.[a-z_]+): (.+)$/s.exec(msg);
+      const fieldErr = parseFieldError(msg);
+      const fe = fieldErr?.field.startsWith('routing.fallback') ? fieldErr : null;
       if (pe && order[pe.index]) {
         const key = order[pe.index].key;
         errors = { [key]: { [pe.field]: pe.message } };
         open = key;
       } else if (fe) {
-        fbErrors = { [fe[1]]: fe[2] };
+        fbErrors = { [fe.field]: fe.message };
         fbOpen = true;
       } else {
         banner = e instanceof ApiError && e.status >= 500 ? m.proxy_path_rejected() : msg;
       }
-      toast.error(m.proxy_paths_not_saved(), pe?.message ?? fe?.[2] ?? banner);
+      toast.error(m.proxy_paths_not_saved(), pe?.message ?? fe?.message ?? banner);
     } finally {
       saving = false;
     }
@@ -138,6 +150,7 @@
 
 {#snippet editor(r: Row)}
   {@const f = r.form}
+  {@const shown = cleanPath(f.path) || '/ords'}
   <div class="editor" data-testid="path-editor">
     <div class="grid2">
       <fieldset class="radios">
@@ -146,7 +159,7 @@
           <label><input type="radio" bind:group={f.type} value="prefix" disabled={readonly} /> {m.proxy_path_prefix()}</label>
           <label><input type="radio" bind:group={f.type} value="exact" disabled={readonly} /> {m.proxy_path_exact()}</label>
         </div>
-        <span class="hint">{f.type === 'prefix' ? m.proxy_path_prefix_hint({ path: cleanPath(f.path) || '/ords' }) : m.proxy_path_exact_hint()}</span>
+        <span class="hint">{f.type === 'prefix' ? m.proxy_path_prefix_hint({ path: shown }) : m.proxy_path_exact_hint()}</span>
       </fieldset>
       <div class="dm-field">
         <label for="p-{r.key}-path">{m.proxy_path_path()}</label>
@@ -174,7 +187,7 @@
         {@render fieldErr(r.key, 'target.kind')}
       </fieldset>
       {#if f.backend === 'site'}
-        <span class="hint">{m.proxy_path_backend_site_tls({ tls: siteTLS ? m.proxy_path_on() : m.proxy_path_off() })} <a href="?tab=options">{m.proxy_col_options()}</a></span>
+        <span class="hint">{m.proxy_path_backend_site_tls({ tls: siteTLS ? m.proxy_path_on() : m.proxy_path_off() })} <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={onoptions}>{m.proxy_col_options()}</button></span>
       {:else}
         <div class="dm-field">
           <label for="p-{r.key}-up">{m.proxy_path_upstreams()}</label>
@@ -182,7 +195,7 @@
           <span class="hint">{m.proxy_path_upstreams_hint()}</span>
           {@render fieldErr(r.key, 'target.upstreams')}
         </div>
-        {#if f.upstreams.split(/[\n,]/).filter((x) => x.trim()).length > 1}
+        {#if fromLines(f.upstreams).length > 1}
           <div class="grid2">
             <div class="dm-field">
               <label for="p-{r.key}-lb">{m.proxy_oe_lb()}</label>
@@ -208,8 +221,8 @@
         <div class="ck">
           <input id="p-{r.key}-strip" type="checkbox" bind:checked={f.stripPrefix} disabled={readonly} />
           <span class="ck-l">
-            <label for="p-{r.key}-strip">{m.proxy_path_strip({ path: cleanPath(f.path) || '/ords' })}</label>
-            {#if f.stripPrefix}<span class="hint dm-mono">{cleanPath(f.path) || '/ords'}/x → /x, {cleanPath(f.path) || '/ords'} → /</span>{/if}
+            <label for="p-{r.key}-strip">{m.proxy_path_strip({ path: shown })}</label>
+            {#if f.stripPrefix}<span class="hint dm-mono">{shown}/x → /x, {shown} → /</span>{/if}
           </span>
         </div>
         {@render fieldErr(r.key, 'strip_prefix')}
@@ -260,10 +273,7 @@
         <div class="dm-field">
           <label for="p-{r.key}-code">{m.proxy_redir_code()}</label>
           <select id="p-{r.key}-code" class="dm-input" bind:value={f.code} disabled={readonly}>
-            <option value={301}>{m.proxy_redir_301()}</option>
-            <option value={302}>{m.proxy_redir_302()}</option>
-            <option value={307}>{m.proxy_redir_307()}</option>
-            <option value={308}>{m.proxy_redir_308()}</option>
+            {#each REDIRECT_CODES as c (c)}<option value={c}>{m.proxy_path_act_redirect({ code: c, to: '' }).trim()}</option>{/each}
           </select>
           {@render fieldErr(r.key, 'code')}
         </div>
@@ -340,7 +350,7 @@
     <span class="dm-sub">{m.proxy_paths_count({ n: rows.length, max: MAX_PATHS })}</span>
     {#if !readonly && rows.length}
       <button type="button" class="dm-btn dm-btn-sm" data-testid="paths-add" disabled={full} onclick={add}>{m.proxy_paths_add()}</button>
-      {#if full}<span class="dm-sub">{m.proxy_paths_full()}</span>{/if}
+      {#if full}<span class="dm-sub">{m.proxy_paths_full({ max: MAX_PATHS })}</span>{/if}
     {/if}
   </div>
   {#if fwdPort}<p class="hint">{m.proxy_paths_fwd_port()}</p>{/if}

@@ -63,10 +63,10 @@ const MB = 1 << 20;
 const GB = 1 << 30;
 const UNIT: Record<SizeUnit, number> = { B: 1, MB, GB };
 
-const lines = (l?: string[] | null) => (l ?? []).join('\n');
-const fromLines = (s: string) => [...new Set(s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean))];
+export const lines = (l?: string[] | null) => (l ?? []).join('\n');
+export const fromLines = (s: string) => [...new Set(s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean))];
 
-function headerRows(l?: SiteHeader[]): HeaderRow[] {
+export function headerRows(l?: SiteHeader[]): HeaderRow[] {
   return (l ?? []).map((h) => ({ name: h.name, value: h.value ?? '', secret: !!h.secret, valueSet: !!h.value_set }));
 }
 
@@ -167,12 +167,11 @@ export function toForm(o?: SiteOptions | null): OptionsForm {
 
 // toPayload builds the options body for create/update. Empty rows are
 // dropped; the server validates everything else.
+export const sendRows = (rows: HeaderRow[]) =>
+  rows.filter((r) => r.name.trim()).map((r) => ({ name: r.name.trim(), value: r.value, ...(r.secret ? { secret: true } : {}) }));
+
 export function toPayload(f: OptionsForm): SiteOptions {
   const size = Number(f.performance.maxBody.trim() || '0');
-  const sendRows = (rows: HeaderRow[]) =>
-    rows
-      .filter((r) => r.name.trim())
-      .map((r) => ({ name: r.name.trim(), value: r.value, ...(r.secret ? { secret: true } : {}) }));
   return {
     routing: {
       extra_upstreams: fromLines(f.routing.extraUpstreams),

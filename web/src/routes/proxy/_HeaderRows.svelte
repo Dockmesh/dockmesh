@@ -3,8 +3,8 @@
   import { Plus, X } from 'lucide-svelte';
   import type { HeaderRow } from './_options';
 
-  // Set-header rows of a path route. `chip` names rows to mark, e.g.
-  // headers that replace one of the site's.
+  // Set-header rows. `chip` names rows to mark, e.g. headers that
+  // replace one of the site's.
   let {
     list = $bindable(),
     label,
@@ -33,7 +33,7 @@
       {:else}
         <input class="dm-input dm-mono" bind:value={h.value} placeholder={m.proxy_oe_value_ph()} aria-label={m.proxy_oe_row_value({ label })} disabled={readonly} autocomplete="off" />
       {/if}
-      {#if secrets}<label class="chk" title={m.proxy_oe_secret_writeonly()}>
+      {#if secrets}<label class="chk" title={h.secret && h.valueSet && !h.value ? m.proxy_oe_secret_reenter() : m.proxy_oe_secret_writeonly()}>
         <input type="checkbox" bind:checked={h.secret} disabled={readonly || (h.secret && h.valueSet && !h.value)} /> {m.proxy_oe_secret()}
       </label>{/if}
       {#if !readonly}
