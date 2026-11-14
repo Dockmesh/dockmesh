@@ -125,13 +125,9 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 	return from, to, nil
 }
 
-// MovedSystemTarget finds a system job that earlier versions moved off its
-// saved local target: MigrateSystemJobPath took the empty inline config of
-// such a job for the old relative default on every start, so the job ended
-// up on a new target at <data>/backups while the one it was created with
-// stayed saved under the job's name. It returns the job's name and the
-// paths of those left-behind targets, or no paths when nothing points to
-// such a move.
+// MovedSystemTarget reports a local system job whose saved target is
+// <data>/backups while an unused local target under the job's name still
+// holds another path. It returns the job's name and those paths.
 func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
 	if s.paths.DataDir == "" {
 		return "", nil, nil
@@ -153,6 +149,7 @@ func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous [
 	for _, t := range all {
 		if t.ID == j.TargetID {
 			current = localTargetPath(t.Config)
+			break
 		}
 	}
 	if current != moved {
@@ -173,12 +170,15 @@ func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous [
 }
 
 func localTargetPath(cfg any) string {
-	var lc targets.LocalConfig
-	b, err := json.Marshal(cfg)
-	if err != nil || json.Unmarshal(b, &lc) != nil || lc.Path == "" {
+	m, err := configToMap(cfg)
+	if err != nil {
 		return ""
 	}
-	return filepath.Clean(lc.Path)
+	p, _ := m["path"].(string)
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
 }
 
 func hasFiles(dir string) bool {

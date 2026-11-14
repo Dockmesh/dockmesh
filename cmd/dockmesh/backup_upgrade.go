@@ -136,8 +136,8 @@ func syncMovedSystemTargetNotice(ctx context.Context, n *notices.Service, svc *b
 		Key:      "backups.system-target-moved",
 		Audience: notices.Admins(),
 		Severity: notices.SevWarning,
-		Title:    i18n.Msg("notice.backup_sys_moved.title"),
-		Body:     i18n.Msg("notice.backup_sys_moved.body", job, notices.Bullets(previous)),
+		Title:    i18n.Msg("notice.backup_system_moved.title"),
+		Body:     i18n.Msg("notice.backup_system_moved.body", job, notices.Bullets(previous)),
 		Link:     "/backups",
 	})
 }
