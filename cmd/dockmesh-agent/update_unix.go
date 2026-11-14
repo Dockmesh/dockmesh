@@ -80,7 +80,7 @@ func updateApply(args []string) error {
 	if binary != pathBinary || !rootOwnedBinary(binary) {
 		return fmt.Errorf("the managed agent binary must be the root-owned %s, not %s", pathBinary, binary)
 	}
-	if err := legacyCopyStep(filepath.Clean(*data)); err != nil {
+	if err := legacyCopyStepAt(filepath.Clean(*data), legacyRefreshScript, agentUnitFile, true); err != nil {
 		return fmt.Errorf("not a managed agent: %w", err)
 	}
 	u, err := user.Lookup(agentAccount)
@@ -233,10 +233,11 @@ func putUnit(p string, data []byte) error {
 // pathBinary, so with it in place root would run whatever that account
 // put there.
 func legacyCopyStep(dataDir string) error {
-	return legacyCopyStepAt(dataDir, legacyRefreshScript, agentUnitFile)
+	return legacyCopyStepAt(dataDir, legacyRefreshScript, agentUnitFile, false)
 }
 
-func legacyCopyStepAt(dataDir, script, unitFile string) error {
+// legacyCopyStepAt with strict refuses when systemd can't be asked.
+func legacyCopyStepAt(dataDir, script, unitFile string, strict bool) error {
 	if _, err := os.Lstat(script); err == nil {
 		return fmt.Errorf("%s still exists", script)
 	}
@@ -244,7 +245,11 @@ func legacyCopyStepAt(dataDir, script, unitFile string) error {
 		return fmt.Errorf("%s still exists", filepath.Join(dataDir, "bin", "dockmesh-agent"))
 	}
 	// Drop-ins and every spelling systemd accepts count, so ask systemd.
-	if pre := execStartPre(); pre != "" {
+	pre, err := execStartPre()
+	if err != nil && strict {
+		return fmt.Errorf("ask systemd for the ExecStartPre of %s: %w", agentUnitName, err)
+	}
+	if pre != "" {
 		return fmt.Errorf("%s runs ExecStartPre %s", agentUnitName, pre)
 	}
 	unit, err := readRootOwnedUnit(unitFile)
@@ -261,13 +266,13 @@ func legacyCopyStepAt(dataDir, script, unitFile string) error {
 }
 
 // execStartPre is the ExecStartPre systemd has for the agent unit,
-// drop-ins included; empty without one or without systemd.
-var execStartPre = func() string {
+// drop-ins included; empty without one.
+var execStartPre = func() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "/bin/systemctl", "show", "-p", "ExecStartPre", "--value", agentUnitName).Output() // #nosec G204 -- fixed unit name
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
 }

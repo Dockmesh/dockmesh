@@ -221,7 +221,7 @@ func TestLegacyCopyStep(t *testing.T) {
 		{"binary left in the data dir", managedUnit, false, true, true},
 	}
 	old := execStartPre
-	execStartPre = func() string { return "" }
+	execStartPre = func() (string, error) { return "", nil }
 	t.Cleanup(func() { execStartPre = old })
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,20 +245,34 @@ func TestLegacyCopyStep(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := legacyCopyStepAt(data, script, unit); (err != nil) != tt.legacy {
+			if err := legacyCopyStepAt(data, script, unit, false); (err != nil) != tt.legacy {
 				t.Errorf("legacyCopyStepAt = %v, want legacy=%v", err, tt.legacy)
 			}
 		})
 	}
 	t.Run("ExecStartPre in a drop-in", func(t *testing.T) {
-		execStartPre = func() string { return "{ path=/etc/dockmesh-agent/refresh-path-copy ; argv[]=… }" }
+		execStartPre = func() (string, error) { return "{ path=/etc/dockmesh-agent/refresh-path-copy ; argv[]=… }", nil }
 		dir := t.TempDir()
 		unit := filepath.Join(dir, "dockmesh-agent.service")
 		if err := os.WriteFile(unit, []byte(managedUnit), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := legacyCopyStepAt(dir, filepath.Join(dir, "none"), unit); err == nil {
+		if err := legacyCopyStepAt(dir, filepath.Join(dir, "none"), unit, false); err == nil {
 			t.Error("ExecStartPre from systemd not seen")
+		}
+	})
+	t.Run("systemd unreachable", func(t *testing.T) {
+		execStartPre = func() (string, error) { return "", errors.New("no systemd") }
+		dir := t.TempDir()
+		unit := filepath.Join(dir, "dockmesh-agent.service")
+		if err := os.WriteFile(unit, []byte(managedUnit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := legacyCopyStepAt(dir, filepath.Join(dir, "none"), unit, true); err == nil {
+			t.Error("root went on without asking systemd")
+		}
+		if err := legacyCopyStepAt(dir, filepath.Join(dir, "none"), unit, false); err != nil {
+			t.Errorf("layout detection without systemd: %v", err)
 		}
 	})
 }

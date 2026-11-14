@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -267,6 +268,41 @@ func markRunning(dataDir string) {
 	}
 	if err := writeStaged(dir, runningFile, []byte(version.Version)); err != nil {
 		slog.Warn("agent update: write health file", "err", err)
+	}
+}
+
+// resultWaitLimit bounds how long a connection waits for the root
+// oneshot to finish: its TimeoutStartSec plus some slack.
+var resultWaitLimit = 65 * time.Minute
+
+// reconnectForResult closes the connection once the root oneshot that is
+// still checking this start (or that just put this version back) wrote its
+// result, so the next hello reports it. The hello of this connection was
+// sent before the result existed.
+func reconnectForResult(ctx context.Context, conn io.Closer, dataDir string) {
+	pending := filepath.Join(updateDir(dataDir), rootupdate.PendingFile)
+	if _, err := os.Lstat(pending); err != nil {
+		return
+	}
+	deadline := time.After(resultWaitLimit)
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			return
+		case <-tick.C:
+		}
+		if _, err := os.Lstat(pending); err == nil {
+			continue
+		}
+		if lastUpdateResult(dataDir) != nil {
+			slog.Info("agent update: reconnecting to report the root updater's result")
+			_ = conn.Close()
+		}
+		return
 	}
 }
 
