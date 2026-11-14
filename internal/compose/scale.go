@@ -105,7 +105,7 @@ func (s *Service) CheckScale(ctx context.Context, proj *composetypes.Project, se
 // ScaleService itself only enforces hard blocks (container_name, hard
 // ports) and trusts the caller for soft warnings (stateful).
 func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, serviceName string, replicas int) (*ScaleResult, error) {
-	if replicas < 0 || replicas > 100 {
+	if replicas < 0 || replicas > maxReplicas {
 		return nil, errors.New("replicas must be between 0 and 100")
 	}
 	if err := s.refuseStagedMounts(ctx, proj); err != nil {
@@ -130,10 +130,8 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		}
 	}
 
-	// Current containers for this service, sorted by replica index.
-	// Only RUNNING replicas count toward `current` — stopped/exited
-	// replicas are replaced on the next scale so a killed container
-	// can be auto-healed with "scale to same N". Fixes FINDING-13.
+	// Only running replicas count; stopped ones are replaced, so scaling
+	// to the same N heals them.
 	allContainers, err := listServiceContainers(ctx, cli, proj.Name, serviceName)
 	if err != nil {
 		return nil, err
@@ -174,22 +172,16 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 			}
 		}
 		for i := current + 1; i <= replicas; i++ {
-			name := fmt.Sprintf("%s-%s-%d", proj.Name, serviceName, i)
-			cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
+			name := replicaName(proj.Name, serviceName, i)
+			cfg, hostCfg, netCfg, err := replicaContainerConfig(proj, svc, netNames, i)
 			if err != nil {
 				return nil, fmt.Errorf("config replica %d: %w", i, err)
 			}
-			// Force unless-stopped on scaled replicas if the compose
-			// didn't set a restart policy. Docker's default (no
-			// restart) means a crashing scaled replica stays dead and
-			// auto-heal via "scale to same N" is the only recovery —
-			// this also works because we clean up stale replicas above.
-			// FINDING-13.
-			if hostCfg.RestartPolicy.Name == "" || hostCfg.RestartPolicy.Name == "no" {
-				hostCfg.RestartPolicy.Name = "unless-stopped"
-			}
 			// Remove stale container with the same name if it exists.
 			if old, inspErr := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{}); inspErr == nil {
+				if err := ownedBy(old.Container.Config, proj.Name, serviceName); err != nil {
+					return nil, fmt.Errorf("replica %d (%s): %w", i, name, err)
+				}
 				_, _ = cli.ContainerStop(ctx, old.Container.ID, client.ContainerStopOptions{})
 				_, _ = cli.ContainerRemove(ctx, old.Container.ID, client.ContainerRemoveOptions{Force: true})
 			}

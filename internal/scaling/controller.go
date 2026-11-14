@@ -14,10 +14,20 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
-// ScaleFunc is the callback the controller calls to execute a scale
-// action. Decoupled so the controller doesn't depend on the host
-// package. Injected from cmd/dockmesh/main.go.
-type ScaleFunc func(ctx context.Context, stackName, service string, replicas int) error
+// TargetFunc resolves the scale target of a service of a stack.
+type TargetFunc func(ctx context.Context, stack, service string) (Target, error)
+
+// ScaleFunc scales t from the count the auto-scaler saw to a new one.
+type ScaleFunc func(ctx context.Context, stack string, t Target, from, to int) error
+
+type sampler interface {
+	Query(ctx context.Context, q metrics.Query) ([]metrics.Sample, error)
+}
+
+// errCountChanged means the replica count or the deployment changed
+// between evaluating a rule and taking the stack lock, e.g. by a manual
+// scale.
+var errCountChanged = errors.New("replica count changed")
 
 // Controller is the auto-scaling goroutine that polls metrics every
 // 30s and evaluates rules from each stack's .dockmesh.meta.json.
@@ -28,7 +38,8 @@ type ScaleFunc func(ctx context.Context, stackName, service string, replicas int
 //	      → scale_action → cooldown → stable
 type Controller struct {
 	stacks  *stacks.Manager
-	metrics *metrics.Collector
+	metrics sampler
+	targets TargetFunc
 	scaleFn ScaleFunc
 
 	pollInterval time.Duration
@@ -50,15 +61,15 @@ const (
 
 type ruleState struct {
 	phase         phase
+	direction     string // "up" or "down" while phaseExceeded
 	exceededSince time.Time
 	cooldownUntil time.Time
-	lastReplicas  int
 }
 
-func NewController(sm *stacks.Manager, mc *metrics.Collector, fn ScaleFunc) *Controller {
-	return &Controller{
+func NewController(sm *stacks.Manager, mc *metrics.Collector, targets TargetFunc, fn ScaleFunc) *Controller {
+	c := &Controller{
 		stacks:       sm,
-		metrics:      mc,
+		targets:      targets,
 		scaleFn:      fn,
 		pollInterval: 30 * time.Second,
 		states:       make(map[string]*ruleState),
@@ -66,6 +77,11 @@ func NewController(sm *stacks.Manager, mc *metrics.Collector, fn ScaleFunc) *Con
 		seen:         make(map[string]bool),
 		stop:         make(chan struct{}),
 	}
+	// A nil *Collector stored in the interface would not compare to nil.
+	if mc != nil {
+		c.metrics = mc
+	}
+	return c
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -160,8 +176,6 @@ func (c *Controller) evaluateRule(ctx context.Context, stackName string, rule Ru
 	c.mu.Unlock()
 
 	now := time.Now()
-
-	// Cooldown phase — skip evaluation.
 	if st.phase == phaseCooldown {
 		if now.Before(st.cooldownUntil) {
 			return
@@ -169,134 +183,143 @@ func (c *Controller) evaluateRule(ctx context.Context, stackName string, rule Ru
 		st.phase = phaseStable
 	}
 
-	// Detect stateful services — refuse to auto-scale.
-	// (CheckScale is too expensive here, so just skip known DB images
-	// by checking the rule; the handler validates at config time.)
+	t, err := c.targets(ctx, stackName, rule.Service)
+	if err != nil {
+		slog.Debug("scaling: resolve target", "key", key, "err", err)
+		return
+	}
+	replicas, err := t.Replicas(ctx)
+	if err != nil {
+		slog.Debug("scaling: list replicas", "key", key, "err", err)
+		return
+	}
+	current := len(replicas)
+	// A stopped or never deployed service is left alone: scaling it up
+	// would start a stack somebody stopped.
+	if current == 0 {
+		st.phase = phaseStable
+		return
+	}
 
-	// Query recent metrics for this service's containers.
-	avg, err := c.serviceAvg(ctx, stackName, rule.Service, rule.ScaleUp.Metric, rule.Unit())
+	upMetric := rule.ScaleUp.metric("")
+	up, err := c.serviceAvg(ctx, t.MetricsHost(), replicas, upMetric, rule.Unit())
 	if err != nil {
 		slog.Debug("scaling: metrics query", "key", key, "err", err)
-		return
-	}
-
-	// Current replica count (from metrics sample count or StackStatus).
-	currentReplicas := st.lastReplicas
-	if currentReplicas <= 0 {
-		currentReplicas = 1
-	}
-
-	// Evaluate scale-up threshold.
-	if avg >= rule.ScaleUp.ThresholdPercent && currentReplicas < rule.MaxReplicas {
-		switch st.phase {
-		case phaseStable:
-			st.phase = phaseExceeded
-			st.exceededSince = now
-		case phaseExceeded:
-			if now.Sub(st.exceededSince) >= time.Duration(rule.ScaleUp.DurationSeconds)*time.Second {
-				newReplicas := currentReplicas + 1
-				if newReplicas > rule.MaxReplicas {
-					newReplicas = rule.MaxReplicas
-				}
-				c.doScale(ctx, stackName, rule, key, st, currentReplicas, newReplicas, "up", avg)
-			}
-		}
-		return
-	}
-
-	// Evaluate scale-down threshold.
-	if rule.ScaleDown.ThresholdPercent > 0 && avg <= rule.ScaleDown.ThresholdPercent && currentReplicas > rule.MinReplicas {
-		switch st.phase {
-		case phaseStable:
-			st.phase = phaseExceeded
-			st.exceededSince = now
-		case phaseExceeded:
-			if now.Sub(st.exceededSince) >= time.Duration(rule.ScaleDown.DurationSeconds)*time.Second {
-				newReplicas := currentReplicas - 1
-				if newReplicas < rule.MinReplicas {
-					newReplicas = rule.MinReplicas
-				}
-				c.doScale(ctx, stackName, rule, key, st, currentReplicas, newReplicas, "down", avg)
-			}
-		}
-		return
-	}
-
-	// Neither threshold hit — reset to stable.
-	if st.phase == phaseExceeded {
 		st.phase = phaseStable
+		return
 	}
+	if up >= rule.ScaleUp.ThresholdPercent && current < rule.MaxReplicas {
+		if c.held(st, "up", now, rule.ScaleUp.DurationSeconds) {
+			c.doScale(ctx, stackName, rule, t, st, current, min(current+1, rule.MaxReplicas), "up", upMetric, up)
+		}
+		return
+	}
+
+	if rule.ScaleDown.ThresholdPercent > 0 && current > rule.MinReplicas {
+		downMetric := rule.ScaleDown.metric(upMetric)
+		down := up
+		if downMetric != upMetric {
+			down, err = c.serviceAvg(ctx, t.MetricsHost(), replicas, downMetric, rule.Unit())
+			if err != nil {
+				slog.Debug("scaling: metrics query", "key", key, "err", err)
+				st.phase = phaseStable
+				return
+			}
+		}
+		if down <= rule.ScaleDown.ThresholdPercent {
+			if c.held(st, "down", now, rule.ScaleDown.DurationSeconds) {
+				c.doScale(ctx, stackName, rule, t, st, current, max(current-1, rule.MinReplicas), "down", downMetric, down)
+			}
+			return
+		}
+	}
+
+	st.phase = phaseStable
 }
 
-func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, key string, st *ruleState, from, to int, direction string, metricVal float64) {
+// held records that a threshold in direction is crossed and reports
+// whether it has been for durationSec. Crossing the other threshold
+// starts the wait over.
+func (c *Controller) held(st *ruleState, direction string, now time.Time, durationSec int) bool {
+	if st.phase != phaseExceeded || st.direction != direction {
+		st.phase = phaseExceeded
+		st.direction = direction
+		st.exceededSince = now
+	}
+	return now.Sub(st.exceededSince) >= time.Duration(durationSec)*time.Second
+}
+
+func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, t Target, st *ruleState, from, to int, direction, metric string, metricVal float64) {
 	slog.Info("scaling: action",
 		"stack", stackName, "service", rule.Service,
 		"direction", direction, "from", from, "to", to,
-		"metric", rule.ScaleUp.Metric, "value", fmt.Sprintf("%.1f%%", metricVal))
+		"metric", metric, "value", fmt.Sprintf("%.1f%%", metricVal))
 
-	if err := c.scaleFn(ctx, stackName, rule.Service, to); err != nil {
-		if errors.Is(err, stacklock.ErrBusy) {
-			slog.Info("scaling: stack busy, retrying on the next check", "stack", stackName, "service", rule.Service, "err", err)
-			st.phase = phaseStable
-			return
-		}
-		slog.Warn("scaling: action failed",
-			"stack", stackName, "service", rule.Service,
-			"direction", direction, "err", err)
+	if err := c.scaleFn(ctx, stackName, t, from, to); err != nil {
 		st.phase = phaseStable
+		switch {
+		case errors.Is(err, stacklock.ErrBusy), errors.Is(err, errCountChanged):
+			slog.Info("scaling: retrying on the next check", "stack", stackName, "service", rule.Service, "err", err)
+		default:
+			slog.Warn("scaling: action failed",
+				"stack", stackName, "service", rule.Service,
+				"direction", direction, "err", err)
+		}
 		return
 	}
 
-	st.lastReplicas = to
 	st.phase = phaseCooldown
 	st.cooldownUntil = time.Now().Add(time.Duration(rule.CooldownSeconds) * time.Second)
 }
 
-// serviceAvg computes the average metric value across all replicas of
-// a service over the last 60 seconds, CPU in the given unit.
-func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric, cpuUnit string) (float64, error) {
-	if c.metrics == nil {
-		return 0, fmt.Errorf("metrics collector unavailable")
-	}
-	// Containers are named <stack>-<service>-1, <stack>-<service>-2, ...
-	// The metrics collector stores per-container samples keyed by name.
-	// We query each and average.
-	prefix := stackName + "-" + service + "-"
-	now := time.Now()
-	from := now.Add(-60 * time.Second)
+// Metrics windows: each replica's newest minute of samples is averaged.
+// Agents ship their samples about once a minute, so the newest one can be
+// older than a minute; samples older than metricsMaxAge are not used.
+const (
+	metricsWindow = 60 * time.Second
+	metricsMaxAge = 5 * time.Minute
+)
 
-	// Query all containers for this service by trying indices 1..20.
-	// (The metrics table doesn't support LIKE queries, so we enumerate.)
+// serviceAvg averages a metric over the newest minute of samples of every
+// replica, CPU in the given unit. No samples at all is an error, so a
+// service without metrics is never scaled down for looking idle.
+func (c *Controller) serviceAvg(ctx context.Context, hostID string, replicas []Replica, metric, cpuUnit string) (float64, error) {
+	if c.metrics == nil {
+		return 0, errors.New("metrics collector unavailable")
+	}
+	now := time.Now()
+	from := now.Add(-metricsMaxAge)
 	var total float64
 	var count int
-	for i := 1; i <= 20; i++ {
-		name := fmt.Sprintf("%s%d", prefix, i)
-		samples, err := c.metrics.Query(ctx, metrics.Query{
-			Name: name,
-			From: from,
-			To:   now,
-		})
-		if err != nil || len(samples) == 0 {
-			if i == 1 {
-				// No samples at all — service might not be running.
+	for _, r := range replicas {
+		if r.Name == "" {
+			continue
+		}
+		samples, err := c.metrics.Query(ctx, metrics.Query{HostID: hostID, Name: r.Name, From: from, To: now})
+		if err != nil {
+			return 0, err
+		}
+		if len(samples) == 0 {
+			continue
+		}
+		newest := samples[len(samples)-1].TS
+		for _, s := range samples {
+			if s.TS < newest-int64(metricsWindow/time.Second) {
 				continue
 			}
-			break // No more replicas.
-		}
-		for _, s := range samples {
-			switch strings.ToLower(metric) {
-			case "cpu":
-				total += cpuValue(s, cpuUnit)
+			switch metric {
 			case "memory":
 				if s.MemLimit > 0 {
 					total += float64(s.MemUsed) / float64(s.MemLimit) * 100
 				}
+			default:
+				total += cpuValue(s, cpuUnit)
 			}
 			count++
 		}
 	}
 	if count == 0 {
-		return 0, nil
+		return 0, errors.New("no recent metrics for the service's replicas")
 	}
 	return total / float64(count), nil
 }
@@ -308,32 +331,43 @@ func cpuValue(s metrics.Sample, unit string) float64 {
 	return s.CPUPercentCore
 }
 
-// ReplicaCount returns the last known replica count for a service.
-// Used by the rules API to report current state.
-func (c *Controller) ReplicaCount(stackName, service string) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	key := stackName + "/" + service
-	if st, ok := c.states[key]; ok && st.lastReplicas > 0 {
-		return st.lastReplicas
+// CheckedScale scales under the stack lock, from the stack files as they
+// are now, and only while the files allow the auto-scaler to act and the
+// service still runs from replicas.
+func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks, deployments *stacks.DeploymentStore) ScaleFunc {
+	return func(ctx context.Context, stack string, t Target, from, to int) error {
+		release, err := locks.TryLock(t.LockKey(), stacklock.OpAutoScale)
+		if err != nil {
+			return err
+		}
+		defer release()
+		// A migration or delete doesn't take the stack lock; its status does
+		// tell, and so does a move to another host since the evaluation.
+		d, err := deployments.Get(ctx, stack)
+		if err != nil {
+			return err
+		}
+		if d == nil || d.Status != "deployed" || stacklock.Host(d.HostID) != t.LockKey().Target {
+			return fmt.Errorf("%w: stack %s is not deployed there", errCountChanged, stack)
+		}
+		v, err := Check(sm, stack)
+		if err != nil {
+			return err
+		}
+		if v.Pause != nil {
+			return fmt.Errorf("auto-scaling of %s is paused: %s", stack, v.Pause.Reason)
+		}
+		if v.Rules == nil {
+			return fmt.Errorf("stack %s has no enabled scaling rules", stack)
+		}
+		replicas, err := t.Replicas(ctx)
+		if err != nil {
+			return err
+		}
+		if len(replicas) != from {
+			return fmt.Errorf("%w: %d running, expected %d", errCountChanged, len(replicas), from)
+		}
+		_, err = t.Scale(ctx, v.Files.Detail.Compose, v.Files.Detail.Env, to)
+		return err
 	}
-	return 0
-}
-
-// UpdateReplicaCount is called after a manual scale so the controller
-// knows the current state without waiting for a full tick cycle.
-func (c *Controller) UpdateReplicaCount(stackName, service string, count int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	key := stackName + "/" + service
-	st, ok := c.states[key]
-	if !ok {
-		st = &ruleState{phase: phaseStable}
-		c.states[key] = st
-	}
-	st.lastReplicas = count
-	// Treat manual scale as a cooldown trigger so auto-scaler doesn't
-	// immediately undo the user's action.
-	st.phase = phaseCooldown
-	st.cooldownUntil = time.Now().Add(60 * time.Second)
 }

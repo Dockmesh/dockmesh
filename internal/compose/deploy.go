@@ -36,23 +36,6 @@ const (
 	LabelManaged = docker.LabelManaged
 )
 
-// Service wires a Docker client and stack manager into compose operations.
-//
-// Supported compose features in Phase 1:
-//   - services: image, environment, command, entrypoint, ports, volumes,
-//     networks, restart, labels, user, working_dir, hostname, privileged,
-//     read_only, cap_add, cap_drop, tty, stdin_open
-//   - top-level networks/volumes (named, non-external → auto-create; external
-//     assumed to exist)
-//   - .env file resolution
-//
-// Explicitly NOT supported yet (will be ignored or error out clearly):
-//   - build:, secrets:, configs:, depends_on ordering, deploy:,
-//     profiles, extends, network aliases, ipam overrides
-//
-// healthcheck: is wired into the container config as of P.12.5a and
-// WaitHealthy is called after ContainerStart so a failing probe
-// surfaces at deploy time rather than silently in docker ps.
 // authResolver is what compose calls before every image pull so the
 // daemon API gets a proper X-Registry-Auth blob instead of an anonymous
 // request; registries.Service.ForHost returns one bound to a host.
@@ -79,6 +62,23 @@ const (
 	progressHealthwait = "healthcheck"
 )
 
+// Service wires a Docker client and stack manager into compose operations.
+//
+// Supported compose features:
+//   - services: image, environment, command, entrypoint, ports, volumes,
+//     networks, restart, labels, user, working_dir, hostname, privileged,
+//     read_only, cap_add, cap_drop, tty, stdin_open, healthcheck
+//   - top-level networks/volumes (named, non-external → auto-create; external
+//     assumed to exist)
+//   - .env file resolution
+//
+// Not supported (ignored or refused with an error):
+//   - build:, secrets:, configs:, depends_on ordering, deploy: (a
+//     deploy.replicas other than 1 is reported in DeployResult.ReplicasIgnored),
+//     profiles, extends, network aliases, ipam overrides
+//
+// WaitHealthy runs after ContainerStart so a failing probe surfaces at
+// deploy time rather than silently in docker ps.
 type Service struct {
 	docker  *docker.Client
 	stacks  *stacks.Manager
@@ -167,6 +167,9 @@ type DeployResult struct {
 	Volumes  []ResourceResult `json:"volumes,omitempty"`
 	// BindCopies lists data moved out of old staging bind mounts.
 	BindCopies []BindCopy `json:"bind_copies,omitempty"`
+	// ReplicasIgnored lists services whose deploy.replicas asks for a
+	// count other than 1; a host stack keeps the count it runs instead.
+	ReplicasIgnored []string `json:"replicas_ignored,omitempty"`
 }
 
 type ServiceResult struct {
@@ -233,7 +236,7 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	defer span.End()
 
 	cli := s.docker.Raw()
-	result := &DeployResult{Stack: proj.Name}
+	result := &DeployResult{Stack: proj.Name, ReplicasIgnored: ignoredReplicas(proj)}
 
 	// Live progress for the UI — Begin once, Finish after the loop or
 	// on early-exit error. The tracker is nil-safe.
@@ -290,7 +293,7 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	}
 
 	// Phase 2 — tear down + recreate per service. Pulls already happened
-	// in phase 1 so deployService no longer touches the registry.
+	// in phase 1, so deployService never touches the registry.
 	for i, name := range names {
 		svc := proj.Services[name]
 		sr, err := s.deployService(ctx, cli, proj, svc, netNames, i+1)
@@ -306,13 +309,23 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	return result, nil
 }
 
+func ignoredReplicas(proj *composetypes.Project) []string {
+	var out []string
+	for name, svc := range proj.Services {
+		if svc.Deploy != nil && svc.Deploy.Replicas != nil && *svc.Deploy.Replicas != 1 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // prePullImages walks every service in deploy order and pulls the image
 // when needed (svc.PullPolicy=always, WithForcePull(ctx), or no cached
 // copy). A pull failure is fatal ONLY when the image isn't cached
-// locally — otherwise we log and keep the cached copy, matching the
-// previous in-loop behaviour. Runs before any container is stopped, so
-// abort here leaves the existing deployment intact (fix for the
-// "frontend-orphan after failed pull" bug).
+// locally — otherwise we log and keep the cached copy. Runs before any
+// container is stopped, so an abort here leaves the existing deployment
+// intact.
 func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *composetypes.Project, names []string) error {
 	for i, name := range names {
 		svc := proj.Services[name]
@@ -514,26 +527,107 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		}
 	}
 
-	containerName := svc.ContainerName
-	if containerName == "" {
-		containerName = fmt.Sprintf("%s-%s-1", proj.Name, svc.Name)
+	replicas, err := replicaPlan(ctx, cli, proj, svc)
+	if err != nil {
+		return nil, err
 	}
+	var firstID string
+	for i, rp := range replicas {
+		id, err := s.replaceReplica(ctx, cli, proj, svc, netNames, rp, i+1, track)
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			firstID = id
+		}
+	}
+	return &ServiceResult{Name: svc.Name, ContainerID: firstID, Image: svc.Image}, nil
+}
 
-	// Pulls already happened in DeployProject.prePullImages — by the
-	// time we get here every required image is in the local cache (or
-	// the deploy aborted before touching containers).
+// plannedReplica is one container a deploy creates, with the containers
+// it replaces.
+type plannedReplica struct {
+	name string
+	old  []container.Summary
+}
 
-	// Remove any existing container with the same name (idempotent redeploy).
-	if existing, err := cli.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{}); err == nil {
-		_, _ = cli.ContainerStop(ctx, existing.Container.ID, client.ContainerStopOptions{})
-		if _, err := cli.ContainerRemove(ctx, existing.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			return nil, fmt.Errorf("remove existing %s: %w", containerName, err)
+// replicaPlan keeps the number of replicas a service has, so a deploy
+// renews every replica with the new config. A service with
+// container_name or without containers gets one.
+func replicaPlan(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig) ([]plannedReplica, error) {
+	if svc.ContainerName != "" {
+		return []plannedReplica{{name: svc.ContainerName}}, nil
+	}
+	existing, err := listServiceContainers(ctx, cli, proj.Name, svc.Name)
+	if err != nil {
+		return nil, err
+	}
+	sortByReplicaIndex(existing, proj.Name, svc.Name)
+	n := min(max(len(existing), 1), maxReplicas)
+	plan := make([]plannedReplica, n)
+	for i := range plan {
+		plan[i].name = replicaName(proj.Name, svc.Name, i+1)
+		if i < len(existing) {
+			plan[i].old = []container.Summary{existing[i]}
+		}
+	}
+	return plan, nil
+}
+
+// maxReplicas is the most replicas a service runs on a host.
+const maxReplicas = 100
+
+// ownedBy refuses a container that compose labels as part of another
+// stack or service: replica names of different stacks can collide
+// ("a" + "b-c" and "a-b" + "c" both give "a-b-c-1").
+func ownedBy(cfg *container.Config, stack, service string) error {
+	if cfg == nil {
+		return nil
+	}
+	p, ok := cfg.Labels[LabelProject]
+	if !ok {
+		return nil
+	}
+	if p != stack || cfg.Labels[LabelService] != service {
+		return fmt.Errorf("name is taken by service %s of stack %s", cfg.Labels[LabelService], p)
+	}
+	return nil
+}
+
+// removeContainer stops and removes a container; one already gone is fine.
+func removeContainer(ctx context.Context, cli *client.Client, id string) error {
+	_, _ = cli.ContainerStop(ctx, id, client.ContainerStopOptions{})
+	if _, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func replicaName(stack, service string, index int) string {
+	return fmt.Sprintf("%s-%s-%d", stack, service, index)
+}
+
+// replaceReplica removes the containers rp replaces and any container
+// holding its name, then creates and starts the replica and waits until
+// it is healthy, so the other replicas keep serving meanwhile.
+func (s *Service) replaceReplica(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string, rp plannedReplica, index int, track func(string)) (string, error) {
+	for _, c := range rp.old {
+		if err := removeContainer(ctx, cli, c.ID); err != nil {
+			return "", fmt.Errorf("remove existing %s: %w", rp.name, err)
+		}
+	}
+	if existing, err := cli.ContainerInspect(ctx, rp.name, client.ContainerInspectOptions{}); err == nil {
+		if err := ownedBy(existing.Container.Config, proj.Name, svc.Name); err != nil {
+			return "", fmt.Errorf("%s: %w", rp.name, err)
+		}
+		if err := removeContainer(ctx, cli, existing.Container.ID); err != nil {
+			return "", fmt.Errorf("remove existing %s: %w", rp.name, err)
 		}
 	}
 
-	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
+	cfg, hostCfg, netCfg, err := replicaContainerConfig(proj, svc, netNames, index)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	startCtx, startSpan := composeTracer.Start(ctx, "compose.start_container",
@@ -541,31 +635,45 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 			attribute.String("stack", proj.Name),
 			attribute.String("service", svc.Name),
 			attribute.String("image", svc.Image),
-			attribute.String("container.name", containerName),
+			attribute.String("container.name", rp.name),
 		))
 	defer startSpan.End()
 
 	track(progressCreating)
-	resp, err := cli.ContainerCreate(startCtx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: containerName})
+	resp, err := cli.ContainerCreate(startCtx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: rp.name})
 	if err != nil {
 		startSpan.SetStatus(codes.Error, "create")
 		startSpan.RecordError(err)
-		return nil, fmt.Errorf("container create %s: %w", containerName, err)
+		return "", fmt.Errorf("container create %s: %w", rp.name, err)
 	}
 	track(progressStarting)
 	startSpan.SetAttributes(attribute.String("container.id", resp.ID))
 	if _, err := cli.ContainerStart(startCtx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		startSpan.SetStatus(codes.Error, "start")
 		startSpan.RecordError(err)
-		return nil, fmt.Errorf("container start %s: %w", containerName, err)
+		return "", fmt.Errorf("container start %s: %w", rp.name, err)
 	}
 	track(progressHealthwait)
 	if err := WaitHealthy(startCtx, cli, resp.ID, &svc); err != nil {
 		startSpan.SetStatus(codes.Error, "unhealthy")
 		startSpan.RecordError(err)
-		return nil, fmt.Errorf("service %s did not become healthy: %w", svc.Name, err)
+		return "", fmt.Errorf("service %s did not become healthy: %w", svc.Name, err)
 	}
-	return &ServiceResult{Name: svc.Name, ContainerID: resp.ID, Image: svc.Image}, nil
+	return resp.ID, nil
+}
+
+// Replicas after the first get unless-stopped when the service sets no
+// restart policy: without it a crashed extra replica stays down until
+// the next scale.
+func replicaContainerConfig(proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string, index int) (*container.Config, *container.HostConfig, *dnetwork.NetworkingConfig, error) {
+	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if index > 1 && (hostCfg.RestartPolicy.Name == "" || hostCfg.RestartPolicy.Name == "no") {
+		hostCfg.RestartPolicy.Name = "unless-stopped"
+	}
+	return cfg, hostCfg, netCfg, nil
 }
 
 func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (*container.Config, *container.HostConfig, *dnetwork.NetworkingConfig, error) {

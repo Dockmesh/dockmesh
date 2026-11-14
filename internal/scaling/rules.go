@@ -56,6 +56,17 @@ type ThresholdConfig struct {
 	DurationSeconds  int     `json:"duration_seconds"`  // how long the threshold must be exceeded
 }
 
+// metric is the threshold's metric in lower case, else fallback, else "cpu".
+func (t ThresholdConfig) metric(fallback string) string {
+	if m := strings.ToLower(t.Metric); m != "" {
+		return m
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "cpu"
+}
+
 // Validate checks a ScalingConfig for structural errors.
 func (c *ScalingConfig) Validate() error {
 	for i, r := range c.Rules {

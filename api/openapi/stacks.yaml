@@ -1526,6 +1526,13 @@ components:
         warnings:
           type: array
           items: {type: string}
+        replicas_ignored:
+          type: array
+          items: {type: string}
+          description: |
+            Services whose `deploy.replicas` asks for a count other than 1.
+            Host stacks don't apply it; each service keeps the number of
+            containers it runs.
     StackCleanupPlan:
       type: object
       description: |

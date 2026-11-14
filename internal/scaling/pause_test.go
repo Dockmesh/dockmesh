@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,7 +129,7 @@ func TestControllerSkipsPausedStack(t *testing.T) {
 	ctx := context.Background()
 	m, n, dir := scalingEnv(t)
 	saveMeta(t, m, dir, validRules)
-	c := NewController(m, nil, func(context.Context, string, string, int) error {
+	c := NewController(m, nil, noTarget, func(context.Context, string, Target, int, int) error {
 		t.Error("scale called")
 		return nil
 	})
@@ -184,7 +185,7 @@ func TestControllerResolvesNoticeFromEarlierStart(t *testing.T) {
 	m, n, dir := scalingEnv(t)
 	saveMeta(t, m, dir, validRules)
 	m.HoldScaler(ctx, "app", stacks.ScalerPause{Reason: stacks.PauseModifiedOutside, Files: []string{"compose.yaml"}})
-	NewController(m, nil, nil).tick(ctx)
+	NewController(m, nil, noTarget, nil).tick(ctx)
 	open, err := n.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -194,4 +195,8 @@ func TestControllerResolvesNoticeFromEarlierStart(t *testing.T) {
 			t.Fatal("notice from an earlier start still open")
 		}
 	}
+}
+
+func noTarget(context.Context, string, string) (Target, error) {
+	return nil, errors.New("no target")
 }

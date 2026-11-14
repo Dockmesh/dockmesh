@@ -631,37 +631,6 @@ func main() {
 	}
 	defer backupSvc.Stop()
 
-	// Auto-scaling controller (P.8). The ScaleFunc closure routes through
-	// the local compose service for now — remote scaling will go through
-	// the host abstraction once the agent binary is updated.
-	scaleController := scaling.NewController(stacksMgr, metricsCol, func(ctx context.Context, stackName, service string, replicas int) error {
-		if dockerCli == nil {
-			return fmt.Errorf("docker unavailable")
-		}
-		v, err := scaling.Check(stacksMgr, stackName)
-		if err != nil {
-			return err
-		}
-		if v.Pause != nil {
-			return fmt.Errorf("auto-scaling of %s is paused: %s", stackName, v.Pause.Reason)
-		}
-		if v.Rules == nil {
-			return fmt.Errorf("stack %s has no enabled scaling rules", stackName)
-		}
-		detail := v.Files.Detail
-		release, err := stackLocks.TryLock(stacklock.HostKey("local", stackName), stacklock.OpAutoScale)
-		if err != nil {
-			return err
-		}
-		defer release()
-		lh := host.NewLocal(dockerCli)
-		lh.SetStackDirResolver(stacksMgr.Dir)
-		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
-		return err
-	})
-	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
-	defer scaleController.Stop()
-
 	// Remote-agent PKI + service. The mTLS listener starts only if the
 	// CA + server cert can be issued and a listen address is configured.
 	pkiSANs := []string{}
@@ -878,6 +847,23 @@ func main() {
 	updaterSvc.SetStacks(stacksMgr, deployHistoryStore)
 
 	deployStore := stacks.NewDeploymentStore(database)
+
+	// The auto-scaler acts on the host a stack is deployed to.
+	scaleController := scaling.NewController(stacksMgr, metricsCol,
+		func(ctx context.Context, stack, service string) (scaling.Target, error) {
+			hostID, err := deployStore.HostOf(ctx, stack)
+			if err != nil {
+				return nil, err
+			}
+			h, err := hostRegistry.Pick(hostID)
+			if err != nil {
+				return nil, err
+			}
+			return scaling.NewHostTarget(h, stack, service), nil
+		},
+		scaling.CheckedScale(stacksMgr, stackLocks, deployStore))
+	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
+	defer scaleController.Stop()
 
 	// Git-backed stacks. Cache dir sits under the DB data dir so
 	// operators who override DOCKMESH_DB_PATH get the matching location
