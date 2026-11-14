@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
@@ -125,9 +126,12 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 	return from, to, nil
 }
 
-// MovedSystemTarget reports a local system job whose saved target is
-// <data>/backups while an unused local target under the job's name still
-// holds another path. It returns the job's name and those paths.
+// MovedSystemTarget reports a local system job that a start of an earlier
+// version moved to a migrated target at <data>/backups, while the target it
+// was created with is still saved and unused. That target is saved under
+// the job's name no later than the job; anything created afterwards, by
+// whoever may save targets, is not taken for it. It returns the job's name
+// and the paths of those targets.
 func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
 	if s.paths.DataDir == "" {
 		return "", nil, nil
@@ -145,28 +149,37 @@ func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous [
 		return "", nil, err
 	}
 	moved := filepath.Join(s.paths.DataDir, "backups")
-	current := ""
-	for _, t := range all {
-		if t.ID == j.TargetID {
-			current = localTargetPath(t.Config)
+	var current *targets.StoredTarget
+	for i := range all {
+		if all[i].ID == j.TargetID {
+			current = &all[i]
 			break
 		}
 	}
-	if current != moved {
+	if current == nil || localTargetPath(current.Config) != moved ||
+		!hasNameOrSuffix(current.Name, migratedTargetName("local", map[string]any{"path": moved})) {
 		return "", nil, nil
 	}
 	for _, t := range all {
 		if t.Type != "local" || t.ID == j.TargetID || (t.JobCount != nil && *t.JobCount > 0) {
 			continue
 		}
-		if t.Name != j.Name && !strings.HasPrefix(t.Name, j.Name+" (") {
+		if !hasNameOrSuffix(t.Name, j.Name) || t.CreatedAt.After(j.CreatedAt) || !current.CreatedAt.After(t.CreatedAt) {
 			continue
 		}
-		if p := localTargetPath(t.Config); p != "" && p != moved {
-			previous = append(previous, p)
+		p := localTargetPath(t.Config)
+		if p == "" || p == moved || strings.ContainsFunc(p, unicode.IsControl) {
+			continue
 		}
+		previous = append(previous, p)
 	}
 	return j.Name, previous, nil
+}
+
+// hasNameOrSuffix reports whether name is base or base with the " (n)"
+// suffix insertTarget adds when base is taken.
+func hasNameOrSuffix(name, base string) bool {
+	return name == base || strings.HasPrefix(name, base+" (")
 }
 
 func localTargetPath(cfg any) string {

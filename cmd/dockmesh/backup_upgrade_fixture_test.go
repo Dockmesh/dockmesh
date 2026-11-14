@@ -176,6 +176,10 @@ func TestMovedSystemTargetNotice(t *testing.T) {
 		`{"path":"`+filepath.Join(dataDir, "backups")+`"}`); err != nil {
 		t.Fatal(err)
 	}
+	// Saved after the job, so it can't be the target the job was created with.
+	if _, err := conn.Exec(`INSERT INTO backup_targets (name, type, config_json) VALUES ('sys-abs (old)', 'local', '{"path":"/srv/elsewhere"}')`); err != nil {
+		t.Fatal(err)
+	}
 	svc, n := startBackups(t, conn, dataDir)
 	job, previous, err := svc.MovedSystemTarget(ctx)
 	if err != nil {
