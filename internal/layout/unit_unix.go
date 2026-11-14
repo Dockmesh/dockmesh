@@ -13,13 +13,6 @@ import (
 	"syscall"
 )
 
-// UnitWriteOptions configure WriteServerUnit and RestoreServerUnit. Empty
-// paths default to UnitFile and PrevUnitFile; tests point them elsewhere.
-type UnitWriteOptions struct {
-	UnitFile     string
-	PrevUnitFile string
-}
-
 func (o UnitWriteOptions) paths() (string, string) {
 	unit, prev := o.UnitFile, o.PrevUnitFile
 	if unit == "" {
@@ -48,6 +41,11 @@ func WriteServerUnit(u ServerUnit, opts UnitWriteOptions) (changed bool, err err
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		old = nil
+		// A copy left by an earlier install must not be restored over
+		// this one.
+		if err := os.Remove(prevPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
 	case err != nil:
 		return false, err
 	case bytes.Equal(old, data):

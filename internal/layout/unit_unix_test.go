@@ -31,12 +31,13 @@ func TestWriteServerUnit(t *testing.T) {
 	tests := []struct {
 		name        string
 		existing    string // "" = no unit yet
+		sameAsUnit  bool   // existing unit equals the rendered one
 		wantChanged bool
 		wantPrev    string // "" = no prev file
 	}{
-		{"fresh install", "", true, ""},
-		{"legacy unit is kept as prev", legacy, true, legacy},
-		{"same unit is left alone", "same", false, ""},
+		{"fresh install", "", false, true, ""},
+		{"legacy unit is kept as prev", legacy, false, true, legacy},
+		{"same unit is left alone", "", true, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,7 +54,7 @@ func TestWriteServerUnit(t *testing.T) {
 				t.Fatal(err)
 			}
 			existing := tt.existing
-			if existing == "same" {
+			if tt.sameAsUnit {
 				existing = string(want)
 			}
 			if existing != "" {
@@ -173,5 +174,21 @@ func TestReadEnvFile(t *testing.T) {
 		if _, err := ReadEnvFile(p); err == nil {
 			t.Errorf("%s: want an error", p)
 		}
+	}
+}
+
+func TestWriteServerUnitDropsStalePrev(t *testing.T) {
+	opts, _ := unitOpts(t)
+	if err := os.WriteFile(opts.PrevUnitFile, []byte("from an earlier install"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteServerUnit(testUnit(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(opts.PrevUnitFile); !os.IsNotExist(err) {
+		t.Errorf("stale prev file kept: %v", err)
+	}
+	if err := RestoreServerUnit(opts); err == nil {
+		t.Error("restore after a fresh write must fail")
 	}
 }

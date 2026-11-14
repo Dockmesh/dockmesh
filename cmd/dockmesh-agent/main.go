@@ -123,8 +123,8 @@ func main() {
 	// Step 1: enrollment, only if no cert on disk yet.
 	if !fileExists(certPath) || !fileExists(keyPath) || !fileExists(caPath) {
 		if cfg.enrollURL == "" || cfg.token == "" {
-			slog.Error("first run: DOCKMESH_ENROLL_URL and DOCKMESH_TOKEN are required", "hint", reenrollHint)
-			os.Exit(layout.AgentExitEnrollRejected)
+			slog.Error("first run: DOCKMESH_ENROLL_URL and DOCKMESH_TOKEN are required")
+			os.Exit(1)
 		}
 		slog.Info("enrolling", "url", cfg.enrollURL)
 		if err := enroll(cfg, certPath, keyPath, caPath, urlPath); err != nil {

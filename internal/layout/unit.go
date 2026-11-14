@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -40,6 +41,13 @@ var unitFS embed.FS
 var unitTemplates = template.Must(template.New("").
 	Funcs(template.FuncMap{"join": func(s []string) string { return strings.Join(s, " ") }}).
 	ParseFS(unitFS, "units/*.tmpl"))
+
+// UnitWriteOptions configure WriteServerUnit and RestoreServerUnit. Empty
+// paths default to UnitFile and PrevUnitFile; tests point them elsewhere.
+type UnitWriteOptions struct {
+	UnitFile     string
+	PrevUnitFile string
+}
 
 // ErrBadUnitValue marks a value that cannot go into a unit file safely.
 var ErrBadUnitValue = errors.New("value not allowed in a systemd unit")
@@ -98,7 +106,7 @@ func RenderAgentUnit(u AgentUnit) ([]byte, error) {
 		return nil, err
 	}
 	if u.User != "" {
-		if !groupName.MatchString(u.User) {
+		if !accountName.MatchString(u.User) {
 			return nil, fmt.Errorf("%w: user %q", ErrBadUnitValue, u.User)
 		}
 		v.User = u.User
@@ -128,20 +136,20 @@ func commonValues(binary, envFile, dataDir string, writable, groups []string) (u
 		return v, err
 	}
 	for _, g := range groups {
-		if !groupName.MatchString(g) {
+		if !accountName.MatchString(g) {
 			if _, err := strconv.ParseUint(g, 10, 32); err != nil {
 				return v, fmt.Errorf("%w: group %q", ErrBadUnitValue, g)
 			}
 		}
-		if !contains(v.SupplementaryGroups, g) {
+		if !slices.Contains(v.SupplementaryGroups, g) {
 			v.SupplementaryGroups = append(v.SupplementaryGroups, g)
 		}
 	}
 	return v, nil
 }
 
-// groupName is the portable user and group name set of useradd.
-var groupName = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+// accountName is the portable user and group name set of useradd.
+var accountName = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 // checkPath returns the cleaned form of an absolute path that has no
 // character systemd's unit parser treats specially: control characters
@@ -188,10 +196,15 @@ func plainPath(what, p string) (string, error) {
 	return escapeSpecifiers(c), nil
 }
 
+// systemTrees may never become writable for the service: a path below
+// one, set through a setting, would undo ProtectSystem= for it.
+var systemTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr"}
+
 // readWritePaths returns one ReadWritePaths= value per directory: the
 // data dir first and required, the rest prefixed with '-' so a missing
 // one does not stop the service. A path below another is dropped. Every
-// value is quoted, so spaces stay inside it.
+// value is quoted, so spaces stay inside it. Paths other than the data
+// dir may neither lie in a system tree nor contain the data dir.
 func readWritePaths(dataDir string, extra []string) ([]string, error) {
 	var dirs []string
 	for i, p := range append([]string{dataDir}, extra...) {
@@ -206,11 +219,21 @@ func readWritePaths(dataDir string, extra []string) ([]string, error) {
 		if c == "/" {
 			return nil, fmt.Errorf("%w: %s is the root directory", ErrBadUnitValue, what)
 		}
+		if i > 0 {
+			for _, sys := range systemTrees {
+				if within(sys, c) {
+					return nil, fmt.Errorf("%w: %s %q lies in %s", ErrBadUnitValue, what, p, sys)
+				}
+			}
+			if c != dirs[0] && within(c, dirs[0]) {
+				return nil, fmt.Errorf("%w: %s %q contains the data dir", ErrBadUnitValue, what, p)
+			}
+		}
 		dirs = append(dirs, c)
 	}
 	var out []string
 	for i, d := range dirs {
-		if coveredBy(d, dirs[:i]) || coveredBy(d, laterParents(d, dirs[i+1:])) {
+		if coveredBy(d, dirs[:i]) || hasLaterParent(d, dirs[i+1:]) {
 			continue
 		}
 		prefix := "-"
@@ -222,15 +245,14 @@ func readWritePaths(dataDir string, extra []string) ([]string, error) {
 	return out, nil
 }
 
-// laterParents returns the entries of dirs that are strict parents of d.
-func laterParents(d string, dirs []string) []string {
-	var out []string
+// hasLaterParent reports whether an entry of dirs is a strict parent of d.
+func hasLaterParent(d string, dirs []string) bool {
 	for _, p := range dirs {
 		if p != d && within(p, d) {
-			out = append(out, p)
+			return true
 		}
 	}
-	return out
+	return false
 }
 
 func coveredBy(d string, dirs []string) bool {
@@ -248,15 +270,6 @@ func within(root, p string) bool {
 }
 
 func escapeSpecifiers(s string) string { return strings.ReplaceAll(s, "%", "%%") }
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
 
 // ServerWritablePaths returns the directories of p the server writes
 // outside its data dir when the per-path variables move them, followed

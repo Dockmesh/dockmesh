@@ -989,8 +989,6 @@ func installSystemdUnitFile(dataDir string) (string, error) {
 	if runtime.GOOS != "linux" {
 		return "", fmt.Errorf("systemd install supported on linux only")
 	}
-	// useradd exits 9 when the account exists; any other failure surfaces
-	// when the unit cannot start.
 	if err := runSilent("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "dockmesh"); err != nil {
 		if _, statErr := os.Stat("/etc/passwd"); statErr == nil {
 			initWarn("could not create 'dockmesh' user — continuing with existing system accounts (if the user exists it's fine)")

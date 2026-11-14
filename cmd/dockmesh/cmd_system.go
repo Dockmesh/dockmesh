@@ -133,8 +133,7 @@ func systemWriteUnit(args []string) error {
 }
 
 // writeServerUnit writes the server's unit for the given config (see
-// unitConfigFile) and reloads systemd when it changed. A refused value
-// leaves the unit and /etc/dockmesh as they were.
+// unitConfigFile) and reloads systemd when it changed.
 func writeServerUnit(envFlag string) (bool, error) {
 	envFile, err := unitConfigFile(envFlag)
 	if err != nil {
@@ -153,8 +152,11 @@ func writeServerUnit(envFlag string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if resolved, err := filepath.EvalSymlinks(binary); err == nil {
-		binary = resolved
+	if binary, err = filepath.EvalSymlinks(binary); err != nil {
+		return false, err
+	}
+	if err := checkUnitBinary(binary); err != nil {
+		return false, fmt.Errorf("%w (the unit was not changed)", err)
 	}
 	gid, err := ensureServiceGroup()
 	if err != nil {
@@ -209,7 +211,7 @@ func ensureServiceGroup() (int, error) {
 	if gid, ok := lookupGID(layout.ServiceGroup); ok {
 		return gid, nil
 	}
-	if out, err := exec.Command("groupadd", "--system", layout.ServiceGroup).CombinedOutput(); err != nil {
+	if out, err := exec.Command("groupadd", "--system", layout.ServiceGroup).CombinedOutput(); err != nil { // #nosec G204 -- constant arguments
 		return 0, fmt.Errorf("create group %s: %w: %s", layout.ServiceGroup, err, strings.TrimSpace(string(out)))
 	}
 	if gid, ok := lookupGID(layout.ServiceGroup); ok {
