@@ -392,3 +392,41 @@ func TestInstallFailsClosedWithoutHostList(t *testing.T) {
 		t.Fatal("downloaded release kept after the install ended")
 	}
 }
+
+func TestAwaitResultRaisesStuckNotice(t *testing.T) {
+	f := newInstallFixture(t)
+	setPoll(t, 5*time.Millisecond)
+	oldAfter := unconfirmedAfter
+	unconfirmedAfter = 20 * time.Millisecond
+	t.Cleanup(func() { unconfirmedAfter = oldAfter })
+	pending := filepath.Join(f.dir, rootupdate.PendingFile)
+	_ = os.WriteFile(pending, []byte("{}"), 0o644)
+	done := make(chan struct{})
+	go func() { f.inst.AwaitResult(context.Background()); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		open, _ := f.notices.Open(context.Background())
+		if len(open) == 1 && open[0].Key == UnconfirmedNoticeKey {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no stuck notice: %+v", open)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = os.Remove(pending)
+	<-done
+	if open, _ := f.notices.Open(context.Background()); len(open) != 0 {
+		t.Fatalf("stuck notice still open: %+v", open)
+	}
+}
+
+func TestAwaitResultResolvesStuckNoticeOfEarlierProcess(t *testing.T) {
+	f := newInstallFixture(t)
+	_ = f.notices.Raise(context.Background(), notices.RaiseInput{Key: UnconfirmedNoticeKey, Audience: notices.Admins(),
+		Severity: notices.SevCritical, Blocking: true, Title: i18n.Msg("notice.update_unconfirmed.title")})
+	f.inst.AwaitResult(context.Background())
+	if open, _ := f.notices.Open(context.Background()); len(open) != 0 {
+		t.Fatalf("stuck notice of an earlier process still open: %+v", open)
+	}
+}

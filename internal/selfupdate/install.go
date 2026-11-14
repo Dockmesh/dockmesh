@@ -28,6 +28,14 @@ import (
 // ResultNoticeKey is the notice raised from the root updater's result.
 const ResultNoticeKey = "update.result"
 
+// UnconfirmedNoticeKey is raised while an update stays unconfirmed for
+// longer than the root updater ever needs, e.g. after it was killed.
+const UnconfirmedNoticeKey = "update.unconfirmed"
+
+// unconfirmedAfter is when an update in flight counts as stuck: the
+// updater's own limit (TimeoutStartSec) plus some slack.
+var unconfirmedAfter = 65 * time.Minute
+
 // Default waits of an install.
 const (
 	// DefaultLockWait is how long an install waits for running stack
@@ -386,11 +394,36 @@ func (i *Installer) UpdatePending() bool {
 // through CheckResult. The server calls it once on start: right after an
 // update it runs while the root updater still checks the new version.
 func (i *Installer) AwaitResult(ctx context.Context) {
+	// Counted from the marker, so a restart does not push the notice out.
+	stuck := time.Now().Add(unconfirmedAfter)
+	if fi, err := os.Lstat(filepath.Join(i.cfg.Dir, rootupdate.PendingFile)); err == nil {
+		stuck = fi.ModTime().Add(unconfirmedAfter)
+	}
+	raised := false
 	for i.UpdatePending() {
+		if !raised && !time.Now().Before(stuck) && i.cfg.Notices != nil {
+			raised = true
+			if err := i.cfg.Notices.Raise(ctx, notices.RaiseInput{
+				Key:      UnconfirmedNoticeKey,
+				Audience: notices.Admins(),
+				Severity: notices.SevCritical,
+				Blocking: true,
+				Title:    i18n.Msg("notice.update_unconfirmed.title"),
+				Body:     i18n.Msg("notice.update_unconfirmed.body", "sudo systemctl start dockmesh-update.service"),
+			}); err != nil {
+				slog.Warn("raise update notice", "err", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(pendingPoll):
+		}
+	}
+	// Also when an earlier process raised it.
+	if i.cfg.Notices != nil {
+		if err := i.cfg.Notices.Resolve(ctx, UnconfirmedNoticeKey); err != nil {
+			slog.Warn("resolve update notice", "err", err)
 		}
 	}
 	i.CheckResult(ctx)

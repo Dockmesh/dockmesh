@@ -1,0 +1,3 @@
+kind: Added
+body: Right after an update through the root updater, backup schedules, git polling, auto-scaling, agent upgrades, audit retention and migration cleanup wait until the update is confirmed; UI and API run meanwhile, and normal restarts are not delayed
+time: 2026-11-14T11:18:21.729776165Z
