@@ -21,10 +21,10 @@ When the image looks like a database or another stateful service (`postgres`, `m
 Things to know:
 
 - Scaling does not pull images. The image must already be on the host.
-- Added replicas get the restart policy `unless-stopped` when the service sets none.
+- Replicas after the first get the restart policy `unless-stopped` when the service sets none.
 - Replicas are built from the base `compose.yaml` and the stack's `.env`, without the stack's environment override and without global environment variables.
-- The replica count is not saved anywhere. A stack **Deploy** only recreates replica 1; the other replicas keep running with their previous configuration until you scale again. Scale down to 1 before a deploy that changes the service, then scale up again.
-- `deploy.replicas` in `compose.yaml` is ignored.
+- The replica count is the number of containers that exist for the service. A stack **Deploy** keeps it and replaces every replica with the new configuration, one after the other, waiting for each to become healthy, so the others keep serving meanwhile. A service that has no containers starts with one.
+- `deploy.replicas` in `compose.yaml` is not applied on host stacks yet. After a deploy, a warning names the services that set it to something other than 1.
 - Scaling up waits for each new replica to pass its health check (or, without one, to keep running for a short grace period) before it creates the next one, as a deploy does.
 - When stack files changed outside Dockmesh, **Scale…** and **Rolling update…** first ask **Stack files changed outside Dockmesh** and list the files, like a deploy.
 - Scaling and rolling updates are refused while the stack's containers still bind-mount a temporary staging directory from an earlier version. Deploy the stack once to move that data into the stack directory.
@@ -86,10 +86,10 @@ Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused*
 
 Before you rely on it, note the limits:
 
-- Rules are read for every stack, but the metrics used are those of the server host and scaling always acts on the server host, so rules only work for stacks on the server host.
-- The current replica count is kept in memory and starts at 1 after a server restart, whatever is actually running.
-- When no metrics are available for the service, the average counts as 0, which can trigger a scale-down. A container without a memory limit counts as 0 % memory.
-- Both thresholds are compared against the `scale_up` metric; the `metric` of `scale_down` is not used. Only the first 20 replicas are included in the average.
+- Rules act on the host the stack is deployed to, the server host or an agent host. The replica count is the number of running containers of the service, so it survives a server restart.
+- A service with no running containers is never scaled, so a stopped stack stays stopped. When none of its replicas reported metrics in the last minute, the rule waits. A container without a memory limit counts as 0 % memory.
+- The average covers every running replica. `scale_down` is compared against its own `metric`; a rule without one uses the `scale_up` metric, and a rule without any metric uses `cpu`.
+- When the replica count changes between the evaluation and the scale (for example by a manual scale), the auto-scaler skips that action and evaluates again on its next run.
 - The same scaling restrictions apply (`container_name`, fixed host ports, no image pull, no global variables). The database warning does not: database-like images are scaled without asking.
 
 ## API

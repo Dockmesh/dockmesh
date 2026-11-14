@@ -1381,6 +1381,9 @@
       modifiedOutside = [];
       if (scalerPaused && scalerPaused.reason !== 'invalid_rules') scalerPaused = null;
       toast.success(m.stacks_deployed(), m.stacks_d_deployed_on({ count: res.services.length, host: hosts.selected?.name ?? m.common_local() }));
+      if (res.replicas_ignored?.length) {
+        toast.warning(m.stacks_d_replicas_ignored(), m.stacks_d_replicas_ignored_services({ services: res.replicas_ignored.join(', ') }));
+      }
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.

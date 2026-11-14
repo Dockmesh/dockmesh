@@ -174,19 +174,10 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 			}
 		}
 		for i := current + 1; i <= replicas; i++ {
-			name := fmt.Sprintf("%s-%s-%d", proj.Name, serviceName, i)
-			cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
+			name := replicaName(proj.Name, serviceName, i)
+			cfg, hostCfg, netCfg, err := replicaContainerConfig(proj, svc, netNames, i)
 			if err != nil {
 				return nil, fmt.Errorf("config replica %d: %w", i, err)
-			}
-			// Force unless-stopped on scaled replicas if the compose
-			// didn't set a restart policy. Docker's default (no
-			// restart) means a crashing scaled replica stays dead and
-			// auto-heal via "scale to same N" is the only recovery —
-			// this also works because we clean up stale replicas above.
-			// FINDING-13.
-			if hostCfg.RestartPolicy.Name == "" || hostCfg.RestartPolicy.Name == "no" {
-				hostCfg.RestartPolicy.Name = "unless-stopped"
 			}
 			// Remove stale container with the same name if it exists.
 			if old, inspErr := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{}); inspErr == nil {

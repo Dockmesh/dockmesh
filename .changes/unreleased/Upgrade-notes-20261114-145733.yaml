@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Deploying a stack whose service was scaled now replaces all of its replicas one after the other instead of only the first; auto-scaling rules now also act on stacks on agent hosts, skip services without recent metrics, and compare scale_down against its own metric (rules without one keep using the scale_up metric)
+time: 2026-11-14T14:57:33.057168151Z
+custom:
+    Audience: all
+    Id: scale-target

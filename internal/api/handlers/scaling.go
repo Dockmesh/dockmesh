@@ -93,7 +93,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := target.ScaleService(r.Context(), name, detail.Compose, detail.Env, service, req.Replicas)
+	res, err := scaling.NewHostTarget(target, name, service).Scale(r.Context(), detail.Compose, detail.Env, req.Replicas)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
