@@ -51,29 +51,16 @@ func applyValuesFor(in setup.CommitInput) (setup.ApplyValues, error) {
 	return v, v.Validate()
 }
 
-// writeApplyValues stores v in the state dir for root, 0600.
+// writeApplyValues stores v in the state dir for root.
 func writeApplyValues(stateDir string, v setup.ApplyValues) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(stateDir, ".apply-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(stateDir, setup.ApplyFile))
+	return writeFileReplace(filepath.Join(stateDir, setup.ApplyFile), data)
 }
 
-// readApplyValues reads and validates ApplyFile from stateDir; f is open
-// on it already when root reads it through a checked handle.
+// readApplyValues reads and validates setup values from r.
 func readApplyValues(r io.Reader) (setup.ApplyValues, error) {
 	var v setup.ApplyValues
 	data, err := io.ReadAll(io.LimitReader(r, maxApplyFile+1))
@@ -162,7 +149,7 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 		if err := st.Load(ctx); err != nil {
 			return err
 		}
-		if err := saveSetupURLs(ctx, st, v.BaseURL, ":8443"); err != nil {
+		if err := saveSetupURLs(ctx, st, v.BaseURL, setup.AgentListen); err != nil {
 			return err
 		}
 	}
@@ -366,7 +353,8 @@ func materializeInProcess(ctx context.Context, dataDir string, v setup.ApplyValu
 	return nil
 }
 
-// writeFileReplace replaces path with data through a temp file and rename.
+// writeFileReplace replaces path with data, 0600, through a temp file and
+// rename.
 func writeFileReplace(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {

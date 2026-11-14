@@ -350,7 +350,7 @@ func main() {
 			_ = os.Unsetenv(k)
 		}
 		if err := os.Setenv("DOCKMESH_DATA_DIR", setup.StateDir(realDataDir)); err != nil {
-			slog.Error("setup state dir", "err", err)
+			slog.Error("point the data dir at the setup state dir", "err", err)
 			os.Exit(1)
 		}
 	}

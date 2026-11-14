@@ -102,25 +102,25 @@ func (a *setupApplier) run(ctx context.Context) error {
 	}
 	envData, err := v.ConfigEnv(filepath.Join(filepath.Dir(filepath.Dir(a.binary)), "share", "dockmesh"))
 	if err != nil {
-		a.dropTarget(v.DataDir, created)
+		dropTarget(v.DataDir, created)
 		a.result(applyRefused, "config", err)
 		return nil
 	}
 	gid := configGID()
 	if err := layout.PrepareConfigDir(gid); err != nil {
-		a.dropTarget(v.DataDir, created)
+		dropTarget(v.DataDir, created)
 		a.result(applyFailed, "config", err)
 		return nil
 	}
 	candidate, err := writeRootConfig(layout.ConfigDir, ".dockmesh.env.new-", envData, gid)
 	if err != nil {
-		a.dropTarget(v.DataDir, created)
+		dropTarget(v.DataDir, created)
 		a.result(applyFailed, "config", err)
 		return nil
 	}
 	defer os.Remove(candidate)
 	if out, err := runAsService(ctx, a.binary, time.Minute, "serve", "--check-config", "--env-file", candidate); err != nil {
-		a.dropTarget(v.DataDir, created)
+		dropTarget(v.DataDir, created)
 		a.result(applyRefused, "check_config", fmt.Errorf("%w %s", err, strings.TrimSpace(string(out))))
 		return nil
 	}
@@ -284,7 +284,7 @@ func (a *setupApplier) onlySetupLeftovers(dir string) error {
 		case same && (name == setup.StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir))):
 		case failedName.MatchString(name) && e.Type().IsRegular():
 		case (name == "data" || name == "stacks") && e.IsDir():
-			if err := a.onlyFailed(filepath.Join(dir, name)); err != nil {
+			if err := onlyFailed(filepath.Join(dir, name)); err != nil {
 				return err
 			}
 		default:
@@ -297,7 +297,7 @@ func (a *setupApplier) onlySetupLeftovers(dir string) error {
 // failedName is a file setAside or rollBack renamed.
 var failedName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.failed-[0-9]{8}T[0-9]{6}Z$`)
 
-func (a *setupApplier) onlyFailed(dir string) error {
+func onlyFailed(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -311,7 +311,7 @@ func (a *setupApplier) onlyFailed(dir string) error {
 }
 
 // dropTarget removes a data dir this run created, if it is still empty.
-func (a *setupApplier) dropTarget(dir string, created bool) {
+func dropTarget(dir string, created bool) {
 	if created {
 		_ = os.Remove(dir)
 	}

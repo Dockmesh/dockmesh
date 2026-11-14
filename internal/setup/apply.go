@@ -13,6 +13,9 @@ import (
 	"github.com/dockmesh/dockmesh/internal/webtls"
 )
 
+// AgentListen is the agent listener of a new install.
+const AgentListen = ":8443"
+
 // ApplyFile is the file in StateDir where the service leaves what the
 // wizard entered for root's setup-apply. Passwords are only in it as
 // hashes.
@@ -126,7 +129,7 @@ func (v *ApplyValues) ConfigEnv(assetDir string) ([]byte, error) {
 	env := map[string]string{
 		"DOCKMESH_DATA_DIR":       v.DataDir,
 		"DOCKMESH_HTTP_ADDR":      v.HTTPAddr,
-		"DOCKMESH_AGENT_LISTEN":   ":8443",
+		"DOCKMESH_AGENT_LISTEN":   AgentListen,
 		"DOCKMESH_TLS_MODE":       v.TLSMode,
 		"DOCKMESH_INSTALL_SCRIPT": filepath.Join(assetDir, "install-agent.sh"),
 		"DOCKMESH_BINARY_DIR":     filepath.Join(assetDir, "bin"),

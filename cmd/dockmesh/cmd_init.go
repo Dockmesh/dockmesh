@@ -671,13 +671,7 @@ func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error)
 	if err := db.Migrate(database); err != nil {
 		return false, err
 	}
-	// The service only creates the account here and never signs a token;
-	// the server reads its own secret from secrets.env.
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return false, err
-	}
-	authSvc := auth.NewService(database, secret)
+	authSvc := auth.NewService(database, make([]byte, 32))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := authSvc.CreateUser(ctx, username, "", password, "admin"); err != nil {
@@ -693,11 +687,6 @@ func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error)
 // via env var. Missing entries make the loader fall back to relative
 // defaults (./data/secrets.env etc.) which fail under systemd because
 // the service's working directory is `/`.
-//
-// Real-world bug: v0.1.3–v0.1.5 omitted DOCKMESH_SECRETS_PATH and
-// DOCKMESH_AUDIT_GENESIS_PATH, so a fresh install on systemd couldn't
-// find its own JWT-secret file and crash-looped. Fixed by writing
-// every path explicitly.
 func writeEnvFile(dataDir string, cfg *config.Config) error {
 	envPath := initEnvPath(dataDir)
 	assetDir := resolveAssetDir()

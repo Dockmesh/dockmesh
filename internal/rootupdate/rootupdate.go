@@ -56,7 +56,7 @@ type Request struct {
 }
 
 // RequestSetupApply asks root to commit the setup of a never set up
-// server; the server package handles it.
+// server.
 const RequestSetupApply = "setup-apply"
 
 // Pending is written to PendingFile from the stop of the old version until
