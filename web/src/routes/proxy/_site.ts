@@ -7,6 +7,25 @@ export interface SiteHeader { name: string; value?: string; secret?: boolean; va
 export interface UpstreamTLS { tls?: boolean; server_name?: string; host_header?: string; ca_pem?: string; skip_verify?: boolean }
 export interface Fallback { mode?: string; to?: string; code?: number }
 
+export interface PathRoute {
+  match: { type: 'prefix' | 'exact'; path: string };
+  action: 'proxy' | 'redirect' | 'respond';
+  target?: { kind?: 'site' | 'static'; upstreams?: string[]; lb_policy?: string; health_path?: string; tls?: UpstreamTLS };
+  strip_prefix?: boolean;
+  headers?: { request_set?: SiteHeader[]; request_remove?: string[]; response_set?: SiteHeader[]; response_remove?: string[] };
+  transport?: {
+    dial_timeout?: string;
+    read_timeout?: string;
+    write_timeout?: string;
+    stream_close_delay?: string;
+    flush_immediately?: boolean | null;
+    buffer_requests?: boolean | null;
+  };
+  to?: string;
+  code?: number;
+  status?: number;
+}
+
 export interface SiteOptions {
   routing?: {
     extra_upstreams?: string[];
@@ -51,6 +70,7 @@ export interface Site {
   tls_mode: TLSMode;
   enabled: boolean;
   options?: SiteOptions;
+  paths?: PathRoute[];
   created_at?: string;
   updated_at?: string;
   cert_issuer?: string;
@@ -59,11 +79,12 @@ export interface Site {
   cert_days_left?: number;
 }
 
-// skipsVerify is true when the site dials a backend over HTTPS without
-// checking its certificate.
+// skipsVerify is true when the site or one of its paths dials a backend
+// over HTTPS without checking its certificate.
 export function skipsVerify(s: Site): boolean {
   const t = s.options?.routing?.upstream_tls;
-  return !!(t?.tls && t.skip_verify);
+  if (t?.tls && t.skip_verify) return true;
+  return (s.paths ?? []).some((p) => p.action === 'proxy' && p.target?.kind === 'static' && p.target.tls?.tls && p.target.tls.skip_verify);
 }
 
 export interface ProxyStatus {
