@@ -103,11 +103,11 @@ By default Caddy talks plain HTTP to the site's backend. **Use HTTPS to the back
 | **Host header** | **Keep the visitor's host** (default) or **Use the backend's host**, for backends that serve several sites by name |
 | **Certificate check** | **Trust public CAs** (default), **Trust this CA certificate** (paste one or more PEM certificates, up to 64 KB; a private key is refused and only the certificates are stored), or **Don't check the certificate** |
 
-**Don't check the certificate** lets anyone between the proxy and the backend read and change the traffic; use your own CA certificate instead if you can. A site with it shows **TLS not verified** in the site list, and every save that leaves it on writes a `proxy.route_tls_unverified` audit entry.
+**Don't check the certificate** lets anyone between the proxy and the backend read and change the traffic; use your own CA certificate instead if you can. A site where the site or one of its paths uses it shows **TLS not verified** in the site list, and creating the site or any change to it that leaves the setting on writes a `proxy.route_tls_unverified` audit entry.
 
 ### X-Forwarded-Port
 
-Caddy sends `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` to the backend on its own, but not the port. **Send X-Forwarded-Port** (Options › Headers, off by default) adds it with the port of the listener that took the request: `443` for HTTPS and `80` for plain HTTP. It applies to the site's backend and to every path route. Behind a port mapping or a CDN the port can differ from the one the visitor used; set a request header named `X-Forwarded-Port` on the site or on a path to send your own value.
+Caddy sends `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` to the backend on its own, but not the port. **Send X-Forwarded-Port** (Options › Headers, off by default) adds it with the port of the listener that took the request: `443` for HTTPS and `80` for plain HTTP. It applies to the site's backend and to every proxy path. When it's off, an `X-Forwarded-Port` sent by the visitor reaches the backend unchanged; remove it under request headers if the backend trusts it. Behind a port mapping or a CDN the port can differ from the one the visitor used; set a request header named `X-Forwarded-Port` on the site or on a path to send your own value.
 
 ## Path routes
 
@@ -121,14 +121,14 @@ Each path route has:
 | **Action** | **Proxy**, **Redirect** (an absolute path or an http(s) URL, code 301, 302, 307 or 308) or **Respond** (404 or 403) |
 | **Backend** (Proxy) | **Same as the site**, with the site's upstreams, load balancing and upstream TLS, or **Other backend**: its own `host:port` addresses, load balancing, health check and [upstream TLS](#upstream-tls) |
 | **Strip prefix** (Proxy, prefix only) | Removes exactly the prefix before passing the request on: `/ords/x` reaches the backend as `/x`, `/ords` as `/` |
-| **Request and response headers** (Proxy) | Applied after the site's headers. On the same name the path's value wins, also over the site's security headers, and a header the path removes is removed even if the site sets it. The tab marks a response header that replaces one of the site's |
+| **Request and response headers** (Proxy) | Applied after the site's headers. On the same name the path's value wins, also over the site's security headers and HSTS, and a header the path removes is removed even if the site sets it. The tab marks a response header that replaces one of the site's |
 | **Timeouts and streaming** (Proxy) | Connect, read and write timeout, stream responses, buffer uploads, keep streams on reload. Empty fields keep the site's values |
 
 - **Order:** paths are sorted automatically, exact paths first, then longer prefixes before shorter ones, so no path can hide another. The table shows that order.
 - **Fallback:** the last row, **everything else**, handles requests that match no path: proxy to the site's backend (default), redirect, or respond 404. It is the same setting as Options › Routing › **Requests that match no path**.
 - **Access rules come first:** the site's IP filter, password protection, forward auth, compression and upload limit apply to every path. A path can't bypass them.
-- **Limits:** up to 50 paths per site. A path starts with `/`, is not `/` alone (that is the fallback), and can't contain `*`, `[`, `]`, `\`, `{}`, spaces, `#`, `?` or `..` segments.
-- **Secrets:** request headers on a path can be **Secret** like the site's; they are matched by the path and header name, and need to be entered again when the path gets a backend address it didn't have. The site's own secret request headers are sent only to paths that use the site's backend; paths with another backend don't get them.
+- **Limits:** up to 50 paths per site. A path starts with `/`, is not `/` alone (that is the fallback), and can't contain `*`, `[`, `]`, `\`, `{` or `}`, spaces, `#`, `?`, control characters, `.` or `..` segments or a `%` without two hex digits after it. It can't start with `//` and has at most 256 characters.
+- **Secrets:** request headers on a path can be **Secret** like the site's; they are matched by the path and header name, and need to be entered again when the path gets a backend address it didn't have. The site's own secret request headers are sent only to paths that use the site's backend; paths with another backend don't get them. Turning off HTTPS or the certificate check on a path's backend keeps its secrets, which then cross the network unprotected.
 - **Respond is not access control:** a 403 on a path blocks that path at the proxy, but a backend may serve the same content under another form of the path, for example with a trailing `/` after an exact path. Protect content with the site's access rules.
 
 A site without paths gets exactly the Caddy config it had before path routes existed. **Save paths** sends the whole list, and **Reset** drops unsaved changes. If Caddy refuses the result, nothing is saved and the tab says "Caddy rejected the configuration. Nothing was changed." Users without `proxy.update` see the paths read-only, with header values hidden.
