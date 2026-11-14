@@ -70,7 +70,7 @@ type Config struct {
 func Load() (*Config, error) {
 	paths := ResolvePaths(os.Getenv)
 	cfg := &Config{
-				DataDir:           paths.DataDir,
+		DataDir:           paths.DataDir,
 		DBPath:            paths.DBPath,
 		StacksRoot:        paths.StacksRoot,
 		SecretsPath:       paths.SecretsPath,
