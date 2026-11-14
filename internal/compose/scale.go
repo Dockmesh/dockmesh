@@ -130,10 +130,8 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		}
 	}
 
-	// Current containers for this service, sorted by replica index.
-	// Only RUNNING replicas count toward `current` — stopped/exited
-	// replicas are replaced on the next scale so a killed container
-	// can be auto-healed with "scale to same N". Fixes FINDING-13.
+	// Only running replicas count; stopped ones are replaced, so scaling
+	// to the same N heals them.
 	allContainers, err := listServiceContainers(ctx, cli, proj.Name, serviceName)
 	if err != nil {
 		return nil, err

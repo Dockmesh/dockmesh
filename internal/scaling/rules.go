@@ -56,10 +56,7 @@ type ThresholdConfig struct {
 	DurationSeconds  int     `json:"duration_seconds"`  // how long the threshold must be exceeded
 }
 
-// metric is the threshold's metric in lower case; a threshold without one
-// uses fallback, and "cpu" when that is empty too. A scale-down threshold
-// passes the scale-up metric as fallback, as rules saved without a
-// scale-down metric were evaluated on it.
+// metric is the threshold's metric in lower case, else fallback, else "cpu".
 func (t ThresholdConfig) metric(fallback string) string {
 	if m := strings.ToLower(t.Metric); m != "" {
 		return m

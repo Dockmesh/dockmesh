@@ -17,8 +17,7 @@ type Replica struct {
 }
 
 // Target is one service that manual scale and the auto-scaler change: a
-// service of a host stack. Everything they need to know about the service
-// comes from the target, never from what an earlier scale asked for.
+// service of a host stack.
 type Target interface {
 	// MetricsHost is the host id the replicas' metrics are stored under.
 	MetricsHost() string

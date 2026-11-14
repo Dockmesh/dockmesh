@@ -36,23 +36,6 @@ const (
 	LabelManaged = docker.LabelManaged
 )
 
-// Service wires a Docker client and stack manager into compose operations.
-//
-// Supported compose features in Phase 1:
-//   - services: image, environment, command, entrypoint, ports, volumes,
-//     networks, restart, labels, user, working_dir, hostname, privileged,
-//     read_only, cap_add, cap_drop, tty, stdin_open
-//   - top-level networks/volumes (named, non-external → auto-create; external
-//     assumed to exist)
-//   - .env file resolution
-//
-// Explicitly NOT supported yet (will be ignored or error out clearly):
-//   - build:, secrets:, configs:, depends_on ordering, deploy:,
-//     profiles, extends, network aliases, ipam overrides
-//
-// healthcheck: is wired into the container config as of P.12.5a and
-// WaitHealthy is called after ContainerStart so a failing probe
-// surfaces at deploy time rather than silently in docker ps.
 // authResolver is what compose calls before every image pull so the
 // daemon API gets a proper X-Registry-Auth blob instead of an anonymous
 // request; registries.Service.ForHost returns one bound to a host.
@@ -79,6 +62,23 @@ const (
 	progressHealthwait = "healthcheck"
 )
 
+// Service wires a Docker client and stack manager into compose operations.
+//
+// Supported compose features:
+//   - services: image, environment, command, entrypoint, ports, volumes,
+//     networks, restart, labels, user, working_dir, hostname, privileged,
+//     read_only, cap_add, cap_drop, tty, stdin_open, healthcheck
+//   - top-level networks/volumes (named, non-external → auto-create; external
+//     assumed to exist)
+//   - .env file resolution
+//
+// Not supported (ignored or refused with an error):
+//   - build:, secrets:, configs:, depends_on ordering, deploy: (a
+//     deploy.replicas other than 1 is reported in DeployResult.ReplicasIgnored),
+//     profiles, extends, network aliases, ipam overrides
+//
+// WaitHealthy runs after ContainerStart so a failing probe surfaces at
+// deploy time rather than silently in docker ps.
 type Service struct {
 	docker  *docker.Client
 	stacks  *stacks.Manager
@@ -293,7 +293,7 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	}
 
 	// Phase 2 — tear down + recreate per service. Pulls already happened
-	// in phase 1 so deployService no longer touches the registry.
+	// in phase 1, so deployService never touches the registry.
 	for i, name := range names {
 		svc := proj.Services[name]
 		sr, err := s.deployService(ctx, cli, proj, svc, netNames, i+1)
@@ -323,10 +323,9 @@ func ignoredReplicas(proj *composetypes.Project) []string {
 // prePullImages walks every service in deploy order and pulls the image
 // when needed (svc.PullPolicy=always, WithForcePull(ctx), or no cached
 // copy). A pull failure is fatal ONLY when the image isn't cached
-// locally — otherwise we log and keep the cached copy, matching the
-// previous in-loop behaviour. Runs before any container is stopped, so
-// abort here leaves the existing deployment intact (fix for the
-// "frontend-orphan after failed pull" bug).
+// locally — otherwise we log and keep the cached copy. Runs before any
+// container is stopped, so an abort here leaves the existing deployment
+// intact.
 func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *composetypes.Project, names []string) error {
 	for i, name := range names {
 		svc := proj.Services[name]
@@ -532,17 +531,17 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 	if err != nil {
 		return nil, err
 	}
-	var res *ServiceResult
+	var firstID string
 	for i, rp := range replicas {
 		id, err := s.replaceReplica(ctx, cli, proj, svc, netNames, rp, i+1, track)
 		if err != nil {
 			return nil, err
 		}
-		if res == nil {
-			res = &ServiceResult{Name: svc.Name, ContainerID: id, Image: svc.Image}
+		if i == 0 {
+			firstID = id
 		}
 	}
-	return res, nil
+	return &ServiceResult{Name: svc.Name, ContainerID: firstID, Image: svc.Image}, nil
 }
 
 // plannedReplica is one container a deploy creates, with the containers
@@ -552,9 +551,9 @@ type plannedReplica struct {
 	old  []container.Summary
 }
 
-// replicaPlan keeps the number of replicas a service runs, so a deploy
-// renews every replica with the new config instead of only the first.
-// A service with container_name or without running containers gets one.
+// replicaPlan keeps the number of replicas a service has, so a deploy
+// renews every replica with the new config. A service with
+// container_name or without containers gets one.
 func replicaPlan(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig) ([]plannedReplica, error) {
 	if svc.ContainerName != "" {
 		return []plannedReplica{{name: svc.ContainerName}}, nil
@@ -575,6 +574,15 @@ func replicaPlan(ctx context.Context, cli *client.Client, proj *composetypes.Pro
 	return plan, nil
 }
 
+// removeContainer stops and removes a container; one already gone is fine.
+func removeContainer(ctx context.Context, cli *client.Client, id string) error {
+	_, _ = cli.ContainerStop(ctx, id, client.ContainerStopOptions{})
+	if _, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 func replicaName(stack, service string, index int) string {
 	return fmt.Sprintf("%s-%s-%d", stack, service, index)
 }
@@ -584,14 +592,12 @@ func replicaName(stack, service string, index int) string {
 // it is healthy, so the other replicas keep serving meanwhile.
 func (s *Service) replaceReplica(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string, rp plannedReplica, index int, track func(string)) (string, error) {
 	for _, c := range rp.old {
-		_, _ = cli.ContainerStop(ctx, c.ID, client.ContainerStopOptions{})
-		if _, err := cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		if err := removeContainer(ctx, cli, c.ID); err != nil {
 			return "", fmt.Errorf("remove existing %s: %w", rp.name, err)
 		}
 	}
 	if existing, err := cli.ContainerInspect(ctx, rp.name, client.ContainerInspectOptions{}); err == nil {
-		_, _ = cli.ContainerStop(ctx, existing.Container.ID, client.ContainerStopOptions{})
-		if _, err := cli.ContainerRemove(ctx, existing.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		if err := removeContainer(ctx, cli, existing.Container.ID); err != nil {
 			return "", fmt.Errorf("remove existing %s: %w", rp.name, err)
 		}
 	}
@@ -633,7 +639,6 @@ func (s *Service) replaceReplica(ctx context.Context, cli *client.Client, proj *
 	return resp.ID, nil
 }
 
-// replicaContainerConfig is the container config of replica index of svc.
 // Replicas after the first get unless-stopped when the service sets no
 // restart policy: without it a crashed extra replica stays down until
 // the next scale.

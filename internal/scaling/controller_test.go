@@ -107,7 +107,7 @@ func TestEverySampledReplica(t *testing.T) {
 }
 
 // A new controller, as after a restart, starts from the replicas that
-// run, not from 1.
+// run.
 func TestRestartKeepsCount(t *testing.T) {
 	target := &fakeTarget{replicas: 3}
 	rule := Rule{Service: "web", MinReplicas: 1, MaxReplicas: 5,

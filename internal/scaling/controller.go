@@ -17,8 +17,7 @@ import (
 // TargetFunc resolves the scale target of a service of a stack.
 type TargetFunc func(ctx context.Context, stack, service string) (Target, error)
 
-// ScaleFunc executes a scale action of the auto-scaler from from to to
-// replicas; CheckedScale is the one main.go wires in.
+// ScaleFunc scales t from the count the auto-scaler saw to a new one.
 type ScaleFunc func(ctx context.Context, stack string, t Target, from, to int) error
 
 type sampler interface {
@@ -77,6 +76,7 @@ func NewController(sm *stacks.Manager, mc *metrics.Collector, targets TargetFunc
 		seen:         make(map[string]bool),
 		stop:         make(chan struct{}),
 	}
+	// A nil *Collector stored in the interface would not compare to nil.
 	if mc != nil {
 		c.metrics = mc
 	}
