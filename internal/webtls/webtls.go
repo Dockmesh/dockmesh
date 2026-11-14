@@ -111,6 +111,11 @@ func readPEM(path string) ([]byte, error) {
 	// device swapped in would block or never end the read, and the root
 	// updater reads this path too. Symlinks are followed, as certbot's
 	// live/ directory uses them.
+	// Stat first so a link to a device is refused before its open runs.
+	pre, err := os.Stat(path)
+	if err == nil && !pre.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	f, err := os.OpenFile(path, os.O_RDONLY|oNonBlock, 0) // #nosec G304 -- certificate path from the root-owned config
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
@@ -119,8 +124,8 @@ func readPEM(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || !os.SameFile(pre, fi) {
+		return nil, fmt.Errorf("%s is not a regular file, or changed while it was opened", path)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxPEMFile+1))
 	if err != nil {
