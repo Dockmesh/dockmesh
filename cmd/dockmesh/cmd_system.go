@@ -180,10 +180,40 @@ func writeServerUnit(envFlag string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%w (the unit was not changed)", err)
 	}
-	if !changed {
-		return false, nil
+	// Without the updater units the server cannot update itself, but it
+	// runs as before, so a refused value only warns.
+	updaterChanged, uerr := layout.WriteUpdateUnits(binary, paths.DataDir, "")
+	if uerr != nil {
+		fmt.Fprintln(os.Stderr, "warning: updater units not written:", uerr)
 	}
-	return true, daemonReload()
+	if changed || updaterChanged {
+		if err := daemonReload(); err != nil {
+			return changed, err
+		}
+	}
+	if uerr == nil {
+		if err := enableUpdater(updaterChanged); err != nil {
+			fmt.Fprintln(os.Stderr, "warning:", err)
+		}
+	}
+	return changed, nil
+}
+
+// enableUpdater enables the updater's path unit and its boot run, and
+// (re)starts the path unit so it watches for requests from now on.
+func enableUpdater(restart bool) error {
+	path, service := filepath.Base(layout.UpdatePathUnitFile), filepath.Base(layout.UpdateServiceUnitFile)
+	if out, err := exec.Command("systemctl", "enable", path, service).CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl enable %s %s: %w: %s", path, service, err, strings.TrimSpace(string(out)))
+	}
+	verb := "start"
+	if restart {
+		verb = "restart"
+	}
+	if out, err := exec.Command("systemctl", verb, path).CombinedOutput(); err != nil { // #nosec G204 -- constant arguments
+		return fmt.Errorf("systemctl %s %s: %w: %s", verb, path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // unitConfigFile is the env file the unit loads: the root-owned file in

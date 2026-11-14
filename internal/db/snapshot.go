@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -290,4 +291,102 @@ func pruneSnapshots(dbPath, keep string) {
 			slog.Warn("removing old database snapshot failed", "path", p, "err", err)
 		}
 	}
+}
+
+// UpdateSnapshotPath is where the root updater keeps the database as it
+// was before a binary update, for the rollback.
+func UpdateSnapshotPath(dbPath string) string { return dbPath + ".pre-update.bak" }
+
+// WriteUpdateSnapshot copies the database at dbPath, its WAL included,
+// to UpdateSnapshotPath. The server must be stopped, so the copy holds
+// everything it wrote. Without a database there is nothing to copy and
+// no snapshot is left behind.
+func WriteUpdateSnapshot(dbPath string) error {
+	snap := UpdateSnapshotPath(dbPath)
+	tmp := snap + tmpSuffix
+	for _, p := range []string{snap, tmp} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if _, err := os.Lstat(dbPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	src, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: dbPath}).String())
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // derived from the configured DB path
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if _, err := src.Exec(`VACUUM INTO ?`, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, snap); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// RestoreUpdateSnapshot replaces the database at dbPath with the copy
+// WriteUpdateSnapshot made and drops the WAL and shared-memory files of
+// the replaced one. The server must be stopped. Without a snapshot there
+// was no database before the update, and the one written since is moved
+// aside rather than deleted.
+func RestoreUpdateSnapshot(dbPath string) error {
+	snap := UpdateSnapshotPath(dbPath)
+	in, err := os.Open(snap) //nolint:gosec // derived from the configured DB path
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(dbPath, dbPath+".after-failed-update"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return removeSideFiles(dbPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := dbPath + ".restore" + tmpSuffix
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // derived from the configured DB path
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = removeSideFiles(dbPath)
+	}
+	if err == nil {
+		err = os.Rename(tmp, dbPath)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
+}
+
+func removeSideFiles(dbPath string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(dbPath + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }

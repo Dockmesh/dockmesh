@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/semver"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -327,17 +328,17 @@ func (c *Checker) getJSON(ctx context.Context, url string, v any) error {
 // or pre-release, or nil when there is none.
 func newestRelease(rels []ghRelease) *ghRelease {
 	var best *ghRelease
-	var bestV semver
+	var bestV semver.Version
 	for i := range rels {
 		r := &rels[i]
 		if r.Draft {
 			continue
 		}
-		v, ok := parseSemver(r.TagName)
+		v, ok := semver.Parse(r.TagName)
 		if !ok {
 			continue
 		}
-		if best == nil || v.compare(bestV) > 0 {
+		if best == nil || v.Compare(bestV) > 0 {
 			best, bestV = r, v
 		}
 	}
@@ -521,131 +522,9 @@ func isDevVersion(v string) bool {
 // treated as "up-to-date" — local development shouldn't show an update
 // banner about itself. A release candidate is older than its release, so
 // an install running v0.6.0-rc.2 is offered v0.6.0.
-func isNewer(current, latest string) bool {
-	cur, ok := parseSemver(current)
-	if !ok {
-		return false
-	}
-	lat, ok := parseSemver(latest)
-	if !ok {
-		return false
-	}
-	return lat.compare(cur) > 0
-}
+func isNewer(current, latest string) bool { return semver.Newer(latest, current) }
 
 func isPrerelease(tag string) bool {
-	v, ok := parseSemver(tag)
-	return ok && len(v.pre) > 0
-}
-
-type semver struct {
-	core [3]int
-	pre  []string
-}
-
-// parseSemver parses "1.2.3", "v1.2.3-rc.1" or "1.2.3+build"; build
-// metadata is ignored.
-func parseSemver(s string) (semver, bool) {
-	s = strings.TrimPrefix(s, "v")
-	if i := strings.IndexByte(s, '+'); i >= 0 {
-		s = s[:i]
-	}
-	var v semver
-	core, pre, hasPre := strings.Cut(s, "-")
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return semver{}, false
-	}
-	for i, p := range parts {
-		n, ok := number(p)
-		if !ok {
-			return semver{}, false
-		}
-		v.core[i] = n
-	}
-	if hasPre {
-		v.pre = strings.Split(pre, ".")
-		for _, id := range v.pre {
-			if !validIdent(id) {
-				return semver{}, false
-			}
-		}
-	}
-	return v, true
-}
-
-// validIdent reports whether id is a semver pre-release identifier:
-// non-empty, ASCII letters, digits and hyphens.
-func validIdent(id string) bool {
-	if id == "" {
-		return false
-	}
-	for _, r := range id {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && r != '-' {
-			return false
-		}
-	}
-	return true
-}
-
-// number parses a non-empty run of ASCII digits.
-func number(s string) (int, bool) {
-	if s == "" || len(s) > 9 {
-		return 0, false
-	}
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0, false
-		}
-		n = n*10 + int(r-'0')
-	}
-	return n, true
-}
-
-// compare orders by semver precedence: a pre-release sorts before its
-// release, numeric identifiers numerically and below alphanumeric ones.
-func (a semver) compare(b semver) int {
-	for i := range a.core {
-		if a.core[i] != b.core[i] {
-			return cmpInt(a.core[i], b.core[i])
-		}
-	}
-	switch {
-	case len(a.pre) == 0 && len(b.pre) == 0:
-		return 0
-	case len(a.pre) == 0:
-		return 1
-	case len(b.pre) == 0:
-		return -1
-	}
-	for i := 0; i < len(a.pre) && i < len(b.pre); i++ {
-		an, aNum := number(a.pre[i])
-		bn, bNum := number(b.pre[i])
-		switch {
-		case aNum && bNum:
-			if an != bn {
-				return cmpInt(an, bn)
-			}
-		case aNum:
-			return -1
-		case bNum:
-			return 1
-		default:
-			if c := strings.Compare(a.pre[i], b.pre[i]); c != 0 {
-				return c
-			}
-		}
-	}
-	return cmpInt(len(a.pre), len(b.pre))
-}
-
-func cmpInt(a, b int) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
+	v, ok := semver.Parse(tag)
+	return ok && v.Prerelease()
 }

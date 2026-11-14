@@ -276,3 +276,35 @@ func TestRootOwnedFile(t *testing.T) {
 		t.Error("/etc/passwd does not count as root's")
 	}
 }
+
+func TestWriteUpdateUnits(t *testing.T) {
+	dir := t.TempDir()
+	changed, err := WriteUpdateUnits("/usr/local/bin/dockmesh", "/var/lib/dockmesh", dir)
+	if err != nil || !changed {
+		t.Fatalf("first write: changed %v, %v", changed, err)
+	}
+	changed, err = WriteUpdateUnits("/usr/local/bin/dockmesh", "/var/lib/dockmesh", dir)
+	if err != nil || changed {
+		t.Fatalf("same units again: changed %v, %v", changed, err)
+	}
+	changed, err = WriteUpdateUnits("/usr/local/bin/dockmesh", "/data", dir)
+	if err != nil || !changed {
+		t.Fatalf("other data dir: changed %v, %v", changed, err)
+	}
+	data, err := ReadUnitFile(filepath.Join(dir, "dockmesh-update.path"))
+	if err != nil || !strings.Contains(string(data), "PathExists=/data/update/request") {
+		t.Fatalf("path unit %q, %v", data, err)
+	}
+	if _, err := WriteUpdateUnits("/usr/local/bin/dockmesh", "/data\nx", dir); err == nil {
+		t.Fatal("bad data dir accepted")
+	}
+	if data, err := ReadUnitFile(filepath.Join(dir, "missing")); err != nil || data != nil {
+		t.Fatalf("missing unit: %q, %v", data, err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadUnitFile(filepath.Join(dir, "link")); err == nil {
+		t.Fatal("symlinked unit read")
+	}
+}

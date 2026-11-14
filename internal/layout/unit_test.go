@@ -199,3 +199,39 @@ func TestDockerSocketPath(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderUpdateUnits(t *testing.T) {
+	pathUnit, serviceUnit, err := RenderUpdateUnits("/usr/local/bin/dockmesh", "/srv/dm%data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PathExists=/srv/dm%%data/update/request\n", "Unit=dockmesh-update.service\n", "WantedBy=paths.target\n"} {
+		if !strings.Contains(string(pathUnit), want) {
+			t.Errorf("path unit lacks %q:\n%s", want, pathUnit)
+		}
+	}
+	for _, want := range []string{"Type=oneshot\n", "ExecStart=/usr/local/bin/dockmesh update apply --data-dir=/srv/dm%%data\n", "WantedBy=multi-user.target\n"} {
+		if !strings.Contains(string(serviceUnit), want) {
+			t.Errorf("service unit lacks %q:\n%s", want, serviceUnit)
+		}
+	}
+	if strings.Contains(string(serviceUnit), "User=") {
+		t.Error("the update service must run as root")
+	}
+}
+
+func TestRenderUpdateUnitsRefuses(t *testing.T) {
+	tests := []struct{ binary, dataDir string }{
+		{"/usr/local/bin/dockmesh", "/srv/dm data"},
+		{"/usr/local/bin/dockmesh", "/srv/dm\nExecStartPre=/bin/sh"},
+		{"/usr/local/bin/dockmesh", "/srv/$HOME"},
+		{"/usr/local/bin/dockmesh", "relative"},
+		{"/usr/local/bin/dock mesh", "/var/lib/dockmesh"},
+		{"/usr/local/bin/dockmesh", `/srv/"x"`},
+	}
+	for _, tt := range tests {
+		if _, _, err := RenderUpdateUnits(tt.binary, tt.dataDir); !errors.Is(err, ErrBadUnitValue) {
+			t.Errorf("RenderUpdateUnits(%q, %q) = %v, want ErrBadUnitValue", tt.binary, tt.dataDir, err)
+		}
+	}
+}

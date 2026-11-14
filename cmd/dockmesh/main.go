@@ -272,6 +272,9 @@ func main() {
 		case "system":
 			runSystemCmd(os.Args[2:])
 			return
+		case "update":
+			runUpdateCmd(os.Args[2:])
+			return
 		case "setup":
 			runSetupCmd(os.Args[2:])
 			return

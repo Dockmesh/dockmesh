@@ -1,0 +1,15 @@
+# Written by `dockmesh system write-unit` on every install and upgrade.
+# Runs as root when the server asks for an update (dockmesh-update.path),
+# and once at boot to finish an update a crash or power cut interrupted.
+[Unit]
+Description=Apply a Dockmesh update
+After=dockmesh.service
+
+[Service]
+Type=oneshot
+ExecStart={{.Binary}} update apply --data-dir={{.DataDir}}
+TimeoutStartSec=30min
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

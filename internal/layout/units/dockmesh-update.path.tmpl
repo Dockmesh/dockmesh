@@ -1,0 +1,10 @@
+# Written by `dockmesh system write-unit` on every install and upgrade.
+[Unit]
+Description=Watch for Dockmesh update requests
+
+[Path]
+PathExists={{.RequestFile}}
+Unit=dockmesh-update.service
+
+[Install]
+WantedBy=paths.target

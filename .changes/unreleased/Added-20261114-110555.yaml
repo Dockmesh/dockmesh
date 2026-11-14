@@ -1,0 +1,3 @@
+kind: Added
+body: 'Root updater for the server: the installer adds dockmesh-update.path and dockmesh-update.service, which install a release the server staged only after checking its signature, and put back the old binary, unit and database when the new version does not come up within 180 seconds'
+time: 2026-11-14T11:05:55.899781447Z
