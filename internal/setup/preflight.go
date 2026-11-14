@@ -334,6 +334,9 @@ type ServerInfo struct {
 	IP            string `json:"ip"`
 	DockerVersion string `json:"docker_version"`
 	UptimeSecs    int64  `json:"uptime_secs"`
+	// TLSFingerprint is the SHA-256 of the certificate setup mode
+	// serves; empty over plain HTTP.
+	TLSFingerprint string `json:"tls_fingerprint,omitempty"`
 }
 
 // CollectServerInfo gathers the four-row top-bar payload.

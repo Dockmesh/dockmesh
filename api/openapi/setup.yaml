@@ -57,6 +57,7 @@ paths:
                   ip: {type: string}
                   docker_version: {type: string}
                   uptime_secs: {type: integer}
+                  tls_fingerprint: {type: string, description: "SHA-256 of the certificate setup mode serves, as colon-separated hex; absent over plain HTTP."}
   /setup/validate-data-dir:
     post:
       operationId: setup.validate_data_dir

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,11 +10,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
@@ -55,7 +59,8 @@ func setupNewCode(now time.Time) error {
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	if !setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr) }) {
+	webCert, _ := pki.ReadUICert(filepath.Join(setup.StateDir(paths.DataDir), "data"))
+	if !setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr, webCert) }) {
 		return errSetUpAlready
 	}
 
@@ -77,7 +82,11 @@ func setupNewCode(now time.Time) error {
 	if statErr == nil {
 		fmt.Println("The previous code no longer works.")
 	}
-	fmt.Printf("Open %s/setup#%s\n", setupBaseURL(httpAddr), shown)
+	fmt.Printf("Open %s/setup#%s\n", setupBaseURL(httpAddr, webCert != nil), shown)
+	if webCert != nil {
+		fmt.Printf("Certificate  SHA-256 %s\n", pki.Fingerprint(webCert.Raw))
+		fmt.Println("Your browser warns about this certificate; continue only if it shows this fingerprint.")
+	}
 	return nil
 }
 
@@ -100,17 +109,19 @@ func countUsersReadOnly(path string, exists bool) int {
 	return n
 }
 
-// serverInSetup asks the server on this host whether it runs in setup mode.
-func serverInSetup(httpAddr string) bool {
-	host, port, err := net.SplitHostPort(httpAddr)
-	if err != nil {
+// serverInSetup asks the server on this host whether it runs in setup
+// mode: over HTTPS pinned to webCert when setup mode has a certificate,
+// else over plain HTTP.
+func serverInSetup(httpAddr string, webCert *x509.Certificate) bool {
+	if _, _, err := net.SplitHostPort(httpAddr); err != nil {
 		return false
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
+	var tlsCfg *tls.Config
+	if webCert != nil {
+		tlsCfg = &tls.Config{Certificates: []tls.Certificate{{Leaf: webCert}}}
 	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/v1/setup/status") // #nosec G704 -- this host's own listen address from the server config
+	base, client := selfProbe(httpAddr, tlsCfg)
+	resp, err := client.Get(base + "/api/v1/setup/status") // #nosec G704 -- this host's own listen address from the server config
 	if err != nil {
 		return false
 	}
@@ -123,15 +134,19 @@ func serverInSetup(httpAddr string) bool {
 
 // setupBaseURL is where the operator opens the wizard: the configured
 // base URL, else this host's first LAN address on the web port.
-func setupBaseURL(httpAddr string) string {
+func setupBaseURL(httpAddr string, https bool) string {
+	scheme := "http://"
+	if https {
+		scheme = "https://"
+	}
 	if u := os.Getenv("DOCKMESH_BASE_URL"); u != "" && u != config.DefaultBaseURL {
-		return strings.TrimSuffix(u, "/")
+		return scheme + strings.TrimPrefix(strings.TrimPrefix(strings.TrimSuffix(u, "/"), "https://"), "http://")
 	}
 	_, port, err := net.SplitHostPort(httpAddr)
 	if err != nil || port == "" {
 		port = "8080"
 	}
-	return "http://" + net.JoinHostPort(lanAddress(), port)
+	return scheme + net.JoinHostPort(lanAddress(), port)
 }
 
 func lanAddress() string {

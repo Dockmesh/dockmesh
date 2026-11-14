@@ -150,6 +150,10 @@ func reusableServerKey(keyPEM []byte) *ecdsa.PrivateKey {
 // issueServerCert signs key (a fresh one when nil) with the CA for the
 // given SANs plus the loopback names, deduplicated.
 func (m *Manager) issueServerCert(dns []string, ips []net.IP, key *ecdsa.PrivateKey) (*x509.Certificate, []byte, []byte, error) {
+	return m.issueLeaf("dockmesh-agent-server", dns, ips, key)
+}
+
+func (m *Manager) issueLeaf(commonName string, dns []string, ips []net.IP, key *ecdsa.PrivateKey) (*x509.Certificate, []byte, []byte, error) {
 	// Loopback is always included so on-host operators can dial the
 	// listener even when the public name does not resolve locally.
 	dns, ips = mergeSANs(append([]string{"localhost"}, dns...),
@@ -168,7 +172,7 @@ func (m *Manager) issueServerCert(dns []string, ips []net.IP, key *ecdsa.Private
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "dockmesh-agent-server", Organization: []string{"Dockmesh"}},
+		Subject:      pkix.Name{CommonName: commonName, Organization: []string{"Dockmesh"}},
 		NotBefore:    now.Add(-1 * time.Minute),
 		NotAfter:     now.Add(serverCertValidity),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

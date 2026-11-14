@@ -23,3 +23,7 @@ func chownLike(f *os.File, ref string) error {
 	}
 	return f.Chown(int(st.Uid), int(st.Gid))
 }
+
+// oNoFollow also opens without blocking, so a FIFO planted in place of the
+// file fails the regular-file check instead of hanging the reader.
+const oNoFollow = syscall.O_NOFOLLOW | syscall.O_NONBLOCK

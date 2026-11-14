@@ -1451,6 +1451,7 @@ else
   # The setup code goes to this terminal only, never to a log. Wait for
   # the service first: new-code asks it whether it is in setup mode.
   for _ in $(seq 1 30); do
+    curl -fsk "https://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
     curl -fs "http://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
     sleep 1
   done

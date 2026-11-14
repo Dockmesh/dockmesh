@@ -156,7 +156,7 @@
   }
 
   // ----- Header: live server info -------------------------------------------
-  let serverInfo = $state<{ version: string; os: string; ip: string; docker_version: string; uptime_secs: number } | null>(null);
+  let serverInfo = $state<{ version: string; os: string; ip: string; docker_version: string; uptime_secs: number; tls_fingerprint?: string } | null>(null);
   let serverInfoTimer: ReturnType<typeof setInterval> | null = null;
 
   async function loadServerInfo() {
@@ -659,6 +659,12 @@
     <section class="panel">
       {#if step === 1}
         <h2 class="dm-h2">{m.setup_this_server()}</h2>
+        {#if serverInfo?.tls_fingerprint}
+          <div class="callout fp" role="note">
+            <span>{m.setup_tls_fingerprint_hint()}</span>
+            <code class="dm-num">SHA-256 {serverInfo.tls_fingerprint}</code>
+          </div>
+        {/if}
         {#if preflightLoading}
           <div class="dm-empty">{m.setup_checking_server()}</div>
         {:else if preflightError}
@@ -1078,6 +1084,8 @@
     padding: 10px 12px;
     font-size: var(--fs-sm);
   }
+  .callout.fp { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
+  .callout.fp code { font-size: 12px; overflow-wrap: anywhere; }
   .callout.bad { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); color: var(--fg); }
 
   .restore { border-top: 1px solid var(--border); padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
