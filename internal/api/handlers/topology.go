@@ -8,9 +8,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/topology"
 )
 
-// Topology is the network graph of one target. A cluster target will
-// reuse this shape: Target.Kind "cluster", its services as an extra list
-// and links from services to overlay networks.
+// Topology is the network graph of one target.
 type Topology struct {
 	Target TopoTarget `json:"target"`
 	topology.Graph
@@ -27,7 +25,7 @@ type TopoTarget struct {
 func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if q.Has("cluster") {
-		writeError(w, http.StatusBadRequest, "cluster topology is not available yet")
+		writeError(w, http.StatusBadRequest, "cluster topology is not supported")
 		return
 	}
 	if host.IsAll(q.Get("host")) {

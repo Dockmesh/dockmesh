@@ -13,8 +13,7 @@ type topologyClient interface {
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
 }
 
-// buildTopology answers req.networks.topology. It only lists, so the
-// frame stays read-only whatever the server sends.
+// buildTopology answers req.networks.topology.
 func buildTopology(ctx context.Context, cli topologyClient) (topology.Graph, error) {
 	nets, err := dockerwrap.ListNetworks(ctx, cli)
 	if err != nil {

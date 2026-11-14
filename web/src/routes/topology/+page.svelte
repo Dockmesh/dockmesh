@@ -55,7 +55,7 @@
   // the server's own host, where Caddy runs.
   const proxyApplies = $derived(target === 'local');
   const proxiedPorts = $derived(
-    !proxyApplies ? new Map<number | null, string>() : new Map(routes.filter((r) => r.enabled).map((r) => [upstreamPort(r.upstream), r.host] as const).filter(([p]) => p != null))
+    new Map(routes.filter((r) => r.enabled).map((r) => [upstreamPort(r.upstream), r.host] as const).filter(([p]) => p != null))
   );
   function routesFor(c: TopoContainer): string[] {
     return (c.ports ?? []).map((p) => proxiedPorts.get(p.host_port)).filter((h): h is string => !!h);
