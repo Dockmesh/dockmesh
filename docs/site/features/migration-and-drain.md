@@ -34,12 +34,13 @@ The target gets the same deploy as a manual one: global environment variables an
 | `no_concurrent` | No other migration of this stack is running |
 | `source_online` | The source host is reachable |
 | `source_metrics` | The source host's CPU and memory can be read |
-| `target_capacity` | Free memory on the target is at least 1.2× the memory in use on the source host |
-| `target_disk` | Free disk on the target is at least 1.1× the disk in use on the source host |
+| `target_capacity` | Free memory on the target is at least 1.2× the memory the stack needs |
+| `target_cpu` | Free CPU cores on the target (cores minus cores in use) cover the cores the stack needs |
+| `target_disk` | Free disk on the target is at least 1.1× the size of the images it still has to pull |
 | `arch_match` | Both Docker daemons report the same platform, for example `linux/amd64`. If an agent is too old to report it, the check shows as not checked and doesn't block; update the agent to have it compared |
 | `images` | The stack's compose file can be read and parsed. Images missing on the target are listed but don't fail the check |
 
-The capacity and disk checks compare against the whole source host, not only the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
+The capacity checks look at the stack, not the whole source host. Each service counts with its declared reservation (`deploy.resources.reservations`, `mem_reservation`), else its limit (`deploy.resources.limits`, `mem_limit`, `cpus`), times its running containers; a service without either counts with the current usage of its containers on the source, from the last five minutes of metrics. A service with neither, or an image whose size the source doesn't know, makes the check show as not checked; that doesn't block. Everything already running on the target, Swarm tasks included, counts as used. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
 
 ### Phases
 
