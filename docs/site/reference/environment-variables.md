@@ -20,13 +20,15 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_HTTP_ADDR` | `:8080` | Listen address for the web UI, REST API, `/metrics` and `/install/*`. Plain HTTP |
+| `DOCKMESH_HTTP_ADDR` | `:8080` (`127.0.0.1:8080` with `DOCKMESH_TLS_MODE` `caddy` or `proxy`) | Listen address for the web UI, REST API, `/metrics` and `/install/*` |
+| `DOCKMESH_TLS_MODE` | unset | What that listener serves. Unset: plain HTTP. `internal`: HTTPS with a certificate from the built-in CA, kept across restarts (its SHA-256 fingerprint is logged at start). `file`: HTTPS with `DOCKMESH_TLS_CERT_FILE` and `DOCKMESH_TLS_KEY_FILE`. `caddy`: plain HTTP behind the managed Caddy proxy. `proxy`: plain HTTP behind your own reverse proxy. Any other value stops the server at startup. Setup mode on a new install always serves HTTPS |
+| `DOCKMESH_TLS_CERT_FILE`, `DOCKMESH_TLS_KEY_FILE` | unset | PEM certificate (with its chain) and key for `DOCKMESH_TLS_MODE=file`. The `dockmesh` user must be able to read both. Dockmesh checks the files every 10 seconds and serves a renewed pair without a restart; a pair that does not load keeps the previous one in service |
 | `DOCKMESH_BASE_URL` | `http://localhost:8080` | Public URL of the server. Wins over **Base URL** under **Settings → General** for SSO callback URLs, invite links and agent install commands |
 | `DOCKMESH_AGENT_LISTEN` | `:8443` | Listen address of the agent listener. It always runs; an empty value falls back to the default |
 | `DOCKMESH_AGENT_PUBLIC_URL` | unset | `wss://` URL agents enroll at and connect to. Wins over **Agent public URL** under **Settings → General**. With neither set: `wss://<host of the base URL>:<port of DOCKMESH_AGENT_LISTEN>/connect` |
 | `DOCKMESH_AGENT_SANS` | empty | Comma-separated extra host names and IPs for the agent listener certificate. `localhost`, `127.0.0.1`, `::1` and the agent URL's host are always included |
 | `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `1h` | Lifetime of host enrollment tokens, as a Go duration from `1m` to `720h`. Any other value stops the server at startup |
-| `DOCKMESH_TRUSTED_PROXIES` | unset | Used when **Trusted proxies** under **Settings → General** is empty: comma-separated IPs or CIDRs whose forwarding headers are believed. With neither, only localhost |
+| `DOCKMESH_TRUSTED_PROXIES` | unset | Used when **Trusted proxies** under **Settings → General** is empty: comma-separated IPs or CIDRs whose forwarding headers are believed. With neither, only localhost; with `DOCKMESH_TLS_MODE` `caddy` or `proxy`, the IP of `DOCKMESH_HTTP_ADDR` (none for a wildcard address) |
 
 The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, so agent install commands work without editing `dockmesh.env`. SSO callbacks and invite links don't read those settings; when you use them, also set the public URL in `dockmesh.env`:
 

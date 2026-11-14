@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -24,8 +25,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
+	"github.com/dockmesh/dockmesh/internal/webtls"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -72,6 +75,10 @@ func updateApply(args []string) error {
 	}
 	paths := config.ResolvePaths(func(k string) string { return env[k] })
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	health, client, err := healthProbe(env, paths)
+	if err != nil {
+		return err
+	}
 
 	// A stop or timeout from systemd ends the update early; Apply still
 	// rolls back before it returns.
@@ -89,14 +96,8 @@ func updateApply(args []string) error {
 		Service: &serverService{
 			binary: binary,
 			dbPath: paths.DBPath,
-			health: healthURL(env["DOCKMESH_HTTP_ADDR"]),
-			client: &http.Client{
-				Timeout:   3 * time.Second,
-				Transport: &http.Transport{Proxy: nil},
-				// A redirect from whatever answers on the port must not
-				// send root's probe anywhere else.
-				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-			},
+			health: health,
+			client: client,
 		},
 	})
 	if err != nil {
@@ -124,6 +125,43 @@ func serverFiles(binary string) []rootupdate.File {
 		{Name: "dockmesh-agent-linux-arm64", Dest: filepath.Join(assets, "bin", "dockmesh-agent-linux-arm64"), Optional: true},
 		{Name: "install-agent.sh", Dest: filepath.Join(assets, "install-agent.sh"), Optional: true},
 	}
+}
+
+// healthProbe is the health URL of the server and a client for it that
+// follows the listener mode in env: HTTPS trusting only the certificate
+// the server serves (the internal one from its data dir, or the
+// configured file), else plain HTTP. It never uses a proxy or follows a
+// redirect, so whatever answers on the port cannot send root's probe
+// anywhere else.
+func healthProbe(env map[string]string, paths config.Paths) (string, *http.Client, error) {
+	mode, err := webtls.ParseMode(env["DOCKMESH_TLS_MODE"])
+	if err != nil {
+		return "", nil, err
+	}
+	addr := env["DOCKMESH_HTTP_ADDR"]
+	if addr == "" && mode.BehindProxy() {
+		addr = webtls.DefaultProxyAddr
+	}
+	transport := &http.Transport{Proxy: nil}
+	url := healthURL(addr)
+	if mode.TLS() {
+		var leaf *x509.Certificate
+		if mode == webtls.Internal {
+			leaf, err = pki.ReadUICert(filepath.Dir(paths.DBPath))
+		} else {
+			leaf, err = webtls.ReadLeaf(env["DOCKMESH_TLS_CERT_FILE"])
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("certificate for the health check: %w", err)
+		}
+		transport.TLSClientConfig = pinnedTLS(leaf)
+		url = "https" + strings.TrimPrefix(url, "http")
+	}
+	return url, &http.Client{
+		Timeout:       3 * time.Second,
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 // healthURL is the health endpoint on the address the server listens on.
