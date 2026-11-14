@@ -91,6 +91,9 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks)
 	var unconfirmed *migration.DrainHooksUnconfirmedError
 	if errors.As(err, &unconfirmed) {
+		if !h.checkDrainHooksReadable(w, r, hostID, unconfirmed.Entries) {
+			return
+		}
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":   err.Error(),
 			"code":    "hooks_unconfirmed",
