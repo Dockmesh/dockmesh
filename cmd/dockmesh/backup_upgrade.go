@@ -124,6 +124,24 @@ func raiseSystemPathNotice(ctx context.Context, n *notices.Service, from, to str
 	})
 }
 
+// syncMovedSystemTargetNotice asks admins to check the system backup
+// job's target when an earlier version moved it to <data>/backups and the
+// target it was created with is still saved.
+func syncMovedSystemTargetNotice(ctx context.Context, n *notices.Service, svc *backup.Service) error {
+	job, previous, err := svc.MovedSystemTarget(ctx)
+	if err != nil {
+		return err
+	}
+	return n.Set(ctx, len(previous) > 0, notices.RaiseInput{
+		Key:      "backups.system-target-moved",
+		Audience: notices.Admins(),
+		Severity: notices.SevWarning,
+		Title:    i18n.Msg("notice.backup_system_moved.title"),
+		Body:     i18n.Msg("notice.backup_system_moved.body", job, notices.Bullets(previous)),
+		Link:     "/backups",
+	})
+}
+
 // syncUnencryptableNotice tells admins about jobs set to encrypt while
 // secrets encryption is off: their runs now fail instead of quietly
 // writing unencrypted archives.
