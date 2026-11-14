@@ -33,6 +33,37 @@ type RoutingOptions struct {
 	LBPolicy       string   `json:"lb_policy"`
 	HealthPath     string   `json:"health_path"`
 	WWWRedirect    bool     `json:"www_redirect"`
+	// UpstreamTLS is how Caddy talks to the site's own upstreams.
+	UpstreamTLS UpstreamTLS `json:"upstream_tls"`
+	Fallback    Fallback    `json:"fallback"`
+}
+
+// UpstreamTLS makes Caddy dial a backend over HTTPS. The zero value is
+// plain HTTP with the visitor's Host header.
+type UpstreamTLS struct {
+	TLS        bool   `json:"tls"`
+	ServerName string `json:"server_name"`
+	// HostHeader is "" or "keep" for the visitor's Host, "upstream" for
+	// the dialed address.
+	HostHeader string `json:"host_header"`
+	// CAPEM trusts these CA certificates instead of the public roots.
+	CAPEM      string `json:"ca_pem"`
+	SkipVerify bool   `json:"skip_verify"`
+}
+
+// Fallback modes. The empty mode proxies like FallbackProxy.
+const (
+	FallbackProxy    = "proxy"
+	FallbackRedirect = "redirect"
+	FallbackNotFound = "404"
+)
+
+// Fallback is how a site answers requests: proxy them to its upstream
+// (the default), redirect them or answer 404.
+type Fallback struct {
+	Mode string `json:"mode"`
+	To   string `json:"to"`
+	Code int    `json:"code"`
 }
 
 type HTTPSOptions struct {
@@ -79,7 +110,10 @@ type ForwardAuth struct {
 }
 
 type HeaderOptions struct {
-	Security       bool     `json:"security"`
+	Security bool `json:"security"`
+	// ForwardedPort sends X-Forwarded-Port with the port of the listener
+	// that took the request; Caddy sets the other X-Forwarded-* itself.
+	ForwardedPort  bool     `json:"forwarded_port"`
 	RequestSet     []Header `json:"request_set"`
 	RequestRemove  []string `json:"request_remove"`
 	ResponseSet    []Header `json:"response_set"`
@@ -98,6 +132,12 @@ type Header struct {
 
 type LogOptions struct {
 	AccessLog bool `json:"access_log"`
+}
+
+// SkipsVerify reports whether the site dials a backend over HTTPS
+// without checking its certificate.
+func (o SiteOptions) SkipsVerify() bool {
+	return o.Routing.UpstreamTLS.TLS && o.Routing.UpstreamTLS.SkipVerify
 }
 
 // decodeOptions reads stored or submitted options; absent fields keep
@@ -300,6 +340,12 @@ func (o *SiteOptions) validate(host, tlsMode string) error {
 }
 
 func (r *RoutingOptions) validate(host string) error {
+	if err := r.UpstreamTLS.validate("routing.upstream_tls"); err != nil {
+		return err
+	}
+	if err := r.Fallback.validate("routing.fallback"); err != nil {
+		return err
+	}
 	if len(r.ExtraUpstreams) > maxExtraUpstreams {
 		return optErr("routing.extra_upstreams", "at most %d", maxExtraUpstreams)
 	}
@@ -641,8 +687,12 @@ func (o SiteOptions) canonical() SiteOptions {
 	return o
 }
 
-// normalize stores IP ranges in canonical CIDR form.
+// normalize stores IP ranges in canonical CIDR form and a CA PEM as
+// its certificates only.
 func (o *SiteOptions) normalize() {
+	if t := &o.Routing.UpstreamTLS; t.CAPEM != "" {
+		t.CAPEM = normalizeCAPEM(t.CAPEM)
+	}
 	for i, r := range o.Access.IPRanges {
 		if p, err := parseIPRange(r); err == nil {
 			o.Access.IPRanges[i] = p.String()

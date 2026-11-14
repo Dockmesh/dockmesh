@@ -96,6 +96,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'proxy.route_create': [m.audit_act_proxy_route_create, m.audit_sen_proxy_route_create],
   'proxy.route_update': [m.audit_act_proxy_route_update, m.audit_sen_proxy_route_update],
   'proxy.route_delete': [m.audit_act_proxy_route_delete, m.audit_sen_proxy_route_delete],
+  'proxy.route_tls_unverified': [m.audit_act_proxy_route_tls_unverified, m.audit_sen_proxy_route_tls_unverified],
   'proxy.route_enabled': [m.audit_act_proxy_route_enabled, m.audit_sen_proxy_route_enabled],
   'proxy.route_disabled': [m.audit_act_proxy_route_disabled, m.audit_sen_proxy_route_disabled],
   'proxy.settings_update': [m.audit_act_proxy_settings_update, m.audit_sen_proxy_settings_update],

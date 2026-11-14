@@ -5,7 +5,14 @@ import type { SiteOptions } from './_site';
 // What the server returns for a site with every group set; secrets come
 // back empty with their "set" flags.
 const stored: SiteOptions = {
-  routing: { extra_upstreams: ['app2:8080'], lb_policy: 'least_conn', health_path: '/health', www_redirect: true },
+  routing: {
+    extra_upstreams: ['app2:8080'],
+    lb_policy: 'least_conn',
+    health_path: '/health',
+    www_redirect: true,
+    upstream_tls: { tls: true, server_name: 'backend.lan', host_header: 'upstream', ca_pem: '', skip_verify: true },
+    fallback: { mode: 'redirect', to: '/ords/r/app/home', code: 302 }
+  },
   https: { allow_http: false, hsts: true },
   performance: {
     flush_immediately: true,
@@ -25,6 +32,7 @@ const stored: SiteOptions = {
   },
   headers: {
     security: true,
+    forwarded_port: true,
     request_set: [{ name: 'Authorization', value: '', secret: true, value_set: true }, { name: 'X-Plain', value: 'v' }],
     request_remove: ['X-Debug'],
     response_set: [],
@@ -49,6 +57,29 @@ describe('round trip', () => {
   it('treats a missing options object as Caddy defaults', () => {
     for (const g of GROUPS) expect(isDefault(toForm(null), g.key)).toBe(true);
     for (const g of GROUPS) expect(isDefault(toForm(stored), g.key)).toBe(false);
+  });
+});
+
+describe('upstream TLS and fallback', () => {
+  it('drops HTTPS-only fields while HTTPS is off', () => {
+    const f = toForm(stored);
+    f.routing.upstreamTLS.tls = false;
+    expect(toPayload(f).routing?.upstream_tls).toEqual({ tls: false, server_name: '', host_header: 'upstream', ca_pem: '', skip_verify: false });
+  });
+
+  it('sends the CA only with the CA check picked', () => {
+    const f = toForm(null);
+    Object.assign(f.routing.upstreamTLS, { tls: true, check: 'ca', caPEM: ' PEM ' });
+    expect(toPayload(f).routing?.upstream_tls?.ca_pem).toBe('PEM');
+    f.routing.upstreamTLS.check = 'public';
+    expect(toPayload(f).routing?.upstream_tls?.ca_pem).toBe('');
+  });
+
+  it('defaults to proxying and sends no target for 404', () => {
+    expect(toPayload(toForm(null)).routing?.fallback).toEqual({ mode: '', to: '', code: 0 });
+    const f = toForm(null);
+    f.routing.fallback = { mode: '404', to: '/left', code: 308 };
+    expect(toPayload(f).routing?.fallback).toEqual({ mode: '404', to: '', code: 0 });
   });
 });
 

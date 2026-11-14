@@ -94,11 +94,22 @@ type caddyHealthChecks struct {
 }
 
 type caddyTransport struct {
-	Protocol     string    `json:"protocol"`
-	DialTimeout  int64     `json:"dial_timeout,omitempty"`
-	ReadTimeout  int64     `json:"read_timeout,omitempty"`
-	WriteTimeout int64     `json:"write_timeout,omitempty"`
-	TLS          *struct{} `json:"tls,omitempty"`
+	Protocol     string             `json:"protocol"`
+	DialTimeout  int64              `json:"dial_timeout,omitempty"`
+	ReadTimeout  int64              `json:"read_timeout,omitempty"`
+	WriteTimeout int64              `json:"write_timeout,omitempty"`
+	TLS          *caddyTransportTLS `json:"tls,omitempty"`
+}
+
+type caddyTransportTLS struct {
+	CA                 *caddyCAPool `json:"ca,omitempty"`
+	ServerName         string       `json:"server_name,omitempty"`
+	InsecureSkipVerify bool         `json:"insecure_skip_verify,omitempty"`
+}
+
+type caddyCAPool struct {
+	Provider       string   `json:"provider"`
+	TrustedCACerts []string `json:"trusted_ca_certs"`
 }
 
 type caddyHeaderOps struct {
@@ -186,6 +197,8 @@ type caddyIssuer struct {
 const (
 	serverHTTPS = "dockmesh"
 	serverHTTP  = "dockmesh_http"
+	portHTTPS   = "443"
+	portHTTP    = "80"
 )
 
 // redactedHash replaces basic-auth hashes in the config preview.
@@ -239,14 +252,15 @@ func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []s
 		if o.Routing.WWWRedirect && !taken["www."+strings.ToLower(r.Host)] {
 			wwwHost = "www." + r.Host
 		}
-		site := siteRoutes(r, wwwHost, redact)
 		if r.TLSMode == "none" {
+			site := siteRoutes(r, wwwHost, portHTTP, redact)
 			plain = append(plain, site...)
 			if o.Logs.AccessLog {
 				plainLogs[r.Host] = []string{""}
 			}
 			continue
 		}
+		site := siteRoutes(r, wwwHost, portHTTPS, redact)
 		subjects := []string{r.Host}
 		if wwwHost != "" {
 			subjects = append(subjects, wwwHost)
@@ -264,7 +278,7 @@ func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []s
 			secureLogs[r.Host] = []string{""}
 		}
 		if o.HTTPS.AllowHTTP {
-			plain = append(plain, siteRoutes(r, wwwHost, redact)...)
+			plain = append(plain, siteRoutes(r, wwwHost, portHTTP, redact)...)
 			if o.Logs.AccessLog {
 				plainLogs[r.Host] = []string{""}
 			}
@@ -304,8 +318,9 @@ const hstsValue = "max-age=31536000"
 // siteRoutes returns the Caddy routes serving one site, in the order
 // they must appear in a server: the IP filter, the www redirect, then
 // the site itself. A route without options yields exactly one route
-// with one reverse_proxy handler.
-func siteRoutes(r Route, wwwHost string, redact bool) []caddyRoute {
+// with one reverse_proxy handler. port is the listener the routes go
+// into, for X-Forwarded-Port.
+func siteRoutes(r Route, wwwHost, port string, redact bool) []caddyRoute {
 	o := &r.Options
 	var out []caddyRoute
 
@@ -373,7 +388,7 @@ func siteRoutes(r Route, wwwHost string, redact bool) []caddyRoute {
 	if o.Access.ForwardAuth != nil {
 		handle = append(handle, forwardAuthHandler(o.Access.ForwardAuth))
 	}
-	handle = append(handle, mainProxy(r))
+	handle = append(handle, fallbackHandler(r, port))
 
 	return append(out, caddyRoute{
 		Match:    []caddyMatch{{Host: []string{r.Host}}},
@@ -407,7 +422,20 @@ func responseHeaderOp(o *SiteOptions, tlsMode string) *caddyHeaderOp {
 	return op
 }
 
-func mainProxy(r Route) caddyReverseProxy {
+// fallbackHandler is the site's final handler: its upstreams, a redirect
+// or a 404.
+func fallbackHandler(r Route, port string) any {
+	f := r.Options.Routing.Fallback
+	switch f.Mode {
+	case FallbackRedirect:
+		return caddyStaticResponse{Handler: "static_response", StatusCode: f.Code, Headers: map[string][]string{"Location": {f.To}}}
+	case FallbackNotFound:
+		return caddyStaticResponse{Handler: "static_response", StatusCode: 404}
+	}
+	return mainProxy(r, port)
+}
+
+func mainProxy(r Route, port string) caddyReverseProxy {
 	o := &r.Options
 	p := caddyReverseProxy{Handler: "reverse_proxy", Upstreams: []caddyUpstream{{Dial: r.Upstream}}}
 	for _, u := range o.Routing.ExtraUpstreams {
@@ -427,25 +455,60 @@ func mainProxy(r Route) caddyReverseProxy {
 		p.RequestBuffers = requestBufferSize
 	}
 	p.StreamCloseDelay = durationNanos(perf.StreamCloseDelay)
-	if perf.DialTimeout != "" || perf.ReadTimeout != "" || perf.WriteTimeout != "" {
+	tls := o.Routing.UpstreamTLS.caddyTLS()
+	if perf.DialTimeout != "" || perf.ReadTimeout != "" || perf.WriteTimeout != "" || tls != nil {
 		p.Transport = &caddyTransport{
 			Protocol:     "http",
 			DialTimeout:  durationNanos(perf.DialTimeout),
 			ReadTimeout:  durationNanos(perf.ReadTimeout),
 			WriteTimeout: durationNanos(perf.WriteTimeout),
+			TLS:          tls,
 		}
 	}
-	if len(o.Headers.RequestSet) > 0 || len(o.Headers.RequestRemove) > 0 {
-		op := &caddyHeaderOp{Delete: o.Headers.RequestRemove}
-		if len(o.Headers.RequestSet) > 0 {
-			op.Set = map[string][]string{}
-			for _, h := range o.Headers.RequestSet {
-				op.Set[h.Name] = []string{h.Value}
+	p.Headers = requestHeaderOps(o, hostHeader(&o.Routing.UpstreamTLS), port)
+	return p
+}
+
+// hostHeader is the Host Dockmesh sets on requests to a backend, "" for
+// none. Over TLS Caddy sends the dialed address unless told otherwise,
+// so keeping the visitor's host needs an explicit value there.
+func hostHeader(t *UpstreamTLS) string {
+	switch {
+	case t.HostHeader == "upstream":
+		return "{http.reverse_proxy.upstream.hostport}"
+	case t.TLS:
+		return "{http.request.hostport}"
+	}
+	return ""
+}
+
+// requestHeaderOps is what the site sets on requests to its backend:
+// host as Host and X-Forwarded-Port when asked for, then the site's own
+// headers, which replace either on the same name.
+func requestHeaderOps(o *SiteOptions, host, port string) *caddyHeaderOps {
+	set := map[string][]string{}
+	if host != "" {
+		set["Host"] = []string{host}
+	}
+	if o.Headers.ForwardedPort {
+		set["X-Forwarded-Port"] = []string{port}
+	}
+	for _, h := range o.Headers.RequestSet {
+		for k := range set {
+			if strings.EqualFold(k, h.Name) {
+				delete(set, k)
 			}
 		}
-		p.Headers = &caddyHeaderOps{Request: op}
+		set[h.Name] = []string{h.Value}
 	}
-	return p
+	if len(set) == 0 && len(o.Headers.RequestRemove) == 0 {
+		return nil
+	}
+	op := &caddyHeaderOp{Delete: o.Headers.RequestRemove}
+	if len(set) > 0 {
+		op.Set = set
+	}
+	return &caddyHeaderOps{Request: op}
 }
 
 // forwardAuthHandler is what Caddy's forward_auth directive expands to:
@@ -465,7 +528,7 @@ func forwardAuthHandler(f *ForwardAuth) caddyReverseProxy {
 		}}},
 	}
 	if t.tls {
-		p.Transport = &caddyTransport{Protocol: "http", TLS: &struct{}{}}
+		p.Transport = &caddyTransport{Protocol: "http", TLS: &caddyTransportTLS{}}
 	}
 	routes := []caddyRoute{{Handle: []any{map[string]string{"handler": "vars"}}}}
 	for _, h := range f.CopyHeaders {

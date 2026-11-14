@@ -1,0 +1,89 @@
+{
+  "admin": {
+    "listen": "unix//run/dockmesh-caddy/admin.sock|0666",
+    "origins": [
+      "dockmesh-proxy"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "metrics": {
+        "per_host": true
+      },
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    }
+                  ],
+                  "transport": {
+                    "protocol": "http",
+                    "dial_timeout": 5000000000,
+                    "tls": {
+                      "ca": {
+                        "provider": "inline",
+                        "trusted_ca_certs": [
+                          "MIIBjDCCATOgAwIBAgIUbrpYBL8NtogSJhnySczVtn9vpTQwCgYIKoZIzj0EAwIwGzEZMBcGA1UEAwwQRG9ja21lc2ggVGVzdCBDQTAgFw0yNjExMTQxMjMzMDhaGA8yMTI2MTAyMTEyMzMwOFowGzEZMBcGA1UEAwwQRG9ja21lc2ggVGVzdCBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABKLJN024oCr+uXoRBaWXwgM9xudjK2ExRiCshVKnvsmD2qmVz8LbnQEnaHS9Iz2/Urt5SRG0wJ+GvBS3OnjO8RqjUzBRMB0GA1UdDgQWBBRLVKkHPeDgWSG4sImLAGqSOrzSnTAfBgNVHSMEGDAWgBRLVKkHPeDgWSG4sImLAGqSOrzSnTAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIHJ6Sm2/zr1fZxvivxHga+UxUhy5D8C/KAnLS5dtCjWMAiAIt7Bt8EkjxkYrso2lydU+/eIlBh1HPiX5z2/8hsGUdQ=="
+                        ]
+                      },
+                      "server_name": "backend.internal"
+                    }
+                  },
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "Host": [
+                          "{http.reverse_proxy.upstream.hostport}"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "app.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

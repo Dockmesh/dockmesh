@@ -1,5 +1,5 @@
 import { m } from '$lib/paraglide/messages.js';
-import type { SiteHeader, SiteOptions, TLSMode } from './_site';
+import type { Fallback, SiteHeader, SiteOptions, TLSMode, UpstreamTLS } from './_site';
 
 // Editable form of a site's options. Lists that are plain names or
 // addresses are edited one per line; rows with a value of their own stay
@@ -9,9 +9,21 @@ import type { SiteHeader, SiteOptions, TLSMode } from './_site';
 export interface UserRow { username: string; password: string; stored: boolean }
 export interface HeaderRow { name: string; value: string; secret: boolean; valueSet: boolean }
 export type SizeUnit = 'B' | 'MB' | 'GB';
+export type CertCheck = 'public' | 'ca' | 'skip';
+export interface TLSForm { tls: boolean; serverName: string; hostHeader: 'keep' | 'upstream'; check: CertCheck; caPEM: string }
+export const REDIRECT_CODES = [301, 302, 307, 308] as const;
+export type RedirectCode = (typeof REDIRECT_CODES)[number];
+export interface FallbackForm { mode: 'proxy' | 'redirect' | '404'; to: string; code: RedirectCode }
 
 export interface OptionsForm {
-  routing: { extraUpstreams: string; lbPolicy: string; healthPath: string; wwwRedirect: boolean };
+  routing: {
+    extraUpstreams: string;
+    lbPolicy: string;
+    healthPath: string;
+    wwwRedirect: boolean;
+    upstreamTLS: TLSForm;
+    fallback: FallbackForm;
+  };
   https: { allowHTTP: boolean; hsts: boolean };
   performance: {
     flushImmediately: boolean;
@@ -36,6 +48,7 @@ export interface OptionsForm {
   };
   headers: {
     security: boolean;
+    forwardedPort: boolean;
     requestSet: HeaderRow[];
     requestRemove: string;
     responseSet: HeaderRow[];
@@ -64,6 +77,45 @@ function sizeOf(bytes?: number): { maxBody: string; maxBodyUnit: SizeUnit } {
   return { maxBody: String(bytes), maxBodyUnit: 'B' };
 }
 
+export function toTLSForm(t?: UpstreamTLS | null): TLSForm {
+  return {
+    tls: !!t?.tls,
+    serverName: t?.server_name ?? '',
+    hostHeader: t?.host_header === 'upstream' ? 'upstream' : 'keep',
+    check: t?.skip_verify ? 'skip' : t?.ca_pem ? 'ca' : 'public',
+    caPEM: t?.ca_pem ?? ''
+  };
+}
+
+// toTLSPayload drops the HTTPS-only fields while HTTPS is off, so a
+// switched-off block doesn't fail validation over leftovers.
+export function toTLSPayload(f: TLSForm): UpstreamTLS {
+  const on = f.tls;
+  return {
+    tls: on,
+    server_name: on ? f.serverName.trim() : '',
+    host_header: f.hostHeader === 'upstream' ? 'upstream' : '',
+    ca_pem: on && f.check === 'ca' ? f.caPEM.trim() : '',
+    skip_verify: on && f.check === 'skip'
+  };
+}
+
+export function toFallbackForm(f?: Fallback | null): FallbackForm {
+  const mode = f?.mode === 'redirect' || f?.mode === '404' ? f.mode : 'proxy';
+  const code = (REDIRECT_CODES as readonly number[]).includes(f?.code ?? 0) ? (f!.code as RedirectCode) : 301;
+  return { mode, to: f?.to ?? '', code };
+}
+
+export function toFallbackPayload(f: FallbackForm): Fallback {
+  if (f.mode === 'redirect') return { mode: 'redirect', to: f.to.trim(), code: f.code };
+  return { mode: f.mode === '404' ? '404' : '', to: '', code: 0 };
+}
+
+// pemCount is the number of certificate blocks in a pasted PEM.
+export function pemCount(pem: string): number {
+  return (pem.match(/-----BEGIN CERTIFICATE-----/g) ?? []).length;
+}
+
 export function toForm(o?: SiteOptions | null): OptionsForm {
   const r = o?.routing ?? {};
   const h = o?.https ?? {};
@@ -72,7 +124,14 @@ export function toForm(o?: SiteOptions | null): OptionsForm {
   const hd = o?.headers ?? {};
   const fa = a.forward_auth ?? null;
   return {
-    routing: { extraUpstreams: lines(r.extra_upstreams), lbPolicy: r.lb_policy ?? '', healthPath: r.health_path ?? '', wwwRedirect: !!r.www_redirect },
+    routing: {
+      extraUpstreams: lines(r.extra_upstreams),
+      lbPolicy: r.lb_policy ?? '',
+      healthPath: r.health_path ?? '',
+      wwwRedirect: !!r.www_redirect,
+      upstreamTLS: toTLSForm(r.upstream_tls),
+      fallback: toFallbackForm(r.fallback)
+    },
     https: { allowHTTP: !!h.allow_http, hsts: !!h.hsts },
     performance: {
       flushImmediately: !!p.flush_immediately,
@@ -96,6 +155,7 @@ export function toForm(o?: SiteOptions | null): OptionsForm {
     },
     headers: {
       security: !!hd.security,
+      forwardedPort: !!hd.forwarded_port,
       requestSet: headerRows(hd.request_set),
       requestRemove: lines(hd.request_remove),
       responseSet: headerRows(hd.response_set),
@@ -118,7 +178,9 @@ export function toPayload(f: OptionsForm): SiteOptions {
       extra_upstreams: fromLines(f.routing.extraUpstreams),
       lb_policy: f.routing.lbPolicy,
       health_path: f.routing.healthPath.trim(),
-      www_redirect: f.routing.wwwRedirect
+      www_redirect: f.routing.wwwRedirect,
+      upstream_tls: toTLSPayload(f.routing.upstreamTLS),
+      fallback: toFallbackPayload(f.routing.fallback)
     },
     https: { allow_http: f.https.allowHTTP, hsts: f.https.hsts },
     performance: {
@@ -147,6 +209,7 @@ export function toPayload(f: OptionsForm): SiteOptions {
     },
     headers: {
       security: f.headers.security,
+      forwarded_port: f.headers.forwardedPort,
       request_set: sendRows(f.headers.requestSet),
       request_remove: fromLines(f.headers.requestRemove),
       response_set: sendRows(f.headers.responseSet),
@@ -215,5 +278,7 @@ export function warnings(f: OptionsForm, tls: TLSMode): Warning[] {
     out.push({ field: 'access.forward_auth', text: m.proxy_warn_forward_auth() });
   if (f.access.users.some((u) => u.username.trim()) && (tls === 'none' || f.https.allowHTTP))
     out.push({ field: 'access.basic_auth', text: m.proxy_warn_basic_auth_http() });
+  if (f.routing.fallback.mode === 'redirect' && f.routing.fallback.to.trim().startsWith('/'))
+    out.push({ field: 'routing.fallback', text: m.proxy_warn_fallback_loop() });
   return out;
 }

@@ -56,6 +56,17 @@ func TestBuildConfigGolden(t *testing.T) {
 			ResponseSet: []Header{{Name: "X-Robots-Tag", Value: "noindex"}}, ResponseRemove: []string{"Server"}}})},
 		{"access_log", site("auto", SiteOptions{Logs: LogOptions{AccessLog: true}})},
 		{"access_log_none", site("none", SiteOptions{Logs: LogOptions{AccessLog: true}})},
+		{"upstream_tls", site("auto", SiteOptions{Routing: RoutingOptions{UpstreamTLS: UpstreamTLS{TLS: true}}})},
+		{"upstream_tls_ca", site("auto", SiteOptions{
+			Routing:     RoutingOptions{UpstreamTLS: UpstreamTLS{TLS: true, ServerName: "backend.internal", HostHeader: "upstream", CAPEM: testCAPEM(t)}},
+			Performance: PerformanceOptions{DialTimeout: "5s"}})},
+		{"upstream_tls_skip_verify", site("auto", SiteOptions{Routing: RoutingOptions{UpstreamTLS: UpstreamTLS{TLS: true, SkipVerify: true}}})},
+		{"host_header_upstream", site("auto", SiteOptions{Routing: RoutingOptions{UpstreamTLS: UpstreamTLS{HostHeader: "upstream"}}})},
+		{"fallback_redirect", site("auto", SiteOptions{Routing: RoutingOptions{Fallback: Fallback{Mode: FallbackRedirect, To: "/ords/r/app/home", Code: 302}}})},
+		{"fallback_404", site("auto", SiteOptions{Routing: RoutingOptions{Fallback: Fallback{Mode: FallbackNotFound}}})},
+		{"forwarded_port", site("auto", SiteOptions{HTTPS: HTTPSOptions{AllowHTTP: true}, Headers: HeaderOptions{ForwardedPort: true}})},
+		{"forwarded_port_none", site("none", SiteOptions{Headers: HeaderOptions{ForwardedPort: true, RequestSet: []Header{{Name: "X-Env", Value: "lab"}}}})},
+		{"forwarded_port_replaced", site("auto", SiteOptions{Headers: HeaderOptions{ForwardedPort: true, RequestSet: []Header{{Name: "x-forwarded-port", Value: "8443"}}}})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,6 +100,15 @@ func TestBuildConfigGolden(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testCAPEM(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", "upstream_ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // A route stored before options existed must produce the same config as
@@ -172,6 +192,27 @@ func TestSiteOptionsValidate(t *testing.T) {
 		{"hash with placeholder", "auto", SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "a", Hash: "$2a$10${file./config/caddy/autosave.json}AAAAAAAAAAAAAAAAAAAAAAAAAA"}}}}, "access.basic_auth"},
 		{"hash cost too high", "auto", SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "a", Hash: "$2a$31$" + testHash[7:]}}}}, "access.basic_auth"},
 		{"wildcard header delete", "auto", SiteOptions{Headers: HeaderOptions{ResponseRemove: []string{"*"}}}, "headers.response_remove"},
+		{"upstream tls", "auto", upstreamTLS(UpstreamTLS{TLS: true, ServerName: "backend.example.com", HostHeader: "upstream", SkipVerify: true}), ""},
+		{"server name without tls", "auto", upstreamTLS(UpstreamTLS{ServerName: "backend.example.com"}), "routing.upstream_tls.tls"},
+		{"skip verify without tls", "auto", upstreamTLS(UpstreamTLS{SkipVerify: true}), "routing.upstream_tls.tls"},
+		{"server name with port", "auto", upstreamTLS(UpstreamTLS{TLS: true, ServerName: "backend:443"}), "routing.upstream_tls.server_name"},
+		{"server name with scheme", "auto", upstreamTLS(UpstreamTLS{TLS: true, ServerName: "https://backend"}), "routing.upstream_tls.server_name"},
+		{"server name placeholder", "auto", upstreamTLS(UpstreamTLS{TLS: true, ServerName: "{env.X}"}), "routing.upstream_tls.server_name"},
+		{"bad host header", "auto", upstreamTLS(UpstreamTLS{HostHeader: "{http.request.host}"}), "routing.upstream_tls.host_header"},
+		{"ca and skip verify", "auto", upstreamTLS(UpstreamTLS{TLS: true, SkipVerify: true, CAPEM: "x"}), "routing.upstream_tls.skip_verify"},
+		{"ca not pem", "auto", upstreamTLS(UpstreamTLS{TLS: true, CAPEM: "hello"}), "routing.upstream_tls.ca_pem"},
+		{"ca is a key", "auto", upstreamTLS(UpstreamTLS{TLS: true, CAPEM: testKeyPEM}), "routing.upstream_tls.ca_pem"},
+		{"ca too large", "auto", upstreamTLS(UpstreamTLS{TLS: true, CAPEM: strings.Repeat("a", maxCAPEMBytes+1)}), "routing.upstream_tls.ca_pem"},
+		{"fallback redirect", "auto", fallback(Fallback{Mode: "redirect", To: "https://example.org/x?y=1", Code: 308}), ""},
+		{"fallback redirect path", "auto", fallback(Fallback{Mode: "redirect", To: "/ords/r/app/home?a=b", Code: 301}), ""},
+		{"fallback 404", "auto", fallback(Fallback{Mode: "404"}), ""},
+		{"fallback bad mode", "auto", fallback(Fallback{Mode: "respond"}), "routing.fallback.mode"},
+		{"fallback bad code", "auto", fallback(Fallback{Mode: "redirect", To: "/x", Code: 200}), "routing.fallback.code"},
+		{"fallback relative", "auto", fallback(Fallback{Mode: "redirect", To: "x", Code: 301}), "routing.fallback.to"},
+		{"fallback placeholder", "auto", fallback(Fallback{Mode: "redirect", To: "/{http.request.uri}", Code: 301}), "routing.fallback.to"},
+		{"fallback scheme", "auto", fallback(Fallback{Mode: "redirect", To: "javascript:alert(1)", Code: 301}), "routing.fallback.to"},
+		{"fallback dot segment", "auto", fallback(Fallback{Mode: "redirect", To: "/a/../b", Code: 301}), "routing.fallback.to"},
+		{"fallback proxy with target", "auto", fallback(Fallback{Mode: "proxy", To: "/x"}), "routing.fallback.to"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,6 +234,39 @@ func TestSiteOptionsValidate(t *testing.T) {
 		if err := www.validate(host, "auto"); err == nil {
 			t.Errorf("www redirect on %s accepted", host)
 		}
+	}
+}
+
+func upstreamTLS(t UpstreamTLS) SiteOptions {
+	return SiteOptions{Routing: RoutingOptions{UpstreamTLS: t}}
+}
+func fallback(f Fallback) SiteOptions { return SiteOptions{Routing: RoutingOptions{Fallback: f}} }
+
+// testKeyPEM is a PEM block of the private-key type with filler bytes,
+// only here to be refused as a CA. Split so secret scanners skip it.
+var testKeyPEM = "-----BEGIN " + "PRIVATE KEY-----\nAAAAAAAAAAAAAAAA\n-----END " + "PRIVATE KEY-----\n"
+
+func TestCAPEM(t *testing.T) {
+	ca := testCAPEM(t)
+	ders, err := parseCAPEM(ca + ca)
+	if err != nil || len(ders) != 2 {
+		t.Fatalf("two certificates: %d, %v", len(ders), err)
+	}
+	if _, err := parseCAPEM(ca + "trailing"); err == nil {
+		t.Error("text after the certificate accepted")
+	}
+	broken := strings.Replace(testKeyPEM, "AAAA", "!!", 1)
+	if _, err := parseCAPEM(broken + ca); err != errPEMPrivateKey {
+		t.Errorf("damaged key before a certificate: %v", err)
+	}
+	o := SiteOptions{Routing: RoutingOptions{UpstreamTLS: UpstreamTLS{TLS: true, CAPEM: "notes: hunter2\n" + ca}}}
+	o.normalize()
+	if strings.Contains(o.Routing.UpstreamTLS.CAPEM, "hunter2") || o.Routing.UpstreamTLS.CAPEM != ca {
+		t.Errorf("normalized PEM = %q", o.Routing.UpstreamTLS.CAPEM)
+	}
+	_, err = parseCAPEM(ca + testKeyPEM)
+	if err == nil || !strings.Contains(err.Msg, "private key") {
+		t.Errorf("certificate + key: %v", err)
 	}
 }
 

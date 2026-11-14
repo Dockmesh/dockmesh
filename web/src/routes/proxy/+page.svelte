@@ -19,7 +19,7 @@
   import ImportModal from './_ImportModal.svelte';
   import { goto } from '$app/navigation';
   import CaddyTab from './_CaddyTab.svelte';
-  import { TLS_LABEL, certExpiresSoon, certNeedsAttention, optionSummary, type Site, type ProxyStatus, type ACMEEvent } from './_site';
+  import { TLS_LABEL, certExpiresSoon, certNeedsAttention, optionSummary, skipsVerify, type Site, type ProxyStatus, type ACMEEvent } from './_site';
 
   type MetricsSnapshot = {
     total_requests: number;
@@ -357,7 +357,7 @@
               {#if op && isActive(op)}
                 <OpProgress {op} compact />
               {:else}
-                <span class="px-tls">{TLS_LABEL[r.tls_mode]}</span>
+                <span class="px-tls">{TLS_LABEL[r.tls_mode]}{#if skipsVerify(r)} <span class="dm-badge dm-badge-warning" title={m.proxy_tls_unverified_title()}>{m.proxy_tls_unverified()}</span>{/if}</span>
                 <small class:warn={r.enabled && certNeedsAttention(r)}>{httpsNote(r)}</small>
               {/if}
             </span>
