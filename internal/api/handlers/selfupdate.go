@@ -22,7 +22,13 @@ func (h *Handlers) GetUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.SelfUpdate.Status())
+	st := h.SelfUpdate.Status()
+	// A list of the advisories this server is still open to is only for
+	// those who can install the fix.
+	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+		st.Severity, st.Security = "", nil
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 // CheckUpdateNow forces an immediate GitHub Releases lookup. Wired to

@@ -25,10 +25,10 @@ func (h *Handlers) InstallUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	err := h.UpdateInstaller.Start(r.Context(), req.Version)
 	switch {
-	case errors.Is(err, selfupdate.ErrInvalidVersion), errors.Is(err, selfupdate.ErrNotNewer):
+	case errors.Is(err, selfupdate.ErrInvalidVersion), errors.Is(err, selfupdate.ErrNotNewer), errors.Is(err, selfupdate.ErrChannel):
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	case errors.Is(err, selfupdate.ErrInstallRunning), errors.Is(err, selfupdate.ErrUpdaterMissing):
+	case errors.Is(err, selfupdate.ErrInstallRunning), errors.Is(err, selfupdate.ErrUpdaterMissing), errors.Is(err, selfupdate.ErrInContainer):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
@@ -42,7 +42,7 @@ func (h *Handlers) InstallUpdate(w http.ResponseWriter, r *http.Request) {
 // GetUpdateInstall reports the install started last.
 func (h *Handlers) GetUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	if h.UpdateInstaller == nil {
-		writeJSON(w, http.StatusOK, selfupdate.InstallState{Phase: selfupdate.PhaseIdle})
+		writeJSON(w, http.StatusOK, selfupdate.InstallState{Phase: selfupdate.PhaseIdle, Unavailable: selfupdate.UnavailableUnsupported})
 		return
 	}
 	writeJSON(w, http.StatusOK, h.UpdateInstaller.State())

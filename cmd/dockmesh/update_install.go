@@ -8,8 +8,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/notices"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
@@ -18,12 +20,14 @@ import (
 
 // newUpdateInstaller wires the server side of the root updater and turns
 // the result of an update that just ended into a notice.
-func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *agents.Service, n *notices.Service, auditSvc *audit.Service) (*selfupdate.Installer, error) {
+func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *agents.Service, n *notices.Service, auditSvc *audit.Service, channel func() string) (*selfupdate.Installer, error) {
 	inst, err := selfupdate.NewInstaller(selfupdate.InstallerConfig{
 		Dir:     config.ResolvePaths(os.Getenv).UpdateDir,
 		Current: version.Version,
 		Locks:   locks,
 		Notices: n,
+		Channel: channel,
+		InContainer: proxy.DetectContainer(host.SelfContainerID),
 		Audit: func(ctx context.Context, res rootupdate.Result) error {
 			return auditUpdateResult(ctx, auditSvc, res)
 		},
