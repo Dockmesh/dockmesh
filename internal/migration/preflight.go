@@ -4,24 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/host"
 )
 
 // runPreflight executes all pre-flight checks and returns the result.
 // If any check fails, the migration should not proceed.
 func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightResult, error) {
 	result := &PreflightResult{Passed: true}
-	add := func(name string, passed bool, detail string) {
+	addStatus := func(name, status, detail string) {
 		result.Checks = append(result.Checks, PreflightCheck{
-			Name: name, Passed: passed, Detail: detail,
+			Name: name, Passed: status != CheckFail, Status: status, Detail: detail,
 		})
-		if !passed {
+		if status == CheckFail {
 			result.Passed = false
 		}
+	}
+	add := func(name string, passed bool, detail string) {
+		status := CheckPass
+		if !passed {
+			status = CheckFail
+		}
+		addStatus(name, status, detail)
 	}
 
 	// 1. Target agent online
@@ -110,16 +116,14 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		}
 	}
 
-	// 5. Architecture match.
-	// For local host we use runtime.GOARCH. For remote hosts, the
-	// agent hello includes arch. We compare both sides.
-	srcArch := archForHost(source)
-	tgtArch := archForHost(target)
-	if srcArch != "" && tgtArch != "" && srcArch != tgtArch {
-		add("arch_match", false, fmt.Sprintf("source=%s, target=%s", srcArch, tgtArch))
-	} else {
-		add("arch_match", true, fmt.Sprintf("%s", tgtArch))
+	// 5. Platform match.
+	srcInfo, srcErr := s.hosts.DaemonInfo(ctx, m.SourceHostID)
+	tgtInfo, tgtErr := s.hosts.DaemonInfo(ctx, m.TargetHostID)
+	if srcErr != nil || tgtErr != nil {
+		slog.Warn("migration preflight daemon info", "id", m.ID, "source_err", srcErr, "target_err", tgtErr)
 	}
+	status, archDetail := archCheck(srcInfo, tgtInfo)
+	addStatus("arch_match", status, archDetail)
 
 	// 6. Images available on target.
 	detail, err := s.stacks.Get(m.StackName)
@@ -160,12 +164,29 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 	return result, nil
 }
 
-func archForHost(h host.Host) string {
-	if h.ID() == "local" {
-		return runtime.GOARCH
+// archCheck compares the platforms the two daemons report. A host whose
+// agent doesn't report one makes the result unknown: guessing "pass"
+// would move an amd64-only stack onto an arm64 host unchecked.
+func archCheck(src, tgt *agents.DaemonInfo) (status, detail string) {
+	platform := func(d *agents.DaemonInfo) string {
+		if d == nil || d.Arch == "" {
+			return ""
+		}
+		if d.OS == "" {
+			return d.Arch
+		}
+		return d.OS + "/" + d.Arch
 	}
-	// Remote hosts report arch in the hello payload, exposed via
-	// the agents.Service. For now use a heuristic — the controller
-	// can look it up from the DB if needed. Return empty to skip.
-	return ""
+	sp, tp := platform(src), platform(tgt)
+	switch {
+	case sp == "" && tp == "":
+		return CheckUnknown, "neither host reports its architecture; update their agents"
+	case sp == "":
+		return CheckUnknown, "source host doesn't report its architecture; update its agent (target " + tp + ")"
+	case tp == "":
+		return CheckUnknown, "target host doesn't report its architecture; update its agent (source " + sp + ")"
+	case sp != tp:
+		return CheckFail, fmt.Sprintf("source=%s, target=%s", sp, tp)
+	}
+	return CheckPass, tp
 }

@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Migration hooks that exit non-zero now fail the migration (a failing post_restore rolls it back); make sure the hooks in your stacks' .dockmesh.meta.json exit 0 on success
+time: 2026-11-14T13:53:44.779192639Z
+custom:
+    Audience: admins
+    Id: migration-hook-exit-code

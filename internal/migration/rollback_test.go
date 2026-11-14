@@ -13,6 +13,7 @@ import (
 
 	"github.com/moby/moby/api/types/image"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
@@ -27,6 +28,7 @@ type fakeHost struct {
 	id        string
 	stopErr   error
 	deployErr error
+	daemon    *agents.DaemonInfo
 
 	mu       sync.Mutex
 	stops    int
@@ -77,6 +79,12 @@ func (h fakeHosts) Pick(id string) (host.Host, error) {
 	return nil, host.ErrUnknownHost
 }
 func (h fakeHosts) List(context.Context) ([]host.Info, error) { return nil, nil }
+func (h fakeHosts) DaemonInfo(_ context.Context, id string) (*agents.DaemonInfo, error) {
+	if f, ok := h[id]; ok {
+		return f.daemon, nil
+	}
+	return nil, host.ErrUnknownHost
+}
 
 type migrationEnv struct {
 	svc            *Service

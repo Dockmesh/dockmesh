@@ -407,6 +407,9 @@ type HelloPayload struct {
 	// MirroredEnv is set by agents that no longer mirror stack .env files
 	// while plaintext copies from older versions are still on the host.
 	MirroredEnv bool `json:"mirrored_env,omitempty"`
+	// Daemon is nil from agents that predate it, and when the daemon
+	// could not be asked.
+	Daemon *DaemonInfo `json:"daemon,omitempty"`
 }
 
 // Has reports whether the agent advertised capability c.

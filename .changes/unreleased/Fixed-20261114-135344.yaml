@@ -1,0 +1,3 @@
+kind: Fixed
+body: A migration hook (pre_dump, post_restore) that exits with an error now stops the migration instead of being ignored; its output goes to the server log
+time: 2026-11-14T13:53:44.373089718Z

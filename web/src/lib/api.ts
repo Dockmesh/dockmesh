@@ -477,7 +477,8 @@ export interface MigrationProgress {
 
 export interface PreflightResult {
   passed: boolean;
-  checks: Array<{ name: string; passed: boolean; detail?: string }>;
+  // status 'unknown': could not be evaluated (e.g. an older agent); doesn't block.
+  checks: Array<{ name: string; passed: boolean; status?: 'pass' | 'fail' | 'unknown'; detail?: string }>;
 }
 
 // Drain Host (P.10)

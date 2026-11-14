@@ -2531,14 +2531,16 @@
         <div class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">{m.stacks_d_preflight()}</div>
         {#each migratePreflight.checks as check}
           <div class="flex items-center gap-2 text-xs">
-            {#if check.passed}
+            {#if check.status === 'unknown'}
+              <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)] shrink-0" />
+            {:else if check.passed}
               <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)] shrink-0" />
             {:else}
               <XCircle class="w-3.5 h-3.5 text-[var(--color-danger-400)] shrink-0" />
             {/if}
             <span class="font-medium">{check.name.replace(/_/g, ' ')}</span>
             {#if check.detail}
-              <span class="text-[var(--fg-muted)] {check.passed ? 'truncate' : 'break-words'}">{check.detail}</span>
+              <span class="text-[var(--fg-muted)] {check.passed && check.status !== 'unknown' ? 'truncate' : 'break-words'}">{check.detail}</span>
             {/if}
           </div>
         {/each}

@@ -65,8 +65,17 @@ type MigrateRequest struct {
 type PreflightCheck struct {
 	Name   string `json:"name"`
 	Passed bool   `json:"passed"`
+	// Status is CheckPass, CheckFail or CheckUnknown. An unknown check
+	// could not be evaluated; it is reported but doesn't block.
+	Status string `json:"status"`
 	Detail string `json:"detail,omitempty"`
 }
+
+const (
+	CheckPass    = "pass"
+	CheckFail    = "fail"
+	CheckUnknown = "unknown"
+)
 
 // PreflightResult groups all pre-flight checks.
 type PreflightResult struct {

@@ -7559,18 +7559,29 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [passed, checks]
                 properties:
-                  safe: {type: boolean}
-                  blockers:
-                    type: array
-                    items: {type: string}
-                  volumes:
+                  passed:
+                    type: boolean
+                    description: False when any check has status `fail`; the migration would be refused.
+                  checks:
                     type: array
                     items:
                       type: object
+                      required: [name, passed, status]
                       properties:
-                        name: {type: string}
-                        size_bytes: {type: integer, format: int64}
+                        name:
+                          type: string
+                          description: Check id, e.g. `target_online`, `named_volumes`, `target_capacity`, `arch_match`, `images`.
+                        passed:
+                          type: boolean
+                          description: False only for status `fail`.
+                        status:
+                          type: string
+                          enum: [pass, fail, unknown]
+                          description: "`unknown`: the check could not be evaluated (e.g. an agent too old to report its architecture); reported, but doesn't block."
+                        detail: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
   /stacks/{name}/migrate/{id}:

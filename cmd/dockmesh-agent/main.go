@@ -239,7 +239,12 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 
 	// Send hello
 	hostname, _ := os.Hostname()
-	dockerVersion := dockerDaemonVersion(ctx)
+	// The server waits 15 s for the hello; a slow daemon leaves the
+	// fields empty instead of failing the connection.
+	infoCtx, cancelInfo := context.WithTimeout(ctx, 5*time.Second)
+	dockerVersion := dockerDaemonVersion(infoCtx)
+	daemonInfo := dockerDaemonInfo(infoCtx)
+	cancelInfo()
 	hello := agents.HelloPayload{
 		Version:         version.Version,
 		Commit:          version.Commit,
@@ -250,6 +255,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
 		MirroredEnv:     hasMirroredEnv(dataDir()),
+		Daemon:          daemonInfo,
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -978,7 +984,11 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		if maxOut <= 0 {
 			maxOut = 1 << 20
 		}
-		out, exitCode, err := dockerwrap.RunExec(ctx, cli, req.Container, req.Cmd, maxOut)
+		// The server's request timeout; its cancel frame can be dropped
+		// when the send queue is full.
+		execCtx, cancelExec := context.WithTimeout(ctx, 30*time.Minute)
+		out, exitCode, err := dockerwrap.RunExec(execCtx, cli, req.Container, req.Cmd, maxOut)
+		cancelExec()
 		if err != nil {
 			respond(conn, f.ID, nil, err)
 			break
@@ -1445,6 +1455,20 @@ func dockerDaemonVersion(ctx context.Context) string {
 		return ""
 	}
 	return v.Version
+}
+
+func dockerDaemonInfo(ctx context.Context) *agents.DaemonInfo {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+	res, err := cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		slog.Warn("docker info for hello", "err", err)
+		return nil
+	}
+	return agents.DaemonInfoFrom(res.Info)
 }
 
 func dockerContainerCount(ctx context.Context) int32 {

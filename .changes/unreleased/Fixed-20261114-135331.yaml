@@ -1,0 +1,3 @@
+kind: Fixed
+body: Moving a stack to another host checks that both Docker daemons run the same platform (for example amd64 vs. arm64); a host whose agent is too old to report it shows the check as not checked instead of passed
+time: 2026-11-14T13:53:31.717839822Z
