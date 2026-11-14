@@ -61,9 +61,18 @@ var (
 	ErrUpdaterMissing   = errors.New("the root updater is not installed; upgrade with the installer once to set it up")
 	ErrNotNewer         = errors.New("version is not newer than the running one")
 	ErrInvalidVersion   = errors.New("not a release version")
+	ErrInContainer      = errors.New("the server runs in a container; pull the new image and recreate the container instead")
+	ErrChannel          = errors.New("pre-releases are only installed on the pre-release update channel")
 	errStacksStillBusy  = errors.New("stack operations were still running after the wait; nothing was installed")
 	errUpdaterNoAnswer  = errors.New("the root updater did not pick up the request; check dockmesh-update.path")
 	errDownloadTooLarge = errors.New("download larger than allowed")
+)
+
+// Reasons an Installer can't install updates on this host.
+const (
+	UnavailableContainer   = "container"
+	UnavailableNoUpdater   = "no_updater"
+	UnavailableUnsupported = "unsupported"
 )
 
 // InstallState is what the server knows about the install it started.
@@ -72,6 +81,12 @@ type InstallState struct {
 	Version string    `json:"version,omitempty"`
 	Error   string    `json:"error,omitempty"`
 	Started time.Time `json:"started,omitzero"`
+	// Pending is set while the root updater still checks a new version.
+	Pending bool `json:"pending,omitempty"`
+	// Unavailable names why Start would refuse every version.
+	Unavailable string `json:"unavailable,omitempty"`
+	// LastResult is the root updater's result this process read last.
+	LastResult *rootupdate.Result `json:"last_result,omitempty"`
 }
 
 // InstallerConfig wires an Installer.
@@ -90,6 +105,12 @@ type InstallerConfig struct {
 	Audit func(ctx context.Context, res rootupdate.Result) error
 	// UpdaterInstalled reports whether the root updater's units exist.
 	UpdaterInstalled func() bool
+	// InContainer reports whether the server runs in a container, where
+	// the image is updated instead.
+	InContainer func() bool
+	// Channel returns the update channel; pre-releases are refused on
+	// any other than ChannelPrerelease.
+	Channel func() string
 
 	// Zero values pick the defaults.
 	BaseURL   string
@@ -107,6 +128,7 @@ type Installer struct {
 
 	mu    sync.Mutex
 	state InstallState
+	last  *rootupdate.Result
 }
 
 // NewInstaller returns an Installer; the update directory is created if
@@ -133,6 +155,12 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	if cfg.UpdaterInstalled == nil {
 		cfg.UpdaterInstalled = func() bool { return false }
 	}
+	if cfg.InContainer == nil {
+		cfg.InContainer = func() bool { return false }
+	}
+	if cfg.Channel == nil {
+		cfg.Channel = func() string { return ChannelStable }
+	}
 	if err := os.MkdirAll(cfg.Dir, 0o750); err != nil {
 		return nil, err
 	}
@@ -151,8 +179,25 @@ func Asset() string { return fmt.Sprintf("dockmesh_%s_%s.tar.gz", runtime.GOOS, 
 // State returns the state of the install started last.
 func (i *Installer) State() InstallState {
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.state
+	st := i.state
+	if i.last != nil {
+		res := *i.last
+		st.LastResult = &res
+	}
+	i.mu.Unlock()
+	st.Pending = i.UpdatePending()
+	st.Unavailable = i.unavailable()
+	return st
+}
+
+func (i *Installer) unavailable() string {
+	switch {
+	case i.cfg.InContainer():
+		return UnavailableContainer
+	case !i.cfg.UpdaterInstalled():
+		return UnavailableNoUpdater
+	}
+	return ""
 }
 
 func (i *Installer) set(phase string, err error) {
@@ -175,7 +220,13 @@ func (i *Installer) Start(ctx context.Context, version string) error {
 	if !semver.Newer(version, i.cfg.Current) {
 		return ErrNotNewer
 	}
-	if !i.cfg.UpdaterInstalled() {
+	if v, _ := semver.Parse(version); v.Prerelease() && i.cfg.Channel() != ChannelPrerelease {
+		return ErrChannel
+	}
+	switch i.unavailable() {
+	case UnavailableContainer:
+		return ErrInContainer
+	case UnavailableNoUpdater:
 		return ErrUpdaterMissing
 	}
 	// Until the last update is confirmed or rolled back, the updater
@@ -454,6 +505,10 @@ func (i *Installer) CheckResult(ctx context.Context) rootupdate.Result {
 		return res
 	}
 	slog.Info("update result", "status", res.Status, "from", res.From, "to", res.To, "step", res.Step, "reason", res.Reason)
+	i.mu.Lock()
+	last := res
+	i.last = &last
+	i.mu.Unlock()
 	i.auditOnce(ctx, data, res)
 	if i.cfg.Notices != nil {
 		if err := i.cfg.Notices.Resolve(ctx, ResultNoticeKey); err != nil {

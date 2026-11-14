@@ -181,6 +181,8 @@ paths:
                   checked_at: {type: string, format: date-time}
                   enabled: {type: boolean}
                   error: {type: string}
+                  severity: {type: string, enum: [security, recommended, normal], description: "From the newer release's manifest; absent without an update or a manifest."}
+                  security: {type: array, items: {type: string}, description: "Advisories (\"GHSA-… (severity): title\") and security entries of the newer release."}
         "401": {$ref: "#/components/responses/Unauthorized"}
   /system/whats-new:
     get:
@@ -251,9 +253,12 @@ paths:
       summary: State of the update install started last
       description: |
         In-memory state of the install this server process started;
-        `idle` after a restart. The outcome of an install that restarted
-        the server is reported as an admin notice instead. Needs
-        `system.upgrade`.
+        `idle` after a restart. `pending` is set while the root updater
+        still checks the version that just started, `last_result` is the
+        root updater's result this process read last (also after the
+        restart into the new version or back into the old one), and
+        `unavailable` says why this host can't install updates itself.
+        Needs `system.upgrade`.
       responses:
         "200":
           description: Install state.
@@ -283,7 +288,7 @@ paths:
               type: object
               required: [version]
               properties:
-                version: {type: string, description: "Release tag, e.g. v0.6.1; must be newer than the running version.", example: v0.6.1}
+                version: {type: string, description: "Release tag, e.g. v0.6.1; must be newer than the running version. A pre-release needs the pre-release update channel.", example: v0.6.1}
       responses:
         "202":
           description: Install started.
@@ -294,7 +299,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: Another install is running, or the root updater is not installed on this host.
+          description: Another install is running, the root updater is not installed on this host, or the server runs in a container.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -371,6 +376,21 @@ components:
         version: {type: string}
         error: {type: string}
         started: {type: string, format: date-time}
+        pending: {type: boolean, description: The root updater has not confirmed or rolled back the update yet.}
+        unavailable:
+          type: string
+          enum: [container, no_updater, unsupported]
+          description: "Set when this host can't install updates itself: the server runs in a container, the root updater units are missing (run the installer once), or the platform has no root updater."
+        last_result:
+          type: object
+          required: [status, from, finished]
+          properties:
+            status: {type: string, enum: [updated, refused, rolled_back, failed]}
+            from: {type: string}
+            to: {type: string}
+            step: {type: string}
+            reason: {type: string}
+            finished: {type: string, format: date-time}
     HostMetricsSample:
       type: object
       required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]

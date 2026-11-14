@@ -946,7 +946,7 @@ func main() {
 	agentsSvc.SetNotices(noticesSvc)
 	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
-	updateInstaller, err := newUpdateInstaller(ctx, stackLocks, agentsSvc, noticesSvc, auditSvc)
+	updateInstaller, err := newUpdateInstaller(ctx, stackLocks, agentsSvc, noticesSvc, auditSvc, selfUpdateChk.Channel)
 	if err != nil {
 		slog.Warn("update installer unavailable", "err", err)
 	}

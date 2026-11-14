@@ -9,7 +9,7 @@ An upgrade replaces the `dockmesh` binary and restarts the service. On the first
 
 Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, every signed-in user gets an **Update available** banner with a **Release notes** link, and users with Settings & audit: Manage on everything get a notification in the bell once per new release (and once more after each server restart). Hiding the banner hides it for that release in this browser.
 
-**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version and the command to run, with a copy button. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
+**Settings → Updates** (needs Settings & audit: Manage on everything) shows the running and the latest version, an **Update now** button (see [Update from the UI](#update-from-the-ui)) and the installer command as an alternative, with a copy button. A security release is marked **Security release** and lists its advisories and security fixes. Under **Automatic update checks** you can switch off **Check for updates** (useful without outbound internet access) and set the interval (15 to 10080 minutes). **Check now** runs a check immediately, also while automatic checks are off. The check never downloads or installs anything.
 
 ### Update channel
 
@@ -90,6 +90,16 @@ sudo install -m 0755 dockmesh-agent-linux-amd64 dockmesh-agent-linux-arm64 /usr/
 sudo install -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent.sh
 sudo systemctl restart dockmesh
 ```
+
+### Update from the UI
+
+**Update now** on **Settings → Updates** installs the newer release through the root updater described below. A dialog asks for confirmation, then shows each step: download and signature check, the wait for running stack operations, the restart, and the check of the new version. At the end it shows the result the root updater wrote: **Updated**, **rolled back** (with the reason, the old version runs again) or **refused** (nothing was changed). The outcome is also written to the audit log as a system entry. You can close the dialog while it runs; the update goes on, and reopening the page shows its progress again.
+
+The button is only shown when the server can install updates itself:
+
+- On a server that runs in a container, the page says to pull the new image and recreate the container instead.
+- Before the root updater is installed, the page says to run the installer once; the first v0.6.0 install sets it up.
+- A pre-release is only installed on the **Pre-release** channel.
 
 ### Install through the API (root updater)
 

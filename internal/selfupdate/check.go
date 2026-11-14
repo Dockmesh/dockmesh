@@ -125,6 +125,10 @@ type Result struct {
 	CheckedAt        time.Time `json:"checked_at,omitempty"`
 	Enabled          bool      `json:"enabled"`
 	Error            string    `json:"error,omitempty"`
+	// Severity and Security come from the latest release's manifest and
+	// are empty without an update or a manifest.
+	Severity string   `json:"severity,omitempty"`
+	Security []string `json:"security,omitempty"`
 }
 
 type ghRelease struct {
@@ -420,21 +424,36 @@ func (c *Checker) fetchManifest(ctx context.Context, rel ghRelease) string {
 // LatestManifest returns the manifest of the latest release when that
 // release is newer than the running version, or nil.
 func (c *Checker) LatestManifest() *changelog.Manifest {
-	if !c.Status().UpdateAvailable {
+	st := c.Status()
+	if !st.UpdateAvailable {
 		return nil
 	}
+	return c.manifestFor(st.LatestVersion)
+}
+
+// manifestFor returns the cached manifest when it belongs to tag.
+func (c *Checker) manifestFor(tag string) *changelog.Manifest {
 	raw := c.settings.Get(keyManifest, "")
-	if raw == "" {
+	if raw == "" || tag == "" {
 		return nil
 	}
 	var m changelog.Manifest
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return nil
 	}
-	if m.Version != strings.TrimPrefix(c.settings.Get("update_latest_version", ""), "v") {
+	if m.Version != strings.TrimPrefix(tag, "v") {
 		return nil
 	}
 	return &m
+}
+
+// securityEntries lists the manifest's advisories and security entries.
+func securityEntries(m *changelog.Manifest) []string {
+	var out []string
+	for _, a := range m.Advisories {
+		out = append(out, strings.TrimSpace(a.ID+" ("+a.Severity+"): "+a.Title))
+	}
+	return append(out, m.Changes.Security...)
 }
 
 func (c *Checker) recordErr(err error) {
@@ -485,7 +504,7 @@ func (c *Checker) Status() Result {
 		}
 	}
 
-	return Result{
+	res := Result{
 		CurrentVersion:   c.current,
 		LatestVersion:    latest,
 		LatestPrerelease: isPrerelease(latest),
@@ -499,6 +518,13 @@ func (c *Checker) Status() Result {
 		Enabled:          c.settings.GetBool("update_check_enabled", true),
 		Error:            lastErr,
 	}
+	if available {
+		if m := c.manifestFor(latest); m != nil {
+			res.Severity = m.Severity
+			res.Security = securityEntries(m)
+		}
+	}
+	return res
 }
 
 // isDevVersion returns true for locally-built binaries where no release
