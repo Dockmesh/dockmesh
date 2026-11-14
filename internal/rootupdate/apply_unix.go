@@ -90,6 +90,13 @@ func Apply(ctx context.Context, cfg Config) (Result, error) {
 	if err := u.writeJSON(ResultFile, res); err != nil {
 		cfg.Log.Error("write update result", "err", err)
 	}
+	// The service reads the result once PendingFile is gone, so it goes
+	// last. After a failed rollback it stays: the update is not over.
+	if res.Status != StatusFailed && u.req != nil {
+		if err := removeEntry(u.req, PendingFile); err != nil {
+			cfg.Log.Warn("remove pending marker", "err", err)
+		}
+	}
 	return res, nil
 }
 
@@ -386,14 +393,8 @@ func (u *updater) recover(ctx context.Context, j *journal) Result {
 	return u.rollback(ctx, j, failed(StepRecover, errors.New("an earlier update run was interrupted")))
 }
 
-// finish drops the journal, the backups and the pending marker. The
-// <binary>.prev copy stays.
+// finish drops the journal and the backups. The <binary>.prev copy stays.
 func (u *updater) finish() {
-	if u.req != nil {
-		if err := removeEntry(u.req, PendingFile); err != nil {
-			u.cfg.Log.Warn("remove pending marker", "err", err)
-		}
-	}
 	matches, _ := filepath.Glob(filepath.Join(u.cfg.StateDir, "backup-*"))
 	for _, m := range matches {
 		_ = os.Remove(m)

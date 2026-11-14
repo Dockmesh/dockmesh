@@ -54,7 +54,8 @@ type Request struct {
 }
 
 // Pending is written to PendingFile from the stop of the old version until
-// the update is confirmed or rolled back.
+// the update is confirmed or rolled back. ResultFile is written before it
+// is removed.
 type Pending struct {
 	From    string    `json:"from"`
 	To      string    `json:"to"`
