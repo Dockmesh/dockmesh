@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/host"
 )
@@ -42,6 +43,11 @@ func (s *Service) loadHooks(stackName string) (*MigrationHooks, error) {
 	return meta.Migration, nil
 }
 
+// hookTimeout bounds one hook, like the agent's request timeout does for
+// remote hosts. Docker can't kill an exec, so a hook that times out keeps
+// running in its container.
+var hookTimeout = 30 * time.Minute
+
 // executeHook runs a shell command via docker exec on the first running
 // container of the stack on the given host. This is how pre_dump and
 // post_restore hooks are executed. A non-zero exit fails the phase.
@@ -67,7 +73,9 @@ func (s *Service) executeHook(ctx context.Context, h host.Host, stackName, hookN
 		return fmt.Errorf("hook %s: no running container found for stack %s", hookName, stackName)
 	}
 
-	output, exitCode, err := h.ContainerExec(ctx, containerID, []string{"sh", "-c", cmd})
+	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout)
+	defer cancel()
+	output, exitCode, err := h.ContainerExec(hookCtx, containerID, []string{"sh", "-c", cmd})
 	if err != nil {
 		return fmt.Errorf("hook %s: exec: %w", hookName, err)
 	}

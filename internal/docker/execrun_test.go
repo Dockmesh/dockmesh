@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -21,6 +22,8 @@ type fakeExecClient struct {
 	// running is how many inspects still report the exec as running.
 	running  int
 	inspects int
+	// block makes the output stream wait until the connection is closed.
+	block bool
 }
 
 func (f *fakeExecClient) ExecCreate(context.Context, string, client.ExecCreateOptions) (client.ExecCreateResult, error) {
@@ -29,6 +32,9 @@ func (f *fakeExecClient) ExecCreate(context.Context, string, client.ExecCreateOp
 
 func (f *fakeExecClient) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
 	c1, c2 := net.Pipe()
+	if f.block {
+		return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: c1, Reader: bufio.NewReader(c1)}}, nil
+	}
 	_ = c2.Close()
 	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: c1, Reader: bufio.NewReader(bytes.NewReader(f.stream))}}, nil
 }
@@ -84,6 +90,7 @@ func TestRunExecDemultiplexes(t *testing.T) {
 }
 
 func TestRunExecWaitsForExit(t *testing.T) {
+	defer func(d time.Duration) { execExitPoll = d }(execExitPoll)
 	execExitPoll = time.Millisecond
 	big := strings.Repeat("x", 64)
 	f := &fakeExecClient{stream: muxed("out", big, "out", big, "err", "failed"), exit: 2, running: 3}
@@ -93,5 +100,23 @@ func TestRunExecWaitsForExit(t *testing.T) {
 	}
 	if string(got) != big[:16] || code != 2 || f.inspects != 4 {
 		t.Fatalf("got %q exit %d after %d inspects, want the first 16 bytes, exit 2 after 4", got, code, f.inspects)
+	}
+}
+
+func TestRunExecStopsOnContextEnd(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := RunExec(ctx, &fakeExecClient{block: true}, "c1", []string{"yes"}, 16)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want deadline exceeded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunExec kept reading after the deadline")
 	}
 }

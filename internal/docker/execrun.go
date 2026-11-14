@@ -46,8 +46,15 @@ func RunExec(ctx context.Context, cli client.ExecAPIClient, containerID string, 
 		return nil, -1, err
 	}
 	defer attach.Close()
+	// The client doesn't tie the hijacked connection to ctx, so a command
+	// that keeps printing would block the copy past any deadline.
+	stop := context.AfterFunc(ctx, attach.Close)
+	defer stop()
 	out := &cappedBuffer{max: max}
 	_, _ = stdcopy.StdCopy(out, out, attach.Reader)
+	if err := ctx.Err(); err != nil {
+		return out.Bytes(), -1, err
+	}
 	for {
 		insp, err := cli.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
 		if err != nil {
