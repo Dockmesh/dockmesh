@@ -105,6 +105,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.HTTPAddr = webtls.ListenAddr(mode, os.Getenv("DOCKMESH_HTTP_ADDR"))
+	if mode == webtls.File && (!filepath.IsAbs(cfg.TLSCertFile) || !filepath.IsAbs(cfg.TLSKeyFile)) {
+		return nil, errors.New("DOCKMESH_TLS_MODE=file needs absolute paths in DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE")
+	}
 	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
 	cfg.UpdateRollbackKeep = 3
 	if v := os.Getenv("DOCKMESH_UPDATE_ROLLBACK_KEEP"); v != "" {

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -103,12 +104,14 @@ func readPEM(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE must both be set")
 	}
-	// A FIFO or device would block or never end the read; the root
-	// updater reads this path too.
-	if fi, err := os.Stat(path); err == nil && !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("%s must be an absolute path", path)
 	}
-	f, err := os.Open(path) // #nosec G304 -- certificate path from the root-owned config
+	// Opened without blocking and checked on the open file: a FIFO or
+	// device swapped in would block or never end the read, and the root
+	// updater reads this path too. Symlinks are followed, as certbot's
+	// live/ directory uses them.
+	f, err := os.OpenFile(path, os.O_RDONLY|oNonBlock, 0) // #nosec G304 -- certificate path from the root-owned config
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return nil, fmt.Errorf("%s is not readable by the service account: %w", path, err)
@@ -116,6 +119,9 @@ func readPEM(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxPEMFile+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -189,6 +195,9 @@ func (r *Reloader) Certificate() *tls.Certificate {
 		r.checked = now
 		if st := r.stamps(); st != r.stamp {
 			cert, err := LoadPair(r.certFile, r.keyFile)
+			if err == nil && (now.Before(cert.Leaf.NotBefore) || now.After(cert.Leaf.NotAfter)) {
+				err = fmt.Errorf("the certificate is valid from %s to %s only", cert.Leaf.NotBefore, cert.Leaf.NotAfter)
+			}
 			if err != nil {
 				slog.Warn("TLS certificate files changed but do not load; still serving the previous certificate", "cert", r.certFile, "err", err)
 			} else {

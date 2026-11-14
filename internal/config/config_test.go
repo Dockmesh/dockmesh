@@ -39,6 +39,7 @@ func TestLoadTLSMode(t *testing.T) {
 		{"caddy", "", "127.0.0.1:8080", true},
 		{"proxy", "10.0.0.5:9000", "10.0.0.5:9000", true},
 		{"tls", "", "", false},
+		{"file", "", "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.mode+"/"+c.addr, func(t *testing.T) {

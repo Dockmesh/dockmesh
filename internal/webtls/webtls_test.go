@@ -132,6 +132,7 @@ func TestLoadPairErrors(t *testing.T) {
 		{"missing file", filepath.Join(dir, "nope.pem"), keyFile},
 		{"mismatched key", certFile, otherKey},
 		{"directory", dir, keyFile},
+		{"relative path", "cert.pem", keyFile},
 	}
 	for _, tt := range tests {
 		if _, err := LoadPair(tt.cert, tt.key); err == nil {

@@ -139,19 +139,18 @@ func healthProbe(env map[string]string, paths config.Paths) (string, *http.Clien
 		return "", nil, err
 	}
 	addr := webtls.ListenAddr(mode, env["DOCKMESH_HTTP_ADDR"])
-	transport := &http.Transport{Proxy: nil}
+	var transport http.RoundTripper = &http.Transport{Proxy: nil}
 	scheme := "http"
 	if mode.TLS() {
-		var leaf *x509.Certificate
-		if mode == webtls.Internal {
-			leaf, err = pki.ReadUICert(filepath.Dir(paths.DBPath))
-		} else {
-			leaf, err = webtls.ReadLeaf(env["DOCKMESH_TLS_CERT_FILE"])
+		load := func() (*x509.Certificate, error) { return pki.ReadUICert(filepath.Dir(paths.DBPath)) }
+		if mode == webtls.File {
+			certFile := env["DOCKMESH_TLS_CERT_FILE"]
+			load = func() (*x509.Certificate, error) { return webtls.ReadLeaf(certFile) }
 		}
-		if err != nil {
+		if _, err := load(); err != nil {
 			return "", nil, fmt.Errorf("certificate for the health check: %w", err)
 		}
-		transport.TLSClientConfig = pinnedTLS(leaf)
+		transport = pinnedTransport{load: load}
 		scheme = "https"
 	}
 	return healthURL(scheme, addr), &http.Client{
@@ -159,6 +158,21 @@ func healthProbe(env map[string]string, paths config.Paths) (string, *http.Clien
 		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}, nil
+}
+
+// pinnedTransport pins the certificate load returns at each request, so a
+// renewal while the update runs does not fail the health check.
+type pinnedTransport struct {
+	load func() (*x509.Certificate, error)
+}
+
+func (p pinnedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	leaf, err := p.load()
+	if err != nil {
+		return nil, err
+	}
+	t := &http.Transport{Proxy: nil, TLSClientConfig: pinnedTLS(leaf), DisableKeepAlives: true}
+	return t.RoundTrip(r)
 }
 
 // healthURL is the health endpoint on the address the server listens on.
