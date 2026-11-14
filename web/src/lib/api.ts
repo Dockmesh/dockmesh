@@ -1077,7 +1077,14 @@ export interface TopoLink {
   aliases?: string[];
 }
 
+export interface TopoTarget {
+  kind: 'host';
+  id: string;
+  name: string;
+}
+
 export interface Topology {
+  target: TopoTarget;
   networks: TopoNetwork[];
   containers: TopoContainer[];
   links: TopoLink[];
@@ -2377,7 +2384,7 @@ export const api = {
     remove: (id: string, host = 'local') =>
       request<void>(`/networks/${encodeURIComponent(id)}${hostQs(host)}`, { method: 'DELETE' }),
     prune: (host = 'local') => request<any>(`/networks/prune${hostQs(host)}`, { method: 'POST' }),
-    topology: () => request<Topology>('/networks/topology')
+    topology: (host: string) => request<Topology>(`/networks/topology${hostQs(host)}`)
   },
 
   volumes: {

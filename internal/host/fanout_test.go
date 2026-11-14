@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
@@ -116,6 +117,7 @@ func (f *fakeHost) ListNetworks(context.Context) ([]network.Inspect, error) {
 func (f *fakeHost) InspectNetwork(context.Context, string) (network.Inspect, error) {
 	panic("no")
 }
+func (f *fakeHost) Topology(context.Context) (topology.Graph, error) { panic("no") }
 func (f *fakeHost) ListVolumes(context.Context) ([]any, error) { panic("no") }
 func (f *fakeHost) InspectVolume(context.Context, string) (volume.Volume, error) {
 	panic("no")

@@ -4,16 +4,20 @@
   // edges are network memberships. Reloads on Docker and stack events.
   import { api, ApiError, type Topology, type TopoNetwork, type TopoContainer } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
+  import { hosts } from '$lib/stores/host.svelte';
   import { Skeleton, EmptyState, StatusChip, Switch, LiveIndicator } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
-  import { Waypoints, Minus, Plus } from 'lucide-svelte';
+  import { Waypoints, Minus, Plus, CircleAlert } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
 
   type Route = { id: number; host: string; upstream: string; enabled: boolean };
 
   let topo = $state<Topology | null>(null);
+  let outdated = $state(false);
+  // Topology is per host, so in all-hosts mode the page picks one itself.
+  let pick = $state('local');
   let routes = $state<Route[]>([]);
   let loading = $state(true);
   let lastLoaded = $state<number | null>(null);
@@ -44,6 +48,12 @@
     const mt = u.match(/:(\d+)(?:\/.*)?$/);
     return mt ? Number(mt[1]) : null;
   }
+  const realHosts = $derived(hosts.available.filter((h) => h.id === 'local' || h.status === 'online'));
+  const target = $derived(hosts.isAll ? pick : hosts.id || 'local');
+  const lensKnown = $derived(hosts.usable(allowed('hosts.view')));
+  // Routes are matched by published port, which only says something for
+  // the server's own host, where Caddy runs.
+  const proxyApplies = $derived(target === 'local');
   const proxiedPorts = $derived(
     new Map(routes.filter((r) => r.enabled).map((r) => [upstreamPort(r.upstream), r.host] as const).filter(([p]) => p != null))
   );
@@ -172,18 +182,28 @@
   });
 
   async function load() {
+    const want = target;
     try {
       const [t, r] = await Promise.all([
-        api.networks.topology(),
-        allowed('proxy.view') ? api.proxy.listRoutes().catch(() => [] as Route[]) : Promise.resolve([] as Route[])
+        api.networks.topology(want),
+        allowed('proxy.view') && want === 'local' ? api.proxy.listRoutes().catch(() => [] as Route[]) : Promise.resolve([] as Route[])
       ]);
+      if (want !== target) return;
       topo = t;
       routes = r;
+      outdated = false;
       lastLoaded = Date.now();
     } catch (err) {
+      if (want !== target) return;
+      if (err instanceof ApiError && err.status === 503 && err.body?.code === 'topology_agent_outdated') {
+        topo = null;
+        outdated = true;
+        lastLoaded = Date.now();
+        return;
+      }
       toast.error(m.topology_load_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
-      loading = false;
+      if (want === target) loading = false;
     }
   }
   const stream = new EventStream({
@@ -196,7 +216,18 @@
     onStatus: (s) => (connStatus = s)
   });
   $effect(() => {
+    if (realHosts.length > 0 && !realHosts.some((h) => h.id === pick)) pick = realHosts[0].id;
+  });
+  $effect(() => {
+    if (!lensKnown) return;
+    void target;
+    topo = null;
+    outdated = false;
+    selected = null;
+    loading = true;
     load();
+  });
+  $effect(() => {
     stream.start();
     return () => {
       stream.stop();
@@ -225,7 +256,14 @@
 
   <div class="dm-toolbar">
     <input type="search" class="dm-filter" style="width: 260px" placeholder={m.topology_search_placeholder()} aria-label={m.topology_search_label()} bind:value={search} />
-    <Switch bind:checked={showProxy} label={m.topology_show_proxy()} />
+    {#if hosts.isAll && realHosts.length > 0}
+      <select bind:value={pick} class="dm-input text-sm" aria-label={m.common_host()}>
+        {#each realHosts as h (h.id)}
+          <option value={h.id}>{h.name}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if proxyApplies}<Switch bind:checked={showProxy} label={m.topology_show_proxy()} />{/if}
     <Switch bind:checked={showSystem} label={m.topology_show_system()} />
     <span class="dm-sp"></span>
     <div class="zoom" role="group" aria-label={m.topology_zoom()}>
@@ -235,7 +273,9 @@
     </div>
   </div>
 
-  {#if loading && !topo}
+  {#if outdated}
+    <EmptyState icon={CircleAlert} title={m.topology_agent_outdated_title()} description={m.topology_agent_outdated_desc()} />
+  {:else if loading && !topo}
     <Skeleton width="100%" height="520px" />
   {:else if !topo || scene.groups.length === 0}
     <EmptyState icon={Waypoints} title={m.topology_empty_title()} description={m.topology_empty_desc()} />
@@ -332,7 +372,7 @@
               {:else}—{/each}
             </dd>
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}">{m.topology_open_network()}</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}?host={encodeURIComponent(target)}">{m.topology_open_network()}</a>
         {:else}
           {@const domains = routesFor(sel.ct)}
           <h2 class="dm-h2 dm-mono">{sel.ct.name}</h2>
@@ -350,7 +390,7 @@
             <dt>{m.topology_domain()}</dt><dd>{domains.join(', ') || '—'}</dd>
             {#if sel.ct.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.ct.stack)}">{sel.ct.stack}</a></dd>{/if}
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{sel.ct.id}">{m.topology_open_container()}</a>
+          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{encodeURIComponent(sel.ct.id)}?host={encodeURIComponent(target)}">{m.topology_open_container()}</a>
         {/if}
       </aside>
     </div>

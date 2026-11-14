@@ -13,6 +13,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
@@ -72,6 +73,8 @@ type Host interface {
 	PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error)
 	ListNetworks(ctx context.Context) ([]network.Inspect, error)
 	InspectNetwork(ctx context.Context, id string) (network.Inspect, error)
+	// Topology is the host's unfiltered network graph.
+	Topology(ctx context.Context) (topology.Graph, error)
 	CreateNetwork(ctx context.Context, name, driver string, labels map[string]string) (network.CreateResponse, error)
 	RemoveNetwork(ctx context.Context, id string) error
 	PruneNetworks(ctx context.Context) (network.PruneReport, error)

@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Agents need an update to show their host on the Topology page; until then the page says the topology is not available on that agent version
+time: 2026-11-14T15:58:14.169478918Z
+custom:
+    Audience: admins
+    Id: topology-agent

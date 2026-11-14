@@ -1,184 +1,96 @@
 package handlers
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
-	"net/netip"
-	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/topology"
 )
 
-// Topology is the network-graph payload returned to the frontend.
-// It's small enough to send as a single response (each container/network is
-// only its identity + a handful of summary fields). The frontend lays out
-// the graph client-side.
+// Topology is the network graph of one target.
 type Topology struct {
-	Networks   []TopoNetwork   `json:"networks"`
-	Containers []TopoContainer `json:"containers"`
-	Links      []TopoLink      `json:"links"`
+	Target TopoTarget `json:"target"`
+	topology.Graph
 }
 
-type TopoNetwork struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Driver   string `json:"driver"`
-	Scope    string `json:"scope"`
-	Internal bool   `json:"internal"`
-	System   bool   `json:"system"` // bridge/host/none — usually filtered in the UI
-	Stack    string `json:"stack,omitempty"`
+type TopoTarget struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
-type TopoContainer struct {
-	ID    string     `json:"id"`
-	Name  string     `json:"name"`
-	State string     `json:"state"`
-	Image string     `json:"image"`
-	Stack string     `json:"stack,omitempty"`
-	Ports []TopoPort `json:"ports,omitempty"`
-}
-
-type TopoPort struct {
-	HostPort      int    `json:"host_port"`
-	ContainerPort int    `json:"container_port"`
-	Protocol      string `json:"protocol"`
-}
-
-type TopoLink struct {
-	NetworkID   string   `json:"network_id"`
-	ContainerID string   `json:"container_id"`
-	IPv4        string   `json:"ipv4,omitempty"`
-	Aliases     []string `json:"aliases,omitempty"`
-}
-
-// GetTopology builds the topology by listing networks (verbose inspect to
-// get container endpoints) and containers in parallel. Containers without
-// any networks (e.g. host-mode) are still included so they appear in the UI.
+// GetTopology returns the network graph of the host named by ?host=
+// (the server's own when empty), cut to what the caller may see.
 func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	q := r.URL.Query()
+	if q.Has("cluster") {
+		writeError(w, http.StatusBadRequest, "cluster topology is not supported")
 		return
 	}
-	ctx := r.Context()
-
-	netList, err := h.Docker.ListNetworks(ctx)
+	if host.IsAll(q.Get("host")) {
+		writeError(w, http.StatusBadRequest, "topology needs one host, not all hosts")
+		return
+	}
+	target, err := h.pickHost(r)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-
-	containers, err := h.Docker.ListContainers(ctx, true)
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	g, err := target.Topology(r.Context())
+	if errors.Is(err, host.ErrAgentNoTopology) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error(), "code": "topology_agent_outdated"})
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, err.Error())
 		return
 	}
-	// The graph shows the server's own Docker host: containers and
-	// networks of stacks in scope, host-level ones only with the host.
-	containers = h.filterContainersByRoleScope(r, "local", containers)
-	unscoped := h.callerUnscoped(r)
-
-	topo := Topology{
-		Networks:   []TopoNetwork{},
-		Containers: []TopoContainer{},
-		Links:      []TopoLink{},
-	}
-
-	containerByID := make(map[string]bool, len(containers))
-	for _, c := range containers {
-		name := strings.TrimPrefix(firstName(c.Names), "/")
-		stack := ""
-		if c.Labels != nil {
-			stack = c.Labels["com.docker.compose.project"]
-		}
-		// Deduplicate published ports — Docker reports one entry per host
-		// IP binding (0.0.0.0 + ::) which would otherwise show twice.
-		seen := make(map[string]bool)
-		var ports []TopoPort
-		for _, p := range c.Ports {
-			if p.PublicPort == 0 {
-				continue
-			}
-			key := fmt.Sprintf("%d/%s", p.PublicPort, p.Type)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			ports = append(ports, TopoPort{
-				HostPort:      int(p.PublicPort),
-				ContainerPort: int(p.PrivatePort),
-				Protocol:      p.Type,
-			})
-		}
-		topo.Containers = append(topo.Containers, TopoContainer{
-			ID:    c.ID,
-			Name:  name,
-			State: string(c.State),
-			Image: c.Image,
-			Stack: stack,
-			Ports: ports,
-		})
-		containerByID[c.ID] = true
-	}
-
-	for _, n := range netList {
-		// Verbose inspect gives us the Containers map. ListNetworks alone
-		// returns it empty.
-		full, err := h.Docker.InspectNetwork(ctx, n.ID)
-		if err != nil {
-			continue
-		}
-		stack := ""
-		if full.Labels != nil {
-			stack = full.Labels["com.docker.compose.project"]
-		}
-		visible := unscoped || h.inReadScope(r, "local", stack)
-		if !visible && !networkHasContainer(full.Containers, containerByID) {
-			continue
-		}
-		topo.Networks = append(topo.Networks, TopoNetwork{
-			ID:       full.ID,
-			Name:     full.Name,
-			Driver:   full.Driver,
-			Scope:    full.Scope,
-			Internal: full.Internal,
-			System:   full.Name == "bridge" || full.Name == "host" || full.Name == "none",
-			Stack:    stack,
-		})
-		for cid, ep := range full.Containers {
-			if !containerByID[cid] {
-				continue
-			}
-			topo.Links = append(topo.Links, TopoLink{
-				NetworkID:   full.ID,
-				ContainerID: cid,
-				IPv4:        prefixAddr(ep.IPv4Address),
-			})
-		}
-	}
-
-	writeJSON(w, http.StatusOK, topo)
+	writeJSON(w, http.StatusOK, Topology{
+		Target: TopoTarget{Kind: "host", ID: target.ID(), Name: target.Name()},
+		Graph:  h.scopeTopology(r, target.ID(), g),
+	})
 }
 
-func firstName(names []string) string {
-	if len(names) == 0 {
-		return ""
+// scopeTopology keeps the containers of stacks in the caller's scope and
+// the networks it sees, plus any shared network one of those containers
+// sits on. Host-level containers and networks need the host in scope.
+func (h *Handlers) scopeTopology(r *http.Request, hostID string, g topology.Graph) topology.Graph {
+	if h.callerUnscoped(r) {
+		return g
 	}
-	return names[0]
-}
-
-func prefixAddr(p netip.Prefix) string {
-	if !p.IsValid() {
-		return ""
-	}
-	return p.Addr().String()
-}
-
-// networkHasContainer reports whether a network links a container the
-// caller sees, so a stack-scoped caller still sees the shared network its
-// containers sit on.
-func networkHasContainer[E any](eps map[string]E, visible map[string]bool) bool {
-	for cid := range eps {
-		if visible[cid] {
-			return true
+	out := topology.Graph{Networks: []topology.Network{}, Containers: []topology.Container{}, Links: []topology.Link{}}
+	containers := map[string]bool{}
+	for _, c := range g.Containers {
+		if h.inReadScope(r, hostID, c.Stack) {
+			out.Containers = append(out.Containers, c)
+			containers[c.ID] = true
 		}
 	}
-	return false
+	reached := map[string]bool{}
+	for _, l := range g.Links {
+		if containers[l.ContainerID] {
+			reached[l.NetworkID] = true
+		}
+	}
+	networks := map[string]bool{}
+	for _, n := range g.Networks {
+		if reached[n.ID] || h.inReadScope(r, hostID, n.Stack) {
+			out.Networks = append(out.Networks, n)
+			networks[n.ID] = true
+		}
+	}
+	for _, l := range g.Links {
+		if containers[l.ContainerID] && networks[l.NetworkID] {
+			out.Links = append(out.Links, l)
+		}
+	}
+	return out
 }

@@ -4474,32 +4474,40 @@ paths:
     get:
       operationId: networks.topology
       tags: [networks]
-      summary: Network → containers graph for the topology view
+      summary: Network graph of one host
       description: |
-        Only containers in the caller's scope, and the networks of stacks in
-        scope or that a visible container is attached to.
+        Networks, containers and their memberships on one host, for the
+        topology view. On an agent host the agent builds the graph for its
+        own daemon; an agent too old for this request gets a 503 with code
+        `topology_agent_outdated`. The answer holds only containers in the
+        caller's scope, plus the networks of stacks in scope and any network a
+        visible container is attached to. `target` names what the graph
+        shows; a cluster target will use the same shape with `kind: cluster`.
       parameters:
-        - $ref: "#/components/parameters/HostQuery"
+        - name: host
+          in: query
+          required: false
+          description: "Host id. Empty or `local` = the server's own daemon, otherwise an agent id. `all` is refused: the graph is per host."
+          schema: {type: string, default: local}
+        - name: cluster
+          in: query
+          required: false
+          description: Reserved for cluster targets; refused with 400 until they exist.
+          schema: {type: string}
       responses:
         "200":
-          description: Nodes + edges ready for the d3 force graph.
+          description: The graph; the UI lays it out.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  networks:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: {type: string}
-                        name: {type: string}
-                        driver: {type: string}
-                        containers:
-                          type: array
-                          items: {type: string}
+              schema: {$ref: "#/components/schemas/Topology"}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Host offline, no Docker, or the agent is too old (code `topology_agent_outdated`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /networks/{id}:
     parameters:
       - name: id
@@ -9874,6 +9882,66 @@ components:
         started_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
         message: {type: string}
+    Topology:
+      type: object
+      required: [target, networks, containers, links]
+      properties:
+        target:
+          type: object
+          required: [kind, id, name]
+          properties:
+            kind:
+              type: string
+              enum: [host]
+              description: What the graph shows. Only `host` exists today.
+            id: {type: string}
+            name: {type: string}
+        networks:
+          type: array
+          items:
+            type: object
+            required: [id, name, driver, scope, internal, system]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              driver: {type: string}
+              scope: {type: string}
+              internal: {type: boolean}
+              system: {type: boolean, description: "bridge, host or none"}
+              stack: {type: string, description: Compose project the network belongs to.}
+        containers:
+          type: array
+          items:
+            type: object
+            required: [id, name, state, image]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              state: {type: string}
+              image: {type: string}
+              stack: {type: string}
+              ports:
+                type: array
+                description: Published ports, one entry per host port and protocol.
+                items:
+                  type: object
+                  properties:
+                    host_port: {type: integer}
+                    container_port: {type: integer}
+                    protocol: {type: string}
+        links:
+          type: array
+          description: Container memberships of networks.
+          items:
+            type: object
+            required: [network_id, container_id]
+            properties:
+              network_id: {type: string}
+              container_id: {type: string}
+              ipv4: {type: string}
+              aliases:
+                type: array
+                items: {type: string}
     OIDCProvider:
       type: object
       required: [id, slug, display_name, issuer_url, client_id, default_role, enabled]

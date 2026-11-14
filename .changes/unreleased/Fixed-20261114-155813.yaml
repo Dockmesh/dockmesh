@@ -1,0 +1,3 @@
+kind: Fixed
+body: The Topology page shows the host picked in the host selector instead of always the server's own host; agents build the graph of their host, and in all-hosts mode the page offers a host picker
+time: 2026-11-14T15:58:13.768661752Z

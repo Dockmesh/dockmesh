@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
+	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
@@ -323,6 +324,30 @@ func (h *RemoteHost) ImageHistory(ctx context.Context, id string) ([]image.Histo
 		return nil, fmt.Errorf("decode image history: %w", err)
 	}
 	return out, nil
+}
+
+// ErrAgentNoTopology is returned for an agent older than the
+// req.networks.topology frame.
+var ErrAgentNoTopology = errors.New("the agent on this host is too old to show the topology; update it from the Hosts page")
+
+// Topology asks the agent for its host's network graph.
+func (h *RemoteHost) Topology(ctx context.Context) (topology.Graph, error) {
+	ag, err := h.live()
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	if !ag.Hello.Has(agents.CapNetworkTopology) {
+		return topology.Graph{}, ErrAgentNoTopology
+	}
+	data, err := h.request(ctx, agents.FrameReqNetworkTopology, nil)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	var out topology.Graph
+	if err := json.Unmarshal(data, &out); err != nil {
+		return topology.Graph{}, fmt.Errorf("decode topology: %w", err)
+	}
+	return out.Normalize(), nil
 }
 
 func (h *RemoteHost) ListNetworks(ctx context.Context) ([]network.Inspect, error) {
