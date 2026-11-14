@@ -14,21 +14,21 @@ type caddyStripPrefix struct {
 
 // headerSet is a set of header operations keyed case-insensitively.
 type headerSet struct {
-	set  map[string]string // lower name -> name as written
-	val  map[string]string // lower name -> value
-	del  []string
-	keep map[string]bool // lower names in del
+	set     map[string]string // lower name -> name as written
+	val     map[string]string // lower name -> value
+	del     []string
+	deleted map[string]bool
 }
 
 func newHeaderSet() *headerSet {
-	return &headerSet{set: map[string]string{}, val: map[string]string{}, keep: map[string]bool{}}
+	return &headerSet{set: map[string]string{}, val: map[string]string{}, deleted: map[string]bool{}}
 }
 
 func (h *headerSet) put(name, value string) {
 	k := strings.ToLower(name)
 	h.set[k], h.val[k] = name, value
-	if h.keep[k] {
-		delete(h.keep, k)
+	if h.deleted[k] {
+		delete(h.deleted, k)
 		out := h.del[:0:0]
 		for _, d := range h.del {
 			if strings.ToLower(d) != k {
@@ -43,8 +43,8 @@ func (h *headerSet) remove(name string) {
 	k := strings.ToLower(name)
 	delete(h.set, k)
 	delete(h.val, k)
-	if !h.keep[k] {
-		h.keep[k] = true
+	if !h.deleted[k] {
+		h.deleted[k] = true
 		h.del = append(h.del, name)
 	}
 }

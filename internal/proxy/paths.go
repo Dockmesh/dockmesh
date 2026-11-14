@@ -106,10 +106,10 @@ func ParsePaths(raw []byte) (*[]PathRoute, error) {
 }
 
 func decodePaths(raw string) ([]PathRoute, error) {
-	var p []PathRoute
 	if raw == "" {
 		return []PathRoute{}, nil
 	}
+	var p []PathRoute
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return nil, err
 	}
@@ -130,6 +130,7 @@ type PathError struct {
 func (e *PathError) Error() string {
 	return fmt.Sprintf("paths[%d].%s: %s", e.Index, e.Field, e.Msg)
 }
+
 func (e *PathError) Unwrap() error { return ErrInvalidOptions }
 
 // asPathError turns an OptionError from a shared checker into a
@@ -189,7 +190,7 @@ func validatePaths(p []PathRoute) error {
 		if err := p[i].validate(); err != nil {
 			return asPathError(i, err)
 		}
-		key := p[i].Match.Type + " " + strings.ToLower(p[i].Match.Path)
+		key := matchKey(p[i].Match)
 		if seen[key] {
 			return &PathError{Index: i, Field: "match.path", Msg: "this path is already in the list"}
 		}
@@ -360,14 +361,20 @@ func maskedPaths(p []PathRoute) []PathRoute {
 
 // pathsWithoutSecrets replaces secret header values by maskedValue for
 // the config preview.
-func pathsWithoutSecrets(p []PathRoute) []PathRoute {
+func pathsWithoutSecrets(p []PathRoute) []PathRoute { return pathsWithSecretsAs(p, maskedValue) }
+
+// pathsWithEmptySecrets clears secret request header values, so kept
+// paths are refilled and checked like sent ones.
+func pathsWithEmptySecrets(p []PathRoute) []PathRoute { return pathsWithSecretsAs(p, "") }
+
+func pathsWithSecretsAs(p []PathRoute, v string) []PathRoute {
 	out := make([]PathRoute, len(p))
 	for i, r := range p {
 		set := make([]Header, len(r.Headers.RequestSet))
 		for j, h := range r.Headers.RequestSet {
 			set[j] = h
 			if h.Secret {
-				set[j].Value = maskedValue
+				set[j].Value = v
 			}
 		}
 		r.Headers.RequestSet = set
@@ -384,24 +391,6 @@ func pathSecretValues(p []PathRoute) []string {
 		for _, h := range append(append([]Header{}, r.Headers.RequestSet...), r.Headers.ResponseSet...) {
 			out = append(out, h.Value)
 		}
-	}
-	return out
-}
-
-// pathsWithEmptySecrets copies p with secret request header values
-// cleared, so kept paths are refilled and checked like sent ones.
-func pathsWithEmptySecrets(p []PathRoute) []PathRoute {
-	out := make([]PathRoute, len(p))
-	for i, r := range p {
-		set := make([]Header, len(r.Headers.RequestSet))
-		for j, h := range r.Headers.RequestSet {
-			set[j] = h
-			if h.Secret {
-				set[j].Value = ""
-			}
-		}
-		r.Headers.RequestSet = set
-		out[i] = r
 	}
 	return out
 }

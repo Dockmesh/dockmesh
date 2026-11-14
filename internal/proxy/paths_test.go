@@ -18,8 +18,8 @@ func toSite(m PathMatch) PathRoute {
 
 func boolPtr(b bool) *bool { return &b }
 
-// apexPaths is the setup from #127: /ords and /i to the site's HTTPS
-// backend, /i with its own caching, everything else redirected.
+// apexSite has /ords and /i to the site's HTTPS backend, /i with its
+// own caching, everything else redirected.
 func apexSite() Route {
 	i := toSite(prefix("/i"))
 	i.Headers.ResponseSet = []Header{{Name: "Cache-Control", Value: "public, max-age=86400"}}

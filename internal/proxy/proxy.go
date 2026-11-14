@@ -310,10 +310,11 @@ func reportApply(op *operations.Op, outcome applyOutcome) {
 
 // UpdateRoute replaces the upstream and TLS mode of an existing route,
 // its enabled state unless enabled is nil, its options unless opts is
-// nil and its path routes unless paths is nil. A disabled route stays in the table but is left out of the
-// generated config, so traffic stops without losing config. It returns
-// what changed (upstream, tls_mode, enabled, options.<group>) once the
-// change is saved; a change Caddy refuses is not saved.
+// nil and its path routes unless paths is nil. A disabled route stays
+// in the table but is left out of the generated config, so traffic
+// stops without losing config. It returns what changed (upstream,
+// tls_mode, enabled, options.<group>, paths) once the change is saved;
+// a change Caddy refuses is not saved.
 func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions, paths *[]PathRoute) ([]string, error) {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
