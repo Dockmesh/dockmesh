@@ -1167,7 +1167,7 @@
   "audit_sen_system_update_applied": "{actor} hat das Update auf {target} installiert",
   "audit_sen_system_update_refused": "{actor} hat das Update auf {target} abgelehnt",
   "audit_sen_system_update_rolled_back": "{actor} hat das Update auf {target} zurückgenommen",
-  "audit_sen_system_update_failed": "{actor}: Das Update auf {target} ist fehlgeschlagen und konnte nicht zurückgenommen werden",
+  "audit_sen_system_update_failed": "{actor} konnte das fehlgeschlagene Update auf {target} nicht zurücknehmen",
   "audit_sen_template_create": "{actor} hat Vorlage {target} erstellt",
   "audit_sen_template_delete": "{actor} hat Vorlage {target} gelöscht",
   "audit_sen_template_deploy": "{actor} hat eine Vorlage als {target} deployt",
