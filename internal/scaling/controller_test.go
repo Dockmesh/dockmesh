@@ -166,3 +166,26 @@ func TestHostTargetReplicasByLabel(t *testing.T) {
 		t.Fatalf("replicas = %v", got)
 	}
 }
+
+type seriesSamples []metrics.Sample
+
+func (f seriesSamples) Query(context.Context, metrics.Query) ([]metrics.Sample, error) { return f, nil }
+
+// Agent samples reach the server up to about a minute and a half late;
+// the newest minute of them counts, older ones don't.
+func TestNewestMinuteOfLateSamples(t *testing.T) {
+	now := time.Now().Unix()
+	c, scaled := testController(&fakeTarget{replicas: 3}, nil)
+	c.metrics = seriesSamples{
+		{TS: now - 200, CPUPercent: 100},
+		{TS: now - 150, CPUPercent: 5},
+		{TS: now - 120, CPUPercent: 5},
+		{TS: now - 90, CPUPercent: 5},
+	}
+	c.evaluateRule(context.Background(), "app", Rule{Service: "web", MinReplicas: 1, MaxReplicas: 5, CPUUnit: CPUUnitHost,
+		ScaleUp:   ThresholdConfig{Metric: "cpu", ThresholdPercent: 80},
+		ScaleDown: ThresholdConfig{Metric: "cpu", ThresholdPercent: 20}})
+	if fmt.Sprint(*scaled) != "[2]" {
+		t.Fatalf("scaled to %v, want [2]", *scaled)
+	}
+}

@@ -272,15 +272,23 @@ func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, t
 	st.cooldownUntil = time.Now().Add(time.Duration(rule.CooldownSeconds) * time.Second)
 }
 
-// serviceAvg averages a metric over the samples of the last 60 seconds of
-// every replica, CPU in the given unit. No samples at all is an error, so
-// a service without metrics is never scaled down for looking idle.
+// Metrics windows: each replica's newest minute of samples is averaged.
+// Agents ship their samples about once a minute, so the newest one can be
+// older than a minute; samples older than metricsMaxAge are not used.
+const (
+	metricsWindow = 60 * time.Second
+	metricsMaxAge = 5 * time.Minute
+)
+
+// serviceAvg averages a metric over the newest minute of samples of every
+// replica, CPU in the given unit. No samples at all is an error, so a
+// service without metrics is never scaled down for looking idle.
 func (c *Controller) serviceAvg(ctx context.Context, hostID string, replicas []Replica, metric, cpuUnit string) (float64, error) {
 	if c.metrics == nil {
 		return 0, errors.New("metrics collector unavailable")
 	}
 	now := time.Now()
-	from := now.Add(-60 * time.Second)
+	from := now.Add(-metricsMaxAge)
 	var total float64
 	var count int
 	for _, r := range replicas {
@@ -291,7 +299,14 @@ func (c *Controller) serviceAvg(ctx context.Context, hostID string, replicas []R
 		if err != nil {
 			return 0, err
 		}
+		if len(samples) == 0 {
+			continue
+		}
+		newest := samples[len(samples)-1].TS
 		for _, s := range samples {
+			if s.TS < newest-int64(metricsWindow/time.Second) {
+				continue
+			}
 			switch metric {
 			case "memory":
 				if s.MemLimit > 0 {

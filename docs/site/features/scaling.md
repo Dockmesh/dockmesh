@@ -65,7 +65,7 @@ curl -X PUT -H "Authorization: Bearer $DOCKMESH_TOKEN" \
   }'
 ```
 
-`GET` returns the rules and `DELETE` removes them, on the same path. The rules are stored in the stack's `.dockmesh.meta.json`, and the rules and their values are checked when they are saved and again every time the auto-scaler reads them. Every 30 seconds Dockmesh averages the service's usage over the last minute, compares it with the thresholds and, once a threshold has been crossed for `duration_seconds`, adds or removes one replica, then waits for the cooldown. A manual scale does not pause or update the auto-scaler; it may scale the service again on its next evaluation.
+`GET` returns the rules and `DELETE` removes them, on the same path. The rules are stored in the stack's `.dockmesh.meta.json`, and the rules and their values are checked when they are saved and again every time the auto-scaler reads them. Every 30 seconds Dockmesh averages the newest minute of usage samples of every replica (agents ship their samples about once a minute, so this minute can lag behind), compares it with the thresholds and, once a threshold has been crossed for `duration_seconds`, adds or removes one replica, then waits for the cooldown. A manual scale does not pause or update the auto-scaler; it may scale the service again on its next evaluation.
 
 `cpu_unit` sets what a CPU threshold means:
 
@@ -87,7 +87,7 @@ Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused*
 Before you rely on it, note the limits:
 
 - Rules act on the host the stack is deployed to, the server host or an agent host. The replica count is the number of running containers of the service, so it survives a server restart.
-- A service with no running containers is never scaled, so a stopped stack stays stopped. When none of its replicas reported metrics in the last minute, the rule waits. A container without a memory limit counts as 0 % memory.
+- A service with no running containers is never scaled, so a stopped stack stays stopped. When none of its replicas reported metrics in the last 5 minutes, the rule waits. A container without a memory limit counts as 0 % memory.
 - The average covers every running replica. `scale_down` is compared against its own `metric`; a rule without one uses the `scale_up` metric, and a rule without any metric uses `cpu`.
 - When the replica count changes between the evaluation and the scale (for example by a manual scale), the auto-scaler skips that action and evaluates again on its next run.
 - The same scaling restrictions apply (`container_name`, fixed host ports, no image pull, no global variables). The database warning does not: database-like images are scaled without asking.
