@@ -102,12 +102,23 @@ func selfProbe(httpAddr string, leaf *x509.Certificate) (string, *http.Client) {
 	return scheme + net.JoinHostPort(host, port), &http.Client{Timeout: 3 * time.Second, Transport: transport}
 }
 
-// pinnedTLS accepts exactly the certificate leaf, whatever name it is
-// reached by: a loopback probe of our own listener has no name to verify.
+// pinnedTLS trusts exactly the certificate leaf: it is the only root, and
+// the name checked is one the leaf carries, since a loopback probe of our
+// own listener has no name of its own to verify.
 func pinnedTLS(leaf *x509.Certificate) *tls.Config {
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	name := "localhost"
+	switch {
+	case len(leaf.DNSNames) > 0:
+		name = leaf.DNSNames[0]
+	case len(leaf.IPAddresses) > 0:
+		name = leaf.IPAddresses[0].String()
+	}
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, // #nosec G402 -- VerifyConnection pins the exact leaf
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
+		ServerName: name,
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 || !bytes.Equal(cs.PeerCertificates[0].Raw, leaf.Raw) {
 				return errors.New("the listener does not serve the expected certificate")
