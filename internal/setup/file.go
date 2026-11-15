@@ -131,18 +131,17 @@ func (f File) SecretFiles() []SecretFile {
 }
 
 // ReadableWarning returns the warning for a file that group or others may
-// read, empty when only its owner can. name is how the warning calls it.
-func ReadableWarning(path, name string) string {
+// read, empty when only its owner can.
+func ReadableWarning(path string) string {
 	fi, err := os.Stat(path)
-	if err != nil {
+	if err != nil || fi.Mode().Perm()&0o044 == 0 {
 		return ""
 	}
-	mode := fi.Mode().Perm()
-	if mode&0o044 == 0 {
-		return ""
-	}
-	if name != path {
-		return fmt.Sprintf("%s is readable by other users (mode %04o). Run chmod 600 on it", name, mode)
-	}
-	return fmt.Sprintf("%s is readable by other users (mode %04o). Run: chmod 600 %s", path, mode, path)
+	return fmt.Sprintf("%s is readable by other users (mode %04o). Run: chmod 600 %s", path, fi.Mode().Perm(), path)
+}
+
+// ReadableByOthers reports a file that group or others may read.
+func ReadableByOthers(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().Perm()&0o044 != 0
 }

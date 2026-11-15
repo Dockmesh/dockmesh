@@ -80,7 +80,10 @@ func TestReadableWarning(t *testing.T) {
 		if err := os.Chmod(p, tt.mode); err != nil {
 			t.Fatal(err)
 		}
-		w := ReadableWarning(p, p)
+		w := ReadableWarning(p)
+		if ReadableByOthers(p) != tt.warn {
+			t.Errorf("mode %04o: ReadableByOthers wrong", tt.mode)
+		}
 		if (w != "") != tt.warn {
 			t.Errorf("mode %04o: warning %q, want %v", tt.mode, w, tt.warn)
 		}

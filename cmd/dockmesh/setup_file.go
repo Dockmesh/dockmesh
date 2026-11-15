@@ -107,14 +107,14 @@ func loadSetupFile(path string) (*setupFileRun, []string, error) {
 	}
 	run := &setupFileRun{file: file}
 	var warnings []string
-	if w := setup.ReadableWarning(path, path); w != "" {
+	if w := setup.ReadableWarning(path); w != "" {
 		warnings = append(warnings, w)
 	}
-	// The files the setup file names are called by their key: a path in
-	// the output would be all a log keeps of them.
+	// The files the setup file names are called by their key, so nothing
+	// about the secrets themselves ends up in a log.
 	for _, sf := range file.SecretFiles() {
-		if w := setup.ReadableWarning(sf.Path, "the file "+sf.Key+" names"); w != "" {
-			warnings = append(warnings, w)
+		if setup.ReadableByOthers(sf.Path) {
+			warnings = append(warnings, "the file "+sf.Key+" names is readable by other users. Run chmod 600 on it")
 		}
 	}
 	if run.values, err = setupFileValues(file); err != nil {
