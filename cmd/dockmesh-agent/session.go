@@ -29,7 +29,7 @@ var agentCapabilities = []string{
 	agents.CapRequestCancel, agents.CapStreamCredit, agents.CapDiskMounts, agents.CapDockerEvents,
 	agents.CapVolumeReplace, agents.CapMetricsHistory, agents.CapVolumeStaged, agents.CapContainerFiles,
 	agents.CapVolumeManage, agents.CapResourceManage, agents.CapVolumeFileDownload, agents.CapImageTransfer,
-	agents.CapImageHistory, agents.CapNoEnvMirror, agents.CapNetworkTopology,
+	agents.CapImageHistory, agents.CapNoEnvMirror, agents.CapNetworkTopology, agents.CapReservedLabels,
 }
 
 // reconnectDelay is the wait before reconnect attempt n (0-based): the

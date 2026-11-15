@@ -178,6 +178,9 @@ const (
 	CapResourceManage = "resources.manage"
 	// CapVolumeFileDownload, agent: serves the "volume_file" stream kind.
 	CapVolumeFileDownload = "volume_file.download"
+	// CapReservedLabels, agent: refuses compose labels that would override
+	// Dockmesh's tracking labels on deploy and scale.
+	CapReservedLabels = "compose.reserved_labels"
 	// CapImageTransfer, agent: serves the "image_pull" and "image_export"
 	// stream kinds.
 	CapImageTransfer = "images.transfer"

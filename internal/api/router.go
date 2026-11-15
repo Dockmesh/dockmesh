@@ -37,6 +37,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	// 503 with a body pointing UI clients at /setup, lets the wizard
 	// itself + its API + static assets through.
 	r.Use(middleware.SetupGate(setupState))
+
 	r.Use(middleware.AuditDenials(h.AuditPermDenied))
 
 	// Kubernetes-style health probes (P.12.2). Mounted at the router

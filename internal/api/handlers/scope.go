@@ -147,9 +147,11 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 // AuditPermDenied writes the auth.scope_denied entry for a request
 // refused because the caller lacks perm.
 func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
-	path := r.URL.Path
+	// The escaped form is plain ASCII: no line breaks or control
+	// characters from the caller end up in the audit log.
+	path := r.URL.EscapedPath()
 	if len(path) > maxDeniedPathLen {
-		path = path[:maxDeniedPathLen] + "…"
+		path = path[:maxDeniedPathLen] + "..."
 	}
 	details := map[string]any{
 		"permission": string(perm),

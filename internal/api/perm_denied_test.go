@@ -31,17 +31,18 @@ func TestPermissionDenialIsJSONAndAudited(t *testing.T) {
 
 	longID := strings.Repeat("x", 2000)
 	tests := []struct {
-		method, path string
-		perm         rbac.Perm
-		target       string
+		name, method, path string
+		perm               rbac.Perm
+		target             string
 	}{
-		{http.MethodGet, "/api/v1/users", rbac.PermUsersView, "GET /api/v1/users"},
-		{http.MethodGet, "/api/v1/audit", rbac.PermAuditView, "GET /api/v1/audit"},
-		{http.MethodGet, "/api/v1/system/backup-key/export", rbac.PermBackupsKeyExport, "GET /api/v1/system/backup-key/export"},
-		{http.MethodGet, "/api/v1/users/" + longID, rbac.PermUsersView, "GET " + ("/api/v1/users/" + longID)[:512] + "…"},
+		{"users", http.MethodGet, "/api/v1/users", rbac.PermUsersView, "GET /api/v1/users"},
+		{"audit", http.MethodGet, "/api/v1/audit", rbac.PermAuditView, "GET /api/v1/audit"},
+		{"key export", http.MethodGet, "/api/v1/system/backup-key/export", rbac.PermBackupsKeyExport, "GET /api/v1/system/backup-key/export"},
+		{"long path cut", http.MethodGet, "/api/v1/users/" + longID, rbac.PermUsersView, "GET " + ("/api/v1/users/" + longID)[:512] + "..."},
+		{"control characters escaped", http.MethodGet, "/api/v1/users/a%0Ab", rbac.PermUsersView, "GET /api/v1/users/a%0Ab"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.target[:min(len(tt.target), 60)], func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			rr := httptest.NewRecorder()

@@ -1320,7 +1320,8 @@ func deployErrorStatus(err error) int {
 		strings.Contains(msg, "unauthorized"),
 		strings.Contains(msg, "yaml:"),
 		strings.Contains(msg, "invalid compose"),
-		strings.Contains(msg, "is reserved for dockmesh"):
+		strings.Contains(msg, "is reserved for dockmesh"),
+		strings.Contains(msg, "upgrade the agent from the hosts page"):
 		return http.StatusUnprocessableEntity
 	}
 	return http.StatusInternalServerError

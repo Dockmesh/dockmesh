@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: A stack whose compose file sets `com.docker.compose.project`, `com.docker.compose.service` or `dockmesh.managed` to another value, or any other `dockmesh.` label, keeps running but its next deploy is refused until that label is removed
+body: A stack whose compose file sets `com.docker.compose.project`, `com.docker.compose.service` or `dockmesh.managed` to another value, or any other `dockmesh.` label, keeps running, but its next deploy, scale or image update is refused until that label is removed. On hosts whose agent is older than the server, a compose file that uses `include`, `extends` from another file or `label_file` deploys again once the agent is upgraded
 time: 2026-11-15T21:41:43.910647906Z
 custom:
     Audience: all

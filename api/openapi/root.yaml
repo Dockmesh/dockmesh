@@ -262,7 +262,7 @@ components:
     Forbidden:
       description: |
         Authenticated but refused: `code` `forbidden` when the caller lacks the permission, `out_of_scope*`
-        when it holds it but not on this resource. A `forbidden` refusal is recorded as an `auth.scope_denied` audit entry.
+        when it holds it but not on this resource. A refusal for a missing permission is recorded as an `auth.scope_denied` audit entry.
       content:
         application/json:
           schema:
