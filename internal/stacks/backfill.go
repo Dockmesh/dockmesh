@@ -25,12 +25,17 @@ type ContainerInfo struct {
 // Logic per stack:
 //   - Group containers by com.docker.compose.project label.
 //   - Match each project name against known stacks from the filesystem.
-//   - Skip stacks that already have a deployment row.
+//   - Skip stacks that already have a deployment row, and stacks created
+//     for another host than the one running their containers.
 //   - For stacks with containers on exactly one host → insert (deployed).
 //   - For stacks with containers on multiple hosts → pick the host with
 //     the most containers, log a warning.
 func BackfillDeployments(ctx context.Context, ds *DeploymentStore, mgr *Manager, containers []ContainerInfo) error {
 	existing, err := ds.All(ctx)
+	if err != nil {
+		return err
+	}
+	createdFor, err := ds.Targets(ctx)
 	if err != nil {
 		return err
 	}
@@ -83,7 +88,12 @@ func BackfillDeployments(ctx context.Context, ds *DeploymentStore, mgr *Manager,
 			slog.Warn("backfill: stack has containers on multiple hosts — picking majority",
 				"stack", proj, "host", best, "hosts", len(hosts))
 		}
-		if err := ds.Set(ctx, proj, best, "deployed"); err != nil {
+		if t := createdFor[proj]; t != "" && t != best {
+			slog.Info("backfill: containers of the stack run on another host than it was created for, left undeployed",
+				"stack", proj, "host", best, "created_for", t)
+			continue
+		}
+		if err := ds.insertDeployed(ctx, proj, best); err != nil {
 			slog.Warn("backfill: failed to set deployment", "stack", proj, "err", err)
 			continue
 		}

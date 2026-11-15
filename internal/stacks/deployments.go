@@ -49,6 +49,16 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 	return err
 }
 
+// insertDeployed records a deployment unless the stack has one by now.
+func (s *DeploymentStore) insertDeployed(ctx context.Context, stackName, hostID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO stack_deployments (stack_name, host_id, status, deployed_at, updated_at)
+		VALUES (?, ?, 'deployed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(stack_name) DO NOTHING`,
+		stackName, hostID)
+	return err
+}
+
 // MarkDeletePending sets a stack's status to DeploymentDeletePending if it
 // is still deployed on hostID, and reports whether it did. stop records
 // whether the delete stops the containers first.

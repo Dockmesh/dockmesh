@@ -1,0 +1,3 @@
+kind: Fixed
+body: A stack created for a remote host is no longer marked as deployed on the local host at server start because local containers with the same compose project name are running, which made deploys to its host fail and hid it from users limited to that host
+time: 2026-11-15T16:42:29.255123166Z
