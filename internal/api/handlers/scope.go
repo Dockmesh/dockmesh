@@ -144,8 +144,8 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 	writeError(w, http.StatusForbidden, "out of scope: none of your assignments allows this here")
 }
 
-// AuditPermDenied writes the auth.scope_denied entry for a request that
-// lacks a permission; middleware.Forbidden calls it.
+// AuditPermDenied writes the auth.scope_denied entry for a request
+// refused because the caller lacks perm.
 func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 	path := r.URL.Path
 	if len(path) > maxDeniedPathLen {
