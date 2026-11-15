@@ -49,7 +49,7 @@ func ListDisks() ([]Disk, error) {
 	}
 	defer f.Close()
 	var out []Disk
-	// Bind-mounted files, as a container has for /etc/hosts, are no disks.
+	// Skip bind-mounted files such as a container's /etc/hosts.
 	for _, d := range parseDisks(f, diskUsage) {
 		if fi, err := os.Stat(d.Mountpoint); err == nil && fi.IsDir() {
 			out = append(out, d)

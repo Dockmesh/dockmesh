@@ -6,25 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"os/user"
 	"regexp"
 	"strings"
 	"time"
 )
-
-// isDirWritable tries to create a temp file in dir; success means the
-// dockmesh process has write access. Cheaper than parsing modes.
-func isDirWritable(dir string) bool {
-	f, err := os.CreateTemp(dir, ".dockmesh-write-test-")
-	if err != nil {
-		return false
-	}
-	name := f.Name()
-	_ = f.Close()
-	_ = os.Remove(name)
-	return true
-}
 
 // ---------------------------------------------------------------------------
 // Service user validation

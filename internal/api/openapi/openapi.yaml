@@ -6240,6 +6240,7 @@ paths:
                   version: {type: string}
                   os: {type: string}
                   arch: {type: string, description: "CPU architecture as Go names it, for example amd64."}
+                  fresh: {type: boolean, description: "True for a new install. False for an older install whose setup never finished; its commit keeps the data dir, port and TLS settings."}
                   ip: {type: string}
                   docker_version: {type: string}
                   uptime_secs: {type: integer}
@@ -6308,19 +6309,17 @@ paths:
                   path: {type: string}
                   exists: {type: boolean}
                   is_dir: {type: boolean}
-                  writable: {type: boolean}
                   will_create: {type: boolean}
                   empty: {type: boolean, description: "The directory exists and holds nothing but setup mode's own files."}
                   fs_type: {type: string, description: Filesystem type of the mount that holds the path.}
                   total_bytes: {type: integer, format: int64}
                   free_bytes: {type: integer, format: int64}
                   parent_exists: {type: boolean}
-                  parent_writable: {type: boolean}
                   status: {type: string, enum: [ok, warn, fail]}
                   issue:
                     type: string
                     description: The first problem found, for `fail` and `warn`.
-                    enum: [not_absolute, bad_characters, inside_docker, system_dir, not_a_directory, no_parent, existing_install, not_empty, network_share, no_unix_permissions, too_small, low_space, unreadable]
+                    enum: [not_absolute, bad_characters, inside_docker, system_dir, no_parent, unsafe_parent, symlink, not_a_directory, existing_install, foreign_owner, not_empty, network_share, no_unix_permissions, too_small, low_space, unreadable]
                   message: {type: string}
         "401":
           description: No setup session that may write (`setup code required`).

@@ -6208,5 +6208,15 @@
   "sw_s4_button": "Neuen Code eingeben",
   "sw_nocode_title": "Noch kein Setup-Code",
   "sw_nocode_text": "Dieser Server hat noch keinen Setup-Code. Erzeuge einen auf dem Server:",
-  "sw_apply_rolled_back": "Dockmesh ist mit der neuen Konfiguration nicht gestartet und zurück im Einrichtungsmodus. Nichts wurde gelöscht. Gib den Setup-Code erneut ein, um es noch einmal zu versuchen."
+  "sw_apply_rolled_back": "Dockmesh ist mit der neuen Konfiguration nicht gestartet und zurück im Einrichtungsmodus. Nichts wurde gelöscht. Gib den Setup-Code erneut ein, um es noch einmal zu versuchen.",
+  "sw_legacy_data": "Dieser Server wurde mit einem älteren Dockmesh installiert und behält seine Daten, wo sie sind. Die Einrichtung verschiebt sie nicht.",
+  "sw_legacy_address": "Dieser Server wurde mit einem älteren Dockmesh installiert und behält seine Port- und TLS-Einstellungen. Ändere sie nach der Einrichtung in dockmesh.env.",
+  "sw_legacy_unchanged": "Unverändert",
+  "sw_n6_final_legacy": "Dockmesh legt dein Konto an und speichert die Basis-URL. Datenverzeichnis, Port und TLS-Einstellungen bleiben, wie sie sind.",
+  "sw_apply_prepare_legacy": "Server wird geprüft",
+  "sw_n3_trusted_none": "keine (keinem Absender wird vertraut)",
+  "sw_dir_err_no_parent": "{path} existiert nicht. Leg es zuerst an oder wähle ein Verzeichnis in einem vorhandenen.",
+  "sw_dir_err_unsafe_parent": "{path} und jedes Verzeichnis darüber müssen root gehören und dürfen nur für root beschreibbar sein.",
+  "sw_dir_err_symlink": "{path} ist ein symbolischer Link. Gib den echten Pfad ein.",
+  "sw_dir_err_foreign": "{path} gehört einem anderen Konto. Entferne es oder wähle ein neues Verzeichnis; die Einrichtung legt es an."
 }

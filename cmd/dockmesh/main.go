@@ -434,6 +434,7 @@ func main() {
 	var webLeaf *x509.Certificate
 	if setupState.Active() {
 		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
+		setupState.SetFresh(freshInstall)
 		if freshInstall {
 			if err := setupState.Codes().PersistCounters(filepath.Join(setup.StateDir(realDataDir), "code-counters.json")); err != nil {
 				slog.Warn("setup code counters", "err", err)

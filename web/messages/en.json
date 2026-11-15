@@ -6208,5 +6208,15 @@
   "sw_s4_button": "Enter a new code",
   "sw_nocode_title": "No setup code yet",
   "sw_nocode_text": "This server has no setup code yet. Create one on the server:",
-  "sw_apply_rolled_back": "Dockmesh did not start with the new configuration and went back to setup mode. Nothing was deleted. Enter the setup code again to retry."
+  "sw_apply_rolled_back": "Dockmesh did not start with the new configuration and went back to setup mode. Nothing was deleted. Enter the setup code again to retry.",
+  "sw_legacy_data": "This server was installed by an older Dockmesh and keeps its data where it is. Setup does not move it.",
+  "sw_legacy_address": "This server was installed by an older Dockmesh and keeps its port and TLS settings. Change them in dockmesh.env after setup.",
+  "sw_legacy_unchanged": "Unchanged",
+  "sw_n6_final_legacy": "Dockmesh will create your account and save the base URL. It keeps its data directory, port and TLS settings.",
+  "sw_apply_prepare_legacy": "Checking this server",
+  "sw_n3_trusted_none": "none (no peer is trusted)",
+  "sw_dir_err_no_parent": "{path} does not exist. Create it first, or choose a directory in an existing one.",
+  "sw_dir_err_unsafe_parent": "{path} and every directory above it must belong to root and be writable only by root.",
+  "sw_dir_err_symlink": "{path} is a symbolic link. Enter the real path.",
+  "sw_dir_err_foreign": "{path} belongs to another account. Remove it or choose a new directory; setup creates it."
 }

@@ -338,6 +338,9 @@ type ServerInfo struct {
 	// TLSFingerprint is the SHA-256 of the certificate setup mode
 	// serves; empty over plain HTTP.
 	TLSFingerprint string `json:"tls_fingerprint,omitempty"`
+	// Fresh is true for a new install; false for a 0.5.x install whose
+	// setup never finished.
+	Fresh bool `json:"fresh"`
 }
 
 // CollectServerInfo gathers the four-row top-bar payload.

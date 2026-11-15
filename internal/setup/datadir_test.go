@@ -2,6 +2,7 @@ package setup
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,14 +35,21 @@ func TestCheckDataDir(t *testing.T) {
 	file := filepath.Join(mk("files", "plain"), "plain")
 
 	const gib = int64(1) << 30
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(empty, link); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
-		name   string
-		path   string
-		fs     string
-		free   int64
-		status string
-		issue  string
-		create bool
+		name    string
+		path    string
+		fs      string
+		free    int64
+		unsafe  bool
+		foreign bool
+		status  string
+		issue   string
+		create  bool
 	}{
 		{name: "relative", path: "var/lib/dockmesh", status: "fail", issue: IssueNotAbsolute},
 		{name: "system dir", path: "/etc", status: "fail", issue: IssueSystemDir},
@@ -52,7 +60,11 @@ func TestCheckDataDir(t *testing.T) {
 		{name: "empty", path: empty, fs: "ext4", free: 40 * gib, status: "ok"},
 		{name: "trailing slash cleaned", path: empty + "/", fs: "ext4", free: 40 * gib, status: "ok"},
 		{name: "setup leftovers count as empty", path: leftovers, fs: "ext4", free: 40 * gib, status: "ok"},
-		{name: "new below existing", path: filepath.Join(empty, "a", "b"), fs: "xfs", free: 40 * gib, status: "ok", create: true},
+		{name: "new in existing", path: filepath.Join(empty, "new"), fs: "xfs", free: 40 * gib, status: "ok", create: true},
+		{name: "parent missing", path: filepath.Join(empty, "a", "b"), fs: "xfs", free: 40 * gib, status: "fail", issue: IssueNoParent},
+		{name: "parent not root's alone", path: filepath.Join(empty, "new"), fs: "ext4", free: 40 * gib, unsafe: true, status: "fail", issue: IssueUnsafeParent},
+		{name: "symlink", path: link, fs: "ext4", free: 40 * gib, status: "fail", issue: IssueSymlink},
+		{name: "owned by another account", path: empty, fs: "ext4", free: 40 * gib, foreign: true, status: "fail", issue: IssueForeignOwner},
 		{name: "not empty", path: full, fs: "ext4", free: 40 * gib, status: "fail", issue: IssueNotEmpty},
 		{name: "existing install", path: install, fs: "ext4", free: 40 * gib, status: "fail", issue: IssueExistingInstall},
 		{name: "file", path: file, fs: "ext4", free: 40 * gib, status: "fail", issue: IssueNotDir},
@@ -64,9 +76,17 @@ func TestCheckDataDir(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := checkDataDir(tt.path,
-				func(string) string { return tt.fs },
-				func(string) (int64, int64, error) { return 100 * gib, tt.free, nil })
+			got := checkDataDir(tt.path, dataDirRules{
+				fsType: func(string) string { return tt.fs },
+				usage:  func(string) (int64, int64, error) { return 100 * gib, tt.free, nil },
+				ancestors: func(string) error {
+					if tt.unsafe {
+						return errors.New("group-writable")
+					}
+					return nil
+				},
+				owned: func(fs.FileInfo) bool { return !tt.foreign },
+			})
 			if got.Status != tt.status || got.Issue != tt.issue {
 				t.Fatalf("status %q issue %q (%s), want %q %q", got.Status, got.Issue, got.Message, tt.status, tt.issue)
 			}
@@ -84,8 +104,12 @@ func TestCheckDataDir(t *testing.T) {
 }
 
 func TestCheckDataDirUsageUnknown(t *testing.T) {
-	got := checkDataDir(t.TempDir(), func(string) string { return "" },
-		func(string) (int64, int64, error) { return 0, 0, errors.New("no statfs") })
+	got := checkDataDir(t.TempDir(), dataDirRules{
+		fsType:    func(string) string { return "" },
+		usage:     func(string) (int64, int64, error) { return 0, 0, errors.New("no statfs") },
+		ancestors: func(string) error { return nil },
+		owned:     func(fs.FileInfo) bool { return true },
+	})
 	if got.Status != "ok" {
 		t.Fatalf("status %q (%s), want ok when space is unknown", got.Status, got.Message)
 	}

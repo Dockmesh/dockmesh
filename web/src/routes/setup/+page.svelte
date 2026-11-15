@@ -7,6 +7,7 @@
   import { copyToClipboard } from '$lib/clipboard';
   import { uploadSystemBackup } from '$lib/api';
   import { fmtVersion } from '$lib/version';
+  import { fmtMem } from '$lib/format';
   import { m } from '$lib/paraglide/messages.js';
   import {
     DOCS,
@@ -17,7 +18,6 @@
     codeFromFragment,
     emailError,
     fingerprintLines,
-    fmtBytes,
     generatePassword,
     httpAddr,
     isEarly,
@@ -159,8 +159,12 @@
   });
 
   // ----- Server info: header line, fingerprint, session liveness -----------
-  type ServerInfo = { version: string; os: string; arch?: string; ip: string; docker_version: string; tls_fingerprint?: string };
+  type ServerInfo = { version: string; os: string; arch?: string; ip: string; docker_version: string; tls_fingerprint?: string; fresh?: boolean };
   let serverInfo = $state<ServerInfo | null>(null);
+  // A 0.5.x install whose setup never finished commits through the old
+  // path: its data dir and listener stay as they are and it does not
+  // restart.
+  const legacy = $derived(serverInfo !== null && serverInfo.fresh === false);
   let serverInfoTimer: ReturnType<typeof setInterval> | null = null;
 
   async function loadServerInfo() {
@@ -205,7 +209,7 @@
       case 'W1': return m.sw_step_code();
       case 'W2': return m.sw_step_start();
       case 'N1': return m.sw_step_admin();
-      case 'N2': case 'R1': return m.sw_step_data();
+      case 'N2': return m.sw_step_data();
       case 'N3': return m.sw_step_address();
       case 'N4': return m.sw_step_proxy();
       case 'N5': return m.sw_step_notifications();
@@ -348,7 +352,7 @@
   }
 
   async function dataNext() {
-    if (await checkDir()) next();
+    if (legacy || (await checkDir())) next();
   }
 
   function dirIssueText(c: DirCheck): string {
@@ -365,13 +369,18 @@
       case 'too_small': return m.sw_dir_err_small({ n: Math.floor(c.free_bytes / 1048576), path: p });
       case 'low_space': return m.sw_dir_warn_low({ n: (c.free_bytes / 1073741824).toFixed(1) });
       case 'not_a_directory': return m.sw_dir_err_file({ path: p });
+      case 'no_parent': return m.sw_dir_err_no_parent({ path: p.replace(/\/[^/]+$/, '') || '/' });
+      case 'unsafe_parent': return m.sw_dir_err_unsafe_parent({ path: p.replace(/\/[^/]+$/, '') || '/' });
+      case 'symlink': return m.sw_dir_err_symlink({ path: p });
+      case 'foreign_owner': return m.sw_dir_err_foreign({ path: p });
       default: return c.message;
     }
   }
+  const stacksDir = $derived(dataDir.trim().replace(/\/+$/, '') + '/stacks');
   const dirCurrent = $derived(dirCheck && dirCheckFor === dataDir.trim() ? dirCheck : null);
 
   $effect(() => {
-    if (step === 'N2') {
+    if (step === 'N2' && !legacy) {
       void loadDisks();
       if (!dirCurrent) void checkDir();
     }
@@ -392,11 +401,11 @@
   });
 
   function addressErrors() {
-    const u = baseURLError(baseURL.trim(), tls);
+    const u = legacy ? (baseURLError(baseURL.trim(), 'internal') === 'invalid' ? 'invalid' : null) : baseURLError(baseURL.trim(), tls);
     const absolute = (f: string) => f.startsWith('/') && !/\s/.test(f);
     return {
       base: u === 'https_required' ? m.sw_addr_err_https() : u === 'proxy_url' ? m.sw_addr_err_proxy_url() : u ? m.sw_addr_err_url() : null,
-      port: portError(webPort) ? m.sw_addr_err_port() : webPort === AGENT_PORT ? m.sw_addr_err_same_ports() : null,
+      port: legacy ? null : portError(webPort) ? m.sw_addr_err_port() : webPort === AGENT_PORT ? m.sw_addr_err_same_ports() : null,
       cert: tls === 'file' && !absolute(certFile.trim()) ? m.sw_addr_err_file() : null,
       key: tls === 'file' && !absolute(keyFile.trim()) ? m.sw_addr_err_file() : null,
       listen: tls === 'proxy' && listenAddressError(listen.trim()) ? m.sw_addr_err_listen() : null
@@ -404,7 +413,12 @@
   }
   const addrErr = $derived(addressErrors());
   const listenPublic = $derived(tls === 'proxy' && !addrErr.listen && !isLoopback(listen.trim()));
-  const trustedProxies = $derived(listen.includes(':') ? `${listen.trim()}/128` : `${listen.trim()}/32`);
+  // The server trusts the bind address alone, and nobody for a wildcard.
+  const trustedProxies = $derived.by(() => {
+    const a = listen.trim();
+    if (a === '0.0.0.0' || a === '::') return m.sw_n3_trusted_none();
+    return a.includes(':') ? `${a}/128` : `${a}/32`;
+  });
 
   async function testURL() {
     urlTest = { state: 'busy' };
@@ -474,7 +488,7 @@
           service_user: { mode: 'existing', username: 'dockmesh', add_to_docker_group: false },
           admin: { username, email: email.trim(), password },
           public_url: targetURL,
-          tls: {
+          tls: legacy ? undefined : {
             mode: tls,
             http_addr: httpAddr(tls, listen.trim(), webPort),
             cert_file: tls === 'file' ? certFile.trim() : undefined,
@@ -525,16 +539,14 @@
       eventSource?.close();
       eventSource = null;
       if (applyFailRow !== null) return;
+      if (!restarting && legacy) {
+        applyRow = 6;
+        applyDone = true;
+        applying = false;
+        return startRedirect();
+      }
       if (!restarting) return failApply(4, m.sw_apply_no_restart());
-      stopServerInfo();
-      applyRow = 4;
-      const outcome = await waitForServer();
-      if (outcome === 'timeout') return failApply(5, m.sw_apply_not_back());
-      if (outcome === 'setup') return failApply(4, m.sw_apply_rolled_back());
-      applyRow = 6;
-      applyDone = true;
-      applying = false;
-      startRedirect();
+      if (await afterRestart()) startRedirect();
     });
     eventSource.onerror = () => {
       if (eventSource?.readyState === EventSource.CLOSED && applyFailRow === null && !restarting) {
@@ -543,15 +555,40 @@
     };
   }
 
+  /** Follows the restart to its end; true when the server is up. */
+  async function afterRestart(): Promise<boolean> {
+    stopServerInfo();
+    applyRow = 4;
+    const outcome = await waitForServer();
+    if (outcome === 'timeout') {
+      failApply(5, m.sw_apply_not_back());
+      return false;
+    }
+    if (outcome === 'setup') {
+      failApply(4, m.sw_apply_rolled_back());
+      return false;
+    }
+    applyRow = 6;
+    applyDone = true;
+    applying = false;
+    return true;
+  }
+
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   /** Setup mode is back on this origin: the new configuration was rolled back. */
   async function setupModeBack(): Promise<boolean> {
+    return (await setupStatus()) === 'active';
+  }
+
+  /** Setup status on this origin, 'unknown' when it does not answer. */
+  async function setupStatus(): Promise<'active' | 'done' | 'unknown'> {
     try {
       const r = await fetch('/api/v1/setup/status', { cache: 'no-store' });
-      return r.ok && (await r.json()).active === true;
+      if (!r.ok) return 'unknown';
+      return (await r.json()).active === true ? 'active' : 'done';
     } catch {
-      return false;
+      return 'unknown';
     }
   }
 
@@ -589,7 +626,13 @@
         if (settled) return 'up';
       } catch {
         wentDown = true;
-        if (settled && (await setupModeBack())) return 'setup';
+        // The new origin may serve a certificate this browser has not
+        // accepted yet; the old origin tells whether setup finished.
+        if (settled) {
+          const st = await setupStatus();
+          if (st === 'active') return 'setup';
+          if (st === 'done') return 'up';
+        }
       }
     }
     return 'timeout';
@@ -610,13 +653,13 @@
   }
 
   const applyItems = $derived([
-    m.sw_apply_prepare({ path: dataDir.trim() }),
+    legacy ? m.sw_apply_prepare_legacy() : m.sw_apply_prepare({ path: dataDir.trim() }),
     path === 'restore' ? m.sw_apply_restore() : m.sw_apply_database(),
     m.sw_apply_check(),
     m.sw_apply_write(),
     m.sw_apply_restart(),
     m.sw_apply_wait()
-  ]);
+  ].slice(0, legacy ? 2 : 6));
 
   // ----- Restore (R2/R3) ------------------------------------------------------
   let restoreFile = $state<File | null>(null);
@@ -643,14 +686,7 @@
       restoreError = e instanceof Error ? e.message : String(e);
       return go('R2');
     }
-    stopServerInfo();
-    applyRow = 4;
-    const outcome = await waitForServer();
-    if (outcome === 'timeout') return failApply(5, m.sw_apply_not_back());
-    if (outcome === 'setup') return failApply(4, m.sw_apply_rolled_back());
-    applyRow = 6;
-    applyDone = true;
-    applying = false;
+    await afterRestart();
   }
 </script>
 
@@ -682,6 +718,10 @@
     <h1 id="step-title" tabindex="-1">{title}</h1>
     {#if text}<p>{text}</p>{/if}
   </div>
+{/snippet}
+
+{#snippet fingerprint(fp: string)}
+  <div class="fp">{#each fingerprintLines(fp) as l (l)}<div>{l}</div>{/each}</div>
 {/snippet}
 
 {#snippet bannerBox()}
@@ -733,7 +773,7 @@
         <ol>
           {#each railSteps as s, k (s)}
             {@const done = k < idx}
-            {@const sub = s === 'N4' ? m.sw_optional() : s === 'N5' ? m.sw_optional() : ''}
+            {@const sub = s === 'N4' || s === 'N5' ? m.sw_optional() : ''}
             <li class:done class:on={k === idx} aria-current={k === idx ? 'step' : undefined}>
               {#if railClickable(s, step, path) && gate === 'wizard'}
                 <button type="button" class="rb" onclick={() => go(s)} title={m.sw_rail_back_to({ name: stepName(s) })}>
@@ -782,7 +822,7 @@
               </div>
             </form>
           </div>
-        {:else if step === 'W1' || step === 'W2'}
+        {:else if early}
           <div class="col">
             {@render head(m.sw_w2_title())}
             <section class="panel">
@@ -800,7 +840,7 @@
               {#if serverInfo?.tls_fingerprint}
                 <div class="fpbox">
                   <span class="lbl">{m.sw_fingerprint_label()}</span>
-                  <div class="fp">{#each fingerprintLines(serverInfo.tls_fingerprint) as l (l)}<div>{l}</div>{/each}</div>
+                  {@render fingerprint(serverInfo.tls_fingerprint)}
                   <span class="hint">{m.sw_fingerprint_matches()}</span>
                 </div>
               {/if}
@@ -873,6 +913,9 @@
             {@render head(m.sw_n2_title(), m.sw_n2_text())}
             <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); dataNext(); }}>
               {@render bannerBox()}
+              {#if legacy}
+                <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_legacy_data()}</span></div>
+              {:else}
               <div class="field">
                 <label class="lbl" for="data-dir">{m.sw_n2_field()}</label>
                 <div class="inp-wrap">
@@ -886,7 +929,7 @@
                 {:else if dirCurrent}
                   <div class="result">
                     <span class="ok">✓</span>
-                    {m.sw_n2_result({ free: fmtBytes(dirCurrent.free_bytes), fs: dirCurrent.fs_type || '—', state: dirCurrent.will_create ? m.sw_n2_new_dir() : m.sw_n2_empty() })}
+                    {m.sw_n2_result({ free: fmtMem(dirCurrent.free_bytes), fs: dirCurrent.fs_type || '—', state: dirCurrent.will_create ? m.sw_n2_new_dir() : m.sw_n2_empty() })}
                   </div>
                   {#if dirCurrent.status === 'warn'}<span class="wrn">{dirIssueText(dirCurrent)}</span>{/if}
                 {/if}
@@ -896,7 +939,8 @@
                 <DiskList {disks} selected={dataDir.trim()} onuse={useDisk} />
                 <span class="hint">{m.sw_n2_disks_hint()}</span>
               </div>
-              <p class="hint plain">{m.sw_n2_stacks()} <span class="dm-mono">{dataDir.trim().replace(/\/+$/, '')}/stacks</span></p>
+              <p class="hint plain">{m.sw_n2_stacks()} <span class="dm-mono">{stacksDir}</span></p>
+              {/if}
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
                 <span class="sp"></span>
@@ -923,6 +967,9 @@
                 {:else if urlTest.state === 'ok'}<span class="result"><span class="ok">✓</span> {m.sw_n3_test_ok({ ms: urlTest.ms ?? 0 })}</span>
                 {:else if urlTest.state === 'fail'}<span class="err">{m.sw_n3_test_fail({ url: baseURL.trim(), reason: urlTest.reason ?? '' })}</span>{/if}
               </div>
+              {#if legacy}
+                <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_legacy_address()}</span></div>
+              {:else}
               <div class="grid2">
                 <div class="field">
                   <label class="lbl" for="web-port">{m.sw_n3_web_port()}</label>
@@ -947,7 +994,7 @@
                         <div class="sub">
                           <div>
                             <span class="lbl">{m.sw_fingerprint_label()}</span>
-                            <div class="fp">{#each fingerprintLines(serverInfo.tls_fingerprint) as l (l)}<div>{l}</div>{/each}</div>
+                            {@render fingerprint(serverInfo.tls_fingerprint)}
                             <span class="hint">{m.sw_fingerprint_matches()}</span>
                           </div>
                         </div>
@@ -1014,6 +1061,7 @@
                   </label>
                 </div>
               </div>
+              {/if}
               <div class="field">
                 <span class="lbl">{m.sw_n3_agent_url()}</span>
                 <span class="dm-mono ro">{agentURL(baseURL.trim(), AGENT_PORT) || '—'}</span>
@@ -1063,12 +1111,20 @@
                 {@render row(m.sw_n6_email(), email.trim() || '—', 'N1')}
                 {@render row(m.sw_n1_password(), '••••', 'N1')}
                 <div class="sect">{m.sw_step_data()}</div>
-                {@render row(m.sw_n6_data(), dataDir.trim(), 'N2', true)}
-                {@render row(m.sw_n6_stacks(), dataDir.trim().replace(/\/+$/, '') + '/stacks', 'N2', true)}
+                {#if legacy}
+                  {@render row(m.sw_n6_data(), m.sw_legacy_unchanged(), 'N2')}
+                {:else}
+                  {@render row(m.sw_n6_data(), dataDir.trim(), 'N2', true)}
+                  {@render row(m.sw_n6_stacks(), stacksDir, 'N2', true)}
+                {/if}
                 <div class="sect">{m.sw_step_address()}</div>
                 {@render row(m.sw_n3_base(), targetURL, 'N3', true)}
-                {@render row(m.sw_n6_ports(), `${webPort} · ${AGENT_PORT}`, 'N3', true)}
-                {@render row(m.sw_n3_cert(), tlsName, 'N3')}
+                {#if legacy}
+                  {@render row(m.sw_n3_cert(), m.sw_legacy_unchanged(), 'N3')}
+                {:else}
+                  {@render row(m.sw_n6_ports(), `${webPort} · ${AGENT_PORT}`, 'N3', true)}
+                  {@render row(m.sw_n3_cert(), tlsName, 'N3')}
+                {/if}
                 {#if tls === 'file'}{@render row(m.sw_n3_cert_file(), certFile.trim(), 'N3', true)}{/if}
                 {#if tls === 'proxy'}{@render row(m.sw_n3_listen(), listen.trim(), 'N3', true)}{/if}
                 <div class="sect">{m.sw_step_proxy()}</div>
@@ -1076,7 +1132,7 @@
                 <div class="sect">{m.sw_step_notifications()}</div>
                 {@render row(m.sw_n6_channel(), m.sw_n6_none(), 'N5')}
               </div>
-              <p class="hint plain final">{m.sw_n6_final({ data: dataDir.trim() })}</p>
+              <p class="hint plain final">{legacy ? m.sw_n6_final_legacy() : m.sw_n6_final({ data: dataDir.trim() })}</p>
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
                 <span class="sp"></span>
@@ -1093,7 +1149,7 @@
                 <label class="lbl" for="backup-file">{m.sw_r2_file()}</label>
                 <input id="backup-file" class="inp" type="file" accept=".gz,.age"
                   onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-                {#if restoreFile}<span class="hint dm-mono">{restoreFile.name} · {fmtBytes(restoreFile.size)}</span>{/if}
+                {#if restoreFile}<span class="hint dm-mono">{restoreFile.name} · {fmtMem(restoreFile.size)}</span>{/if}
               </div>
               {#if restoreFile?.name.endsWith('.age')}
                 <div class="field">
@@ -1135,10 +1191,10 @@
                   <span class="ic">✓</span>
                   <span>{path === 'restore' ? m.sw_r3_done() : m.sw_n7_redirect({ n: redirectIn })}</span>
                 </div>
-                {#if path !== 'restore' && tls === 'internal' && serverInfo?.tls_fingerprint}
+                {#if path !== 'restore' && !legacy && tls === 'internal' && serverInfo?.tls_fingerprint}
                   <div>
                     <span class="lbl">{m.sw_n7_fp_same()}</span>
-                    <div class="fp">{#each fingerprintLines(serverInfo.tls_fingerprint) as l (l)}<div>{l}</div>{/each}</div>
+                    {@render fingerprint(serverInfo.tls_fingerprint)}
                   </div>
                 {/if}
                 <div class="foot">

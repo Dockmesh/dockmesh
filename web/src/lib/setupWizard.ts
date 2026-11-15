@@ -1,4 +1,4 @@
-export type StepId = 'W1' | 'W2' | 'N1' | 'N2' | 'N3' | 'N4' | 'N5' | 'N6' | 'N7' | 'R1' | 'R2' | 'R3';
+export type StepId = 'W1' | 'W2' | 'N1' | 'N2' | 'N3' | 'N4' | 'N5' | 'N6' | 'N7' | 'R2' | 'R3';
 export type SetupPath = 'new' | 'restore';
 export type TLSChoice = 'internal' | 'file' | 'caddy' | 'proxy';
 
@@ -26,7 +26,6 @@ export const DOCS: Record<StepId, string> = {
   N5: 'features/notifications',
   N6: 'install/setup',
   N7: 'install/setup#what-setup-writes',
-  R1: 'install/setup#data-directory',
   R2: 'features/backups#restore-on-a-new-server',
   R3: 'features/backups#restore-on-a-new-server'
 };
@@ -99,7 +98,7 @@ export function repeatError(pw: string, repeat: string): FieldError {
 
 const PW_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789-_.!';
 
-/** 20 characters from an unambiguous set, without modulo bias. */
+/** Characters from an unambiguous set, without modulo bias. */
 export function generatePassword(len = 20, rand: (a: Uint8Array<ArrayBuffer>) => Uint8Array = (a) => crypto.getRandomValues(a)): string {
   const limit = 256 - (256 % PW_CHARS.length);
   let out = '';
@@ -165,6 +164,8 @@ export function isLoopback(addr: string): boolean {
 
 /** The address the server listens on, as DOCKMESH_HTTP_ADDR wants it. */
 export function httpAddr(tls: TLSChoice, listen: string, port: string): string {
+  // Empty lets the server pick its loopback default for Caddy.
+  if (tls === 'caddy') return '';
   if (tls !== 'proxy') return `:${port}`;
   return listen.includes(':') ? `[${listen}]:${port}` : `${listen}:${port}`;
 }
@@ -174,15 +175,4 @@ export function fingerprintLines(fp: string): string[] {
   const parts = fp.split(':');
   if (parts.length !== 32) return [fp];
   return [parts.slice(0, 16).join(':') + ':', parts.slice(16).join(':')];
-}
-
-export function fmtBytes(n: number): string {
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }

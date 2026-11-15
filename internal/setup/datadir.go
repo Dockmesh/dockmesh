@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,20 +17,18 @@ import (
 // first problem so the wizard can show its own text for it; Message is
 // the same in English.
 type DataDirCheck struct {
-	Path           string `json:"path"`
-	Exists         bool   `json:"exists"`
-	IsDir          bool   `json:"is_dir"`
-	Writable       bool   `json:"writable"`
-	WillCreate     bool   `json:"will_create"`
-	Empty          bool   `json:"empty"`
-	FSType         string `json:"fs_type,omitempty"`
-	TotalBytes     int64  `json:"total_bytes"`
-	FreeBytes      int64  `json:"free_bytes"`
-	ParentExists   bool   `json:"parent_exists"`
-	ParentWritable bool   `json:"parent_writable"`
-	Status         string `json:"status"` // "ok" | "warn" | "fail"
-	Issue          string `json:"issue,omitempty"`
-	Message        string `json:"message"`
+	Path         string `json:"path"`
+	Exists       bool   `json:"exists"`
+	IsDir        bool   `json:"is_dir"`
+	WillCreate   bool   `json:"will_create"`
+	Empty        bool   `json:"empty"`
+	FSType       string `json:"fs_type,omitempty"`
+	TotalBytes   int64  `json:"total_bytes"`
+	FreeBytes    int64  `json:"free_bytes"`
+	ParentExists bool   `json:"parent_exists"`
+	Status       string `json:"status"` // "ok" | "warn" | "fail"
+	Issue        string `json:"issue,omitempty"`
+	Message      string `json:"message"`
 }
 
 // Data dir issues, in the order CheckDataDir tests them.
@@ -40,6 +39,9 @@ const (
 	IssueSystemDir       = "system_dir"
 	IssueNotDir          = "not_a_directory"
 	IssueNoParent        = "no_parent"
+	IssueUnsafeParent    = "unsafe_parent"
+	IssueSymlink         = "symlink"
+	IssueForeignOwner    = "foreign_owner"
 	IssueExistingInstall = "existing_install"
 	IssueNotEmpty        = "not_empty"
 	IssueNetworkShare    = "network_share"
@@ -56,14 +58,28 @@ const (
 
 // CheckDataDir checks path as a data dir for a new install with the rules
 // root's setup-apply enforces: a clean absolute path outside system and
-// Docker directories, empty or not there yet, on a local filesystem with
-// Unix permissions and enough space. Root creates a missing directory, so
-// the parent need not be writable by the service.
+// Docker directories whose parent exists and belongs to root alone, no
+// symlink, empty or not there yet and owned by the service account if it
+// exists, on a local filesystem with Unix permissions and enough space.
+// It writes nothing.
 func CheckDataDir(path string) DataDirCheck {
-	return checkDataDir(path, mountFSType, diskUsage)
+	return checkDataDir(path, dataDirRules{
+		fsType:    mountFSType,
+		usage:     diskUsage,
+		ancestors: RootOwnedAncestors,
+		owned:     ownedBySelf,
+	})
 }
 
-func checkDataDir(path string, fsType func(string) string, usage func(string) (int64, int64, error)) DataDirCheck {
+// dataDirRules are the host lookups of checkDataDir.
+type dataDirRules struct {
+	fsType    func(string) string
+	usage     func(string) (int64, int64, error)
+	ancestors func(string) error
+	owned     func(fs.FileInfo) bool
+}
+
+func checkDataDir(path string, r dataDirRules) DataDirCheck {
 	d := DataDirCheck{Path: path}
 	fail := func(issue, format string, a ...any) DataDirCheck {
 		d.Status, d.Issue, d.Message = "fail", issue, fmt.Sprintf(format, a...)
@@ -83,17 +99,27 @@ func checkDataDir(path string, fsType func(string) string, usage func(string) (i
 	if CheckDataDirPath(path) != nil {
 		return fail(IssueSystemDir, "%s is a system directory. Choose a directory of its own, for example /srv/dockmesh.", path)
 	}
+	parent := filepath.Dir(path)
+	if pi, err := os.Stat(parent); err != nil || !pi.IsDir() {
+		return fail(IssueNoParent, "%s does not exist. Create it first, or choose a directory in an existing one.", parent)
+	}
+	d.ParentExists = true
+	if err := r.ancestors(parent); err != nil {
+		return fail(IssueUnsafeParent, "%s and every directory above it must belong to root and be writable only by root.", parent)
+	}
 
 	probe := path
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	switch {
 	case err == nil:
 		d.Exists = true
 		d.IsDir = info.IsDir()
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fail(IssueSymlink, "%s is a symbolic link. Enter the real path.", path)
+		}
 		if !d.IsDir {
 			return fail(IssueNotDir, "%s is a file, not a directory.", path)
 		}
-		d.Writable = isDirWritable(path)
 		if hasInstall(path) {
 			return fail(IssueExistingInstall, "%s already holds a Dockmesh installation.", path)
 		}
@@ -104,28 +130,25 @@ func checkDataDir(path string, fsType func(string) string, usage func(string) (i
 		if !empty {
 			return fail(IssueNotEmpty, "%s is not empty. Choose an empty or new directory.", path)
 		}
+		if !r.owned(info) {
+			return fail(IssueForeignOwner, "%s belongs to another account. Remove it or choose a new directory; setup creates it.", path)
+		}
 		d.Empty = true
 	case errors.Is(err, os.ErrNotExist):
-		parent := nearestDir(path)
-		if parent == "" {
-			return fail(IssueNoParent, "No parent directory of %s exists.", path)
-		}
-		d.ParentExists = parent == filepath.Dir(path)
-		d.ParentWritable = isDirWritable(parent)
 		d.WillCreate = true
 		probe = parent
 	default:
 		return fail(IssueUnreadable, "Cannot read %s: %v.", path, err)
 	}
 
-	d.FSType = fsType(probe)
+	d.FSType = r.fsType(probe)
 	switch {
 	case networkFS[d.FSType] || strings.HasPrefix(d.FSType, "nfs"):
 		return fail(IssueNetworkShare, "%s is on a network share (%s). Dockmesh needs a local filesystem such as ext4, xfs or btrfs.", path, d.FSType)
 	case noPermFS[d.FSType]:
 		return fail(IssueNoUnixPerms, "%s is on a filesystem without Unix permissions (%s). Dockmesh needs a local filesystem such as ext4, xfs or btrfs.", path, d.FSType)
 	}
-	if t, f, err := usage(probe); err == nil {
+	if t, f, err := r.usage(probe); err == nil {
 		d.TotalBytes, d.FreeBytes = t, f
 		switch {
 		case f < minDataDirFree:
@@ -155,44 +178,45 @@ func hasInstall(dir string) bool {
 // mode keeps there itself and empty data and stacks dirs; setup-apply
 // accepts the same.
 func emptyForSetup(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
+	f, err := os.Open(dir)
 	if err != nil {
 		return false, err
 	}
-	for _, e := range entries {
-		name := e.Name()
-		switch {
-		case name == StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir)):
-		case (name == "data" || name == "stacks") && e.IsDir():
-			sub, err := os.ReadDir(filepath.Join(dir, name))
-			if err != nil {
-				return false, err
+	defer f.Close()
+	for {
+		entries, err := f.ReadDir(64)
+		for _, e := range entries {
+			if !setupLeftover(dir, e) {
+				return false, nil
 			}
-			for _, s := range sub {
-				if !strings.Contains(s.Name(), ".failed-") {
-					return false, nil
-				}
-			}
-		case strings.Contains(name, ".failed-"):
-		default:
-			return false, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
 		}
 	}
-	return true, nil
 }
 
-// nearestDir is the closest existing directory above path, "" if none.
-func nearestDir(path string) string {
-	for p := filepath.Dir(path); ; p = filepath.Dir(p) {
-		if fi, err := os.Stat(p); err == nil {
-			if fi.IsDir() {
-				return p
+func setupLeftover(dir string, e fs.DirEntry) bool {
+	name := e.Name()
+	switch {
+	case name == StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir)):
+		return true
+	case (name == "data" || name == "stacks") && e.IsDir():
+		sub, err := os.ReadDir(filepath.Join(dir, name))
+		if err != nil || len(sub) > 64 {
+			return false
+		}
+		for _, s := range sub {
+			if !strings.Contains(s.Name(), ".failed-") {
+				return false
 			}
-			return ""
 		}
-		if p == "/" || p == "." {
-			return ""
-		}
+		return true
+	default:
+		return strings.Contains(name, ".failed-")
 	}
 }
 

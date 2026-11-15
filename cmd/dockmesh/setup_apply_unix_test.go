@@ -107,11 +107,11 @@ func TestMaterialize(t *testing.T) {
 }
 
 func TestRootOwnedAncestors(t *testing.T) {
-	if err := rootOwnedAncestors("/"); err != nil {
+	if err := setup.RootOwnedAncestors("/"); err != nil {
 		t.Errorf("/: %v", err)
 	}
 	if os.Geteuid() != 0 {
-		if err := rootOwnedAncestors(t.TempDir()); err == nil {
+		if err := setup.RootOwnedAncestors(t.TempDir()); err == nil {
 			t.Error("a directory of another account passed")
 		}
 	}
@@ -120,7 +120,7 @@ func TestRootOwnedAncestors(t *testing.T) {
 	if err := os.Symlink("/", link); err != nil {
 		t.Skip(err)
 	}
-	if err := rootOwnedAncestors(link); err == nil {
+	if err := setup.RootOwnedAncestors(link); err == nil {
 		t.Error("a symlink passed")
 	}
 }

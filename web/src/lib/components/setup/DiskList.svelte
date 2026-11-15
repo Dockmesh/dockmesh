@@ -2,7 +2,7 @@
   // Mounted filesystems of a host with a "Use <path>" button per row.
   // Used for the server's data dir in setup and for an agent's stacks dir.
   import { m } from '$lib/paraglide/messages.js';
-  import { fmtBytes } from '$lib/setupWizard';
+  import { fmtMem } from '$lib/format';
 
   export interface Disk {
     mountpoint: string;
@@ -48,12 +48,12 @@
       {#if d.usable}
         <span class="use">
           <span class="dbar" aria-hidden="true"><i style:width="{usedPct(d)}%"></i></span>
-          <span class="hint">{m.setup_disk_free({ free: fmtBytes(d.free_bytes), total: fmtBytes(d.total_bytes) })}</span>
+          <span class="hint">{m.setup_disk_free({ free: fmtMem(d.free_bytes), total: fmtMem(d.total_bytes) })}</span>
         </span>
         {#if selected === d.suggested}
           <span class="sel">{m.setup_disk_selected()}</span>
         {:else}
-          <button type="button" class="btn sm" {disabled} onclick={() => onuse(d.suggested)}>
+          <button type="button" class="btn" {disabled} onclick={() => onuse(d.suggested)}>
             {m.setup_disk_use({ path: d.suggested })}
           </button>
         {/if}

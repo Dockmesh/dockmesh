@@ -105,10 +105,10 @@ func openOperatorFile(path string) (*os.File, error) {
 		err = fmt.Errorf("%s is not a regular file", path)
 	}
 	if err == nil && os.Geteuid() == 0 {
-		if owner, ok := fileOwner(fi); !ok || owner != 0 || fi.Mode().Perm()&0o022 != 0 {
+		if owner, ok := setup.FileOwner(fi); !ok || owner != 0 || fi.Mode().Perm()&0o022 != 0 {
 			err = fmt.Errorf("%s must belong to root and be writable only by root", path)
 		} else {
-			err = rootOwnedAncestors(filepath.Dir(path))
+			err = setup.RootOwnedAncestors(filepath.Dir(path))
 		}
 	}
 	if err != nil {
