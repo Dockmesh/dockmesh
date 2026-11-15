@@ -1,0 +1,3 @@
+kind: Fixed
+body: A compose file with a YAML anchor that merges into itself is refused on deploy instead of making the server or agent load it until it runs out of memory
+time: 2026-11-15T23:16:37.683326194Z

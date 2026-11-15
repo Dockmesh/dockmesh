@@ -39,6 +39,10 @@ func CheckReservedLabelsText(composeYAML string) error {
 	if d := unsupportedNode(&root); d != "" {
 		return fmt.Errorf("%s: %w", d, ErrLabelsNeedAgent)
 	}
+	var plain any
+	if err := root.Decode(&plain); err != nil {
+		return fmt.Errorf("parse compose file: %w", err)
+	}
 	if err := root.Decode(&doc); err != nil {
 		return fmt.Errorf("parse compose file: %w", err)
 	}

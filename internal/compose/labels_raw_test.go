@@ -40,6 +40,7 @@ func TestCheckReservedLabelsText(t *testing.T) {
 		{"number that compose rewrites", svc + "    labels:\n      com.docker.compose.project: 1e2\n", "is reserved for Dockmesh", false},
 		{"other compose label", svc + "    labels:\n      com.docker.compose.oneoff: \"False\"\n", "is reserved for Dockmesh", false},
 		{"empty value in a flow map", svc + "    labels: {com.docker.compose.project:}\n", "plain value", true},
+		{"anchor that merges itself", "&a\n<<: *a\n", "parse compose file", false},
 		{"unparsable", "services: [\n", "parse compose file", false},
 	}
 	for _, tt := range tests {
