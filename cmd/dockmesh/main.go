@@ -670,13 +670,6 @@ func main() {
 			slog.Warn("backup scheduler start", "err", err)
 		}
 	})
-	// P.13.2: backup defaults are now opt-in. New installs never get a
-	// default job created on boot; the user has to set one up
-	// explicitly (Backups → New job, or the "Enable daily system
-	// backup" toggle). Existing installs that still carry the legacy
-	// auto-created `dockmesh-system` job get the needs_review flag set
-	// once so the operator can confirm Keep / Disable on the next UI
-	// visit. Idempotent — once cleared, the flag stays cleared.
 	if err := backupSvc.MarkAutoCreatedJobsForReview(ctx); err != nil {
 		slog.Warn("backup default review migration", "err", err)
 	}
