@@ -48,7 +48,14 @@ func ListDisks() ([]Disk, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return parseDisks(f, diskUsage), nil
+	var out []Disk
+	// Bind-mounted files, as a container has for /etc/hosts, are no disks.
+	for _, d := range parseDisks(f, diskUsage) {
+		if fi, err := os.Stat(d.Mountpoint); err == nil && fi.IsDir() {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {

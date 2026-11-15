@@ -8,103 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/user"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 )
-
-// DataDirCheck is what the wizard's Step 2 input live-validates against
-// as the operator types. The frontend renders the green/amber/red row
-// directly from these fields.
-type DataDirCheck struct {
-	Path           string `json:"path"`
-	Exists         bool   `json:"exists"`
-	IsDir          bool   `json:"is_dir"`
-	Writable       bool   `json:"writable"`
-	WillCreate     bool   `json:"will_create"` // !exists, parent writable
-	TotalBytes     int64  `json:"total_bytes"`
-	FreeBytes      int64  `json:"free_bytes"`
-	ParentExists   bool   `json:"parent_exists"`
-	ParentWritable bool   `json:"parent_writable"`
-	Status         string `json:"status"`  // "ok" | "warn" | "fail"
-	Message        string `json:"message"` // human-readable summary
-}
-
-// CheckDataDir is the live-validate Step 2 helper. Path can be absolute
-// or relative; a relative path is resolved against the working dir of
-// the dockmesh process, which on a systemd install is `/`.
-func CheckDataDir(path string) DataDirCheck {
-	d := DataDirCheck{Path: path}
-	if strings.TrimSpace(path) == "" {
-		d.Status = "fail"
-		d.Message = "path is required"
-		return d
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		d.Status = "fail"
-		d.Message = "invalid path: " + err.Error()
-		return d
-	}
-	d.Path = abs
-
-	info, err := os.Stat(abs)
-	switch {
-	case err == nil:
-		d.Exists = true
-		d.IsDir = info.IsDir()
-		if !d.IsDir {
-			d.Status = "fail"
-			d.Message = "path exists but is a file, not a directory"
-			return d
-		}
-		d.Writable = isDirWritable(abs)
-		t, f, derr := diskUsage(abs)
-		if derr == nil {
-			d.TotalBytes, d.FreeBytes = t, f
-		}
-		if !d.Writable {
-			d.Status = "fail"
-			d.Message = "directory exists but is not writable by the dockmesh process"
-			return d
-		}
-		d.Status = "ok"
-		d.Message = fmt.Sprintf("%s free, writable", humanBytes(d.FreeBytes))
-	case errors.Is(err, os.ErrNotExist):
-		// Doesn't exist yet — check the parent.
-		parent := filepath.Dir(abs)
-		pinfo, perr := os.Stat(parent)
-		if perr != nil {
-			d.Status = "fail"
-			d.Message = "parent directory " + parent + " doesn't exist either"
-			return d
-		}
-		if !pinfo.IsDir() {
-			d.Status = "fail"
-			d.Message = "parent " + parent + " is not a directory"
-			return d
-		}
-		d.ParentExists = true
-		d.ParentWritable = isDirWritable(parent)
-		t, f, derr := diskUsage(parent)
-		if derr == nil {
-			d.TotalBytes, d.FreeBytes = t, f
-		}
-		if !d.ParentWritable {
-			d.Status = "fail"
-			d.Message = "parent " + parent + " is not writable — pick a different path"
-			return d
-		}
-		d.WillCreate = true
-		d.Status = "ok"
-		d.Message = fmt.Sprintf("doesn't exist — will be created (parent: %s free)", humanBytes(d.FreeBytes))
-	default:
-		d.Status = "fail"
-		d.Message = "stat failed: " + err.Error()
-	}
-	return d
-}
 
 // isDirWritable tries to create a temp file in dir; success means the
 // dockmesh process has write access. Cheaper than parsing modes.
