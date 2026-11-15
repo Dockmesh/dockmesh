@@ -1061,8 +1061,13 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   say ""
-  STATUS_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup status --porcelain 2>/dev/null || true)"
-  if [ "$(kv setup "$STATUS_OUT")" = "unfinished" ]; then
+  STATUS_OUT=""
+  if [ "$WRITE_UNIT" = "1" ]; then
+    STATUS_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup status --porcelain 2>/dev/null || true)"
+  fi
+  if [ "$WRITE_UNIT" = "0" ]; then
+    status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is installed."
+  elif [ "$(kv setup "$STATUS_OUT")" = "unfinished" ]; then
     status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is running."
     box "Setup was never finished" \
       "Get a setup code with: sudo dockmesh setup new-code" \
