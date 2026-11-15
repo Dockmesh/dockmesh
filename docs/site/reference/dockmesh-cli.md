@@ -52,7 +52,8 @@ Most commands open the database and apply pending migrations first. Loading the 
 | Command | Purpose |
 |---|---|
 | `serve` | Start the HTTP server and the agent mTLS listener (default) |
-| `init` | Interactive first-run setup on the command line |
+| `init` | Deprecated wrapper on `setup apply` |
+| `setup apply` / `setup example` | Set up a new install from a setup file / print a template |
 | `setup new-code` | Print a one-time code that opens the setup wizard |
 | `setup status` | Say whether the setup is still unfinished |
 | `restore` | Restore database, stacks and data directory from a system backup |
@@ -82,26 +83,34 @@ After a system restore was staged in the UI, the server exits with status 75 so 
 
 ## init
 
+`dockmesh init` is deprecated and will be removed in 0.7.0; every run prints a warning. It is a thin wrapper on [`setup apply`](#setup-apply) and asks no questions any more:
+
 ```bash
-sudo dockmesh init
-sudo dockmesh init --yes --data-dir /var/lib/dockmesh --base-url https://dockmesh.example.com
+sudo dockmesh init --file /root/dockmesh-setup.yaml
+sudo dockmesh init --yes --data-dir /var/lib/dockmesh --base-url https://dockmesh.example.com:8080
 ```
 
-A command-line alternative to the web setup wizard. It walks through six steps (data directory, listen address, admin user, base URL, agent URL, service), creates `<data-dir>/data` and `<data-dir>/stacks`, creates the admin user, writes the config (as root on Linux to `/etc/dockmesh/dockmesh.env`, owner root, group `dockmesh`, mode `0640`; otherwise `<data-dir>/dockmesh.env`, mode `0600`) and, unless disabled, installs and starts a service (systemd on Linux, launchd on macOS). Interactive mode needs a terminal; use `--yes` in scripts.
+`--file` is the same as `setup apply --file`. `--yes` builds the setup from `--data-dir`, `--listen`, `--admin-user` (default `admin`) and `--base-url`, generates a 20-character admin password, writes it to a new file (`--password-file`, default `/root/dockmesh-admin-password` as root, mode 0600; the file must not exist yet), applies it exactly like a setup file and prints the file's path, never the password. `--service` and `--systemd` are accepted and ignored. Without `--yes` or `--file` it stops with an error.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--yes` | `false` | Non-interactive: accept defaults, generate an 18-character admin password and print it once |
-| `--data-dir` | `/var/lib/dockmesh` (Linux), `/usr/local/var/dockmesh` (macOS) | Data root |
-| `--service` | `true` | Install, enable and start the OS service |
-| `--systemd` | `true` | Deprecated alias; `--systemd=false` disables the service step |
-| `--listen` | `:8080` | HTTP listen address, written as `DOCKMESH_HTTP_ADDR` |
-| `--admin-user` | `admin` | Admin username |
-| `--base-url` | `http://<hostname>:<port>` | Public URL users browse to |
+## setup apply
 
-The agent URL defaults to the base URL's host with `wss://`, port `8443` and path `/connect`. init writes it as `DOCKMESH_AGENT_PUBLIC_URL`, which then wins over the agent URL on the **Settings** page, and derives `DOCKMESH_AGENT_SANS` from both URLs and the hostname. If the admin user already exists, init leaves its password unchanged and says so.
+`sudo dockmesh setup apply --file <setup file>` sets up a new server without the browser, from a YAML file with the wizard's answers: a new installation (`admin`) or a restore of a system backup (`restore`). `dockmesh setup example` prints an annotated template. It is the same commit as the wizard's: on Linux as root it checks the server was never set up, checks the values and the data directory, runs `serve --check-config` as `dockmesh`, creates the database and the admin account (or restores the backup) as `dockmesh`, writes `/etc/dockmesh/dockmesh.env` and the unit, starts and enables the service and waits for it to answer, and puts everything back if a step fails. It refuses on a server that is set up.
 
-init creates the `dockmesh` user if needed, adds it to the `docker` group, hands the data root to it and writes the unit the same way as [`system write-unit`](#system-write-unit).
+```yaml
+data_dir: /var/lib/dockmesh
+admin:
+  username: admin
+  email: you@example.com
+  password_file: /root/dockmesh-admin-password
+address:
+  base_url: https://dockmesh.example.com:8080
+tls:
+  mode: internal
+```
+
+Secrets are never written into the file: the admin password is `admin.password_file` (a file with the password alone, at least 12 characters) or `admin.password_hash` (argon2id); a restore names `restore.backup_file` and, for an encrypted backup, the exported key in `restore.key_file`. Unknown keys, such as a plain `password:`, are refused. When the setup file or one of the files it names is readable by group or others, the command warns, for example `warning  /root/dockmesh-setup.yaml is readable by other users (mode 0644). Run: chmod 600 /root/dockmesh-setup.yaml`, and continues. A file the setup file names is called by its key (`the file admin.password_file names is readable by other users. Run chmod 600 on it`).
+
+`--dry-run` checks the file and the host and changes nothing. `--porcelain` prints `key=value` lines (`warning`, `url`, `fingerprint`, `admin`; `check=ok` with `--dry-run`) for the installer. As root, the setup file and every file it names must be regular files owned by root and, like their directories, writable only by root; a symlink is refused. Applies are serialized with the wizard's, and a failed apply puts everything back and leaves `dockmesh.service` stopped. Without root or outside Linux (a container, a source build, `make dev SETUP_FILE=<file>`) it sets up the data directory of `DOCKMESH_DATA_DIR` in place and writes no config or unit; `address.http_addr` and `tls` then come from the environment.
 
 ## setup new-code
 

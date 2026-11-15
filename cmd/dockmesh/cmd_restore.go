@@ -31,8 +31,9 @@ func runRestoreCmd(args []string) {
 
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ExitOnError)
-	from := fs.String("from", "", "path to a system-backup archive (.tar.gz or .tar.gz.age) — required")
+	from := fs.String("from", "", "path to a system-backup archive (.tar.gz or .tar.gz.age), - for stdin — required")
 	keyFile := fs.String("key", "", "backup key file exported from the original install, for encrypted archives")
+	keyFD := fs.Int("key-fd", 0, "read the backup key from this open file descriptor (set by setup apply)")
 	force := fs.Bool("force", false, "restore over a populated install (its files are kept next to the data and stacks directories)")
 	dryRun := fs.Bool("dry-run", false, "list what would be restored without writing anything")
 	_ = fs.Parse(args)
@@ -44,12 +45,20 @@ func runRestore(args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(*from)
+	// "-" reads the archive from stdin: root's setup apply passes a backup
+	// the service account may not open itself.
+	var f io.ReadCloser = os.Stdin
+	if *from != "-" {
+		if f, err = os.Open(*from); err != nil {
+			return err
+		}
+	}
+	defer f.Close()
+	key, err := readBackupKey(*keyFile, *keyFD)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	src, err := plaintextArchive(f, *keyFile)
+	src, err := plaintextArchive(f, key)
 	if err != nil {
 		return err
 	}
@@ -96,17 +105,51 @@ func runRestore(args []string) error {
 	return nil
 }
 
-// plaintextArchive returns the archive as plaintext, decrypting it with
-// the key file if it is age-encrypted.
-func plaintextArchive(f io.Reader, keyFile string) (io.Reader, error) {
-	var ids []age.Identity
-	if keyFile != "" {
-		b, err := os.ReadFile(keyFile)
+// maxBackupKey bounds a backup key file; a real one is a few hundred bytes.
+const maxBackupKey = 64 << 10
+
+// readBackupKey reads the key from path, or from an inherited descriptor:
+// root's setup apply passes a key the service account may not open, and
+// reopening /dev/fd/N would check its permissions again. Nil when neither
+// is given.
+func readBackupKey(path string, fd int) ([]byte, error) {
+	var r io.Reader
+	switch {
+	case fd > 2:
+		f := os.NewFile(uintptr(fd), "backup key")
+		if f == nil {
+			return nil, fmt.Errorf("--key-fd %d is not open", fd)
+		}
+		defer f.Close()
+		r = f
+	case path != "":
+		f, err := os.Open(path) // #nosec G304 -- the operator's key file
 		if err != nil {
 			return nil, err
 		}
-		if ids, err = secrets.ParseKeyFile(b); err != nil {
-			return nil, fmt.Errorf("--key: %w", err)
+		defer f.Close()
+		r = f
+	default:
+		return nil, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r, maxBackupKey+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxBackupKey {
+		return nil, errors.New("backup key file too large")
+	}
+	return b, nil
+}
+
+// plaintextArchive returns the archive as plaintext, decrypting it with
+// the key if it is age-encrypted.
+func plaintextArchive(f io.Reader, key []byte) (io.Reader, error) {
+	var ids []age.Identity
+	if key != nil {
+		var err error
+		if ids, err = secrets.ParseKeyFile(key); err != nil {
+			return nil, fmt.Errorf("backup key: %w", err)
 		}
 	}
 	r, err := restore.Plaintext(f, ids)

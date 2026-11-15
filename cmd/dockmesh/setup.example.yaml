@@ -1,0 +1,53 @@
+# Dockmesh setup file: the answers of the setup wizard, for installs
+# without a browser (Ansible, cloud-init). Apply it on a new server with
+#   curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_SETUP_FILE=/root/dockmesh-setup.yaml bash
+# or, once the installer ran, with
+#   sudo dockmesh setup apply --file /root/dockmesh-setup.yaml
+# Check it first with --dry-run. Keep the file and every file it names
+# readable by root only (chmod 600): Dockmesh warns otherwise.
+#
+# Use either admin (a new installation) or restore (bring back a system
+# backup); not both.
+
+# Where Dockmesh keeps its database, keys and stacks. It must be empty or
+# not exist yet. Default: /var/lib/dockmesh
+data_dir: /var/lib/dockmesh
+
+# New installation: the first admin account.
+admin:
+  # 3 to 32 characters: a-z, 0-9, dot, dash, underscore. Default: admin
+  username: admin
+  # Optional.
+  email: you@example.com
+  # The password, at least 12 characters, alone in a file. Plain text
+  # passwords are not accepted in this file.
+  password_file: /root/dockmesh-admin-password
+  # Or instead of password_file, an argon2id hash:
+  # password_hash: $argon2id$v=19$m=65536,t=3,p=4$...
+
+# Restore from a system backup instead of admin. The accounts, settings
+# and stacks come from the backup.
+# restore:
+#   backup_file: /root/dockmesh-backup.tar.gz.age
+#   # The backup key file exported from the old server, for an encrypted
+#   # backup.
+#   key_file: /root/dockmesh-backup-key.txt
+
+address:
+  # The address users and agents use. Default: <first IP>:8080, https
+  # unless tls mode is caddy or proxy
+  base_url: https://dockmesh.example.com:8080
+  # Web listener. Default: :8080 (127.0.0.1:8080 with tls mode proxy).
+  # The agent port stays 8443.
+  http_addr: ":8080"
+
+tls:
+  # internal  certificate from Dockmesh's own CA (default); its SHA-256
+  #           fingerprint is printed when the setup is applied
+  # file      your own certificate: cert_file and key_file, readable by
+  #           the dockmesh user; reloaded when they change
+  # caddy     Caddy issues it (needs the reverse proxy)
+  # proxy     plain HTTP on 127.0.0.1 behind your own reverse proxy
+  mode: internal
+  # cert_file: /etc/ssl/dockmesh/fullchain.pem
+  # key_file: /etc/ssl/dockmesh/privkey.pem

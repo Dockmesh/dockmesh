@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -899,16 +900,17 @@ func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
 	return c, nil
 }
 
-func generatePassword(n int) (string, error) {
-	// Ambiguous characters (0/O, 1/l/I) intentionally excluded.
+// GeneratePassword returns n random characters from an alphabet without
+// look-alikes (0/O, 1/l/I).
+func GeneratePassword(n int) (string, error) {
 	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
 	out := make([]byte, n)
-	for i, v := range b {
-		out[i] = alphabet[int(v)%len(alphabet)]
+	for i := range out {
+		k, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		out[i] = alphabet[k.Int64()]
 	}
 	return string(out), nil
 }

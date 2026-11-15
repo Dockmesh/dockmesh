@@ -1,0 +1,3 @@
+kind: Added
+body: 'Unattended installs: dockmesh setup apply --file applies a YAML setup file with the setup wizard''s answers (a new install or a restore of a system backup) through the same commit as the wizard, with --dry-run and an annotated template from dockmesh setup example; the installer applies the file named by DOCKMESH_SETUP_FILE instead of starting setup mode, and make dev SETUP_FILE=<file> sets up a fresh dev data dir'
+time: 2026-11-15T00:54:05.517686326Z

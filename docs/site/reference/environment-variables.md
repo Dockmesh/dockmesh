@@ -36,7 +36,7 @@ The web setup wizard stores the address you enter as the **Base URL** and **Agen
 DOCKMESH_BASE_URL=https://dockmesh.example.com
 ```
 
-`dockmesh init` writes `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` into the file it creates; on those installs the environment wins over the Settings fields.
+Installs set up with `dockmesh init` before 0.6 have `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` in their config; there the environment wins over the Settings fields.
 
 ### Paths
 
@@ -125,17 +125,18 @@ Set these in front of `bash` when piping the installer, for example `curl -fsSL 
 | `DOCKMESH_CHANNEL` | `stable` | `stable` or `testing`; `testing` is deprecated and removed in 0.7.0, use `--version <tag>` |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Directory for `dockmesh`, `dmctl` and `grype` |
 | `DOCKMESH_ASSET_DIR` | `<install-dir>/../share/dockmesh` | Agent installer and agent binaries |
-| `DOCKMESH_DATA_DIR` | the data root of an earlier install; otherwise `/var/lib/dockmesh` (Linux) or `/usr/local/var/dockmesh` (macOS) | Data root. Setting it to a different directory than an earlier install's stops the script |
+| `DOCKMESH_DATA_DIR` | the data root of an earlier install | On an upgrade, the data root of the earlier install; a different directory than the one its config names stops the script. Not used on a new Linux install (the setup wizard or setup file chooses); on macOS the data root of a new install (default `/usr/local/var/dockmesh`) |
 | `DOCKMESH_NO_SUDO` | `0` | `1` runs without `sudo` |
 | `DOCKMESH_FORCE` | `0` | `1` reinstalls even if the same version is installed |
 | `DOCKMESH_NO_SCANNER` | `0` | `1` skips installing Grype |
 | `DOCKMESH_SKIP_CHECKSUM` | `0` | `1` installs without checking the signature or the release tarball against `checksums.txt`; the binary runs as root, so only for a build you verified yourself |
 | `DOCKMESH_SKIP_SIGNATURE` | `0` | `1` trusts `checksums.txt` without checking its minisign signature and prints a warning; needed for releases before v0.6.0 and hosts without OpenSSL 3, see [Verify a release](../operations/verify-release.md) |
 | `DOCKMESH_SKIP_DOWNLOAD` | `0` | `1` uses the binary already in the install directory |
-| `DOCKMESH_NO_BOOTSTRAP` | `0` | `1` skips creating the service user, env file and service; run `dockmesh init` yourself |
+| `DOCKMESH_NO_BOOTSTRAP` | `0` | `1` on a new Linux install creates the service user, data root and units but does not start setup mode |
+| `DOCKMESH_SETUP_FILE` | unset | Setup file to apply instead of starting setup mode, on a new Linux install (see `dockmesh setup apply`) |
 | `NO_COLOR` | unset | Any value disables colours |
 
-`dockmesh init` also honours `DOCKMESH_ASSET_DIR` when it writes `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_DIR`.
+The config a setup writes points `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_DIR` at `share/dockmesh` next to the directory of the `dockmesh` binary.
 
 ## install-agent.sh
 

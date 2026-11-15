@@ -81,6 +81,12 @@ func serviceAccount() (uint32, uint32, error) {
 // maxUnitPathsOutput bytes of its stdout. Root uses it for anything that
 // parses or rewrites files that account owns.
 func runAsService(ctx context.Context, binary string, timeout time.Duration, args ...string) ([]byte, error) {
+	return runAsServiceIO(ctx, binary, timeout, nil, nil, args...)
+}
+
+// runAsServiceIO is runAsService with stdin and extra open files (fd 3
+// onward), for files root may open but the service account may not.
+func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, args ...string) ([]byte, error) {
 	uid, gid, err := serviceAccount()
 	if err != nil {
 		return nil, err
@@ -90,6 +96,8 @@ func runAsService(ctx context.Context, binary string, timeout time.Duration, arg
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
+	cmd.Stdin = stdin
+	cmd.ExtraFiles = extra
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:     true,
 		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}},

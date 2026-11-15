@@ -121,7 +121,8 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
 | `DOCKMESH_DATA_DIR` | unset | On an upgrade, the data root of the earlier install, if the script can't find it at the default places; it must match the config the script finds. Not used on a new Linux install. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
-| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` on a new Linux install installs the binaries, the `dockmesh` user, the data root and the units, but does not start setup mode. Start it later with `sudo systemctl start dockmesh && sudo dockmesh setup new-code`. |
+| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` on a new Linux install installs the binaries, the `dockmesh` user, the data root and the units, but does not start setup mode. Start it later with `sudo systemctl start dockmesh && sudo dockmesh setup new-code`, or apply a setup file with `sudo dockmesh setup apply --file <file>`. |
+| `DOCKMESH_SETUP_FILE` | unset | Absolute path of a [setup file](#install-without-a-browser) to apply instead of starting setup mode; new Linux installs only. |
 | `DOCKMESH_SKIP_DOWNLOAD` | unset | `1` uses a `dockmesh` binary you placed in the install directory yourself instead of downloading a release. It does not count as an earlier install. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
@@ -163,26 +164,20 @@ The data directory and service user answers do not relocate anything: the server
 
 Only one install runs at a time. Setup mode still serves plain HTTP, so the code and the admin password cross the network unencrypted: finish the wizard from a trusted network and keep port 8080 closed to everyone else until then.
 
-## Install with `dockmesh init`
+## Install without a browser
 
-`dockmesh init` is a terminal wizard that does the same job without a browser. Use it after a manual install. It must run as root to install the service.
+For Ansible, cloud-init and other installs without a browser, put the wizard's answers into a setup file and hand it to the installer. There is no setup mode and no setup code then:
 
 ```bash
-sudo dockmesh init
+# the template: run `dockmesh setup example` on any machine with Dockmesh
+# 0.6 or later, edit it, and copy it to the new server
+chmod 600 /root/dockmesh-setup.yaml
+curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_SETUP_FILE=/root/dockmesh-setup.yaml bash
 ```
 
-It asks for the data root, HTTP listen address, admin username and password (leave the password empty to generate one), public base URL, the agent connection URL (default `wss://<host>:8443/connect`), and whether to install and start the service. It then creates the database and admin account, writes `<data dir>/dockmesh.env` (with `DOCKMESH_HTTP_ADDR`, `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS` and the paths) and, on Linux, writes a hardened systemd unit to `/etc/systemd/system/dockmesh.service` (a copy stays in the data root), creates the `dockmesh` user, and starts the service. A generated password is printed once.
+The installer checks the file first (`dockmesh setup apply --dry-run`), prints a warning for any file that others may read, then applies it with `dockmesh setup apply --file` as its last step (`[6/6] Applying setup file`) and prints a box with the address, the certificate fingerprint when Dockmesh serves its own certificate, and the admin to sign in as. The file format is in the [CLI reference](../reference/dockmesh-cli.md#setup-apply). As root, the setup file and every file it names must belong to root, and they and their directories must be writable only by root. On a host with an earlier install the file is ignored with a warning and the run is an upgrade.
 
-| Flag | Default | Effect |
-|---|---|---|
-| `--yes` | off | Non-interactive: accept defaults, generate the admin password. Required when stdin is not a terminal. |
-| `--data-dir` | `/var/lib/dockmesh` (`/usr/local/var/dockmesh` on macOS) | Data root. |
-| `--listen` | `:8080` | HTTP listen address. |
-| `--admin-user` | `admin` | Admin username. |
-| `--base-url` | `http://<hostname>:<port>` | Public base URL. |
-| `--service` | `true` | Install and start a systemd unit (launchd on macOS). `--service=false` to skip. |
-
-Because `init` creates the admin itself, the server starts without setup mode and you go straight to the sign-in page. Re-running `init` is safe for the account: an existing admin keeps its password (reset it with `sudo -u dockmesh dockmesh admin reset-password --user admin`). It does write `dockmesh.env` again.
+`dockmesh init` still works as a wrapper on `setup apply` (`--yes` or `--file`), prints a deprecation warning and goes away in 0.7.0.
 
 ## Manual install from a release archive
 
@@ -200,8 +195,14 @@ tar -xzf dockmesh_linux_$ARCH.tar.gz
 sudo install -m 0755 dockmesh dmctl /usr/local/bin/
 sudo install -D -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent.sh
 sudo install -D -m 0755 -t /usr/local/share/dockmesh/bin dockmesh-agent-linux-amd64 dockmesh-agent-linux-arm64
-sudo dockmesh init
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin -G docker dockmesh
+sudo install -d -m 0750 -o dockmesh -g docker /var/lib/dockmesh
+sudo dockmesh system write-unit
+sudo systemctl enable --now dockmesh
+sudo dockmesh setup new-code
 ```
+
+Instead of the last two lines, `sudo dockmesh setup apply --file <setup file>` sets the server up from a [setup file](#install-without-a-browser).
 
 The `minisign` line checks the signature and that its trusted comment names `$VER`. Details and the rotation key are in [Verify a release](../operations/verify-release.md).
 

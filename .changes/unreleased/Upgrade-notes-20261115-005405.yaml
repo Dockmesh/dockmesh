@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'dockmesh init is deprecated and goes away in 0.7.0. It no longer asks questions: init --yes still sets up a server from its flags and writes the generated password to /root/dockmesh-admin-password (--password-file) instead of printing it, init --file applies a setup file; use dockmesh setup apply --file instead'
+time: 2026-11-15T00:54:05.906780544Z
+custom:
+    Audience: admins
+    Id: init-deprecated

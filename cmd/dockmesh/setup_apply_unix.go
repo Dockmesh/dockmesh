@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,13 @@ type setupApplier struct {
 	binary   string
 	log      *slog.Logger
 	now      func() time.Time
+	// fromFile is a setup file applied from the command line: the values
+	// come with the call, the result goes to report, and nobody polls.
+	fromFile bool
+	report   func(applyResult)
+	// restoreFrom (and restoreKey for an encrypted backup) restore a
+	// system backup instead of creating a new install.
+	restoreFrom, restoreKey *os.File
 }
 
 // failedSuffix marks what a failed setup-apply leaves behind; it is never
@@ -59,6 +67,10 @@ func (a *setupApplier) result(status, step string, err error) {
 	r := applyResult{Status: status, Step: step}
 	if err != nil {
 		r.Reason = err.Error()
+	}
+	if a.report != nil {
+		a.report(r)
+		return
 	}
 	data, _ := json.Marshal(r)
 	if werr := rootupdate.WriteServiceFile(a.reqDir, a.uid, setupResultFile, data); werr != nil {
@@ -86,50 +98,62 @@ func (a *setupApplier) run(ctx context.Context) error {
 		a.result(applyRefused, "values", err)
 		return nil
 	}
-	for _, f := range []string{v.TLSCertFile, v.TLSKeyFile} {
-		// Root reads the certificate for its health check; the account
-		// must not be able to point it elsewhere after the config check.
-		if f != "" {
-			if err := rootOwnedAncestors(filepath.Dir(f)); err != nil {
-				a.result(applyRefused, "values", fmt.Errorf("certificate file %s: %w", f, err))
-				return nil
-			}
-		}
+	a.commit(ctx, v)
+	return nil
+}
+
+// commit sets up a never set up server from v: target dir, config check,
+// data, config, unit, restart and health, rolling back on any failure.
+// Every outcome goes to a.result.
+func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
+	unlock, err := lockSetup()
+	if err != nil {
+		a.result(applyFailed, "lock", err)
+		return
+	}
+	defer unlock()
+	// Another apply may have finished while this one waited for the lock.
+	if mode := a.decide(); mode != setup.NeverSetUp {
+		a.result(applyRefused, "decide", fmt.Errorf("this server is %s; setup-apply only runs on a server that was never set up", mode))
+		return
+	}
+	if err := checkCertDirs(v); err != nil {
+		a.result(applyRefused, "values", err)
+		return
 	}
 	created, err := a.prepareTarget(v.DataDir)
 	if err != nil {
 		a.result(applyRefused, "data_dir", err)
-		return nil
+		return
 	}
 	envData, err := v.ConfigEnv(filepath.Join(filepath.Dir(filepath.Dir(a.binary)), "share", "dockmesh"))
 	if err != nil {
 		dropTarget(v.DataDir, created)
 		a.result(applyRefused, "config", err)
-		return nil
+		return
 	}
 	gid := configGID()
 	if err := layout.PrepareConfigDir(gid); err != nil {
 		dropTarget(v.DataDir, created)
 		a.result(applyFailed, "config", err)
-		return nil
+		return
 	}
 	candidate, err := writeRootConfig(layout.ConfigDir, ".dockmesh.env.new-", envData, gid)
 	if err != nil {
 		dropTarget(v.DataDir, created)
 		a.result(applyFailed, "config", err)
-		return nil
+		return
 	}
 	defer os.Remove(candidate)
 	if out, err := runAsService(ctx, a.binary, time.Minute, "serve", "--check-config", "--env-file", candidate); err != nil {
 		dropTarget(v.DataDir, created)
 		a.result(applyRefused, "check_config", fmt.Errorf("%w %s", err, strings.TrimSpace(string(out))))
-		return nil
+		return
 	}
-	if _, err := runAsService(ctx, a.binary, 5*time.Minute, "setup", "materialize",
-		"--state-dir", setup.StateDir(a.dataDir), "--data-dir", v.DataDir); err != nil {
+	if step, err := a.populate(ctx, v, candidate); err != nil {
 		a.setAside(v.DataDir)
-		a.result(applyFailed, "materialize", err)
-		return nil
+		a.result(applyFailed, step, err)
+		return
 	}
 
 	svc := &serverService{binary: a.binary}
@@ -137,50 +161,92 @@ func (a *setupApplier) run(ctx context.Context) error {
 	if err != nil {
 		a.setAside(v.DataDir)
 		a.result(applyFailed, "unit", err)
-		return nil
+		return
 	}
 	if err := os.Rename(candidate, layout.ConfigFile); err != nil {
 		a.setAside(v.DataDir)
 		a.result(applyFailed, "config", err)
-		return nil
+		return
 	}
 	if _, err := writeServerUnit(""); err != nil { //nolint:contextcheck // the unit writer runs its own short-lived children
 		a.rollBack(ctx, svc, prevUnit, v.DataDir, "unit", err)
-		return nil
+		return
 	}
 	a.result(applyRestarting, "restart", nil)
-	// The wizard polls the result every second; let it pass the restart
-	// on before the server stops.
-	time.Sleep(3 * time.Second)
+	if !a.fromFile {
+		// The wizard polls the result every second; let it pass the
+		// restart on before the server stops.
+		time.Sleep(3 * time.Second)
+	}
 	if err := systemctl(ctx, "restart", serverUnitName); err != nil {
 		a.rollBack(ctx, svc, prevUnit, v.DataDir, "start", err)
-		return nil
+		return
 	}
 	env, err := layout.ReadEnvFile(layout.ConfigFile)
 	if err != nil {
 		a.rollBack(ctx, svc, prevUnit, v.DataDir, "health", err)
-		return nil
+		return
 	}
 	paths := config.ResolvePaths(func(k string) string { return env[k] })
+	deadline := time.Now().Add(rootupdate.DefaultHealthTimeout)
 	health, client, err := healthProbe(env, paths)
+	// Without setup mode's PKI (a setup file) the server issues its
+	// certificate at the first start; the probe pins it once it exists.
+	for errors.Is(err, fs.ErrNotExist) && time.Now().Before(deadline) && ctx.Err() == nil {
+		time.Sleep(2 * time.Second)
+		health, client, err = healthProbe(env, paths)
+	}
 	if err != nil {
 		a.rollBack(ctx, svc, prevUnit, v.DataDir, "health", err)
-		return nil
+		return
 	}
 	svc.health, svc.client = health, client
-	deadline := time.Now().Add(rootupdate.DefaultHealthTimeout)
 	for !svc.Healthy(ctx, version.Version) {
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			a.rollBack(ctx, svc, prevUnit, v.DataDir, "health", errors.New("the server did not report healthy with the new config"))
-			return nil
+			return
 		}
 		time.Sleep(2 * time.Second)
 	}
 	if err := os.RemoveAll(setup.StateDir(a.dataDir)); err != nil {
 		a.log.Warn("setup state dir not removed", "err", err)
 	}
+	if a.fromFile {
+		// A setup file runs before setup mode ever started the service.
+		if err := systemctl(ctx, "enable", serverUnitName); err != nil {
+			a.log.Warn("dockmesh.service not enabled", "err", err)
+		}
+	}
 	a.result(applyApplied, "", nil)
-	return nil
+}
+
+// populate fills the new data dir as the service account: a restored
+// backup, or a new database with the admin. It returns the step name for
+// the result.
+func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candidate string) (string, error) {
+	switch {
+	case a.restoreFrom != nil:
+		args := []string{"restore", "--from", "-"}
+		var extra []*os.File
+		if a.restoreKey != nil {
+			extra = []*os.File{a.restoreKey}
+			args = append(args, "--key-fd", "3")
+		}
+		_, err := runAsServiceIO(ctx, a.binary, 30*time.Minute, a.restoreFrom, extra, append(args, "--env-file", candidate)...)
+		return "restore", err
+	case a.fromFile:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return "materialize", err
+		}
+		_, err = runAsServiceIO(ctx, a.binary, 5*time.Minute, bytes.NewReader(data), nil,
+			"setup", "materialize", "--data-dir", v.DataDir, "--values", "-")
+		return "materialize", err
+	default:
+		_, err := runAsService(ctx, a.binary, 5*time.Minute, "setup", "materialize",
+			"--state-dir", setup.StateDir(a.dataDir), "--data-dir", v.DataDir)
+		return "materialize", err
+	}
 }
 
 // decide runs the setup decision on this host itself; root never takes
@@ -213,6 +279,27 @@ func (a *setupApplier) values() (setup.ApplyValues, error) {
 // must belong to root and be writable by nobody else, so the account
 // cannot swap a parent for a symlink between these steps.
 func (a *setupApplier) prepareTarget(dir string) (created bool, err error) {
+	exists, err := a.checkTarget(dir)
+	if err != nil || exists {
+		return false, err
+	}
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		return false, err
+	}
+	if a.uid > math.MaxInt32 || a.gid > math.MaxInt32 {
+		_ = os.Remove(dir)
+		return false, errors.New("the dockmesh account has an out-of-range uid or gid")
+	}
+	if err := os.Lchown(dir, int(a.uid), int(a.gid)); err != nil {
+		_ = os.Remove(dir)
+		return false, err
+	}
+	return true, nil
+}
+
+// checkTarget is prepareTarget without changes: whether dir exists, and
+// why it cannot become the data dir.
+func (a *setupApplier) checkTarget(dir string) (exists bool, err error) {
 	if err := setup.CheckDataDirPath(dir); err != nil {
 		return false, err
 	}
@@ -222,27 +309,45 @@ func (a *setupApplier) prepareTarget(dir string) (created bool, err error) {
 	fi, err := os.Lstat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		if err := os.Mkdir(dir, 0o750); err != nil {
-			return false, err
-		}
-		if a.uid > math.MaxInt32 || a.gid > math.MaxInt32 {
-			_ = os.Remove(dir)
-			return false, errors.New("the dockmesh account has an out-of-range uid or gid")
-		}
-		if err := os.Lchown(dir, int(a.uid), int(a.gid)); err != nil {
-			_ = os.Remove(dir)
-			return false, err
-		}
-		return true, nil
+		return false, nil
 	case err != nil:
 		return false, err
 	case !fi.IsDir():
-		return false, fmt.Errorf("%s is not a directory", dir)
+		return true, fmt.Errorf("%s is not a directory", dir)
 	}
 	if owner, ok := fileOwner(fi); !ok || owner != a.uid {
-		return false, fmt.Errorf("%s exists and does not belong to the dockmesh account; choose a new directory", dir)
+		return true, fmt.Errorf("%s exists and does not belong to the dockmesh account; choose a new directory", dir)
 	}
-	return false, a.onlySetupLeftovers(dir)
+	return true, a.onlySetupLeftovers(dir)
+}
+
+// checkCertDirs refuses certificate files whose directories another
+// account could change: root reads them for its health check.
+func checkCertDirs(v setup.ApplyValues) error {
+	for _, f := range []string{v.TLSCertFile, v.TLSKeyFile} {
+		if f != "" {
+			if err := rootOwnedAncestors(filepath.Dir(f)); err != nil {
+				return fmt.Errorf("certificate file %s: %w", f, err)
+			}
+		}
+	}
+	return nil
+}
+
+// setupLockFile serializes setup-applies: the wizard's, run by the path
+// unit, and one from a setup file.
+const setupLockFile = "/run/dockmesh-setup.lock"
+
+func lockSetup() (func(), error) {
+	f, err := os.OpenFile(setupLockFile, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
 }
 
 // rootOwnedAncestors checks dir and every directory above it: a real
@@ -382,7 +487,16 @@ func (a *setupApplier) rollBack(ctx context.Context, svc *serverService, prevUni
 	errs = append(errs, svc.RestoreUnit(prevUnit), svc.DaemonReload(ctx),
 		systemctl(ctx, "restart", filepath.Base(layout.UpdatePathUnitFile)))
 	a.setAside(dir)
-	errs = append(errs, svc.Start(ctx))
+	// Quick retries can hit systemd's start limit; setup mode must still
+	// come back.
+	_ = systemctl(ctx, "reset-failed", serverUnitName)
+	if a.fromFile {
+		// A headless install never asked for setup mode; the service
+		// stays stopped until the file is fixed and applied again.
+		cause = fmt.Errorf("%w; dockmesh.service is left stopped", cause)
+	} else {
+		errs = append(errs, svc.Start(ctx))
+	}
 	if err := errors.Join(errs...); err != nil {
 		cause = fmt.Errorf("%w; the rollback did not finish: %w", cause, err)
 	}

@@ -18,6 +18,8 @@
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
 #    DOCKMESH_NO_BOOTSTRAP    1 to install binaries, user and units without
 #                             starting setup mode (Linux)
+#    DOCKMESH_SETUP_FILE      setup file (dockmesh setup example) to apply instead
+#                             of starting setup mode, on a new Linux install
 #    DOCKMESH_SKIP_DOWNLOAD   1 to use a binary already placed in the bin directory
 #    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
 #    DOCKMESH_SKIP_SIGNATURE  1 to trust checksums.txt without its signature: releases
@@ -516,6 +518,7 @@ if [ "$(id -u)" = "0" ] || [ "${DOCKMESH_NO_SUDO:-0}" = "1" ]; then
 fi
 SKIP_DOWNLOAD="${DOCKMESH_SKIP_DOWNLOAD:-0}"
 NO_BOOTSTRAP="${DOCKMESH_NO_BOOTSTRAP:-0}"
+SETUP_FILE="${DOCKMESH_SETUP_FILE:-}"
 SEP='·'; ARROW='→'
 if [ "$BOX_H" = "-" ]; then SEP='-'; ARROW='->'; fi
 
@@ -698,12 +701,24 @@ port_free() {
     return 0
   fi
 }
+if [ -n "$SETUP_FILE" ]; then
+  if [ "$IS_UPGRADE" = "1" ]; then
+    WARNINGS+=("DOCKMESH_SETUP_FILE is not used: this host has an earlier install, which is upgraded")
+    SETUP_FILE=""
+  elif [ "$OS" != "linux" ] || [ "$HAS_SYSTEMD" = "0" ]; then
+    die "DOCKMESH_SETUP_FILE needs Linux with systemd"
+  elif [ "$NO_BOOTSTRAP" = "1" ]; then
+    die "DOCKMESH_SETUP_FILE and DOCKMESH_NO_BOOTSTRAP exclude each other"
+  elif [ "${SETUP_FILE#/}" = "$SETUP_FILE" ] || ! $USE_SUDO test -f "$SETUP_FILE"; then
+    die "DOCKMESH_SETUP_FILE=$SETUP_FILE is not an absolute path to a file"
+  fi
+fi
 if [ "$IS_UPGRADE" = "0" ]; then
   for p in 8080 8443; do
     port_free "$p" || WARNINGS+=("port $p is in use; Dockmesh needs it")
   done
   if [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$OS" = "linux" ]; then
-    WARNINGS+=("DOCKMESH_DATA_DIR is not used by a new install: choose the data directory in the setup wizard")
+    WARNINGS+=("DOCKMESH_DATA_DIR is not used by a new install: choose the data directory in the setup wizard or the setup file")
   fi
 fi
 
@@ -1165,11 +1180,42 @@ fi
 write_unit || die "could not write /etc/systemd/system/dockmesh.service"
 N=$((N + 1)); step "$N" "Installing services" "dockmesh.service, dockmesh-update.path"
 
+if [ -n "$SETUP_FILE" ]; then
+  # The check runs first, so its warnings come before anything is applied.
+  if ! CHECK_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup apply --file "$SETUP_FILE" --dry-run --porcelain 2>&1)"; then
+    die "the setup file was refused: $(printf '%s\n' "$CHECK_OUT" | grep -v '^warning=' | tail -n 1)"
+  fi
+  while IFS= read -r w; do warn "$w"; done < <(printf '%s\n' "$CHECK_OUT" | sed -n 's/^warning=//p')
+  if ! APPLY_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup apply --file "$SETUP_FILE" --porcelain 2>&1)"; then
+    die "the setup file could not be applied: $(printf '%s\n' "$APPLY_OUT" | tail -n 1)"
+  fi
+  N=$((N + 1)); step "$N" "Applying setup file" "$SETUP_FILE"
+  lines=("$(kv url "$APPLY_OUT")" "")
+  fp="$(kv fingerprint "$APPLY_OUT")"
+  if [ -n "$fp" ]; then
+    lines+=("Your browser will warn about the certificate. Check that" "it shows this SHA-256 fingerprint before you continue:")
+    while IFS= read -r l; do lines+=("$l"); done < <(fingerprint_lines "$fp")
+    lines+=("")
+  fi
+  if [ -n "$(kv admin "$APPLY_OUT")" ]; then
+    lines+=("Sign in as $(kv admin "$APPLY_OUT").")
+  else
+    lines+=("Sign in with an account from the backup.")
+  fi
+  box "Dockmesh is running" "${lines[@]}"
+  say ""
+  say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
+  say ""
+  exit 0
+fi
+
 if [ "$NO_BOOTSTRAP" = "1" ]; then
   $USE_SUDO systemctl enable dockmesh >/dev/null 2>&1 || true
   box "Binaries installed" \
     "Start the setup with:" \
-    "  sudo systemctl start dockmesh && sudo dockmesh setup new-code"
+    "  sudo systemctl start dockmesh && sudo dockmesh setup new-code" \
+    "Or apply a setup file with:" \
+    "  sudo dockmesh setup apply --file <file>"
   say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
   say ""
   exit 0

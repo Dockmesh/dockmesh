@@ -12,7 +12,7 @@ import (
 
 func TestCompletionsKnowEveryCommand(t *testing.T) {
 	for name, script := range map[string]string{"bash": bashCompletion, "zsh": zshCompletion, "fish": fishCompletion} {
-		for _, want := range []string{"init", "reissue-server"} {
+		for _, want := range []string{"init", "reissue-server", "setup", "apply", "new-code"} {
 			if !strings.Contains(script, want) {
 				t.Errorf("%s completion lacks %s", name, want)
 			}
