@@ -182,3 +182,31 @@ func TestEnrollRejectedTokenIsFinal(t *testing.T) {
 		})
 	}
 }
+
+// A renewal the replaced identity left half done must not overwrite the
+// pair a new enrollment wrote, on this start or the next.
+func TestEnrollDropsUnfinishedRenewal(t *testing.T) {
+	mgr := newPKI(t)
+	srv := startEnrollServer(t, mgr, mgr.CACertPEM())
+	dir := t.TempDir()
+	certPath, keyPath := filepath.Join(dir, "agent.crt"), filepath.Join(dir, "agent.key")
+	for _, p := range []string{certPath + ".next", keyPath + ".next"} {
+		if err := os.WriteFile(p, []byte("old renewal"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := agentConfig{enrollURL: srv.URL + "/enroll", token: "tok", caFingerprint: mgr.CAFingerprint(), enrollCAFile: writeCAFile(t, mgr)}
+	if err := enroll(cfg, certPath, keyPath, filepath.Join(dir, "ca.crt"), filepath.Join(dir, "agent.url")); err != nil {
+		t.Fatal(err)
+	}
+	for start := 1; start <= 2; start++ {
+		if err := finishPendingRenewal(certPath, keyPath); err != nil {
+			t.Fatal(err)
+		}
+		for p, want := range map[string]string{certPath: "cert", keyPath: "key"} {
+			if got, err := os.ReadFile(p); err != nil || string(got) != want {
+				t.Fatalf("start %d: %s = %q (%v), want %q", start, filepath.Base(p), got, err, want)
+			}
+		}
+	}
+}
