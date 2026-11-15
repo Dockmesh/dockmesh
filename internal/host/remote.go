@@ -1008,14 +1008,14 @@ var (
 	ErrUnknownHost  = errors.New("unknown host")
 )
 
-type volumeInspecter interface {
+type volumeInspector interface {
 	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
 }
 
 // requireRemoteVolume checks the volume through the agent before the
 // export starts, so an agent without its own check doesn't create an
 // empty volume either. The agent relays Docker's error only as text.
-func requireRemoteVolume(ctx context.Context, h volumeInspecter, name string) error {
+func requireRemoteVolume(ctx context.Context, h volumeInspector, name string) error {
 	_, err := h.InspectVolume(ctx, name)
 	if err == nil {
 		return nil

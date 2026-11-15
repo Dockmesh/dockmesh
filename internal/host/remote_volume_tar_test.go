@@ -9,9 +9,9 @@ import (
 	"github.com/moby/moby/api/types/volume"
 )
 
-type fakeVolumeInspecter struct{ err error }
+type fakeVolumeInspector struct{ err error }
 
-func (f fakeVolumeInspecter) InspectVolume(context.Context, string) (volume.Volume, error) {
+func (f fakeVolumeInspector) InspectVolume(context.Context, string) (volume.Volume, error) {
 	return volume.Volume{}, f.err
 }
 
@@ -28,7 +28,7 @@ func TestRequireRemoteVolume(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := requireRemoteVolume(context.Background(), fakeVolumeInspecter{tc.err}, "pgdata")
+			err := requireRemoteVolume(context.Background(), fakeVolumeInspector{tc.err}, "pgdata")
 			var nf *docker.VolumeNotFoundError
 			if got := errors.As(err, &nf); got != tc.missing {
 				t.Fatalf("VolumeNotFoundError = %v, want %v (err %v)", got, tc.missing, err)
