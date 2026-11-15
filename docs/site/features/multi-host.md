@@ -77,7 +77,7 @@ The installer and binary routes on the agent port need no sign-in. They and `/en
 
 Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation in 0.6.x and goes away in 0.7.0; the script it serves downloads the binary from the agent port with the pin, but the script itself still travels over the web port. Each use writes a warning to the server log and counts against the same per-IP limit as the installer on the agent port, and admins get a notice at most once a day while the route is in use.
 
-Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server.
+Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server. The stack copies in `stacks/`, with the data of relative bind mounts, are not moved, so those stacks start with empty bind directories at the next deploy. On a host without a Dockmesh server, move `<old data directory>/stacks/` to `/var/lib/dockmesh-agent/stacks/` first and `chown -R dockmesh-agent:dockmesh-agent` it (skip the chown with `--as-root`). On a host that also runs the server, `/var/lib/dockmesh/stacks/` is the server's own stacks directory: never move it; copy only the directories of the stacks deployed to this agent.
 
 The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it). Without a binary for the host's architecture the installer stops.
 
@@ -89,7 +89,7 @@ The agent reads these from its environment (the installer puts them in `agent.en
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` (the installer writes `/var/lib/dockmesh-agent`) | Certificates, the saved agent URL, the stack mirror |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when only that directory holds an enrollment) | Certificates, the saved agent URL, the stack mirror |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint, `https://<agent host>:8443/enroll`. Required on first start |
 | `DOCKMESH_TOKEN` | none | Enrollment token. Required on first start |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA. Required to enroll over `https://` |
@@ -170,8 +170,7 @@ To bring the host back, add it again with **Add host** and run the new install c
 ## Limits
 
 - Rolling updates and stack cleanup are not supported on remote hosts.
-- Image pulls, volume and network create, remove and prune run on the local host only.
-- Vulnerability scans, image update detection and auto-scaling cover the local host only.
+- Image update detection covers the local host only.
 - Live deploy progress isn't reported for remote hosts.
 
 See also [Migration and drain](./migration-and-drain.md) and [Troubleshooting](../troubleshooting/troubleshooting.md).

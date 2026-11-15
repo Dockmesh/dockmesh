@@ -30,13 +30,9 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 | `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `1h` | Lifetime of host enrollment tokens, as a Go duration from `1m` to `720h`. Any other value stops the server at startup |
 | `DOCKMESH_TRUSTED_PROXIES` | unset | Used when **Trusted proxies** under **Settings → General** is empty: comma-separated IPs or CIDRs whose forwarding headers are believed. With neither, only localhost; with `DOCKMESH_TLS_MODE` `caddy` or `proxy`, the IP of `DOCKMESH_HTTP_ADDR` (none for a wildcard address) |
 
-The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, so agent install commands work without editing `dockmesh.env`. SSO callbacks and invite links don't read those settings; when you use them, also set the public URL in `dockmesh.env`:
+The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, and agent install commands, SSO callback URLs and invite links are built from them, so you don't need to edit `dockmesh.env`. A change under **Settings → General** applies without a restart.
 
-```bash
-DOCKMESH_BASE_URL=https://dockmesh.example.com
-```
-
-Installs set up with `dockmesh init` before 0.6 have `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` in their config; there the environment wins over the Settings fields.
+When `DOCKMESH_BASE_URL` or `DOCKMESH_AGENT_PUBLIC_URL` is set in `dockmesh.env`, it wins over the Settings field. Installs set up with `dockmesh init` before 0.6 have `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` in their config.
 
 ### Paths
 
@@ -65,7 +61,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_PROXY_ENABLED` | `false` | `true` turns the reverse proxy on while the `proxy_enabled` setting has never been saved. See the note below |
 | `DOCKMESH_PROXY_IMAGE` | `caddy:2.11.7` pinned by digest | Caddy image for the `dockmesh-proxy` container. While it is set, the Caddy version can't be switched from the UI or API |
 | `DOCKMESH_METRICS_AUTH` | `true` | Require a bearer token with `metrics.view` on `/metrics`. `false` makes it public |
-| `DOCKMESH_SETUP_FORCE` | `false` | Marks an install whose setup wizard has not finished: with no user accounts, the server starts in setup mode. Ignored once accounts exist. `install.sh` sets it; the web wizard removes it from `dockmesh.env` when it finishes |
+| `DOCKMESH_SETUP_FORCE` | `false` | Marks an install whose setup wizard has not finished: with no user accounts, the server starts in setup mode. Ignored once accounts exist. `install.sh` sets it on macOS (on Linux only installs before 0.6 have it); the web wizard removes it from `dockmesh.env` when it finishes |
 | `DOCKMESH_UPDATE_ROLLBACK_KEEP` | `3` | How many rollback tags per image container updates keep. Must be a positive number, or the server doesn't start |
 | `DOCKMESH_SKIP_PREMIGRATE_BACKUP` | unset | `1` or `true` skips the database copy (`<db>.pre-migrate-<time>.bak`) taken before schema migrations, for example when the disk is too full for it |
 
@@ -80,7 +76,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_OTEL_ENDPOINT` | empty | OTLP/gRPC endpoint for traces; empty disables tracing |
 | `DOCKMESH_OTEL_INSECURE` | `false` | Plaintext connection to the OTLP endpoint |
 
-Tracing does not start: initialisation fails with a resource schema conflict, which the server logs as a warning and continues without tracing.
+With `DOCKMESH_OTEL_ENDPOINT` set, the server sends traces of HTTP requests over OTLP/gRPC and logs `otel tracing enabled` at start. If the exporter can't be set up, it logs a warning and runs without tracing.
 
 ### Variables that are not read from the environment
 
@@ -100,7 +96,7 @@ Written by `install-agent.sh` to `/etc/dockmesh-agent/agent.env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when the agent is enrolled only there) | Agent state: certificate, key, CA, saved URL, staging and stack mirror. The installer writes it to `/etc/dockmesh-agent/agent.env`, which the agent also reads when started by hand |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when only that directory holds an enrollment) | Agent state: certificate, key, CA, saved URL, staging and stack mirror. The installer writes it to `/etc/dockmesh-agent/agent.env`, which the agent also reads when started by hand |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint on the agent port (`https://<host>:8443/enroll`), required on first start |
 | `DOCKMESH_TOKEN` | none | One-time enrollment token, required on first start. It stays in `agent.env` after enrollment |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 fingerprint of the server's agent CA. Required for enrollment over `https://`; the CA the server returns must match it |

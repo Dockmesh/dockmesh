@@ -45,7 +45,7 @@ For an update it stops `dockmesh.service`, writes a snapshot of the database nex
 
 Commands that write files (`admin`, `enroll`, `db`, `ca`, `secrets`, `import`, `restore`) create them as the user that runs the command. On a systemd install the service runs as `dockmesh`, so `sudo -u dockmesh dockmesh <command>` keeps file ownership consistent.
 
-Most commands open the database and apply pending migrations first. Loading the configuration creates `secrets.env` with a new JWT secret if it is missing, and commands that load the agent PKI (`ca export`, `doctor`, `enroll create`) create a CA if none exists yet.
+Most commands open the database and apply pending migrations first (`doctor`, `admin`, `ca`, `enroll` and `db`; `config show` and `secrets rotate` do not), with the same pre-migration snapshot as the server. Don't run a newer binary's commands against an install that still runs an older version: they migrate its database under it. Loading the configuration creates `secrets.env` with a new JWT secret if it is missing, and commands that load the agent PKI (`ca export`, `doctor`, `enroll create`) create a CA if none exists yet.
 
 ## Command overview
 
@@ -141,7 +141,7 @@ The command must run as root. It refuses on an install that is set up (`This ser
 sudo systemctl stop dockmesh
 sudo dockmesh restore --from ./dockmesh-system.tar.gz --dry-run
 sudo dockmesh restore --from ./dockmesh-system.tar.gz.age --key ./backup-key.txt --force
-sudo chown -R dockmesh:docker /var/lib/dockmesh
+sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
 ```
 
 Restores the database, stacks directory and data directory from a system backup archive. Stop the server first. The archive is unpacked next to the live files and checked (the database opens and migrates, at least one admin exists); only then are the files swapped in. A restore that stops halfway finishes on the next start of the server. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. Run as root, the restored files belong to root, hence the `chown` afterwards.

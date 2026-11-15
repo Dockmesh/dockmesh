@@ -82,7 +82,7 @@ The auto-scaler builds new replicas from the files on disk with nobody there to 
 - the stack's default environment override was never confirmed by a manual deploy, or
 - the stored rules are invalid.
 
-Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused** notice that says why, and the stack page shows the same as a banner. Review the files and deploy the stack once (or save the rules again when they are invalid); auto-scaling resumes on its next evaluation.
+Users who may deploy the stack get an **Auto-scaling of &lt;stack&gt; is paused** notice that says why, and the stack page shows the same as a banner. Review the files and deploy the stack once (or save the rules again when they are invalid); auto-scaling resumes on its next evaluation. The pause is not stored: it is checked again on every evaluation, so it lasts across restarts and upgrades as long as its cause does. Cooldowns are kept in memory and start over after a restart.
 
 Before you rely on it, note the limits:
 

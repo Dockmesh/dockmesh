@@ -33,7 +33,7 @@ A CPU rule states its unit:
 - **% of host**: the share of the whole host, as the charts show it. The default for new rules.
 - **% of one core**: 100 per busy core, as `docker stats` shows it.
 
-On a 4-core host, 80 % of one core is 20 % of the host. Rules created before the unit existed are labelled **% of one core** and behave as before; edit a rule to switch it. Memory is used memory as a share of the container's limit. The API field is `cpu_unit` (`host` or `core`); API clients that leave it out get `host`.
+On a 4-core host, 80 % of one core is 20 % of the host. Rules created before the unit existed and the built-in CPU rules are labelled **% of one core**; edit a rule to switch it. Memory is used memory as a share of the container's limit. The API field is `cpu_unit` (`host` or `core`); API clients that leave it out get `host`.
 
 ### Scope
 

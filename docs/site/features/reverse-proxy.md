@@ -19,7 +19,7 @@ Everything below happens on **Reverse proxy** in the sidebar, which has the tabs
 | Volumes | `dockmesh-caddy-data` (certificates), `dockmesh-caddy-config` (config) |
 | Labels | `dockmesh.managed=true`, `dockmesh.component=proxy` |
 
-Ports 80 and 443 must be free on the server host. The admin API has no authentication; it only answers on loopback and refuses requests from browsers on other sites. Any process on the server host can still reconfigure Caddy, so don't run untrusted workloads with host networking on the same machine.
+Ports 80 and 443 must be free on the server host. The admin API has no authentication of its own: only processes that can enter the socket directory (Dockmesh and root) can reach it, and it refuses requests from browsers. Anyone who can start containers on the server host (members of `docker`, users who may deploy stacks there) can bind-mount the directory and reach it too; see [Security hardening](../operations/hardening.md). If moving an older proxy container to the socket fails, that container keeps its admin API on `127.0.0.1:2019` and admins get a notice; while it shows, any process on the host can reconfigure Caddy.
 
 Caddy starts from the last config Dockmesh pushed (`caddy run --resume`), so a container that restarts on its own keeps serving its sites. Dockmesh also compares Caddy's running config with the saved sites every 30 seconds and pushes them again if they differ. On a server start the container is kept when it still matches the expected image and settings; otherwise it is replaced.
 
@@ -168,7 +168,7 @@ The API is `POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": tru
 
 The **Caddy** tab shows which Caddy version runs and the versions tested with your Dockmesh release, each pinned by digest. **Switch** replaces the container with the chosen version; sites are briefly unavailable. If Caddy doesn't come up with the current config, Dockmesh starts the previous version again and reports the switch as failed. **Go back** returns to the version before the last switch, whose image is kept until the next switch. The proxy has to be running to switch.
 
-Without a chosen version, the proxy follows the default of each Dockmesh release. When a newer default is available, the page header shows "*version* recommended", and the version also appears on the **Updates** page (see [Image updates](./image-updates.md)).
+Without a chosen version, the proxy follows the default of each Dockmesh release: on the first start after an upgrade that changes the default, the container is replaced with the new version and sites are briefly unavailable. A chosen version that the new release no longer ships falls back to the default as well. When a newer default is available, the page header shows "*version* recommended", and the version also appears on the **Updates** page (see [Image updates](./image-updates.md)).
 
 With `DOCKMESH_PROXY_IMAGE` set in the server environment, Dockmesh runs that image and the version can't be changed here.
 
@@ -207,7 +207,7 @@ Expiring certificates also show up elsewhere:
 
 The **Activity** tab merges certificate events (obtained, renewed, failed) from Caddy's log with the sites created in the last 7 days. Certificate events are kept in memory, the last 200 since Caddy started; for the full log run `docker logs dockmesh-proxy`.
 
-The site page shows requests, p95 latency and 5xx errors when Caddy reports them. The config Dockmesh pushes doesn't turn on Caddy's HTTP metrics, so these figures usually stay empty.
+The site page shows requests, p95 latency and 5xx errors for the site, from Caddy's per-host HTTP metrics, which Dockmesh turns on in the config it pushes. The figures start when the site gets traffic.
 
 ## Using your own proxy instead
 

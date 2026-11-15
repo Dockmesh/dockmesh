@@ -89,7 +89,7 @@ Other pages, API error messages and `dmctl whoami -o json` name single permissio
 | Everything | every host and stack, and the instance-wide areas |
 | Host | one host, its containers, images, volumes, networks and stacks |
 | Host tag | every host carrying the tag, now and later |
-| Stack | one stack. Stack names are unique; a stack scope with a host covers the stack while it runs there, one without a host covers it anywhere, also before it is deployed |
+| Stack | one stack. Stack names are unique; a stack scope with a host covers the stack while it runs there (it stops applying when the stack is migrated to another host), one without a host covers it anywhere, also before it is deployed |
 
 Proxy, alert rules and notification channels, users and roles, settings, the audit log and the `/metrics` scrape are instance-wide. Only an assignment on **everything** grants them; a narrower assignment of the same role does not. Editing host tags, adding new hosts, adding, editing and removing registries, creating, editing and deleting templates, other users' API tokens and the backup key are instance-wide for the same reason. Alert history, the registry list and hosts follow the scope.
 
@@ -123,4 +123,6 @@ Adding or removing an assignment, creating, changing or deleting a role, and cre
 
 ## Upgrading from v0.4
 
-The upgrade moves every user's role, the role's scopes and the user's host tags onto assignments that give the same access. Where that isn't possible, for example a scoped role combined with user host tags, the access is narrowed: such users get one assignment per host that matched at upgrade time. Custom roles get, per area, the highest level their old permissions fully covered. API tokens whose role was limited to more than one scope are revoked, because a token restriction holds one scope. Nothing gains access, except that the built-in roles follow the new definitions above. An admin notice lists every account, role and token that changed, with before and after.
+The upgrade moves every user's role, the role's scopes and the user's host tags onto assignments that give the same access. Where that isn't possible, for example a scoped role combined with user host tags, the access is narrowed: such users get one assignment per host that matched at upgrade time. Old permission keys are first translated to the current keys; a key that was split counts as all of its successors (for example `containers.view` and `stacks.view` also grant **See environment values**, which they allowed before). Custom roles then get, per area, the highest level whose keys they all held, and an extra only if they held every key of it.
+
+User host tags on a role without scope become host-tag assignments, also for tags no host carries yet; where a scoped role and the user's tags match no host, the user gets no assignment and the notice says so. API tokens whose role was limited to more than one scope are revoked, because a token restriction holds one scope. Nothing gains access, except that the built-in roles follow the new definitions above. An admin notice lists every account, role and token that changed, with before and after.

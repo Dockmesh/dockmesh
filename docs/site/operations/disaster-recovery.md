@@ -7,7 +7,7 @@ When the Dockmesh server goes down, containers keep running: on the local host D
 
 ## What to keep safe
 
-Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). If `/data` existed at install time, `install.sh` used `/data` instead; replace the paths and pass `--env-file /data/dockmesh.env` to `dockmesh` commands. Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
+Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). Installs that use another data root, such as `/data` from an older release, keep it in their config; replace the paths accordingly and pass `--env-file <config>` to `dockmesh` commands when the config is not at one of the places listed below. Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
 
 | Path | Contents | Lost means |
 |---|---|---|
@@ -20,7 +20,7 @@ Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). If `/
 | `stacks/` | `compose.yaml`, `.env` / `.env.age`, metadata per stack, and the data of relative bind mounts of stacks on the server's host | Stack definitions |
 | `dockmesh.env` | Server configuration (`DOCKMESH_*` variables) | Settings made only there, e.g. `DOCKMESH_BASE_URL` |
 
-A system backup covers the database, `stacks/` and `data/` (without `data/backups`). It does **not** include `dockmesh.env` (it sits one level above `data/`) or any Docker volume. Keep a copy of `dockmesh.env` with your notes, and back up stateful stacks with their own stack jobs.
+A system backup covers the database, `stacks/` and `data/` (without `data/backups`). It does **not** include `dockmesh.env` (it lives in `/etc/dockmesh`, or one level above `data/` on installs from before 0.6) or any Docker volume. Keep a copy of `dockmesh.env` with your notes, and back up stateful stacks with their own stack jobs.
 
 ## Export the age key
 
@@ -94,14 +94,13 @@ If the command stops halfway, run it again or start the server: the swap finishe
 
 ### 4. Fix configuration and ownership
 
-After a command-line restore, the restored files belong to root. The fresh install also left `DOCKMESH_SETUP_FORCE=true` in its env file; the server ignores it once an admin exists, but warns about it on every start.
+After a command-line restore, the restored files belong to root. Hand them to the service account (use `dockmesh:dockmesh` if your data root is owned that way, as on installs moved off root by an upgrade):
 
 ```bash
-sudo sed -i '/^DOCKMESH_SETUP_FORCE=/d' /var/lib/dockmesh/dockmesh.env
 sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
 ```
 
-Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on). Settings changed in the UI are in the database and came back with it. Then check and start:
+A fresh Linux install has no `dockmesh.env` until the setup wizard writes it, so the restored server runs on the default paths. Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on) into `/etc/dockmesh/dockmesh.env`, owned by root, group `dockmesh`, mode 0640. Settings changed in the UI are in the database and came back with it. Then check and start:
 
 ```bash
 sudo -u dockmesh dockmesh doctor
@@ -115,6 +114,8 @@ Sign in with an account of the restored install.
 A system restore brings back stack definitions, not containers or volume data. For each stateful stack, open its latest stack run under **Backups** → **Runs** and click **Restore…** (see [Backups](./backups.md#restore)). Then deploy the stack. Stacks without volumes only need a deploy.
 
 Point DNS or your load balancer for the server's public name at the new machine, so agents and users find it.
+
+The restored install knows only the backup runs up to the archive you restored. Archives that the old server wrote after it stay on the targets, are not listed and are never pruned; delete them by hand. Settings that hold absolute paths (`backups.local_roots`, `backups.empty_path_dir`, local target paths, the audit archive folder) come back unchanged: when the new machine uses another data root, update them, then run `sudo dockmesh system write-unit` and restart the service. Files in the live data directory that the archive does not contain (for example `secrets.age-key.history` or `*.old` certificates of the fresh install) are kept next to the restored ones.
 
 ## Agents after a restore
 

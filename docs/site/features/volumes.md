@@ -30,7 +30,7 @@ Click a volume to open its page. **Overview** shows driver, mountpoint, scope, c
 
 ## Browsing files
 
-The **Files** tab shows the volume's content as a read-only file tree. Click a folder to open it, click a file to preview it. Text files up to 1 MiB are shown inline; of larger files only the first 1 MiB is shown, and binary files are not displayed. **Download** saves the content the preview loaded, so for files over 1 MiB you only get the first 1 MiB.
+The **Files** tab shows the volume's content as a read-only file tree. Click a folder to open it, click a file to preview it. Text files up to 1 MiB are shown inline; of larger files only the first 1 MiB is shown, and binary files are not displayed. **Download** saves the whole file, also files over 1 MiB and binary files. On an agent host this needs the agent version that ships with this server.
 
 You cannot upload, edit or delete files here. To change data in a volume, open a terminal in a container that mounts it, or use the container's **Files** tab (see [Containers](./containers.md)).
 

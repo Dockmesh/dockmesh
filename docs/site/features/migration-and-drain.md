@@ -15,6 +15,8 @@ The check runs when you start the migration (the API answers `409 Conflict` and 
 
 ## Migrate a stack
 
+An assignment on the stack that names a host covers the stack only on that host, so it stops applying once the stack runs on the target; assignments on the stack without a host follow it.
+
 1. Open the stack and click **Migrate** in the header. The button appears when you can deploy the stack and Dockmesh has more than one host.
 2. Pick the **Target host**. Dockmesh runs the **Pre-flight checks** and shows the result.
 3. If all checks pass, click **Start migration**.
