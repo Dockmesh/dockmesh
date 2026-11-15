@@ -104,7 +104,7 @@ func TestStartFailsInterruptedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.setRunPath(ctx, id, "jobs/x/partial.tar.gz"); err != nil {
+	if err := svc.store.setRunPath(ctx, id, "jobs/x/partial.tar.gz", nil); err != nil {
 		t.Fatal(err)
 	}
 	svc.FailInterruptedRuns(ctx)

@@ -152,7 +152,14 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.syncBackupNameNotice(r)
-	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+job.Name, nil)
+	var details map[string]any
+	if job.TargetID != prev.TargetID {
+		details = map[string]any{
+			"job_id": job.ID, "target_id": job.TargetID, "previous_target_id": prev.TargetID,
+			"runs_at_previous_location": job.RunsAtPreviousLocation,
+		}
+	}
+	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+job.Name, details)
 	writeJSON(w, http.StatusOK, redactJob(job))
 }
 
@@ -378,6 +385,9 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	src, err := h.Backups.ReadRun(r.Context(), id)
+	if writeArchiveMissing(w, err) {
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -506,6 +516,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	op.Finish(err)
 	var inUse *backup.VolumeInUseError
 	switch {
+	case writeArchiveMissing(w, err):
+		return
 	case errors.Is(err, errOwnVolume):
 		writeError(w, http.StatusForbidden, err.Error())
 		return
@@ -685,4 +697,14 @@ func (h *Handlers) stackEnvValues(name string) []string {
 		return nil
 	}
 	return operations.EnvValues(d.Env)
+}
+
+// writeArchiveMissing answers a run whose archive is not where it was
+// looked for: 404 with the explanation of where it most likely is.
+func writeArchiveMissing(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, backup.ErrArchiveMissing) {
+		return false
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error(), "code": "archive_not_found"})
+	return true
 }

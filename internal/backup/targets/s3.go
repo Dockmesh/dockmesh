@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -78,6 +79,15 @@ func (s *S3) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 func (s *S3) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 	obj, err := s.client.GetObject(ctx, s.cfg.Bucket, s.objectKey(path), minio.GetObjectOptions{})
 	if err != nil {
+		return nil, err
+	}
+	// GetObject is lazy; without the stat a missing key only shows on the
+	// first read, as an error that doesn't say the archive is gone.
+	if _, err := obj.Stat(); err != nil {
+		_ = obj.Close()
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, fmt.Errorf("s3: %s: %w", s.objectKey(path), fs.ErrNotExist)
+		}
 		return nil, err
 	}
 	return obj, nil

@@ -29,6 +29,10 @@ type StoredTarget struct {
 	unreadable       []string
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	// RunsAtPreviousLocation is set in the answer to a save that moved the
+	// target: the kept archives that stay at its earlier location and
+	// remain restorable from there.
+	RunsAtPreviousLocation int `json:"runs_at_previous_location,omitempty"`
 }
 
 type TargetInput struct {
@@ -118,20 +122,26 @@ func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*St
 	return s.Get(ctx, id)
 }
 
-// ErrTargetInUse refuses deleting a target that backup jobs write to;
-// runs of deleted jobs count too, their archives are read from it.
+// ErrTargetInUse refuses deleting a target that backup jobs write to or
+// that holds kept archives of runs, also of jobs that moved elsewhere or
+// were deleted: they are read from it with its credentials.
 var ErrTargetInUse = errors.New("backup target is used by backup jobs or their archives")
+
+// targetInUse takes the target id twice.
+const targetInUse = `(EXISTS (SELECT 1 FROM backup_jobs WHERE target_id = ?)
+	OR EXISTS (SELECT 1 FROM backup_runs WHERE target_id = ?
+		AND status IN ('success', 'success_with_warnings') AND pruned_at IS NULL
+		AND COALESCE(target_path, '') != ''))`
 
 func (s *TargetStore) Delete(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx, `
-		DELETE FROM backup_targets WHERE id = ?
-		  AND NOT EXISTS (SELECT 1 FROM backup_jobs WHERE target_id = ?)`, id, id)
+		DELETE FROM backup_targets WHERE id = ? AND NOT `+targetInUse, id, id, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var inUse bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM backup_jobs WHERE target_id = ?)`, id).Scan(&inUse); err == nil && inUse {
+		if err := s.db.QueryRowContext(ctx, `SELECT `+targetInUse, id, id).Scan(&inUse); err == nil && inUse {
 			return ErrTargetInUse
 		}
 	}
