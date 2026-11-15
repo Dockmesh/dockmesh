@@ -315,3 +315,65 @@ func TestParallelGuessesStayWithinLimit(t *testing.T) {
 		t.Fatalf("%d parallel guesses from one address were checked, want at most 5", checked)
 	}
 }
+
+func TestCountersSurviveRestart(t *testing.T) {
+	c, path, clock := newTestCodes(t)
+	code := writeTestCode(t, path, clock.t)
+	counters := filepath.Join(t.TempDir(), "code-counters.json")
+	if err := c.PersistCounters(counters); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 20 {
+		ip := "192.0.2." + string(rune('a'+i/5))
+		if _, err := c.Redeem(ip, "AAAA-AAAA-AAAA"); err == nil {
+			t.Fatal("wrong code accepted")
+		}
+	}
+
+	// A restart: new Codes on the same files.
+	after := NewCodes(path)
+	after.now = clock.now
+	if err := after.PersistCounters(counters); err != nil {
+		t.Fatal(err)
+	}
+	if after.State() != CodeLocked {
+		t.Fatalf("state after a restart = %v, want locked", after.State())
+	}
+	if _, err := after.Redeem("192.0.2.250", code); redeemErr(t, err).State != CodeLocked {
+		t.Fatal("a restart reset the 20-failure lock")
+	}
+
+	// The per-address limit survives too.
+	c2, path2, clock2 := newTestCodes(t)
+	code2 := writeTestCode(t, path2, clock2.t)
+	counters2 := filepath.Join(t.TempDir(), "code-counters.json")
+	if err := c2.PersistCounters(counters2); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		_, _ = c2.Redeem("192.0.2.1", "AAAA-AAAA-AAAA")
+	}
+	restarted := NewCodes(path2)
+	restarted.now = clock2.now
+	if err := restarted.PersistCounters(counters2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Redeem("192.0.2.1", code2); !redeemErr(t, err).RateLimited {
+		t.Fatal("a restart reset the per-address limit")
+	}
+}
+
+func TestBrokenCountersLockTheCode(t *testing.T) {
+	c, path, clock := newTestCodes(t)
+	code := writeTestCode(t, path, clock.t)
+	counters := filepath.Join(t.TempDir(), "code-counters.json")
+	if err := os.WriteFile(counters, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PersistCounters(counters); err == nil {
+		t.Fatal("broken counters read")
+	}
+	if _, err := c.Redeem("192.0.2.1", code); redeemErr(t, err).State != CodeLocked {
+		t.Fatal("unreadable counters reset the limits")
+	}
+}

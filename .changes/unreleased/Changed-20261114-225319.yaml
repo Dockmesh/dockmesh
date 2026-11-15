@@ -1,0 +1,3 @@
+kind: Changed
+body: Fresh installs and `dockmesh init` write the config straight to `/etc/dockmesh/dockmesh.env`, and a restart in the middle of setup comes back to the setup page
+time: 2026-11-14T22:53:19.350036168Z

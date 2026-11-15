@@ -1,0 +1,3 @@
+kind: Added
+body: 'A new install keeps its setup state in the data directory until setup finishes, and the root updater applies it: it checks the config with `dockmesh serve --check-config`, writes `/etc/dockmesh/dockmesh.env` and restarts, and a failed start goes back to setup mode with the new database kept as `dockmesh.db.failed-<time>`'
+time: 2026-11-14T22:53:18.950166018Z

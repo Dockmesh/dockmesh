@@ -48,10 +48,16 @@ const (
 // DefaultHealthTimeout is how long the new version gets to report healthy.
 const DefaultHealthTimeout = 180 * time.Second
 
-// Request is what the service asks for. Only Version is read.
+// Request is what the service asks for. Only Version is read for an
+// update; Type names another request, RequestSetupApply.
 type Request struct {
-	Version string `json:"version"`
+	Type    string `json:"type,omitempty"`
+	Version string `json:"version,omitempty"`
 }
+
+// RequestSetupApply asks root to commit the setup of a never set up
+// server.
+const RequestSetupApply = "setup-apply"
 
 // Pending is written to PendingFile from the stop of the old version until
 // the update is confirmed or rolled back. ResultFile is written before it

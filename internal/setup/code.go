@@ -7,10 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -155,11 +157,13 @@ type codeSession struct {
 }
 
 // Codes checks setup codes against CodeFile and keeps the one setup
-// session. Counters live in memory; the file is read on every check, so
-// `new-code` takes effect without a restart.
+// session. The file is read on every check, so `new-code` takes effect
+// without a restart. The wrong-code counters are kept in a file too once
+// PersistCounters named one, so a restart does not reset the limits.
 type Codes struct {
-	path string
-	now  func() time.Time
+	path     string
+	now      func() time.Time
+	counters string
 
 	verify sync.Mutex // one argon2id verification at a time
 
@@ -183,6 +187,76 @@ func NewCodes(path string) *Codes {
 		failed:   map[string]int{},
 		logged:   map[string]CodeState{},
 		replaced: map[[sha256.Size]byte]bool{},
+	}
+}
+
+// codeCounters is the content of the counters file.
+type codeCounters struct {
+	IPFails map[string][]time.Time `json:"ip_fails"`
+	Failed  map[string]int         `json:"failed"`
+}
+
+// maxCountersFile bounds the counters file; entries older than the
+// per-address window are dropped on every write.
+const maxCountersFile = 1 << 20
+
+// PersistCounters loads the wrong-code counters from path, when it
+// exists, and writes them there after every attempt.
+func (c *Codes) PersistCounters(path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.counters = path
+	f, err := os.Open(path) // #nosec G304 -- fixed name in the setup state dir
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var cc codeCounters
+	if err := json.NewDecoder(io.LimitReader(f, maxCountersFile)).Decode(&cc); err != nil {
+		// Counters that cannot be read may have been at the limit: the
+		// current code counts as used up until new-code.
+		if rec, ok := c.read(); ok {
+			c.failed[rec.Hash] = codeTotalLimit
+		}
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	for ip, ts := range cc.IPFails {
+		c.ipFails[ip] = ts
+	}
+	for h, n := range cc.Failed {
+		c.failed[h] = n
+	}
+	return nil
+}
+
+// saveLocked writes the counters when PersistCounters named a file; c.mu
+// must be held. A failed write is logged: the limits still hold in memory.
+func (c *Codes) saveLocked() {
+	if c.counters == "" {
+		return
+	}
+	now := c.now()
+	cc := codeCounters{IPFails: map[string][]time.Time{}, Failed: c.failed}
+	for ip, ts := range c.ipFails {
+		var keep []time.Time
+		for _, t := range ts {
+			if now.Sub(t) < codeIPWindow {
+				keep = append(keep, t)
+			}
+		}
+		if len(keep) > 0 {
+			cc.IPFails[ip] = keep
+		}
+	}
+	data, err := json.Marshal(cc)
+	if err == nil {
+		err = writeFileAtomic(c.counters, data)
+	}
+	if err != nil {
+		slog.Warn("setup code counters not saved", "path", c.counters, "err", err)
 	}
 }
 
@@ -274,6 +348,7 @@ func (c *Codes) Redeem(ip, code string) (string, error) {
 	}
 	c.ipFails[ip] = append(recent, now)
 	c.failed[rec.Hash]++
+	c.saveLocked()
 	c.mu.Unlock()
 
 	norm, valid := NormalizeCode(code)
@@ -294,6 +369,7 @@ func (c *Codes) Redeem(ip, code string) (string, error) {
 	if fails := c.ipFails[ip]; len(fails) > 0 {
 		c.ipFails[ip] = fails[:len(fails)-1]
 	}
+	c.saveLocked()
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
@@ -365,4 +441,26 @@ func WriteCodeRecord(path string, rec CodeRecord, gid int) error {
 		return err
 	}
 	return writeRootFile(path, data, gid)
+}
+
+// writeFileAtomic replaces path with data, 0600, through a temp file in
+// the same directory.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

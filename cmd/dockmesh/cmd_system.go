@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/url"
@@ -147,12 +148,19 @@ func unitEnvFlag(flag, loaded string, explicit bool) string {
 // unitConfigFile) and reloads systemd when it changed.
 func writeServerUnit(envFlag string) (bool, error) {
 	envFile, err := unitConfigFile(envFlag)
-	if err != nil {
+	optional := false
+	env := map[string]string{}
+	switch {
+	case errors.Is(err, errNoConfig) && envFlag == "":
+		// A new install: setup mode runs on the defaults until setup
+		// writes the config.
+		envFile, optional = layout.ConfigFile, true
+	case err != nil:
 		return false, err
-	}
-	env, err := layout.ReadEnvFile(envFile)
-	if err != nil {
-		return false, err
+	default:
+		if env, err = layout.ReadEnvFile(envFile); err != nil {
+			return false, err
+		}
 	}
 	paths := config.ResolvePaths(func(k string) string { return env[k] })
 	extra, err := settingsWritablePaths(paths.DBPath)
@@ -176,6 +184,7 @@ func writeServerUnit(envFlag string) (bool, error) {
 	unit := layout.ServerUnit{
 		Binary:              binary,
 		EnvFile:             envFile,
+		EnvOptional:         optional,
 		DataDir:             paths.DataDir,
 		WritablePaths:       layout.ServerWritablePaths(paths, extra...),
 		SupplementaryGroups: supplementaryGroups(envFile, env),
@@ -227,6 +236,8 @@ func enableUpdater(restart bool) error {
 	return nil
 }
 
+var errNoConfig = errors.New("no config found")
+
 // unitConfigFile is the env file the unit loads: the root-owned file in
 // /etc once it exists, else the given one, the one the unit names today or
 // an old default place. A symlink is never named, since its directory may
@@ -243,7 +254,7 @@ func unitConfigFile(given string) (string, error) {
 			return filepath.Clean(c), nil
 		}
 	}
-	return "", fmt.Errorf("no config found: neither %s nor an earlier env file exists", layout.ConfigFile)
+	return "", fmt.Errorf("%w: neither %s nor an earlier env file exists", errNoConfig, layout.ConfigFile)
 }
 
 // ensureServiceGroup returns the gid of the group the unit runs the

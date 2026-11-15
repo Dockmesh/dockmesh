@@ -258,7 +258,14 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "serve":
-			// fall through to server startup
+			if len(os.Args) > 2 && os.Args[2] == "--check-config" {
+				if err := checkServeConfig(); err != nil {
+					fmt.Fprintln(os.Stderr, "config check failed:", err)
+					os.Exit(1)
+				}
+				fmt.Println("config ok")
+				return
+			}
 		case "secrets":
 			runSecretsCmd(os.Args[2:])
 			return
@@ -327,9 +334,23 @@ func main() {
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
 	// over plain HTTP.
+	realDataDir := config.ResolvePaths(os.Getenv).DataDir
 	if !setupFacts.DB {
-		if _, err := setup.EnsureStateDir(config.ResolvePaths(os.Getenv).DataDir); err != nil {
+		if _, err := setup.EnsureStateDir(realDataDir); err != nil {
 			slog.Error("setup state dir", "err", err)
+			os.Exit(1)
+		}
+	}
+	// A new install runs setup mode on the state dir: nothing lands at
+	// the real paths until setup is applied, so a restart before that
+	// still finds a never set up server.
+	freshInstall := setup.Fresh(setupFacts)
+	if freshInstall {
+		for _, k := range []string{"DOCKMESH_STACKS_ROOT", "DOCKMESH_SECRETS_PATH", "DOCKMESH_SECRETS_KEY_PATH", "DOCKMESH_AUDIT_GENESIS_PATH"} {
+			_ = os.Unsetenv(k)
+		}
+		if err := os.Setenv("DOCKMESH_DATA_DIR", setup.StateDir(realDataDir)); err != nil {
+			slog.Error("point the data dir at the setup state dir", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -414,8 +435,13 @@ func main() {
 	var webLeaf *x509.Certificate
 	if setupState.Active() {
 		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
-		if setup.ServesTLS(setupFacts, cfg.DataDir) {
-			cert, err := setupCertificate(cfg)
+		if freshInstall {
+			if err := setupState.Codes().PersistCounters(filepath.Join(setup.StateDir(realDataDir), "code-counters.json")); err != nil {
+				slog.Warn("setup code counters", "err", err)
+			}
+		}
+		if setup.ServesTLS(setupFacts, realDataDir) {
+			cert, err := setupCertificate(realDataDir, cfg.BaseURL)
 			if err != nil {
 				slog.Error("setup certificate", "err", err)
 				os.Exit(1)
@@ -1144,6 +1170,10 @@ func main() {
 			}
 		}
 		return nil
+	}
+
+	if freshInstall {
+		setupCommit = freshSetupCommit(realDataDir, requestRestart)
 	}
 
 	noticesSvc.RunChecks(ctx)

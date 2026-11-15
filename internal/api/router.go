@@ -71,6 +71,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.With(middleware.RequireSetupHeader).Post("/setup/code", h.SetupCode)
 		r.Get("/setup/preflight", h.SetupPreflight)
 		r.Get("/setup/server-info", h.SetupServerInfo)
+		r.Get("/setup/disks", h.SetupDisks)
 		r.With(middleware.RequireSetupHeader).Post("/setup/validate-data-dir", h.SetupValidateDataDir)
 		r.With(middleware.RequireSetupHeader).Post("/setup/validate-user", h.SetupValidateUser)
 		r.With(middleware.RequireSetupHeader).Post("/setup/test-url", h.SetupTestURL)

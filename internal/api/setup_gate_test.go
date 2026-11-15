@@ -134,6 +134,7 @@ func TestSetupModeUIRoutesWithoutSession(t *testing.T) {
 		{path: "/api/v1/docs"},
 		{path: "/api/v1/setup/preflight"},
 		{path: "/api/v1/setup/server-info"},
+		{path: "/api/v1/setup/disks"},
 		{path: "/api/v1/stacks/x.js"},
 		{path: "/ws/logs/x.js"},
 		{path: "/ws/exec/x.js"},

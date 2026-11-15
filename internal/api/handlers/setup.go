@@ -125,6 +125,20 @@ func (h *Handlers) SetupServerInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, si)
 }
 
+// SetupDisks lists the mounted filesystems for the data dir step:
+// mountpoint, type and space only, never directory contents.
+func (h *Handlers) SetupDisks(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	disks, err := setup.ListDisks()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"disks": disks})
+}
+
 // SetupValidateDataDir is the live-validate Step 2 endpoint. Body:
 // `{ "path": "/data" }`. Returns the DataDirCheck struct verbatim.
 func (h *Handlers) SetupValidateDataDir(w http.ResponseWriter, r *http.Request) {

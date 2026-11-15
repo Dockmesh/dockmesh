@@ -402,9 +402,15 @@
         if (data.status === 'fail') installFailed = data.message;
       } catch { /* ignore malformed frame */ }
     });
-    eventSource.addEventListener('end', () => {
+    eventSource.addEventListener('end', async () => {
       eventSource?.close();
       eventSource = null;
+      // A new install restarts on the config setup wrote; the login
+      // only works once it is back.
+      if (!installFailed && streamLines.some((l) => l.step === 'restart' && l.status === 'ok')) {
+        installMsg = m.setup_restarting();
+        if (!(await waitForRestart())) installFailed = m.setup_restart_timeout();
+      }
       installing = false;
       installMsg = '';
       // A failed install shows its error instead of the credentials.

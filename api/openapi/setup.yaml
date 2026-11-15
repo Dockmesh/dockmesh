@@ -58,6 +58,40 @@ paths:
                   docker_version: {type: string}
                   uptime_secs: {type: integer}
                   tls_fingerprint: {type: string, description: "SHA-256 of the certificate setup mode serves, as colon-separated hex; absent over plain HTTP."}
+  /setup/disks:
+    get:
+      operationId: setup.disks
+      tags: [setup]
+      summary: Mounted filesystems for the data directory step
+      description: Mountpoint, filesystem type and space of each disk, with the suggested data directory. Pseudo filesystems and Docker's own directories are left out; network shares and filesystems without Unix permissions come back with `usable` false. Never lists directory contents. Answers 410 once setup is over.
+      security:
+        - setupSession: []
+      responses:
+        "401":
+          description: No setup session (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410": {description: Setup is over.}
+        "200":
+          description: The disks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  disks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mountpoint: {type: string}
+                        fs_type: {type: string}
+                        total_bytes: {type: integer}
+                        free_bytes: {type: integer}
+                        suggested: {type: string}
+                        usable: {type: boolean}
+                        reason: {type: string}
   /setup/validate-data-dir:
     post:
       operationId: setup.validate_data_dir
@@ -241,6 +275,14 @@ paths:
                     email: {type: string}
                     password: {type: string}
                 public_url: {type: string, format: uri}
+                tls:
+                  type: object
+                  description: What a new install serves after setup. Ignored for an install from 0.5.x that finishes its setup.
+                  properties:
+                    mode: {type: string, enum: [internal, file, caddy, proxy], description: "Defaults to internal: the setup certificate."}
+                    http_addr: {type: string, description: "Listen address; defaults to :8080, or 127.0.0.1:8080 for caddy and proxy."}
+                    cert_file: {type: string, description: Absolute PEM certificate path for mode file.}
+                    key_file: {type: string, description: Absolute PEM key path for mode file.}
       responses:
         "403": {description: "Missing the `X-Dockmesh-Setup` header."}
         "202":

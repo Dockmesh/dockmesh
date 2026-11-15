@@ -14,7 +14,7 @@ Group=dockmesh
 {{- if .SupplementaryGroups}}
 SupplementaryGroups={{join .SupplementaryGroups}}
 {{- end}}
-EnvironmentFile={{.EnvFile}}
+EnvironmentFile={{if .EnvOptional}}-{{end}}{{.EnvFile}}
 ExecStart={{.Binary}} serve
 Restart=on-failure
 RestartSec=5s

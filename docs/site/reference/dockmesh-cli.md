@@ -31,7 +31,9 @@ If your config lives elsewhere, pass `--env-file <path>` explicitly.
 - `request`, `checksums.txt`, `checksums.txt.minisig` and the archive must be regular files with a single link; symlinks, FIFOs, devices, directories and hard links are refused, and so are files above a size limit.
 - The minisign signature of `checksums.txt` is checked against the keys built into the installed binary, including the tag in its trusted comment. The archive is copied to `/var/lib/dockmesh-update/` (root only) and its SHA-256 is checked on that copy; the files that get installed are taken from that copy.
 
-It then stops `dockmesh.service`, writes a snapshot of the database next to it (`dockmesh.db.pre-update.bak`, made by a child process running as `dockmesh`), keeps the old binary as `/usr/local/bin/dockmesh.prev`, installs the new `dockmesh`, `dmctl`, agent binaries and `install-agent.sh`, runs the new binary's `system write-unit`, and starts the service. If the new version does not answer `/api/v1/health` with its version within 180 seconds, or any step fails, it puts back the binaries, the units and the database snapshot and starts the old version again. The outcome is written to `<data directory>/update/result.json`. Changes made in Dockmesh while the new version was running, at most those 180 seconds, are lost on such a rollback, audit entries included. Linux only.
+A request of type `setup-apply` finishes the setup of a new install instead; the wizard writes it. The updater runs it only when it finds, on its own, no config at any location, no database and no accounts, and refuses and logs it otherwise. It reads what the wizard entered from `<data directory>/.setup/apply.json` (the admin password only as an argon2id hash), checks every value, and creates the data directory the wizard chose (every directory above it must belong to root; an existing one only if it belongs to `dockmesh` and holds nothing but what setup leaves). It writes the new config to a temporary file in `/etc/dockmesh`, runs `dockmesh serve --check-config` with it as `dockmesh`, and only then has a child running as `dockmesh` create the database, the admin and the settings and copy the setup certificate into the data directory. The config is renamed to `/etc/dockmesh/dockmesh.env`, the unit is rewritten and the service restarted. A failed check changes nothing. If the new start does not answer healthy within 180 seconds, the config and every file the start created are renamed with a `.failed-<time>` suffix (never deleted), the old unit comes back and the server starts in setup mode again. The outcome is written to `<data directory>/update/setup-result.json`; `<data directory>/.setup/` is removed after a healthy start.
+
+For an update it stops `dockmesh.service`, writes a snapshot of the database next to it (`dockmesh.db.pre-update.bak`, made by a child process running as `dockmesh`), keeps the old binary as `/usr/local/bin/dockmesh.prev`, installs the new `dockmesh`, `dmctl`, agent binaries and `install-agent.sh`, runs the new binary's `system write-unit`, and starts the service. If the new version does not answer `/api/v1/health` with its version within 180 seconds, or any step fails, it puts back the binaries, the units and the database snapshot and starts the old version again. The outcome is written to `<data directory>/update/result.json`. Changes made in Dockmesh while the new version was running, at most those 180 seconds, are lost on such a rollback, audit entries included. Linux only.
 
 Commands that write files (`admin`, `enroll`, `db`, `ca`, `secrets`, `import`, `restore`) create them as the user that runs the command. On a systemd install the service runs as `dockmesh`, so `sudo -u dockmesh dockmesh <command>` keeps file ownership consistent.
 
@@ -65,7 +67,7 @@ An unknown subcommand prints the command list and exits with status 2. A failing
 dockmesh serve --env-file /var/lib/dockmesh/dockmesh.env
 ```
 
-Starts the web UI and REST API on `DOCKMESH_HTTP_ADDR` (default `:8080`) and the agent listener on `DOCKMESH_AGENT_LISTEN` (default `:8443`). The only flag is `--env-file`. On SIGINT or SIGTERM the server marks itself not ready, waits two seconds, then shuts down. The server never creates an account by itself. It starts in setup mode only on an install without accounts that has no env file, no database and no data, or whose env file still has `DOCKMESH_SETUP_FORCE=true`; any other install without accounts logs the `dockmesh admin create` command to run.
+Starts the web UI and REST API on `DOCKMESH_HTTP_ADDR` (default `:8080`, over HTTPS or HTTP as `DOCKMESH_TLS_MODE` says) and the agent listener on `DOCKMESH_AGENT_LISTEN` (default `:8443`). The flags are `--env-file` and `--check-config`, which only checks the config (TLS mode, listen address, a data directory the account can write, readable certificate files) without writing anything and exits 0 or 1. A new install runs setup mode over HTTPS with the certificate in `<data directory>/.setup/`, and keeps everything it creates there until setup is applied, so a restart before that comes back into setup mode. On SIGINT or SIGTERM the server marks itself not ready, waits two seconds, then shuts down. The server never creates an account by itself. It starts in setup mode only on an install without accounts that has no env file, no database and no data, or whose env file still has `DOCKMESH_SETUP_FORCE=true`; any other install without accounts logs the `dockmesh admin create` command to run.
 
 After a system restore was staged in the UI, the server exits with status 75 so the service manager starts it again; on that start it swaps the restored files in before it opens the database.
 
@@ -76,7 +78,7 @@ sudo dockmesh init
 sudo dockmesh init --yes --data-dir /var/lib/dockmesh --base-url https://dockmesh.example.com
 ```
 
-A command-line alternative to the web setup wizard. It walks through six steps (data directory, listen address, admin user, base URL, agent URL, service), creates `<data-dir>/data` and `<data-dir>/stacks`, creates the admin user, writes `<data-dir>/dockmesh.env` (mode `0600`) and, unless disabled, installs and starts a service (systemd on Linux, launchd on macOS). Interactive mode needs a terminal; use `--yes` in scripts.
+A command-line alternative to the web setup wizard. It walks through six steps (data directory, listen address, admin user, base URL, agent URL, service), creates `<data-dir>/data` and `<data-dir>/stacks`, creates the admin user, writes the config (as root on Linux to `/etc/dockmesh/dockmesh.env`, owner root, group `dockmesh`, mode `0640`; otherwise `<data-dir>/dockmesh.env`, mode `0600`) and, unless disabled, installs and starts a service (systemd on Linux, launchd on macOS). Interactive mode needs a terminal; use `--yes` in scripts.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -99,8 +101,11 @@ init creates the `dockmesh` user if needed, adds it to the `docker` group, hands
 ```
 Setup code   K7QD-3MXA-9PRT
 Valid until  16:05 (2 hours)
-Open http://192.168.10.50:8080/setup#K7QD-3MXA-9PRT
+Open https://192.168.10.50:8080/setup#K7QD-3MXA-9PRT
+Certificate  SHA-256 63:EC:84:70:…:E4:FF
 ```
+
+On a new install the link is `https://` and the last line is the SHA-256 fingerprint of the certificate setup mode serves; your browser warns about that certificate, so compare the fingerprint it shows before you go on. The wizard shows the same fingerprint on its first step.
 
 The code is 12 characters of Crockford base32; case and dashes don't matter when you type it. It is in the link's fragment (after `#`), which browsers never send to the server, and the wizard fills the field from it without submitting. Only an argon2id hash of the code and its expiry are stored, in `/etc/dockmesh/setup-code.hash` (owner root, the group of the data directory, mode 0640; if `/etc/dockmesh` belongs to another group, the command lets others enter it without listing it, and the files in it stay 0640 or 0600); the code itself is never stored or logged and can't be shown again. Each run replaces the previous code and ends a setup session opened with it.
 

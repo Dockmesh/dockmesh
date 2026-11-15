@@ -177,6 +177,15 @@ func (s *Service) CreateFirstUser(ctx context.Context, username, email, password
 	return s.createUser(ctx, username, email, password, role, true)
 }
 
+// CreateFirstUserHashed is CreateFirstUser for a password the setup
+// wizard already checked and hashed, so the plaintext never reaches disk.
+func (s *Service) CreateFirstUserHashed(ctx context.Context, username, email, hash, role string) (*User, error) {
+	if !strings.HasPrefix(hash, "$argon2id$") {
+		return nil, errors.New("not an argon2id password hash")
+	}
+	return s.insertUser(ctx, username, email, hash, role, true)
+}
+
 func (s *Service) createUser(ctx context.Context, username, email, password, role string, onlyFirst bool) (*User, error) {
 	if err := ValidatePassword(s.policy(), password); err != nil {
 		return nil, err
@@ -185,6 +194,10 @@ func (s *Service) createUser(ctx context.Context, username, email, password, rol
 	if err != nil {
 		return nil, err
 	}
+	return s.insertUser(ctx, username, email, hash, role, onlyFirst)
+}
+
+func (s *Service) insertUser(ctx context.Context, username, email, hash, role string, onlyFirst bool) (*User, error) {
 	id := uuid.NewString()
 	var emailNullable any
 	if email != "" {
