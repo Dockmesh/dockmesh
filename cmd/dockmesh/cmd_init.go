@@ -32,6 +32,7 @@ func runInit(args []string) error {
 	listen := fset.String("listen", "", "web listen address (default :8080)")
 	adminUser := fset.String("admin-user", "admin", "admin username")
 	baseURL := fset.String("base-url", "", "public base URL")
+	pwFile := fset.String("password-file", defaultInitPasswordFile(), "with --yes: new file that gets the generated admin password (mode 0600)")
 	_ = fset.Bool("service", true, "ignored: the service is always installed")
 	_ = fset.Bool("systemd", true, "ignored: the service is always installed")
 	_ = fset.Parse(args)
@@ -49,6 +50,11 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The password goes to a private file, never to the terminal: init
+	// runs under cloud-init and CI, which keep their output in logs.
+	if err := writeNewPrivateFile(*pwFile, password+"\n"); err != nil {
+		return fmt.Errorf("admin password file: %w", err)
+	}
 	f := setup.File{
 		DataDir: *dataDir,
 		Admin:   &setup.FileAdmin{Username: *adminUser, PasswordHash: hash},
@@ -60,6 +66,7 @@ func runInit(args []string) error {
 	}
 	res, err := applySetup(context.Background(), &setupFileRun{file: f, values: v}, false)
 	if err != nil {
+		_ = os.Remove(*pwFile)
 		return err
 	}
 	if res.Local {
@@ -70,6 +77,26 @@ func runInit(args []string) error {
 			fmt.Printf("Certificate  SHA-256 %s\n", res.Fingerprint)
 		}
 	}
-	fmt.Printf("Admin %s, password %s (shown only now).\n", res.Admin, password)
+	fmt.Printf("Sign in as %s; the password is in %s.\n", res.Admin, *pwFile)
 	return nil
+}
+
+func defaultInitPasswordFile() string {
+	if os.Geteuid() == 0 {
+		return "/root/dockmesh-admin-password"
+	}
+	return "dockmesh-admin-password"
+}
+
+// writeNewPrivateFile creates path, which must not exist, with mode 0600.
+func writeNewPrivateFile(path, content string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- the operator's own file
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

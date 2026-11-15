@@ -82,12 +82,12 @@ func TestLoadSetupFileWarnsReadable(t *testing.T) {
 	if err := os.Chmod(pw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	run, err := loadSetupFile(cfg)
+	_, warnings, err := loadSetupFile(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.warnings) != 1 || !strings.Contains(run.warnings[0], pw) {
-		t.Fatalf("warnings = %q", run.warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], pw) {
+		t.Fatalf("warnings = %q", warnings)
 	}
 }
 
@@ -160,5 +160,18 @@ func TestReadBackupKeyFromDescriptor(t *testing.T) {
 	}
 	if string(got) != "AGE-SECRET-KEY-1TEST\n" {
 		t.Fatalf("key = %q", got)
+	}
+}
+
+func TestWriteNewPrivateFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "pw")
+	if err := writeNewPrivateFile(p, "secret\n"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(p); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
+		t.Fatalf("stat %v %v", fi, err)
+	}
+	if err := writeNewPrivateFile(p, "other\n"); err == nil {
+		t.Fatal("an existing file was overwritten")
 	}
 }

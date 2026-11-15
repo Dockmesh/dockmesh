@@ -30,8 +30,6 @@ const maxPasswordFile = 4 << 10
 type setupFileRun struct {
 	file   setup.File
 	values setup.ApplyValues
-	// warnings are printed before anything is applied.
-	warnings []string
 }
 
 // appliedSetup is what a finished setup apply reports.
@@ -52,11 +50,11 @@ func runSetupApply(args []string) error {
 	if *path == "" {
 		return errors.New("usage: dockmesh setup apply --file <setup file> [--dry-run]")
 	}
-	run, err := loadSetupFile(*path)
+	run, warnings, err := loadSetupFile(*path)
 	if err != nil {
 		return err
 	}
-	for _, w := range run.warnings {
+	for _, w := range warnings {
 		if *porcelain {
 			fmt.Printf("warning=%s\n", w)
 		} else {
@@ -91,31 +89,33 @@ func runSetupApply(args []string) error {
 }
 
 // loadSetupFile reads and checks a setup file and the files it names,
-// and turns it into the values the wizard's commit takes.
-func loadSetupFile(path string) (*setupFileRun, error) {
+// and turns it into the values the wizard's commit takes. The warnings,
+// printed before anything is applied, only ever name paths and modes.
+func loadSetupFile(path string) (*setupFileRun, []string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	f, err := openOperatorFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	file, err := setup.ParseFile(f)
 	f.Close()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	run := &setupFileRun{file: file}
+	var warnings []string
 	for _, p := range append([]string{path}, file.SecretFiles()...) {
 		if w := setup.ReadableWarning(p); w != "" {
-			run.warnings = append(run.warnings, w)
+			warnings = append(warnings, w)
 		}
 	}
 	if run.values, err = setupFileValues(file); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return run, nil
+	return run, warnings, nil
 }
 
 // setupFileValues maps a setup file to ApplyValues. A password file is

@@ -90,7 +90,7 @@ sudo dockmesh init --file /root/dockmesh-setup.yaml
 sudo dockmesh init --yes --data-dir /var/lib/dockmesh --base-url https://dockmesh.example.com:8080
 ```
 
-`--file` is the same as `setup apply --file`. `--yes` builds the setup from `--data-dir`, `--listen`, `--admin-user` (default `admin`) and `--base-url`, generates a 20-character admin password, applies it exactly like a setup file and prints the password once. `--service` and `--systemd` are accepted and ignored. Without `--yes` or `--file` it stops with an error.
+`--file` is the same as `setup apply --file`. `--yes` builds the setup from `--data-dir`, `--listen`, `--admin-user` (default `admin`) and `--base-url`, generates a 20-character admin password, writes it to a new file (`--password-file`, default `/root/dockmesh-admin-password` as root, mode 0600; the file must not exist yet), applies it exactly like a setup file and prints the file's path, never the password. `--service` and `--systemd` are accepted and ignored. Without `--yes` or `--file` it stops with an error.
 
 ## setup apply
 
