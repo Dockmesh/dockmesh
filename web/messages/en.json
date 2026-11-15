@@ -6227,5 +6227,8 @@
   "sw_s3b_title": "Dockmesh is not answering",
   "sw_s3b_text": "Check the service on the server:",
   "sw_s3b_check": "Check again",
-  "sw_w1_again": "The restart ended this setup session. Enter the setup code again to continue."
+  "sw_w1_again": "The restart ended this setup session. Enter the setup code again to continue.",
+  "sw_r2_err_needs_key": "This backup is encrypted. Add the backup key file exported from the server it came from.",
+  "sw_r2_err_key": "The key file does not open this backup.",
+  "sw_r2_err_no_admin": "This backup contains no admin account, so nobody could sign in after the restore. On the server it came from, run sudo dockmesh admin create, make a new system backup and upload that one."
 }

@@ -707,6 +707,14 @@
   let restoreError = $state<string | null>(null);
   let restoreSummary = $state<string | null>(null);
 
+  function restoreErrorText(res: { error?: string; sanity?: { summary?: string; checks?: { name: string; status: string }[] } }, status: number): string {
+    const err = res.error ?? '';
+    if (err.includes('backup is encrypted')) return m.sw_r2_err_needs_key();
+    if (err.startsWith('decrypt backup') || err.startsWith('key file')) return m.sw_r2_err_key();
+    if (res.sanity?.checks?.some((c) => c.name === 'users.admin' && c.status === 'fail')) return m.sw_r2_err_no_admin();
+    return res.sanity?.summary ?? (err || `HTTP ${status}`);
+  }
+
   async function restore() {
     if (!restoreFile) return;
     restoreError = null;
@@ -730,7 +738,7 @@
       const res = await r.json().catch(() => ({}));
       if (!r.ok) {
         applying = false;
-        restoreError = res.sanity?.summary ?? res.error ?? `HTTP ${r.status}`;
+        restoreError = restoreErrorText(res, r.status);
         return go('R2');
       }
       const admins = (res.sanity?.checks ?? []).find((c: { name: string }) => c.name === 'users.admin')?.message;

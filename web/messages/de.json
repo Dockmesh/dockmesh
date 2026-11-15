@@ -6227,5 +6227,8 @@
   "sw_s3b_title": "Dockmesh antwortet nicht",
   "sw_s3b_text": "Prüfe den Dienst auf dem Server:",
   "sw_s3b_check": "Erneut prüfen",
-  "sw_w1_again": "Der Neustart hat diese Einrichtungssitzung beendet. Gib den Setup-Code erneut ein, um weiterzumachen."
+  "sw_w1_again": "Der Neustart hat diese Einrichtungssitzung beendet. Gib den Setup-Code erneut ein, um weiterzumachen.",
+  "sw_r2_err_needs_key": "Dieses Backup ist verschlüsselt. Füge die Backup-Schlüsseldatei hinzu, die du auf dem ursprünglichen Server exportiert hast.",
+  "sw_r2_err_key": "Die Schlüsseldatei öffnet dieses Backup nicht.",
+  "sw_r2_err_no_admin": "Dieses Backup enthält kein Admin-Konto, nach der Wiederherstellung könnte sich also niemand anmelden. Führe auf dem ursprünglichen Server sudo dockmesh admin create aus, erstelle ein neues Systembackup und lade dieses hoch."
 }
