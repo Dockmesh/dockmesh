@@ -3,11 +3,11 @@ package auth
 import (
 	"context"
 	"crypto/rand"
-	"math/big"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
