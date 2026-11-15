@@ -147,16 +147,22 @@
     // the server. Take it into the field, drop it from the address bar at
     // once and wait for Continue: opening the link again must not take
     // over a running setup.
-    if (window.location.hash) {
-      const code = codeFromFragment(window.location.hash);
-      history.replaceState(history.state, '', window.location.pathname + window.location.search);
-      if (code) {
-        codeInput = code;
-        codeFromLink = true;
-      }
-    }
+    takeFragment();
+    window.addEventListener('hashchange', takeFragment);
     if (await refreshGate()) startWizard();
   });
+  onDestroy(() => window.removeEventListener('hashchange', takeFragment));
+
+  function takeFragment() {
+    if (!window.location.hash) return;
+    const code = codeFromFragment(window.location.hash);
+    history.replaceState(history.state, '', window.location.pathname + window.location.search);
+    if (code) {
+      codeInput = code;
+      codeFromLink = true;
+      codeError = null;
+    }
+  }
 
   // ----- Server info: header line, fingerprint, session liveness -----------
   type ServerInfo = { version: string; os: string; arch?: string; ip: string; docker_version: string; tls_fingerprint?: string; fresh?: boolean };

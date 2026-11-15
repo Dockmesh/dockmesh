@@ -48,14 +48,7 @@ func ListDisks() ([]Disk, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var out []Disk
-	// Skip bind-mounted files such as a container's /etc/hosts.
-	for _, d := range parseDisks(f, diskUsage) {
-		if fi, err := os.Stat(d.Mountpoint); err == nil && fi.IsDir() {
-			out = append(out, d)
-		}
-	}
-	return out, nil
+	return parseDisks(f, diskUsage), nil
 }
 
 func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {
@@ -76,6 +69,11 @@ func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {
 		}
 		mp := unescapeMount(fields[4])
 		fsType := fields[sep+1]
+		// A bind mount of a part of a filesystem (the service's private
+		// /tmp, its writable paths, a container's /etc/hosts) is no disk.
+		if fields[3] != "/" {
+			continue
+		}
 		if pseudoFS[fsType] || seen[mp] || underAny(mp, systemMounts) {
 			continue
 		}

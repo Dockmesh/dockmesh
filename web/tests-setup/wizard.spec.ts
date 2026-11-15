@@ -40,6 +40,14 @@ test('a crafted fragment never reaches the field', async ({ page }) => {
   await page.goto('/setup#%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E');
   await expect(page.locator('#setup-code')).toHaveValue('');
   expect(new URL(page.url()).hash).toBe('');
+
+});
+
+test('a link pasted into an open setup tab fills the code too', async ({ page }) => {
+  await page.goto('/setup');
+  await page.evaluate((c) => (window.location.hash = c), code);
+  await expect(page.locator('#setup-code')).toHaveValue(code);
+  await expect.poll(() => new URL(page.url()).hash).toBe('');
 });
 
 test('wrong and malformed codes', async ({ page }) => {
