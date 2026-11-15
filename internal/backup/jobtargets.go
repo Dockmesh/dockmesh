@@ -280,8 +280,7 @@ func jobTargetAt(ctx context.Context, st *store, n *notices.Service, job *Job) (
 		if err != nil {
 			return nil, nil, err
 		}
-		loc := &RunLocation{TargetID: t.ID, Type: t.Type, Config: targets.Location(t.Type, t.Config)}
-		return wrapRunTarget(built), loc, nil
+		return wrapRunTarget(built), storedLocation(t), nil
 	}
 	if job.CredentialsError != "" {
 		return nil, nil, fmt.Errorf("backup job %q: %s", job.Name, job.CredentialsError)

@@ -318,7 +318,7 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 		if finished.Valid {
 			r.FinishedAt = &finished.Time
 		}
-		r.JobID, r.TargetID, r.Location = jobID, tid.Int64, unmarshalLocation(tid, loc)
+		r.Location = unmarshalLocation(tid, loc)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -344,7 +344,7 @@ func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 		if err := rows.Scan(&r.ID, &r.TargetPath, &r.StartedAt, &tid, &loc); err != nil {
 			return nil, err
 		}
-		r.JobID, r.TargetID, r.Location = jobID, tid.Int64, unmarshalLocation(tid, loc)
+		r.Location = unmarshalLocation(tid, loc)
 		out = append(out, r)
 	}
 	return out, rows.Err()

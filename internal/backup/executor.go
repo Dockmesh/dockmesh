@@ -591,9 +591,9 @@ func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID strin
 	return docker.RunExec(ctx, l.dc.Raw(), containerID, cmd, 1<<20)
 }
 
-// recordHostKey adds the SFTP host key the run trusted to its location
-// when it was recorded on this first contact, so the archive can be read
-// from this server even after the target moves elsewhere.
+// recordHostKey stores the SFTP host key the run trusted in its location,
+// so the archive can still be read from this server after the target
+// moves.
 func (e *Executor) recordHostKey(ctx context.Context, runID int64, t targets.Target, loc *RunLocation) {
 	hk, ok := t.(interface{ HostKey() string })
 	if !ok || loc == nil || loc.Type != "sftp" || hk.HostKey() == "" {
@@ -676,11 +676,6 @@ func (e *Executor) deleteArchive(ctx context.Context, runID int64, job *Job, cur
 		return err
 	}
 	return e.store.markPruned(ctx, r.ID)
-}
-
-func sameRunLocation(a, b *RunLocation) bool {
-	return a != nil && b != nil && a.TargetID == b.TargetID && a.Type == b.Type &&
-		targets.SameLocation(a.Type, a.Config, b.Config)
 }
 
 // -----------------------------------------------------------------------------

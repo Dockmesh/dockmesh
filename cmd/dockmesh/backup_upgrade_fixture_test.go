@@ -260,7 +260,7 @@ func TestMovedSystemTargetNotice(t *testing.T) {
 }
 
 // Runs written by v0.5.3 recorded no location. After the upgrade they read
-// from the job's target, start after start; a later path edit keeps them
+// from the job's target on every start; a later path edit keeps them
 // readable at the path they were written to.
 func TestUpgradeFromV053KeepsRunsReadable(t *testing.T) {
 	ctx := context.Background()

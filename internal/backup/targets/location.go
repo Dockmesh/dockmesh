@@ -84,9 +84,9 @@ func norm(v any) any {
 }
 
 // AtLocation returns the current config cur moved to the place recorded
-// in loc: credentials, user name and trusted CA stay those of cur. An SFTP
-// server other than the current one is checked against the host key
-// recorded with loc.
+// in loc: credentials, user name and trusted CA stay those of cur. For an
+// SFTP server other than the current one, the host key recorded with loc
+// replaces the current one.
 func AtLocation(typ string, loc map[string]any, cur any) map[string]any {
 	out := map[string]any{}
 	if err := decodeConfig(cur, &out); err != nil || out == nil {

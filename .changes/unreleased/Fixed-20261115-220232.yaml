@@ -1,3 +1,3 @@
 kind: Fixed
-body: 'Backup runs remember the target and the location they wrote to: restore, verify, download and retention of older runs keep working after a target''s path, bucket, prefix, share or server is edited or a job is switched to another target, instead of failing with an internal error, and retention deletes old archives where they are. A run whose archive can''t be found answers with where it most likely is, and a target that still holds kept archives can''t be deleted'
+body: 'Restore, verify, download and retention of older backup runs no longer fail with an internal error after a target''s path, bucket, prefix, share or server is edited or a job is switched to another target: each run reads and deletes its archive where it was written. A run whose archive is missing says where it most likely is, and a target that still holds kept archives can''t be deleted'
 time: 2026-11-15T22:02:32.199681277Z

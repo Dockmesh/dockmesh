@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -30,6 +31,16 @@ type RunLocation struct {
 
 func (l *RunLocation) describe() string {
 	return targets.DescribeLocation(l.Type, l.Config)
+}
+
+// storedLocation is where a saved target points now.
+func storedLocation(t *targets.StoredTarget) *RunLocation {
+	return &RunLocation{TargetID: t.ID, Type: t.Type, Config: targets.Location(t.Type, t.Config)}
+}
+
+func sameRunLocation(a, b *RunLocation) bool {
+	return a != nil && b != nil && a.TargetID == b.TargetID && a.Type == b.Type &&
+		targets.SameLocation(a.Type, a.Config, b.Config)
 }
 
 // ErrArchiveMissing means a run's archive is not where Dockmesh looked.
@@ -92,7 +103,7 @@ func runCandidates(ctx context.Context, st *store, n *notices.Service, run *Run,
 	}
 	t, cur, err := jobTargetAt(ctx, st, n, job)
 	if err != nil {
-		if run.Location != nil && len(out) > 0 {
+		if len(out) > 0 {
 			return out, nil
 		}
 		return nil, err
@@ -107,10 +118,10 @@ func runCandidates(ctx context.Context, st *store, n *notices.Service, run *Run,
 // the target has now; a target that changed type or was deleted can't be
 // opened, and the error says where the archive is.
 func targetAt(ctx context.Context, st *store, n *notices.Service, run *Run, job *Job, loc *RunLocation) (targets.Target, error) {
-	ts := st.targets()
 	if loc.TargetID == 0 {
 		return jobInlineTargetAt(ctx, st, n, job, loc)
 	}
+	ts := st.targets()
 	stored, err := ts.Get(ctx, loc.TargetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, missing("run %d was written to backup target #%d, which was deleted; its archive %s is still at %s, but can't be read without a target holding the credentials",
@@ -124,8 +135,7 @@ func targetAt(ctx context.Context, st *store, n *notices.Service, run *Run, job 
 			run.ID, loc.describe(), stored.Name, stored.Type, run.TargetPath)
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(stored.Type, stored.Config)...)
-	current := targets.Location(stored.Type, stored.Config)
-	if targets.SameLocation(loc.Type, loc.Config, current) {
+	if targets.SameLocation(loc.Type, loc.Config, storedLocation(stored).Config) {
 		built, err := ts.BuildChecked(ctx, stored, n)
 		if err != nil {
 			return nil, err
@@ -189,13 +199,7 @@ func checkOldServer(loc *RunLocation, cfg map[string]any) error {
 // archiveNotFound explains a run whose archive is in none of the places
 // tried, naming the most likely one.
 func archiveNotFound(ctx context.Context, st *store, run *Run, job *Job, tried []string) error {
-	where := "its target"
-	if len(tried) > 0 {
-		where = tried[0]
-		for _, t := range tried[1:] {
-			where += " or " + t
-		}
-	}
+	where := strings.Join(tried, " or ")
 	loc := run.Location
 	switch {
 	case loc != nil && loc.Inferred && loc.ChangedAt != nil:
@@ -210,14 +214,14 @@ func archiveNotFound(ctx context.Context, st *store, run *Run, job *Job, tried [
 		if t, err := st.targets().Get(ctx, job.TargetID); err == nil && t.UpdatedAt.After(run.StartedAt) {
 			msg += fmt.Sprintf(": the run was taken on %s, before Dockmesh recorded where each run writes, and backup target %q was changed on %s, so the archive is most likely still where that target pointed before the change",
 				run.StartedAt.Format(stampTime), t.Name, t.UpdatedAt.Format(stampTime))
-			return &ArchiveMissingError{msg: msg}
+			return missing("%s", msg)
 		}
 	}
 	if job.UpdatedAt.After(run.StartedAt) {
 		msg += fmt.Sprintf(": the run was taken on %s, before Dockmesh recorded where each run writes, and the job was changed on %s, so the archive is most likely on the target the job used before",
 			run.StartedAt.Format(stampTime), job.UpdatedAt.Format(stampTime))
 	}
-	return &ArchiveMissingError{msg: msg}
+	return missing("%s", msg)
 }
 
 func marshalLocation(loc *RunLocation) (sql.NullInt64, sql.NullString) {
@@ -243,14 +247,11 @@ func unmarshalLocation(targetID sql.NullInt64, raw sql.NullString) *RunLocation 
 	return &loc
 }
 
-// restorableRuns is the WHERE clause of runs whose archive is kept.
-const restorableRuns = `status IN ('success', 'success_with_warnings') AND pruned_at IS NULL
-	AND COALESCE(target_path, '') != ''`
-
 // stampLegacyRuns records loc as the inferred location of the runs that
-// match where and have none recorded. It runs right before the place loc
-// describes changes, which is the last moment it is known.
-func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, where string, args ...any) error {
+// have none recorded, of the jobs on target targetID or of job jobID
+// (0 matches all). It runs right before the place loc describes changes,
+// which is the last moment it is known.
+func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, targetID, jobID int64) error {
 	now := time.Now().UTC()
 	stamp := *loc
 	stamp.Inferred, stamp.ChangedAt = true, &now
@@ -258,16 +259,21 @@ func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, where str
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_runs SET target_id = ?, target_location = ?
 		WHERE target_location IS NULL AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
-		  AND `+where, append([]any{tid, raw}, args...)...)
+		  AND (? = 0 OR job_id IN (SELECT id FROM backup_jobs WHERE target_id = ?))
+		  AND (? = 0 OR job_id = ?)`,
+		tid, raw, targetID, targetID, jobID, jobID)
 	return err
 }
 
-// countElsewhere counts the restorable runs matching where whose archive
-// is not at target targetID with location loc.
-func (s *store) countElsewhere(ctx context.Context, targetID int64, loc *RunLocation, where string, args ...any) (int, error) {
+// countElsewhere counts the restorable runs recorded on target targetID
+// or of job jobID (0 matches all) whose archive is not at want.
+func (s *store) countElsewhere(ctx context.Context, want *RunLocation, targetID, jobID int64) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT target_id, target_location FROM backup_runs
-		WHERE `+restorableRuns+` AND `+where, args...)
+		WHERE status IN ('success', 'success_with_warnings') AND pruned_at IS NULL
+		  AND COALESCE(target_path, '') != ''
+		  AND (? = 0 OR target_id = ?) AND (? = 0 OR job_id = ?)`,
+		targetID, targetID, jobID, jobID)
 	if err != nil {
 		return 0, err
 	}
@@ -279,9 +285,7 @@ func (s *store) countElsewhere(ctx context.Context, targetID int64, loc *RunLoca
 		if err := rows.Scan(&tid, &raw); err != nil {
 			return 0, err
 		}
-		have := unmarshalLocation(tid, raw)
-		want := &RunLocation{TargetID: targetID, Type: loc.Type, Config: loc.Config}
-		if !sameRunLocation(have, want) {
+		if !sameRunLocation(unmarshalLocation(tid, raw), want) {
 			n++
 		}
 	}
@@ -300,16 +304,15 @@ func (s *Service) PrepareTargetChange(ctx context.Context, id int64, newType str
 	if err != nil {
 		return 0, err
 	}
-	prev := &RunLocation{TargetID: id, Type: stored.Type, Config: targets.Location(stored.Type, stored.Config)}
+	prev := storedLocation(stored)
 	next := &RunLocation{TargetID: id, Type: newType, Config: targets.Location(newType, newCfg)}
 	if sameRunLocation(prev, next) {
 		return 0, nil
 	}
-	if err := s.store.stampLegacyRuns(ctx, prev,
-		`job_id IN (SELECT id FROM backup_jobs WHERE target_id = ?)`, id); err != nil {
+	if err := s.store.stampLegacyRuns(ctx, prev, id, 0); err != nil {
 		return 0, err
 	}
-	return s.store.countElsewhere(ctx, id, next, `target_id = ?`, id)
+	return s.store.countElsewhere(ctx, next, id, 0)
 }
 
 // prepareJobSwitch stamps the job's runs without a recorded location with
@@ -325,8 +328,7 @@ func (s *Service) prepareJobSwitch(ctx context.Context, prev *Job, nextTargetID 
 	if err != nil {
 		return err
 	}
-	loc := &RunLocation{TargetID: stored.ID, Type: stored.Type, Config: targets.Location(stored.Type, stored.Config)}
-	return s.store.stampLegacyRuns(ctx, loc, `job_id = ?`, prev.ID)
+	return s.store.stampLegacyRuns(ctx, storedLocation(stored), 0, prev.ID)
 }
 
 // runsElsewhere counts the job's kept archives that are not on its target.
@@ -338,6 +340,5 @@ func (s *Service) runsElsewhere(ctx context.Context, job *Job) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	loc := &RunLocation{Type: stored.Type, Config: targets.Location(stored.Type, stored.Config)}
-	return s.store.countElsewhere(ctx, stored.ID, loc, `job_id = ?`, job.ID)
+	return s.store.countElsewhere(ctx, storedLocation(stored), 0, job.ID)
 }

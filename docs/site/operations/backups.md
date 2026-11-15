@@ -101,7 +101,7 @@ A job that is still running is not started a second time: a scheduled run is ski
 
 Retention runs after each successful run and has two settings, **Keep the newest N runs** (`retention_count`) and **Max age (days)** (`retention_days`). 0 turns a rule off. Both rules are applied independently: an archive is deleted if it is not among the newest N, or if it is older than the maximum age, even when it is among the newest N. The newest archive is never deleted.
 
-Retention works from the job's own run records, not from a listing of the target, so it never touches files of other jobs. It deletes each archive where its run wrote it, also after the target or the job's target changed; while that target can't be opened (it was deleted, or its SFTP server has no recorded host key) the run stays listed and is retried. Only successful runs count. A failed run deletes its partial archive right away; if that fails, the next retention pass retries. Runs whose archive retention removed stay in the list as pruned and can no longer be restored. Deleting a job keeps its runs and archives.
+Retention works from the job's own run records, not from a listing of the target, so it never touches files of other jobs. It deletes each archive where its run wrote it, also after the target or the job's target changed; while that place can't be opened (an SFTP server without a recorded host key) the run stays listed and is retried. Only successful runs count. A failed run deletes its partial archive right away; if that fails, the next retention pass retries. Runs whose archive retention removed stay in the list as pruned and can no longer be restored. Deleting a job keeps its runs and archives.
 
 ### Encryption
 
