@@ -25,15 +25,24 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 	var doc struct {
 		Include  any `yaml:"include"`
 		Services map[string]struct {
-			Labels    any `yaml:"labels"`
-			LabelFile any `yaml:"label_file"`
-			Extends   any `yaml:"extends"`
+			Labels    yaml.Node `yaml:"labels"`
+			LabelFile any       `yaml:"label_file"`
+			Extends   any       `yaml:"extends"`
 		} `yaml:"services"`
 		Networks map[string]*rawResource `yaml:"networks"`
 		Volumes  map[string]*rawResource `yaml:"volumes"`
 	}
 	dec := yaml.NewDecoder(strings.NewReader(composeYAML))
-	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+	var root yaml.Node
+	if err := dec.Decode(&root); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("parse compose file: %w", err)
+	}
+	// Compose's own tags (!reset, !override) change what a merge leaves
+	// behind in ways plain YAML decoding doesn't see.
+	if tag := customTag(&root); tag != "" {
+		return fmt.Errorf("YAML tag %s: %w", tag, ErrLabelsNeedAgent)
+	}
+	if err := root.Decode(&doc); err != nil {
 		return fmt.Errorf("parse compose file: %w", err)
 	}
 	// Compose merges every document of the file; this check reads one.
@@ -100,9 +109,23 @@ func sameFileExtends(v any) bool {
 	return false
 }
 
+// customTag returns the first tag in n that isn't a standard YAML one.
+// Aliases aren't followed: their anchor is part of the tree itself.
+func customTag(n *yaml.Node) string {
+	if strings.HasPrefix(n.Tag, "!") && !strings.HasPrefix(n.Tag, "!!") {
+		return n.Tag
+	}
+	for _, c := range n.Content {
+		if t := customTag(c); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
 type rawResource struct {
-	External any `yaml:"external"`
-	Labels   any `yaml:"labels"`
+	External any       `yaml:"external"`
+	Labels   yaml.Node `yaml:"labels"`
 }
 
 func isExternal(v any) bool {
@@ -118,18 +141,25 @@ func isExternal(v any) bool {
 // checkRawLabels applies withTrackingLabels to labels as written. A key
 // or value with a variable in it is refused: its final text depends on
 // interpolation the server doesn't run.
-func checkRawLabels(kind, name string, tracking map[string]string, raw any) error {
+//
+// Values are taken as written (a YAML number like -0 stays "-0"), the way
+// compose keeps them.
+func checkRawLabels(kind, name string, tracking map[string]string, raw yaml.Node) error {
 	labels := map[string]string{}
-	switch x := raw.(type) {
-	case nil:
+	switch raw.Kind {
+	case 0:
 		return nil
-	case map[string]any:
-		for k, v := range x {
-			labels[k] = fmt.Sprint(v)
+	case yaml.MappingNode, yaml.AliasNode:
+		if err := raw.Decode(&labels); err != nil {
+			return fmt.Errorf("%s %q: labels: %w", kind, name, err)
 		}
-	case []any:
-		for _, e := range x {
-			k, v, _ := strings.Cut(fmt.Sprint(e), "=")
+	case yaml.SequenceNode:
+		var list []string
+		if err := raw.Decode(&list); err != nil {
+			return fmt.Errorf("%s %q: labels: %w", kind, name, err)
+		}
+		for _, e := range list {
+			k, v, _ := strings.Cut(e, "=")
 			labels[k] = v
 		}
 	default:

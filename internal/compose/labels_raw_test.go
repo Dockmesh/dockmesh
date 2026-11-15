@@ -33,6 +33,10 @@ func TestCheckReservedLabelsText(t *testing.T) {
 		{"second document", svc + "---\nservices:\n  web:\n    labels:\n      com.docker.compose.project: billing\n", "several YAML documents", true},
 		{"extends with an odd key", svc + "    extends:\n      service: base\n      file: /tmp/x.yaml\n      1: x\n", "upgrade the agent", true},
 		{"service label passed on through extends", "services:\n  base:\n    image: nginx\n    labels:\n      com.docker.compose.service: base\n  web:\n    extends: base\n", "is reserved for Dockmesh", false},
+		{"!reset behind a merge key", "x-b: &b {com.docker.compose.project: billing}\n" + svc + "    labels:\n      <<: *b\n      com.docker.compose.project: !reset shop\n", "YAML tag !reset", true},
+		{"!reset on a whole service", "x-s: &s {web: {image: nginx, labels: {dockmesh.component: proxy}}}\nservices:\n  <<: *s\n  web: !reset {image: nginx}\n", "YAML tag !reset", true},
+		{"!override", svc + "    labels: !override {team: x}\n", "YAML tag !override", true},
+		{"number as service label", "services:\n  \"0\":\n    image: nginx\n    labels:\n      com.docker.compose.service: -0\n", "is reserved for Dockmesh", false},
 		{"unparsable", "services: [\n", "parse compose file", false},
 	}
 	for _, tt := range tests {
