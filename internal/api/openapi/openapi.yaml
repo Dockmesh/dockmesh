@@ -7488,6 +7488,11 @@ paths:
                   message: {type: string}
                   force_needed: {type: boolean}
         "422":
+          description: The compose file can't be used for the new replicas, e.g. it sets a label reserved for Dockmesh, or the agent on the host is too old to check it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
           description: Scale blocked by a safety check (singleton port/volume).
           content:
             application/json:
@@ -11386,7 +11391,7 @@ components:
     Forbidden:
       description: |
         Authenticated but refused: `code` `forbidden` when the caller lacks the permission, `out_of_scope*`
-        when it holds it but not on this resource. A `forbidden` refusal is recorded as an `auth.scope_denied` audit entry.
+        when it holds it but not on this resource. A refusal for a missing permission is recorded as an `auth.scope_denied` audit entry.
       content:
         application/json:
           schema:

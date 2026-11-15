@@ -2,12 +2,17 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/types"
+	"gopkg.in/yaml.v3"
 )
 
 // LoadProject parses <stackDir>/compose.yaml with stackName as the project
@@ -16,6 +21,9 @@ import (
 // plaintext without touching the filesystem.
 func LoadProject(ctx context.Context, stackDir, stackName, envContent string) (*types.Project, error) {
 	composePath := filepath.Join(stackDir, "compose.yaml")
+	if err := checkPlainYAML(composePath); err != nil {
+		return nil, err
+	}
 	envSlice := parseEnvContent(envContent)
 	opts, err := cli.NewProjectOptions(
 		[]string{composePath},
@@ -54,4 +62,28 @@ func parseEnvContent(s string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// checkPlainYAML refuses a compose file that doesn't decode as plain YAML
+// before compose-go sees it: compose's merge-key handling never finishes
+// on an anchor that merges itself, and grows until the process dies.
+func checkPlainYAML(path string) error {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	for {
+		var doc any
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("invalid compose file: %w", err)
+		}
+	}
 }

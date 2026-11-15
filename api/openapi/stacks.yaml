@@ -767,6 +767,11 @@ paths:
                   message: {type: string}
                   force_needed: {type: boolean}
         "422":
+          description: The compose file can't be used for the new replicas, e.g. it sets a label reserved for Dockmesh, or the agent on the host is too old to check it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
           description: Scale blocked by a safety check (singleton port/volume).
           content:
             application/json:

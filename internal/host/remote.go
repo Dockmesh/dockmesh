@@ -230,7 +230,7 @@ func (s *remoteExecSession) Close() error {
 // -----------------------------------------------------------------------------
 
 func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
-	if err := checkReservedLabels(ctx, name, composeYAML, envContent); err != nil {
+	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
 	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
@@ -886,6 +886,9 @@ func (h *RemoteHost) ExportImage(ctx context.Context, ref string) (io.ReadCloser
 }
 
 func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
+	if err := h.checkReservedLabels(composeYAML); err != nil {
+		return nil, err
+	}
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent,
 		Service: service, Replicas: replicas,
@@ -1014,19 +1017,14 @@ var (
 	ErrUnknownHost  = errors.New("unknown host")
 )
 
-// checkReservedLabels refuses tracking labels on the server too, since
-// agents older than the server don't. A file the server can't parse is
-// left to the agent, which parses it against its own stack directory.
-func checkReservedLabels(ctx context.Context, name, composeYAML, envContent string) error {
-	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
-	if err != nil {
-		return err
+// checkReservedLabels refuses tracking labels on the server for agents
+// that don't check them; agents that do load the file, and the files it
+// names, on their own host.
+func (h *RemoteHost) checkReservedLabels(composeYAML string) error {
+	if ag, err := h.live(); err == nil && ag.Hello.Has(agents.CapReservedLabels) {
+		return nil
 	}
-	defer cleanup()
-	if proj, err := compose.LoadProject(ctx, dir, name, envContent); err == nil {
-		return compose.CheckReservedLabels(proj)
-	}
-	return nil
+	return compose.CheckReservedLabelsText(composeYAML)
 }
 
 type volumeInspector interface {
