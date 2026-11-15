@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -41,8 +43,16 @@ func FileOwner(fi fs.FileInfo) (uint32, bool) {
 	return st.Uid, true
 }
 
-// ownedBySelf reports whether this process's account owns fi.
+// ownedBySelf reports whether the account setup-apply hands the data dir
+// to owns fi: the dockmesh account when it exists, else this process's.
 func ownedBySelf(fi fs.FileInfo) bool {
 	owner, ok := FileOwner(fi)
-	return ok && int64(owner) == int64(os.Getuid())
+	if !ok {
+		return false
+	}
+	want := strconv.Itoa(os.Getuid())
+	if u, err := user.Lookup("dockmesh"); err == nil {
+		want = u.Uid
+	}
+	return strconv.FormatUint(uint64(owner), 10) == want
 }

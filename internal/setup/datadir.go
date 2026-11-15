@@ -205,8 +205,13 @@ func setupLeftover(dir string, e fs.DirEntry) bool {
 	case name == StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir)):
 		return true
 	case (name == "data" || name == "stacks") && e.IsDir():
-		sub, err := os.ReadDir(filepath.Join(dir, name))
-		if err != nil || len(sub) > 64 {
+		f, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			return false
+		}
+		sub, err := f.ReadDir(65)
+		f.Close()
+		if (err != nil && !errors.Is(err, io.EOF)) || len(sub) > 64 {
 			return false
 		}
 		for _, s := range sub {

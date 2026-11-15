@@ -6218,5 +6218,6 @@
   "sw_dir_err_no_parent": "{path} existiert nicht. Leg es zuerst an oder wähle ein Verzeichnis in einem vorhandenen.",
   "sw_dir_err_unsafe_parent": "{path} und jedes Verzeichnis darüber müssen root gehören und dürfen nur für root beschreibbar sein.",
   "sw_dir_err_symlink": "{path} ist ein symbolischer Link. Gib den echten Pfad ein.",
-  "sw_dir_err_foreign": "{path} gehört einem anderen Konto. Entferne es oder wähle ein neues Verzeichnis; die Einrichtung legt es an."
+  "sw_dir_err_foreign": "{path} gehört einem anderen Konto. Entferne es oder wähle ein neues Verzeichnis; die Einrichtung legt es an.",
+  "sw_n7_open": "Die Einrichtung ist fertig, aber dieser Browser erreicht die neue Adresse noch nicht. Öffne {url}."
 }

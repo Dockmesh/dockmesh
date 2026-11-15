@@ -6218,5 +6218,6 @@
   "sw_dir_err_no_parent": "{path} does not exist. Create it first, or choose a directory in an existing one.",
   "sw_dir_err_unsafe_parent": "{path} and every directory above it must belong to root and be writable only by root.",
   "sw_dir_err_symlink": "{path} is a symbolic link. Enter the real path.",
-  "sw_dir_err_foreign": "{path} belongs to another account. Remove it or choose a new directory; setup creates it."
+  "sw_dir_err_foreign": "{path} belongs to another account. Remove it or choose a new directory; setup creates it.",
+  "sw_n7_open": "Setup finished, but this browser could not reach the new address yet. Open {url}."
 }

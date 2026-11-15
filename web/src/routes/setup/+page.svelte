@@ -422,7 +422,7 @@
   // The server trusts the bind address alone, and nobody for a wildcard.
   const trustedProxies = $derived.by(() => {
     const a = listen.trim();
-    if (a === '0.0.0.0' || a === '::') return m.sw_n3_trusted_none();
+    if (/^[0.:]+$/.test(a)) return m.sw_n3_trusted_none();
     return a.includes(':') ? `${a}/128` : `${a}/32`;
   });
 
@@ -473,6 +473,9 @@
   let applyDetail = $state<string | null>(null);
   let applyDone = $state(false);
   let redirectIn = $state(3);
+  // Setup finished, but this browser could not reach the new address:
+  // show it instead of redirecting there.
+  let newOriginUnverified = $state(false);
   let eventSource: EventSource | null = null;
   onDestroy(() => eventSource?.close());
 
@@ -577,7 +580,8 @@
     applyRow = 6;
     applyDone = true;
     applying = false;
-    return true;
+    newOriginUnverified = outcome === 'unverified';
+    return !newOriginUnverified;
   }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -605,7 +609,7 @@
    * an opaque answer from it counts as "up".
    */
   const FAST_RESTART_MS = 15_000;
-  async function waitForServer(): Promise<'up' | 'setup' | 'timeout'> {
+  async function waitForServer(): Promise<'up' | 'unverified' | 'setup' | 'timeout'> {
     const sameOrigin = targetURL === window.location.origin;
     const started = Date.now();
     let wentDown = false;
@@ -637,7 +641,7 @@
         if (settled) {
           const st = await setupStatus();
           if (st === 'active') return 'setup';
-          if (st === 'done') return 'up';
+          if (st === 'done') return 'unverified';
         }
       }
     }
@@ -1195,7 +1199,7 @@
               {:else if applyDone}
                 <div class="callout ok" role="status">
                   <span class="ic">✓</span>
-                  <span>{path === 'restore' ? m.sw_r3_done() : m.sw_n7_redirect({ n: redirectIn })}</span>
+                  <span>{path === 'restore' ? m.sw_r3_done() : newOriginUnverified ? m.sw_n7_open({ url: `${targetURL}/login` }) : m.sw_n7_redirect({ n: redirectIn })}</span>
                 </div>
                 {#if path !== 'restore' && !legacy && tls === 'internal' && serverInfo?.tls_fingerprint}
                   <div>

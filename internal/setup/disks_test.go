@@ -18,6 +18,8 @@ const mountinfo = `22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw
 32 22 8:1 /tmp/systemd-private-x/tmp /tmp rw - ext4 /dev/sda1 rw
 33 22 8:1 /var/lib/dockmesh /var/lib/dockmesh rw - ext4 /dev/sda1 rw
 34 22 8:1 /var/lib/docker/containers/c/hosts /etc/hosts rw - ext4 /dev/sda1 rw
+35 22 0:40 /@home /home rw - btrfs /dev/sdd1 rw,space_cache=v2,subvolid=257,subvol=/@home
+36 22 0:40 /@/tmp/systemd-private-y/tmp /var/tmp rw - btrfs /dev/sdd1 rw,space_cache=v2,subvolid=256,subvol=/@
 `
 
 func TestParseDisks(t *testing.T) {
@@ -26,7 +28,7 @@ func TestParseDisks(t *testing.T) {
 	for _, d := range disks {
 		got[d.Mountpoint] = d
 	}
-	for _, gone := range []string{"/proc", "/run", "/var/lib/docker", "/var/lib/docker/overlay2/x/merged", "/tmp", "/var/lib/dockmesh", "/etc/hosts"} {
+	for _, gone := range []string{"/proc", "/run", "/var/lib/docker", "/var/lib/docker/overlay2/x/merged", "/tmp", "/var/lib/dockmesh", "/etc/hosts", "/var/tmp"} {
 		if _, ok := got[gone]; ok {
 			t.Errorf("%s listed", gone)
 		}
@@ -40,6 +42,7 @@ func TestParseDisks(t *testing.T) {
 		{"/mnt/nas", "/mnt/nas/dockmesh", false},
 		{"/boot/efi", "/boot/efi/dockmesh", false},
 		{"/data disk", "/data disk/dockmesh", false},
+		{"/home", "/home/dockmesh", true},
 	}
 	for _, tt := range tests {
 		d, ok := got[tt.mp]

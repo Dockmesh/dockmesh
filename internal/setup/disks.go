@@ -71,7 +71,7 @@ func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {
 		fsType := fields[sep+1]
 		// A bind mount of a part of a filesystem (the service's private
 		// /tmp, its writable paths, a container's /etc/hosts) is no disk.
-		if fields[3] != "/" {
+		if fields[3] != "/" && !mountsSubvolume(fields[3], fields[sep+3:]) {
 			continue
 		}
 		if pseudoFS[fsType] || seen[mp] || underAny(mp, systemMounts) {
@@ -96,6 +96,20 @@ func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mountpoint < out[j].Mountpoint })
 	return out
+}
+
+// mountsSubvolume reports a btrfs subvolume mounted as a whole: its root
+// field is the subvolume, named again in the super options.
+func mountsSubvolume(root string, super []string) bool {
+	if len(super) == 0 {
+		return false
+	}
+	for _, o := range strings.Split(super[0], ",") {
+		if o == "subvol="+root {
+			return true
+		}
+	}
+	return false
 }
 
 func underAny(p string, dirs []string) bool {
