@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -174,7 +173,7 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	// A renewal the old identity left unfinished would otherwise replace
 	// this pair on the next start.
 	for _, p := range []string{certPath + ".next", keyPath + ".next"} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
