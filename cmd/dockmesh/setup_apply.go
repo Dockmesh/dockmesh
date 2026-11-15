@@ -315,12 +315,14 @@ func freshSetupRestore(dataDir string, restart func()) setup.RestorePrepareFunc 
 			return nil, err
 		}
 		keyPath := filepath.Join(state, setup.RestoreKeyFile)
+		var err error
 		if len(key) > 0 {
-			if err := writeFileReplace(keyPath, key); err != nil {
-				return nil, err
-			}
-		} else if err := os.Remove(keyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, err
+			err = writeFileReplace(keyPath, key)
+		} else if err = os.Remove(keyPath); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+		if err != nil {
+			return nil, errors.Join(err, setup.DropRestoreFiles(state))
 		}
 		return func(ctx context.Context, emit func(step, msg, status string)) error {
 			err := applyFresh(ctx, dataDir, v, emit, func() error {
