@@ -263,12 +263,38 @@ func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
 				ok = AllowedOn(r.Context(), perm, res)
 			}
 			if !ok {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				Forbidden(w, r, perm)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithRoutePerm(r.Context(), perm)))
 		})
 	}
+}
+
+// DenialAuditor records a refused permission check; see AuditDenials.
+type DenialAuditor func(r *http.Request, perm rbac.Perm)
+
+var denialAuditorKey = ctxKey{"denialAuditor"}
+
+// AuditDenials makes Forbidden report every refusal to fn, so a missing
+// permission leaves the same audit trail as a refused scope.
+func AuditDenials(fn DenialAuditor) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), denialAuditorKey, fn)))
+		})
+	}
+}
+
+// Forbidden audits the refusal of perm and answers 403 with the API's
+// JSON error shape.
+func Forbidden(w http.ResponseWriter, r *http.Request, perm rbac.Perm) {
+	if fn, _ := r.Context().Value(denialAuditorKey).(DenialAuditor); fn != nil {
+		fn(r, perm)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"error":"forbidden","code":"forbidden"}` + "\n"))
 }
 
 func clientIP(r *http.Request) string { return clientip.IP(r) }

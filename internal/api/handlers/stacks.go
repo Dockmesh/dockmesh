@@ -1319,7 +1319,8 @@ func deployErrorStatus(err error) int {
 		strings.Contains(msg, "pull access denied"),
 		strings.Contains(msg, "unauthorized"),
 		strings.Contains(msg, "yaml:"),
-		strings.Contains(msg, "invalid compose"):
+		strings.Contains(msg, "invalid compose"),
+		strings.Contains(msg, "is reserved for dockmesh"):
 		return http.StatusUnprocessableEntity
 	}
 	return http.StatusInternalServerError

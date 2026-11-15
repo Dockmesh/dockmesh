@@ -580,7 +580,7 @@ func TestRouteGateMatrix(t *testing.T) {
 				want = want && c.scope.IsGlobal()
 			}
 			code, body := call(g.method, path, c.token)
-			denied := code == http.StatusForbidden && (body == "forbidden" || strings.Contains(body, "out of scope") || strings.Contains(body, "on everything"))
+			denied := code == http.StatusForbidden && (strings.Contains(body, `"code":"forbidden"`) || strings.Contains(body, "out of scope") || strings.Contains(body, "on everything"))
 			if denied == want {
 				t.Errorf("%s %s as %s: %d %s, want allowed=%v", g.method, g.path, c.name, code, body, want)
 			}

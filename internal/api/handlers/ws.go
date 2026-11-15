@@ -99,7 +99,7 @@ func (h *Handlers) wsAuth(w http.ResponseWriter, r *http.Request, want rbac.Perm
 	}
 	ctx := context.WithValue(middleware.WithIdentity(r.Context(), id), wsTicketKey{}, t)
 	if !middleware.Allowed(ctx, want) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		middleware.Forbidden(w, r.WithContext(ctx), want)
 		return r, false
 	}
 	return r.WithContext(middleware.WithRoutePerm(ctx, want)), true
