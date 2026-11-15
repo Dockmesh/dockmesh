@@ -27,6 +27,9 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 		return nil, err
 	}
 	cli := dc.Raw()
+	if err := docker.RequireVolume(ctx, cli, volumeName); err != nil {
+		return nil, err
+	}
 	// ensure helper image present
 	if _, err := cli.ImageInspect(ctx, VolumeTarHelperImage); err != nil {
 		if pullErr := docker.PullAnonymous(ctx, cli, VolumeTarHelperImage); pullErr != nil {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 )
@@ -125,5 +126,39 @@ func TestPruneUnusedVolumesPinnedClientKeepsNamed(t *testing.T) {
 	}
 	if len(f.pruned) != 0 || len(f.removed) != 0 {
 		t.Fatalf("pruned = %v, removed = %v", f.pruned, f.removed)
+	}
+}
+
+type fakeInspector struct{ err error }
+
+func (f fakeInspector) VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
+	return client.VolumeInspectResult{}, f.err
+}
+
+func TestRequireVolume(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		missing bool
+		fails   bool
+	}{
+		{"exists", nil, false, false},
+		{"missing", cerrdefs.ErrNotFound.WithMessage("get pgdata: no such volume"), true, true},
+		{"daemon error", errors.New("connection refused"), false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RequireVolume(context.Background(), fakeInspector{tc.err}, "pgdata")
+			var nf *VolumeNotFoundError
+			if got := errors.As(err, &nf); got != tc.missing {
+				t.Fatalf("VolumeNotFoundError = %v, want %v (err %v)", got, tc.missing, err)
+			}
+			if (err != nil) != tc.fails {
+				t.Fatalf("err = %v, want failure %v", err, tc.fails)
+			}
+			if err != nil && !strings.Contains(err.Error(), "pgdata") {
+				t.Fatalf("error does not name the volume: %v", err)
+			}
+		})
 	}
 }

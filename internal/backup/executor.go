@@ -435,6 +435,10 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	switch src.Type {
 	case "volume":
 		rc, err := hostTarget.VolumeTar(ctx, src.Name)
+		var missing *docker.VolumeNotFoundError
+		if errors.As(err, &missing) {
+			return 0, err
+		}
 		if err != nil {
 			return 0, fmt.Errorf("tar volume %s: %w", src.Name, err)
 		}
