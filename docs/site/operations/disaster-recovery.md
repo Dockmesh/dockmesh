@@ -20,7 +20,7 @@ Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). Insta
 | `stacks/` | `compose.yaml`, `.env` / `.env.age`, metadata per stack, and the data of relative bind mounts of stacks on the server's host | Stack definitions |
 | `dockmesh.env` | Server configuration (`DOCKMESH_*` variables) | Settings made only there, e.g. `DOCKMESH_BASE_URL` |
 
-A system backup covers the database, `stacks/` and `data/` (without `data/backups`). It does **not** include `dockmesh.env` (it sits one level above `data/`) or any Docker volume. Keep a copy of `dockmesh.env` with your notes, and back up stateful stacks with their own stack jobs.
+A system backup covers the database, `stacks/` and `data/` (without `data/backups`). It does **not** include `dockmesh.env` (it lives in `/etc/dockmesh`, or one level above `data/` on installs from before 0.6) or any Docker volume. Keep a copy of `dockmesh.env` with your notes, and back up stateful stacks with their own stack jobs.
 
 ## Export the age key
 
@@ -100,7 +100,7 @@ After a command-line restore, the restored files belong to root. Hand them to th
 sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
 ```
 
-A fresh Linux install has no `dockmesh.env` until the setup wizard writes it, so the restored server runs on the default paths. Carry over the settings from your saved `dockmesh.env` into `/etc/dockmesh/dockmesh.env` (owner root, group `dockmesh`, mode 0640) (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on). Settings changed in the UI are in the database and came back with it. Then check and start:
+A fresh Linux install has no `dockmesh.env` until the setup wizard writes it, so the restored server runs on the default paths. Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on) into `/etc/dockmesh/dockmesh.env`, owned by root, group `dockmesh`, mode 0640. Settings changed in the UI are in the database and came back with it. Then check and start:
 
 ```bash
 sudo -u dockmesh dockmesh doctor

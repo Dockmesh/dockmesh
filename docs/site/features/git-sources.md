@@ -70,7 +70,7 @@ Every 30 seconds Dockmesh checks which sources are due and syncs them. A source 
 
 ## Auto-deploy
 
-The last synced commit is stored in the database, not taken from the clone in `git-cache/`: deleting the cache only causes a fresh clone. After a restore of a database older than the branch head, the next sync counts the head as a new commit.
+The last synced commit is stored in the database, not taken from the clone in `git-cache/`: deleting the cache only causes a fresh clone. After restoring a database backup taken before the latest commit was synced, the next sync treats that commit as new.
 
 With **Auto-deploy on new commits** on, every sync that pulls a new commit deploys the stack, like a manual **Deploy** with these differences:
 

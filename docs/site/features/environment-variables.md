@@ -81,7 +81,7 @@ Secret global variables are encrypted with the same key. With encryption off the
 The values exist in plaintext in these places as well:
 
 - the temporary staging directory during a deploy (removed afterwards); on an agent host the staged `.env` includes the global variables;
-- on hosts whose agent is older than 0.6.0, a `.env` copy in the agent's stack directory, until the next deploy of that stack removes it (it stays while a container of the stack bind-mounts it or its directory);
+- a `.env` copy that an agent older than 0.6.0 wrote into its stack directory; a current agent removes it at the next deploy of that stack, unless a container of the stack bind-mounts it or its directory;
 - `compose.yaml` itself, for placeholders a custom [template](./templates.md) uses there, and therefore also the deploy history entry of that deploy.
 
 Deploy history of a deploy with an environment override keeps the base `compose.yaml` and the name of the override, not the merged file, so `.env` values don't end up in history. A rollback to such an entry applies the override again. History entries of override deploys made before v0.5.0 lost their compose snapshot during the upgrade, because it held `.env` values, and can no longer be rolled back to.

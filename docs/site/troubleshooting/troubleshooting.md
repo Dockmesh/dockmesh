@@ -74,7 +74,7 @@ sudo dockmesh setup new-code
 
 ### The sign-in page appears instead of the setup wizard
 
-**Cause:** the wizard at `/setup` opens only on an install with no user accounts that was never set up: no env file, no database and no data files (secrets, keys, stacks), or an env file with `DOCKMESH_SETUP_FORCE=true` from `install.sh`. Every other install starts normally, even without accounts, so a configured server is never handed to whoever opens `/setup` first. The server does not create an account by itself. If there is none, the log shows `this installation has no user accounts and is not a new install`.
+**Cause:** the wizard at `/setup` opens only on an install with no user accounts that was never set up: no env file, no database and no data files (secrets, keys, stacks), or an env file with `DOCKMESH_SETUP_FORCE=true` (written by `install.sh` on macOS, and by Linux installs before 0.6). Every other install starts normally, even without accounts, so a configured server is never handed to whoever opens `/setup` first. The server does not create an account by itself. If there is none, the log shows `this installation has no user accounts and is not a new install`.
 
 **Fix:** create an admin on the server, restart the service and sign in.
 

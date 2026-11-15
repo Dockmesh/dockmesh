@@ -61,7 +61,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_PROXY_ENABLED` | `false` | `true` turns the reverse proxy on while the `proxy_enabled` setting has never been saved. See the note below |
 | `DOCKMESH_PROXY_IMAGE` | `caddy:2.11.7` pinned by digest | Caddy image for the `dockmesh-proxy` container. While it is set, the Caddy version can't be switched from the UI or API |
 | `DOCKMESH_METRICS_AUTH` | `true` | Require a bearer token with `metrics.view` on `/metrics`. `false` makes it public |
-| `DOCKMESH_SETUP_FORCE` | `false` | Marks an install whose setup wizard has not finished: with no user accounts, the server starts in setup mode. Ignored once accounts exist. `install.sh` sets it; the web wizard removes it from `dockmesh.env` when it finishes |
+| `DOCKMESH_SETUP_FORCE` | `false` | Marks an install whose setup wizard has not finished: with no user accounts, the server starts in setup mode. Ignored once accounts exist. `install.sh` sets it on macOS (on Linux only installs before 0.6 have it); the web wizard removes it from `dockmesh.env` when it finishes |
 | `DOCKMESH_UPDATE_ROLLBACK_KEEP` | `3` | How many rollback tags per image container updates keep. Must be a positive number, or the server doesn't start |
 | `DOCKMESH_SKIP_PREMIGRATE_BACKUP` | unset | `1` or `true` skips the database copy (`<db>.pre-migrate-<time>.bak`) taken before schema migrations, for example when the disk is too full for it |
 
@@ -96,7 +96,7 @@ Written by `install-agent.sh` to `/etc/dockmesh-agent/agent.env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when the agent is enrolled only there) | Agent state: certificate, key, CA, saved URL, staging and stack mirror. The installer writes it to `/etc/dockmesh-agent/agent.env`, which the agent also reads when started by hand |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when only that directory holds an enrollment) | Agent state: certificate, key, CA, saved URL, staging and stack mirror. The installer writes it to `/etc/dockmesh-agent/agent.env`, which the agent also reads when started by hand |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint on the agent port (`https://<host>:8443/enroll`), required on first start |
 | `DOCKMESH_TOKEN` | none | One-time enrollment token, required on first start. It stays in `agent.env` after enrollment |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 fingerprint of the server's agent CA. Required for enrollment over `https://`; the CA the server returns must match it |

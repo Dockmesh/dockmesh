@@ -30,7 +30,7 @@ An admin can set a new password for a user with **Reset password…** on the use
 
 After the configured number of failed sign-ins in a row, the account is locked for the configured time. Wrong passwords and wrong 2FA codes both count. Unlock an account early with **Unlock** on the user's **Sessions & 2FA** tab under **Users & roles**, or with `dockmesh admin unlock --user <name>`.
 
-Independent of that policy, Dockmesh limits failed attempts. The per-username counter of an existing account is stored with the account, survives a restart and an upgrade (so does an account lock) and is cleared by **Unlock** or `dockmesh admin unlock`. The per-address counters, and the counters for usernames that match no account, live in memory and a restart resets them.
+Independent of that policy, Dockmesh limits failed attempts. The per-username counter of an existing account is stored with the account: it and an account lock survive restarts and upgrades until **Unlock** or `dockmesh admin unlock` clears them. The per-address counters, and the counters for usernames that match no account, live in memory and a restart resets them.
 
 | Limit | Blocks for |
 |---|---|
