@@ -1,0 +1,3 @@
+kind: Fixed
+body: A system backup job named dockmesh-system that was set up in the job wizard or with the system backup switch is no longer marked on restart as auto-created by an earlier version and asked to be kept or disabled; a mark set this way is removed on the next start
+time: 2026-11-15T16:27:55.35123624Z

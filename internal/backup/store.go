@@ -504,6 +504,29 @@ func (s *store) markJobNeedsReview(ctx context.Context, id int64, reason string)
 	return err
 }
 
+// unflagJobReview drops a review flag the operator never set, leaving
+// review_acked and updated_at as they are.
+func (s *store) unflagJobReview(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET needs_review = 0, review_reason = '' WHERE id = ?`, id)
+	return err
+}
+
+// createdBeforeMigration reports whether created lies before the named
+// migration was applied to this database; false when it never was.
+func (s *store) createdBeforeMigration(ctx context.Context, created time.Time, migration string) (bool, error) {
+	var applied time.Time
+	err := s.db.QueryRowContext(ctx,
+		`SELECT applied_at FROM schema_migrations WHERE version = ?`, migration).Scan(&applied)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return created.Before(applied), nil
+}
+
 // clearJobReview drops the review flag and sets review_acked so the
 // boot-time migration leaves this job alone forever. Called when the
 // operator picks Keep or Disable in the UI.
