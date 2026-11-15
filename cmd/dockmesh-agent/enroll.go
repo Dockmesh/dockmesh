@@ -123,6 +123,14 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	if err != nil {
 		return err
 	}
+	// A renewal the old identity left unfinished would otherwise replace
+	// the enrolled pair on the next start. Removed before the token is spent,
+	// so a file system error leaves the token usable.
+	for _, p := range []string{certPath + ".next", keyPath + ".next"} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	hostname, _ := os.Hostname()
 	body := agents.EnrollRequest{
 		Token:         cfg.token,
@@ -168,13 +176,6 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 		}
 		if err := checkCAFingerprint(caCert, cfg.caFingerprint); err != nil {
 			return fmt.Errorf("server CA: %w", err)
-		}
-	}
-	// A renewal the old identity left unfinished would otherwise replace
-	// this pair on the next start.
-	for _, p := range []string{certPath + ".next", keyPath + ".next"} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
 		}
 	}
 	if err := os.WriteFile(certPath, []byte(er.ClientCert), 0o600); err != nil {
