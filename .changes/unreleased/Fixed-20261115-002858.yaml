@@ -1,0 +1,3 @@
+kind: Fixed
+body: The installer with DOCKMESH_SKIP_DOWNLOAD=1 no longer reports an upgrade on a new install or treats an upgrade as a new install; it now restarts a running service
+time: 2026-11-15T00:28:58.199882213Z

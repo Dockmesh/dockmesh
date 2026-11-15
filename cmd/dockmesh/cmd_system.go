@@ -25,7 +25,7 @@ import (
 // that need root, run by the installer.
 func runSystemCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh system <migrate-layout|write-unit>")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh system <migrate-layout|write-unit|snapshot-db|unit-groups|data-dir>")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -37,6 +37,18 @@ func runSystemCmd(args []string) {
 	case "write-unit":
 		if err := systemWriteUnit(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "system write-unit:", err)
+			os.Exit(1)
+		}
+	case "snapshot-db":
+		if err := systemSnapshotDB(); err != nil {
+			fmt.Fprintln(os.Stderr, "system snapshot-db:", err)
+			os.Exit(1)
+		}
+	case "unit-groups":
+		fmt.Println(unitGroupsText())
+	case "data-dir":
+		if err := systemDataDir(); err != nil {
+			fmt.Fprintln(os.Stderr, "system data-dir:", err)
 			os.Exit(1)
 		}
 	case unitPathsCmd:
@@ -71,7 +83,7 @@ func systemMigrateLayout(args []string) error {
 	}
 	switch res.Outcome {
 	case layout.Moved:
-		fmt.Printf("config moved to %s (symlink left at %s), data stays in %s\n", layout.ConfigFile, res.From, res.DataDir)
+		fmt.Printf("moved  %s → %s (symlink left)\n", res.From, layout.ConfigFile)
 	case layout.AlreadyMigrated:
 		fmt.Printf("config already at %s\n", layout.ConfigFile)
 	case layout.SetupPending:
@@ -291,6 +303,54 @@ func supplementaryGroups(envFile string, env map[string]string) []string {
 		fmt.Fprintln(os.Stderr, "warning:", warn)
 	}
 	return groups
+}
+
+// systemDataDir is `dockmesh system data-dir`: the data dir the config
+// the unit would load names, worked out the way the server does. The
+// installer hands that directory back to a recreated service user.
+func systemDataDir() error {
+	envFile, err := unitConfigFile(unitEnvFlag("", loadedEnvFile, explicitEnvFile))
+	if err != nil {
+		return err
+	}
+	env, err := layout.ReadEnvFile(envFile)
+	if err != nil {
+		return err
+	}
+	dir := config.ResolvePaths(func(k string) string { return env[k] }).DataDir
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("data dir %q is not an absolute path", dir)
+	}
+	fmt.Println(filepath.Clean(dir))
+	return nil
+}
+
+// unitGroupsText lists the supplementary groups write-unit gives the
+// service, the Docker socket's own group by name.
+func unitGroupsText() string {
+	env := map[string]string{}
+	envFile, err := unitConfigFile("")
+	if err == nil {
+		if e, rerr := layout.ReadEnvFile(envFile); rerr == nil {
+			env = e
+		}
+	}
+	var names []string
+	for _, g := range supplementaryGroups(envFile, env) {
+		if g == "docker" {
+			names = append(names, g)
+			continue
+		}
+		name := g
+		if grp, err := user.LookupGroupId(g); err == nil {
+			name = grp.Name
+		}
+		names = append(names, name+" (Docker socket)")
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
 }
 
 func lookupGID(name string) (int, bool) {

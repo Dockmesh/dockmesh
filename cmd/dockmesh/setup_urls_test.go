@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
@@ -100,5 +101,29 @@ func TestInviteLinksUseThePublicBaseURL(t *testing.T) {
 				t.Fatalf("accept URL %q, want %s<token>", got.AcceptURL, s.want)
 			}
 		})
+	}
+}
+
+func TestNewCodeOutput(t *testing.T) {
+	c := newCode{
+		Code:        "K7QD-3MXA-9PRT",
+		ValidUntil:  time.Date(2026, 11, 15, 14, 32, 0, 0, time.Local),
+		URL:         "https://10.0.0.5:8080/setup#K7QD-3MXA-9PRT",
+		Fingerprint: "3F:A2",
+	}
+	var porcelain, text strings.Builder
+	c.writePorcelain(&porcelain)
+	want := "code=K7QD-3MXA-9PRT\nvalid_until=14:32\nurl=https://10.0.0.5:8080/setup#K7QD-3MXA-9PRT\nfingerprint=3F:A2\nreplaced=false\n"
+	if porcelain.String() != want {
+		t.Errorf("porcelain:\n%s\nwant:\n%s", porcelain.String(), want)
+	}
+	c.writeText(&text)
+	for _, line := range []string{"Setup code   K7QD-3MXA-9PRT", "Valid until  14:32 (2 hours)", "Open https://10.0.0.5:8080/setup#K7QD-3MXA-9PRT", "Certificate  SHA-256 3F:A2"} {
+		if !strings.Contains(text.String(), line) {
+			t.Errorf("text output lacks %q:\n%s", line, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "previous code") {
+		t.Error("a first code says it replaced one")
 	}
 }

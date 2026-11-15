@@ -16,20 +16,14 @@ func TestInstallWriteEnvFile(t *testing.T) {
 	helpers := envHelpers(t)
 
 	tests := []struct {
-		name        string
-		oldEnv      string // existing env file content, "" for none
-		dbInData    bool   // database already at <data>/data/dockmesh.db
-		defaultEnv  bool   // an env file exists at a default location
-		systemdUnit bool
-		wantFlag    bool
+		name     string
+		oldEnv   string // existing env file content, "" for none
+		dbInData bool   // database already at <data>/data/dockmesh.db
+		wantFlag bool
 	}{
 		{name: "fresh install", wantFlag: true},
 		{name: "reinstall over kept data", oldEnv: "DOCKMESH_HTTP_ADDR=:9090\nDOCKMESH_BASE_URL=https://dm.lan\n", dbInData: true},
 		{name: "kept env file with setup flag", oldEnv: "DOCKMESH_SETUP_FORCE=true\n", dbInData: true},
-		{name: "database without env file", dbInData: true},
-		{name: "old env file without database", oldEnv: "DOCKMESH_HTTP_ADDR=:9090\n"},
-		{name: "env file at a default location", defaultEnv: true},
-		{name: "systemd unit present", systemdUnit: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -40,12 +34,6 @@ func TestInstallWriteEnvFile(t *testing.T) {
 			}
 			envFile := filepath.Join(dataDir, "dockmesh.env")
 			defaultEnv := filepath.Join(root, "default", "dockmesh.env")
-			if tt.defaultEnv {
-				if err := os.MkdirAll(filepath.Dir(defaultEnv), 0o750); err != nil {
-					t.Fatal(err)
-				}
-				mustWrite(t, defaultEnv, "DOCKMESH_HTTP_ADDR=:8080\n")
-			}
 			if tt.oldEnv != "" {
 				mustWrite(t, envFile, tt.oldEnv)
 			}
@@ -53,7 +41,7 @@ func TestInstallWriteEnvFile(t *testing.T) {
 				mustWrite(t, filepath.Join(dataDir, "data", "dockmesh.db"), "")
 			}
 
-			if err := runWriteEnvFile(t, helpers, envRun{envFile: envFile, dataDir: dataDir, defaultEnv: defaultEnv, systemdUnit: tt.systemdUnit}); err != nil {
+			if err := runWriteEnvFile(t, helpers, envRun{envFile: envFile, dataDir: dataDir, defaultEnv: defaultEnv}); err != nil {
 				t.Fatalf("write_env_file: %v", err)
 			}
 

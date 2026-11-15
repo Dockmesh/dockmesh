@@ -23,6 +23,14 @@ If your config lives elsewhere, pass `--env-file <path>` explicitly.
 
 `sudo dockmesh system write-unit` writes `/etc/systemd/system/dockmesh.service` from the template built into the binary and reloads systemd. The service runs as user `dockmesh`, group `dockmesh`, with the `docker` group added (and the group of the Docker socket when that is not `docker`, as on Synology or with Podman; the socket comes from `DOCKER_HOST` when that names a unix socket), and loads `/etc/dockmesh/dockmesh.env` (an install whose config was not moved yet keeps its old env file; `--env-file <path>` names it). With `ProtectSystem=strict` it may only write to the data root, the stacks directory, the directories of the database and secrets when the path variables move them, every directory in `backups.local_roots` (`/srv/backups` and `<data directory>/backups` until the setting is saved), the audit archive directory and `backups.empty_path_dir`. A value that is not a clean absolute path, contains a control character, a quote or a backslash, lies in a system directory (`/etc`, `/usr`, `/proc`, `/run`, `/root` and the like) or contains the data root stops the command with an error and leaves the unit as it was; so does a binary that is not owned and writable only by root. The settings are read by a child process running as the `dockmesh` account. The unit it replaces is kept as `/etc/dockmesh/dockmesh.service.prev`; `--restore` puts it back. Local changes go into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never writes or removes. The installer runs it on every install and upgrade; run it yourself after you add a directory to `backups.local_roots`, then `sudo systemctl restart dockmesh`. Linux only.
 
+### system snapshot-db
+
+`sudo dockmesh system snapshot-db` writes the snapshot of the database the root updater takes before an update, `dockmesh.db.pre-update.bak` next to the database, through a child process running as `dockmesh`. Run it with the service stopped. The installer runs it on an upgrade, with the new binary, before it replaces the old one. Linux only.
+
+### system unit-groups
+
+`dockmesh system unit-groups` prints the supplementary groups `system write-unit` gives the service, for example `docker, dmsock (Docker socket)`.
+
 ### update apply
 
 `dockmesh update apply --data-dir <dir>` installs a release staged in `<data directory>/update/` and is run as root by `dockmesh-update.service`; you don't run it yourself. `system write-unit` writes that service and `dockmesh-update.path`, which starts it as soon as `<data directory>/update/request` appears, and enables both (the service also runs once at boot, to finish an update a crash or power cut interrupted). Everything in `<data directory>/update/` is treated as untrusted:
@@ -46,6 +54,7 @@ Most commands open the database and apply pending migrations first. Loading the 
 | `serve` | Start the HTTP server and the agent mTLS listener (default) |
 | `init` | Interactive first-run setup on the command line |
 | `setup new-code` | Print a one-time code that opens the setup wizard |
+| `setup status` | Say whether the setup is still unfinished |
 | `restore` | Restore database, stacks and data directory from a system backup |
 | `doctor` | Run local health checks |
 | `ca export` / `ca rotate` / `ca reissue-server` | Export the agent CA, replace it, or add names to the agent listener certificate |
@@ -110,6 +119,12 @@ On a new install the link is `https://` and the last line is the SHA-256 fingerp
 The code is 12 characters of Crockford base32; case and dashes don't matter when you type it. It is in the link's fragment (after `#`), which browsers never send to the server, and the wizard fills the field from it without submitting. Only an argon2id hash of the code and its expiry are stored, in `/etc/dockmesh/setup-code.hash` (owner root, the group of the data directory, mode 0640; if `/etc/dockmesh` belongs to another group, the command lets others enter it without listing it, and the files in it stay 0640 or 0600); the code itself is never stored or logged and can't be shown again. Each run replaces the previous code and ends a setup session opened with it.
 
 The command must run as root. It refuses on an install that is set up (`This server is already set up`); to get an admin there, use `dockmesh admin create`. It works only while the server runs in setup mode or before its first start on a host with no config, no database and no accounts. In a container, run it as root inside the container: `docker exec -u 0 <container> /app/dockmesh setup new-code`.
+
+`--porcelain` prints the same as `key=value` lines (`code`, `valid_until`, `url`, `fingerprint`, `replaced`); the installer reads that form.
+
+## setup status
+
+`sudo dockmesh setup status` says whether the server still waits for its setup and, if so, where the wizard is. It writes nothing and never creates a code. `--porcelain` prints `setup=unfinished` and `url=…`, or `setup=done`. The installer runs it after an upgrade.
 
 ## restore
 

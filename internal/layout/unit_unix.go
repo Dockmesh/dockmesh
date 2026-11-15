@@ -188,7 +188,9 @@ func ReadEnvFile(path string) (map[string]string, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	// O_NONBLOCK: a FIFO swapped in after the caller's Lstat must not
+	// block root's open; on a regular file it changes nothing.
+	f, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

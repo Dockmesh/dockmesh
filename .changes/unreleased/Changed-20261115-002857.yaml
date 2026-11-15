@@ -1,0 +1,3 @@
+kind: Changed
+body: 'The server installer decides once, at the start, whether it installs or upgrades: any binary, unit, config or database of an earlier install makes it an upgrade, which never prints a setup code. A new install writes no config, starts setup mode and prints the setup link with the code, its expiry and the certificate fingerprint; an upgrade takes a database snapshot before it replaces the binary'
+time: 2026-11-15T00:28:57.798069109Z
