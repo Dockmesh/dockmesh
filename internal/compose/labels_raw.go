@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/compose-spec/compose-go/v2/loader"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,7 +20,7 @@ var ErrLabelsNeedAgent = errors.New("the agent on this host doesn't check labels
 // reads nothing but the text: loading the project would open every file
 // include, extends and env_file name, on the server. Whatever it can't
 // decide from the text alone is refused.
-func CheckReservedLabelsText(stackName, composeYAML string) error {
+func CheckReservedLabelsText(composeYAML string) error {
 	var doc struct {
 		Include  any `yaml:"include"`
 		Services map[string]struct {
@@ -37,10 +36,8 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 	if err := dec.Decode(&root); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parse compose file: %w", err)
 	}
-	// Compose's own tags (!reset, !override) change what a merge leaves
-	// behind in ways plain YAML decoding doesn't see.
-	if tag := customTag(&root); tag != "" {
-		return fmt.Errorf("YAML tag %s: %w", tag, ErrLabelsNeedAgent)
+	if d := unsupportedNode(&root); d != "" {
+		return fmt.Errorf("%s: %w", d, ErrLabelsNeedAgent)
 	}
 	if err := root.Decode(&doc); err != nil {
 		return fmt.Errorf("parse compose file: %w", err)
@@ -53,12 +50,6 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 	if doc.Include != nil {
 		return fmt.Errorf("include: %w", ErrLabelsNeedAgent)
 	}
-	project := loader.NormalizeProjectName(stackName)
-	base := map[string]string{LabelProject: project, LabelManaged: "true"}
-	extends := false
-	for _, svc := range doc.Services {
-		extends = extends || svc.Extends != nil
-	}
 	for _, name := range slices.Sorted(maps.Keys(doc.Services)) {
 		svc := doc.Services[name]
 		if svc.LabelFile != nil {
@@ -67,14 +58,7 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 		if !sameFileExtends(svc.Extends) {
 			return fmt.Errorf("service %q: extends from another file: %w", name, ErrLabelsNeedAgent)
 		}
-		tracking := maps.Clone(base)
-		tracking[LabelService] = name
-		if extends {
-			// An extended service passes its labels on, and with them a
-			// service label that is right only for itself.
-			tracking[LabelService] = ""
-		}
-		if err := checkRawLabels("service", name, tracking, svc.Labels); err != nil {
+		if err := checkRawLabels("service", name, svc.Labels); err != nil {
 			return err
 		}
 	}
@@ -84,7 +68,7 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 			if r == nil || isExternal(r.External) {
 				continue
 			}
-			if err := checkRawLabels(kind, name, base, r.Labels); err != nil {
+			if err := checkRawLabels(kind, name, r.Labels); err != nil {
 				return err
 			}
 		}
@@ -109,15 +93,22 @@ func sameFileExtends(v any) bool {
 	return false
 }
 
-// customTag returns the first tag in n that isn't a standard YAML one.
-// Aliases aren't followed: their anchor is part of the tree itself.
-func customTag(n *yaml.Node) string {
+// unsupportedNode describes the first node of n that two YAML parsers
+// may read differently: a tag that isn't a standard YAML one (compose's
+// !reset and !override change what a merge leaves behind), or a plain
+// scalar ending in ":" (in a flow map, "{key:}" is a key with an empty
+// value to compose but a key ending in ":" to this parser). Aliases
+// aren't followed: their anchor is part of the tree itself.
+func unsupportedNode(n *yaml.Node) string {
 	if strings.HasPrefix(n.Tag, "!") && !strings.HasPrefix(n.Tag, "!!") {
-		return n.Tag
+		return "YAML tag " + n.Tag
+	}
+	if n.Kind == yaml.ScalarNode && n.Style == 0 && strings.HasSuffix(n.Value, ":") {
+		return fmt.Sprintf("plain value %q", n.Value)
 	}
 	for _, c := range n.Content {
-		if t := customTag(c); t != "" {
-			return t
+		if d := unsupportedNode(c); d != "" {
+			return d
 		}
 	}
 	return ""
@@ -138,13 +129,11 @@ func isExternal(v any) bool {
 	return false
 }
 
-// checkRawLabels applies withTrackingLabels to labels as written. A key
-// or value with a variable in it is refused: its final text depends on
-// interpolation the server doesn't run.
-//
-// Values are taken as written (a YAML number like -0 stays "-0"), the way
-// compose keeps them.
-func checkRawLabels(kind, name string, tracking map[string]string, raw yaml.Node) error {
+// checkRawLabels refuses every label under com.docker.compose. and
+// dockmesh., whatever its value: compose may turn a value into other
+// text (an unquoted 1e2 becomes 100), so a value that matches here may
+// not match on the agent. A key with a variable in it is refused too.
+func checkRawLabels(kind, name string, raw yaml.Node) error {
 	labels := map[string]string{}
 	switch raw.Kind {
 	case 0:
@@ -165,16 +154,13 @@ func checkRawLabels(kind, name string, tracking map[string]string, raw yaml.Node
 	default:
 		return fmt.Errorf("%s %q: labels must be a map or a list", kind, name)
 	}
-	for k, v := range labels {
-		if strings.Contains(k, "$") || (strings.Contains(v, "$") && isTrackedOrReserved(k, tracking)) {
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		switch {
+		case strings.Contains(k, "$"):
 			return fmt.Errorf("%s %q: label %q uses a variable: %w", kind, name, k, ErrLabelsNeedAgent)
+		case strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, reservedLabelPrefix):
+			return fmt.Errorf("%s %q: label %q is reserved for Dockmesh; remove it from the compose file", kind, name, k)
 		}
 	}
-	_, err := withTrackingLabels(kind, name, tracking, labels)
-	return err
-}
-
-func isTrackedOrReserved(k string, tracking map[string]string) bool {
-	_, tracked := tracking[k]
-	return tracked || strings.HasPrefix(k, reservedLabelPrefix)
+	return nil
 }

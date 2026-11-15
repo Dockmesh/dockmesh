@@ -230,7 +230,7 @@ func (s *remoteExecSession) Close() error {
 // -----------------------------------------------------------------------------
 
 func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
-	if err := h.checkReservedLabels(name, composeYAML); err != nil {
+	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
 	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
@@ -886,7 +886,7 @@ func (h *RemoteHost) ExportImage(ctx context.Context, ref string) (io.ReadCloser
 }
 
 func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
-	if err := h.checkReservedLabels(name, composeYAML); err != nil {
+	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
@@ -1020,11 +1020,11 @@ var (
 // checkReservedLabels refuses tracking labels on the server for agents
 // that don't check them; agents that do load the file, and the files it
 // names, on their own host.
-func (h *RemoteHost) checkReservedLabels(name, composeYAML string) error {
+func (h *RemoteHost) checkReservedLabels(composeYAML string) error {
 	if ag, err := h.live(); err == nil && ag.Hello.Has(agents.CapReservedLabels) {
 		return nil
 	}
-	return compose.CheckReservedLabelsText(name, composeYAML)
+	return compose.CheckReservedLabelsText(composeYAML)
 }
 
 type volumeInspector interface {

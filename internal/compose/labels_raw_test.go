@@ -16,12 +16,12 @@ func TestCheckReservedLabelsText(t *testing.T) {
 		needAgent     bool
 	}{
 		{"own labels", svc + "    labels:\n      team: web\n", "", false},
-		{"tracking label repeated with its value", svc + "    labels:\n      com.docker.compose.project: shop\n", "", false},
+		{"tracking label repeated with its value", svc + "    labels:\n      com.docker.compose.project: shop\n", "is reserved for Dockmesh", false},
 		{"another project", svc + "    labels:\n      com.docker.compose.project: billing\n", "is reserved for Dockmesh", false},
 		{"list syntax", svc + "    labels:\n      - com.docker.compose.service=db\n", "is reserved for Dockmesh", false},
 		{"dockmesh prefix", svc + "    labels:\n      dockmesh.component: proxy\n", "is reserved for Dockmesh", false},
 		{"through a merge key", "x-l: &l\n  com.docker.compose.project: billing\n" + svc + "    labels:\n      <<: *l\n", "is reserved for Dockmesh", false},
-		{"interpolated value", svc + "    labels:\n      com.docker.compose.project: ${OTHER}\n", "uses a variable", true},
+		{"interpolated value", svc + "    labels:\n      com.docker.compose.project: ${OTHER}\n", "is reserved for Dockmesh", false},
 		{"interpolated key", svc + "    labels:\n      ${K}: billing\n", "uses a variable", true},
 		{"variable in an own label", svc + "    labels:\n      team: ${TEAM}\n", "", false},
 		{"network label", svc + "networks:\n  n:\n    labels:\n      dockmesh.managed: \"false\"\n", "is reserved for Dockmesh", false},
@@ -37,11 +37,14 @@ func TestCheckReservedLabelsText(t *testing.T) {
 		{"!reset on a whole service", "x-s: &s {web: {image: nginx, labels: {dockmesh.component: proxy}}}\nservices:\n  <<: *s\n  web: !reset {image: nginx}\n", "YAML tag !reset", true},
 		{"!override", svc + "    labels: !override {team: x}\n", "YAML tag !override", true},
 		{"number as service label", "services:\n  \"0\":\n    image: nginx\n    labels:\n      com.docker.compose.service: -0\n", "is reserved for Dockmesh", false},
+		{"number that compose rewrites", svc + "    labels:\n      com.docker.compose.project: 1e2\n", "is reserved for Dockmesh", false},
+		{"other compose label", svc + "    labels:\n      com.docker.compose.oneoff: \"False\"\n", "is reserved for Dockmesh", false},
+		{"empty value in a flow map", svc + "    labels: {com.docker.compose.project:}\n", "plain value", true},
 		{"unparsable", "services: [\n", "parse compose file", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := CheckReservedLabelsText("shop", tt.compose)
+			err := CheckReservedLabelsText(tt.compose)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("refused: %v", err)
