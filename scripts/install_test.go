@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// envHelpers returns the env-file helper functions from install.sh, so they
+// envHelpers returns the helper functions from install.sh, so they
 // can be run without executing the installer itself.
 func envHelpers(t *testing.T) string {
 	t.Helper()
@@ -18,10 +18,10 @@ func envHelpers(t *testing.T) string {
 		t.Fatalf("read install.sh: %v", err)
 	}
 	s := string(b)
-	start := strings.Index(s, "#  Env file helpers")
+	start := strings.Index(s, "#  Helpers (")
 	end := strings.Index(s, "#  Banner")
 	if start < 0 || end < start {
-		t.Fatal("env file helpers block not found in install.sh")
+		t.Fatal("helpers block not found in install.sh")
 	}
 	return s[start:end]
 }

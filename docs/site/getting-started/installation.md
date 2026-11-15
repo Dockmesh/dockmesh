@@ -99,11 +99,11 @@ If the earlier install never finished its setup, a box follows that says how to 
 
 The agent binaries are not installed into `/usr/local/bin`; they are only kept so the server can hand them to remote hosts. The full tree is in [Filesystem layout](../reference/filesystem-layout.md).
 
-The installer no longer picks `/data` by itself; installs that already use `/data` keep it through their config. On a new install `DOCKMESH_DATA_DIR` is not used: choose the data directory in the setup wizard. On macOS the data root is `/usr/local/var/dockmesh`, the installer still writes `<data root>/dockmesh.env` there, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
+The installer never picks `/data` itself; installs that already use `/data` keep it through their config. On Linux a new install does not use `DOCKMESH_DATA_DIR`: choose the data directory in the setup wizard. On macOS the data root is `/usr/local/var/dockmesh`, the installer still writes `<data root>/dockmesh.env` there, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
 
 A reinstall over kept data (for example after `uninstall.sh` without `--purge`) is an upgrade: the script keeps the config and the data next to it, recreates the `dockmesh` user and hands the data back to it, so the existing database, stacks and keys are picked up and you sign in with your existing account.
 
-The installer writes the systemd unit with `dockmesh system write-unit` on every install and upgrade, so changes made directly to `/etc/systemd/system/dockmesh.service` are replaced. Put local changes into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never touches.
+The installer writes the systemd unit with `dockmesh system write-unit` on every install and on every upgrade of a host with a service, so changes made directly to `/etc/systemd/system/dockmesh.service` are replaced. Put local changes into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never touches.
 
 ### Installer options
 
@@ -119,9 +119,9 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_CHANNEL` | `stable` | Deprecated, removed in 0.7.0: `testing` also considers pre-releases when resolving "latest" and prints a warning. Name the pre-release with `--version` instead. |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
-| `DOCKMESH_DATA_DIR` | unset | On an upgrade, the data root of the earlier install, if the script can't find it at the default places; it must match the config the script finds. Not used on a new install. |
+| `DOCKMESH_DATA_DIR` | unset | On an upgrade, the data root of the earlier install, if the script can't find it at the default places; it must match the config the script finds. Not used on a new Linux install. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
-| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` on a new install installs the binaries, the `dockmesh` user, the data root and the units, but does not start setup mode. Start it later with `sudo systemctl start dockmesh && sudo dockmesh setup new-code`. |
+| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` on a new Linux install installs the binaries, the `dockmesh` user, the data root and the units, but does not start setup mode. Start it later with `sudo systemctl start dockmesh && sudo dockmesh setup new-code`. |
 | `DOCKMESH_SKIP_DOWNLOAD` | unset | `1` uses a `dockmesh` binary you placed in the install directory yourself instead of downloading a release. It does not count as an earlier install. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
@@ -165,7 +165,7 @@ Only one install runs at a time. Setup mode still serves plain HTTP, so the code
 
 ## Install with `dockmesh init`
 
-`dockmesh init` is a terminal wizard that does the same job without a browser. Use it after a binaries-only install (`DOCKMESH_NO_BOOTSTRAP=1`) or a manual install. It must run as root to install the service.
+`dockmesh init` is a terminal wizard that does the same job without a browser. Use it after a manual install. It must run as root to install the service.
 
 ```bash
 sudo dockmesh init

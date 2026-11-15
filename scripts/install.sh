@@ -17,7 +17,7 @@
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
 #    DOCKMESH_NO_BOOTSTRAP    1 to install binaries, user and units without
-#                             starting setup mode
+#                             starting setup mode (Linux)
 #    DOCKMESH_SKIP_DOWNLOAD   1 to use a binary already placed in the bin directory
 #    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
 #    DOCKMESH_SKIP_SIGNATURE  1 to trust checksums.txt without its signature: releases
@@ -36,8 +36,6 @@ set -euo pipefail
 # awk prints "0.6", not "0,6", under a German or French LC_NUMERIC.
 CALLER_LOCALE="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
 export LC_ALL=C
-
-START_TS=${EPOCHREALTIME:-$SECONDS}
 
 # The installer writes to stderr: under `curl | bash` that stays a TTY.
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
@@ -61,13 +59,9 @@ esac
 BOX_WIDTH=65
 
 say()    { printf '%s\n' "$*" >&2; }
-# A status word in front of a line: warning, notice, moved, ok.
+# A status word in front of a line: warning, moved, ok.
 status() { local word="$1" colour="$2"; shift 2; printf '%s%s%s  %s\n' "$colour" "$word" "$RST" "$*" >&2; }
 warn()   { status warning "$FG_WARN" "$*"; }
-notice() { status notice "$FG_STEP" "$*"; }
-# Details of a step are not printed; the step line sums them up.
-ok()     { :; }
-info()   { :; }
 
 die() {
   printf '\n%serror%s  %s\n\n' "$FG_FAIL" "$RST" "$*" >&2
@@ -112,7 +106,7 @@ get_time() {
 }
 
 # ------------------------------------------------------------------
-#  Env file helpers (exercised by scripts/install_test.go)
+#  Helpers (the scripts/*_test.go tests run everything from here to "Banner")
 #
 #  The data dir belongs to the service user, so anything in it may be a
 #  link planted to make root write elsewhere. Files are only created with
@@ -195,35 +189,11 @@ warn_stale_asset_paths() {
   done
 }
 
-# Succeeds only on a host without an earlier install: no service unit, no
-# env file at the default locations, and none of the given paths (target
-# env file, databases) present. A directory we can't look into counts as
-# "present". Without the flag the server opens the wizard by itself when
-# no admin exists.
-setup_flag_wanted() {
-  local p dir
-  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ] || [ "${HAS_LAUNCHD_UNIT:-0}" = "1" ]; then
-    return 1
-  fi
-  for p in "$ETC_ENV_FILE" "${ENV_FILE_CANDIDATES[@]}" "$@"; do
-    [ -n "$p" ] || continue
-    if $USE_SUDO test -e "$p" || $USE_SUDO test -L "$p"; then
-      return 1
-    fi
-    dir="$(dirname "$p")"
-    if $USE_SUDO test -d "$dir" && ! $USE_SUDO test -x "$dir"; then
-      return 1
-    fi
-  done
-  return 0
-}
-
-# write_env_file ENV_FILE DATA_DIR ASSET_DIR [OWNER] creates the bootstrap
-# env file. An existing one is the live config of an earlier install and is
-# never rewritten.
+# write_env_file ENV_FILE DATA_DIR ASSET_DIR creates the bootstrap env file
+# of a new macOS install, which the setup wizard finishes. An existing file
+# is never rewritten.
 write_env_file() {
-  local env_file="$1" data_dir="$2" asset_dir="$3" owner="${4:-}"
-  local setup_line="" tmp
+  local env_file="$1" data_dir="$2" asset_dir="$3" tmp
   if $USE_SUDO test -L "$env_file"; then
     die "refusing to write $env_file: it is a symlink — remove it and re-run"
   fi
@@ -231,13 +201,7 @@ write_env_file() {
     die "refusing to write $env_file: it is a directory"
   fi
   if $USE_SUDO test -e "$env_file"; then
-    info "env file        $env_file exists — kept unchanged"
     return 0
-  fi
-  if setup_flag_wanted "$env_file" "$data_dir/data/dockmesh.db"; then
-    setup_line="DOCKMESH_SETUP_FORCE=true"
-  else
-    info "earlier install found — setup wizard not forced open"
   fi
   # shellcheck disable=SC2016
   tmp="$($USE_SUDO bash -c 'set -C; umask 077
@@ -259,12 +223,9 @@ DOCKMESH_SECRETS_KEY_PATH=$data_dir/data/secrets.age-key
 DOCKMESH_AUDIT_GENESIS_PATH=$data_dir/data/audit-genesis.sha256
 DOCKMESH_INSTALL_SCRIPT=$asset_dir/install-agent.sh
 DOCKMESH_BINARY_DIR=$asset_dir/bin
-$setup_line
+DOCKMESH_SETUP_FORCE=true
 EOF
   )" || die "could not create a temp file next to $env_file"
-  if [ -n "$owner" ]; then
-    $USE_SUDO chown -h "$owner" "$tmp"
-  fi
   $USE_SUDO mv -f "$tmp" "$env_file"
 }
 
@@ -296,7 +257,6 @@ write_unit() {
   fi
   case "$out" in "wrote /etc/systemd/system/dockmesh.service "*|*$'\n'"wrote /etc/systemd/system/dockmesh.service "*) UNIT_REWRITTEN=1 ;; esac
   printf '%s\n' "$out" | sed -n 's/^warning: //p' | while IFS= read -r line; do warn "$line"; done
-  ok "systemd unit    /etc/systemd/system/dockmesh.service"
 }
 
 # start_service runs `systemctl $1 dockmesh` and waits for it. If the
@@ -335,13 +295,11 @@ install_agent_binaries() {
     [ -f "$f" ] || continue
     name="$(basename "$f")"
     $USE_SUDO install -m 0755 "$f" "$asset_dir/bin/$name"
-    ok "agent binary    $asset_dir/bin/$name"
     found=1
   done
   if [ "$found" = "0" ] && [ -f "$src/dockmesh-agent" ]; then
     name="dockmesh-agent-${os}-${arch}"
     $USE_SUDO install -m 0755 "$src/dockmesh-agent" "$asset_dir/bin/$name"
-    ok "agent binary    $asset_dir/bin/$name"
   fi
 }
 
@@ -387,12 +345,6 @@ version_older() {
   a="$(printf '%s' "${1#v}" | sed -E 's/[-+].*//')"
   b="$(printf '%s' "${2#v}" | sed -E 's/[-+].*//')"
   [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$a" ]
-}
-
-# download_speed <bytes> <seconds>: awk gets the numbers as variables, so a
-# download that took 0.0 s doesn't make it divide by a constant zero.
-download_speed() {
-  awk -v b="$1" -v d="$2" 'BEGIN { if (d > 0) printf "%.1f MB/s", (b / 1048576) / d; else print "—" }'
 }
 
 # Minisign public keys of Dockmesh releases. The first signs every release;
@@ -525,8 +477,8 @@ fingerprint_lines() {
 #  Banner
 # ------------------------------------------------------------------
 REPO="dockmesh/dockmesh"
-# DM_VERSION, not VERSION: /etc/os-release, sourced below, sets VERSION.
 parse_args "$@"
+# DM_VERSION, not VERSION: /etc/os-release, sourced below, sets VERSION.
 DM_VERSION="${DOCKMESH_VERSION:-latest}"
 if [ "$DM_VERSION" != "latest" ] && ! valid_tag "$DM_VERSION"; then
   die "release tag '$DM_VERSION' is not of the form vX.Y.Z or vX.Y.Z-rc.N"
@@ -963,48 +915,45 @@ if [ "$IS_UPGRADE" = "1" ]; then
     $USE_SUDO install -m 0755 "$TMP/dockmesh" "$NEW_BINARY"
     NEW_BIN="$NEW_BINARY"
   fi
-  SNAP_DETAIL="skipped, no systemd"
-  if [ "$OS" = "linux" ]; then
-    ensure_service_user
-    if [ "$USER_CREATED" = "1" ]; then
-      # A recreated service user may have a new UID; the data of the
-      # earlier install is handed back to it.
-      KEPT_DATA=""
-      if [ -n "$KEPT_ENV_FILE" ]; then
-        KEPT_DATA="$(dirname "$KEPT_ENV_FILE")"
-      elif [ -n "$FOUND_DB" ] && [ "$(basename "$(dirname "$FOUND_DB")")" = "data" ]; then
-        KEPT_DATA="$(dirname "$(dirname "$FOUND_DB")")"
-      fi
-      if [ -n "$KEPT_DATA" ] && data_dir_allowed "$KEPT_DATA"; then
-        $USE_SUDO mkdir -p "$KEPT_DATA/data" "$KEPT_DATA/stacks"
-        $USE_SUDO chown dockmesh:docker "$KEPT_DATA"
-        $USE_SUDO chown -R dockmesh:docker "$KEPT_DATA/data" "$KEPT_DATA/stacks"
-        $USE_SUDO chmod 750 "$KEPT_DATA"
+  ensure_service_user
+  if [ "$USER_CREATED" = "1" ]; then
+    # A recreated service user may have a new UID; the data of the
+    # earlier install is handed back to it.
+    KEPT_DATA=""
+    if [ -n "$KEPT_ENV_FILE" ]; then
+      KEPT_DATA="$(dirname "$KEPT_ENV_FILE")"
+    elif [ -n "$FOUND_DB" ] && [ "$(basename "$(dirname "$FOUND_DB")")" = "data" ]; then
+      KEPT_DATA="$(dirname "$(dirname "$FOUND_DB")")"
+    fi
+    if [ -n "$KEPT_DATA" ] && data_dir_allowed "$KEPT_DATA"; then
+      $USE_SUDO mkdir -p "$KEPT_DATA/data" "$KEPT_DATA/stacks"
+      $USE_SUDO chown dockmesh:docker "$KEPT_DATA"
+      $USE_SUDO chown -R dockmesh:docker "$KEPT_DATA/data" "$KEPT_DATA/stacks"
+      $USE_SUDO chmod 750 "$KEPT_DATA"
+    fi
+  fi
+  if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
+    # Installs up to v0.1.3 ran the service as root; the unit written
+    # below runs it as dockmesh, which needs the data dir.
+    CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null || true)"
+    if { [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; } && [ -n "$UNIT_ENV_FILE" ] && $USE_SUDO test -f "$UNIT_ENV_FILE"; then
+      ROOT_DATA="$(dirname "$UNIT_ENV_FILE")"
+      if data_dir_allowed "$ROOT_DATA"; then
+        $USE_SUDO chown -R dockmesh:dockmesh "$ROOT_DATA"
+        $USE_SUDO chmod 700 "$ROOT_DATA"
       fi
     fi
-    if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
-      # Installs up to v0.1.3 ran the service as root; the unit written
-      # below runs it as dockmesh, which needs the data dir.
-      CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null || true)"
-      if { [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; } && [ -n "$UNIT_ENV_FILE" ] && $USE_SUDO test -f "$UNIT_ENV_FILE"; then
-        ROOT_DATA="$(dirname "$UNIT_ENV_FILE")"
-        if data_dir_allowed "$ROOT_DATA"; then
-          $USE_SUDO chown -R dockmesh:dockmesh "$ROOT_DATA"
-          $USE_SUDO chmod 700 "$ROOT_DATA"
-        fi
-      fi
-      if [ "$SYSTEMD_ACTIVE" = "1" ]; then
-        STOPPED=1
-        $USE_SUDO systemctl stop dockmesh || true
-      fi
+    if [ "$SYSTEMD_ACTIVE" = "1" ]; then
+      STOPPED=1
+      $USE_SUDO systemctl stop dockmesh || true
     fi
-    RESTART_T0=$(get_time)
-    if SNAP_OUT="$($USE_SUDO "$NEW_BIN" system snapshot-db 2>&1)"; then
-      SNAP_DETAIL="$(printf '%s\n' "$SNAP_OUT" | tail -n 1)"
-    else
-      SNAP_DETAIL="skipped"
-      warn "no database snapshot: $(printf '%s' "$SNAP_OUT" | tail -n 1)"
-    fi
+  fi
+  RESTART_T0=$(get_time)
+  if SNAP_OUT="$($USE_SUDO "$NEW_BIN" system snapshot-db 2>&1)"; then
+    SNAP_DETAIL="$(printf '%s\n' "$SNAP_OUT" | tail -n 1)"
+  else
+    SNAP_DETAIL="skipped"
+    warn "no database snapshot: $(printf '%s' "$SNAP_OUT" | tail -n 1)"
   fi
   N=$((N + 1)); step "$N" "Taking a snapshot" "$SNAP_DETAIL"
 
@@ -1023,35 +972,32 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   # ---- Config and unit ---------------------------------------------
-  MIGRATE_DETAIL="no service unit"
-  if [ "$OS" = "linux" ]; then
-    MOVED_LINES=""
-    if MIGRATE_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout ${KEPT_ENV_FILE:+--from "$KEPT_ENV_FILE"} 2>&1)"; then
-      MOVED_LINES="$(printf '%s\n' "$MIGRATE_OUT" | grep '^moved  ' || true)"
+  MOVED_LINES=""
+  if MIGRATE_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout ${KEPT_ENV_FILE:+--from "$KEPT_ENV_FILE"} 2>&1)"; then
+    MOVED_LINES="$(printf '%s\n' "$MIGRATE_OUT" | grep '^moved  ' || true)"
+  else
+    warn "config left at its old place, Dockmesh keeps using it: $(printf '%s' "$MIGRATE_OUT" | tail -n 1)"
+  fi
+  # The unit loads the root-owned file, never the symlink left behind.
+  ENV_FILE="$KEPT_ENV_FILE"
+  if [ -n "$ENV_FILE" ] && $USE_SUDO test -L "$ENV_FILE" && [ "$($USE_SUDO readlink "$ENV_FILE")" = "$ETC_ENV_FILE" ]; then
+    ENV_FILE="$ETC_ENV_FILE"
+  fi
+  if [ -n "$ENV_FILE" ]; then
+    warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
+  fi
+  if $USE_SUDO test -f "$ETC_ENV_FILE"; then
+    MIGRATE_DETAIL="config in $ETC_ENV_FILE"
+  elif [ -n "$ENV_FILE" ]; then
+    MIGRATE_DETAIL="config stays in $ENV_FILE"
+  else
+    MIGRATE_DETAIL="no config yet"
+  fi
+  if [ "$WRITE_UNIT" = "1" ]; then
+    if write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
+      MIGRATE_DETAIL="$MIGRATE_DETAIL, unit from the template"
     else
-      warn "config left at its old place, Dockmesh keeps using it: $(printf '%s' "$MIGRATE_OUT" | tail -n 1)"
-    fi
-    # The unit loads the root-owned file, never the symlink left behind.
-    ENV_FILE="$KEPT_ENV_FILE"
-    if [ -n "$ENV_FILE" ] && $USE_SUDO test -L "$ENV_FILE" && [ "$($USE_SUDO readlink "$ENV_FILE")" = "$ETC_ENV_FILE" ]; then
-      ENV_FILE="$ETC_ENV_FILE"
-    fi
-    if [ -n "$ENV_FILE" ]; then
-      warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
-    fi
-    if $USE_SUDO test -f "$ETC_ENV_FILE"; then
-      MIGRATE_DETAIL="config in $ETC_ENV_FILE"
-    elif [ -n "$ENV_FILE" ]; then
-      MIGRATE_DETAIL="config stays in $ENV_FILE"
-    else
-      MIGRATE_DETAIL="no config yet"
-    fi
-    if [ "$WRITE_UNIT" = "1" ]; then
-      if write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
-        MIGRATE_DETAIL="$MIGRATE_DETAIL, unit from the template"
-      else
-        warn "unit kept as it was; Dockmesh keeps running with it"
-      fi
+      warn "unit kept as it was; Dockmesh keeps running with it"
     fi
   fi
   N=$((N + 1)); step "$N" "Migrating config" "$MIGRATE_DETAIL"
@@ -1082,10 +1028,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   say ""
-  STATUS_OUT=""
-  if [ "$OS" = "linux" ]; then
-    STATUS_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup status --porcelain 2>/dev/null || true)"
-  fi
+  STATUS_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup status --porcelain 2>/dev/null || true)"
   if [ "$(kv setup "$STATUS_OUT")" = "unfinished" ]; then
     status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is running."
     box "Setup was never finished" \
