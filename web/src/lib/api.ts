@@ -1241,13 +1241,12 @@ export async function uploadSystemBackup(
   url: string,
   file: File,
   key?: File | null,
-  token?: string | null,
-  extraHeaders: Record<string, string> = {}
-): Promise<StageSystemRestoreResult & { error?: string; restarting?: boolean }> {
+  token?: string | null
+): Promise<StageSystemRestoreResult & { error?: string }> {
   const form = new FormData();
   form.append('file', file);
   if (key) form.append('key', key);
-  const headers: Record<string, string> = { ...extraHeaders };
+  const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { method: 'POST', headers, body: form });
   const data = await res.json().catch(() => ({}));

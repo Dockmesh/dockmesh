@@ -208,17 +208,6 @@ func ReadServiceFile(dir string, uid uint32, name string, max int64) ([]byte, ti
 	return data, fi.ModTime(), nil
 }
 
-// OpenServiceFile opens name in a directory the service owns for reading,
-// with the checks of ReadServiceFile, for files too large to read at once.
-func OpenServiceFile(dir string, uid uint32, name string, max int64) (*os.File, error) {
-	root, err := openRequestDir(dir, uid)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	return openUntrusted(root, name, max)
-}
-
 // RemoveServiceFile removes name from the service's update directory
 // through the same checked handle ReadServiceFile uses.
 func RemoveServiceFile(dir string, uid uint32, name string) error {

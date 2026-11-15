@@ -436,6 +436,9 @@ func main() {
 		slog.Warn("Setup mode. Get a setup code with: "+setup.CodeCommand, "install", setupMode.String())
 		setupState.SetFresh(freshInstall)
 		if freshInstall {
+			if err := setup.DropRestoreFiles(setup.StateDir(realDataDir)); err != nil {
+				slog.Warn("remove the backup of an earlier setup restore", "err", err)
+			}
 			if err := setupState.Codes().PersistCounters(filepath.Join(setup.StateDir(realDataDir), "code-counters.json")); err != nil {
 				slog.Warn("setup code counters", "err", err)
 			}

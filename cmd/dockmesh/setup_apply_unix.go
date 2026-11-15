@@ -55,6 +55,10 @@ type setupApplier struct {
 	// restoreFrom (and restoreKey for an encrypted backup) restore a
 	// system backup instead of creating a new install.
 	restoreFrom, restoreKey *os.File
+	// restoreFromState restores the backup the wizard left in the state
+	// dir. The restore opens it as the service account, so it reads only
+	// what that account may read anyway.
+	restoreFromState bool
 }
 
 // failedSuffix marks what a failed setup-apply leaves behind; it is never
@@ -98,45 +102,9 @@ func (a *setupApplier) run(ctx context.Context) error {
 		a.result(applyRefused, "values", err)
 		return nil
 	}
-	if v.Restore {
-		closeFiles, err := a.openRestore()
-		if err != nil {
-			a.result(applyRefused, "restore", err)
-			return nil
-		}
-		defer closeFiles()
-	}
+	a.restoreFromState = v.Restore
 	a.commit(ctx, v)
 	return nil
-}
-
-// maxRestoreArchive bounds the system backup root streams to the restore.
-const maxRestoreArchive = 64 << 30
-
-// openRestore opens the backup and key file the service left in the state
-// dir. Root only streams them to the restore, which runs as the service
-// account; the files are opened through checked handles all the same.
-func (a *setupApplier) openRestore() (func(), error) {
-	state := setup.StateDir(a.dataDir)
-	backup, err := rootupdate.OpenServiceFile(state, a.uid, setup.RestoreArchiveFile, maxRestoreArchive)
-	if err != nil {
-		return nil, err
-	}
-	a.restoreFrom = backup
-	key, err := rootupdate.OpenServiceFile(state, a.uid, setup.RestoreKeyFile, 1<<20)
-	switch {
-	case err == nil:
-		a.restoreKey = key
-	case !errors.Is(err, fs.ErrNotExist):
-		backup.Close()
-		return nil, err
-	}
-	return func() {
-		backup.Close()
-		if key != nil {
-			key.Close()
-		}
-	}, nil
 }
 
 // commit sets up a never set up server from v: target dir, config check,
@@ -262,6 +230,14 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 // the result.
 func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candidate string) (string, error) {
 	switch {
+	case a.restoreFromState:
+		state := setup.StateDir(a.dataDir)
+		args := []string{"restore", "--from", filepath.Join(state, setup.RestoreArchiveFile)}
+		if _, err := os.Lstat(filepath.Join(state, setup.RestoreKeyFile)); err == nil {
+			args = append(args, "--key", filepath.Join(state, setup.RestoreKeyFile))
+		}
+		_, err := runAsService(ctx, a.binary, 30*time.Minute, append(args, "--env-file", candidate)...)
+		return "restore", err
 	case a.restoreFrom != nil:
 		args := []string{"restore", "--from", "-"}
 		var extra []*os.File
@@ -400,7 +376,7 @@ func (a *setupApplier) onlySetupLeftovers(dir string) error {
 		name := e.Name()
 		switch {
 		case same && (name == setup.StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir))):
-		case failedName.MatchString(name) && e.Type().IsRegular():
+		case failedName.MatchString(name) && (e.Type().IsRegular() || e.IsDir()):
 		case (name == "data" || name == "stacks") && e.IsDir():
 			if err := onlyFailed(filepath.Join(dir, name)); err != nil {
 				return err
@@ -451,9 +427,24 @@ func (a *setupApplier) setAside(dir string) {
 		return
 	}
 	defer top.Close()
-	// OpenRoot below top refuses a data dir the account swapped for a
-	// symlink out of the data dir.
-	root, err := top.OpenRoot(filepath.Base(filepath.Dir(paths.DBPath)))
+	suffix := a.failedSuffix()
+	a.setAsideIn(top, filepath.Base(filepath.Dir(paths.DBPath)), suffix)
+	// A restore fills the stacks dir as well.
+	if filepath.Dir(paths.StacksRoot) == filepath.Clean(dir) {
+		stacks := filepath.Base(paths.StacksRoot)
+		a.setAsideIn(top, stacks, suffix)
+		if err := top.Rename(stacks+".restore-staged", stacks+".restore-staged"+suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			a.log.Warn("set aside the failed data", "file", stacks+".restore-staged", "err", err)
+		}
+	}
+}
+
+// setAsideIn renames every entry of sub below top with suffix, so a retry
+// finds the data dir as setup left it.
+func (a *setupApplier) setAsideIn(top *os.Root, sub, suffix string) {
+	// OpenRoot below top refuses a dir the account swapped for a symlink
+	// out of the data dir.
+	root, err := top.OpenRoot(sub)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			a.log.Warn("set aside the failed data", "err", err)
@@ -461,7 +452,6 @@ func (a *setupApplier) setAside(dir string) {
 		return
 	}
 	defer root.Close()
-	suffix := a.failedSuffix()
 	d, err := root.Open(".")
 	if err != nil {
 		a.log.Warn("set aside the failed data", "err", err)
@@ -472,8 +462,6 @@ func (a *setupApplier) setAside(dir string) {
 	if err != nil {
 		a.log.Warn("set aside the failed data", "err", err)
 	}
-	// Everything the failed start wrote goes, so a retry finds the data
-	// dir as setup left it.
 	for _, e := range entries {
 		if n := e.Name(); !failedName.MatchString(n) {
 			if err := root.Rename(n, n+suffix); err != nil {

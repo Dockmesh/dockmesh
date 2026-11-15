@@ -500,9 +500,7 @@
     notAnswering = false;
     applyFailRow = null;
     applying = true;
-    if (await afterRestart()) {
-      if (path !== 'restore') startRedirect();
-    }
+    if ((await afterRestart()) && path !== 'restore') startRedirect();
   }
   let eventSource: EventSource | null = null;
   onDestroy(() => eventSource?.close());

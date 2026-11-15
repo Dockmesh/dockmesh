@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,6 +28,18 @@ const (
 	RestoreArchiveFile = "restore.archive"
 	RestoreKeyFile     = "restore.key"
 )
+
+// DropRestoreFiles removes the backup and key file a wizard restore left
+// in stateDir; the key opens every backup of the old install.
+func DropRestoreFiles(stateDir string) error {
+	var errs []error
+	for _, name := range []string{RestoreArchiveFile, RestoreKeyFile} {
+		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // ApplyValues are what a setup-apply commits. The service writes them,
 // so root treats them as untrusted and checks them with Validate.

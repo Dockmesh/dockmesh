@@ -323,9 +323,15 @@ func freshSetupRestore(dataDir string, restart func()) setup.RestorePrepareFunc 
 			return nil, err
 		}
 		return func(ctx context.Context, emit func(step, msg, status string)) error {
-			return applyFresh(ctx, dataDir, v, emit, func() error {
+			err := applyFresh(ctx, dataDir, v, emit, func() error {
 				return restoreInProcess(ctx, dataDir, v, restart, emit)
 			})
+			if err != nil {
+				if derr := setup.DropRestoreFiles(state); derr != nil {
+					emit("cleanup", derr.Error(), "warn")
+				}
+			}
+			return err
 		}, nil
 	}
 }
@@ -391,30 +397,43 @@ func rootUpdaterInstalled() bool {
 // and restarts into it. There is no root to write a config here, so the
 // data dir cannot move and the listener follows the environment.
 func materializeInProcess(ctx context.Context, dataDir string, v setup.ApplyValues, restart func(), emit func(step, msg, status string)) error {
-	if v.DataDir != filepath.Clean(dataDir) {
-		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
-		emit("data_dir", err.Error(), "fail")
+	if err := sameDataDir(dataDir, v, emit); err != nil {
 		return err
 	}
 	if err := materialize(ctx, v, setup.PKIDir(dataDir)); err != nil {
 		emit("materialize", err.Error(), "fail")
 		return err
 	}
+	finishInProcess(dataDir, "setup applied; the server restarts", restart, emit)
+	return nil
+}
+
+// sameDataDir refuses a data dir other than the one the server was
+// started with: without root nothing can point the server elsewhere.
+func sameDataDir(dataDir string, v setup.ApplyValues, emit func(step, msg, status string)) error {
+	if v.DataDir != filepath.Clean(dataDir) {
+		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
+		emit("data_dir", err.Error(), "fail")
+		return err
+	}
+	return nil
+}
+
+// finishInProcess drops the state dir and restarts into the set up data
+// dir.
+func finishInProcess(dataDir, msg string, restart func(), emit func(step, msg, status string)) {
 	if err := os.RemoveAll(setup.StateDir(dataDir)); err != nil {
 		emit("cleanup", err.Error(), "warn")
 	}
-	emit("restart", "setup applied; the server restarts", "ok")
+	emit("restart", msg, "ok")
 	time.AfterFunc(2*time.Second, restart)
-	return nil
 }
 
 // restoreInProcess restores the uploaded backup into the data dir the
 // server was started with and restarts into it, as `dockmesh restore`
 // does for that data dir.
 func restoreInProcess(ctx context.Context, dataDir string, v setup.ApplyValues, restart func(), emit func(step, msg, status string)) error {
-	if v.DataDir != filepath.Clean(dataDir) {
-		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
-		emit("data_dir", err.Error(), "fail")
+	if err := sameDataDir(dataDir, v, emit); err != nil {
 		return err
 	}
 	state := setup.StateDir(dataDir)
@@ -434,11 +453,7 @@ func restoreInProcess(ctx context.Context, dataDir string, v setup.ApplyValues, 
 		emit("restore", err.Error(), "fail")
 		return err
 	}
-	if err := os.RemoveAll(state); err != nil {
-		emit("cleanup", err.Error(), "warn")
-	}
-	emit("restart", "backup restored; the server restarts", "ok")
-	time.AfterFunc(2*time.Second, restart)
+	finishInProcess(dataDir, "backup restored; the server restarts", restart, emit)
 	return nil
 }
 

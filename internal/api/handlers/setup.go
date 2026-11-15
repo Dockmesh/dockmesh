@@ -228,31 +228,33 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runner := setup.NewRunner()
-	runID := uuid.NewString()
-	h.setupRuns.Store(runID, runner)
-
-	go func() {
-		// Detach from the request context so the install isn't
-		// cancelled when the operator's commit POST returns. The
-		// runner uses its own background context.
-		ctx := context.Background()
+	h.startSetupRun(w, r, func(ctx context.Context, runner *setup.Runner) bool {
 		runner.Run(ctx, in, h.SetupCommit_)
 		done, err := runner.Done()
 		// An account created meanwhile ends setup just like a finished install.
-		h.SetupState.EndCommit(done && (err == nil || errors.Is(err, auth.ErrAlreadySetUp)))
-		// Keep the runner around for a while so late subscribers can
-		// still read the event history. After 10 minutes drop it.
-		go func() {
-			time.Sleep(10 * time.Minute)
-			h.setupRuns.Delete(runID)
-		}()
-	}()
+		return done && (err == nil || errors.Is(err, auth.ErrAlreadySetUp))
+	}, nil)
+}
 
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"run_id":     runID,
-		"stream_url": "/api/v1/setup/stream/" + runID,
-	})
+// startSetupRun runs an install or restore on a runner the wizard follows
+// on the stream, detached from the request so it outlives the POST, ends
+// the install slot with the outcome run reports, and answers 202 with the
+// run and extra.
+func (h *Handlers) startSetupRun(w http.ResponseWriter, r *http.Request, run func(context.Context, *setup.Runner) bool, extra map[string]any) {
+	runner := setup.NewRunner()
+	runID := uuid.NewString()
+	h.setupRuns.Store(runID, runner)
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		h.SetupState.EndCommit(run(ctx, runner))
+		// Late subscribers can still read the history for a while.
+		time.AfterFunc(10*time.Minute, func() { h.setupRuns.Delete(runID) })
+	}()
+	body := map[string]any{"run_id": runID, "stream_url": "/api/v1/setup/stream/" + runID}
+	for k, v := range extra {
+		body[k] = v
+	}
+	writeJSON(w, http.StatusAccepted, body)
 }
 
 // localPort is the port of the listener that accepted r, 0 if unknown.
