@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 )
 
@@ -114,6 +115,10 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, files *stackh
 		if err != nil {
 			_ = tw.Close()
 			_ = gz.Close()
+			var missing *docker.VolumeNotFoundError
+			if errors.As(err, &missing) {
+				return total, fmt.Errorf("%w; is the stack deployed on this host?", err)
+			}
 			return total, fmt.Errorf("volume %s: %w", vn, err)
 		}
 	}
