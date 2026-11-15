@@ -87,8 +87,11 @@ Usage: dockmesh [command] [flags]
 
 Server:
   serve                  Start the HTTP + agent mTLS server (default if no command given)
-  init                   Interactive first-run setup (admin user, listen port,
-                         systemd unit, agent public URL). Run once after install.
+  setup apply --file F   Set up a new install from a setup file (--dry-run checks it)
+  setup example          Print an annotated setup file
+  setup new-code         Print a one-time code for the setup wizard
+  setup status           Say whether the setup is still unfinished
+  init                   Deprecated wrapper on setup apply (--yes or --file)
 
 Admin:
   admin create           Create a user (--username --email --password --role)

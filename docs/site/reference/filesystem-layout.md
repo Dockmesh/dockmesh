@@ -7,7 +7,7 @@ Dockmesh keeps stack definitions as files and runtime state in one SQLite databa
 
 ## Server data root
 
-`install.sh` and `dockmesh init` create the same layout under the data root (`DOCKMESH_DATA_DIR`). The default is `/var/lib/dockmesh` on Linux and `/usr/local/var/dockmesh` on macOS; `install.sh` reuses the data root of an earlier install when it finds its `dockmesh.env`. On Linux the config moves to `/etc/dockmesh/dockmesh.env` (root:dockmesh, 0640) on the first installer upgrade; the old place then holds a symlink to it.
+`install.sh` and `dockmesh setup apply` create the same layout under the data root (`DOCKMESH_DATA_DIR`). The default is `/var/lib/dockmesh` on Linux and `/usr/local/var/dockmesh` on macOS; `install.sh` reuses the data root of an earlier install when it finds its `dockmesh.env`. On Linux the config moves to `/etc/dockmesh/dockmesh.env` (root:dockmesh, 0640) on the first installer upgrade; the old place then holds a symlink to it.
 
 ```text
 /var/lib/dockmesh/
@@ -81,7 +81,7 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/usr/local/bin/grype` | `install.sh` unless `DOCKMESH_NO_SCANNER=1` | Vulnerability scanner |
 | `/usr/local/share/dockmesh/install-agent.sh` | `install.sh` (`DOCKMESH_ASSET_DIR`) | Served at `/install/agent.sh` on the agent port |
 | `/usr/local/share/dockmesh/bin/dockmesh-agent-linux-amd64`, `dockmesh-agent-linux-arm64` | `install.sh` | Agent binaries, served at `/install/{name}` and to agent upgrades (`DOCKMESH_BINARY_DIR`) |
-| `/etc/systemd/system/dockmesh.service` | `dockmesh system write-unit`, run by `install.sh` and `dockmesh init` | Service unit, user `dockmesh`, group `dockmesh` plus `docker`; rewritten on every upgrade |
+| `/etc/systemd/system/dockmesh.service` | `dockmesh system write-unit`, run by `install.sh` and `dockmesh setup apply` | Service unit, user `dockmesh`, group `dockmesh` plus `docker`; rewritten on every upgrade |
 | `/etc/systemd/system/dockmesh.service.d/*.conf` | you | Local changes to the unit; Dockmesh never writes or removes them |
 | `/etc/dockmesh/dockmesh.service.prev` | `dockmesh system write-unit` | The unit the last write replaced (`write-unit --restore`) |
 | `/etc/systemd/system/dockmesh-update.path`, `dockmesh-update.service` | `dockmesh system write-unit` | Root updater: the path unit starts the oneshot `dockmesh update apply` when the server writes an update request; rewritten on every upgrade |

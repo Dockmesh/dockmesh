@@ -24,7 +24,7 @@ import (
 // runSetupCmd handles `dockmesh setup <subcommand>`.
 func runSetupCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status>")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status|apply|example>")
 		os.Exit(2)
 	}
 	var err error
@@ -35,8 +35,12 @@ func runSetupCmd(args []string) {
 		err = runSetupNewCode(args[1:])
 	case "status":
 		runSetupStatus(args[1:])
+	case "apply":
+		err = runSetupApply(args[1:])
+	case "example":
+		runSetupExample()
 	default:
-		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status>")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status|apply|example>")
 		os.Exit(2)
 	}
 	if err != nil {

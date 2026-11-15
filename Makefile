@@ -10,7 +10,11 @@ LDFLAGS := -s -w \
 
 # Keeps the dev data in ./data and ./stacks of the checkout.
 dev: export DOCKMESH_DATA_DIR ?= $(CURDIR)
+# make dev SETUP_FILE=<file> sets up a fresh data dir from a setup file
+# (template: go run ./cmd/dockmesh setup example) instead of the wizard.
 dev:
+	@if [ -n "$(SETUP_FILE)" ] && [ ! -e "$$DOCKMESH_DATA_DIR/data/dockmesh.db" ]; then \
+		go run ./cmd/dockmesh setup apply --file "$(SETUP_FILE)"; fi
 	@echo ">> starting backend (:8080) and frontend (:5173)"
 	@(cd web && npm run dev) & \
 	 (command -v air >/dev/null && air || go run ./cmd/dockmesh)

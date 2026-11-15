@@ -9,7 +9,7 @@ Each entry starts with the symptom as you see it, an error message or a behaviou
 
 | Install | Server log | Agent log |
 |---|---|---|
-| Linux, `install.sh` or `dockmesh init` (systemd unit `dockmesh.service`) | `journalctl -u dockmesh` | `journalctl -u dockmesh-agent` on the agent host |
+| Linux, `install.sh` or `dockmesh setup apply` (systemd unit `dockmesh.service`) | `journalctl -u dockmesh` | `journalctl -u dockmesh-agent` on the agent host |
 | macOS (launchd `dev.dockmesh.service`) | `/usr/local/var/log/dockmesh.log` and `/usr/local/var/log/dockmesh.err` | not applicable |
 
 ```bash

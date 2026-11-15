@@ -34,7 +34,7 @@ _dockmesh_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="serve init admin db ca enroll secrets import restore config system doctor completion version help"
+    local commands="serve setup init admin db ca enroll secrets import restore config system doctor completion version help"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -49,6 +49,7 @@ _dockmesh_complete() {
         secrets)     COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
         import)      COMPREPLY=( $(compgen -W "compose-dir" -- "$cur") ) ;;
         config)      COMPREPLY=( $(compgen -W "show" -- "$cur") ) ;;
+        setup)       COMPREPLY=( $(compgen -W "apply example new-code status" -- "$cur") ) ;;
         system)      COMPREPLY=( $(compgen -W "migrate-layout write-unit" -- "$cur") ) ;;
         completion)  COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;
     esac
@@ -63,7 +64,8 @@ _dockmesh() {
     local -a commands
     commands=(
         'serve:Start the HTTP + agent mTLS server'
-        'init:Set up a new install'
+        'setup:Set up a new install (apply, example, new-code, status)'
+        'init:Deprecated, use setup apply'
         'admin:Manage users'
         'db:Database operations'
         'ca:Agent PKI operations'
@@ -89,6 +91,7 @@ _dockmesh() {
         secrets)    _values 'secrets subcommand' rotate ;;
         import)     _values 'import source' compose-dir ;;
         config)     _values 'config subcommand' show ;;
+        setup)      _values 'setup subcommand' apply example new-code status ;;
         system)     _values 'system subcommand' migrate-layout write-unit ;;
         completion) _values 'shell' bash zsh fish ;;
     esac
@@ -100,7 +103,8 @@ const fishCompletion = `# dockmesh fish completion
 # Install: dockmesh completion fish > ~/.config/fish/completions/dockmesh.fish
 complete -c dockmesh -f
 complete -c dockmesh -n '__fish_use_subcommand' -a serve  -d 'Start the server'
-complete -c dockmesh -n '__fish_use_subcommand' -a init   -d 'Set up a new install'
+complete -c dockmesh -n '__fish_use_subcommand' -a setup  -d 'Set up a new install'
+complete -c dockmesh -n '__fish_use_subcommand' -a init   -d 'Deprecated, use setup apply'
 complete -c dockmesh -n '__fish_use_subcommand' -a admin  -d 'Manage users'
 complete -c dockmesh -n '__fish_use_subcommand' -a db     -d 'Database operations'
 complete -c dockmesh -n '__fish_use_subcommand' -a ca     -d 'Agent PKI operations'
@@ -121,6 +125,7 @@ complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke l
 complete -c dockmesh -n '__fish_seen_subcommand_from secrets' -a 'rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from import' -a 'compose-dir'
 complete -c dockmesh -n '__fish_seen_subcommand_from config' -a 'show'
+complete -c dockmesh -n '__fish_seen_subcommand_from setup'  -a 'apply example new-code status'
 complete -c dockmesh -n '__fish_seen_subcommand_from system' -a 'migrate-layout write-unit'
 complete -c dockmesh -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 `

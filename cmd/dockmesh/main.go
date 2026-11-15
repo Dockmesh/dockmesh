@@ -128,14 +128,13 @@ func seedScannerEnabled(ctx context.Context, store *settings.Store, enabled bool
 // os.Args so the rest of the process never sees it.
 //
 // If no --env-file was passed, we also try the default location where
-// install.sh and `dockmesh init` write the env file (see defaultEnvFiles).
+// install.sh and setup apply write the env file (see defaultEnvFiles).
 // This lets CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
 // without the operator having to source the file or pass --env-file
 // every time.
 //
-// Originally built because launchd on macOS has no EnvironmentFile
-// directive (unlike systemd), so init's plist template passes
-// `--env-file PATH` to `dockmesh serve` explicitly.
+// launchd has no EnvironmentFile, so the plist install.sh writes passes
+// --env-file to serve.
 func loadEnvFileFromArgs() error {
 	var path string
 	var keep []string

@@ -225,7 +225,7 @@ func (s *Service) lookupUserID(ctx context.Context, query string, args ...any) (
 // createSSOUser inserts an account without a usable password, retrying
 // with a numeric suffix when the username is taken.
 func (s *Service) createSSOUser(ctx context.Context, id SSOIdentity, insert string) (*User, error) {
-	randomPw, err := generatePassword(40)
+	randomPw, err := GeneratePassword(40)
 	if err != nil {
 		return nil, err
 	}

@@ -82,35 +82,47 @@ var pkiFiles = []string{"agents-ca.crt", "agents-ca.key", "agents-server.crt", "
 
 // runSetupMaterialize is `dockmesh setup materialize`, run by root's
 // setup-apply as the service account: it creates the database, the admin
-// and the settings in the new data dir and copies the PKI there.
+// and the settings in the new data dir and copies the PKI there. The
+// values come from the wizard's state dir, or with --values - from stdin
+// (a setup file, applied before setup mode ever ran).
 func runSetupMaterialize(args []string) error {
 	fset := flag.NewFlagSet("setup materialize", flag.ExitOnError)
 	stateDir := fset.String("state-dir", "", "setup state dir")
 	dataDir := fset.String("data-dir", "", "data dir to set up")
+	values := fset.String("values", "", "- to read the setup values from stdin instead of the state dir")
 	_ = fset.Parse(args)
 	if os.Geteuid() == 0 {
 		return errors.New("runs as the dockmesh account, not as root")
 	}
-	if !filepath.IsAbs(*stateDir) || !filepath.IsAbs(*dataDir) {
-		return errors.New("--state-dir and --data-dir need absolute paths")
+	if !filepath.IsAbs(*dataDir) {
+		return errors.New("--data-dir needs an absolute path")
 	}
-	f, err := os.Open(filepath.Join(*stateDir, setup.ApplyFile))
-	if err != nil {
-		return err
+	var in io.Reader = os.Stdin
+	pkiDir := ""
+	if *values != "-" {
+		if !filepath.IsAbs(*stateDir) {
+			return errors.New("--state-dir needs an absolute path")
+		}
+		f, err := os.Open(filepath.Join(*stateDir, setup.ApplyFile))
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		in = f
+		pkiDir = setup.PKIDir(filepath.Dir(*stateDir))
 	}
-	v, err := readApplyValues(f)
-	f.Close()
+	v, err := readApplyValues(in)
 	if err != nil {
 		return err
 	}
 	if filepath.Clean(*dataDir) != v.DataDir {
 		return fmt.Errorf("data dir %s is not the one the setup values name", *dataDir)
 	}
-	return materialize(context.Background(), v, setup.PKIDir(filepath.Dir(*stateDir)))
+	return materialize(context.Background(), v, pkiDir)
 }
 
 // materialize sets up the data dir of v from the setup state, whose PKI
-// is in pkiDir.
+// is in pkiDir; without one the server creates its PKI at the first start.
 func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error {
 	paths := config.ResolvePaths(func(k string) string {
 		if k == "DOCKMESH_DATA_DIR" {
@@ -128,9 +140,11 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 	if err := os.MkdirAll(paths.StacksRoot, 0o750); err != nil {
 		return err
 	}
-	for _, name := range pkiFiles {
-		if err := copyPKIFile(filepath.Join(pkiDir, name), filepath.Join(dataSub, name)); err != nil {
-			return err
+	if pkiDir != "" {
+		for _, name := range pkiFiles {
+			if err := copyPKIFile(filepath.Join(pkiDir, name), filepath.Join(dataSub, name)); err != nil {
+				return err
+			}
 		}
 	}
 	conn, err := db.Open(paths.DBPath)

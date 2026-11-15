@@ -72,6 +72,24 @@ func CheckDataDirPath(p string) error {
 // Validate checks every value and fills the defaults: the internal
 // certificate, port 8080, and loopback for a listener behind a proxy.
 func (v *ApplyValues) Validate() error {
+	if err := v.ValidateServer(); err != nil {
+		return err
+	}
+	if !adminNameRe.MatchString(v.Admin.Username) {
+		return errors.New("admin username must be 3-32 characters of a-z, 0-9, . _ -")
+	}
+	if strings.ContainsAny(v.Admin.Email, "\r\n\x00") || len(v.Admin.Email) > 254 {
+		return errors.New("admin email is not valid")
+	}
+	if !strings.HasPrefix(v.Admin.PasswordHash, "$argon2id$") || strings.ContainsAny(v.Admin.PasswordHash, "\r\n\x00 ") {
+		return errors.New("admin password hash is not an argon2id hash")
+	}
+	return nil
+}
+
+// ValidateServer is Validate without the admin account, which a restore
+// brings from its backup.
+func (v *ApplyValues) ValidateServer() error {
 	if err := CheckDataDirPath(v.DataDir); err != nil {
 		return err
 	}
@@ -110,15 +128,6 @@ func (v *ApplyValues) Validate() error {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(v.BaseURL, " \t\r\n") {
 			return fmt.Errorf("base URL %q is not an http(s) URL", v.BaseURL)
 		}
-	}
-	if !adminNameRe.MatchString(v.Admin.Username) {
-		return errors.New("admin username must be 3-32 characters of a-z, 0-9, . _ -")
-	}
-	if strings.ContainsAny(v.Admin.Email, "\r\n\x00") || len(v.Admin.Email) > 254 {
-		return errors.New("admin email is not valid")
-	}
-	if !strings.HasPrefix(v.Admin.PasswordHash, "$argon2id$") || strings.ContainsAny(v.Admin.PasswordHash, "\r\n\x00 ") {
-		return errors.New("admin password hash is not an argon2id hash")
 	}
 	return nil
 }
