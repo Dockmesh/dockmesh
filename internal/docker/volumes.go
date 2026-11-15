@@ -28,6 +28,33 @@ func CheckVolumeName(name string) error {
 	return nil
 }
 
+// VolumeNotFoundError reports a named volume that does not exist on the
+// host the backup runs on.
+type VolumeNotFoundError struct{ Name string }
+
+func (e *VolumeNotFoundError) Error() string {
+	return fmt.Sprintf("volume %q does not exist on this host", e.Name)
+}
+
+// VolumeInspector is the part of the Docker client RequireVolume needs.
+type VolumeInspector interface {
+	VolumeInspect(ctx context.Context, name string, opts client.VolumeInspectOptions) (client.VolumeInspectResult, error)
+}
+
+// RequireVolume fails with a VolumeNotFoundError when the volume is
+// missing. Binding a missing volume into a helper makes Docker create an
+// empty one, so a backup would archive nothing and leave a stray volume.
+func RequireVolume(ctx context.Context, cli VolumeInspector, name string) error {
+	_, err := cli.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
+	if cerrdefs.IsNotFound(err) {
+		return &VolumeNotFoundError{Name: name}
+	}
+	if err != nil {
+		return fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	return nil
+}
+
 func (c *Client) ListVolumes(ctx context.Context) ([]volume.Volume, error) {
 	resp, err := c.cli.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {

@@ -1,0 +1,3 @@
+kind: Fixed
+body: A backup of a volume that no longer exists on its host, or of a stack that is not deployed there, now fails and names the volume instead of succeeding with an empty archive and leaving an empty volume behind
+time: 2026-11-15T21:36:55.449598339Z
