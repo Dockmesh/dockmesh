@@ -22,11 +22,8 @@ const DefaultSystemSchedule = "0 3 * * *"
 const DefaultSystemRetentionDays = 14
 
 // EnsureDefaultJob creates the default daily system backup job if it
-// doesn't already exist. **Not** called on boot anymore — only when
-// the operator explicitly opts in (see SetDefaultJobEnabled). Earlier
-// dockmesh versions called this from cmd/dockmesh/main.go on every
-// start, which created a backup job the user never asked for and
-// didn't necessarily want — see P.13.2.
+// doesn't already exist. Only called when the operator opts in (see
+// SetDefaultJobEnabled), never on boot.
 func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 	if s.paths.DBPath == "" || s.paths.StacksRoot == "" || s.paths.DataDir == "" {
 		slog.Info("backup default job skipped — system paths not configured")
@@ -211,37 +208,46 @@ func hasFiles(dir string) bool {
 	return found
 }
 
-// MarkAutoCreatedJobsForReview is a one-shot migration helper. On boot,
-// if a job named DefaultSystemJobName exists and the review flag is
-// not already set or cleared, mark it as needing operator review. The
-// UI surfaces these as "auto-created — keep or disable?" so the
-// operator can confirm they actually want the daily local backup that
-// older dockmesh versions installed without asking. Idempotent: once
-// the flag is cleared (Keep / Disable in the UI), it stays cleared.
-//
-// New installs never see this fire — there's no default job to flag.
+// reviewMigration is the migration of the release that stopped creating
+// the default system job on boot. Only a job created before it was applied
+// can be one of those auto-created jobs.
+const reviewMigration = "034_backup_review.sql"
+
+// MarkAutoCreatedJobsForReview flags the system job that older dockmesh
+// versions created on boot without asking, so the operator confirms Keep
+// or Disable on the Backups page. A job created later, through the UI or
+// the system backup switch, carries the same name and is never flagged; a
+// flag earlier versions put on such a job is taken back. Once the operator
+// has reviewed a job (review_acked is sticky), it is left alone.
 func (s *Service) MarkAutoCreatedJobsForReview(ctx context.Context) error {
 	jobs, err := s.store.listJobs(ctx)
 	if err != nil {
 		return err
 	}
-	// Only the system job still carrying the stock name counts as
-	// auto-created. Jobs that already carry the flag, or that the operator
-	// has reviewed (review_acked is sticky), are left alone so this stays
-	// idempotent across restarts.
 	j := systemJob(jobs)
-	if j == nil || j.Name != DefaultSystemJobName || j.NeedsReview || j.ReviewAcked {
+	if j == nil || j.Name != DefaultSystemJobName || j.ReviewAcked {
 		return nil
 	}
-	reason := "Auto-created by an earlier dockmesh version. Default behaviour changed in v0.3 — review and choose Keep or Disable. " +
-		"Default jobs back up everything to a local directory, which can fill the disk and is not off-host. Move to an off-host target if you want to keep it."
-	if err := s.store.markJobNeedsReview(ctx, j.ID, reason); err != nil {
-		slog.Warn("flag legacy default job for review", "id", j.ID, "err", err)
-		return nil
+	legacy, err := s.store.createdBeforeMigration(ctx, j.CreatedAt, reviewMigration)
+	if err != nil {
+		return err
 	}
-	slog.Warn("backup default job flagged for review",
-		"id", j.ID,
-		"action_needed", "open the Backups page in the UI and choose Keep or Disable")
+	switch {
+	case legacy && !j.NeedsReview:
+		reason := "Auto-created by an earlier dockmesh version. Default behaviour changed in v0.3 — review and choose Keep or Disable. " +
+			"Default jobs back up everything to a local directory, which can fill the disk and is not off-host. Move to an off-host target if you want to keep it."
+		if err := s.store.markJobNeedsReview(ctx, j.ID, reason); err != nil {
+			return err
+		}
+		slog.Warn("backup default job flagged for review",
+			"id", j.ID,
+			"action_needed", "open the Backups page in the UI and choose Keep or Disable")
+	case !legacy && j.NeedsReview:
+		if err := s.store.unflagJobReview(ctx, j.ID); err != nil {
+			return err
+		}
+		slog.Info("backup default job review flag removed", "id", j.ID)
+	}
 	return nil
 }
 

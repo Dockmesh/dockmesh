@@ -495,13 +495,34 @@ func (s *store) setJobEnabled(ctx context.Context, id int64, enabled bool) error
 }
 
 // markJobNeedsReview flags a job for operator review with a reason.
-// Used by MarkAutoCreatedJobsForReview when a legacy default job is
-// found on an existing install. P.13.2.
 func (s *store) markJobNeedsReview(ctx context.Context, id int64, reason string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE backup_jobs SET needs_review = 1, review_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		reason, id)
 	return err
+}
+
+// unflagJobReview drops a review flag without marking the job reviewed or
+// touching updated_at.
+func (s *store) unflagJobReview(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET needs_review = 0, review_reason = '' WHERE id = ?`, id)
+	return err
+}
+
+// createdBeforeMigration reports whether created lies before the named
+// migration was applied to this database; false when it never was.
+func (s *store) createdBeforeMigration(ctx context.Context, created time.Time, migration string) (bool, error) {
+	var applied time.Time
+	err := s.db.QueryRowContext(ctx,
+		`SELECT applied_at FROM schema_migrations WHERE version = ?`, migration).Scan(&applied)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return created.Before(applied), nil
 }
 
 // clearJobReview drops the review flag and sets review_acked so the

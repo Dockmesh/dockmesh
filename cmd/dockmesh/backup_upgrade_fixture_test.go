@@ -59,6 +59,9 @@ func startBackups(t *testing.T, conn *sql.DB, dataDir string) (*backup.Service, 
 	if err := st.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.MarkAutoCreatedJobsForReview(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := svc.MigrateSystemJobPath(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +159,33 @@ func TestUpgradeFromV053KeepsJobTargets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A system job a v0.5.3 user named like the job older versions created on
+// boot is not taken for one of those; the flag v0.5.3 put on it is removed.
+func TestUpgradeFromV053KeepsUserJobUnflagged(t *testing.T) {
+	ctx := context.Background()
+	dump := readV053Fixture(t)
+	t.Chdir(t.TempDir())
+	dataDir := filepath.Join(t.TempDir(), "data")
+	conn := openV053Fixture(t, dump, dataDir)
+	if _, err := conn.Exec(`DELETE FROM backup_jobs WHERE name <> 'sys-abs'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`UPDATE backup_jobs SET name = ?, needs_review = 1,
+		review_reason = 'Auto-created by an earlier dockmesh version.'`, backup.DefaultSystemJobName); err != nil {
+		t.Fatal(err)
+	}
+	for start := 1; start <= 2; start++ {
+		svc, _ := startBackups(t, conn, dataDir)
+		jobs, err := svc.ListJobs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(jobs) != 1 || jobs[0].NeedsReview {
+			t.Fatalf("start %d: jobs %+v, want one job without a review flag", start, jobs)
+		}
 	}
 }
 
