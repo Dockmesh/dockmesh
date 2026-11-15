@@ -236,8 +236,9 @@
   async function wizardSaveJob(payload: BackupJobInput, isEdit: boolean, originalId?: number) {
     try {
       if (isEdit && originalId) {
-        await api.backups.updateJob(originalId, payload);
+        const saved = await api.backups.updateJob(originalId, payload);
         toast.success(m.common_updated(), payload.name);
+        if (saved.runs_at_previous_location) toast.info(m.backups_runs_stay_at_old_location({ count: saved.runs_at_previous_location }));
       } else {
         await api.backups.createJob(payload);
         toast.success(m.common_created(), payload.name);
@@ -252,8 +253,9 @@
   async function wizardSaveTarget(payload: { name: string; type: string; config: Record<string, any> }, isEdit: boolean, originalId?: number) {
     try {
       if (isEdit && originalId) {
-        await api.backups.updateTarget(originalId, payload);
+        const saved = await api.backups.updateTarget(originalId, payload);
         toast.success(m.common_updated(), payload.name);
+        if (saved.runs_at_previous_location) toast.info(m.backups_runs_stay_at_old_location({ count: saved.runs_at_previous_location }));
       } else {
         await api.backups.createTarget(payload);
         toast.success(m.common_created(), payload.name);

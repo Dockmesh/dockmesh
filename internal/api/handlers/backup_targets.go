@@ -2,15 +2,19 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/go-chi/chi/v5"
 )
+
+func backupTargetRef(id int64) string { return "backup-target:" + strconv.FormatInt(id, 10) }
 
 func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 	if h.BackupTargets == nil {
@@ -74,6 +78,7 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionBackupTargetCreate, backupTargetRef(t.ID), map[string]any{"name": t.Name, "type": t.Type})
 	writeJSON(w, http.StatusCreated, redactTarget(t))
 }
 
@@ -95,7 +100,16 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 	if !h.requireTargetAccess(w, r, id) {
 		return
 	}
-	if prev, err := h.BackupTargets.Get(r.Context(), id); err == nil && prev.Type == in.Type {
+	prev, err := h.BackupTargets.Get(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if prev.Type == in.Type {
 		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -104,6 +118,15 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 	if in.Type == "local" {
 		if err := targets.CheckLocalConfig(in.Config); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	// Runs that recorded no location get the current one first: once the
+	// target is saved, nothing says where they went.
+	elsewhere := 0
+	if h.Backups != nil {
+		if elsewhere, err = h.Backups.PrepareTargetChange(r.Context(), id, in.Type, in.Config); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
@@ -116,7 +139,16 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, redactTarget(t))
+	details := map[string]any{"name": t.Name, "type": t.Type}
+	from := targets.DescribeLocation(prev.Type, targets.Location(prev.Type, prev.Config))
+	if to := targets.DescribeLocation(t.Type, targets.Location(t.Type, t.Config)); from != to {
+		details["from"], details["to"] = from, to
+		details["runs_at_previous_location"] = elsewhere
+	}
+	h.audit(r, audit.ActionBackupTargetUpdate, backupTargetRef(id), details)
+	out := redactTarget(t)
+	out.RunsAtPreviousLocation = elsewhere
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +171,7 @@ func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionBackupTargetDelete, backupTargetRef(id), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -244,7 +277,7 @@ func (h *Handlers) AcceptBackupTargetHostKey(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "backup.accept_target_host_key", "backup-target:"+strconv.FormatInt(id, 10), nil)
+	h.audit(r, "backup.accept_target_host_key", backupTargetRef(id), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

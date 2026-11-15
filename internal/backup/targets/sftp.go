@@ -83,6 +83,10 @@ func (s *SFTP) checkHostKey(_ string, _ net.Addr, key ssh.PublicKey) error {
 	return nil
 }
 
+// HostKey returns the server key this target trusts, including one it
+// recorded on first contact.
+func (s *SFTP) HostKey() string { return s.cfg.HostKey }
+
 func NewSFTP(raw any) (*SFTP, error) {
 	var cfg SFTPConfig
 	if err := decodeConfig(raw, &cfg); err != nil {

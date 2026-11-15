@@ -106,6 +106,9 @@ func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rc, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), req.RunID)
+		if h.writeArchiveMissing(w, r, run, err) {
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusConflict, err.Error())
 			return

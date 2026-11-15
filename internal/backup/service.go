@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -223,12 +224,20 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := s.attachTarget(ctx, &in, prev); err != nil {
 		return nil, err
 	}
+	if err := s.prepareJobSwitch(ctx, prev, in.TargetID); err != nil {
+		return nil, err
+	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
 	}
 	j, err := s.store.getJob(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if prev.TargetID != j.TargetID {
+		if j.RunsAtPreviousLocation, err = s.runsElsewhere(ctx, j); err != nil {
+			slog.Warn("backup count runs at the previous target", "job", j.Name, "err", err)
+		}
 	}
 	_ = s.schedule(j)
 	return j, nil
@@ -401,11 +410,7 @@ func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.R
 	if err != nil {
 		return nil, err
 	}
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return nil, err
-	}
-	src, err := target.Read(ctx, run.TargetPath)
+	src, err := s.openRunArchive(ctx, run, job)
 	if err != nil {
 		return nil, err
 	}

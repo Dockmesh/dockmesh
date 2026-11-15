@@ -152,7 +152,14 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.syncBackupNameNotice(r)
-	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+job.Name, nil)
+	var details map[string]any
+	if job.TargetID != prev.TargetID {
+		details = map[string]any{
+			"job_id": job.ID, "target_id": job.TargetID, "previous_target_id": prev.TargetID,
+			"runs_at_previous_location": job.RunsAtPreviousLocation,
+		}
+	}
+	h.audit(r, audit.ActionBackupJobUpdate, "backup:"+job.Name, details)
 	writeJSON(w, http.StatusOK, redactJob(job))
 }
 
@@ -378,6 +385,9 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	src, err := h.Backups.ReadRun(r.Context(), id)
+	if h.writeArchiveMissing(w, r, run, err) {
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -506,6 +516,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	op.Finish(err)
 	var inUse *backup.VolumeInUseError
 	switch {
+	case h.writeArchiveMissing(w, r, run, err):
+		return
 	case errors.Is(err, errOwnVolume):
 		writeError(w, http.StatusForbidden, err.Error())
 		return
@@ -685,4 +697,40 @@ func (h *Handlers) stackEnvValues(name string) []string {
 		return nil
 	}
 	return operations.EnvValues(d.Env)
+}
+
+// runTargetsVisible reports whether the caller may see the targets an
+// archive-missing message about run can name: the one the run wrote to
+// and the job's current one.
+func (h *Handlers) runTargetsVisible(r *http.Request, run *backup.Run) bool {
+	ids := []int64{run.TargetID}
+	if job, err := h.Backups.GetJob(r.Context(), run.JobID); err == nil {
+		ids = append(ids, job.TargetID)
+	} else if !h.callerIsAdmin(r) {
+		return false
+	}
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if visible, err := h.backupTargetVisible(r, id); err != nil || !visible {
+			return false
+		}
+	}
+	return true
+}
+
+// writeArchiveMissing answers a run whose archive is not where it was
+// looked for: 404 with the explanation of where it most likely is. A
+// caller who can't see the run's target gets no server or path.
+func (h *Handlers) writeArchiveMissing(w http.ResponseWriter, r *http.Request, run *backup.Run, err error) bool {
+	if !errors.Is(err, backup.ErrArchiveMissing) {
+		return false
+	}
+	msg := err.Error()
+	if run != nil && !h.runTargetsVisible(r, run) {
+		msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "code": "archive_not_found"})
+	return true
 }

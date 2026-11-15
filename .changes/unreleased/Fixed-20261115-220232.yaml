@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Restore, verify, download and retention of older backup runs no longer fail with an internal error after a target''s path, bucket, prefix or share is edited or a job is switched to another target: each run reads and deletes its archive where it was written. Runs written to a server or account the target no longer points at are not read with its new credentials; they say so and become readable again once the target points back. A run whose archive is missing says where it most likely is, and a target that still holds kept archives can''t be deleted'
+time: 2026-11-15T22:02:32.199681277Z

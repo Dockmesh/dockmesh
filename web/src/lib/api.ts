@@ -1126,6 +1126,8 @@ export interface BackupTarget {
   credentials_error?: string;
   created_at: string;
   updated_at: string;
+  // Set in the answer to an update that moved the target.
+  runs_at_previous_location?: number;
 }
 
 // targetUsage tells whoever edits a shared target what the change affects.
@@ -1167,6 +1169,8 @@ export interface BackupJob {
   next_run_at?: string;
   created_at: string;
   updated_at: string;
+  // Set in the answer to an update that moved the job to another target.
+  runs_at_previous_location?: number;
 }
 
 export interface BackupHost {
@@ -1211,6 +1215,7 @@ export interface BackupRun {
   error?: string;
   sources: BackupSource[];
   pruned_at?: string;
+  target_id?: number;
 }
 
 export interface StagedRestore {
