@@ -385,7 +385,7 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	src, err := h.Backups.ReadRun(r.Context(), id)
-	if writeArchiveMissing(w, err) {
+	if h.writeArchiveMissing(w, r, run, err) {
 		return
 	}
 	if err != nil {
@@ -516,7 +516,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	op.Finish(err)
 	var inUse *backup.VolumeInUseError
 	switch {
-	case writeArchiveMissing(w, err):
+	case h.writeArchiveMissing(w, r, run, err):
 		return
 	case errors.Is(err, errOwnVolume):
 		writeError(w, http.StatusForbidden, err.Error())
@@ -700,11 +700,18 @@ func (h *Handlers) stackEnvValues(name string) []string {
 }
 
 // writeArchiveMissing answers a run whose archive is not where it was
-// looked for: 404 with the explanation of where it most likely is.
-func writeArchiveMissing(w http.ResponseWriter, err error) bool {
+// looked for: 404 with the explanation of where it most likely is. A
+// caller who can't see the run's target gets no server or path.
+func (h *Handlers) writeArchiveMissing(w http.ResponseWriter, r *http.Request, run *backup.Run, err error) bool {
 	if !errors.Is(err, backup.ErrArchiveMissing) {
 		return false
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error(), "code": "archive_not_found"})
+	msg := err.Error()
+	if run != nil && run.TargetID > 0 {
+		if visible, verr := h.backupTargetVisible(r, run.TargetID); verr != nil || !visible {
+			msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "code": "archive_not_found"})
 	return true
 }

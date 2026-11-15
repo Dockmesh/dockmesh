@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/redact"
 )
 
 // Location returns the settings of a target config that say where it
@@ -83,20 +85,30 @@ func norm(v any) any {
 	return string(raw)
 }
 
+// SameAccount reports whether two locations name the same server and
+// user, the fields a stored credential is bound to (redact.Bound).
+func SameAccount(a, b map[string]any) bool {
+	for _, k := range redact.Bound {
+		if !reflect.DeepEqual(norm(a[k]), norm(b[k])) {
+			return false
+		}
+	}
+	return true
+}
+
 // AtLocation returns the current config cur moved to the place recorded
-// in loc: credentials, user name and trusted CA stay those of cur. For an
-// SFTP server other than the current one, the host key recorded with loc
-// replaces the current one.
+// in loc on the same server and account: credentials and trusted CA stay
+// those of cur. An SFTP config without a host key takes the one recorded
+// with loc.
 func AtLocation(typ string, loc map[string]any, cur any) map[string]any {
 	out := map[string]any{}
 	if err := decodeConfig(cur, &out); err != nil || out == nil {
 		out = map[string]any{}
 	}
-	if typ == "sftp" && !SameServer(loc, out) {
-		delete(out, "host_key")
-		delete(out, "host_key_pending")
-		if k, _ := loc["host_key"].(string); k != "" {
+	if k, _ := loc["host_key"].(string); typ == "sftp" && k != "" {
+		if have, _ := out["host_key"].(string); have == "" {
 			out["host_key"] = k
+			delete(out, "host_key_pending")
 		}
 	}
 	for _, k := range placeFields[typ] {
@@ -107,16 +119,6 @@ func AtLocation(typ string, loc map[string]any, cur any) map[string]any {
 		}
 	}
 	return out
-}
-
-// SameServer reports whether two SFTP locations name the same host and
-// port, the scope a recorded host key is valid for.
-func SameServer(a, b map[string]any) bool {
-	var x, y SFTPConfig
-	if decodeConfig(a, &x) != nil || decodeConfig(b, &y) != nil {
-		return false
-	}
-	return x.Host == y.Host && portOr22(x.Port) == portOr22(y.Port)
 }
 
 // DescribeLocation names a location for people: the server and the path,

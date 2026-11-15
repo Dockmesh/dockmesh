@@ -58,9 +58,15 @@ func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 // getJobForRun also returns deleted jobs: their runs stay restorable and
 // need the job's target.
 // jobsUsingTarget returns every job that writes to the target, deleted
-// ones included: their runs still read from it.
+// ones included, and every job with kept archives written to it: their
+// runs still read from it with its settings.
 func (s *store) jobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM backup_jobs WHERE target_id = ? ORDER BY id`, targetID)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM backup_jobs WHERE target_id = ? OR id IN (
+			SELECT job_id FROM backup_runs WHERE target_id = ?
+			  AND status IN ('success', 'success_with_warnings') AND pruned_at IS NULL
+			  AND COALESCE(target_path, '') != '')
+		ORDER BY id`, targetID, targetID)
 	if err != nil {
 		return nil, err
 	}

@@ -83,25 +83,55 @@ func TestSameLocation(t *testing.T) {
 	}
 }
 
-func TestAtLocation(t *testing.T) {
-	cur := map[string]any{"host": "new-nas", "port": 22, "username": "u", "password": "pw", "path": "/new",
-		"host_key": "ssh-ed25519 NEW", "host_key_pending": "ssh-ed25519 PEND"}
+func TestSameAccount(t *testing.T) {
+	base := map[string]any{"host": "nas", "port": float64(22), "username": "u", "path": "/a"}
+	with := func(k string, v any) map[string]any {
+		out := map[string]any{}
+		for kk, vv := range base {
+			out[kk] = vv
+		}
+		out[k] = v
+		return out
+	}
 	cases := []struct {
 		name string
-		loc  map[string]any
-		want map[string]any
+		b    map[string]any
+		same bool
 	}{
-		{"other server: its own recorded key", map[string]any{"host": "old-nas", "port": float64(22), "username": "old", "path": "/old", "host_key": "ssh-ed25519 OLD"},
-			map[string]any{"host": "old-nas", "port": float64(22), "username": "u", "password": "pw", "path": "/old", "host_key": "ssh-ed25519 OLD"}},
-		{"other server without a recorded key", map[string]any{"host": "old-nas", "path": "/old"},
-			map[string]any{"host": "old-nas", "username": "u", "password": "pw", "path": "/old"}},
-		{"same server: the target's key", map[string]any{"host": "new-nas", "port": float64(22), "path": "/old"},
-			map[string]any{"host": "new-nas", "port": float64(22), "username": "u", "password": "pw", "path": "/old",
-				"host_key": "ssh-ed25519 NEW", "host_key_pending": "ssh-ed25519 PEND"}},
+		{"path changed", with("path", "/b"), true},
+		{"host changed", with("host", "evil.example"), false},
+		{"port changed", with("port", float64(2222)), false},
+		{"user changed", with("username", "v"), false},
+		{"webdav url changed", with("url", "https://evil.example"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := AtLocation("sftp", tc.loc, cur); !reflect.DeepEqual(got, tc.want) {
+			if got := SameAccount(base, tc.b); got != tc.same {
+				t.Fatalf("SameAccount = %v, want %v", got, tc.same)
+			}
+		})
+	}
+}
+
+func TestAtLocation(t *testing.T) {
+	cases := []struct {
+		name string
+		loc  map[string]any
+		cur  map[string]any
+		want map[string]any
+	}{
+		{"older path, target's key",
+			map[string]any{"host": "nas", "path": "/old", "host_key": "ssh-ed25519 OLD"},
+			map[string]any{"host": "nas", "password": "pw", "path": "/new", "host_key": "ssh-ed25519 NEW"},
+			map[string]any{"host": "nas", "password": "pw", "path": "/old", "host_key": "ssh-ed25519 NEW"}},
+		{"target lost its key: the recorded one",
+			map[string]any{"host": "nas", "path": "/old", "host_key": "ssh-ed25519 OLD"},
+			map[string]any{"host": "nas", "password": "pw", "path": "/new", "host_key_pending": "ssh-ed25519 PEND"},
+			map[string]any{"host": "nas", "password": "pw", "path": "/old", "host_key": "ssh-ed25519 OLD"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AtLocation("sftp", tc.loc, tc.cur); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got  %v\nwant %v", got, tc.want)
 			}
 		})

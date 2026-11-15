@@ -269,3 +269,34 @@ func TestEditWithoutMoveStampsNothing(t *testing.T) {
 		t.Fatalf("a legacy run got a location without a move: %s", *loc)
 	}
 }
+
+// A run recorded on a server the target no longer points at is never read
+// with the target's current credentials: whoever edited the target in
+// between could have chosen that server.
+func TestRecordedServerNeedsItsOwnCredentials(t *testing.T) {
+	svc, _ := newTestService(t, false)
+	ctx := context.Background()
+	tgt, err := svc.Targets().Create(ctx, targets.TargetInput{Name: "nas", Type: "sftp",
+		Config: map[string]any{"host": "nas.lan", "username": "backup", "password": "real-secret", "path": "/b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := volumeJob("db", "")
+	in.TargetID, in.TargetType, in.TargetConfig = tgt.ID, "", nil
+	job, err := svc.CreateJob(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc := `{"type":"sftp","config":{"host":"evil.example","username":"backup","path":"/b","host_key":"ssh-ed25519 AAAA"}}`
+	if _, err := svc.store.db.Exec(`INSERT INTO backup_runs (id, job_id, job_name, host_id, status, target_path, sources_json, target_id, target_location)
+		VALUES (9, ?, 'db', 'local', 'success', 'jobs/1-db/r9.tar.gz', '[{"type":"volume","name":"data"}]', ?, ?)`, job.ID, tgt.ID, loc); err != nil {
+		t.Fatal(err)
+	}
+	dialed := false
+	wrapRunTarget = func(tg targets.Target) targets.Target { dialed = true; return tg }
+	t.Cleanup(func() { wrapRunTarget = func(tg targets.Target) targets.Target { return tg } })
+	_, err = svc.ReadRun(ctx, 9)
+	if !errors.Is(err, ErrArchiveMissing) || !strings.Contains(err.Error(), "another server or account") || dialed {
+		t.Fatalf("got %v (target built: %v)", err, dialed)
+	}
+}

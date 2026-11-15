@@ -2294,7 +2294,7 @@ paths:
       tags: [backups]
       summary: Update a backup target
       description: >-
-        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Archives already written stay where they are and remain restorable from there with the target's credentials; the answer's `runs_at_previous_location` counts them. Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Archives already written stay where they are and remain restorable from there with the target's credentials, as long as the server and user stay the same; the answer's `runs_at_previous_location` counts the kept archives at an earlier location. Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
       requestBody:
         required: true
         content:
@@ -9362,7 +9362,7 @@ components:
         encrypted: {type: boolean}
         error: {type: string}
         pruned_at: {type: string, format: date-time, description: Set when the archive was deleted (retention); the run can no longer be restored.}
-        target_id: {type: integer, format: int64, description: "Saved target the run wrote to. Restore, verify, download and retention use the target's settings as they were at that time (with its current credentials), so later target edits or job moves don't change where the archive is read. Absent for runs from before this was recorded."}
+        target_id: {type: integer, format: int64, description: "Saved target the run wrote to. Restore, verify, download and retention use the target's settings as they were at that time with its current credentials, so later path, bucket or prefix edits and job moves don't change where the archive is read; after the target moved to another server or user, the run answers 404 `archive_not_found` until it points back. Absent for runs from before this was recorded."}
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}

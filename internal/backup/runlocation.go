@@ -91,7 +91,7 @@ type candidate struct {
 // the job's current target.
 func runCandidates(ctx context.Context, st *store, n *notices.Service, run *Run, job *Job) ([]candidate, error) {
 	var out []candidate
-	if loc := run.Location; loc != nil {
+	if loc := run.Location; loc != nil && (loc.TargetID > 0 || job.TargetID == 0) {
 		t, err := targetAt(ctx, st, n, run, job, loc)
 		if err != nil {
 			return nil, err
@@ -135,65 +135,66 @@ func targetAt(ctx context.Context, st *store, n *notices.Service, run *Run, job 
 			run.ID, loc.describe(), stored.Name, stored.Type, run.TargetPath)
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(stored.Type, stored.Config)...)
-	if targets.SameLocation(loc.Type, loc.Config, storedLocation(stored).Config) {
-		built, err := ts.BuildChecked(ctx, stored, n)
-		if err != nil {
-			return nil, err
-		}
-		return wrapRunTarget(built), nil
-	}
-	cfg := targets.AtLocation(loc.Type, loc.Config, stored.Config)
-	if err := checkOldServer(loc, cfg); err != nil {
-		return nil, err
-	}
-	built, err := targets.Build(loc.Type, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", loc.describe(), err)
-	}
-	return wrapRunTarget(built), nil
+	return atRecorded(run, loc, fmt.Sprintf("backup target %q", stored.Name), stored.Config, func() (targets.Target, error) {
+		return ts.BuildChecked(ctx, stored, n)
+	})
 }
 
 // jobInlineTargetAt is targetAt for a job that still keeps its target
 // config inline.
 func jobInlineTargetAt(ctx context.Context, st *store, n *notices.Service, job *Job, loc *RunLocation) (targets.Target, error) {
-	if job.TargetID > 0 || job.TargetType != loc.Type {
+	if job.TargetType != loc.Type {
 		return nil, missing("the archive was written to %s, a target the job no longer uses", loc.describe())
 	}
 	if job.CredentialsError != "" {
 		return nil, fmt.Errorf("backup job %q: %s", job.Name, job.CredentialsError)
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
-	current := targets.Location(job.TargetType, job.TargetConfig)
-	if targets.SameLocation(loc.Type, loc.Config, current) {
+	return atRecorded(nil, loc, fmt.Sprintf("backup job %q", job.Name), job.TargetConfig, func() (targets.Target, error) {
 		t, err := buildTarget(job.TargetType, job.TargetConfig)
 		if err != nil {
 			return nil, err
 		}
 		jobTOFU(st, n, job).Attach(ctx, t)
-		return wrapRunTarget(t), nil
-	}
-	cfg := targets.AtLocation(loc.Type, loc.Config, job.TargetConfig)
-	if err := checkOldServer(loc, cfg); err != nil {
-		return nil, err
-	}
-	t, err := buildTarget(loc.Type, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return wrapRunTarget(t), nil
+		return t, nil
+	})
 }
 
-// checkOldServer refuses an SFTP server other than the target's current
-// one when no host key was recorded for it: without TOFU state the
-// connection would trust any key.
-func checkOldServer(loc *RunLocation, cfg map[string]any) error {
-	if loc.Type != "sftp" {
-		return nil
+// atRecorded opens loc with the config cur of the target (or inline job)
+// named owner that the run wrote through; checked builds cur itself, with
+// its host-key check. Credentials are only used for the server and
+// account they were entered for: once owner points at another server or
+// user, a recorded location there is refused, so editing a target can't
+// make Dockmesh send later-entered credentials to a server of the
+// editor's choosing.
+func atRecorded(run *Run, loc *RunLocation, owner string, cur any, checked func() (targets.Target, error)) (targets.Target, error) {
+	now := targets.Location(loc.Type, cur)
+	if !targets.SameAccount(loc.Config, now) {
+		what := "the archive"
+		if run != nil {
+			what = fmt.Sprintf("the archive %s of run %d", run.TargetPath, run.ID)
+		}
+		return nil, missing("%s was written to %s; %s now points at another server or account, and its credentials are only used where they were entered. Point it back at that server to read %s",
+			what, loc.describe(), owner, what)
 	}
-	if k, _ := cfg["host_key"].(string); k == "" {
-		return fmt.Errorf("no host key was recorded for %s, so Dockmesh won't connect to it to read the archive", loc.describe())
+	recordedKey, _ := loc.Config["host_key"].(string)
+	currentKey, _ := now["host_key"].(string)
+	if targets.SameLocation(loc.Type, loc.Config, now) && (recordedKey == "" || currentKey != "") {
+		t, err := checked()
+		if err != nil {
+			return nil, err
+		}
+		return wrapRunTarget(t), nil
 	}
-	return nil
+	cfg := targets.AtLocation(loc.Type, loc.Config, cur)
+	if k, _ := cfg["host_key"].(string); loc.Type == "sftp" && k == "" {
+		return nil, fmt.Errorf("no host key was recorded for %s, so Dockmesh won't connect to it to read the archive", loc.describe())
+	}
+	built, err := targets.Build(loc.Type, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", loc.describe(), err)
+	}
+	return wrapRunTarget(built), nil
 }
 
 // archiveNotFound explains a run whose archive is in none of the places

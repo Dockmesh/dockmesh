@@ -98,7 +98,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Backups.VerifyRun(r.Context(), id)
-	if writeArchiveMissing(w, err) {
+	if h.writeArchiveMissing(w, r, run, err) {
 		return
 	}
 	if errors.Is(err, backup.ErrNotRestorable) {
@@ -134,7 +134,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 // adds the hash check.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), id)
-	if writeArchiveMissing(w, err) {
+	if h.writeArchiveMissing(w, r, nil, err) {
 		return
 	}
 	if err != nil {
