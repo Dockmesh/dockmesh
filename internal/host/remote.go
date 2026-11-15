@@ -561,6 +561,9 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 	if err != nil {
 		return nil, err
 	}
+	if err := docker.CheckVolumeName(name); err != nil {
+		return nil, err
+	}
 	if err := requireRemoteVolume(ctx, h, name); err != nil {
 		return nil, err
 	}
