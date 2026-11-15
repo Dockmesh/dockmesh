@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -161,6 +162,14 @@ func (r *Runner) Done() (bool, error) {
 // The runner calls it synchronously and emits events around each step.
 type CommitFunc func(ctx context.Context, in CommitInput, emit func(step, msg, status string)) error
 
+// ApplyRun is a prepared apply that the runner follows.
+type ApplyRun func(ctx context.Context, emit func(step, msg, status string)) error
+
+// RestorePrepareFunc keeps the uploaded system backup (and key file) of a
+// new install for setup-apply and returns the apply that restores it with
+// the server values in v. It runs while the upload is still open.
+type RestorePrepareFunc func(v ApplyValues, archive io.Reader, key []byte) (ApplyRun, error)
+
 // Run executes the install in the foreground. Caller typically
 // launches this in a goroutine. Closes the runner's subscriber
 // channels on return so the SSE handler can detect end-of-stream.
@@ -189,6 +198,19 @@ func (r *Runner) Run(ctx context.Context, in CommitInput, fn CommitFunc) {
 	}
 
 	emit("done", "install complete", "done")
+	r.finish(nil)
+}
+
+// RunApply follows a prepared apply like Run follows an install.
+func (r *Runner) RunApply(ctx context.Context, fn ApplyRun) {
+	emit := func(step, msg, status string) { r.publish(step, msg, status) }
+	emit("start", "starting restore", "info")
+	if err := fn(ctx, emit); err != nil {
+		emit("install", "restore failed: "+err.Error(), "fail")
+		r.finish(err)
+		return
+	}
+	emit("done", "restore complete", "done")
 	r.finish(nil)
 }
 

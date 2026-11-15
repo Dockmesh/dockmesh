@@ -334,6 +334,12 @@ paths:
         account of the restored install afterwards. The service manager
         has to restart the process (exit code 75).
 
+        On a new install (setup mode over HTTPS) the checks run the same
+        way, but the archive is kept in setup mode's state dir and restored
+        into `data_dir` by the root updater's setup-apply, which also
+        writes the config; the answer then carries a `run_id` to follow on
+        `GET /setup/stream/{run_id}`, like `POST /setup/commit`.
+
         Requests must carry `X-Dockmesh-Setup: 1`; browsers only send it
         from a same-origin page, so another site can't post a backup here.
         Archives may unpack to at most 8 GiB / 200,000 entries.
@@ -354,15 +360,19 @@ paths:
               properties:
                 file: {type: string, format: binary, description: "System backup (.tar.gz or .tar.gz.age), up to 1 GiB."}
                 key: {type: string, format: binary, description: Exported backup key file; needed for encrypted archives.}
+                data_dir: {type: string, description: "New install only: the data directory to restore into, checked like in `POST /setup/validate-data-dir`."}
+                base_url: {type: string, description: "New install only: the base URL to store; optional."}
       responses:
         "202":
-          description: Staged; the server restarts now.
+          description: Staged; the server restarts now. On a new install, accepted with a run to follow.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   restarting: {type: boolean}
+                  run_id: {type: string, description: New install only.}
+                  stream_url: {type: string, description: New install only.}
                   counts: {type: object}
                   sanity: {type: object}
         "400": {$ref: "#/components/responses/BadRequest"}

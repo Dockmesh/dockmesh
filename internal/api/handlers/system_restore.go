@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/google/uuid"
 )
 
 // stageMu keeps staging, applying and discarding from running at once.
@@ -268,6 +270,10 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	if h.SetupRestoreFresh != nil {
+		done = h.setupRestoreFresh(w, r, rc, name)
+		return
+	}
 	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
 	if err != nil {
 		writeStageError(w, err, result)
@@ -289,6 +295,57 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	done = true
 	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true, "counts": counts, "sanity": result})
 	h.RequestRestart()
+}
+
+// setupRestoreFresh restores a backup on a new install: the checks run by
+// staging it in setup mode's own state dir, which is then dropped, and
+// setup-apply restores the kept archive into the chosen data dir. It
+// answers like SetupCommit, with a run to follow, and reports whether it
+// took over the install slot.
+func (h *Handlers) setupRestoreFresh(w http.ResponseWriter, r *http.Request, rc io.Reader, name string) bool {
+	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
+	if err != nil {
+		writeStageError(w, err, result)
+		return false
+	}
+	h.discardSetupRestore()
+	archive, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'file' part in form")
+		return false
+	}
+	defer archive.Close()
+	var key []byte
+	if kf, _, err := r.FormFile("key"); err == nil {
+		key, err = io.ReadAll(io.LimitReader(kf, 1<<20))
+		kf.Close()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "read key file: "+err.Error())
+			return false
+		}
+	}
+	v := setup.ApplyValues{DataDir: r.FormValue("data_dir"), BaseURL: r.FormValue("base_url")}
+	run, err := h.SetupRestoreFresh(v, archive, key)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	runner := setup.NewRunner()
+	runID := uuid.NewString()
+	h.setupRuns.Store(runID, runner)
+	go func() {
+		runner.RunApply(context.Background(), run)
+		done, err := runner.Done()
+		h.SetupState.EndCommit(done && err == nil)
+		time.AfterFunc(10*time.Minute, func() { h.setupRuns.Delete(runID) })
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"run_id":     runID,
+		"stream_url": "/api/v1/setup/stream/" + runID,
+		"counts":     counts,
+		"sanity":     result,
+	})
+	return true
 }
 
 // discardSetupRestore drops a staged setup restore that was refused; if

@@ -5,7 +5,6 @@
   import DiskList, { type Disk } from '$lib/components/setup/DiskList.svelte';
   import { MIN_PASSWORD_LENGTH } from '$lib/password';
   import { copyToClipboard } from '$lib/clipboard';
-  import { uploadSystemBackup } from '$lib/api';
   import { fmtVersion } from '$lib/version';
   import { fmtMem } from '$lib/format';
   import { m } from '$lib/paraglide/messages.js';
@@ -191,10 +190,16 @@
   function startWizard() {
     if (wizardStarted) return;
     wizardStarted = true;
-    baseURL = window.location.origin;
-    webPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    if (!baseURL) baseURL = window.location.origin;
+    if (!resumeTo) webPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
     if (webPort === '443' || webPort === '80') webPort = '8080';
-    if (step === 'W1') step = 'W2';
+    if (resumeTo) {
+      const to = resumeTo;
+      resumeTo = null;
+      if (to === 'N7') void install();
+      else if (to === 'R3') void restore();
+      else void go(to);
+    } else if (step === 'W1') step = 'W2';
     loadServerInfo();
     serverInfoTimer = setInterval(loadServerInfo, 10_000);
   }
@@ -215,7 +220,7 @@
       case 'W1': return m.sw_step_code();
       case 'W2': return m.sw_step_start();
       case 'N1': return m.sw_step_admin();
-      case 'N2': return m.sw_step_data();
+      case 'N2': case 'R1': return m.sw_step_data();
       case 'N3': return m.sw_step_address();
       case 'N4': return m.sw_step_proxy();
       case 'N5': return m.sw_step_notifications();
@@ -386,7 +391,7 @@
   const dirCurrent = $derived(dirCheck && dirCheckFor === dataDir.trim() ? dirCheck : null);
 
   $effect(() => {
-    if (step === 'N2' && !legacy) {
+    if ((step === 'N2' || step === 'R1') && !legacy) {
       void loadDisks();
       if (!dirCurrent) void checkDir();
     }
@@ -476,6 +481,29 @@
   // Setup finished, but this browser could not reach the new address:
   // show it instead of redirecting there.
   let newOriginUnverified = $state(false);
+  // S3: the server came back in setup mode, or did not come back at all.
+  let rolledBack = $state(false);
+  let notAnswering = $state(false);
+  // Where to continue once the code is entered again after S3.
+  let resumeTo = $state<StepId | null>(null);
+
+  /** S3 buttons: the restart ended the setup session, so the code comes first. */
+  function resumeAfterRollback(to: StepId) {
+    rolledBack = false;
+    applyFailRow = null;
+    resumeTo = to;
+    wizardStarted = false;
+    gate = 'code';
+  }
+
+  async function checkAgain() {
+    notAnswering = false;
+    applyFailRow = null;
+    applying = true;
+    if (await afterRestart()) {
+      if (path !== 'restore') startRedirect();
+    }
+  }
   let eventSource: EventSource | null = null;
   onDestroy(() => eventSource?.close());
 
@@ -555,7 +583,7 @@
         return startRedirect();
       }
       if (!restarting) return failApply(4, m.sw_apply_no_restart());
-      if (await afterRestart()) startRedirect();
+      if ((await afterRestart()) && path !== 'restore') startRedirect();
     });
     eventSource.onerror = () => {
       if (eventSource?.readyState === EventSource.CLOSED && applyFailRow === null && !restarting) {
@@ -571,10 +599,12 @@
     const outcome = await waitForServer();
     if (outcome === 'timeout') {
       failApply(5, m.sw_apply_not_back());
+      notAnswering = true;
       return false;
     }
     if (outcome === 'setup') {
       failApply(4, m.sw_apply_rolled_back());
+      rolledBack = true;
       return false;
     }
     applyRow = 6;
@@ -675,27 +705,43 @@
   let restoreFile = $state<File | null>(null);
   let restoreKey = $state<File | null>(null);
   let restoreError = $state<string | null>(null);
+  let restoreSummary = $state<string | null>(null);
 
   async function restore() {
     if (!restoreFile) return;
     restoreError = null;
+    restoreSummary = null;
     applying = true;
     applyRow = 0;
     applyFailRow = null;
     applyDone = false;
+    const form = new FormData();
+    form.append('file', restoreFile);
+    if (restoreKey) form.append('key', restoreKey);
+    form.append('data_dir', dataDir.trim());
+    form.append('base_url', targetURL);
     await go('R3');
     try {
-      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey, null, { 'X-Dockmesh-Setup': '1' });
-      if (!res.restarting) {
+      const r = await fetch('/api/v1/setup/restore', { method: 'POST', headers: { 'X-Dockmesh-Setup': '1' }, body: form });
+      if (r.status === 401) {
         applying = false;
-        restoreError = res.error ?? res.sanity?.summary ?? m.setup_restore_checks_failed();
+        return sessionLost();
+      }
+      const res = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        applying = false;
+        restoreError = res.sanity?.summary ?? res.error ?? `HTTP ${r.status}`;
         return go('R2');
       }
+      const admins = (res.sanity?.checks ?? []).find((c: { name: string }) => c.name === 'users.admin')?.message;
+      restoreSummary = m.sw_r3_checks({ files: res.counts?.files ?? 0, admins: admins ?? '' });
+      if (res.stream_url) return follow(res.stream_url);
     } catch (e) {
       applying = false;
       restoreError = e instanceof Error ? e.message : String(e);
       return go('R2');
     }
+    applyRow = 1;
     await afterRestart();
   }
 </script>
@@ -776,6 +822,33 @@
     <div class="wiz nor">{@render stateScreen('warn', '!', m.sw_nocode_title(), m.sw_nocode_text(), m.sw_s1_button())}</div>
   {:else if gate === 'replaced'}
     <div class="wiz nor">{@render stateScreen('warn', '↗', m.sw_s4_title(), m.sw_s4_text(), m.sw_s4_button())}</div>
+  {:else if rolledBack}
+    <div class="wiz nor">
+      <div class="col">
+        <div class="head"><div class="state-ic bad" aria-hidden="true">!</div><h1>{m.sw_s3_title()}</h1></div>
+        <section class="panel">
+          <p class="plain">{m.sw_s3_text({ data: dataDir.trim() })}</p>
+          <p class="hint plain">{m.sw_s3_hint()}</p>
+          <div class="foot">
+            <button type="button" class="btn" onclick={() => resumeAfterRollback(path === 'restore' ? 'R1' : 'N2')}>{m.sw_s3_back_data()}</button>
+            <span class="sp"></span>
+            <button type="button" class="btn primary" onclick={() => resumeAfterRollback(path === 'restore' ? 'R3' : 'N7')}>{m.sw_s3_retry()}</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  {:else if notAnswering}
+    <div class="wiz nor">
+      <div class="col">
+        <div class="head"><div class="state-ic warn" aria-hidden="true">…</div><h1>{m.sw_s3b_title()}</h1></div>
+        <section class="panel">
+          <p class="plain">{m.sw_s3b_text()}</p>
+          {@render cmd('sudo systemctl status dockmesh', 'status')}
+          {@render cmd('sudo journalctl -u dockmesh -n 50', 'journal')}
+          <div class="foot"><span class="sp"></span><button type="button" class="btn primary" onclick={checkAgain}>{m.sw_s3b_check()}</button></div>
+        </section>
+      </div>
+    </div>
   {:else}
     <div class="wiz">
       <aside class="rail" aria-label={m.sw_rail_label()}>
@@ -817,6 +890,8 @@
                     <span class="err">{codeError}</span>
                   {:else if codeFromLink}
                     <span class="hint">{m.sw_w1_from_link()}</span>
+                  {:else if resumeTo}
+                    <span class="hint">{m.sw_w1_again()}</span>
                   {/if}
                 </span>
               </div>
@@ -918,9 +993,9 @@
               </div>
             </form>
           </div>
-        {:else if step === 'N2'}
+        {:else if step === 'N2' || step === 'R1'}
           <div class="col">
-            {@render head(m.sw_n2_title(), m.sw_n2_text())}
+            {@render head(m.sw_n2_title(), step === 'R1' ? `${m.sw_n2_text()} ${m.sw_r1_text()}` : m.sw_n2_text())}
             <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); dataNext(); }}>
               {@render bannerBox()}
               {#if legacy}
@@ -1179,6 +1254,9 @@
           <div class="col">
             {@render head(applyDone ? m.sw_n7_ready() : m.sw_n7_title(), applyDone ? undefined : m.sw_n7_text())}
             <section class="panel" aria-live="polite">
+              {#if path === 'restore' && restoreSummary}
+                <div class="callout ok" role="status"><span class="ic">✓</span><span>{restoreSummary}</span></div>
+              {/if}
               <ul class="prog">
                 {#each applyItems as t, i (i)}
                   {@const failed = applyFailRow === i}

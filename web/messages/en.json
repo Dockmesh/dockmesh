@@ -4455,7 +4455,6 @@
   "settings_version": "Version",
   "settings_wins_after": " wins over this field.",
   "setup_checking_server": "Checking this server…",
-  "setup_restore_checks_failed": "the backup failed the restore checks",
   "setup_strength_ok": "ok",
   "shell_api_tokens": "API tokens",
   "shell_dark_mode": "Dark mode",
@@ -6219,5 +6218,14 @@
   "sw_dir_err_unsafe_parent": "{path} and every directory above it must belong to root and be writable only by root.",
   "sw_dir_err_symlink": "{path} is a symbolic link. Enter the real path.",
   "sw_dir_err_foreign": "{path} belongs to another account. Remove it or choose a new directory; setup creates it.",
-  "sw_n7_open": "Setup finished, but this browser could not reach the new address yet. Open {url}."
+  "sw_n7_open": "Setup finished, but this browser could not reach the new address yet. Open {url}.",
+  "sw_r1_text": "The backup is restored into this directory.",
+  "sw_r3_checks": "Backup checks passed: {files} files, {admins}.",
+  "sw_s3_title": "Dockmesh did not start with the new configuration",
+  "sw_s3_text": "Dockmesh went back to setup mode. Nothing was deleted: what setup created in {data} was kept with .failed-<time> appended to the names, for example data/dockmesh.db.failed-<time>.",
+  "sw_s3_hint": "Both buttons ask for the setup code again; they work while it is valid. After that you need a new code. The reason is in the service log: sudo journalctl -u dockmesh-update -n 50",
+  "sw_s3b_title": "Dockmesh is not answering",
+  "sw_s3b_text": "Check the service on the server:",
+  "sw_s3b_check": "Check again",
+  "sw_w1_again": "The restart ended this setup session. Enter the setup code again to continue."
 }

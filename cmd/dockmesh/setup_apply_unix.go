@@ -98,8 +98,45 @@ func (a *setupApplier) run(ctx context.Context) error {
 		a.result(applyRefused, "values", err)
 		return nil
 	}
+	if v.Restore {
+		closeFiles, err := a.openRestore()
+		if err != nil {
+			a.result(applyRefused, "restore", err)
+			return nil
+		}
+		defer closeFiles()
+	}
 	a.commit(ctx, v)
 	return nil
+}
+
+// maxRestoreArchive bounds the system backup root streams to the restore.
+const maxRestoreArchive = 64 << 30
+
+// openRestore opens the backup and key file the service left in the state
+// dir. Root only streams them to the restore, which runs as the service
+// account; the files are opened through checked handles all the same.
+func (a *setupApplier) openRestore() (func(), error) {
+	state := setup.StateDir(a.dataDir)
+	backup, err := rootupdate.OpenServiceFile(state, a.uid, setup.RestoreArchiveFile, maxRestoreArchive)
+	if err != nil {
+		return nil, err
+	}
+	a.restoreFrom = backup
+	key, err := rootupdate.OpenServiceFile(state, a.uid, setup.RestoreKeyFile, 1<<20)
+	switch {
+	case err == nil:
+		a.restoreKey = key
+	case !errors.Is(err, fs.ErrNotExist):
+		backup.Close()
+		return nil, err
+	}
+	return func() {
+		backup.Close()
+		if key != nil {
+			key.Close()
+		}
+	}, nil
 }
 
 // commit sets up a never set up server from v: target dir, config check,
