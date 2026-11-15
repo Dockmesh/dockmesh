@@ -144,6 +144,21 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 	writeError(w, http.StatusForbidden, "out of scope: none of your assignments allows this here")
 }
 
+// AuditPermDenied writes the auth.scope_denied entry for a request that
+// lacks a permission; middleware.Forbidden calls it.
+func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
+	details := map[string]any{
+		"permission": string(perm),
+		"method":     r.Method,
+		"path":       r.URL.Path,
+	}
+	if res, ok := middleware.ResourceOf(r.Context()); ok {
+		details["host_id"] = res.HostID
+		details["stack_name"] = res.StackName
+	}
+	h.audit(r, audit.ActionScopeDenied, r.Method+" "+r.URL.Path, details)
+}
+
 // containerScopeReq builds the resource of a container: its host and, from
 // the compose project label, its stack. If the container can't be
 // inspected the request stays host-only, which a stack scope does not match.
