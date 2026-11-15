@@ -486,3 +486,41 @@ func TestAwaitResultResolvesStuckNoticeOfEarlierProcess(t *testing.T) {
 		t.Fatalf("stuck notice of an earlier process still open: %+v", open)
 	}
 }
+
+// A failed result stays on disk and every start builds a new Installer;
+// it is audited on the first start only.
+func TestFailedResultAuditedOnceAcrossStarts(t *testing.T) {
+	f := newInstallFixture(t)
+	b, _ := json.Marshal(rootupdate.Result{Status: rootupdate.StatusFailed, From: "v0.6.0", To: "v0.6.1", Reason: "why"})
+	if err := os.WriteFile(filepath.Join(f.dir, rootupdate.ResultFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootTemp := filepath.Join(f.dir, "."+rootupdate.ResultFile+".abc123")
+	if err := os.WriteFile(rootTemp, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := f.inst.cfg
+	for start := 1; start <= 2; start++ {
+		inst, err := NewInstaller(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst.CheckResult(context.Background())
+		if len(f.audited) != 1 {
+			t.Fatalf("start %d: audited %d times, want once", start, len(f.audited))
+		}
+	}
+	if _, err := os.Stat(rootTemp); err != nil {
+		t.Fatalf("root updater's temp file removed: %v", err)
+	}
+	stale := filepath.Join(f.dir, "."+Asset()+".999")
+	if err := os.WriteFile(stale, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewInstaller(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted download kept: %v", err)
+	}
+}
