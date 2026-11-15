@@ -132,3 +132,42 @@ func TestInstallPorcelainHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallChownTargetAllowed(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+	tests := []struct {
+		dir string
+		ok  bool
+	}{
+		{"/var/lib/dockmesh", true},
+		{"/data", true},
+		{"/srv/dm", true},
+		{"/etc/dockmesh", false},
+		{"/etc", false},
+		{"/etc/dockmesh/", false},
+		{"/var/lib", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		_, _, err := runHelper(t, helpers, nil, "chown_target_allowed", tt.dir)
+		if (err == nil) != tt.ok {
+			t.Errorf("chown_target_allowed(%q) = %v, want ok=%v", tt.dir, err, tt.ok)
+		}
+	}
+}
+
+func TestInstallPrintable(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	out, _, err := runHelper(t, envHelpers(t), nil, "printable", "a\x1b]0;x\x07b\tc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "a]0;xbc" {
+		t.Errorf("printable = %q", out)
+	}
+}

@@ -25,7 +25,7 @@ import (
 // that need root, run by the installer.
 func runSystemCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh system <migrate-layout|write-unit|snapshot-db|unit-groups>")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh system <migrate-layout|write-unit|snapshot-db|unit-groups|data-dir>")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -46,6 +46,11 @@ func runSystemCmd(args []string) {
 		}
 	case "unit-groups":
 		fmt.Println(unitGroupsText())
+	case "data-dir":
+		if err := systemDataDir(); err != nil {
+			fmt.Fprintln(os.Stderr, "system data-dir:", err)
+			os.Exit(1)
+		}
 	case unitPathsCmd:
 		if err := systemUnitPaths(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "system "+unitPathsCmd+":", err)
@@ -298,6 +303,22 @@ func supplementaryGroups(envFile string, env map[string]string) []string {
 		fmt.Fprintln(os.Stderr, "warning:", warn)
 	}
 	return groups
+}
+
+// systemDataDir is `dockmesh system data-dir`: the data dir the config
+// the unit would load names, worked out the way the server does. The
+// installer hands that directory back to a recreated service user.
+func systemDataDir() error {
+	envFile, err := unitConfigFile(unitEnvFlag("", loadedEnvFile, explicitEnvFile))
+	if err != nil {
+		return err
+	}
+	env, err := layout.ReadEnvFile(envFile)
+	if err != nil {
+		return err
+	}
+	fmt.Println(config.ResolvePaths(func(k string) string { return env[k] }).DataDir)
+	return nil
 }
 
 // unitGroupsText lists the supplementary groups write-unit gives the

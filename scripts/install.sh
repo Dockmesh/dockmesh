@@ -31,6 +31,8 @@
 #  database) is upgraded instead and never gets a setup code.
 # ============================================================================
 set -euo pipefail
+# Failures inside $(…) stop the run too (bash 4.4+).
+shopt -s inherit_errexit 2>/dev/null || true
 
 # Box drawing follows the caller's locale; everything else runs in "C" so
 # awk prints "0.6", not "0,6", under a German or French LC_NUMERIC.
@@ -60,7 +62,7 @@ BOX_WIDTH=65
 
 say()    { printf '%s\n' "$*" >&2; }
 # A status word in front of a line: warning, moved, ok.
-status() { local word="$1" colour="$2"; shift 2; printf '%s%s%s  %s\n' "$colour" "$word" "$RST" "$*" >&2; }
+status() { local word="$1" colour="$2"; shift 2; printf '%s%s%s  %s\n' "$colour" "$word" "$RST" "$(printable "$*")" >&2; }
 warn()   { status warning "$FG_WARN" "$*"; }
 
 die() {
@@ -77,6 +79,7 @@ box() {
   for ((i = ${#title} + 2; i < inner; i++)); do printf '%s' "$BOX_H" >&2; done
   printf '%s%s\n' "$BOX_TR" "$RST" >&2
   for line in "" "$@"; do
+    line="$(printable "$line")"
     pad=$((inner - 3 - ${#line}))
     [ "$pad" -lt 0 ] && pad=0
     printf '%s%s%s   %s%*s%s%s%s\n' "$FG_STEP" "$BOX_V" "$RST" "$line" "$pad" '' "$FG_STEP" "$BOX_V" "$RST" >&2
@@ -88,7 +91,7 @@ box() {
 
 # step N TITLE DETAIL prints the line of a finished step.
 step() {
-  printf '%s[%s/%s]%s %-26s %s\n' "$FG_STEP" "$1" "$TOTAL_STEPS" "$RST" "$2" "$3" >&2
+  printf '%s[%s/%s]%s %-26s %s\n' "$FG_STEP" "$1" "$TOTAL_STEPS" "$RST" "$2" "$(printable "$3")" >&2
 }
 
 get_time() {
@@ -147,6 +150,19 @@ data_dir_allowed() {
   case "${1%/}" in
     ""|/|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var|/var/lib) return 1 ;;
   esac
+}
+
+# printable drops control characters: details can come from files the
+# service account writes, and must not reach root's terminal as escapes.
+printable() { printf '%s' "$1" | tr -d '\000-\037\177'; }
+
+# chown_target_allowed DIR: a data dir root may hand to the service user;
+# never the config directory or anything else below /etc.
+chown_target_allowed() {
+  case "${1%/}" in
+    /etc|/etc/*) return 1 ;;
+  esac
+  [ -n "$1" ] && data_dir_allowed "$1"
 }
 
 # find_existing_env_file [PATH...] prints the first regular env file among
@@ -919,13 +935,11 @@ if [ "$IS_UPGRADE" = "1" ]; then
   if [ "$USER_CREATED" = "1" ]; then
     # A recreated service user may have a new UID; the data of the
     # earlier install is handed back to it.
-    KEPT_DATA=""
-    if [ -n "$KEPT_ENV_FILE" ]; then
-      KEPT_DATA="$(dirname "$KEPT_ENV_FILE")"
-    elif [ -n "$FOUND_DB" ] && [ "$(basename "$(dirname "$FOUND_DB")")" = "data" ]; then
+    KEPT_DATA="$($USE_SUDO "$NEW_BIN" system data-dir ${KEPT_ENV_FILE:+--env-file "$KEPT_ENV_FILE"} 2>/dev/null || true)"
+    if [ -z "$KEPT_DATA" ] && [ -n "$FOUND_DB" ] && [ "$(basename "$(dirname "$FOUND_DB")")" = "data" ]; then
       KEPT_DATA="$(dirname "$(dirname "$FOUND_DB")")"
     fi
-    if [ -n "$KEPT_DATA" ] && data_dir_allowed "$KEPT_DATA"; then
+    if chown_target_allowed "$KEPT_DATA"; then
       $USE_SUDO mkdir -p "$KEPT_DATA/data" "$KEPT_DATA/stacks"
       $USE_SUDO chown dockmesh:docker "$KEPT_DATA"
       $USE_SUDO chown -R dockmesh:docker "$KEPT_DATA/data" "$KEPT_DATA/stacks"
@@ -937,8 +951,8 @@ if [ "$IS_UPGRADE" = "1" ]; then
     # below runs it as dockmesh, which needs the data dir.
     CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null || true)"
     if { [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; } && [ -n "$UNIT_ENV_FILE" ] && $USE_SUDO test -f "$UNIT_ENV_FILE"; then
-      ROOT_DATA="$(dirname "$UNIT_ENV_FILE")"
-      if data_dir_allowed "$ROOT_DATA"; then
+      ROOT_DATA="$($USE_SUDO "$NEW_BIN" system data-dir 2>/dev/null || true)"
+      if chown_target_allowed "$ROOT_DATA"; then
         $USE_SUDO chown -R dockmesh:dockmesh "$ROOT_DATA"
         $USE_SUDO chmod 700 "$ROOT_DATA"
       fi
