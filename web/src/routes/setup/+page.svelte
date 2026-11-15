@@ -760,7 +760,8 @@
                 <input id="setup-code" class="inp big" placeholder="XXXX-XXXX-XXXX" bind:value={codeInput}
                   autocomplete="off" spellcheck="false" autocapitalize="characters"
                   aria-invalid={codeError !== null} aria-describedby="setup-code-msg"
-                  onblur={() => { if (codeInput.trim()) codeError = codeFieldError(); }} />
+                  oninput={() => (codeError = null)}
+                  onblur={() => { if (codeInput.trim() && !codeError) codeError = codeFieldError(); }} />
                 <span id="setup-code-msg">
                   {#if codeError}
                     <span class="err">{codeError}</span>
