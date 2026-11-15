@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -38,7 +39,7 @@ func (f *fakeHost) VolumeTar(_ context.Context, name string) (io.ReadCloser, err
 	}
 	data, ok := f.volumes[name]
 	if !ok {
-		return nil, errors.New("no such volume: " + name)
+		return nil, &docker.VolumeNotFoundError{Name: name}
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -395,9 +396,11 @@ func TestStackArchiveVolumes(t *testing.T) {
 		t.Fatalf("complete archive: %+v", res)
 	}
 
-	// A volume that can't be read fails the backup.
+	// A volume that is not on the host fails the backup and says so.
 	delete(fake.volumes, "web_cache")
-	if _, err := tarStackWithVolumes(ctx, fake, nil, dir, "web", io.Discard); err == nil || !strings.Contains(err.Error(), "web_cache") {
+	_, err := tarStackWithVolumes(ctx, fake, nil, dir, "web", io.Discard)
+	var missing *docker.VolumeNotFoundError
+	if !errors.As(err, &missing) || missing.Name != "web_cache" || !strings.Contains(err.Error(), "deployed on this host") {
 		t.Fatalf("missing volume: %v", err)
 	}
 
@@ -450,5 +453,28 @@ func TestRunNotificationAudience(t *testing.T) {
 				t.Errorf("link %q user %q", in.Link, in.UserID)
 			}
 		})
+	}
+}
+
+func TestMissingVolumeFailsRun(t *testing.T) {
+	svc, fake, root := newExecTest(t, false)
+	ctx := context.Background()
+	delete(fake.volumes, "data")
+	job, err := svc.CreateJob(ctx, volumeJob("gone", root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.RunNow(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != StatusFailed || run.TargetPath != "" || run.Restorable() {
+		t.Fatalf("run of a missing volume: %+v", run)
+	}
+	if want := `volume "data" does not exist on this host`; !strings.HasSuffix(run.Error, want) {
+		t.Fatalf("run error = %q, want it to end in %q", run.Error, want)
+	}
+	if got := archives(t, root); len(got) != 0 {
+		t.Fatalf("archives left on the target: %v", got)
 	}
 }

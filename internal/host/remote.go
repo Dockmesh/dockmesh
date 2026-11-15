@@ -564,6 +564,12 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 	if err != nil {
 		return nil, err
 	}
+	if err := docker.CheckVolumeName(name); err != nil {
+		return nil, err
+	}
+	if err := requireRemoteVolume(ctx, h, name); err != nil {
+		return nil, err
+	}
 	s, err := ag.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
 	if err != nil {
 		return nil, fmt.Errorf("open volume_export stream: %w", err)
@@ -1021,4 +1027,22 @@ func checkReservedLabels(ctx context.Context, name, composeYAML, envContent stri
 		return compose.CheckReservedLabels(proj)
 	}
 	return nil
+}
+
+type volumeInspector interface {
+	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
+}
+
+// requireRemoteVolume checks the volume through the agent before the
+// export starts, so an agent without its own check doesn't create an
+// empty volume either. The agent relays Docker's error only as text.
+func requireRemoteVolume(ctx context.Context, h volumeInspector, name string) error {
+	_, err := h.InspectVolume(ctx, name)
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "no such volume") {
+		return &docker.VolumeNotFoundError{Name: name}
+	}
+	return fmt.Errorf("inspect volume %s: %w", name, err)
 }

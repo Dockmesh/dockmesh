@@ -811,6 +811,9 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		return err
 	}
+	if err := dockerwrap.RequireVolume(ctx, cli, volumeName); err != nil {
+		return err
+	}
 	if err := ensureHelperImage(ctx, cli); err != nil {
 		return err
 	}
