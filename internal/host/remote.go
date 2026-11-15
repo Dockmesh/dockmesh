@@ -230,6 +230,9 @@ func (s *remoteExecSession) Close() error {
 // -----------------------------------------------------------------------------
 
 func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
+	if err := checkReservedLabels(ctx, name, composeYAML, envContent); err != nil {
+		return nil, err
+	}
 	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
 		Name:      name,
 		Compose:   composeYAML,
@@ -1004,3 +1007,18 @@ var (
 	ErrNoDocker     = errors.New("docker daemon unavailable")
 	ErrUnknownHost  = errors.New("unknown host")
 )
+
+// checkReservedLabels refuses tracking labels on the server too, since
+// agents older than the server don't. A file the server can't parse is
+// left to the agent, which parses it against its own stack directory.
+func checkReservedLabels(ctx context.Context, name, composeYAML, envContent string) error {
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if proj, err := compose.LoadProject(ctx, dir, name, envContent); err == nil {
+		return compose.CheckReservedLabels(proj)
+	}
+	return nil
+}

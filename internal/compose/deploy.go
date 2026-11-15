@@ -235,6 +235,9 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 		))
 	defer span.End()
 
+	if err := CheckReservedLabels(proj); err != nil {
+		return nil, err
+	}
 	cli := s.docker.Raw()
 	result := &DeployResult{Stack: proj.Name, ReplicasIgnored: ignoredReplicas(proj)}
 
@@ -448,12 +451,9 @@ func (s *Service) reconcileNetworks(ctx context.Context, cli *client.Client, pro
 			return nil, fmt.Errorf("network inspect %s: %w", actualName, err)
 		}
 
-		labels := map[string]string{
-			LabelProject: proj.Name,
-			LabelManaged: "true",
-		}
-		for k, v := range net.Labels {
-			labels[k] = v
+		labels, err := withTrackingLabels("network", key, trackingLabels(proj), net.Labels)
+		if err != nil {
+			return nil, err
 		}
 		driver := net.Driver
 		if driver == "" {
@@ -489,12 +489,9 @@ func (s *Service) reconcileVolumes(ctx context.Context, cli *client.Client, proj
 			return fmt.Errorf("volume inspect %s: %w", actualName, err)
 		}
 
-		labels := map[string]string{
-			LabelProject: proj.Name,
-			LabelManaged: "true",
-		}
-		for k, v := range vol.Labels {
-			labels[k] = v
+		labels, err := withTrackingLabels("volume", key, trackingLabels(proj), vol.Labels)
+		if err != nil {
+			return err
 		}
 		driver := vol.Driver
 		if driver == "" {
@@ -749,14 +746,9 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 		}
 	}
 
-	// Labels — merge user labels with our tracking labels.
-	labels := map[string]string{
-		LabelProject: proj.Name,
-		LabelService: svc.Name,
-		LabelManaged: "true",
-	}
-	for k, v := range svc.Labels {
-		labels[k] = v
+	labels, err := withTrackingLabels("service", svc.Name, serviceTrackingLabels(proj, svc.Name), svc.Labels)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	cfg := &container.Config{
