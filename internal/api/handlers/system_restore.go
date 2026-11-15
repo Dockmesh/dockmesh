@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -268,6 +269,10 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	if h.SetupRestoreFresh != nil {
+		done = h.restoreNewInstall(w, r, rc, name)
+		return
+	}
 	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
 	if err != nil {
 		writeStageError(w, err, result)
@@ -289,6 +294,51 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	done = true
 	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true, "counts": counts, "sanity": result})
 	h.RequestRestart()
+}
+
+// restoreNewInstall restores a backup on a new install: the checks run by
+// staging it in setup mode's own state dir, which is then dropped, and
+// setup-apply restores the kept archive into the chosen data dir. It
+// answers like SetupCommit, with a run to follow, and reports whether it
+// took over the install slot.
+func (h *Handlers) restoreNewInstall(w http.ResponseWriter, r *http.Request, rc io.Reader, name string) bool {
+	v := setup.ApplyValues{DataDir: r.FormValue("data_dir"), BaseURL: r.FormValue("base_url"), Restore: true}
+	if err := v.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
+	if err != nil {
+		writeStageError(w, err, result)
+		return false
+	}
+	h.discardSetupRestore()
+	archive, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'file' part in form")
+		return false
+	}
+	defer archive.Close()
+	var key []byte
+	if kf, _, err := r.FormFile("key"); err == nil {
+		key, err = io.ReadAll(io.LimitReader(kf, 1<<20))
+		kf.Close()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "read key file: "+err.Error())
+			return false
+		}
+	}
+	run, err := h.SetupRestoreFresh(v, archive, key)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	h.startSetupRun(w, r, func(ctx context.Context, runner *setup.Runner) bool {
+		runner.RunApply(ctx, run)
+		done, err := runner.Done()
+		return done && err == nil
+	}, map[string]any{"counts": counts, "sanity": result})
+	return true
 }
 
 // discardSetupRestore drops a staged setup restore that was refused; if

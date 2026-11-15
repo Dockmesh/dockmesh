@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,6 +22,25 @@ const AgentListen = ":8443"
 // hashes.
 const ApplyFile = "apply.json"
 
+// RestoreArchiveFile and RestoreKeyFile are the uploaded system backup and
+// its key file in StateDir for a restore through setup-apply.
+const (
+	RestoreArchiveFile = "restore.archive"
+	RestoreKeyFile     = "restore.key"
+)
+
+// DropRestoreFiles removes the backup and key file a wizard restore left
+// in stateDir; the key opens every backup of the old install.
+func DropRestoreFiles(stateDir string) error {
+	var errs []error
+	for _, name := range []string{RestoreArchiveFile, RestoreKeyFile} {
+		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // ApplyValues are what a setup-apply commits. The service writes them,
 // so root treats them as untrusted and checks them with Validate.
 type ApplyValues struct {
@@ -30,7 +50,11 @@ type ApplyValues struct {
 	TLSCertFile string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile  string `json:"tls_key_file,omitempty"`
 	BaseURL     string `json:"base_url"`
-	Admin       struct {
+	// Restore restores the system backup the service left as
+	// RestoreArchiveFile (and RestoreKeyFile) in the state dir instead of
+	// creating an admin.
+	Restore bool `json:"restore,omitempty"`
+	Admin   struct {
 		Username     string `json:"username"`
 		Email        string `json:"email,omitempty"`
 		PasswordHash string `json:"password_hash"`
@@ -74,6 +98,12 @@ func CheckDataDirPath(p string) error {
 func (v *ApplyValues) Validate() error {
 	if err := v.ValidateServer(); err != nil {
 		return err
+	}
+	if v.Restore {
+		if v.Admin.Username != "" || v.Admin.PasswordHash != "" {
+			return errors.New("a restore brings its accounts from the backup; it takes no admin")
+		}
+		return nil
 	}
 	if !adminNameRe.MatchString(v.Admin.Username) {
 		return errors.New("admin username must be 3-32 characters of a-z, 0-9, . _ -")

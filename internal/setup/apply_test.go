@@ -82,3 +82,27 @@ func TestApplyValuesValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyValuesRestore(t *testing.T) {
+	tests := []struct {
+		name string
+		v    ApplyValues
+		ok   bool
+	}{
+		{name: "restore without admin", v: ApplyValues{DataDir: "/srv/dockmesh", Restore: true}, ok: true},
+		{name: "restore with admin", v: func() ApplyValues {
+			v := ApplyValues{DataDir: "/srv/dockmesh", Restore: true}
+			v.Admin.Username = "admin"
+			return v
+		}(), ok: false},
+		{name: "restore into system dir", v: ApplyValues{DataDir: "/etc/dockmesh", Restore: true}, ok: false},
+		{name: "new install needs an admin", v: ApplyValues{DataDir: "/srv/dockmesh"}, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.v.Validate(); (err == nil) != tt.ok {
+				t.Fatalf("Validate() = %v, want ok=%v", err, tt.ok)
+			}
+		})
+	}
+}

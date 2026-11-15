@@ -91,6 +91,7 @@ describe('rail', () => {
     expect(railClickable('W1', 'N3', 'new')).toBe(false);
     expect(railClickable('N4', 'N3', 'new')).toBe(false);
     expect(railClickable('N1', 'N7', 'new')).toBe(false);
-    expect(railClickable('W2', 'R2', 'restore')).toBe(true);
+    expect(railClickable('R1', 'R2', 'restore')).toBe(true);
+    expect(railClickable('R2', 'R3', 'restore')).toBe(false);
   });
 });

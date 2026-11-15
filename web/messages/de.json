@@ -4455,7 +4455,6 @@
   "settings_version": "Version",
   "settings_wins_after": " hat Vorrang vor diesem Feld.",
   "setup_checking_server": "Server wird geprüft…",
-  "setup_restore_checks_failed": "das Backup hat die Wiederherstellungsprüfungen nicht bestanden",
   "setup_strength_ok": "ok",
   "shell_api_tokens": "API-Tokens",
   "shell_dark_mode": "Dunkler Modus",
@@ -6219,5 +6218,17 @@
   "sw_dir_err_unsafe_parent": "{path} und jedes Verzeichnis darüber müssen root gehören und dürfen nur für root beschreibbar sein.",
   "sw_dir_err_symlink": "{path} ist ein symbolischer Link. Gib den echten Pfad ein.",
   "sw_dir_err_foreign": "{path} gehört einem anderen Konto. Entferne es oder wähle ein neues Verzeichnis; die Einrichtung legt es an.",
-  "sw_n7_open": "Die Einrichtung ist fertig, aber dieser Browser erreicht die neue Adresse noch nicht. Öffne {url}."
+  "sw_n7_open": "Die Einrichtung ist fertig, aber dieser Browser erreicht die neue Adresse noch nicht. Öffne {url}.",
+  "sw_r1_text": "Das Backup wird in dieses Verzeichnis wiederhergestellt.",
+  "sw_r3_checks": "Backup-Prüfung bestanden: {files} Dateien, {admins}.",
+  "sw_s3_title": "Dockmesh ist mit der neuen Konfiguration nicht gestartet",
+  "sw_s3_text": "Dockmesh ist zurück im Einrichtungsmodus. Nichts wurde gelöscht: Was die Einrichtung in {data} angelegt hat, wurde mit angehängtem .failed-<Zeit> aufbewahrt, zum Beispiel data/dockmesh.db.failed-<Zeit>.",
+  "sw_s3_hint": "Beide Schaltflächen fragen erneut nach dem Setup-Code; sie funktionieren, solange er gültig ist. Danach brauchst du einen neuen Code. Den Grund findest du im Dienst-Log: sudo journalctl -u dockmesh-update -n 50",
+  "sw_s3b_title": "Dockmesh antwortet nicht",
+  "sw_s3b_text": "Prüfe den Dienst auf dem Server:",
+  "sw_s3b_check": "Erneut prüfen",
+  "sw_w1_again": "Der Neustart hat diese Einrichtungssitzung beendet. Gib den Setup-Code erneut ein, um weiterzumachen.",
+  "sw_r2_err_needs_key": "Dieses Backup ist verschlüsselt. Füge die Backup-Schlüsseldatei hinzu, die du auf dem ursprünglichen Server exportiert hast.",
+  "sw_r2_err_key": "Die Schlüsseldatei öffnet dieses Backup nicht.",
+  "sw_r2_err_no_admin": "Dieses Backup enthält kein Admin-Konto, nach der Wiederherstellung könnte sich also niemand anmelden. Führe auf dem ursprünglichen Server sudo dockmesh admin create aus, erstelle ein neues Systembackup und lade dieses hoch."
 }

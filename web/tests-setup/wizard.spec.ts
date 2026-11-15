@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 // One never set up server for the whole file, so the flows run in order:
@@ -7,6 +10,7 @@ test.describe.configure({ mode: 'serial' });
 
 const container = process.env.DOCKMESH_SETUP_CONTAINER ?? '';
 let code = process.env.DOCKMESH_SETUP_CODE ?? '';
+let adminPassword = '';
 
 function newCode(): string {
   const out = execFileSync('docker', ['exec', container, 'dockmesh', 'setup', 'new-code', '--porcelain'], { encoding: 'utf8' });
@@ -162,6 +166,7 @@ test('new installation: every step, then install and sign in', async ({ page }) 
   await expect(page.getByRole('heading', { name: 'Dockmesh is ready' })).toBeVisible({ timeout: 120_000 });
   await page.waitForURL('**/login', { timeout: 15_000 });
 
+  adminPassword = password;
   await page.getByLabel(/username/i).fill('admin');
   await page.getByLabel(/password/i).first().fill(password);
   await page.getByRole('button', { name: /sign in/i }).click();
@@ -171,4 +176,65 @@ test('new installation: every step, then install and sign in', async ({ page }) 
 test('after setup /setup leads to the sign-in page', async ({ page }) => {
   await page.goto('/setup');
   await page.waitForURL('**/login');
+});
+
+test('restore from backup: data directory, upload, restart, sign in with the backup account', async ({ page, request, browser }) => {
+  test.setTimeout(240_000);
+  // A system backup of the server set up above, and its key file.
+  const login = await request.post('/api/v1/auth/login', { data: { username: 'admin', password: adminPassword } });
+  expect(login.ok()).toBeTruthy();
+  const auth = { Authorization: `Bearer ${(await login.json()).access_token}` };
+  await request.put('/api/v1/backups/system/enabled', { headers: auth, data: { enabled: true } });
+  const jobs = await (await request.get('/api/v1/backups/jobs', { headers: auth })).json();
+  const job = (Array.isArray(jobs) ? jobs : jobs.jobs).find((j: { sources: { type: string }[] }) => j.sources.some((s) => s.type === 'system'));
+  expect((await request.post(`/api/v1/backups/jobs/${job.id}/run`, { headers: auth })).ok()).toBeTruthy();
+  let run: { id: number; status: string; encrypted: boolean } | undefined;
+  await expect.poll(async () => {
+    const runs = await (await request.get('/api/v1/backups/runs?limit=5', { headers: auth })).json();
+    run = (Array.isArray(runs) ? runs : runs.runs).find((r: { job_id: number }) => r.job_id === job.id);
+    return run?.status;
+  }, { timeout: 60_000 }).toBe('success');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-setup-e2e-'));
+  const archive = join(dir, run!.encrypted ? 'system.tar.gz.age' : 'system.tar.gz');
+  writeFileSync(archive, await (await request.get(`/api/v1/backups/runs/${run!.id}/archive`, { headers: auth })).body());
+  const key = join(dir, 'backup-key.txt');
+  writeFileSync(key, await (await request.get('/api/v1/system/backup-key/export', { headers: auth })).body());
+
+  // A second never set up server.
+  const name = `${container}-restore`;
+  const port = Number(new URL(process.env.DOCKMESH_SETUP_URL ?? '').port) + 1;
+  const bin = execFileSync('docker', ['inspect', '-f', '{{range .Mounts}}{{if eq .Destination "/usr/local/bin/dockmesh"}}{{.Source}}{{end}}{{end}}', container], { encoding: 'utf8' }).trim();
+  execFileSync('docker', ['run', '-d', '--name', name, '--restart', 'unless-stopped', '-e', 'DOCKMESH_TLS_MODE=internal',
+    '-p', `127.0.0.1:${port}:8080`, '-v', `${bin}:/usr/local/bin/dockmesh:ro`, process.env.DOCKMESH_SETUP_IMAGE ?? 'debian:12-slim', 'dockmesh', 'serve']);
+  try {
+    const base = `https://127.0.0.1:${port}`;
+    await expect.poll(async () => (await request.get(`${base}/api/v1/health`).catch(() => null))?.status(), { timeout: 60_000 }).toBe(200);
+    const out = execFileSync('docker', ['exec', name, 'dockmesh', 'setup', 'new-code', '--porcelain'], { encoding: 'utf8' });
+    const code2 = /^code=(.+)$/m.exec(out)![1];
+    const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/setup#${code2}`);
+    await p.getByRole('button', { name: 'Continue' }).click();
+    await p.getByText('Restore from backup', { exact: true }).click();
+    await p.getByRole('button', { name: 'Continue' }).click();
+    const rail = p.getByRole('complementary', { name: 'Setup steps' });
+    await expect(rail.getByRole('listitem')).toHaveCount(5);
+    await expect(p.getByText('Step 3 of 5 · Data directory')).toBeVisible();
+    await expect(p.getByText('The backup is restored into this directory.')).toBeVisible();
+    await expect(p.getByText(/Free space .* · empty/)).toBeVisible();
+    await p.getByRole('button', { name: 'Next' }).click();
+    await expect(p.getByText('Step 4 of 5 · Backup')).toBeVisible();
+    await p.locator('#backup-file').setInputFiles(archive);
+    if (run!.encrypted) await p.locator('#backup-key').setInputFiles(key);
+    await p.getByRole('button', { name: 'Restore' }).click();
+    await expect(p.getByText('Step 5 of 5 · Apply')).toBeVisible();
+    await expect(p.getByText(/Backup checks passed/)).toBeVisible({ timeout: 60_000 });
+    await expect(p.getByRole('heading', { name: 'Dockmesh is ready' })).toBeVisible({ timeout: 120_000 });
+    await expect(p.getByText('Sign in with an account from the backup.')).toBeVisible();
+    const signIn = await request.post(`${base}/api/v1/auth/login`, { data: { username: 'admin', password: adminPassword } });
+    expect(signIn.ok()).toBeTruthy();
+    await ctx.close();
+  } finally {
+    execFileSync('docker', ['rm', '-f', name]);
+  }
 });

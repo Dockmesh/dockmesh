@@ -114,6 +114,9 @@ type Handlers struct {
 	UserPrefs         *userprefs.Store
 	SetupState        *setup.State     // first-run wizard state; nil = setup never active
 	SetupCommit_      setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	// SetupRestoreFresh hands a wizard restore of a new install to
+	// setup-apply; nil restores in place (an unfinished older install).
+	SetupRestoreFresh setup.RestorePrepareFunc
 	ssoCodes          ssoCodes
 	// System restore: the live paths, a restart request after staging,
 	// and the end-of-setup step for a restore from the wizard.
@@ -200,73 +203,75 @@ type Deps struct {
 	UpdateInstaller *selfupdate.Installer
 	UserPrefs       *userprefs.Store
 	// Changelog is CHANGELOG.md as embedded in the binary.
-	Changelog      string
-	SetupState     *setup.State
-	SetupCommit_   setup.CommitFunc
-	RestoreConfig  *config.Config
-	RequestRestart func()
-	FinishSetup    func() error
-	PublicURLs     func() agents.Endpoints
+	Changelog         string
+	SetupState        *setup.State
+	SetupCommit_      setup.CommitFunc
+	SetupRestoreFresh setup.RestorePrepareFunc
+	RestoreConfig     *config.Config
+	RequestRestart    func()
+	FinishSetup       func() error
+	PublicURLs        func() agents.Endpoints
 }
 
 func New(d Deps) *Handlers {
 	h := &Handlers{
-		DB:              d.DB,
-		Auth:            d.Auth,
-		Audit:           d.Audit,
-		Docker:          d.Docker,
-		Stacks:          d.Stacks,
-		Deployments:     d.Deployments,
-		DeployHistory:   d.DeployHistory,
-		DeployTracker:   d.DeployTracker,
-		Notifications:   d.Notifications,
-		Notices:         d.Notices,
-		Dependencies:    d.Dependencies,
-		Compose:         d.Compose,
-		LoginLimiter:    d.LoginLimiter,
-		Scanner:         d.Scanner,
-		ScanStore:       d.ScanStore,
-		Proxy:           d.Proxy,
-		Operations:      d.Operations,
-		Updater:         d.Updater,
-		StackLocks:      d.StackLocks,
-		UpdateWatcher:   d.UpdateWatcher,
-		OIDC:            d.OIDC,
-		SAML:            d.SAML,
-		LDAP:            d.LDAP,
-		OAuth2:          d.OAuth2,
-		Metrics:         d.Metrics,
-		Notify:          d.Notify,
-		Alerts:          d.Alerts,
-		Backups:         d.Backups,
-		BackupTargets:   d.BackupTargets,
-		Secrets:         d.Secrets,
-		Migrations:      d.Migrations,
-		Drains:          d.Drains,
-		Agents:          d.Agents,
-		Hosts:           d.Hosts,
-		HostTags:        d.HostTags,
-		Roles:           d.Roles,
-		Settings:        d.Settings,
-		GlobalEnv:       d.GlobalEnv,
-		APITokens:       d.APITokens,
-		Registries:      d.Registries,
-		GitSource:       d.GitSource,
-		Templates:       d.Templates,
-		Invites:         d.Invites,
-		AuditRetention:  d.AuditRetention,
-		AuditWebhook:    d.AuditWebhook,
-		AgentUpgrade:    d.AgentUpgrade,
-		Prom:            d.Prom,
-		SelfUpdate:      d.SelfUpdate,
-		UpdateInstaller: d.UpdateInstaller,
-		UserPrefs:       d.UserPrefs,
-		SetupState:      d.SetupState,
-		SetupCommit_:    d.SetupCommit_,
-		RestoreConfig:   d.RestoreConfig,
-		RequestRestart:  d.RequestRestart,
-		FinishSetup:     d.FinishSetup,
-		PublicURLs:      d.PublicURLs,
+		DB:                d.DB,
+		Auth:              d.Auth,
+		Audit:             d.Audit,
+		Docker:            d.Docker,
+		Stacks:            d.Stacks,
+		Deployments:       d.Deployments,
+		DeployHistory:     d.DeployHistory,
+		DeployTracker:     d.DeployTracker,
+		Notifications:     d.Notifications,
+		Notices:           d.Notices,
+		Dependencies:      d.Dependencies,
+		Compose:           d.Compose,
+		LoginLimiter:      d.LoginLimiter,
+		Scanner:           d.Scanner,
+		ScanStore:         d.ScanStore,
+		Proxy:             d.Proxy,
+		Operations:        d.Operations,
+		Updater:           d.Updater,
+		StackLocks:        d.StackLocks,
+		UpdateWatcher:     d.UpdateWatcher,
+		OIDC:              d.OIDC,
+		SAML:              d.SAML,
+		LDAP:              d.LDAP,
+		OAuth2:            d.OAuth2,
+		Metrics:           d.Metrics,
+		Notify:            d.Notify,
+		Alerts:            d.Alerts,
+		Backups:           d.Backups,
+		BackupTargets:     d.BackupTargets,
+		Secrets:           d.Secrets,
+		Migrations:        d.Migrations,
+		Drains:            d.Drains,
+		Agents:            d.Agents,
+		Hosts:             d.Hosts,
+		HostTags:          d.HostTags,
+		Roles:             d.Roles,
+		Settings:          d.Settings,
+		GlobalEnv:         d.GlobalEnv,
+		APITokens:         d.APITokens,
+		Registries:        d.Registries,
+		GitSource:         d.GitSource,
+		Templates:         d.Templates,
+		Invites:           d.Invites,
+		AuditRetention:    d.AuditRetention,
+		AuditWebhook:      d.AuditWebhook,
+		AgentUpgrade:      d.AgentUpgrade,
+		Prom:              d.Prom,
+		SelfUpdate:        d.SelfUpdate,
+		UpdateInstaller:   d.UpdateInstaller,
+		UserPrefs:         d.UserPrefs,
+		SetupState:        d.SetupState,
+		SetupCommit_:      d.SetupCommit_,
+		SetupRestoreFresh: d.SetupRestoreFresh,
+		RestoreConfig:     d.RestoreConfig,
+		RequestRestart:    d.RequestRestart,
+		FinishSetup:       d.FinishSetup,
+		PublicURLs:        d.PublicURLs,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
 		mfaLimiter:        ratelimit.New(20, 15*time.Minute, 15*time.Minute),

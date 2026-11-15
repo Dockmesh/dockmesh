@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -292,51 +295,97 @@ func freshSetupCommit(dataDir string, restart func()) setup.CommitFunc {
 			emit("values", err.Error(), "fail")
 			return err
 		}
-		if err := writeApplyValues(setup.StateDir(dataDir), v); err != nil {
-			emit("values", err.Error(), "fail")
-			return err
-		}
-		if !rootUpdaterInstalled() {
+		return applyFresh(ctx, dataDir, v, emit, func() error {
 			return materializeInProcess(ctx, dataDir, v, restart, emit)
-		}
-		reqDir := layout.UpdateRequestDir(dataDir)
-		if err := os.MkdirAll(reqDir, 0o750); err != nil {
-			emit("apply", err.Error(), "fail")
-			return err
-		}
-		since := time.Now().Add(-time.Second)
-		req, _ := json.Marshal(rootupdate.Request{Type: rootupdate.RequestSetupApply})
-		if err := writeFileReplace(filepath.Join(reqDir, rootupdate.RequestFile), req); err != nil {
-			emit("apply", err.Error(), "fail")
-			return err
-		}
-		emit("apply", "the root updater checks and applies the setup", "info")
-		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		defer cancel()
-		res, err := waitApplyResult(waitCtx, func() ([]byte, time.Time, error) {
-			path := filepath.Join(reqDir, setupResultFile)
-			fi, err := os.Stat(path)
-			if err != nil {
-				return nil, time.Time{}, err
-			}
-			data, err := os.ReadFile(path) // #nosec G304 -- fixed name in the update dir
-			return data, fi.ModTime(), err
-		}, since)
-		if err != nil {
-			emit("apply", "no answer from the root updater: "+err.Error(), "fail")
-			return err
-		}
-		if res.Status != applyRestarting {
-			msg := res.Reason
-			if msg == "" {
-				msg = res.Status
-			}
-			emit(res.Step, msg, "fail")
-			return errors.New(msg)
-		}
-		emit("restart", "setup applied; the server restarts on the new configuration", "ok")
-		return nil
+		})
 	}
+}
+
+// freshSetupRestore is the wizard restore of a new install: it keeps the
+// backup in the state dir, and setup-apply restores it into the chosen
+// data dir like a setup file's restore.
+func freshSetupRestore(dataDir string, restart func()) setup.RestorePrepareFunc {
+	return func(v setup.ApplyValues, archive io.Reader, key []byte) (setup.ApplyRun, error) {
+		v.Restore = true
+		if err := v.Validate(); err != nil {
+			return nil, err
+		}
+		state := setup.StateDir(dataDir)
+		if err := writeFileFrom(filepath.Join(state, setup.RestoreArchiveFile), archive); err != nil {
+			return nil, err
+		}
+		keyPath := filepath.Join(state, setup.RestoreKeyFile)
+		var err error
+		if len(key) > 0 {
+			err = writeFileReplace(keyPath, key)
+		} else if err = os.Remove(keyPath); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+		if err != nil {
+			return nil, errors.Join(err, setup.DropRestoreFiles(state))
+		}
+		return func(ctx context.Context, emit func(step, msg, status string)) error {
+			err := applyFresh(ctx, dataDir, v, emit, func() error {
+				return restoreInProcess(ctx, dataDir, v, restart, emit)
+			})
+			if err != nil {
+				if derr := setup.DropRestoreFiles(state); derr != nil {
+					emit("cleanup", derr.Error(), "warn")
+				}
+			}
+			return err
+		}, nil
+	}
+}
+
+// applyFresh hands v to root's setup-apply and follows it until the server
+// restarts on the new config. Without the root updater (a container, a
+// source build) inProcess sets up the service's own data dir instead.
+func applyFresh(ctx context.Context, dataDir string, v setup.ApplyValues, emit func(step, msg, status string), inProcess func() error) error {
+	if err := writeApplyValues(setup.StateDir(dataDir), v); err != nil {
+		emit("values", err.Error(), "fail")
+		return err
+	}
+	if !rootUpdaterInstalled() {
+		return inProcess()
+	}
+	reqDir := layout.UpdateRequestDir(dataDir)
+	if err := os.MkdirAll(reqDir, 0o750); err != nil {
+		emit("apply", err.Error(), "fail")
+		return err
+	}
+	since := time.Now().Add(-time.Second)
+	req, _ := json.Marshal(rootupdate.Request{Type: rootupdate.RequestSetupApply})
+	if err := writeFileReplace(filepath.Join(reqDir, rootupdate.RequestFile), req); err != nil {
+		emit("apply", err.Error(), "fail")
+		return err
+	}
+	emit("apply", "the root updater checks and applies the setup", "info")
+	waitCtx, cancel := context.WithTimeout(ctx, 40*time.Minute)
+	defer cancel()
+	res, err := waitApplyResult(waitCtx, func() ([]byte, time.Time, error) {
+		path := filepath.Join(reqDir, setupResultFile)
+		fi, err := os.Stat(path)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		data, err := os.ReadFile(path) // #nosec G304 -- fixed name in the update dir
+		return data, fi.ModTime(), err
+	}, since)
+	if err != nil {
+		emit("apply", "no answer from the root updater: "+err.Error(), "fail")
+		return err
+	}
+	if res.Status != applyRestarting {
+		msg := res.Reason
+		if msg == "" {
+			msg = res.Status
+		}
+		emit(res.Step, msg, "fail")
+		return errors.New(msg)
+	}
+	emit("restart", "setup applied; the server restarts on the new configuration", "ok")
+	return nil
 }
 
 // rootUpdaterInstalled reports a systemd install with the root updater
@@ -350,32 +399,92 @@ func rootUpdaterInstalled() bool {
 // and restarts into it. There is no root to write a config here, so the
 // data dir cannot move and the listener follows the environment.
 func materializeInProcess(ctx context.Context, dataDir string, v setup.ApplyValues, restart func(), emit func(step, msg, status string)) error {
-	if v.DataDir != filepath.Clean(dataDir) {
-		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
-		emit("data_dir", err.Error(), "fail")
+	if err := sameDataDir(dataDir, v, emit); err != nil {
 		return err
 	}
 	if err := materialize(ctx, v, setup.PKIDir(dataDir)); err != nil {
 		emit("materialize", err.Error(), "fail")
 		return err
 	}
+	finishInProcess(dataDir, "setup applied; the server restarts", restart, emit)
+	return nil
+}
+
+// sameDataDir refuses a data dir other than the one the server was
+// started with: without root nothing can point the server elsewhere.
+func sameDataDir(dataDir string, v setup.ApplyValues, emit func(step, msg, status string)) error {
+	if v.DataDir != filepath.Clean(dataDir) {
+		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
+		emit("data_dir", err.Error(), "fail")
+		return err
+	}
+	return nil
+}
+
+// finishInProcess drops the state dir and restarts into the set up data
+// dir.
+func finishInProcess(dataDir, msg string, restart func(), emit func(step, msg, status string)) {
 	if err := os.RemoveAll(setup.StateDir(dataDir)); err != nil {
 		emit("cleanup", err.Error(), "warn")
 	}
-	emit("restart", "setup applied; the server restarts", "ok")
+	emit("restart", msg, "ok")
 	time.AfterFunc(2*time.Second, restart)
+}
+
+// restoreInProcess restores the uploaded backup into the data dir the
+// server was started with and restarts into it, as `dockmesh restore`
+// does for that data dir.
+func restoreInProcess(ctx context.Context, dataDir string, v setup.ApplyValues, restart func(), emit func(step, msg, status string)) error {
+	if err := sameDataDir(dataDir, v, emit); err != nil {
+		return err
+	}
+	state := setup.StateDir(dataDir)
+	args := []string{"restore", "--from", filepath.Join(state, setup.RestoreArchiveFile)}
+	if _, err := os.Stat(filepath.Join(state, setup.RestoreKeyFile)); err == nil {
+		args = append(args, "--key", filepath.Join(state, setup.RestoreKeyFile))
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		emit("restore", err.Error(), "fail")
+		return err
+	}
+	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204 -- own binary, fixed arguments
+	cmd.Env = append(envWithout(os.Environ(), "DOCKMESH_DATA_DIR"), "DOCKMESH_DATA_DIR="+dataDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		emit("restore", err.Error(), "fail")
+		return err
+	}
+	finishInProcess(dataDir, "backup restored; the server restarts", restart, emit)
 	return nil
+}
+
+// envWithout is env without the variable key.
+func envWithout(env []string, key string) []string {
+	out := env[:0:0]
+	for _, e := range env {
+		if !strings.HasPrefix(e, key+"=") {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // writeFileReplace replaces path with data, 0600, through a temp file and
 // rename.
 func writeFileReplace(path string, data []byte) error {
+	return writeFileFrom(path, bytes.NewReader(data))
+}
+
+// writeFileFrom replaces path with what r yields, 0600, through a temp
+// file and rename.
+func writeFileFrom(path string, r io.Reader) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := io.Copy(tmp, r); err != nil {
 		tmp.Close()
 		return err
 	}

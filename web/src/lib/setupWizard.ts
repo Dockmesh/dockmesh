@@ -1,9 +1,9 @@
-export type StepId = 'W1' | 'W2' | 'N1' | 'N2' | 'N3' | 'N4' | 'N5' | 'N6' | 'N7' | 'R2' | 'R3';
+export type StepId = 'W1' | 'W2' | 'N1' | 'N2' | 'N3' | 'N4' | 'N5' | 'N6' | 'N7' | 'R1' | 'R2' | 'R3';
 export type SetupPath = 'new' | 'restore';
 export type TLSChoice = 'internal' | 'file' | 'caddy' | 'proxy';
 
 export const NEW_PATH: StepId[] = ['W1', 'W2', 'N1', 'N2', 'N3', 'N4', 'N5', 'N6', 'N7'];
-export const RESTORE_PATH: StepId[] = ['W1', 'W2', 'R2', 'R3'];
+export const RESTORE_PATH: StepId[] = ['W1', 'W2', 'R1', 'R2', 'R3'];
 
 export function pathSteps(path: SetupPath | null): StepId[] {
   return path === 'restore' ? RESTORE_PATH : NEW_PATH;
@@ -26,6 +26,7 @@ export const DOCS: Record<StepId, string> = {
   N5: 'features/notifications',
   N6: 'install/setup',
   N7: 'install/setup#what-setup-writes',
+  R1: 'install/setup#data-directory',
   R2: 'features/backups#restore-on-a-new-server',
   R3: 'features/backups#restore-on-a-new-server'
 };

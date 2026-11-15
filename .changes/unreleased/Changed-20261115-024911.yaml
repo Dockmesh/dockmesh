@@ -1,0 +1,3 @@
+kind: Changed
+body: Restoring a backup in the setup wizard of a new install asks for the data directory, restores into it through the same setup step a new installation uses, and shows its progress; a failed restart offers to go back or try again.
+time: 2026-11-15T02:49:11.909312674Z
