@@ -51,8 +51,12 @@ func TestSecretFilesAndDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(f.SecretFiles(), ","); got != "/root/b,/root/k" {
-		t.Errorf("SecretFiles = %s", got)
+	var got []string
+	for _, sf := range f.SecretFiles() {
+		got = append(got, sf.Key+"="+sf.Path)
+	}
+	if strings.Join(got, ",") != "restore.backup_file=/root/b,restore.key_file=/root/k" {
+		t.Errorf("SecretFiles = %v", got)
 	}
 	if f.DataDirOrDefault() != DefaultFileDataDir {
 		t.Errorf("DataDirOrDefault = %s", f.DataDirOrDefault())
@@ -76,7 +80,7 @@ func TestReadableWarning(t *testing.T) {
 		if err := os.Chmod(p, tt.mode); err != nil {
 			t.Fatal(err)
 		}
-		w := ReadableWarning(p)
+		w := ReadableWarning(p, p)
 		if (w != "") != tt.warn {
 			t.Errorf("mode %04o: warning %q, want %v", tt.mode, w, tt.warn)
 		}

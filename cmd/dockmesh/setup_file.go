@@ -107,8 +107,13 @@ func loadSetupFile(path string) (*setupFileRun, []string, error) {
 	}
 	run := &setupFileRun{file: file}
 	var warnings []string
-	for _, p := range append([]string{path}, file.SecretFiles()...) {
-		if w := setup.ReadableWarning(p); w != "" {
+	if w := setup.ReadableWarning(path, path); w != "" {
+		warnings = append(warnings, w)
+	}
+	// The files the setup file names are called by their key: a path in
+	// the output would be all a log keeps of them.
+	for _, sf := range file.SecretFiles() {
+		if w := setup.ReadableWarning(sf.Path, "the file "+sf.Key+" names"); w != "" {
 			warnings = append(warnings, w)
 		}
 	}

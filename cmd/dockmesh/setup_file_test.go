@@ -86,7 +86,7 @@ func TestLoadSetupFileWarnsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], pw) {
+	if len(warnings) != 1 || strings.Contains(warnings[0], pw) || !strings.Contains(warnings[0], "admin.password_file") {
 		t.Fatalf("warnings = %q", warnings)
 	}
 }

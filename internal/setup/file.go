@@ -109,25 +109,30 @@ func (f File) DataDirOrDefault() string {
 	return f.DataDir
 }
 
-// SecretFiles are the files of f that hold a secret, or data that should
-// be as private as one: the password, the backup and its key.
-func (f File) SecretFiles() []string {
-	var out []string
+// SecretFile is a file a setup file names that holds a secret, or data
+// as private as one, with the key that names it.
+type SecretFile struct {
+	Key, Path string
+}
+
+// SecretFiles are the password, the backup and its key.
+func (f File) SecretFiles() []SecretFile {
+	var out []SecretFile
 	if f.Admin != nil && f.Admin.PasswordFile != "" {
-		out = append(out, f.Admin.PasswordFile)
+		out = append(out, SecretFile{"admin.password_file", f.Admin.PasswordFile})
 	}
 	if f.Restore != nil {
-		out = append(out, f.Restore.BackupFile)
+		out = append(out, SecretFile{"restore.backup_file", f.Restore.BackupFile})
 		if f.Restore.KeyFile != "" {
-			out = append(out, f.Restore.KeyFile)
+			out = append(out, SecretFile{"restore.key_file", f.Restore.KeyFile})
 		}
 	}
 	return out
 }
 
 // ReadableWarning returns the warning for a file that group or others may
-// read, empty when only its owner can.
-func ReadableWarning(path string) string {
+// read, empty when only its owner can. name is how the warning calls it.
+func ReadableWarning(path, name string) string {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return ""
@@ -135,6 +140,9 @@ func ReadableWarning(path string) string {
 	mode := fi.Mode().Perm()
 	if mode&0o044 == 0 {
 		return ""
+	}
+	if name != path {
+		return fmt.Sprintf("%s is readable by other users (mode %04o). Run chmod 600 on it", name, mode)
 	}
 	return fmt.Sprintf("%s is readable by other users (mode %04o). Run: chmod 600 %s", path, mode, path)
 }
