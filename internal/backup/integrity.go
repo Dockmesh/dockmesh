@@ -40,15 +40,11 @@ func readBack(ctx context.Context, t targets.Target, path string, size int64, su
 	return nil
 }
 
-// fetchArchive copies a run's archive into a temp file and checks it
-// against the size and hash recorded at backup time, so a restore never
-// starts extracting bytes that differ from what was written. Closing the
-// returned reader removes the temp file.
-func fetchArchive(ctx context.Context, t targets.Target, run *Run) (io.ReadSeekCloser, error) {
-	src, err := t.Read(ctx, run.TargetPath)
-	if err != nil {
-		return nil, err
-	}
+// fetchArchive copies a run's archive, opened as src, into a temp file
+// and checks it against the size and hash recorded at backup time, so a
+// restore never starts extracting bytes that differ from what was
+// written. Closing the returned reader removes the temp file.
+func fetchArchive(ctx context.Context, src io.ReadCloser, run *Run) (io.ReadSeekCloser, error) {
 	defer src.Close()
 	defer closeOnDone(ctx, func() error { return targets.Break(src) })()
 

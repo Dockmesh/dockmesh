@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 
@@ -55,6 +56,9 @@ func (w *WebDAV) Open(ctx context.Context, p string) (io.WriteCloser, error) {
 func (w *WebDAV) Read(ctx context.Context, p string) (io.ReadCloser, error) {
 	full := path.Join(w.cfg.Path, p)
 	stream, err := w.client.ReadStream(full)
+	if gowebdav.IsErrNotFound(err) {
+		return nil, fmt.Errorf("webdav: %s: %w", full, fs.ErrNotExist)
+	}
 	if err != nil {
 		return nil, err
 	}

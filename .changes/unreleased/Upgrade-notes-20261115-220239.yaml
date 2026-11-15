@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Backups taken before this version did not record where they were written. They are found on the job's current target as before; if a target was edited or a job moved to another target before upgrading, such older runs can't be read until the target points at their old location again, and restore or verify says where they most likely are. The first edit after the upgrade keeps them readable
+time: 2026-11-15T22:02:39.123907132Z
+custom:
+    Audience: admins
+    Id: backup-run-locations

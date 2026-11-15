@@ -37,7 +37,7 @@ Volume backups use a short-lived helper container: `alpine:3.24` on the server's
 
 ## Targets
 
-A target is where archives go. Targets are saved objects: create them under **Backups** → **Targets** → **New target**, or set one up in the job wizard, which saves it under the job's name. Several jobs can share one target. Editing a target changes where every job that uses it writes, the target page lists those jobs under **Jobs writing here**, and a target that jobs still use can't be deleted.
+A target is where archives go. Targets are saved objects: create them under **Backups** → **Targets** → **New target**, or set one up in the job wizard, which saves it under the job's name. Several jobs can share one target. Editing a target changes where every job that uses it writes from the next run on; the target page lists those jobs under **Jobs writing here**. A target that jobs still use, or that still holds kept archives of runs, can't be deleted.
 
 | Type | Wizard label | Config fields | Defaults |
 |---|---|---|---|
@@ -51,7 +51,9 @@ The target wizard has three steps (**Type**, **Connection**, **Test**). **Run te
 
 Passwords, S3 secret keys and SFTP private keys are stored encrypted with the server's secrets key and are never shown again after saving. Leave a secret field empty when editing to keep the stored value.
 
-Archives are written to `jobs/<job id>-<job name>/<UTC timestamp>-r<run id>.tar.gz`, with `.age` appended when the run is encrypted. The job name is lowercased and every character other than `a-z`, `0-9` and `-` becomes `-`. Archives that older versions wrote to `jobs/<job name>/` stay where they are and are still restored and pruned from there. A run remembers its archive relative to the target: renaming a job starts a new folder, and older archives stay in the old one and are still restored and pruned. Changing a job's target, or a target's path, bucket, prefix or host, makes the runs taken before look for their archives at the new location, where they are not found; move the archives along or keep the old target.
+Archives are written to `jobs/<job id>-<job name>/<UTC timestamp>-r<run id>.tar.gz`, with `.age` appended when the run is encrypted. The job name is lowercased and every character other than `a-z`, `0-9` and `-` becomes `-`. Archives that older versions wrote to `jobs/<job name>/` stay where they are and are still restored and pruned from there. A run remembers the target it wrote to and where that target pointed at the time (path, bucket, prefix, share or server, not the credentials). Renaming a job starts a new folder, and older archives stay in the old one. Changing a job's target, or a target's path, bucket, prefix or share, leaves the archives already written where they are: restore, verify, download and retention of those runs use the place they were written to, with the target's current credentials. Saving such a change says how many older backups stay at the old location. Credentials are only used for the server and user they were entered for: after a target moves to another server, URL, endpoint or user, the runs written before can't be read through it (restore and verify say so) until the target points at that server again.
+
+Runs taken before Dockmesh recorded this (before v0.6.0) are looked up on the job's current target. The first time such a target is edited or the job is switched after the upgrade, Dockmesh notes the previous location on those runs, so they stay readable. If the change happened before the upgrade, restore and verify answer that the archive was not found and name where it most likely is; point the target back there, or move the archives to the new location.
 
 ### Target types: local, S3, SFTP, SMB, WebDAV
 
@@ -99,7 +101,7 @@ A job that is still running is not started a second time: a scheduled run is ski
 
 Retention runs after each successful run and has two settings, **Keep the newest N runs** (`retention_count`) and **Max age (days)** (`retention_days`). 0 turns a rule off. Both rules are applied independently: an archive is deleted if it is not among the newest N, or if it is older than the maximum age, even when it is among the newest N. The newest archive is never deleted.
 
-Retention works from the job's own run records, not from a listing of the target, so it never touches files of other jobs. Only successful runs count. A failed run deletes its partial archive right away; if that fails, the next retention pass retries. Runs whose archive retention removed stay in the list as pruned and can no longer be restored. Deleting a job keeps its runs and archives.
+Retention works from the job's own run records, not from a listing of the target, so it never touches files of other jobs. It deletes each archive where its run wrote it, also after the target or the job's target changed; while that place can't be opened (an SFTP server without a recorded host key) the run stays listed and is retried. Only successful runs count. A failed run deletes its partial archive right away; if that fails, the next retention pass retries. Runs whose archive retention removed stay in the list as pruned and can no longer be restored. Deleting a job keeps its runs and archives.
 
 ### Encryption
 

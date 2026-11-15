@@ -147,7 +147,7 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 	op.AllowCancel(stop)
-	out, target := e.execute(runCtx, job, runID, stop)
+	out, target, loc := e.execute(runCtx, job, runID, stop)
 	op.DisallowCancel(runCtx)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)
@@ -157,7 +157,7 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 	if target != nil {
 		op.StepStart(StepRetention, "")
 		rctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
-		e.applyRetention(rctx, runID, job, target)
+		e.applyRetention(rctx, runID, job, target, loc)
 		cancel()
 		op.StepDone(StepRetention, "")
 	}
@@ -183,11 +183,12 @@ type runOutcome struct {
 	err    error
 }
 
-// execute runs the phases of one backup. The target comes back only when
-// the run produced an archive, so retention never runs after a failure.
+// execute runs the phases of one backup. The target and its location come
+// back only when the run produced an archive, so retention never runs
+// after a failure.
 // ctx ends when a user cancels the run or the transfer stalls; the
 // post-hooks run either way.
-func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop context.CancelCauseFunc) (out runOutcome, kept targets.Target) {
+func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop context.CancelCauseFunc) (out runOutcome, kept targets.Target, keptLoc *RunLocation) {
 	op := operations.FromContext(ctx)
 	step := StepPrepare
 	fail := func(stage string, err error) runOutcome {
@@ -205,17 +206,17 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	op.StepStart(StepPrepare, "")
 	resolved, err := e.resolveHost(job.HostID)
 	if err != nil {
-		return fail("resolve host", err), nil
+		return fail("resolve host", err), nil, nil
 	}
 	hostTarget := hostBackupTarget(stoppableHost{resolved})
 	if job.Encrypt && !canEncrypt(e.secrets) {
 		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
 		op.StepFail(step, ErrEncryptUnavailable)
-		return runOutcome{status: StatusFailed, err: ErrEncryptUnavailable}, nil
+		return runOutcome{status: StatusFailed, err: ErrEncryptUnavailable}, nil, nil
 	}
-	target, err := jobTarget(ctx, e.store, e.notices, job)
+	target, loc, err := jobTargetAt(ctx, e.store, e.notices, job)
 	if err != nil {
-		return fail("build target", err), nil
+		return fail("build target", err), nil, nil
 	}
 	op.StepDone(StepPrepare, "")
 
@@ -232,7 +233,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 		defer func() { out = e.runPostHooks(ctx, runID, hostTarget, job, out) }()
 	}
 	if preErr != nil {
-		return fail("pre-hooks", preErr), nil
+		return fail("pre-hooks", preErr), nil, nil
 	}
 	if len(job.PreHooks) > 0 {
 		op.StepDone(StepPreHooks, fmt.Sprintf("%d ran", preRan))
@@ -245,12 +246,12 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	relPath := relativePath(job, runID)
 	// Recorded up front so the partial file of a crashed run stays
 	// traceable.
-	if err := e.store.setRunPath(ctx, runID, relPath); err != nil {
+	if err := e.store.setRunPath(ctx, runID, relPath, loc); err != nil {
 		slog.Warn("backup record run path", "run", runID, "err", err)
 	}
 	w, err := target.Open(ctx, relPath)
 	if err != nil {
-		return fail(fmt.Sprintf("open target %q", relPath), err), nil
+		return fail(fmt.Sprintf("open target %q", relPath), err), nil, nil
 	}
 	// The hash covers the bytes as stored on the target (ciphertext for
 	// encrypted runs), which read-back, verify and restore check against.
@@ -269,7 +270,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 		_ = abortWriter(stored)
 		out = fail("encrypt", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
-		return out, nil
+		return out, nil, nil
 	}
 
 	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
@@ -278,20 +279,20 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
-		return out, nil
+		return out, nil, nil
 	}
 	if err := encW.Close(); err != nil {
 		stopAbort()
 		out = fail("finish upload", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
-		return out, nil
+		return out, nil, nil
 	}
 	if !stopAbort() {
 		// Cancelled or stalled while the upload was closing: the abort may
 		// have cut it short, so the archive is not trusted.
 		out = fail("finish upload", context.Cause(ctx))
 		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
-		return out, nil
+		return out, nil, nil
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
@@ -305,11 +306,12 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 		op.StepFail(StepVerify, err)
 		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
 		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
-		return out, nil
+		return out, nil, nil
 	}
 	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
 	op.StepDone(StepVerify, "checksum matches")
-	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target
+	e.recordHostKey(ctx, runID, target, loc)
+	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target, loc
 }
 
 // runPostHooks uses a context that survives cancellation of the run: a
@@ -593,18 +595,36 @@ func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID strin
 	return docker.RunExec(ctx, l.dc.Raw(), containerID, cmd, 1<<20)
 }
 
+// recordHostKey stores the SFTP host key the run trusted in its location,
+// so the archive can still be read from this server after the target
+// moves.
+func (e *Executor) recordHostKey(ctx context.Context, runID int64, t targets.Target, loc *RunLocation) {
+	hk, ok := t.(interface{ HostKey() string })
+	if !ok || loc == nil || loc.Type != "sftp" || hk.HostKey() == "" {
+		return
+	}
+	if have, _ := loc.Config["host_key"].(string); have != "" {
+		return
+	}
+	loc.Config["host_key"] = hk.HostKey()
+	if err := e.store.setRunLocation(ctx, runID, loc); err != nil {
+		slog.Warn("backup record run host key", "run", runID, "err", err)
+	}
+}
+
 // applyRetention deletes archives beyond the newest RetentionCount and
 // older than RetentionDays (0 disables a rule). It works from the job's
 // own run records, never from a listing of the target, and always keeps
-// the newest archive. Leftover partial files of failed runs go too.
-func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, target targets.Target) {
+// the newest archive. Each archive is deleted where its run wrote it.
+// Leftover partial files of failed runs go too.
+func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, target targets.Target, loc *RunLocation) {
 	partial, err := e.store.partialRuns(ctx, job.ID)
 	if err != nil {
 		e.logf(ctx, runID, "warn", "retention: %s", err)
 		return
 	}
 	for _, r := range partial {
-		if err := e.deleteArchive(ctx, target, r); err != nil {
+		if err := e.deleteArchive(ctx, runID, job, target, loc, r); err != nil {
 			e.logf(ctx, runID, "warn", "retention: delete partial archive of run %d: %s", r.ID, err)
 		}
 	}
@@ -629,7 +649,7 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 		if !drop {
 			continue
 		}
-		if err := e.deleteArchive(ctx, target, r); err != nil {
+		if err := e.deleteArchive(ctx, runID, job, target, loc, r); err != nil {
 			e.logf(ctx, runID, "warn", "retention: delete %s: %s", r.TargetPath, err)
 			continue
 		}
@@ -637,8 +657,26 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 	}
 }
 
-func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r Run) error {
-	if err := target.Delete(ctx, r.TargetPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+// deleteArchive removes a run's archive from where the run wrote it. cur
+// is the job's target now, at location curLoc. A run whose target can't
+// be opened any more stays unpruned, so its archive is never forgotten.
+func (e *Executor) deleteArchive(ctx context.Context, runID int64, job *Job, cur targets.Target, curLoc *RunLocation, r Run) error {
+	t := cur
+	if r.Location != nil && !sameRunLocation(r.Location, curLoc) {
+		at, err := targetAt(ctx, e.store, e.notices, &r, job, r.Location)
+		if err != nil {
+			return err
+		}
+		t = at
+	}
+	err := t.Delete(ctx, r.TargetPath)
+	if errors.Is(err, fs.ErrNotExist) && t != cur && r.Location.Inferred {
+		err = cur.Delete(ctx, r.TargetPath)
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && r.Location == nil:
+		e.logf(ctx, runID, "warn", "retention: archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target", r.ID)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return err
 	}
 	return e.store.markPruned(ctx, r.ID)

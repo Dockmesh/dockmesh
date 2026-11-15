@@ -1883,6 +1883,21 @@
   "backups_runs_no_match": "Keine Läufe passen zu diesem Filter.",
   "backups_runs_of": "Läufe von {name}",
   "backups_runs_on": "Läuft auf",
+  "backups_runs_stay_at_old_location": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} älteres Backup bleibt am alten Ort und kann weiter wiederhergestellt werden.",
+        "countPlural=*": "{count} ältere Backups bleiben am alten Ort und können weiter wiederhergestellt werden."
+      }
+    }
+  ],
   "backups_runs_table_label": "Backup-Läufe",
   "backups_save_anyway": "Trotzdem speichern",
   "backups_save_changes": "Änderungen speichern",
@@ -3021,8 +3036,8 @@
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "Von {count} Job verwendet; Änderungen gelten für alle.",
-        "countPlural=*": "Von {count} Jobs verwendet; Änderungen gelten für alle."
+        "countPlural=one": "Von {count} Job verwendet; Änderungen gelten für alle. Bereits geschriebene Backups bleiben, wo sie sind, und lassen sich weiter wiederherstellen.",
+        "countPlural=*": "Von {count} Jobs verwendet; Änderungen gelten für alle. Bereits geschriebene Backups bleiben, wo sie sind, und lassen sich weiter wiederherstellen."
       }
     }
   ],

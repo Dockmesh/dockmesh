@@ -1883,6 +1883,21 @@
   "backups_runs_no_match": "No runs match this filter.",
   "backups_runs_of": "Runs of {name}",
   "backups_runs_on": "Runs on",
+  "backups_runs_stay_at_old_location": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} older backup stays at the old location and remains restorable.",
+        "countPlural=*": "{count} older backups stay at the old location and remain restorable."
+      }
+    }
+  ],
   "backups_runs_table_label": "Backup runs",
   "backups_save_anyway": "Save anyway",
   "backups_save_changes": "Save changes",
@@ -3021,8 +3036,8 @@
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "Used by {count} job; changes apply to all of them.",
-        "countPlural=*": "Used by {count} jobs; changes apply to all of them."
+        "countPlural=one": "Used by {count} job; changes apply to all of them. Backups already written stay where they are and remain restorable.",
+        "countPlural=*": "Used by {count} jobs; changes apply to all of them. Backups already written stay where they are and remain restorable."
       }
     }
   ],

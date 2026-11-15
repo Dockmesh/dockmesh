@@ -58,9 +58,15 @@ func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 // getJobForRun also returns deleted jobs: their runs stay restorable and
 // need the job's target.
 // jobsUsingTarget returns every job that writes to the target, deleted
-// ones included: their runs still read from it.
+// ones included, and every job with kept archives written to it: their
+// runs still read from it with its settings.
 func (s *store) jobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM backup_jobs WHERE target_id = ? ORDER BY id`, targetID)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM backup_jobs WHERE target_id = ? OR id IN (
+			SELECT job_id FROM backup_runs WHERE target_id = ?
+			  AND status IN ('success', 'success_with_warnings') AND pruned_at IS NULL
+			  AND COALESCE(target_path, '') != '')
+		ORDER BY id`, targetID, targetID)
 	if err != nil {
 		return nil, err
 	}
@@ -262,8 +268,18 @@ func (s *store) failInterruptedRuns(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-func (s *store) setRunPath(ctx context.Context, runID int64, path string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET target_path = ? WHERE id = ?`, path, runID)
+func (s *store) setRunPath(ctx context.Context, runID int64, path string, loc *RunLocation) error {
+	tid, raw := marshalLocation(loc)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_runs SET target_path = ?, target_id = ?, target_location = ? WHERE id = ?`,
+		path, tid, raw, runID)
+	return err
+}
+
+func (s *store) setRunLocation(ctx context.Context, runID int64, loc *RunLocation) error {
+	tid, raw := marshalLocation(loc)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_runs SET target_id = ?, target_location = ? WHERE id = ?`, tid, raw, runID)
 	return err
 }
 
@@ -287,7 +303,7 @@ func (s *store) finishRun(ctx context.Context, runID int64, status string, size 
 // touch another job's archives or files Dockmesh didn't record.
 func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, target_path, finished_at
+		SELECT id, target_path, finished_at, started_at, target_id, target_location
 		FROM backup_runs
 		WHERE job_id = ? AND status IN ('success', 'success_with_warnings')
 		  AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
@@ -300,12 +316,15 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	for rows.Next() {
 		var r Run
 		var finished sql.NullTime
-		if err := rows.Scan(&r.ID, &r.TargetPath, &finished); err != nil {
+		var tid sql.NullInt64
+		var loc sql.NullString
+		if err := rows.Scan(&r.ID, &r.TargetPath, &finished, &r.StartedAt, &tid, &loc); err != nil {
 			return nil, err
 		}
 		if finished.Valid {
 			r.FinishedAt = &finished.Time
 		}
+		r.Location = unmarshalLocation(tid, loc)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -316,7 +335,7 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 // never completed).
 func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, target_path FROM backup_runs
+		SELECT id, target_path, started_at, target_id, target_location FROM backup_runs
 		WHERE job_id = ? AND status = 'failed' AND pruned_at IS NULL
 		  AND COALESCE(target_path, '') != '' AND COALESCE(sha256, '') = ''`, jobID)
 	if err != nil {
@@ -326,9 +345,12 @@ func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	var out []Run
 	for rows.Next() {
 		var r Run
-		if err := rows.Scan(&r.ID, &r.TargetPath); err != nil {
+		var tid sql.NullInt64
+		var loc sql.NullString
+		if err := rows.Scan(&r.ID, &r.TargetPath, &r.StartedAt, &tid, &loc); err != nil {
 			return nil, err
 		}
+		r.Location = unmarshalLocation(tid, loc)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -347,7 +369,8 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.queryRuns(ctx, `
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json, pruned_at
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
+		       target_id, target_location
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
 }
 
@@ -356,7 +379,8 @@ func (s *store) latestRuns(ctx context.Context) ([]Run, error) {
 	return s.queryRuns(ctx, `
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json, pruned_at
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
+		       target_id, target_location
 		FROM backup_runs
 		WHERE id IN (SELECT MAX(id) FROM backup_runs GROUP BY job_id)
 		ORDER BY id DESC`)
@@ -374,10 +398,13 @@ func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run
 		var finished, pruned sql.NullTime
 		var encInt int
 		var srcs string
+		var tid sql.NullInt64
+		var loc sql.NullString
 		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
-			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
+			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc); err != nil {
 			return nil, err
 		}
+		r.TargetID, r.Location = tid.Int64, unmarshalLocation(tid, loc)
 		if finished.Valid {
 			t := finished.Time
 			r.FinishedAt = &t
@@ -397,14 +424,17 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json, pruned_at
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
+		       target_id, target_location
 		FROM backup_runs WHERE id = ?`, id)
 	var r Run
 	var finished, pruned sql.NullTime
 	var encInt int
 	var srcs string
+	var tid sql.NullInt64
+	var loc sql.NullString
 	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
-		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
+		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRunNotFound
 		}
@@ -418,6 +448,7 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 		t := pruned.Time
 		r.PrunedAt = &t
 	}
+	r.TargetID, r.Location = tid.Int64, unmarshalLocation(tid, loc)
 	r.Encrypted = encInt == 1
 	_ = json.Unmarshal([]byte(srcs), &r.Sources)
 	return &r, nil

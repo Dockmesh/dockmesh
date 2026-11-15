@@ -240,11 +240,11 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 func (s *Service) fetchVerified(ctx context.Context, run *Run, job *Job, kind string) (io.ReadSeekCloser, *VerifyResult, error) {
 	op := operations.FromContext(ctx)
 	op.StepStart(StepRestoreDownload, "")
-	target, err := jobTarget(ctx, s.store, s.notices, job)
+	src, err := s.openRunArchive(ctx, run, job)
 	if err != nil {
 		return nil, nil, err
 	}
-	stored, err := fetchArchive(ctx, target, run)
+	stored, err := fetchArchive(ctx, src, run)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -99,7 +99,11 @@ func TestArchiveIntegrity(t *testing.T) {
 				t.Fatalf("readBack err = %v, want error %v", err, tt.wantErr)
 			}
 
-			rc, err := fetchArchive(context.Background(), tg, run)
+			src, err := tg.Read(context.Background(), run.TargetPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rc, err := fetchArchive(context.Background(), src, run)
 			if tt.wantErr {
 				if err == nil {
 					rc.Close()
@@ -129,7 +133,7 @@ func TestArchiveIntegrity(t *testing.T) {
 func TestFetchArchiveWithoutRecordedHash(t *testing.T) {
 	stored := []byte("archive from a run that predates the hash column")
 	tg := &readTarget{stored: stored, reader: func(b []byte) io.Reader { return bytes.NewReader(b) }}
-	rc, err := fetchArchive(context.Background(), tg, &Run{TargetPath: "old.tar.gz"})
+	rc, err := fetchArchive(context.Background(), readOf(t, tg, "old.tar.gz"), &Run{TargetPath: "old.tar.gz"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +144,19 @@ func TestFetchArchiveWithoutRecordedHash(t *testing.T) {
 	}
 
 	tg.reader = failAtEnd
-	if rc, err := fetchArchive(context.Background(), tg, &Run{TargetPath: "old.tar.gz"}); err == nil {
+	if rc, err := fetchArchive(context.Background(), readOf(t, tg, "old.tar.gz"), &Run{TargetPath: "old.tar.gz"}); err == nil {
 		rc.Close()
 		t.Fatal("a read error was ignored when no hash was recorded")
 	}
+}
+
+func readOf(t *testing.T, tg targets.Target, p string) io.ReadCloser {
+	t.Helper()
+	rc, err := tg.Read(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rc
 }
 
 type oneByteReader struct {
@@ -195,7 +208,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 		t.Fatal(err)
 	}
 
-	tg, err := jobTarget(ctx, svc.store, nil, job)
+	tg, _, err := jobTargetAt(ctx, svc.store, nil, job)
 	if err != nil {
 		t.Fatal(err)
 	}

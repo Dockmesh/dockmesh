@@ -311,7 +311,11 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
-        "404": {$ref: "#/components/responses/NotFound"}
+        "404":
+          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "409":
           description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
           content:
@@ -346,7 +350,11 @@ paths:
               schema: {$ref: "#/components/schemas/BackupVerifyResult"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
-        "404": {$ref: "#/components/responses/NotFound"}
+        "404":
+          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "409": {$ref: "#/components/responses/Conflict"}
         "422":
           description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
@@ -622,7 +630,7 @@ paths:
       tags: [backups]
       summary: Update a backup target
       description: >-
-        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Archives already written stay where they are and remain restorable from there with the target's credentials, as long as the server and user stay the same; the answer's `runs_at_previous_location` counts the kept archives at an earlier location. Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
       requestBody:
         required: true
         content:
@@ -655,7 +663,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Target is referenced by one or more jobs (including deleted jobs whose archives are still on it).
+          description: Target is referenced by one or more jobs (including deleted jobs), or kept archives of runs were written to it (also of jobs that moved to another target).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -875,7 +883,11 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
           description: Run not in success state.
-        "404": {$ref: "#/components/responses/NotFound"}
+        "404":
+          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
 components:
   schemas:
     BackupSource:
@@ -927,6 +939,7 @@ components:
         next_run_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        runs_at_previous_location: {type: integer, description: "Only in the answer to an update that moved the job to another target: kept archives that stay where they were written and remain restorable from there."}
     BackupHost:
       type: object
       required: [id, name, kind, status, can_create, can_update]
@@ -988,6 +1001,7 @@ components:
         encrypted: {type: boolean}
         error: {type: string}
         pruned_at: {type: string, format: date-time, description: Set when the archive was deleted (retention); the run can no longer be restored.}
+        target_id: {type: integer, format: int64, description: "Saved target the run wrote to. Restore, verify, download and retention use the target's settings as they were at that time with its current credentials, so later path, bucket or prefix edits and job moves don't change where the archive is read; after the target moved to another server or user, the run answers 404 `archive_not_found` until it points back. Absent for runs from before this was recorded."}
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}
@@ -1074,6 +1088,7 @@ components:
         last_checked_at: {type: string, format: date-time}
         job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
         credentials_error: {type: string, description: "Set when stored credentials can't be decrypted (wrong secrets key, encryption turned off). The target can't run, and an update must enter them again (422 otherwise)."}
+        runs_at_previous_location: {type: integer, description: "Only in the answer to an update that moved the target (path, bucket, prefix, share, server): kept archives that stay at an earlier location and remain restorable from there."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:

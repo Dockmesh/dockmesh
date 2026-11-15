@@ -41,6 +41,10 @@ type Job struct {
 	NextRunAt   *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	// RunsAtPreviousLocation is set in the answer to a save that moved the
+	// job to another target: the kept archives that stay where they were
+	// written and remain restorable from there.
+	RunsAtPreviousLocation int `json:"runs_at_previous_location,omitempty"`
 }
 
 // JobInput is the create/update payload from the API.
@@ -110,6 +114,13 @@ type Run struct {
 	Sources    []Source   `json:"sources"`
 	// PrunedAt is set once the archive was deleted from the target.
 	PrunedAt *time.Time `json:"pruned_at,omitempty"`
+	// TargetID is the saved target the run wrote to; runs from before
+	// this was recorded have none.
+	TargetID int64 `json:"target_id,omitempty"`
+	// Location is where the archive went, nil for runs from before it was
+	// recorded. Kept off the API: it names servers and paths of targets a
+	// caller may not see.
+	Location *RunLocation `json:"-"`
 }
 
 // Run statuses. A post-hook failure leaves an intact archive, so it is
