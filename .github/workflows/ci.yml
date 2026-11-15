@@ -262,6 +262,43 @@ jobs:
       - name: jobs from saved targets
         run: go test -tags integration -count=1 -v -run AgainstRealServers ./internal/api/handlers/
 
+  # The proxy's Caddy config against a real Caddy of the version the proxy
+  # container runs. A download or checksum problem fails its own step.
+  caddy:
+    name: caddy
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CADDY_VERSION: 2.11.7
+      CADDY_SHA512: a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: caddy version matches the proxy image
+        run: |
+          grep -q "DefaultProxyImage = \"caddy:${CADDY_VERSION}@" internal/proxy/container.go || {
+            echo "::error::CADDY_VERSION ${CADDY_VERSION} differs from DefaultProxyImage in internal/proxy/container.go"
+            exit 1
+          }
+      - name: download caddy
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/caddy.tar.gz" \
+            "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          echo "${CADDY_SHA512}  $RUNNER_TEMP/caddy.tar.gz" | sha512sum -c -
+          tar -xzf "$RUNNER_TEMP/caddy.tar.gz" -C "$RUNNER_TEMP" caddy
+          "$RUNNER_TEMP/caddy" version
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: proxy config against caddy
+        run: |
+          start=$(date +%s)
+          DOCKMESH_TEST_CADDY="$RUNNER_TEMP/caddy" go test -count=1 -v -run AgainstCaddy ./internal/proxy/
+          echo "caddy tests took $(( $(date +%s) - start ))s"
+
   # golangci-lint's govet covers go vet.
   lint:
     name: lint
@@ -459,7 +496,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, checks, go-test, integration, lint, web, build, build-cross, e2e]
+    needs: [changes, checks, go-test, integration, caddy, lint, web, build, build-cross, e2e]
     runs-on: ubuntu-24.04
     steps:
       - name: every job passed or was skipped
