@@ -138,7 +138,7 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 		return err
 	}
 	defer conn.Close()
-	if err := db.Migrate(conn); err != nil {
+	if err := db.Migrate(conn); err != nil { //nolint:contextcheck // migrations run to completion
 		return err
 	}
 	if _, err := auth.NewService(conn, make([]byte, 32)).CreateFirstUserHashed(ctx, v.Admin.Username, v.Admin.Email, v.Admin.PasswordHash, "admin"); err != nil {

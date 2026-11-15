@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -143,7 +144,7 @@ func (a *setupApplier) run(ctx context.Context) error {
 		a.result(applyFailed, "config", err)
 		return nil
 	}
-	if _, err := writeServerUnit(""); err != nil {
+	if _, err := writeServerUnit(""); err != nil { //nolint:contextcheck // the unit writer runs its own short-lived children
 		a.rollBack(ctx, svc, prevUnit, v.DataDir, "unit", err)
 		return nil
 	}
@@ -224,6 +225,10 @@ func (a *setupApplier) prepareTarget(dir string) (created bool, err error) {
 		if err := os.Mkdir(dir, 0o750); err != nil {
 			return false, err
 		}
+		if a.uid > math.MaxInt32 || a.gid > math.MaxInt32 {
+			_ = os.Remove(dir)
+			return false, errors.New("the dockmesh account has an out-of-range uid or gid")
+		}
 		if err := os.Lchown(dir, int(a.uid), int(a.gid)); err != nil {
 			_ = os.Remove(dir)
 			return false, err
@@ -303,7 +308,7 @@ func onlyFailed(dir string) error {
 		return err
 	}
 	for _, e := range entries {
-		if !failedName.MatchString(e.Name()) || !(e.Type().IsRegular() || e.IsDir()) {
+		if !failedName.MatchString(e.Name()) || !e.Type().IsRegular() && !e.IsDir() {
 			return fmt.Errorf("%s is not empty (%s)", dir, e.Name())
 		}
 	}
@@ -379,7 +384,7 @@ func (a *setupApplier) rollBack(ctx context.Context, svc *serverService, prevUni
 	a.setAside(dir)
 	errs = append(errs, svc.Start(ctx))
 	if err := errors.Join(errs...); err != nil {
-		cause = fmt.Errorf("%w; the rollback did not finish: %v", cause, err)
+		cause = fmt.Errorf("%w; the rollback did not finish: %w", cause, err)
 	}
 	a.result(applyFailed, step, cause)
 }
