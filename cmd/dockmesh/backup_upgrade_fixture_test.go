@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -254,4 +257,90 @@ func TestMovedSystemTargetNotice(t *testing.T) {
 			t.Fatal("notice still open after the job points at its old target again")
 		}
 	}
+}
+
+// Runs written by v0.5.3 recorded no location. After the upgrade they read
+// from the job's target, start after start; a later path edit keeps them
+// readable at the path they were written to.
+func TestUpgradeFromV053KeepsRunsReadable(t *testing.T) {
+	ctx := context.Background()
+	dump := readV053Fixture(t)
+	t.Chdir(t.TempDir())
+	dataDir := filepath.Join(t.TempDir(), "data")
+	conn, err := db.Open(filepath.Join(dataDir, "dockmesh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if _, err := conn.Exec(string(dump)); err != nil {
+		t.Fatal(err)
+	}
+	oldDir, newDir := t.TempDir(), t.TempDir()
+	targets.SetLocalRoots(func() []string { return []string{oldDir, newDir} })
+	t.Cleanup(func() { targets.SetLocalRoots(nil) })
+	const archive = "jobs/1-sys-abs/20261101-020000-r7.tar.gz"
+	body := []byte("archive written by v0.5.3")
+	if err := os.MkdirAll(filepath.Join(oldDir, "jobs", "1-sys-abs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, filepath.FromSlash(archive)), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`DELETE FROM backup_jobs WHERE name <> 'sys-abs'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`UPDATE backup_targets SET config_json = json_set(config_json, '$.path', ?) WHERE name = 'sys-abs'`, oldDir); err != nil {
+		t.Fatal(err)
+	}
+	var jobID int64
+	if err := conn.QueryRow(`SELECT id FROM backup_jobs`).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`INSERT INTO backup_runs (id, job_id, job_name, status, started_at, finished_at, size_bytes, target_path, sources_json, host_id)
+		VALUES (7, ?, 'sys-abs', 'success', '2026-11-01 02:00:00', '2026-11-01 02:00:05', ?, ?, '[{"type":"system"}]', 'local')`,
+		jobID, len(body), archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	read := func(svc *backup.Service, when string) {
+		t.Helper()
+		rc, err := svc.ReadRun(ctx, 7)
+		if err != nil {
+			t.Fatalf("%s: %v", when, err)
+		}
+		defer rc.Close()
+		got, err := io.ReadAll(rc)
+		if err != nil || string(got) != string(body) {
+			t.Fatalf("%s: read %q, %v", when, got, err)
+		}
+	}
+	var svc *backup.Service
+	for start := 1; start <= 2; start++ {
+		svc, _ = startBackups(t, conn, dataDir)
+		var loc sql.NullString
+		if err := conn.QueryRow(`SELECT target_location FROM backup_runs WHERE id = 7`).Scan(&loc); err != nil {
+			t.Fatal(err)
+		}
+		if loc.Valid {
+			t.Fatalf("start %d recorded a location for a v0.5.3 run: %s", start, loc.String)
+		}
+		read(svc, "start "+strconv.Itoa(start))
+	}
+
+	job, err := svc.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := map[string]any{"path": newDir}
+	if n, err := svc.PrepareTargetChange(ctx, job.TargetID, "local", cfg); err != nil || n != 1 {
+		t.Fatalf("prepare target change: %d, %v", n, err)
+	}
+	if _, err := svc.Targets().Update(ctx, job.TargetID, targets.TargetInput{Name: "sys-abs", Type: "local", Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	read(svc, "after the path edit")
+	svc, _ = startBackups(t, conn, dataDir)
+	read(svc, "start after the path edit")
 }
