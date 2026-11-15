@@ -63,7 +63,7 @@ Revoked and expired sessions are deleted after 30 days.
 
 The web UI refreshes its access token in the background. Each refresh token is single-use. Using one twice revokes the whole session, which protects against stolen refresh tokens. Browser tabs of the same Dockmesh share one refresh, so several open tabs don't sign you out, and a short network outage during a refresh keeps you signed in and retries. Every request checks that the session still exists and reads the user's current assignments, so revoking a session or changing access takes effect immediately.
 
-Under **Sessions** on the **My account** page you see your sessions with browser, IP and last activity, and can revoke any of them. Changing your own password revokes your other sessions. An admin password reset revokes all of the user's sessions. The **Sign out everywhere** button on the **My account** page is disabled; use `POST /api/v1/sessions/revoke-all` instead.
+Under **Sessions** on the **My account** page you see your sessions with browser, IP and last activity, and can revoke any of them. Changing your own password revokes your other sessions. An admin password reset revokes all of the user's sessions. **Sign out everywhere** on the **My account** page ends all of your sessions, this one included, after a confirmation (`POST /api/v1/sessions/revoke-all`).
 
 Admins see another user's sessions on that user's **Sessions & 2FA** tab under **Users & roles** and can end one or all of them. See [Permissions](../concepts/permissions.md#scopes) for who may.
 

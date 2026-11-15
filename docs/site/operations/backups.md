@@ -57,7 +57,7 @@ Archives are written to `jobs/<job id>-<job name>/<UTC timestamp>-r<run id>.tar.
 
 What to know about each type:
 
-- **Local** writes on the server's disk, also for jobs of agent hosts. A local target may only write below an allowed directory, set in the `backups.local_roots` setting (one absolute path per line). A new install allows `/srv/backups` and `<data directory>/backups`; an upgraded install also allows the paths its local targets already used, and admins get a notice to review them. Changing `backups.local_roots` needs the permission to install Dockmesh updates (Settings & audit: Manage on everything). The wizard suggests `<data directory>/backups`. A local target without a path writes to `<data directory>/backups`, or, on installs upgraded from a version that resolved an empty path against the working directory and already had archives there, to that old `./data/backups` directory; the choice is stored in `backups.empty_path_dir`. A local target on the server's own disk does not protect you against losing that disk.
+- **Local** writes on the server's disk, also for jobs of agent hosts. A local target may only write below an allowed directory, set in the `backups.local_roots` setting (one absolute path per line). A new install allows `/srv/backups` and `<data directory>/backups`; an upgraded install also allows the paths its local targets already used, and admins get a notice to review them. Changing `backups.local_roots` needs Settings & audit: Manage on everything: the settings endpoint needs `system.update`, and this key also `system.upgrade`, the permission that installs Dockmesh updates. The wizard suggests `<data directory>/backups`. A local target without a path writes to `<data directory>/backups`, or, on installs upgraded from a version that resolved an empty path against the working directory and already had archives there, to that old `./data/backups` directory; the choice is stored in `backups.empty_path_dir`. A local target on the server's own disk does not protect you against losing that disk.
 - **S3**: works with AWS S3 and S3-compatible stores. **Use TLS** is off by default, so the target talks plain HTTP to the endpoint unless you tick it. Archives stream to the bucket without a temporary file.
 - **SFTP** takes a password, a private key (PEM or OpenSSH) or both. The server's host key is recorded on the first connection. If it changes later, runs to that target fail, admins get a notice, and the job and target menus offer **Accept new host key…**. Accept it only if you know why the key changed.
 - **SMB** connects directly from the server process; nothing is mounted on the host.
@@ -76,7 +76,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/j
   https://dockmesh.example.com/api/v1/settings
 ```
 
-The endpoint needs Settings & audit: Manage. A time zone that is not a valid IANA name is rejected. After adding a directory to `backups.local_roots`, run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh` on the server, so its unit lets the service write there.
+The endpoint needs Settings & audit: Manage on everything; `backups.local_roots` and `backups.empty_path_dir` also need `system.upgrade`, so a custom role with only `system.update` gets `403` for them. A time zone that is not a valid IANA name is rejected. After adding a directory to `backups.local_roots`, run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh` on the server, so its unit lets the service write there.
 
 ## Creating a job
 
@@ -105,7 +105,7 @@ Retention works from the job's own run records, not from a listing of the target
 
 With **Encrypt at rest with age** on, the archive is encrypted to the server's age key (`secrets.age-key` in the data directory), the same key that protects stack `.env` files and stored credentials. There is no per-job key or passphrase.
 
-Encryption needs secrets encryption on the server (`DOCKMESH_SECRETS_ENCRYPT_ENV`, on by default). With it off, a job set to encrypt can't be saved or enabled, and an existing one fails its runs instead of writing an unencrypted archive; admins get a notice listing those jobs.
+Encryption needs secrets encryption on the server (`DOCKMESH_SECRETS_ENCRYPT_ENV`, on by default). With it off, a job set to encrypt can't be saved as enabled or be enabled, and an existing one fails its runs instead of writing an unencrypted archive; admins get a notice listing those jobs.
 
 Keep a copy of the key outside the server: without it nobody can decrypt the archives, Dockmesh included. **Download key backup** under **Settings** → **Encryption key** saves it; see [Disaster recovery](./disaster-recovery.md#export-the-age-key). **Rotate key…** on the same page creates a new key. Earlier keys are kept in `secrets.age-key.history` and included in the downloaded key file, so archives from before a rotation can still be restored. Download the key again after every rotation.
 

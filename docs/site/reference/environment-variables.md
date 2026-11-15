@@ -30,13 +30,9 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 | `DOCKMESH_AGENT_ENROLL_TOKEN_TTL` | `1h` | Lifetime of host enrollment tokens, as a Go duration from `1m` to `720h`. Any other value stops the server at startup |
 | `DOCKMESH_TRUSTED_PROXIES` | unset | Used when **Trusted proxies** under **Settings → General** is empty: comma-separated IPs or CIDRs whose forwarding headers are believed. With neither, only localhost; with `DOCKMESH_TLS_MODE` `caddy` or `proxy`, the IP of `DOCKMESH_HTTP_ADDR` (none for a wildcard address) |
 
-The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, so agent install commands work without editing `dockmesh.env`. SSO callbacks and invite links don't read those settings; when you use them, also set the public URL in `dockmesh.env`:
+The web setup wizard stores the address you enter as the **Base URL** and **Agent public URL** settings, and agent install commands, SSO callback URLs and invite links are built from them, so you don't need to edit `dockmesh.env`. A change under **Settings → General** applies without a restart.
 
-```bash
-DOCKMESH_BASE_URL=https://dockmesh.example.com
-```
-
-Installs set up with `dockmesh init` before 0.6 have `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` in their config; there the environment wins over the Settings fields.
+When `DOCKMESH_BASE_URL` or `DOCKMESH_AGENT_PUBLIC_URL` is set in `dockmesh.env`, it wins over the Settings field. Installs set up with `dockmesh init` before 0.6 have `DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL` and `DOCKMESH_AGENT_SANS` in their config.
 
 ### Paths
 
@@ -80,7 +76,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_OTEL_ENDPOINT` | empty | OTLP/gRPC endpoint for traces; empty disables tracing |
 | `DOCKMESH_OTEL_INSECURE` | `false` | Plaintext connection to the OTLP endpoint |
 
-Tracing does not start: initialisation fails with a resource schema conflict, which the server logs as a warning and continues without tracing.
+With `DOCKMESH_OTEL_ENDPOINT` set, the server sends traces of HTTP requests over OTLP/gRPC and logs `otel tracing enabled` at start. If the exporter can't be set up, it logs a warning and runs without tracing.
 
 ### Variables that are not read from the environment
 

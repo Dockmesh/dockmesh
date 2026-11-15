@@ -39,7 +39,7 @@ Click **Deploy** in a template's row. The dialog asks for:
 Things to know:
 
 - If the deploy fails, the stack files stay on disk so you can fix them and deploy from the stack page.
-- Secret parameters left blank get a random 43-character value. The value is written into `compose.yaml` in plain text (not into the encrypted `.env`), so it is also in the deploy history entry and in the `compose` field of the deploy response; the `values` field of the response shows `<generated>` instead. Read the password from the stack's **Compose** tab when you need it.
+- Secret parameters left blank get a random 43-character value. The built-in templates write secrets to the stack's `.env` (encrypted at rest) and reference them as `${VAR}` in `compose.yaml`, so they are not in the deploy history or the deploy response, whose `values` field shows `<generated>`. Read them on the stack's **Environment** tab. A custom template that uses a secret placeholder directly in `compose.yaml` gets the value written there in plain text; put it in the template's `.env` instead. Stacks deployed from the PostgreSQL, MySQL or Vaultwarden template before 0.5.2 keep their secrets in `compose.yaml`.
 
 ## Writing a custom template
 
@@ -81,7 +81,7 @@ Substitution is plain text replacement. There are no conditionals or loops. `${V
 
 ## Exporting and importing
 
-`GET /api/v1/templates/{id}/export` returns a template as a YAML file in the same format as the built-in templates (slug, name, description, icon URL, compose, env, parameters, author, version). **Download YAML** in a template's row menu links to that URL, but a plain link carries no session token, so the download fails with 401. Use an [API token](./api-tokens.md) instead:
+`GET /api/v1/templates/{id}/export` returns a template as a YAML file in the same format as the built-in templates (slug, name, description, icon URL, compose, env, parameters, author, version). **Download YAML** in a template's row menu saves that file. From a script, use an [API token](./api-tokens.md):
 
 ```bash
 curl -H "Authorization: Bearer $DOCKMESH_TOKEN" \

@@ -7,7 +7,7 @@ When the Dockmesh server goes down, containers keep running: on the local host D
 
 ## What to keep safe
 
-Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). If `/data` existed at install time, `install.sh` used `/data` instead; replace the paths and pass `--env-file /data/dockmesh.env` to `dockmesh` commands. Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
+Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). Installs that use another data root, such as `/data` from an older release, keep it in their config; replace the paths accordingly and pass `--env-file <config>` to `dockmesh` commands when the config is not at one of the places listed below. Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
 
 | Path | Contents | Lost means |
 |---|---|---|
@@ -94,14 +94,13 @@ If the command stops halfway, run it again or start the server: the swap finishe
 
 ### 4. Fix configuration and ownership
 
-After a command-line restore, the restored files belong to root. The fresh install also left `DOCKMESH_SETUP_FORCE=true` in its env file; the server ignores it once an admin exists, but warns about it on every start.
+After a command-line restore, the restored files belong to root. Hand them to the service account (use `dockmesh:dockmesh` if your data root is owned that way, as on installs moved off root by an upgrade):
 
 ```bash
-sudo sed -i '/^DOCKMESH_SETUP_FORCE=/d' /var/lib/dockmesh/dockmesh.env
 sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
 ```
 
-Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on). Settings changed in the UI are in the database and came back with it. Then check and start:
+A fresh Linux install has no `dockmesh.env` until the setup wizard writes it, so the restored server runs on the default paths. Carry over the settings from your saved `dockmesh.env` into `/etc/dockmesh/dockmesh.env` (owner root, group `dockmesh`, mode 0640) (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on). Settings changed in the UI are in the database and came back with it. Then check and start:
 
 ```bash
 sudo -u dockmesh dockmesh doctor

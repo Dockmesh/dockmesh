@@ -56,9 +56,9 @@ When an agent runs a different build than the server, the Hosts page marks it an
 
 ## What works on remote hosts
 
-Most features work on every host: container lists and lifecycle, logs, exec, live stats and metrics history, the container file browser, image, volume and network lists and inspect, image remove and prune, volume browsing, stack deploy, stop and scale, alert rules, backups and restores of volumes and stacks, git-source auto-deploys (they run on the host the stack is deployed on), drains and stack migration. Private registry credentials are sent to agents for the images they deploy; see [Registries](../features/registries.md).
+Most features work on every host: container lists and lifecycle, logs, exec, live stats and metrics history, the container file browser, image, volume and network lists and inspect, image pull, remove and prune, volume and network create, remove and prune, vulnerability scans (the image is sent to the server and scanned there), volume browsing, stack deploy, stop and scale, auto-scaling rules (on the host the stack is deployed on), alert rules, backups and restores of volumes and stacks, git-source auto-deploys (they run on the host the stack is deployed on), drains and stack migration. Private registry credentials are sent to agents for the images they deploy; see [Registries](../features/registries.md).
 
-Some features need an agent that supports them, for example the file browser, metrics history and restores in replace mode. On an older agent they fail with a message to update the agent.
+Some features need an agent that supports them, for example the file browser, metrics history, restores in replace mode, image pulls, network actions, volume prune and scans. On an older agent they fail with a message to update the agent.
 
 These work on the local host only:
 
@@ -66,10 +66,7 @@ These work on the local host only:
 |---|---|
 | Rolling updates | Returns an error. |
 | Stack cleanup (preview and delete of leftover resources) | Returns an error. |
-| Image pull; volume and network create, remove and prune | Always run on the local host, whatever host is selected. |
-| Vulnerability scanning | Scans images on the local host only. |
 | Image update detection and one-click update | Covers local containers only. |
-| Auto-scaling rules | Scale on the local host only. |
 | Live deploy progress | Not reported; you see the result when the deploy finishes. |
 
 Stack migration moves the stack definition and redeploys it on the target host. Stacks with named volumes are refused, because their data isn't copied. See [Migration and drain](../features/migration-and-drain.md).

@@ -74,7 +74,7 @@ sudo dockmesh setup new-code
 
 ### The sign-in page appears instead of the setup wizard
 
-**Cause:** the wizard at `/setup` opens only on an install with no user accounts that was never set up: no env file and no database, or an env file with `DOCKMESH_SETUP_FORCE=true` from `install.sh`. Every other install starts normally, even without accounts, so a configured server is never handed to whoever opens `/setup` first. The server does not create an account by itself. If there is none, the log shows `this installation has no user accounts and is not a new install`.
+**Cause:** the wizard at `/setup` opens only on an install with no user accounts that was never set up: no env file, no database and no data files (secrets, keys, stacks), or an env file with `DOCKMESH_SETUP_FORCE=true` from `install.sh`. Every other install starts normally, even without accounts, so a configured server is never handed to whoever opens `/setup` first. The server does not create an account by itself. If there is none, the log shows `this installation has no user accounts and is not a new install`.
 
 **Fix:** create an admin on the server, restart the service and sign in.
 
@@ -83,7 +83,7 @@ sudo dockmesh admin create --username <name> --role admin
 sudo systemctl restart dockmesh
 ```
 
-If an admin already exists and `DOCKMESH_SETUP_FORCE=true` is still in the env file, the wizard stays closed and admins get the notice **Setup flag ignored**. Delete the line from the env file and restart. The wizard removes the flag itself after a successful run; if it couldn't, it reports `could not scrub setup flag`.
+If any user account exists and `DOCKMESH_SETUP_FORCE=true` is still in the env file, the wizard stays closed and admins get the notice **Setup flag ignored**. Delete the line from the env file and restart. The wizard removes the flag itself after a successful run; if it couldn't, it reports `could not scrub setup flag`.
 
 ### Forgot the admin password
 
@@ -234,7 +234,7 @@ docker pull <image>
 
 ### "... on remote hosts is not yet implemented"
 
-**Cause:** rolling updates and the resource cleanup preview and delete run on the server's own host only and return `rolling updates on remote hosts are not yet implemented` or `resource cleanup on remote hosts is not yet implemented` on agent hosts. Image update checks and vulnerability scans also cover the server's host only.
+**Cause:** rolling updates and the resource cleanup preview and delete run on the server's own host only and return `rolling updates on remote hosts are not yet implemented` or `resource cleanup on remote hosts is not yet implemented` on agent hosts. Image update checks also cover the server's host only.
 
 **Fix:** use a normal redeploy on agent hosts. See [Multi-host](../features/multi-host.md).
 
@@ -431,7 +431,7 @@ See [Upgrade](../operations/upgrade.md) for the procedure.
 
 ### The bell says "Dockmesh vX.Y.Z available"
 
-**Cause:** the server checks GitHub for new stable releases every 2 hours and tells admins once per version (again after a server restart). Development builds always get the notice.
+**Cause:** the server checks GitHub for new stable releases every 2 hours and tells admins once per version; a restart doesn't repeat it. Development builds always get the notice.
 
 **Fix:** read the release notes, back up, and upgrade as described in [Upgrade](../operations/upgrade.md). **Settings → Updates** shows the current version, the release notes and the upgrade command. To stop the checks, for example on an air-gapped install, turn off **Automatic update checks** there.
 

@@ -89,7 +89,7 @@ The agent reads these from its environment (the installer puts them in `agent.en
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` (the installer writes `/var/lib/dockmesh-agent`) | Certificates, the saved agent URL, the stack mirror |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when the agent is enrolled only there) | Certificates, the saved agent URL, the stack mirror |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint, `https://<agent host>:8443/enroll`. Required on first start |
 | `DOCKMESH_TOKEN` | none | Enrollment token. Required on first start |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA. Required to enroll over `https://` |
@@ -170,8 +170,7 @@ To bring the host back, add it again with **Add host** and run the new install c
 ## Limits
 
 - Rolling updates and stack cleanup are not supported on remote hosts.
-- Image pulls, volume and network create, remove and prune run on the local host only.
-- Vulnerability scans, image update detection and auto-scaling cover the local host only.
+- Image update detection covers the local host only.
 - Live deploy progress isn't reported for remote hosts.
 
 See also [Migration and drain](./migration-and-drain.md) and [Troubleshooting](../troubleshooting/troubleshooting.md).
