@@ -1018,8 +1018,8 @@ var (
 )
 
 // checkReservedLabels refuses tracking labels on the server for agents
-// that don't refuse them themselves. Agents that do check the file they
-// load, with the files it names on their own host.
+// that don't check them; agents that do load the file, and the files it
+// names, on their own host.
 func (h *RemoteHost) checkReservedLabels(name, composeYAML string) error {
 	if ag, err := h.live(); err == nil && ag.Hello.Has(agents.CapReservedLabels) {
 		return nil

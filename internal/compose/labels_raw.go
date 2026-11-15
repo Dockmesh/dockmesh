@@ -13,7 +13,7 @@ import (
 
 // ErrLabelsNeedAgent refuses a compose file whose labels the server can't
 // see without reading files on the agent's host.
-var ErrLabelsNeedAgent = errors.New("this compose file takes labels from other files (include, extends from another file, label_file), which the agent on this host doesn't check yet; upgrade the agent from the Hosts page")
+var ErrLabelsNeedAgent = errors.New("the agent on this host doesn't check labels set through other files or variables yet; upgrade the agent from the Hosts page")
 
 // CheckReservedLabelsText is CheckReservedLabels for a compose file the
 // server only forwards to an agent that doesn't check labels itself. It
@@ -24,10 +24,9 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 	var doc struct {
 		Include  any `yaml:"include"`
 		Services map[string]struct {
-			Labels     any `yaml:"labels"`
-			LabelFile  any `yaml:"label_file"`
-			LabelsFile any `yaml:"labels_file"`
-			Extends    any `yaml:"extends"`
+			Labels    any `yaml:"labels"`
+			LabelFile any `yaml:"label_file"`
+			Extends   any `yaml:"extends"`
 		} `yaml:"services"`
 		Networks map[string]*rawResource `yaml:"networks"`
 		Volumes  map[string]*rawResource `yaml:"volumes"`
@@ -36,17 +35,17 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 		return fmt.Errorf("parse compose file: %w", err)
 	}
 	if doc.Include != nil {
-		return ErrLabelsNeedAgent
+		return fmt.Errorf("include: %w", ErrLabelsNeedAgent)
 	}
 	project := loader.NormalizeProjectName(stackName)
 	base := map[string]string{LabelProject: project, LabelManaged: "true"}
 	for _, name := range slices.Sorted(maps.Keys(doc.Services)) {
 		svc := doc.Services[name]
-		if svc.LabelFile != nil || svc.LabelsFile != nil {
-			return ErrLabelsNeedAgent
+		if svc.LabelFile != nil {
+			return fmt.Errorf("service %q: label_file: %w", name, ErrLabelsNeedAgent)
 		}
 		if ext, ok := svc.Extends.(map[string]any); ok && ext["file"] != nil {
-			return ErrLabelsNeedAgent
+			return fmt.Errorf("service %q: extends from another file: %w", name, ErrLabelsNeedAgent)
 		}
 		tracking := maps.Clone(base)
 		tracking[LabelService] = name
@@ -105,7 +104,7 @@ func checkRawLabels(kind, name string, tracking map[string]string, raw any) erro
 	}
 	for k, v := range labels {
 		if strings.Contains(k, "$") || (strings.Contains(v, "$") && isTrackedOrReserved(k, tracking)) {
-			return fmt.Errorf("%s %q: label %q uses a variable, which the agent on this host doesn't check yet; upgrade the agent from the Hosts page", kind, name, k)
+			return fmt.Errorf("%s %q: label %q uses a variable: %w", kind, name, k, ErrLabelsNeedAgent)
 		}
 	}
 	_, err := withTrackingLabels(kind, name, tracking, labels)
