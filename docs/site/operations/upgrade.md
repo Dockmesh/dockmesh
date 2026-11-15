@@ -59,7 +59,7 @@ sudo tar -czf /root/dockmesh-pre-upgrade-$(date +%F).tar.gz -C /var/lib dockmesh
 sudo systemctl start dockmesh
 ```
 
-This includes the database, keys, PKI and `stacks/`; the config lives in `/etc/dockmesh/dockmesh.env` (copy it too). If your local backup target lives under `/var/lib/dockmesh`, exclude it with `--exclude`. A Dockmesh system backup is also fine, as long as you have a copy of the age key (see [Disaster recovery](./disaster-recovery.md#export-the-age-key)).
+Both snapshots are full copies, so an upgrade needs free space next to the database of about twice its size; nothing checks this beforehand. The tar copy includes the database, keys, PKI and `stacks/`; the config lives in `/etc/dockmesh/dockmesh.env` (copy it too). If your local backup target lives under `/var/lib/dockmesh`, exclude it with `--exclude`. A Dockmesh system backup is also fine, as long as you have a copy of the age key (see [Disaster recovery](./disaster-recovery.md#export-the-age-key)).
 
 ## 2. Install the new release
 
@@ -220,7 +220,7 @@ Three upgrade modes exist. The default is `manual`:
 | `auto` | Every outdated, connected agent is told to upgrade when the server starts and on every check (every 60 seconds) |
 | `staged` | Each check upgrades `stage_percent` of the outdated agents (default 10, at least one) |
 
-In `auto` and `staged` mode the server tries each agent at most three times per new agent build, at least five minutes apart. **Upgrade agent** always goes through. Upgrading an agent that already runs the server's build is refused with an explanation.
+In `auto` mode there is no pause after a server upgrade: agents are upgraded within about a minute of reconnecting to the new server (after **Update now**, once the update is confirmed). Use `staged` or `manual` if you want to check the server first. In `auto` and `staged` mode the server tries each agent at most three times per new agent build, at least five minutes apart. **Upgrade agent** always goes through. Upgrading an agent that already runs the server's build is refused with an explanation.
 
 The **Hosts** page shows the mode and, outside `manual`, a **Run policy now** button, but cannot change the mode. Use the API (needs Hosts: Manage on everything, because the policy applies to every host):
 
