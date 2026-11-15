@@ -33,6 +33,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 Entries for the next release are the fragments in `.changes/unreleased/`; `changie batch`
 moves them into a release section.
 
+## [0.5.4] - 2026-11-15 [recommended]
+
+Dockmesh 0.5.4 is a bug fix release for the system backup job. Since 0.5.0, a restart moved a system backup job that used a saved local target, such as a NAS mount, to the server's data directory, so backups no longer went where they were configured. The job now keeps its target, and installs that were already moved get a notice naming the old target. Upgrading is recommended for everyone who uses the system backup job; read the upgrade notes.
+
+
+### Fixed
+
+- A system backup job created on a saved target no longer moves to the server's data directory when the server restarts
+
+### Upgrade notes
+
+- **Admins:** If system backups landed in `<data>/backups` after a restart, check the admin notice in the bell. It names the target the job was created with. Pick it again in the job, or delete the saved target to keep the job where it is <!-- system-backup-target -->
 ## [0.5.3] - 2026-11-12 [security]
 
 Dockmesh 0.5.3 is a security patch release. The auto-scaler, manual scale, rolling updates and image updates now check a stack's files like a deploy does, and the meta and override files count as stack files, so a change a container makes to its own stack directory needs a confirmation before Dockmesh deploys it. The setup wizard no longer reopens on an installation that was already set up. Upgrading is recommended; read the upgrade notes.
