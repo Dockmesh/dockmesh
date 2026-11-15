@@ -164,8 +164,10 @@ func NewInstaller(cfg InstallerConfig) (*Installer, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o750); err != nil {
 		return nil, err
 	}
-	// Temp files of a download a crash interrupted.
-	if leftovers, err := filepath.Glob(filepath.Join(cfg.Dir, ".*")); err == nil {
+	// Temp files a crash left behind, only the installer's own: the root
+	// updater writes its result through one too.
+	for _, name := range []string{Asset(), releasesig.ChecksumsFile, releasesig.SignatureFile, rootupdate.RequestFile, auditedFile} {
+		leftovers, _ := filepath.Glob(filepath.Join(cfg.Dir, "."+name+".*"))
 		for _, f := range leftovers {
 			_ = os.Remove(f)
 		}
