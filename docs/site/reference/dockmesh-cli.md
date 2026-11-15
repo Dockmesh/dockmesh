@@ -45,7 +45,7 @@ For an update it stops `dockmesh.service`, writes a snapshot of the database nex
 
 Commands that write files (`admin`, `enroll`, `db`, `ca`, `secrets`, `import`, `restore`) create them as the user that runs the command. On a systemd install the service runs as `dockmesh`, so `sudo -u dockmesh dockmesh <command>` keeps file ownership consistent.
 
-Most commands open the database and apply pending migrations first. Loading the configuration creates `secrets.env` with a new JWT secret if it is missing, and commands that load the agent PKI (`ca export`, `doctor`, `enroll create`) create a CA if none exists yet.
+Most commands open the database and apply pending migrations first (`doctor`, `admin`, `ca`, `enroll` and `db`; `config show` and `secrets rotate` do not), with the same pre-migration snapshot as the server. Don't run a newer binary's commands against an install that still runs an older version: they migrate its database under it. Loading the configuration creates `secrets.env` with a new JWT secret if it is missing, and commands that load the agent PKI (`ca export`, `doctor`, `enroll create`) create a CA if none exists yet.
 
 ## Command overview
 

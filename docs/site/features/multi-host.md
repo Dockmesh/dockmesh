@@ -77,7 +77,7 @@ The installer and binary routes on the agent port need no sign-in. They and `/en
 
 Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation in 0.6.x and goes away in 0.7.0; the script it serves downloads the binary from the agent port with the pin, but the script itself still travels over the web port. Each use writes a warning to the server log and counts against the same per-IP limit as the installer on the agent port, and admins get a notice at most once a day while the route is in use.
 
-Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server.
+Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server. The stack copies in `stacks/`, with the data of relative bind mounts, are not moved: move `<old data directory>/stacks/` to `/var/lib/dockmesh-agent/stacks/` before the next deploy, or those stacks start with empty bind directories.
 
 The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it). Without a binary for the host's architecture the installer stops.
 

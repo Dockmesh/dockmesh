@@ -46,7 +46,7 @@ Client certificates are valid for 365 days. An online agent asks for a new one o
 
 **Re-issue…** on the host's **Maintenance** tab (needs `hosts.create`) creates a new enrollment token for the same host. Running the new install command on the host re-enrolls it under the same ID, so its stacks, tags and backup jobs stay. The old certificate keeps working until the host enrolls with the new token. Use this for an expired or suspect certificate, or after reinstalling the host.
 
-**Revoke…** in the host's row menu or on the **Maintenance** tab (needs `hosts.delete`) deletes the host from Dockmesh, after you type its name. An open connection is closed and the certificate is no longer accepted. Containers on that host keep running; Dockmesh stops managing them. Stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). To bring the host back, add it again; it gets a new ID.
+**Revoke…** in the host's row menu or on the **Maintenance** tab (needs `hosts.delete`) deletes the host from Dockmesh, after you type its name. An open connection is closed and the certificate is no longer accepted. Containers on that host keep running; Dockmesh stops managing them. Stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). To bring the host back, add it again; it gets a new ID. Assignments, token restrictions, alert rule scopes and backup jobs that name the revoked host are kept but apply to nothing (backup jobs of that host fail on every run); the new host does not inherit them, so edit or remove them.
 
 `dockmesh ca rotate` replaces the CA and the server certificate and resets every agent to pending with a new token, so every host has to be enrolled again.
 

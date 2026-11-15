@@ -215,6 +215,8 @@ make build VERSION=v0.0.0-local
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests (with `-race`), `svelte-check` and the web unit tests.
 
+To run a source build as a service, copy `./dockmesh` to `/usr/local/bin/dockmesh` (root-owned) and run the installer with `DOCKMESH_SKIP_DOWNLOAD=1`; it sets up the user, data root and units around that binary. Build with `VERSION=<tag>` from a release tag, so the server reports that version and agents of the release don't count as outdated. A build without `VERSION` reports `dev`: the update check always offers the latest release and **Update now** is not available. To upgrade, rebuild and repeat these steps.
+
 The repository's `Dockerfile` is for development. No container image is published.
 
 ## Next steps

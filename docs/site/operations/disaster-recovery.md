@@ -115,6 +115,8 @@ A system restore brings back stack definitions, not containers or volume data. F
 
 Point DNS or your load balancer for the server's public name at the new machine, so agents and users find it.
 
+The restored install knows only the backup runs up to the archive you restored. Archives that the old server wrote after it stay on the targets, are not listed and are never pruned; delete them by hand. Settings that hold absolute paths (`backups.local_roots`, `backups.empty_path_dir`, local target paths, the audit archive folder) come back unchanged: when the new machine uses another data root, update them, then run `sudo dockmesh system write-unit` and restart the service. Files in the live data directory that the archive does not contain (for example `secrets.age-key.history` or `*.old` certificates of the fresh install) are kept next to the restored ones.
+
 ## Agents after a restore
 
 Agents trust the CA they received at enrollment and connect to the address they were given. If the restored `data/` directory contains the old `agents-ca.*` and `agents-server.*` files and the server is reachable under the same name, agents reconnect on their own.

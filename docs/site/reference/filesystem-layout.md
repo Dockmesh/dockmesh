@@ -15,6 +15,7 @@ Dockmesh keeps stack definitions as files and runtime state in one SQLite databa
 ├── data/                        data directory = directory of DOCKMESH_DB_PATH
 │   ├── dockmesh.db              SQLite database (+ -wal, -shm while running)
 │   ├── dockmesh.db.pre-migrate-<time>.bak   database snapshot taken before migrations (newest 3)
+│   ├── dockmesh.db.pre-update.bak           database snapshot taken before the last upgrade
 │   ├── secrets.env              DOCKMESH_JWT_SECRET=<hex> (0600)
 │   ├── secrets.age-key          age identity for .env.age, encrypted DB fields and backups (0400)
 │   ├── secrets.age-key.history  previous keys, after a key rotation (0400)
@@ -26,12 +27,19 @@ Dockmesh keeps stack definitions as files and runtime state in one SQLite databa
 │   ├── *.old                    previous CA and server cert, after `dockmesh ca rotate`
 │   ├── git-cache/<stack>/       clones of Git-backed stacks
 │   ├── backups/                 default directory of local backup targets
+│   ├── caddy-admin/             socket of the proxy's admin API (0700)
+│   ├── grype-db/                vulnerability database of the scanner
+│   ├── scan-tmp/                image archives while they are scanned
 │   ├── .restore-staged/         a system restore waiting for the next start
 │   └── .pre-restore/<time>/     data files replaced by a system restore
+├── audit-archive/               default folder of archived audit entries
+├── update/                      release files for the root updater
 ├── stacks/                      DOCKMESH_STACKS_ROOT
 │   └── <stack>/
 └── stacks.pre-restore-<time>/   stacks replaced by a system restore
 ```
+
+A system backup holds the data directory and the stacks directory. It leaves out `backups/`, `.restore-staged/`, `.pre-restore/`, `caddy-admin/`, `grype-db/`, `scan-tmp/` and the database snapshots; `audit-archive/`, `update/` and `dockmesh.env` sit outside the data directory and are not in it either, so copy the audit archive yourself if you keep one there. Files that `DOCKMESH_SECRETS_PATH`, `DOCKMESH_SECRETS_KEY_PATH` or `DOCKMESH_AUDIT_GENESIS_PATH` move out of the data directory are not in a system backup.
 
 What each file is for:
 
@@ -89,7 +97,7 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `/usr/local/bin/dockmesh.prev` | `dockmesh update apply` | The binary the last update replaced |
 | `<data directory>/update/` | the server | Release files the server downloaded and the request for the root updater; the updater writes `pending` while an update runs and `result.json` when it ends |
 | `<data directory>/agent-release/<version>/` | the server | Signed release of the server's own version (`checksums.txt`, its signature, the archive per agent architecture), fetched once and served to managed agents |
-| `<database>.pre-update.bak` | `dockmesh update apply` | Database as it was before the last update, put back on a rollback |
+| `<database>.pre-update.bak` | `dockmesh update apply`, and `install.sh` on upgrade | Database as it was before the last update, put back on a rollback |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |
 
 Linux release archives contain the agent for both architectures, and `install.sh` installs both, whatever the server's own architecture. On macOS, the archive has one agent binary, which `install.sh` installs as `dockmesh-agent-darwin-<arch>`; the agent installer only enrolls Linux hosts and needs the Linux binaries, so copy them from a Linux archive into the asset `bin/` directory if a macOS server should enroll agents.

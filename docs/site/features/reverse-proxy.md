@@ -168,7 +168,7 @@ The API is `POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": tru
 
 The **Caddy** tab shows which Caddy version runs and the versions tested with your Dockmesh release, each pinned by digest. **Switch** replaces the container with the chosen version; sites are briefly unavailable. If Caddy doesn't come up with the current config, Dockmesh starts the previous version again and reports the switch as failed. **Go back** returns to the version before the last switch, whose image is kept until the next switch. The proxy has to be running to switch.
 
-Without a chosen version, the proxy follows the default of each Dockmesh release. When a newer default is available, the page header shows "*version* recommended", and the version also appears on the **Updates** page (see [Image updates](./image-updates.md)).
+Without a chosen version, the proxy follows the default of each Dockmesh release: on the first start after an upgrade that changes the default, the container is replaced with the new version and sites are briefly unavailable. A chosen version that the new release no longer ships falls back to the default as well. When a newer default is available, the page header shows "*version* recommended", and the version also appears on the **Updates** page (see [Image updates](./image-updates.md)).
 
 With `DOCKMESH_PROXY_IMAGE` set in the server environment, Dockmesh runs that image and the version can't be changed here.
 

@@ -28,7 +28,7 @@ Either way the configuration is saved first and the first sync runs right away. 
 
 **HTTPS:** enter a username and a personal access token. GitHub does not accept account passwords; create a fine-grained token with **Contents: Read-only** on the repository, or a classic token with the `repo` scope.
 
-**SSH:** enter the SSH user (default `git`) and paste an OpenSSH private key without a passphrase. Use a deploy key with read access to this one repository. The Git host's key is checked against `~/.ssh/known_hosts` of the user the server runs as, or `/etc/ssh/ssh_known_hosts` (or the files listed in `SSH_KNOWN_HOSTS`). If the sync fails with a host key error, add the key there, for example with `ssh-keyscan github.com >> ~/.ssh/known_hosts` as that user.
+**SSH:** enter the SSH user (default `git`) and paste an OpenSSH private key without a passphrase. Use a deploy key with read access to this one repository. The Git host's key is checked against `/etc/ssh/ssh_known_hosts`, the files listed in `SSH_KNOWN_HOSTS`, and `~/.ssh/known_hosts` of the user the server runs as. The `dockmesh` service account has no home directory, so add the key system-wide (`ssh-keyscan github.com | sudo tee -a /etc/ssh/ssh_known_hosts`), or set `SSH_KNOWN_HOSTS` in `dockmesh.env` to a file the `dockmesh` account can read and restart the service. Installs that ran the server as root and relied on `/root/.ssh/known_hosts` need this after the move to the `dockmesh` account.
 
 The token, the SSH key and the webhook secret are encrypted with the server's secrets key before they are stored, as long as secrets encryption is on (`DOCKMESH_SECRETS_ENCRYPT_ENV`, default `true`). Webhook secrets stored in plaintext by older versions are encrypted at the next start. None of them is returned by the API. When you edit the source, leave a field blank to keep the stored value.
 
@@ -69,6 +69,8 @@ Every 30 seconds Dockmesh checks which sources are due and syncs them. A source 
 > **Note:** Up to v0.4, a poll interval of `0` was saved as 300 seconds. If you meant to turn polling off on an existing source, edit it and set `0` again.
 
 ## Auto-deploy
+
+The last synced commit is stored in the database, not taken from the clone in `git-cache/`: deleting the cache only causes a fresh clone. After a restore of a database older than the branch head, the next sync counts the head as a new commit.
 
 With **Auto-deploy on new commits** on, every sync that pulls a new commit deploys the stack, like a manual **Deploy** with these differences:
 
