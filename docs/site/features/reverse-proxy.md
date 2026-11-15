@@ -19,7 +19,7 @@ Everything below happens on **Reverse proxy** in the sidebar, which has the tabs
 | Volumes | `dockmesh-caddy-data` (certificates), `dockmesh-caddy-config` (config) |
 | Labels | `dockmesh.managed=true`, `dockmesh.component=proxy` |
 
-Ports 80 and 443 must be free on the server host. The admin API has no authentication of its own: only processes that can enter the socket directory (Dockmesh and root) can reach it, and it refuses requests from browsers. If moving an older proxy container to the socket fails, that container keeps its admin API on `127.0.0.1:2019` and admins get a notice; while it shows, any process on the host can reconfigure Caddy.
+Ports 80 and 443 must be free on the server host. The admin API has no authentication of its own: only processes that can enter the socket directory (Dockmesh and root) can reach it, and it refuses requests from browsers. Anyone who can start containers on the server host (members of `docker`, users who may deploy stacks there) can bind-mount the directory and reach it too; see [Security hardening](../operations/hardening.md). If moving an older proxy container to the socket fails, that container keeps its admin API on `127.0.0.1:2019` and admins get a notice; while it shows, any process on the host can reconfigure Caddy.
 
 Caddy starts from the last config Dockmesh pushed (`caddy run --resume`), so a container that restarts on its own keeps serving its sites. Dockmesh also compares Caddy's running config with the saved sites every 30 seconds and pushes them again if they differ. On a server start the container is kept when it still matches the expected image and settings; otherwise it is replaced.
 

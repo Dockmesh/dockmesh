@@ -39,7 +39,7 @@ Click **Deploy** in a template's row. The dialog asks for:
 Things to know:
 
 - If the deploy fails, the stack files stay on disk so you can fix them and deploy from the stack page.
-- Secret parameters left blank get a random 43-character value. The built-in templates write secrets to the stack's `.env` (encrypted at rest) and reference them as `${VAR}` in `compose.yaml`, so they are not in the deploy history or the deploy response, whose `values` field shows `<generated>`. Read them on the stack's **Environment** tab. A custom template that uses a secret placeholder directly in `compose.yaml` gets the value written there in plain text; put it in the template's `.env` instead. Stacks deployed from the PostgreSQL, MySQL or Vaultwarden template before 0.5.2 keep their secrets in `compose.yaml`.
+- Secret parameters left blank get a random 43-character value. The built-in templates write secrets to the stack's `.env` (encrypted at rest while secrets encryption is on) and reference them as `${VAR}` in `compose.yaml`, so they are not in the deploy history or the deploy response, whose `values` field shows `<generated>`. Read them on the stack's **Environment** tab. A custom template that uses a secret placeholder directly in `compose.yaml` gets the value written there in plain text; put it in the template's `.env` instead. Stacks deployed from the PostgreSQL, MySQL or Vaultwarden template before 0.5.2 keep their secrets in `compose.yaml`.
 
 ## Writing a custom template
 
