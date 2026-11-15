@@ -94,7 +94,10 @@ func TestMigrateSystemJobPath(t *testing.T) {
 }
 
 func TestMarkAutoCreatedJobsForReview(t *testing.T) {
-	const appliedAt = "2026-05-03 10:00:00"
+	const (
+		appliedAt     = "2026-05-03 10:00:00"
+		createdBefore = "2026-04-20 03:00:00"
+	)
 	tests := []struct {
 		name     string
 		create   func(t *testing.T, svc *Service) int64
@@ -153,7 +156,7 @@ func TestMarkAutoCreatedJobsForReview(t *testing.T) {
 			svc := NewService(database, nil, nil, nil, SystemPaths{DBPath: filepath.Join(dataDir, "test.db"), StacksRoot: t.TempDir(), DataDir: dataDir})
 			id := tt.create(t, svc)
 			if tt.backdate {
-				if _, err := database.Exec(`UPDATE backup_jobs SET created_at = '2026-04-20 03:00:00' WHERE id = ?`, id); err != nil {
+				if _, err := database.Exec(`UPDATE backup_jobs SET created_at = ? WHERE id = ?`, createdBefore, id); err != nil {
 					t.Fatal(err)
 				}
 			}

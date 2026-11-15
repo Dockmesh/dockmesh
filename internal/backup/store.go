@@ -495,8 +495,6 @@ func (s *store) setJobEnabled(ctx context.Context, id int64, enabled bool) error
 }
 
 // markJobNeedsReview flags a job for operator review with a reason.
-// Used by MarkAutoCreatedJobsForReview when a legacy default job is
-// found on an existing install. P.13.2.
 func (s *store) markJobNeedsReview(ctx context.Context, id int64, reason string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE backup_jobs SET needs_review = 1, review_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -504,8 +502,8 @@ func (s *store) markJobNeedsReview(ctx context.Context, id int64, reason string)
 	return err
 }
 
-// unflagJobReview drops a review flag the operator never set, leaving
-// review_acked and updated_at as they are.
+// unflagJobReview drops a review flag without marking the job reviewed or
+// touching updated_at.
 func (s *store) unflagJobReview(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE backup_jobs SET needs_review = 0, review_reason = '' WHERE id = ?`, id)

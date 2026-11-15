@@ -163,7 +163,7 @@ func TestUpgradeFromV053KeepsJobTargets(t *testing.T) {
 }
 
 // A system job a v0.5.3 user named like the job older versions created on
-// boot is not taken for one of those.
+// boot is not taken for one of those; the flag v0.5.3 put on it is removed.
 func TestUpgradeFromV053KeepsUserJobUnflagged(t *testing.T) {
 	ctx := context.Background()
 	dump := readV053Fixture(t)
@@ -173,7 +173,8 @@ func TestUpgradeFromV053KeepsUserJobUnflagged(t *testing.T) {
 	if _, err := conn.Exec(`DELETE FROM backup_jobs WHERE name <> 'sys-abs'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec(`UPDATE backup_jobs SET name = ?`, backup.DefaultSystemJobName); err != nil {
+	if _, err := conn.Exec(`UPDATE backup_jobs SET name = ?, needs_review = 1,
+		review_reason = 'Auto-created by an earlier dockmesh version.'`, backup.DefaultSystemJobName); err != nil {
 		t.Fatal(err)
 	}
 	for start := 1; start <= 2; start++ {

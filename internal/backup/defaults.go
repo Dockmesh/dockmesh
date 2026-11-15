@@ -22,11 +22,8 @@ const DefaultSystemSchedule = "0 3 * * *"
 const DefaultSystemRetentionDays = 14
 
 // EnsureDefaultJob creates the default daily system backup job if it
-// doesn't already exist. **Not** called on boot anymore — only when
-// the operator explicitly opts in (see SetDefaultJobEnabled). Earlier
-// dockmesh versions called this from cmd/dockmesh/main.go on every
-// start, which created a backup job the user never asked for and
-// didn't necessarily want — see P.13.2.
+// doesn't already exist. Only called when the operator opts in (see
+// SetDefaultJobEnabled), never on boot.
 func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 	if s.paths.DBPath == "" || s.paths.StacksRoot == "" || s.paths.DataDir == "" {
 		slog.Info("backup default job skipped — system paths not configured")
@@ -249,7 +246,7 @@ func (s *Service) MarkAutoCreatedJobsForReview(ctx context.Context) error {
 		if err := s.store.unflagJobReview(ctx, j.ID); err != nil {
 			return err
 		}
-		slog.Info("backup: review flag removed from a system job created after automatic creation ended", "id", j.ID)
+		slog.Info("backup default job review flag removed", "id", j.ID)
 	}
 	return nil
 }
