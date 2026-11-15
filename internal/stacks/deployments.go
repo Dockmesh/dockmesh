@@ -49,13 +49,15 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 	return err
 }
 
-// insertDeployed records a deployment unless the stack has one by now.
+// insertDeployed records a deployment on the host the stack was created
+// for, unless the stack has one by now.
 func (s *DeploymentStore) insertDeployed(ctx context.Context, stackName, hostID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO stack_deployments (stack_name, host_id, status, deployed_at, updated_at)
-		VALUES (?, ?, 'deployed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		SELECT ?, ?, 'deployed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		WHERE EXISTS (SELECT 1 FROM stack_targets WHERE stack_name = ? AND host_id = ?)
 		ON CONFLICT(stack_name) DO NOTHING`,
-		stackName, hostID)
+		stackName, hostID, stackName, hostID)
 	return err
 }
 

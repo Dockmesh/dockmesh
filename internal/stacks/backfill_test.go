@@ -8,6 +8,29 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 )
 
+// A deploy recorded after the backfill read the table is kept.
+func TestInsertDeployedKeepsExistingRow(t *testing.T) {
+	ctx := context.Background()
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ds := NewDeploymentStore(database)
+	if err := ds.SetTarget(ctx, "app", "local", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.Set(ctx, "app", "agent-1", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.insertDeployed(ctx, "app", "local"); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := ds.Get(ctx, "app"); err != nil || d == nil || d.HostID != "agent-1" {
+		t.Fatalf("deployment %+v (%v), want it kept on agent-1", d, err)
+	}
+}
+
 func TestBackfillDeployments(t *testing.T) {
 	local := func(project string) ContainerInfo {
 		return ContainerInfo{Labels: map[string]string{"com.docker.compose.project": project}, HostID: "local"}
@@ -18,7 +41,7 @@ func TestBackfillDeployments(t *testing.T) {
 		deployed string // existing deployment host, "" for none
 		wantHost string // "" = no deployment row
 	}{
-		{name: "running stack without a row is filled in", wantHost: "local"},
+		{name: "stack without a target host is left alone"},
 		{name: "created for this host", target: "local", wantHost: "local"},
 		{name: "created for an agent, old local containers", target: "agent-1"},
 		{name: "deployed elsewhere already", deployed: "agent-1", wantHost: "agent-1"},

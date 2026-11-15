@@ -25,8 +25,8 @@ type ContainerInfo struct {
 // Logic per stack:
 //   - Group containers by com.docker.compose.project label.
 //   - Match each project name against known stacks from the filesystem.
-//   - Skip stacks that already have a deployment row, and stacks created
-//     for another host than the one running their containers.
+//   - Skip stacks that already have a deployment row, and stacks not
+//     created for the host running their containers.
 //   - For stacks with containers on exactly one host → insert (deployed).
 //   - For stacks with containers on multiple hosts → pick the host with
 //     the most containers, log a warning.
@@ -88,8 +88,10 @@ func BackfillDeployments(ctx context.Context, ds *DeploymentStore, mgr *Manager,
 			slog.Warn("backfill: stack has containers on multiple hosts — picking majority",
 				"stack", proj, "host", best, "hosts", len(hosts))
 		}
-		if t := createdFor[proj]; t != "" && t != best {
-			slog.Info("backfill: containers of the stack run on another host than it was created for, left undeployed",
+		// Anyone who may deploy can label a container with any compose
+		// project, so containers alone never decide a stack's host.
+		if t := createdFor[proj]; t != best {
+			slog.Info("backfill: stack not created for the host running its containers, left undeployed",
 				"stack", proj, "host", best, "created_for", t)
 			continue
 		}
