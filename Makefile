@@ -1,4 +1,4 @@
-.PHONY: dev build test test-e2e lint docker clean tidy openapi migration frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
+.PHONY: dev build test test-e2e test-e2e-setup lint docker clean tidy openapi migration frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -74,6 +74,10 @@ test:
 # started from ./dockmesh (see web/tests/run-ephemeral.sh).
 test-e2e: build
 	web/tests/run-ephemeral.sh
+
+# The setup wizard against a never set up server in a throwaway container.
+test-e2e-setup: build
+	web/tests-setup/run.sh
 
 lint:
 	golangci-lint run

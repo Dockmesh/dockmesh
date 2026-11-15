@@ -50,7 +50,7 @@ On the server itself, `sudo cat /var/lib/dockmesh/data/secrets.age-key` shows th
 
 There are three ways to restore a system backup. All of them unpack the archive next to the live files, run the restore checks, and swap the restored files in before the database is opened. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`; the **Backups** page lists them to admins with a **Delete** button.
 
-- **Setup wizard** of a fresh install: **Restore from a backup instead**, upload the system backup and, for an encrypted backup, the key file you exported. Dockmesh restarts, closes the setup wizard and opens the sign-in page. This is the quickest way to rebuild a server.
+- **Setup wizard** of a fresh install: enter the setup code, choose **Restore from backup**, upload the system backup and, for an encrypted backup, the key file you exported. Dockmesh restarts, closes the setup wizard and opens the sign-in page. This is the quickest way to rebuild a server.
 - **Backups** page of a running server (admins): **Restore system…** on a system run, or **Restore system from file…** on the **Runs** tab. See [Restoring the whole system](./backups.md#restoring-the-whole-system).
 - **Command line**, with the server stopped: `dockmesh restore`, below.
 
@@ -69,7 +69,7 @@ Like other subcommands, `restore` loads the first of `/etc/dockmesh/dockmesh.env
 curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_VERSION=vX.Y.Z bash
 ```
 
-Replace `vX.Y.Z` with the version you ran before, or a newer one. To restore through the setup wizard, open the server's URL now and pick **Restore from a backup instead**; then continue with step 4 to carry over `dockmesh.env`, and with step 5.
+Replace `vX.Y.Z` with the version you ran before, or a newer one. To restore through the setup wizard, open the server's URL now, enter the setup code and choose **Restore from backup**; then continue with step 4 to carry over `dockmesh.env`, and with step 5.
 
 For the command line, stop the server and don't finish the setup wizard. If you already did, you need `--force` in step 3.
 

@@ -1,456 +1,58 @@
 <script lang="ts">
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { Check, Copy } from 'lucide-svelte';
+  import Logo from '$lib/components/shell/Logo.svelte';
+  import DiskList, { type Disk } from '$lib/components/setup/DiskList.svelte';
   import { MIN_PASSWORD_LENGTH } from '$lib/password';
-  import AuthShell from '$lib/components/auth/AuthShell.svelte';
-  // Install wizard: one question per step, a review of every answer before
-  // anything is written, then the live install log and the credentials.
-  import { onMount, onDestroy } from 'svelte';
-  import { Check, X, TriangleAlert, Copy, Eye, EyeOff, ArrowRight, RotateCcw } from 'lucide-svelte';
-  import { copyToClipboard as clipboardCopy } from '$lib/clipboard';
+  import { copyToClipboard } from '$lib/clipboard';
   import { uploadSystemBackup } from '$lib/api';
-  import { waitForRestart } from '$lib/restart';
   import { fmtVersion } from '$lib/version';
-  import Button from '$lib/components/ui/Button.svelte';
-  import StatusChip from '$lib/components/ui/StatusChip.svelte';
+  import { fmtMem } from '$lib/format';
   import { m } from '$lib/paraglide/messages.js';
+  import {
+    DOCS,
+    DOCS_BASE,
+    agentURL,
+    baseURLError,
+    codeFormatOK,
+    codeFromFragment,
+    emailError,
+    fingerprintLines,
+    generatePassword,
+    httpAddr,
+    isEarly,
+    isLoopback,
+    listenAddressError,
+    normalizeCode,
+    passwordError,
+    passwordStrength,
+    pathSteps,
+    portError,
+    railClickable,
+    repeatError,
+    usernameError,
+    type SetupPath,
+    type StepId,
+    type TLSChoice
+  } from '$lib/setupWizard';
 
-  type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  const SETUP_HEADER = { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' };
+  const NEW_CODE_CMD = 'sudo dockmesh setup new-code';
+  const AGENT_PORT = '8443';
 
-  const STEPS: Array<{ n: Step; short: string }> = [
-    { n: 1, short: m.setup_step_welcome() },
-    { n: 2, short: m.setup_step_data() },
-    { n: 3, short: m.setup_step_service_user() },
-    { n: 4, short: m.setup_step_admin() },
-    { n: 5, short: m.setup_step_url() },
-    { n: 6, short: m.setup_step_review() },
-    { n: 7, short: m.setup_step_done() }
-  ];
-
-  const HEADERS: Record<Step, { title: string; sub: string }> = {
-    1: {
-      title: m.setup_h1_title(),
-      sub: m.setup_h1_sub()
-    },
-    2: {
-      title: m.setup_h2_title(),
-      sub: m.setup_h2_sub()
-    },
-    3: {
-      title: m.setup_h3_title(),
-      sub: m.setup_h3_sub()
-    },
-    4: {
-      title: m.setup_h4_title(),
-      sub: m.setup_h4_sub()
-    },
-    5: {
-      title: m.setup_h5_title(),
-      sub: m.setup_h5_sub()
-    },
-    6: {
-      title: m.setup_h6_title(),
-      sub: m.setup_h6_sub()
-    },
-    7: {
-      title: m.setup_h7_title(),
-      sub: m.setup_h7_sub()
-    }
-  };
-
-  // "Restore from backup" path: instead of a new install, bring back a
-  // system backup (with the key file exported from the original install
-  // if the backup is encrypted). The server restarts into it.
-  let restoreOpen = $state(false);
-  let restoreFile = $state<File | null>(null);
-  let restoreKey = $state<File | null>(null);
-  let restorePhase = $state<'idle' | 'uploading' | 'restarting' | 'stuck'>('idle');
-  let restoreError = $state('');
-  let restoreChecks = $state<{ name: string; status: string; message?: string }[]>([]);
-
-  async function restoreFromBackup() {
-    if (!restoreFile) return;
-    restorePhase = 'uploading';
-    restoreError = '';
-    restoreChecks = [];
-    try {
-      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey, null, { 'X-Dockmesh-Setup': '1' });
-      if (!res.restarting) {
-        restoreError = res.error ?? res.sanity?.summary ?? m.setup_restore_checks_failed();
-        restoreChecks = res.sanity?.checks ?? [];
-        restorePhase = 'idle';
-        return;
-      }
-    } catch (err) {
-      restoreError = err instanceof Error ? err.message : String(err);
-      restorePhase = 'idle';
-      return;
-    }
-    restorePhase = 'restarting';
-    if (await waitForRestart()) {
-      window.location.href = '/login';
-    } else {
-      restorePhase = 'stuck';
-    }
-  }
-
-  let step = $state<Step>(1);
-  const head = $derived.by(() => {
-    if (step !== 7) return HEADERS[step];
-    if (installFailed) return { title: m.setup_failed_title(), sub: m.setup_failed_sub() };
-    if (credsRevealed) return { title: m.setup_installed_title(), sub: m.setup_installed_sub() };
-    return HEADERS[7];
-  });
-  let completed = $state<Set<Step>>(new Set());
-
-  // Where install.sh puts the env file and the systemd unit points.
-  let dataDir = $state('/var/lib/dockmesh');
-  // recommended: the `dockmesh` user install.sh created (no input);
-  // existing: another system user, checked against /etc/passwd;
-  // new: a user the commit creates under a free name.
-  let svcMode = $state<'recommended' | 'existing' | 'new'>('recommended');
-  let svcExistingUser = $state('');
-  let svcNewUser = $state('');
-  let svcAddToDocker = $state(true);
-  // Fixed so it always matches the user install.sh created.
-  const RECOMMENDED_USER = 'dockmesh';
-
-  let adminUsername = $state('admin');
-  let adminPassword = $state('');
-  let adminEmail = $state('');
-  let adminShowPassword = $state(false);
-
-  // Replaced on mount by the origin the browser used to reach the wizard,
-  // which the connection test can always reach.
-  let publicUrl = $state('http://localhost:8080');
-
-  let installing = $state(false);
-  let installMsg = $state('');
-
-  // ----- Step 1: preflight --------------------------------------------------
-  type PreflightCheck = {
-    key: string;
-    label: string;
-    value: string;
-    status: 'ok' | 'warn' | 'fail';
-    message?: string;
-    hint?: string;
-  };
-  let preflightChecks = $state<PreflightCheck[]>([]);
-  let preflightLoading = $state(true);
-  let preflightError = $state<string | null>(null);
-  const preflightHasFail = $derived(preflightChecks.some((c) => c.status === 'fail'));
-  const preflightWarnings = $derived(preflightChecks.filter((c) => c.status === 'warn'));
-
-  async function loadPreflight() {
-    preflightLoading = true;
-    preflightError = null;
-    try {
-      const r = await fetch('/api/v1/setup/preflight');
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
-      preflightChecks = data.checks ?? [];
-    } catch (e) {
-      preflightError = e instanceof Error ? e.message : String(e);
-    } finally {
-      preflightLoading = false;
-    }
-  }
-
-  // ----- Header: live server info -------------------------------------------
-  let serverInfo = $state<{ version: string; os: string; ip: string; docker_version: string; uptime_secs: number; tls_fingerprint?: string } | null>(null);
-  let serverInfoTimer: ReturnType<typeof setInterval> | null = null;
-
-  async function loadServerInfo() {
-    try {
-      const r = await fetch('/api/v1/setup/server-info');
-      // The session ends with the code, or when the code is entered in
-      // another browser.
-      if (r.status === 401 && !installing) {
-        await refreshGate();
-        return;
-      }
-      if (!r.ok) return;
-      serverInfo = await r.json();
-    } catch { /* keep the last value */ }
-  }
-
-  // ----- Step 2: data dir, validated 250 ms after typing stops -------------
-  let dataDirStatus = $state<{ kind: 'ok' | 'warn' | 'fail'; text: string }>({
-    kind: 'fail',
-    text: m.setup_path_required()
-  });
-  let dataDirDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  async function validateDataDirRemote(path: string) {
-    try {
-      const r = await fetch('/api/v1/setup/validate-data-dir', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
-        body: JSON.stringify({ path })
-      });
-      if (!r.ok) {
-        dataDirStatus = { kind: 'fail', text: m.setup_validation_failed_http({ status: r.status }) };
-        return;
-      }
-      const d = await r.json();
-      dataDirStatus = { kind: d.status, text: d.message };
-    } catch (e) {
-      dataDirStatus = {
-        kind: 'fail',
-        text: m.setup_validation_failed({ error: e instanceof Error ? e.message : String(e) })
-      };
-    }
-  }
-
-  $effect(() => {
-    const path = dataDir;
-    if (dataDirDebounce) clearTimeout(dataDirDebounce);
-    if (!path || path.trim() === '') {
-      dataDirStatus = { kind: 'fail', text: m.setup_path_required() };
-      return;
-    }
-    dataDirDebounce = setTimeout(() => validateDataDirRemote(path), 250);
+  // ----- Theme: follows the system, or the choice stored by the app ---------
+  onMount(() => {
+    const stored = localStorage.getItem('dockmesh.theme');
+    const theme = stored === 'light' || stored === 'dark'
+      ? stored
+      : window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme;
   });
 
-  // ----- Step 3: service user, validated 250 ms after typing stops ---------
-  let svcCheck = $state<{ kind: 'ok' | 'warn' | 'fail' | 'idle'; text: string }>({
-    kind: 'idle',
-    text: ''
-  });
-  let svcDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  async function validateUserRemote(mode: 'existing' | 'new', username: string) {
-    try {
-      const r = await fetch('/api/v1/setup/validate-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
-        body: JSON.stringify({ mode: mode === 'new' ? 'create' : 'existing', username })
-      });
-      if (!r.ok) {
-        svcCheck = { kind: 'fail', text: m.setup_validation_failed_http({ status: r.status }) };
-        return;
-      }
-      const d = await r.json();
-      svcCheck = { kind: d.status, text: d.message };
-    } catch (e) {
-      svcCheck = { kind: 'fail', text: m.setup_validation_failed({ error: e instanceof Error ? e.message : String(e) }) };
-    }
-  }
-
-  $effect(() => {
-    const mode = svcMode;
-    let name: string;
-    let backendMode: 'existing' | 'new';
-    if (mode === 'recommended') {
-      name = RECOMMENDED_USER;
-      backendMode = 'existing';
-    } else if (mode === 'existing') {
-      name = svcExistingUser.trim();
-      backendMode = 'existing';
-    } else {
-      name = svcNewUser.trim();
-      backendMode = 'new';
-    }
-    if (svcDebounce) clearTimeout(svcDebounce);
-    if (!name) {
-      svcCheck = { kind: 'idle', text: '' };
-      return;
-    }
-    svcDebounce = setTimeout(() => validateUserRemote(backendMode, name), 250);
-  });
-
-  const svcBlockNext = $derived.by(() => {
-    if (svcMode === 'recommended') return svcCheck.kind === 'fail' || svcCheck.kind === 'idle';
-    if (svcMode === 'existing') return svcExistingUser.trim().length === 0 || svcCheck.kind === 'fail' || svcCheck.kind === 'idle';
-    return svcNewUser.trim().length === 0 || svcCheck.kind === 'fail' || svcCheck.kind === 'idle';
-  });
-
-  // ----- Step 4: admin --------------------------------------------------------
-  function scorePassword(pw: string): { score: number; label: string } {
-    if (!pw) return { score: 0, label: '—' };
-    let s = 0;
-    if (pw.length >= 12) s++;
-    if (pw.length >= 16) s++;
-    if (/[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw)) s++;
-    if (/[^A-Za-z0-9]/.test(pw) && pw.length >= 12) s++;
-    s = Math.min(4, s);
-    return { score: s, label: ['—', m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][s] };
-  }
-  const strength = $derived(scorePassword(adminPassword));
-  const adminBlockNext = $derived(adminUsername.trim().length === 0 || adminPassword.length < MIN_PASSWORD_LENGTH);
-
-  function generatePassword() {
-    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*';
-    const arr = new Uint32Array(18);
-    crypto.getRandomValues(arr);
-    let out = '';
-    for (let i = 0; i < 18; i++) out += chars[arr[i] % chars.length];
-    adminPassword = out;
-    adminShowPassword = true;
-  }
-
-  // ----- Step 5: public URL ---------------------------------------------------
-  let urlTest = $state<{ state: 'idle' | 'loading' | 'ok' | 'fail'; ms?: number; reason?: string }>({ state: 'idle' });
-  const urlBlockNext = $derived.by(() => {
-    try { new URL(publicUrl); return false; } catch { return true; }
-  });
-  async function runUrlTest() {
-    urlTest = { state: 'loading' };
-    try {
-      const r = await fetch('/api/v1/setup/test-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
-        body: JSON.stringify({ url: publicUrl, expect_health: true })
-      });
-      if (!r.ok) {
-        urlTest = { state: 'fail', reason: 'HTTP ' + r.status };
-        return;
-      }
-      const d = await r.json();
-      if (d.status === 'ok') urlTest = { state: 'ok', ms: d.latency_ms ?? 0 };
-      else urlTest = { state: 'fail', reason: d.message ?? m.setup_unreachable() };
-    } catch (e) {
-      urlTest = { state: 'fail', reason: e instanceof Error ? e.message : String(e) };
-    }
-  }
-  $effect(() => { if (publicUrl) urlTest = { state: 'idle' }; });
-
-  // ----- Navigation -----------------------------------------------------------
-  function goNext() {
-    if (!completed.has(step)) completed = new Set([...completed, step]);
-    if (step < 7) step = (step + 1) as Step;
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }
-  function goBack() {
-    if (step > 1) step = (step - 1) as Step;
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }
-  function jumpTo(n: Step) {
-    step = n;
-    completed = new Set(Array.from(completed).filter((x) => x < n));
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }
-
-  // ?step=N keeps the operator on the same step across a reload.
-  $effect(() => {
-    const u = new URL(window.location.href);
-    u.searchParams.set('step', String(step));
-    history.replaceState(null, '', u.toString());
-  });
-
-  // ----- Step 6 → install, streamed over SSE ---------------------------------
-  type StreamEvent = { ts: string; step: string; message: string; status: string };
-  let streamLines = $state<StreamEvent[]>([]);
-  let installFailed = $state<string | null>(null);
-  let eventSource: EventSource | null = null;
-
-  async function runInstall() {
-    installing = true;
-    installMsg = m.setup_submitting();
-    streamLines = [];
-    installFailed = null;
-    try {
-      const r = await fetch('/api/v1/setup/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
-        body: JSON.stringify({
-          data_dir: dataDir,
-          service_user: {
-            mode: svcMode === 'new' ? 'create' : 'existing',
-            username:
-              svcMode === 'recommended' ? RECOMMENDED_USER
-              : svcMode === 'new' ? svcNewUser.trim()
-              : svcExistingUser.trim(),
-            add_to_docker_group: svcMode === 'new' && svcAddToDocker
-          },
-          admin: {
-            username: adminUsername,
-            password: adminPassword,
-            email: adminEmail
-          },
-          public_url: publicUrl
-        })
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        installing = false;
-        installMsg = '';
-        installFailed = body?.error ?? `HTTP ${r.status}`;
-        return;
-      }
-      const { run_id, stream_url } = await r.json();
-      // Setup ends with the install, and the wizard endpoints with it.
-      if (serverInfoTimer) clearInterval(serverInfoTimer);
-      serverInfoTimer = null;
-      completed = new Set([1, 2, 3, 4, 5, 6]);
-      step = 7;
-      window.scrollTo({ top: 0, behavior: 'instant' });
-      subscribeToStream(stream_url || `/api/v1/setup/stream/${run_id}`);
-    } catch (e) {
-      installing = false;
-      installMsg = '';
-      installFailed = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  function subscribeToStream(url: string) {
-    if (eventSource) eventSource.close();
-    eventSource = new EventSource(url);
-    eventSource.addEventListener('line', (ev) => {
-      try {
-        const data: StreamEvent = JSON.parse((ev as MessageEvent).data);
-        streamLines = [...streamLines, data];
-        if (data.status === 'fail') installFailed = data.message;
-      } catch { /* ignore malformed frame */ }
-    });
-    eventSource.addEventListener('end', async () => {
-      eventSource?.close();
-      eventSource = null;
-      // A new install restarts on the config setup wrote; the login
-      // only works once it is back.
-      if (!installFailed && streamLines.some((l) => l.step === 'restart' && l.status === 'ok')) {
-        installMsg = m.setup_restarting();
-        if (!(await waitForRestart())) installFailed = m.setup_restart_timeout();
-      }
-      installing = false;
-      installMsg = '';
-      // A failed install shows its error instead of the credentials.
-      if (!installFailed) credsRevealed = true;
-    });
-    eventSource.onerror = () => {
-      eventSource?.close();
-      eventSource = null;
-      installing = false;
-      installMsg = '';
-      if (!installFailed && streamLines.length === 0) {
-        installFailed = m.setup_stream_lost();
-      }
-    };
-  }
-  onDestroy(() => { if (eventSource) eventSource.close(); });
-
-  // ----- Step 7: credentials --------------------------------------------------
-  let credsRevealed = $state(false);
-  let copiedKey = $state<string | null>(null);
-  let credShowPw = $state(false);
-  function copyToClipboard(key: string, value: string) {
-    void clipboardCopy(value);
-    copiedKey = key;
-    setTimeout(() => { if (copiedKey === key) copiedKey = null; }, 1400);
-  }
-
-  const svcSummary = $derived(
-    svcMode === 'recommended'
-      ? m.setup_svc_recommended({ user: RECOMMENDED_USER })
-      : svcMode === 'new'
-        ? (svcAddToDocker ? m.setup_svc_new_docker({ user: svcNewUser }) : m.setup_svc_new({ user: svcNewUser }))
-        : svcExistingUser || '—'
-  );
-
-  // ----- Setup code: nothing of the wizard loads before it ----------------
+  // ----- Gate: the code screen and the states without a session -------------
   type CodeState = 'no_code' | 'ready' | 'expired' | 'locked';
-  let gate = $state<'checking' | 'code' | 'open'>('checking');
-  let codeState = $state<CodeState>('ready');
-  let sessionReplaced = $state(false);
+  type Gate = 'checking' | 'code' | 'expired' | 'locked' | 'no_code' | 'replaced' | 'wizard';
+  let gate = $state<Gate>('checking');
   let codeInput = $state('');
   let codeFromLink = $state(false);
   let codeError = $state<string | null>(null);
@@ -458,8 +60,6 @@
   let codeHelpOpen = $state(false);
   let wizardStarted = false;
 
-  // Returns true when this browser holds a setup session. Setup may also
-  // have finished meanwhile (restart, bookmark): then go to the dashboard.
   async function refreshGate(): Promise<boolean> {
     let st: { active?: boolean; code?: CodeState; session?: string } | null = null;
     try {
@@ -469,569 +69,1381 @@
       /* show the code form; entering the code reports the real state */
     }
     if (st && !st.active) {
-      window.location.replace('/');
+      window.location.replace('/login');
       return false;
     }
     if (st?.session === 'valid' || st?.session === 'read_only') {
-      gate = 'open';
+      gate = 'wizard';
       return true;
     }
-    codeState = st?.code ?? 'ready';
-    sessionReplaced = st?.session === 'replaced';
-    gate = 'code';
+    if (st?.session === 'replaced') gate = 'replaced';
+    else if (st?.code === 'expired') gate = 'expired';
+    else if (st?.code === 'locked') gate = 'locked';
+    else if (st?.code === 'no_code') gate = 'no_code';
+    else gate = 'code';
     return false;
   }
 
+  /** A setup endpoint answered 401: the session ended, show why. */
+  async function sessionLost() {
+    if (applying) return;
+    stopServerInfo();
+    wizardStarted = false;
+    await refreshGate();
+  }
+
+  function codeFieldError(): string | null {
+    if (!codeFormatOK(codeInput)) return m.sw_code_err_format();
+    return null;
+  }
+
   async function submitCode() {
+    codeError = codeFieldError();
+    if (codeError) return;
     codeBusy = true;
-    codeError = null;
     try {
       const r = await fetch('/api/v1/setup/code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
-        body: JSON.stringify({ code: codeInput })
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ code: normalizeCode(codeInput) })
       });
       if (r.status === 204) {
         codeInput = '';
-        sessionReplaced = false;
-        gate = 'open';
+        codeFromLink = false;
+        gate = 'wizard';
         startWizard();
         return;
       }
       const b = await r.json().catch(() => ({}));
-      if (b.code_state) codeState = b.code_state;
       if (r.status === 429) {
-        codeError = m.setup_code_rate_limited({ minutes: Math.max(1, Math.ceil((b.retry_after_secs ?? 60) / 60)) });
+        codeError = m.sw_code_err_rate({ minutes: Math.max(1, Math.ceil((b.retry_after_secs ?? 60) / 60)) });
       } else if (r.status === 401) {
-        codeError = m.setup_code_wrong({ n: b.attempts_left ?? 0 });
-      } else if (r.status === 410 && !b.code_state) {
-        window.location.replace('/');
-      } else if (r.status === 400 || r.status === 403) {
-        codeError = m.setup_code_format();
+        codeError = m.sw_code_err_wrong({ n: b.attempts_left ?? 0 });
+      } else if (b.code_state === 'expired') {
+        gate = 'expired';
+      } else if (b.code_state === 'locked') {
+        gate = 'locked';
+      } else if (b.code_state === 'no_code') {
+        gate = 'no_code';
+      } else if (r.status === 410) {
+        window.location.replace('/login');
+      } else {
+        codeError = m.sw_error_banner({ message: b.error ?? `HTTP ${r.status}` });
       }
     } catch (e) {
-      codeError = e instanceof Error ? e.message : String(e);
+      codeError = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
     } finally {
       codeBusy = false;
     }
   }
 
-  function retryCode() {
+  function backToCode() {
     codeError = null;
-    codeState = 'ready';
-    sessionReplaced = false;
+    gate = 'code';
   }
 
   onMount(async () => {
-    // The link the server prints carries the code in the fragment, which
-    // never reaches the server. Fill the field, drop it from the address
-    // bar, and wait for Continue: opening the link again must not take
+    // The installer link carries the code after `#`, which never reaches
+    // the server. Take it into the field, drop it from the address bar at
+    // once and wait for Continue: opening the link again must not take
     // over a running setup.
-    const fragment = window.location.hash.slice(1);
-    if (fragment) {
-      codeInput = decodeURIComponent(fragment);
-      codeFromLink = true;
-      history.replaceState(history.state, '', window.location.pathname + window.location.search);
-    }
+    takeFragment();
+    window.addEventListener('hashchange', takeFragment);
     if (await refreshGate()) startWizard();
   });
+  onDestroy(() => window.removeEventListener('hashchange', takeFragment));
+
+  function takeFragment() {
+    if (!window.location.hash) return;
+    const code = codeFromFragment(window.location.hash);
+    history.replaceState(history.state, '', window.location.pathname + window.location.search);
+    if (code) {
+      codeInput = code;
+      codeFromLink = true;
+      codeError = null;
+    }
+  }
+
+  // ----- Server info: header line, fingerprint, session liveness -----------
+  type ServerInfo = { version: string; os: string; arch?: string; ip: string; docker_version: string; tls_fingerprint?: string; fresh?: boolean };
+  let serverInfo = $state<ServerInfo | null>(null);
+  // A 0.5.x install whose setup never finished commits through the old
+  // path: its data dir and listener stay as they are and it does not
+  // restart.
+  const legacy = $derived(serverInfo !== null && serverInfo.fresh === false);
+  let serverInfoTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function loadServerInfo() {
+    try {
+      const r = await fetch('/api/v1/setup/server-info');
+      if (r.status === 401) return sessionLost();
+      if (r.ok) serverInfo = await r.json();
+    } catch {
+      /* keep the last value */
+    }
+  }
+  function stopServerInfo() {
+    if (serverInfoTimer) clearInterval(serverInfoTimer);
+    serverInfoTimer = null;
+  }
+  onDestroy(stopServerInfo);
 
   function startWizard() {
     if (wizardStarted) return;
     wizardStarted = true;
-    const param = new URLSearchParams(window.location.search).get('step');
-    const n = parseInt(param || '1', 10);
-    if (Number.isFinite(n) && n >= 1 && n <= 7) {
-      step = n as Step;
-      const arr: Step[] = [];
-      for (let i = 1; i < n; i++) arr.push(i as Step);
-      completed = new Set(arr);
-    }
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      publicUrl = window.location.origin;
-    }
+    baseURL = window.location.origin;
+    webPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    if (webPort === '443' || webPort === '80') webPort = '8080';
+    if (step === 'W1') step = 'W2';
     loadServerInfo();
     serverInfoTimer = setInterval(loadServerInfo, 10_000);
-    loadPreflight();
   }
-  onDestroy(() => {
-    if (serverInfoTimer) clearInterval(serverInfoTimer);
+
+  // ----- Steps ----------------------------------------------------------------
+  let step = $state<StepId>('W1');
+  let path = $state<SetupPath | null>(null);
+  let choice = $state<SetupPath>('new');
+  let banner = $state<string | null>(null);
+
+  const steps = $derived(pathSteps(path));
+  const idx = $derived(steps.indexOf(step));
+  const early = $derived(isEarly(step));
+  const railSteps = $derived(early ? steps.slice(0, 2) : steps);
+
+  function stepName(id: StepId): string {
+    switch (id) {
+      case 'W1': return m.sw_step_code();
+      case 'W2': return m.sw_step_start();
+      case 'N1': return m.sw_step_admin();
+      case 'N2': return m.sw_step_data();
+      case 'N3': return m.sw_step_address();
+      case 'N4': return m.sw_step_proxy();
+      case 'N5': return m.sw_step_notifications();
+      case 'N6': return m.sw_step_review();
+      case 'R2': return m.sw_step_backup();
+      case 'N7': case 'R3': return m.sw_step_apply();
+    }
+  }
+
+  async function go(id: StepId) {
+    banner = null;
+    step = id;
+    await tick();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.getElementById('step-title')?.focus();
+  }
+  function next() {
+    if (idx >= 0 && idx < steps.length - 1) go(steps[idx + 1]);
+  }
+  function back() {
+    if (idx > 0) go(steps[idx - 1]);
+  }
+
+  function chooseAndContinue() {
+    path = choice;
+    next();
+  }
+
+  // ----- N1 admin -------------------------------------------------------------
+  let username = $state('admin');
+  let email = $state('');
+  let password = $state('');
+  let repeat = $state('');
+  let showPassword = $state(false);
+  let generated = $state<string | null>(null);
+  let copied = $state<string | null>(null);
+  let touched = $state<Record<string, boolean>>({});
+  let triedNext = $state<Record<string, boolean>>({});
+
+  const strength = $derived(passwordStrength(password));
+  const strengthLabel = $derived(
+    [m.sw_strength_none(), m.account_strength_weak(), m.setup_strength_ok(), m.account_strength_good(), m.account_strength_strong()][strength]
+  );
+
+  function adminErrors() {
+    return {
+      username: usernameError(username) ? m.sw_admin_err_username() : null,
+      email: emailError(email.trim()) ? m.sw_admin_err_email() : null,
+      password: (() => {
+        const e = passwordError(password, username, MIN_PASSWORD_LENGTH);
+        if (e === 'password_short') return m.sw_admin_err_password({ n: MIN_PASSWORD_LENGTH });
+        if (e === 'password_is_username') return m.sw_admin_err_password_username();
+        return null;
+      })(),
+      repeat: repeatError(password, repeat) ? m.sw_admin_err_repeat() : null
+    };
+  }
+  const adminErr = $derived(adminErrors());
+  const show = (k: string, s: string) => touched[k] || triedNext[s];
+
+  function adminNext() {
+    triedNext = { ...triedNext, N1: true };
+    if (Object.values(adminErr).some(Boolean)) return;
+    next();
+  }
+
+  function generate() {
+    generated = generatePassword();
+    password = generated;
+    repeat = generated;
+    showPassword = true;
+  }
+
+  function copy(key: string, value: string) {
+    void copyToClipboard(value);
+    copied = key;
+    setTimeout(() => { if (copied === key) copied = null; }, 1400);
+  }
+
+  // ----- N2 data directory ----------------------------------------------------
+  type DirCheck = {
+    path: string;
+    status: 'ok' | 'warn' | 'fail';
+    issue?: string;
+    message: string;
+    will_create: boolean;
+    empty: boolean;
+    fs_type?: string;
+    free_bytes: number;
+  };
+  let dataDir = $state('/var/lib/dockmesh');
+  let dirCheck = $state<DirCheck | null>(null);
+  let dirChecking = $state(false);
+  let dirCheckFor = $state('');
+  let disks = $state<Disk[]>([]);
+  let disksLoaded = false;
+
+  async function loadDisks() {
+    if (disksLoaded) return;
+    try {
+      const r = await fetch('/api/v1/setup/disks');
+      if (r.status === 401) return sessionLost();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      disks = (await r.json()).disks ?? [];
+      disksLoaded = true;
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function checkDir(): Promise<boolean> {
+    const p = dataDir.trim();
+    if (dirCheckFor === p && dirCheck) return dirCheck.status !== 'fail';
+    dirChecking = true;
+    try {
+      const r = await fetch('/api/v1/setup/validate-data-dir', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ path: p })
+      });
+      if (r.status === 401) {
+        await sessionLost();
+        return false;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      dirCheck = await r.json();
+      dirCheckFor = p;
+      return dirCheck!.status !== 'fail';
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+      return false;
+    } finally {
+      dirChecking = false;
+    }
+  }
+
+  function useDisk(p: string) {
+    dataDir = p;
+    void checkDir();
+  }
+
+  async function dataNext() {
+    if (legacy || (await checkDir())) next();
+  }
+
+  function dirIssueText(c: DirCheck): string {
+    const p = c.path;
+    switch (c.issue) {
+      case 'not_absolute': return m.sw_dir_err_absolute();
+      case 'bad_characters': return m.sw_dir_err_characters();
+      case 'system_dir': return m.sw_dir_err_system({ path: p });
+      case 'inside_docker': return m.sw_dir_err_docker();
+      case 'existing_install': return m.sw_dir_err_existing({ path: p });
+      case 'not_empty': return m.sw_dir_err_not_empty({ path: p });
+      case 'network_share': return m.sw_dir_err_network({ path: p, fs: c.fs_type ?? '' });
+      case 'no_unix_permissions': return m.sw_dir_err_no_unix({ path: p, fs: c.fs_type ?? '' });
+      case 'too_small': return m.sw_dir_err_small({ n: Math.floor(c.free_bytes / 1048576), path: p });
+      case 'low_space': return m.sw_dir_warn_low({ n: (c.free_bytes / 1073741824).toFixed(1) });
+      case 'not_a_directory': return m.sw_dir_err_file({ path: p });
+      case 'no_parent': return m.sw_dir_err_no_parent({ path: p.replace(/\/[^/]+$/, '') || '/' });
+      case 'unsafe_parent': return m.sw_dir_err_unsafe_parent({ path: p.replace(/\/[^/]+$/, '') || '/' });
+      case 'symlink': return m.sw_dir_err_symlink({ path: p });
+      case 'foreign_owner': return m.sw_dir_err_foreign({ path: p });
+      default: return c.message;
+    }
+  }
+  const stacksDir = $derived(dataDir.trim().replace(/\/+$/, '') + '/stacks');
+  const dirCurrent = $derived(dirCheck && dirCheckFor === dataDir.trim() ? dirCheck : null);
+
+  $effect(() => {
+    if (step === 'N2' && !legacy) {
+      void loadDisks();
+      if (!dirCurrent) void checkDir();
+    }
   });
+
+  // ----- N3 address and TLS ---------------------------------------------------
+  let baseURL = $state('');
+  let webPort = $state('8080');
+  let tls = $state<TLSChoice>('internal');
+  let certFile = $state('');
+  let keyFile = $state('');
+  let listen = $state('127.0.0.1');
+  let urlTest = $state<{ state: 'idle' | 'busy' | 'ok' | 'fail'; ms?: number; reason?: string }>({ state: 'idle' });
+
+  $effect(() => {
+    void baseURL;
+    urlTest = { state: 'idle' };
+  });
+
+  function addressErrors() {
+    const u = legacy ? (baseURLError(baseURL.trim(), 'internal') === 'invalid' ? 'invalid' : null) : baseURLError(baseURL.trim(), tls);
+    const absolute = (f: string) => f.startsWith('/') && !/\s/.test(f);
+    return {
+      base: u === 'https_required' ? m.sw_addr_err_https() : u === 'proxy_url' ? m.sw_addr_err_proxy_url() : u ? m.sw_addr_err_url() : null,
+      port: legacy ? null : portError(webPort) ? m.sw_addr_err_port() : webPort === AGENT_PORT ? m.sw_addr_err_same_ports() : null,
+      cert: tls === 'file' && !absolute(certFile.trim()) ? m.sw_addr_err_file() : null,
+      key: tls === 'file' && !absolute(keyFile.trim()) ? m.sw_addr_err_file() : null,
+      listen: tls === 'proxy' && listenAddressError(listen.trim()) ? m.sw_addr_err_listen() : null
+    };
+  }
+  const addrErr = $derived(addressErrors());
+  const listenPublic = $derived(tls === 'proxy' && !addrErr.listen && !isLoopback(listen.trim()));
+  // The server trusts the bind address alone, and nobody for a wildcard.
+  const trustedProxies = $derived.by(() => {
+    const a = listen.trim();
+    if (/^[0.:]+$/.test(a)) return m.sw_n3_trusted_none();
+    return a.includes(':') ? `${a}/128` : `${a}/32`;
+  });
+
+  async function testURL() {
+    urlTest = { state: 'busy' };
+    try {
+      const r = await fetch('/api/v1/setup/test-url', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ url: baseURL.trim(), expect_health: true })
+      });
+      if (r.status === 401) return sessionLost();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      urlTest = d.status === 'ok'
+        ? { state: 'ok', ms: d.latency_ms ?? 0 }
+        : { state: 'fail', reason: d.message ?? '' };
+    } catch (e) {
+      urlTest = { state: 'fail', reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  function addressNext() {
+    triedNext = { ...triedNext, N3: true };
+    if (Object.values(addrErr).some(Boolean)) return;
+    next();
+  }
+
+  // ----- N6 review ------------------------------------------------------------
+  const tlsName = $derived(
+    { internal: m.sw_tls_internal(), file: m.sw_tls_file(), caddy: m.sw_tls_caddy(), proxy: m.sw_tls_proxy() }[tls]
+  );
+
+  // ----- N7 apply -------------------------------------------------------------
+  // The six rows of the progress list; root reports only the step that
+  // failed, so rows before it are done.
+  const PROGRESS_FAIL_ROW: Record<string, number> = {
+    values: 0, decide: 0, lock: 0, data_dir: 0,
+    materialize: 1, restore: 1,
+    check_config: 2,
+    config: 3, unit: 3,
+    restart: 4, start: 4,
+    health: 5
+  };
+  let applying = $state(false);
+  let applyRow = $state(0);
+  let applyFailRow = $state<number | null>(null);
+  let applyDetail = $state<string | null>(null);
+  let applyDone = $state(false);
+  let redirectIn = $state(3);
+  // Setup finished, but this browser could not reach the new address:
+  // show it instead of redirecting there.
+  let newOriginUnverified = $state(false);
+  let eventSource: EventSource | null = null;
+  onDestroy(() => eventSource?.close());
+
+  const targetURL = $derived(baseURL.trim().replace(/\/+$/, ''));
+
+  async function install() {
+    applying = true;
+    applyRow = 0;
+    applyFailRow = null;
+    applyDetail = null;
+    applyDone = false;
+    await go('N7');
+    try {
+      const r = await fetch('/api/v1/setup/commit', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({
+          data_dir: dataDir.trim(),
+          service_user: { mode: 'existing', username: 'dockmesh', add_to_docker_group: false },
+          admin: { username, email: email.trim(), password },
+          public_url: targetURL,
+          tls: legacy ? undefined : {
+            mode: tls,
+            http_addr: httpAddr(tls, listen.trim(), webPort),
+            cert_file: tls === 'file' ? certFile.trim() : undefined,
+            key_file: tls === 'file' ? keyFile.trim() : undefined
+          }
+        })
+      });
+      if (r.status === 401) {
+        applying = false;
+        return sessionLost();
+      }
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}));
+        return failApply(0, b.error ?? `HTTP ${r.status}`);
+      }
+      const { stream_url } = await r.json();
+      follow(stream_url);
+    } catch (e) {
+      failApply(0, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function failApply(row: number, detail: string) {
+    eventSource?.close();
+    eventSource = null;
+    applyRow = row;
+    applyFailRow = row;
+    applyDetail = detail;
+    applying = false;
+  }
+
+  function follow(url: string) {
+    eventSource?.close();
+    let restarting = false;
+    eventSource = new EventSource(url);
+    eventSource.addEventListener('line', (ev) => {
+      let d: { step: string; message: string; status: string };
+      try {
+        d = JSON.parse((ev as MessageEvent).data);
+      } catch {
+        return;
+      }
+      if (d.status === 'fail') return failApply(PROGRESS_FAIL_ROW[d.step] ?? 1, d.message);
+      if (d.step === 'restart' && d.status === 'ok') restarting = true;
+      else if (applyRow < 1) applyRow = 1;
+    });
+    eventSource.addEventListener('end', async () => {
+      eventSource?.close();
+      eventSource = null;
+      if (applyFailRow !== null) return;
+      if (!restarting && legacy) {
+        applyRow = 6;
+        applyDone = true;
+        applying = false;
+        return startRedirect();
+      }
+      if (!restarting) return failApply(4, m.sw_apply_no_restart());
+      if (await afterRestart()) startRedirect();
+    });
+    eventSource.onerror = () => {
+      if (eventSource?.readyState === EventSource.CLOSED && applyFailRow === null && !restarting) {
+        failApply(applyRow, m.sw_apply_stream_lost());
+      }
+    };
+  }
+
+  /** Follows the restart to its end; true when the server is up. */
+  async function afterRestart(): Promise<boolean> {
+    stopServerInfo();
+    applyRow = 4;
+    const outcome = await waitForServer();
+    if (outcome === 'timeout') {
+      failApply(5, m.sw_apply_not_back());
+      return false;
+    }
+    if (outcome === 'setup') {
+      failApply(4, m.sw_apply_rolled_back());
+      return false;
+    }
+    applyRow = 6;
+    applyDone = true;
+    applying = false;
+    newOriginUnverified = outcome === 'unverified';
+    return !newOriginUnverified;
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** Setup mode is back on this origin: the new configuration was rolled back. */
+  async function setupModeBack(): Promise<boolean> {
+    return (await setupStatus()) === 'active';
+  }
+
+  /** Setup status on this origin, 'unknown' when it does not answer. */
+  async function setupStatus(): Promise<'active' | 'done' | 'unknown'> {
+    try {
+      const r = await fetch('/api/v1/setup/status', { cache: 'no-store' });
+      if (!r.ok) return 'unknown';
+      return (await r.json()).active === true ? 'active' : 'done';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Waits until the restarted server answers. A restart can be quicker
+   * than one poll, so after FAST_RESTART_MS without seeing it go down the
+   * restart counts as done. A new origin cannot be read across origins;
+   * an opaque answer from it counts as "up".
+   */
+  const FAST_RESTART_MS = 15_000;
+  async function waitForServer(): Promise<'up' | 'unverified' | 'setup' | 'timeout'> {
+    const sameOrigin = targetURL === window.location.origin;
+    const started = Date.now();
+    let wentDown = false;
+    while (Date.now() - started < 180_000) {
+      await sleep(1000);
+      if (Date.now() - started > 3000) applyRow = 5;
+      const settled = wentDown || Date.now() - started > FAST_RESTART_MS;
+      if (sameOrigin) {
+        try {
+          const r = await fetch('/api/v1/health', { cache: 'no-store' });
+          if (!r.ok) {
+            wentDown = true;
+            continue;
+          }
+        } catch {
+          wentDown = true;
+          continue;
+        }
+        if (settled) return (await setupModeBack()) ? 'setup' : 'up';
+        continue;
+      }
+      try {
+        await fetch(`${targetURL}/api/v1/health`, { mode: 'no-cors', cache: 'no-store' });
+        if (settled) return 'up';
+      } catch {
+        wentDown = true;
+        // The new origin may serve a certificate this browser has not
+        // accepted yet; the old origin tells whether setup finished.
+        if (settled) {
+          const st = await setupStatus();
+          if (st === 'active') return 'setup';
+          if (st === 'done') return 'unverified';
+        }
+      }
+    }
+    return 'timeout';
+  }
+
+  function startRedirect() {
+    redirectIn = 3;
+    const t = setInterval(() => {
+      redirectIn -= 1;
+      if (redirectIn <= 0) {
+        clearInterval(t);
+        signIn();
+      }
+    }, 1000);
+  }
+  function signIn() {
+    window.location.href = `${targetURL}/login`;
+  }
+
+  const applyItems = $derived([
+    legacy ? m.sw_apply_prepare_legacy() : m.sw_apply_prepare({ path: dataDir.trim() }),
+    path === 'restore' ? m.sw_apply_restore() : m.sw_apply_database(),
+    m.sw_apply_check(),
+    m.sw_apply_write(),
+    m.sw_apply_restart(),
+    m.sw_apply_wait()
+  ].slice(0, legacy ? 2 : 6));
+
+  // ----- Restore (R2/R3) ------------------------------------------------------
+  let restoreFile = $state<File | null>(null);
+  let restoreKey = $state<File | null>(null);
+  let restoreError = $state<string | null>(null);
+
+  async function restore() {
+    if (!restoreFile) return;
+    restoreError = null;
+    applying = true;
+    applyRow = 0;
+    applyFailRow = null;
+    applyDone = false;
+    await go('R3');
+    try {
+      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey, null, { 'X-Dockmesh-Setup': '1' });
+      if (!res.restarting) {
+        applying = false;
+        restoreError = res.error ?? res.sanity?.summary ?? m.setup_restore_checks_failed();
+        return go('R2');
+      }
+    } catch (e) {
+      applying = false;
+      restoreError = e instanceof Error ? e.message : String(e);
+      return go('R2');
+    }
+    await afterRestart();
+  }
 </script>
 
 <svelte:head>
-  <title>{m.setup_h1_title()}</title>
+  <title>{m.sw_title()}</title>
 </svelte:head>
 
-{#snippet mark(kind: string)}
-  <span class="mk {kind}" aria-hidden="true">
-    {#if kind === 'ok'}<Check size={13} strokeWidth={2.4} />
-    {:else if kind === 'warn'}<TriangleAlert size={13} strokeWidth={2.2} />
-    {:else if kind === 'fail'}<X size={13} strokeWidth={2.4} />
-    {:else if kind === 'done'}<ArrowRight size={13} strokeWidth={2.2} />
-    {:else}<span class="bullet"></span>{/if}
-  </span>
+{#snippet cmd(text: string, key: string)}
+  <div class="cmd">
+    <span>{text}</span>
+    <button type="button" class="btn sm" onclick={() => copy(key, text)} aria-label={m.sw_copy()}>
+      {#if copied === key}<Check size={13} />{:else}<Copy size={13} />{/if}
+      {m.sw_copy()}
+    </button>
+  </div>
 {/snippet}
 
-{#snippet checkLine(kind: string, text: string)}
-  <div class="check {kind}" role="status">{@render mark(kind)}<span>{text}</span></div>
-{/snippet}
-
-{#snippet serverMeta()}
-  <span class="meta dm-num" aria-label={m.setup_aria_this_server()}>
-    <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
-    <span class="sep">·</span>
-    <span>{serverInfo?.ip ?? '—'}</span>
-    <span class="sep">·</span>
-    <span>docker {serverInfo?.docker_version ?? '—'}</span>
-  </span>
-{/snippet}
-
-<AuthShell width={760} footer={serverMeta}>
-  {#if gate === 'checking'}
-    <div class="col"><div class="dm-empty">{m.setup_checking_server()}</div></div>
-  {:else if gate === 'code'}
-    <div class="col">
-      {#if sessionReplaced}
-        <div class="head"><h1>{m.setup_code_replaced_title()}</h1><p>{m.setup_code_replaced_body()}</p></div>
-      {:else if codeState === 'expired'}
-        <div class="head"><h1>{m.setup_code_expired_title()}</h1><p>{m.setup_code_expired_body()}</p></div>
-      {:else if codeState === 'locked'}
-        <div class="head"><h1>{m.setup_code_locked_title()}</h1><p>{m.setup_code_locked_body()}</p></div>
-      {:else if codeState === 'no_code'}
-        <div class="head"><h1>{m.setup_code_none_title()}</h1><p>{m.setup_code_none_body()}</p></div>
-      {:else}
-        <div class="head"><h1>{m.setup_code_title()}</h1><p>{m.setup_code_sub()}</p></div>
-      {/if}
-      <section class="panel">
-        {#if sessionReplaced || codeState !== 'ready'}
-          <div class="cmd-line">
-            <span class="dm-mono">sudo dockmesh setup new-code</span>
-            <Button size="sm" variant="secondary" onclick={() => copyToClipboard('newcode', 'sudo dockmesh setup new-code')}>
-              {#if copiedKey === 'newcode'}<Check size={13} />{:else}<Copy size={13} />{/if}
-            </Button>
-          </div>
-          <div class="foot">
-            <span class="dm-sp"></span>
-            <Button variant="primary" onclick={retryCode}>{m.setup_code_have_new()}</Button>
-          </div>
-        {:else}
-          <form class="dm-field" onsubmit={(e) => { e.preventDefault(); submitCode(); }}>
-            <label for="setup-code">{m.setup_code_label()}</label>
-            <input id="setup-code" class="dm-input dm-mono code-input" placeholder="XXXX-XXXX-XXXX" bind:value={codeInput}
-              autocomplete="off" spellcheck="false" aria-invalid={codeError !== null} />
-            {#if codeError}
-              {@render checkLine('fail', codeError)}
-            {:else if codeFromLink}
-              <span class="hint">{m.setup_code_from_link()}</span>
-            {/if}
-            <div>
-              <button type="button" class="link" onclick={() => (codeHelpOpen = !codeHelpOpen)} aria-expanded={codeHelpOpen}>{m.setup_code_lost()}</button>
-              {#if codeHelpOpen}
-                <p class="note">{m.setup_code_lost_body_before()} <span class="dm-mono">sudo dockmesh setup new-code</span> {m.setup_code_lost_body_after()}</p>
-              {/if}
-            </div>
-            <div class="foot">
-              <span class="dm-sp"></span>
-              <Button variant="primary" type="submit" disabled={codeBusy || codeInput.trim() === ''}>{m.setup_continue()} <ArrowRight size={14} /></Button>
-            </div>
-          </form>
-        {/if}
-      </section>
+{#snippet head(title: string, text?: string)}
+  <div class="head">
+    <div class="hrow">
+      <div class="counter">
+        {#if early}{m.sw_counter_early({ n: idx + 1, name: stepName(step) })}{:else}{m.sw_counter({ n: idx + 1, total: steps.length, name: stepName(step) })}{/if}
+      </div>
+      <a class="docs" href={DOCS_BASE + DOCS[step]} target="_blank" rel="noopener noreferrer">{m.sw_docs()}</a>
     </div>
-  {:else}
+    {#if !early}
+      <div class="mbar" aria-hidden="true"><i style:width="{Math.round(((idx + 1) / steps.length) * 100)}%"></i></div>
+    {/if}
+    <h1 id="step-title" tabindex="-1">{title}</h1>
+    {#if text}<p>{text}</p>{/if}
+  </div>
+{/snippet}
+
+{#snippet fingerprint(fp: string)}
+  <div class="fp">{#each fingerprintLines(fp) as l (l)}<div>{l}</div>{/each}</div>
+{/snippet}
+
+{#snippet bannerBox()}
+  {#if banner}
+    <div class="callout bad" role="alert"><span class="ic">!</span><span>{banner}</span></div>
+  {/if}
+{/snippet}
+
+{#snippet stateScreen(kind: 'warn' | 'bad', icon: string, title: string, text: string, button: string)}
   <div class="col">
-    <nav aria-label={m.setup_aria_steps()}>
-      <ol class="stepper">
-        {#each STEPS as s (s.n)}
-          {@const done = completed.has(s.n) && step !== s.n}
-          {@const cur = step === s.n}
-          {@const reachable = (done || cur) && step !== 7 && !installing}
-          <li class:done class:on={cur}>
-            <button type="button" disabled={!reachable} aria-current={cur ? 'step' : undefined} onclick={() => reachable && jumpTo(s.n)}>
-              <span class="n">{#if done}<Check size={11} strokeWidth={3} />{:else}{s.n}{/if}</span>
-              <span class="l">{s.short}</span>
-            </button>
-          </li>
-        {/each}
-      </ol>
-    </nav>
-
     <div class="head">
-      <h1>{head.title}</h1>
-      <p>{head.sub}</p>
+      <div class="state-ic {kind}" aria-hidden="true">{icon}</div>
+      <h1>{title}</h1>
     </div>
-
     <section class="panel">
-      {#if step === 1}
-        <h2 class="dm-h2">{m.setup_this_server()}</h2>
-        {#if serverInfo?.tls_fingerprint}
-          <div class="callout fp" role="note">
-            <span>{m.setup_tls_fingerprint_hint()}</span>
-            <code class="dm-num">SHA-256 {serverInfo.tls_fingerprint}</code>
-          </div>
-        {/if}
-        {#if preflightLoading}
-          <div class="dm-empty">{m.setup_checking_server()}</div>
-        {:else if preflightError}
-          <div class="callout bad">
-            <span>{m.setup_check_failed({ error: preflightError })}</span>
-            <Button size="sm" variant="secondary" onclick={loadPreflight}><RotateCcw size={13} /> {m.setup_check_again()}</Button>
-          </div>
-        {:else}
-          <div class="dm-tbl">
-            {#each preflightChecks as c (c.key)}
-              <div class="dm-tr pf">
-                {@render mark(c.status)}
-                <span>{c.label}</span>
-                <span class="dm-num" class:warn={c.status === 'warn'} class:bad={c.status === 'fail'} title={c.value}>{c.value}</span>
-              </div>
-            {/each}
-          </div>
-          {#each preflightWarnings as w (w.key)}
-            {#if w.message || w.hint}
-              <p class="note">
-                <b class="warn-t">{w.label}:</b>
-                {w.message ?? ''}
-                {#if w.hint}<a href={w.hint} target="_blank" rel="noopener">{w.hint}</a>{/if}
-              </p>
-            {/if}
-          {/each}
-          {#if preflightHasFail}
-            <p class="note bad-t">{m.setup_fix_failed()}</p>
-          {/if}
-        {/if}
-
-        <div class="foot">
-          <Button variant="ghost" size="sm" onclick={() => (restoreOpen = !restoreOpen)} aria-expanded={restoreOpen}>
-            {m.setup_restore_instead()}
-          </Button>
-          <span class="dm-sp"></span>
-          {#if !preflightLoading && !preflightError}
-            <Button variant="ghost" size="sm" onclick={loadPreflight}><RotateCcw size={13} /> {m.setup_check_again()}</Button>
-          {/if}
-          <Button variant="primary" onclick={goNext} disabled={preflightHasFail || preflightLoading}>
-            {m.setup_begin()} <ArrowRight size={14} />
-          </Button>
-        </div>
-
-        {#if restoreOpen}
-          <div class="restore">
-            <h2 class="dm-h2">{m.setup_restore_title()}</h2>
-            <p class="hint">
-              {m.setup_restore_hint()}
-            </p>
-            <div class="dm-field">
-              <label for="rs-file">{m.setup_restore_file()}</label>
-              <input id="rs-file" class="file" type="file" accept=".gz,.age,.tar" onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-            </div>
-            <div class="dm-field">
-              <label for="rs-key">{m.setup_restore_key()}</label>
-              <input id="rs-key" class="file" type="file" accept=".txt,.key" onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-              <span class="hint">{m.setup_restore_key_hint()}</span>
-            </div>
-            {#if restoreError}
-              <div class="callout bad" role="alert">
-                <div>
-                  <div>{restoreError}</div>
-                  {#each restoreChecks.filter((c) => c.status === 'fail') as c (c.name)}
-                    <div>{c.name}: {c.message ?? ''}</div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-            {#if restorePhase === 'restarting'}
-              <p class="note">{m.setup_restoring()}</p>
-            {:else if restorePhase === 'stuck'}
-              <div class="callout bad" role="alert">{m.setup_restore_stuck()}</div>
-            {:else}
-              <div>
-                <Button variant="primary" size="sm" onclick={restoreFromBackup} disabled={!restoreFile} loading={restorePhase === 'uploading'}>
-                  {restorePhase === 'uploading' ? m.setup_checking_backup() : m.setup_restore()}
-                </Button>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-      {:else if step === 2}
-        <div class="dm-field">
-          <label for="data-dir">{m.setup_data_dir()}</label>
-          <input id="data-dir" class="dm-input dm-mono" bind:value={dataDir} spellcheck="false" autocomplete="off" aria-invalid={dataDirStatus.kind === 'fail'} />
-          {@render checkLine(dataDirStatus.kind, dataDirStatus.text)}
-          <span class="hint">{m.setup_data_dir_hint()}</span>
-        </div>
-        <div class="dm-field">
-          <span class="lbl">{m.setup_common_locations()}</span>
-          <div class="presets">
-            <button type="button" class="preset" class:on={dataDir === '/var/lib/dockmesh'} onclick={() => (dataDir = '/var/lib/dockmesh')}>
-              <span class="dm-mono">/var/lib/dockmesh</span><small>{m.setup_loc_linux()}</small>
-            </button>
-            <button type="button" class="preset" class:on={dataDir === '/usr/local/var/dockmesh'} onclick={() => (dataDir = '/usr/local/var/dockmesh')}>
-              <span class="dm-mono">/usr/local/var/dockmesh</span><small>{m.setup_loc_macos()}</small>
-            </button>
-          </div>
-        </div>
-        <div class="foot">
-          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
-          <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={dataDirStatus.kind === 'fail'}>{m.setup_continue()}</Button>
-        </div>
-
-      {:else if step === 3}
-        <div class="choices" role="radiogroup" aria-label={m.setup_aria_service_user()}>
-          <label class="radio-card" class:on={svcMode === 'recommended'}>
-            <input type="radio" name="svc-mode" checked={svcMode === 'recommended'} onchange={() => (svcMode = 'recommended')} />
-            <div class="rc-b">
-              <div class="rc-t">{m.setup_rec_before()} <span class="dm-mono">dockmesh</span> {m.setup_rec_after()} <StatusChip tone="acc" label={m.setup_recommended()} /></div>
-              <div class="hint">{m.setup_rec_hint_before()} <span class="dm-mono">docker</span>{m.setup_rec_hint_after()}</div>
-              {#if svcMode === 'recommended' && svcCheck.kind !== 'idle' && svcCheck.text}
-                {@render checkLine(svcCheck.kind, svcCheck.text)}
-              {/if}
-            </div>
-          </label>
-
-          <label class="radio-card" class:on={svcMode === 'existing'}>
-            <input type="radio" name="svc-mode" checked={svcMode === 'existing'} onchange={() => (svcMode = 'existing')} />
-            <div class="rc-b">
-              <div class="rc-t">{m.setup_existing_title()}</div>
-              <div class="hint">{m.setup_existing_hint_before()} <span class="dm-mono">ops</span> {m.setup_existing_hint_or()} <span class="dm-mono">deploy</span>.</div>
-              {#if svcMode === 'existing'}
-                <div class="dm-field sub">
-                  <label for="existing-user">{m.setup_username()}</label>
-                  <input id="existing-user" class="dm-input dm-mono" placeholder="ops" bind:value={svcExistingUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
-                  {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
-                  <span class="hint">
-                    {m.setup_existing_groups_before()}
-                    <span class="dm-mono">docker</span>{m.setup_existing_groups_after()}
-                    <span class="dm-mono">sudo usermod -aG docker {svcExistingUser.trim() || '<user>'}</span>.
-                  </span>
-                </div>
-              {/if}
-            </div>
-          </label>
-
-          <label class="radio-card" class:on={svcMode === 'new'}>
-            <input type="radio" name="svc-mode" checked={svcMode === 'new'} onchange={() => (svcMode = 'new')} />
-            <div class="rc-b">
-              <div class="rc-t">{m.setup_new_title()}</div>
-              <div class="hint">{m.setup_new_hint_before()} <span class="dm-mono">dockmesh</span>{m.setup_new_hint_after()}</div>
-              {#if svcMode === 'new'}
-                <div class="dm-field sub">
-                  <label for="new-user">{m.setup_username()}</label>
-                  <input id="new-user" class="dm-input dm-mono" placeholder="dockermaster" bind:value={svcNewUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
-                  {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
-                  <span class="hint">{m.setup_new_uid_hint()}</span>
-                </div>
-                <label class="cb">
-                  <input type="checkbox" bind:checked={svcAddToDocker} />
-                  <span>{m.setup_add_docker_before()} <span class="dm-mono">docker</span>{m.setup_add_docker_after()} <span class="hint">{m.setup_add_docker_hint()}</span></span>
-                </label>
-              {/if}
-            </div>
-          </label>
-        </div>
-        <div class="foot">
-          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
-          <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={svcBlockNext}>{m.setup_continue()}</Button>
-        </div>
-
-      {:else if step === 4}
-        <div class="dm-field">
-          <label for="admin-user">{m.setup_username()}</label>
-          <input id="admin-user" class="dm-input dm-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
-          <span class="hint">{m.setup_admin_hint()}</span>
-        </div>
-        <div class="dm-field">
-          <div class="lbl-row">
-            <label for="admin-pw">{m.setup_password()}</label>
-            <button type="button" class="link" onclick={generatePassword}>{m.setup_generate_password()}</button>
-          </div>
-          <div class="pw">
-            <input id="admin-pw" type={adminShowPassword ? 'text' : 'password'} class="dm-input dm-mono" bind:value={adminPassword} autocomplete="new-password" aria-describedby="pw-strength" />
-            <button type="button" class="eye" onclick={() => (adminShowPassword = !adminShowPassword)} aria-label={adminShowPassword ? m.setup_hide_password() : m.setup_show_password()}>
-              {#if adminShowPassword}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
-            </button>
-          </div>
-          <div class="strength" id="pw-strength">
-            {#each [0, 1, 2, 3] as i (i)}
-              <i class:on={strength.score > i} class="s{strength.score}"></i>
-            {/each}
-            <span class="dm-num dm-dim">{strength.label}</span>
-          </div>
-          <span class="hint">{m.setup_min_password()}</span>
-        </div>
-        <div class="dm-field">
-          <label for="admin-email">{m.setup_email()} <span class="dm-dim">({m.common_optional()})</span></label>
-          <input id="admin-email" type="email" class="dm-input" placeholder="admin@example.com" bind:value={adminEmail} spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="foot">
-          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
-          <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={adminBlockNext}>{m.setup_continue()}</Button>
-        </div>
-
-      {:else if step === 5}
-        <div class="dm-field">
-          <label for="pub-url">{m.setup_public_url()}</label>
-          <div class="row">
-            <input id="pub-url" class="dm-input dm-mono" bind:value={publicUrl} spellcheck="false" autocomplete="off" aria-invalid={urlBlockNext} />
-            <Button variant="secondary" onclick={runUrlTest} loading={urlTest.state === 'loading'} disabled={urlBlockNext}>
-              {urlTest.state === 'loading' ? m.setup_testing() : m.setup_test_connection()}
-            </Button>
-          </div>
-          {#if urlTest.state === 'ok'}
-            {@render checkLine('ok', m.setup_reached({ ms: urlTest.ms ?? 0 }))}
-          {:else if urlTest.state === 'fail'}
-            {@render checkLine('fail', m.setup_not_reached({ reason: urlTest.reason ?? '' }))}
-          {:else if urlBlockNext}
-            {@render checkLine('fail', m.setup_invalid_url())}
-          {/if}
-          <span class="hint">
-            {m.setup_url_hint()}
-          </span>
-        </div>
-        <div class="foot">
-          <Button variant="ghost" onclick={goBack}>{m.common_back()}</Button>
-          <span class="dm-sp"></span>
-          <Button variant="primary" onclick={goNext} disabled={urlBlockNext}>{m.setup_continue()}</Button>
-        </div>
-
-      {:else if step === 6}
-        <div class="dm-tbl">
-          {#each [
-            { label: m.setup_rv_data_dir(), value: dataDir, to: 2 as Step, dim: false },
-            { label: m.setup_rv_service_user(), value: svcSummary, to: 3 as Step, dim: false },
-            { label: m.setup_rv_admin_user(), value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, to: 4 as Step, dim: false },
-            { label: m.setup_rv_admin_email(), value: adminEmail || '—', to: 4 as Step, dim: !adminEmail },
-            { label: m.setup_rv_public_url(), value: publicUrl, to: 5 as Step, dim: false }
-          ] as r (r.label)}
-            <div class="dm-tr rv">
-              <span class="dm-dim">{r.label}</span>
-              <span class="dm-mono" class:dm-dim={r.dim} title={r.value}>{r.value}</span>
-              <span class="dm-tr-menu"><Button variant="ghost" size="xs" onclick={() => jumpTo(r.to)} disabled={installing}>{m.common_edit()}</Button></span>
-            </div>
-          {/each}
-        </div>
-        {#if installFailed}
-          <div class="callout bad" role="alert">{m.setup_install_failed({ error: installFailed })}</div>
-        {/if}
-        <div class="foot">
-          <Button variant="ghost" onclick={goBack} disabled={installing}>{m.common_back()}</Button>
-          <span class="dm-sp"></span>
-          {#if installing}<span class="dm-sub">{installMsg}</span>{/if}
-          <Button variant="primary" onclick={runInstall} loading={installing}>
-            {installing ? m.setup_installing() : m.setup_install()}
-          </Button>
-        </div>
-
-      {:else if step === 7}
-        <div class="status">
-          {#if installFailed}
-            <StatusChip tone="bad" label={m.setup_chip_failed()} /><span>{m.setup_status_failed()}</span>
-          {:else if credsRevealed}
-            <StatusChip tone="ok" label={m.setup_chip_installed()} /><span>{m.setup_running()}</span>
-          {:else}
-            <StatusChip tone="acc" label={m.setup_chip_installing()} /><span>{installMsg || m.setup_working()}</span>
-          {/if}
-        </div>
-        <h2 class="dm-h2">{m.setup_log()}</h2>
-        <div class="log dm-mono" role="log" aria-live="polite">
-          {#each streamLines as l (l.ts + l.step)}
-            <div class="ln {l.status}">{@render mark(l.status)}<span>{l.message}</span></div>
-          {:else}
-            <div class="dm-dim">{m.setup_waiting()}</div>
-          {/each}
-          {#if installFailed}
-            <div class="ln fail">{@render mark('fail')}<span>{m.setup_log_install_failed({ error: installFailed })}</span></div>
-          {/if}
-        </div>
-
-        {#if credsRevealed}
-          <h2 class="dm-h2 creds-h">{m.setup_your_signin()}</h2>
-          <dl class="dm-kv creds">
-            <dt>{m.setup_login_url()}</dt>
-            <dd>
-              <span class="dm-mono">{publicUrl}</span>
-              <button type="button" class="copy" onclick={() => copyToClipboard('url', publicUrl)} aria-label={m.setup_copy_login_url()}>
-                {#if copiedKey === 'url'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
-              </button>
-            </dd>
-            <dt>{m.setup_username()}</dt>
-            <dd>
-              <span class="dm-mono">{adminUsername}</span>
-              <button type="button" class="copy" onclick={() => copyToClipboard('user', adminUsername)} aria-label={m.setup_copy_username()}>
-                {#if copiedKey === 'user'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
-              </button>
-            </dd>
-            <dt>{m.setup_password()}</dt>
-            <dd>
-              {#if adminPassword}
-                <span class="dm-mono">{credShowPw ? adminPassword : '•'.repeat(Math.max(10, adminPassword.length))}</span>
-                <button type="button" class="copy" onclick={() => (credShowPw = !credShowPw)} aria-label={credShowPw ? m.setup_hide_password() : m.setup_show_password()}>
-                  {#if credShowPw}<EyeOff size={13} /> {m.setup_hide()}{:else}<Eye size={13} /> {m.setup_show()}{/if}
-                </button>
-                <button type="button" class="copy" onclick={() => copyToClipboard('pw', adminPassword)} aria-label={m.setup_copy_password()}>
-                  {#if copiedKey === 'pw'}<Check size={13} /> {m.setup_copied()}{:else}<Copy size={13} /> {m.setup_copy()}{/if}
-                </button>
-              {:else}
-                <span class="dm-dim">{m.setup_password_entered()}</span>
-              {/if}
-            </dd>
-          </dl>
-          <div class="foot">
-            <span class="dm-sub">{m.setup_forgot_before()} <span class="dm-mono">sudo dockmesh admin reset-password --user {adminUsername}</span>{m.setup_forgot_after()}</span>
-            <span class="dm-sp"></span>
-            <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary">{m.setup_open()} <ArrowRight size={14} /></a>
-          </div>
-        {/if}
-      {/if}
+      <p class="plain">{text}</p>
+      {@render cmd(NEW_CODE_CMD, 'newcode')}
+      <div class="foot"><span class="sp"></span><button type="button" class="btn primary" onclick={backToCode}>{button}</button></div>
     </section>
   </div>
+{/snippet}
+
+<div class="page">
+  <header class="brand">
+    <div class="logo"><Logo width={44} height={18} /><span>Dockmesh</span> <small>{m.sw_brand_setup()}</small></div>
+    {#if serverInfo}
+      <div class="meta dm-mono">
+        <span>{window.location.hostname}</span><span class="sep">·</span>
+        <span>dockmesh {fmtVersion(serverInfo.version)}</span><span class="sep">·</span>
+        <span>Linux {serverInfo.arch ?? ''}</span>
+      </div>
+    {/if}
+  </header>
+
+  {#if gate === 'checking'}
+    <div class="wiz nor"><p class="plain muted">{m.setup_checking_server()}</p></div>
+  {:else if gate === 'expired'}
+    <div class="wiz nor">{@render stateScreen('warn', '⏱', m.sw_s1_title(), m.sw_s1_text(), m.sw_s1_button())}</div>
+  {:else if gate === 'locked'}
+    <div class="wiz nor">{@render stateScreen('bad', '!', m.sw_s2_title(), m.sw_s2_text(), m.sw_s1_button())}</div>
+  {:else if gate === 'no_code'}
+    <div class="wiz nor">{@render stateScreen('warn', '!', m.sw_nocode_title(), m.sw_nocode_text(), m.sw_s1_button())}</div>
+  {:else if gate === 'replaced'}
+    <div class="wiz nor">{@render stateScreen('warn', '↗', m.sw_s4_title(), m.sw_s4_text(), m.sw_s4_button())}</div>
+  {:else}
+    <div class="wiz">
+      <aside class="rail" aria-label={m.sw_rail_label()}>
+        <div class="path">{early || !path ? m.sw_rail_setup() : path === 'restore' ? m.sw_rail_restore() : m.sw_rail_new()}</div>
+        <ol>
+          {#each railSteps as s, k (s)}
+            {@const done = k < idx}
+            {@const sub = s === 'N4' || s === 'N5' ? m.sw_optional() : ''}
+            <li class:done class:on={k === idx} aria-current={k === idx ? 'step' : undefined}>
+              {#if railClickable(s, step, path) && gate === 'wizard'}
+                <button type="button" class="rb" onclick={() => go(s)} title={m.sw_rail_back_to({ name: stepName(s) })}>
+                  <span class="n">{#if done}<Check size={11} strokeWidth={3} />{:else}{k + 1}{/if}</span>
+                  <span class="t">{stepName(s)}{#if sub}<span class="o">{sub}</span>{/if}</span>
+                </button>
+              {:else}
+                <span class="n">{#if done}<Check size={11} strokeWidth={3} />{:else}{k + 1}{/if}</span>
+                <span class="t">{stepName(s)}{#if sub}<span class="o">{sub}</span>{/if}</span>
+              {/if}
+            </li>
+          {/each}
+        </ol>
+        {#if early}<div class="later">{m.sw_rail_later()}</div>{/if}
+      </aside>
+
+      <div class="content">
+        {#if gate === 'code'}
+          <div class="col">
+            {@render head(m.sw_w1_title(), m.sw_w1_text())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); submitCode(); }}>
+              <div class="field">
+                <label class="lbl" for="setup-code">{m.sw_w1_field()}</label>
+                <input id="setup-code" class="inp big" placeholder="XXXX-XXXX-XXXX" bind:value={codeInput}
+                  autocomplete="off" spellcheck="false" autocapitalize="characters"
+                  aria-invalid={codeError !== null} aria-describedby="setup-code-msg"
+                  oninput={() => (codeError = null)}
+                  onblur={() => { if (codeInput.trim() && !codeError) codeError = codeFieldError(); }} />
+                <span id="setup-code-msg">
+                  {#if codeError}
+                    <span class="err">{codeError}</span>
+                  {:else if codeFromLink}
+                    <span class="hint">{m.sw_w1_from_link()}</span>
+                  {/if}
+                </span>
+              </div>
+              <div>
+                <button type="button" class="link" onclick={() => (codeHelpOpen = !codeHelpOpen)} aria-expanded={codeHelpOpen}>{m.sw_w1_lost()}</button>
+                {#if codeHelpOpen}
+                  <p class="hint help">{m.sw_w1_lost_before()} <code>{NEW_CODE_CMD}</code> {m.sw_w1_lost_after()}</p>
+                {/if}
+              </div>
+              <div class="foot">
+                <span class="sp"></span>
+                <button type="submit" class="btn primary" disabled={codeBusy}>{#if codeBusy}<span class="spin" aria-hidden="true"></span>{/if}{m.sw_continue()}</button>
+              </div>
+            </form>
+          </div>
+        {:else if early}
+          <div class="col">
+            {@render head(m.sw_w2_title())}
+            <section class="panel">
+              {@render bannerBox()}
+              <div class="big2" role="radiogroup" aria-label={m.sw_w2_title()}>
+                <label class="rc" class:on={choice === 'new'}>
+                  <input type="radio" name="path" value="new" bind:group={choice} />
+                  <div class="b"><div class="t">{m.sw_w2_new()}</div><div class="hint d">{m.sw_w2_new_text()}</div></div>
+                </label>
+                <label class="rc" class:on={choice === 'restore'}>
+                  <input type="radio" name="path" value="restore" bind:group={choice} />
+                  <div class="b"><div class="t">{m.sw_w2_restore()}</div><div class="hint d">{m.sw_w2_restore_text()}</div></div>
+                </label>
+              </div>
+              {#if serverInfo?.tls_fingerprint}
+                <div class="fpbox">
+                  <span class="lbl">{m.sw_fingerprint_label()}</span>
+                  {@render fingerprint(serverInfo.tls_fingerprint)}
+                  <span class="hint">{m.sw_fingerprint_matches()}</span>
+                </div>
+              {/if}
+              <div class="foot">
+                <span class="sp"></span>
+                <button type="button" class="btn primary" onclick={chooseAndContinue}>{m.sw_continue()}</button>
+              </div>
+            </section>
+          </div>
+        {:else if step === 'N1'}
+          <div class="col">
+            {@render head(m.sw_n1_title())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); adminNext(); }}>
+              {@render bannerBox()}
+              <div class="field">
+                <label class="lbl" for="admin-user">{m.sw_n1_username()}</label>
+                <input id="admin-user" class="inp dm-mono" bind:value={username} autocomplete="username" spellcheck="false"
+                  aria-invalid={show('user', 'N1') && !!adminErr.username} onblur={() => (touched = { ...touched, user: true })} />
+                {#if show('user', 'N1') && adminErr.username}<span class="err">{adminErr.username}</span>{/if}
+              </div>
+              <div class="field">
+                <label class="lbl" for="admin-email">{m.sw_n1_email()}</label>
+                <input id="admin-email" class="inp" type="email" placeholder="you@example.com" bind:value={email} autocomplete="email"
+                  aria-invalid={show('email', 'N1') && !!adminErr.email} onblur={() => (touched = { ...touched, email: true })} />
+                {#if show('email', 'N1') && adminErr.email}<span class="err">{adminErr.email}</span>
+                {:else}<span class="hint">{m.sw_n1_email_hint()}</span>{/if}
+              </div>
+              <div class="field">
+                <div class="lbl-row">
+                  <label class="lbl" for="admin-pw">{m.sw_n1_password()}</label>
+                  <button type="button" class="link" onclick={generate}>{m.sw_n1_generate()}</button>
+                </div>
+                <div class="row">
+                  <input id="admin-pw" class="inp dm-mono" type={showPassword ? 'text' : 'password'} bind:value={password}
+                    autocomplete="new-password" aria-invalid={show('pw', 'N1') && !!adminErr.password}
+                    oninput={() => { if (generated && password !== generated) generated = null; }}
+                    onblur={() => (touched = { ...touched, pw: true })} />
+                  <button type="button" class="btn sm" onclick={() => (showPassword = !showPassword)} aria-pressed={showPassword}>
+                    {showPassword ? m.sw_hide() : m.sw_show()}
+                  </button>
+                </div>
+                {#if show('pw', 'N1') && adminErr.password}<span class="err">{adminErr.password}</span>
+                {:else}<span class="hint">{m.sw_n1_password_hint({ n: MIN_PASSWORD_LENGTH, strength: strengthLabel })}</span>{/if}
+              </div>
+              {#if generated}
+                <div class="pwshow">
+                  <span class="dm-mono">{generated}</span>
+                  <button type="button" class="btn sm" onclick={() => copy('pw', generated ?? '')}>
+                    {#if copied === 'pw'}<Check size={13} />{:else}<Copy size={13} />{/if}{m.sw_copy()}
+                  </button>
+                </div>
+                <div class="callout warn" role="note"><span class="ic">!</span><span>{m.sw_n1_generated_note()}</span></div>
+              {/if}
+              <div class="field">
+                <label class="lbl" for="admin-pw2">{m.sw_n1_repeat()}</label>
+                <input id="admin-pw2" class="inp dm-mono" type={showPassword ? 'text' : 'password'} bind:value={repeat}
+                  autocomplete="new-password" aria-invalid={show('pw2', 'N1') && !!adminErr.repeat}
+                  onblur={() => (touched = { ...touched, pw2: true })} />
+                {#if show('pw2', 'N1') && adminErr.repeat}<span class="err">{adminErr.repeat}</span>{/if}
+              </div>
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="submit" class="btn primary">{m.sw_next()}</button>
+              </div>
+            </form>
+          </div>
+        {:else if step === 'N2'}
+          <div class="col">
+            {@render head(m.sw_n2_title(), m.sw_n2_text())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); dataNext(); }}>
+              {@render bannerBox()}
+              {#if legacy}
+                <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_legacy_data()}</span></div>
+              {:else}
+              <div class="field">
+                <label class="lbl" for="data-dir">{m.sw_n2_field()}</label>
+                <div class="inp-wrap">
+                  <input id="data-dir" class="inp dm-mono" bind:value={dataDir} spellcheck="false"
+                    aria-invalid={dirCurrent?.status === 'fail'} class:warnb={dirCurrent?.status === 'warn'}
+                    onblur={() => void checkDir()} />
+                  {#if dirChecking}<span class="spin in" aria-label={m.sw_checking()}></span>{/if}
+                </div>
+                {#if dirCurrent?.status === 'fail'}
+                  <span class="err">{dirIssueText(dirCurrent)}</span>
+                {:else if dirCurrent}
+                  <div class="result">
+                    <span class="ok">✓</span>
+                    {m.sw_n2_result({ free: fmtMem(dirCurrent.free_bytes), fs: dirCurrent.fs_type || '—', state: dirCurrent.will_create ? m.sw_n2_new_dir() : m.sw_n2_empty() })}
+                  </div>
+                  {#if dirCurrent.status === 'warn'}<span class="wrn">{dirIssueText(dirCurrent)}</span>{/if}
+                {/if}
+              </div>
+              <div class="field">
+                <span class="lbl">{m.sw_n2_disks()}</span>
+                <DiskList {disks} selected={dataDir.trim()} onuse={useDisk} />
+                <span class="hint">{m.sw_n2_disks_hint()}</span>
+              </div>
+              <p class="hint plain">{m.sw_n2_stacks()} <span class="dm-mono">{stacksDir}</span></p>
+              {/if}
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="submit" class="btn primary" disabled={dirChecking}>{m.sw_next()}</button>
+              </div>
+            </form>
+          </div>
+        {:else if step === 'N3'}
+          {@const se = triedNext.N3}
+          <div class="col">
+            {@render head(m.sw_n3_title(), m.sw_n3_text())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); addressNext(); }}>
+              {@render bannerBox()}
+              <div class="field">
+                <label class="lbl" for="base-url">{m.sw_n3_base()}</label>
+                <div class="row">
+                  <input id="base-url" class="inp dm-mono" bind:value={baseURL} spellcheck="false"
+                    aria-invalid={(touched.base || se) && !!addrErr.base} onblur={() => (touched = { ...touched, base: true })} />
+                  <button type="button" class="btn" onclick={testURL} disabled={urlTest.state === 'busy' || !!addrErr.base}>
+                    {#if urlTest.state === 'busy'}<span class="spin" aria-hidden="true"></span>{/if}{m.sw_n3_test()}
+                  </button>
+                </div>
+                {#if (touched.base || se) && addrErr.base}<span class="err">{addrErr.base}</span>
+                {:else if urlTest.state === 'ok'}<span class="result"><span class="ok">✓</span> {m.sw_n3_test_ok({ ms: urlTest.ms ?? 0 })}</span>
+                {:else if urlTest.state === 'fail'}<span class="err">{m.sw_n3_test_fail({ url: baseURL.trim(), reason: urlTest.reason ?? '' })}</span>{/if}
+              </div>
+              {#if legacy}
+                <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_legacy_address()}</span></div>
+              {:else}
+              <div class="grid2">
+                <div class="field">
+                  <label class="lbl" for="web-port">{m.sw_n3_web_port()}</label>
+                  <input id="web-port" class="inp dm-mono" bind:value={webPort} inputmode="numeric"
+                    aria-invalid={(touched.port || se) && !!addrErr.port} onblur={() => (touched = { ...touched, port: true })} />
+                  {#if (touched.port || se) && addrErr.port}<span class="err">{addrErr.port}</span>{/if}
+                </div>
+                <div class="field">
+                  <span class="lbl">{m.sw_n3_agent_port()}</span>
+                  <span class="dm-mono ro">{AGENT_PORT}</span>
+                </div>
+              </div>
+              <div class="field">
+                <span class="lbl" id="tls-label">{m.sw_n3_cert()}</span>
+                <div class="choices" role="radiogroup" aria-labelledby="tls-label">
+                  <label class="rc" class:on={tls === 'internal'}>
+                    <input type="radio" name="tls" value="internal" bind:group={tls} />
+                    <div class="b">
+                      <div class="t">{m.sw_tls_internal()} <span class="chip acc">{m.sw_default()}</span></div>
+                      <div class="hint d">{m.sw_tls_internal_text()}</div>
+                      {#if tls === 'internal' && serverInfo?.tls_fingerprint}
+                        <div class="sub">
+                          <div>
+                            <span class="lbl">{m.sw_fingerprint_label()}</span>
+                            {@render fingerprint(serverInfo.tls_fingerprint)}
+                            <span class="hint">{m.sw_fingerprint_matches()}</span>
+                          </div>
+                        </div>
+                      {/if}
+                    </div>
+                  </label>
+                  <label class="rc" class:on={tls === 'file'}>
+                    <input type="radio" name="tls" value="file" bind:group={tls} />
+                    <div class="b">
+                      <div class="t">{m.sw_tls_file()}</div>
+                      <div class="hint d">{m.sw_tls_file_text()}</div>
+                      {#if tls === 'file'}
+                        <div class="sub">
+                          <div class="field">
+                            <label class="lbl" for="cert-file">{m.sw_n3_cert_file()}</label>
+                            <input id="cert-file" class="inp dm-mono" bind:value={certFile} spellcheck="false" placeholder="/etc/letsencrypt/live/example.org/fullchain.pem"
+                              aria-invalid={(touched.cert || se) && !!addrErr.cert} onblur={() => (touched = { ...touched, cert: true })} />
+                            {#if (touched.cert || se) && addrErr.cert}<span class="err">{addrErr.cert}</span>{/if}
+                          </div>
+                          <div class="field">
+                            <label class="lbl" for="key-file">{m.sw_n3_key_file()}</label>
+                            <input id="key-file" class="inp dm-mono" bind:value={keyFile} spellcheck="false" placeholder="/etc/letsencrypt/live/example.org/privkey.pem"
+                              aria-invalid={(touched.key || se) && !!addrErr.key} onblur={() => (touched = { ...touched, key: true })} />
+                            {#if (touched.key || se) && addrErr.key}<span class="err">{addrErr.key}</span>{/if}
+                          </div>
+                          <span class="hint">{m.sw_n3_reload_hint()}</span>
+                        </div>
+                      {/if}
+                    </div>
+                  </label>
+                  <label class="rc off" aria-disabled="true">
+                    <input type="radio" name="tls" value="caddy" disabled />
+                    <div class="b">
+                      <div class="t">{m.sw_tls_caddy()}</div>
+                      <div class="hint d">{m.sw_tls_caddy_text()}</div>
+                      <div class="hint d">{m.sw_tls_caddy_unavailable()}</div>
+                    </div>
+                  </label>
+                  <label class="rc" class:on={tls === 'proxy'}>
+                    <input type="radio" name="tls" value="proxy" bind:group={tls} />
+                    <div class="b">
+                      <div class="t">{m.sw_tls_proxy()}</div>
+                      <div class="hint d">{m.sw_tls_proxy_text()}</div>
+                      {#if tls === 'proxy'}
+                        <div class="sub">
+                          <div class="grid2">
+                            <div class="field">
+                              <label class="lbl" for="listen">{m.sw_n3_listen()}</label>
+                              <input id="listen" class="inp dm-mono" bind:value={listen} spellcheck="false"
+                                aria-invalid={(touched.listen || se) && !!addrErr.listen} onblur={() => (touched = { ...touched, listen: true })} />
+                              {#if (touched.listen || se) && addrErr.listen}<span class="err">{addrErr.listen}</span>
+                              {:else if listenPublic}<span class="wrn">{m.sw_n3_listen_public({ addr: listen.trim() })}</span>{/if}
+                            </div>
+                            <div class="field">
+                              <span class="lbl">{m.sw_n3_trusted()}</span>
+                              <span class="dm-mono ro">{trustedProxies}</span>
+                              <span class="hint">{m.sw_n3_trusted_hint()}</span>
+                            </div>
+                          </div>
+                          <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n3_agent_note({ port: AGENT_PORT })}</span></div>
+                        </div>
+                      {/if}
+                    </div>
+                  </label>
+                </div>
+              </div>
+              {/if}
+              <div class="field">
+                <span class="lbl">{m.sw_n3_agent_url()}</span>
+                <span class="dm-mono ro">{agentURL(baseURL.trim(), AGENT_PORT) || '—'}</span>
+              </div>
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="submit" class="btn primary">{m.sw_next()}</button>
+              </div>
+            </form>
+          </div>
+        {:else if step === 'N4'}
+          <div class="col">
+            {@render head(m.sw_n4_title(), m.sw_n4_text())}
+            <section class="panel">
+              <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n4_later()}</span></div>
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="button" class="btn primary" onclick={next}>{m.sw_next()}</button>
+              </div>
+            </section>
+          </div>
+        {:else if step === 'N5'}
+          <div class="col">
+            {@render head(m.sw_n5_title(), m.sw_n5_text())}
+            <section class="panel">
+              <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n5_later()}</span></div>
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="button" class="btn primary" onclick={next}>{m.sw_next()}</button>
+              </div>
+            </section>
+          </div>
+        {:else if step === 'N6'}
+          {#snippet row(k: string, v: string, to: StepId, mono = false)}
+            <div class="tr"><span class="k">{k}</span><span class:dm-mono={mono}>{v}</span><button type="button" class="link" onclick={() => go(to)}>{m.sw_change()}</button></div>
+          {/snippet}
+          <div class="col">
+            {@render head(m.sw_n6_title(), m.sw_n6_text())}
+            <section class="panel">
+              {@render bannerBox()}
+              <div class="tbl">
+                <div class="sect">{m.sw_n6_admin()}</div>
+                {@render row(m.sw_n1_username(), username, 'N1', true)}
+                {@render row(m.sw_n6_email(), email.trim() || '—', 'N1')}
+                {@render row(m.sw_n1_password(), '••••', 'N1')}
+                <div class="sect">{m.sw_step_data()}</div>
+                {#if legacy}
+                  {@render row(m.sw_n6_data(), m.sw_legacy_unchanged(), 'N2')}
+                {:else}
+                  {@render row(m.sw_n6_data(), dataDir.trim(), 'N2', true)}
+                  {@render row(m.sw_n6_stacks(), stacksDir, 'N2', true)}
+                {/if}
+                <div class="sect">{m.sw_step_address()}</div>
+                {@render row(m.sw_n3_base(), targetURL, 'N3', true)}
+                {#if legacy}
+                  {@render row(m.sw_n3_cert(), m.sw_legacy_unchanged(), 'N3')}
+                {:else}
+                  {@render row(m.sw_n6_ports(), `${webPort} · ${AGENT_PORT}`, 'N3', true)}
+                  {@render row(m.sw_n3_cert(), tlsName, 'N3')}
+                {/if}
+                {#if tls === 'file'}{@render row(m.sw_n3_cert_file(), certFile.trim(), 'N3', true)}{/if}
+                {#if tls === 'proxy'}{@render row(m.sw_n3_listen(), listen.trim(), 'N3', true)}{/if}
+                <div class="sect">{m.sw_step_proxy()}</div>
+                {@render row('Caddy', m.sw_n6_off(), 'N4')}
+                <div class="sect">{m.sw_step_notifications()}</div>
+                {@render row(m.sw_n6_channel(), m.sw_n6_none(), 'N5')}
+              </div>
+              <p class="hint plain final">{legacy ? m.sw_n6_final_legacy() : m.sw_n6_final({ data: dataDir.trim() })}</p>
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="button" class="btn primary" onclick={install}>{m.sw_install()}</button>
+              </div>
+            </section>
+          </div>
+        {:else if step === 'R2'}
+          <div class="col">
+            {@render head(m.sw_r2_title(), m.sw_r2_text())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); restore(); }}>
+              {#if restoreError}<div class="callout bad" role="alert"><span class="ic">!</span><span>{restoreError}</span></div>{/if}
+              <div class="field">
+                <label class="lbl" for="backup-file">{m.sw_r2_file()}</label>
+                <input id="backup-file" class="inp" type="file" accept=".gz,.age"
+                  onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
+                {#if restoreFile}<span class="hint dm-mono">{restoreFile.name} · {fmtMem(restoreFile.size)}</span>{/if}
+              </div>
+              {#if restoreFile?.name.endsWith('.age')}
+                <div class="field">
+                  <label class="lbl" for="backup-key">{m.sw_r2_key()}</label>
+                  <input id="backup-key" class="inp" type="file"
+                    onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
+                </div>
+              {/if}
+              <div class="foot">
+                <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <span class="sp"></span>
+                <button type="submit" class="btn primary" disabled={!restoreFile}>{m.sw_r2_restore()}</button>
+              </div>
+            </form>
+          </div>
+        {:else if step === 'N7' || step === 'R3'}
+          <div class="col">
+            {@render head(applyDone ? m.sw_n7_ready() : m.sw_n7_title(), applyDone ? undefined : m.sw_n7_text())}
+            <section class="panel" aria-live="polite">
+              <ul class="prog">
+                {#each applyItems as t, i (i)}
+                  {@const failed = applyFailRow === i}
+                  <li class:done={i < applyRow && !failed} class:run={i === applyRow && applying && !failed} class:fail={failed}>
+                    <span class="mk" aria-hidden="true">{#if failed}!{:else if i < applyRow}✓{/if}</span>{t}
+                  </li>
+                {/each}
+              </ul>
+              {#if applyFailRow !== null}
+                <div class="detail">{applyDetail}</div>
+                <div class="foot">
+                  <button type="button" class="btn" onclick={() => go(path === 'restore' ? 'R2' : 'N2')}>
+                    {path === 'restore' ? m.sw_r2_title() : m.sw_s3_back_data()}
+                  </button>
+                  <span class="sp"></span>
+                  <button type="button" class="btn primary" onclick={() => (path === 'restore' ? restore() : install())}>{m.sw_s3_retry()}</button>
+                </div>
+              {:else if applyDone}
+                <div class="callout ok" role="status">
+                  <span class="ic">✓</span>
+                  <span>{path === 'restore' ? m.sw_r3_done() : newOriginUnverified ? m.sw_n7_open({ url: `${targetURL}/login` }) : m.sw_n7_redirect({ n: redirectIn })}</span>
+                </div>
+                {#if path !== 'restore' && !legacy && tls === 'internal' && serverInfo?.tls_fingerprint}
+                  <div>
+                    <span class="lbl">{m.sw_n7_fp_same()}</span>
+                    {@render fingerprint(serverInfo.tls_fingerprint)}
+                  </div>
+                {/if}
+                <div class="foot">
+                  <span class="sp"></span>
+                  <button type="button" class="btn primary" onclick={() => (path === 'restore' ? (window.location.href = '/login') : signIn())}>{m.sw_n7_sign_in()}</button>
+                </div>
+              {/if}
+            </section>
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
-</AuthShell>
+</div>
 
 <style>
-  .meta { display: inline-flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
-  .meta .sep { color: var(--border-strong); }
-
-  .col { display: flex; flex-direction: column; gap: 22px; }
-
-  .stepper { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; }
-  .stepper li { display: flex; align-items: center; }
-  .stepper li + li::before { content: ''; width: 14px; height: 1px; background: var(--border); margin-right: 6px; }
-  .stepper button {
-    all: unset;
-    display: inline-flex;
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 28px 16px 64px;
+    min-height: 100vh;
+    color: var(--fg);
+    font-size: var(--fs-base);
+  }
+  .brand {
+    display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 26px;
+    flex-wrap: wrap;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-weight: 700;
+    font-size: var(--fs-md);
+    letter-spacing: -0.01em;
+  }
+  .logo small {
+    font-weight: 500;
+    color: var(--subtle);
+    font-size: var(--fs-sm);
+  }
+  .meta {
+    color: var(--subtle);
+    font-size: var(--fs-xs);
+    display: flex;
     gap: 6px;
+    flex-wrap: wrap;
+  }
+  .meta .sep {
+    color: var(--border-strong);
+  }
+  .wiz {
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 44px;
+    align-items: start;
+  }
+  .wiz.nor {
+    grid-template-columns: minmax(0, 680px);
+    justify-content: center;
+  }
+  .content {
+    max-width: 680px;
+    min-width: 0;
+  }
+  .rail {
+    position: sticky;
+    top: 28px;
+    border-right: 1px solid var(--border);
+    padding-right: 20px;
+  }
+  .rail ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .rail li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    position: relative;
+    padding-bottom: 16px;
     font-size: var(--fs-sm);
     color: var(--subtle);
-    cursor: default;
-    border-radius: var(--r-sm);
-    padding: 2px 4px;
   }
-  .stepper button:not(:disabled) { cursor: pointer; }
-  .stepper button:not(:disabled):hover .l { color: var(--fg); text-decoration: underline; }
-  .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .stepper .n {
-    width: 20px;
-    height: 20px;
-    border-radius: 10px;
+  .rail li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 10px;
+    top: 24px;
+    bottom: 2px;
+    width: 1px;
+    background: var(--border);
+  }
+  .rail li.done:not(:last-child)::after {
+    background: var(--accent);
+  }
+  .rail .n {
+    width: 21px;
+    height: 21px;
+    border-radius: 11px;
     border: 1px solid var(--border);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     font-size: 11px;
+    flex: none;
+    background: var(--bg);
   }
-  .stepper .on button { color: var(--fg); font-weight: 600; }
-  .stepper .on .n { border-color: var(--accent); color: var(--accent); }
-  .stepper .done .n { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-
-  .head h1 { margin: 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
-  .head p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
-
+  .rail .on {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .rail .on .n {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .rail .done {
+    color: var(--muted);
+  }
+  .rail .done .n {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+  .rail .t {
+    padding-top: 1px;
+    line-height: 1.35;
+  }
+  .rail .o {
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--subtle);
+    font-weight: 400;
+  }
+  .rail .rb {
+    all: unset;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+  }
+  .rail .rb:hover .t {
+    color: var(--fg);
+    text-decoration: underline;
+  }
+  .rail .rb:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .rail .later {
+    font-size: var(--fs-xs);
+    color: var(--subtle);
+    padding-left: 31px;
+    margin-top: -4px;
+  }
+  .rail .path {
+    font-size: var(--fs-xs);
+    color: var(--subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .mbar {
+    display: none;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 8px 0 14px;
+    overflow: hidden;
+  }
+  .mbar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  @media (max-width: 780px) {
+    .wiz,
+    .wiz.nor {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      display: none;
+    }
+    .mbar {
+      display: block;
+    }
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .hrow {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .counter {
+    font-size: var(--fs-xs);
+    color: var(--subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .docs {
+    font-size: var(--fs-sm);
+    color: var(--accent);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .docs:hover {
+    text-decoration: underline;
+  }
+  .head h1 {
+    margin: 0;
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+  .head h1:focus {
+    outline: none;
+  }
+  .head p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    max-width: 62ch;
+  }
   .panel {
     border-top: 1px solid var(--border);
     padding-top: 22px;
@@ -1039,7 +1451,6 @@
     flex-direction: column;
     gap: 18px;
   }
-  .panel :global(.dm-h2) { margin: 0; }
   .foot {
     display: flex;
     align-items: center;
@@ -1049,74 +1460,178 @@
     padding-top: 16px;
     margin-top: 4px;
   }
-
-  .dm-field .lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .dm-field.sub { margin-top: 10px; }
-  .hint { color: var(--subtle); font-size: var(--fs-xs); }
-  .code-input { font-size: 18px; letter-spacing: 0.08em; }
-  .cmd-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius, 6px); }
-  .link { background: none; border: 0; padding: 0; color: var(--accent); font-size: var(--fs-sm); cursor: pointer; }
-  .note { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
-  .note a { color: var(--accent); }
-  .warn-t { color: var(--warn); font-weight: 600; }
-  .bad-t { color: var(--bad); }
-  .row { display: flex; gap: 8px; align-items: stretch; }
-  .row input { flex: 1; min-width: 0; }
-  .lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .lbl-row label { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .link { all: unset; cursor: pointer; color: var(--accent); font-size: var(--fs-xs); }
-  .link:hover { text-decoration: underline; }
-  .link:focus-visible { outline: 2px solid var(--accent); }
-
-  .mk { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--subtle); }
-  .mk.ok { color: var(--ok); }
-  .mk.warn { color: var(--warn); }
-  .mk.fail { color: var(--bad); }
-  .mk.done { color: var(--accent); }
-  .mk .bullet { width: 5px; height: 5px; background: currentColor; }
-  .check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
-  .check.ok { color: var(--fg); }
-  .check.warn { color: var(--warn); }
-  .check.fail { color: var(--bad); }
-
-  .pf { grid-template-columns: 16px minmax(140px, 1fr) minmax(0, 1.4fr); }
-  .rv { grid-template-columns: 9.5rem minmax(0, 1fr) auto; }
-
-  .callout {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-radius: var(--r);
-    padding: 10px 12px;
-    font-size: var(--fs-sm);
+  .sp {
+    flex: 1;
   }
-  .callout.fp { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
-  .callout.fp code { font-size: 12px; overflow-wrap: anywhere; }
-  .callout.bad { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); color: var(--fg); }
-
-  .restore { border-top: 1px solid var(--border); padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
-  .restore .hint { margin: -8px 0 0; font-size: var(--fs-sm); }
-  .file { font: inherit; font-size: var(--fs-sm); color: var(--muted); }
-
-  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .preset {
-    all: unset;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    border-radius: var(--r);
-    padding: 8px 10px;
+  .plain {
+    margin: 0;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .field {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 5px;
+  }
+  .lbl {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .lbl-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .hint {
+    color: var(--subtle);
+    font-size: var(--fs-xs);
+  }
+  .hint.d {
     font-size: var(--fs-sm);
   }
-  .preset small { color: var(--subtle); font-size: var(--fs-xs); }
-  .preset:hover { border-color: var(--subtle); }
-  .preset.on { border-color: var(--accent); background: var(--accent-soft); }
-  .preset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-  .choices { display: flex; flex-direction: column; gap: 8px; }
-  .radio-card {
+  .hint.help {
+    margin: 6px 0 0;
+    font-size: var(--fs-sm);
+  }
+  .hint.final {
+    font-size: var(--fs-sm);
+  }
+  .err {
+    color: var(--bad);
+    font-size: var(--fs-sm);
+  }
+  .wrn {
+    color: var(--warn);
+    font-size: var(--fs-sm);
+  }
+  .ro {
+    font-size: 13px;
+    min-height: var(--ctl-h);
+    display: flex;
+    align-items: center;
+  }
+  .inp {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    border-radius: var(--r);
+    padding: 6px 10px;
+    min-height: var(--ctl-h);
+    font: inherit;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .inp.dm-mono {
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .inp.big {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    letter-spacing: 0.12em;
+    text-align: center;
+    min-height: 48px;
+    text-transform: uppercase;
+  }
+  .inp[aria-invalid='true'] {
+    border-color: var(--bad);
+  }
+  .inp.warnb {
+    border-color: var(--warn);
+  }
+  .inp:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .inp-wrap {
+    position: relative;
+  }
+  .spin.in {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    margin-top: -6px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  .row > .inp {
+    flex: 1;
+    min-width: 0;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 560px) {
+    .grid2,
+    .big2 {
+      grid-template-columns: 1fr;
+    }
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    font: inherit;
+    font-weight: 500;
+    border-radius: var(--r);
+    padding: 0 12px;
+    min-height: var(--ctl-h);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn.ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+  }
+  .btn.sm {
+    min-height: var(--ctl-h-sm);
+    font-size: var(--fs-sm);
+    padding: 0 9px;
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .link {
+    all: unset;
+    cursor: pointer;
+    color: var(--accent);
+    font-size: var(--fs-sm);
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .rc {
     display: flex;
     gap: 10px;
     align-items: flex-start;
@@ -1126,77 +1641,297 @@
     cursor: pointer;
     background: var(--surface);
   }
-  .radio-card.on { border-color: var(--accent); background: var(--accent-soft); }
-  .radio-card input[type='radio'] { margin-top: 3px; accent-color: var(--accent); }
-  .rc-b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-  .rc-t { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .cb { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: var(--fs-sm); cursor: pointer; }
-  .cb input { margin-top: 3px; accent-color: var(--accent); }
-  .cb .hint { display: block; }
-
-  .pw { position: relative; }
-  .pw input { padding-right: 40px; }
-  .eye {
-    all: unset;
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 28px;
-    height: 26px;
+  .rc.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .rc.off {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .rc input {
+    margin-top: 3px;
+    accent-color: var(--accent);
+  }
+  .rc .b {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .rc .t {
+    font-weight: 600;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .rc .sub {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    cursor: auto;
+  }
+  .big2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .big2 .rc {
+    padding: 18px;
+  }
+  .big2 .rc .t {
+    font-size: var(--fs-md);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .chip.acc {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: var(--accent-soft);
+  }
+  .callout {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    border-radius: var(--r);
+    padding: 10px 12px;
+    font-size: var(--fs-sm);
+    border: 1px solid var(--border);
+    background: var(--band);
+  }
+  .callout.bad {
+    border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 8%, transparent);
+  }
+  .callout.warn {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+  }
+  .callout.ok {
+    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+    background: color-mix(in srgb, var(--ok) 8%, transparent);
+  }
+  .callout .ic {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 9px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--muted);
-    cursor: pointer;
-    border-radius: var(--r-sm);
+    font-size: 11px;
+    font-weight: 700;
   }
-  .eye:hover { color: var(--fg); }
-  .eye:focus-visible { outline: 2px solid var(--accent); }
-  .strength { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
-  .strength i { flex: 1; height: 4px; background: var(--field); }
-  .strength i.on.s1 { background: var(--bad); }
-  .strength i.on.s2 { background: var(--warn); }
-  .strength i.on.s3, .strength i.on.s4 { background: var(--ok); }
-  .strength span { width: 48px; text-align: right; }
-
-  .status { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); }
-  .log {
-    background: var(--code, var(--field));
-    border-radius: var(--r-sm);
-    padding: 10px 12px;
-    font-size: 12px;
-    line-height: 1.6;
-    max-height: 340px;
-    overflow: auto;
-    margin-top: -8px;
+  .callout.bad .ic {
+    background: var(--bad);
+    color: var(--bg);
   }
-  .ln { display: flex; gap: 8px; align-items: flex-start; }
-  .ln > span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .ln.warn > span:last-child { color: var(--warn); }
-  .ln.fail > span:last-child { color: var(--bad); }
-  .ln .mk { margin-top: 2px; }
-
-  .creds-h { margin-top: 4px !important; }
-  .creds { margin-top: -8px; }
-  .creds dd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .copy {
-    all: unset;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: var(--fs-xs);
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+  .callout.warn .ic {
+    background: var(--warn);
+    color: var(--bg);
+  }
+  .callout.ok .ic {
+    background: var(--ok);
+    color: var(--bg);
+  }
+  .callout .ic.info {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--field);
+    border-radius: 5px;
     padding: 1px 6px;
   }
-  .copy:hover { color: var(--fg); border-color: var(--subtle); }
-  .copy:focus-visible { outline: 2px solid var(--accent); }
-
-  @media (max-width: 640px) {
-    .presets { grid-template-columns: 1fr; }
-    .rv { grid-template-columns: 7rem minmax(0, 1fr) auto; }
+  .cmd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--field);
+    border-radius: var(--r);
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .cmd span {
+    flex: 1;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .cmd .btn {
+    font-family: var(--font-sans);
+  }
+  .fp {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    word-break: break-all;
+    color: var(--fg);
+  }
+  .fpbox {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .result {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .result .ok {
+    color: var(--ok);
+  }
+  .tbl {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: hidden;
+  }
+  .tr {
+    display: grid;
+    grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 9px 12px;
+    border-top: 1px solid var(--border);
+    align-items: baseline;
+    font-size: var(--fs-sm);
+    overflow-wrap: anywhere;
+  }
+  .tr .k {
+    color: var(--muted);
+  }
+  .sect {
+    font-size: 12px;
+    color: var(--subtle);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 8px 12px;
+    background: var(--band);
+    border-top: 1px solid var(--border);
+  }
+  .sect:first-child {
+    border-top: 0;
+  }
+  .prog {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .prog li {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    color: var(--subtle);
+  }
+  .prog .mk {
+    width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    flex: none;
+  }
+  .prog .done {
+    color: var(--fg);
+  }
+  .prog .done .mk {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+  .prog .run {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .prog .run .mk {
+    border-color: var(--accent);
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+  }
+  .prog .fail {
+    color: var(--bad);
+  }
+  .prog .fail .mk {
+    background: var(--bad);
+    border-color: var(--bad);
+    color: var(--bg);
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .spin {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: -2px;
+  }
+  .pwshow {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: var(--field);
+    border-radius: var(--r);
+    padding: 8px 10px;
+  }
+  .pwshow .dm-mono {
+    flex: 1;
+    font-size: 14px;
+    letter-spacing: 0.03em;
+    overflow-wrap: anywhere;
+  }
+  .detail {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--field);
+    border-radius: var(--r);
+    padding: 8px 10px;
+    color: var(--bad);
+    overflow-wrap: anywhere;
+  }
+  .state-ic {
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .state-ic.warn {
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+    color: var(--warn);
+  }
+  .state-ic.bad {
+    background: color-mix(in srgb, var(--bad) 16%, transparent);
+    color: var(--bad);
   }
 </style>

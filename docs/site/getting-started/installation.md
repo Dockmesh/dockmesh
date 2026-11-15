@@ -9,12 +9,12 @@ The recommended path is the installer script on a Linux host that already runs D
 
 | Requirement | Details |
 |---|---|
-| Operating system | Linux on amd64 or arm64. macOS (amd64 or arm64) is also handled by the installer but is less tested; the setup wizard warns on anything other than Linux. The server and agent do not run on Windows. |
+| Operating system | Linux on amd64 or arm64. macOS (amd64 or arm64) is also handled by the installer but is less tested. The server and agent do not run on Windows. |
 | Docker | A running Docker Engine reachable at `/var/run/docker.sock`. 20.10 or newer is recommended. The installer does not install Docker; it prints the command for your distribution if Docker is missing. When the socket belongs to another group than `docker` (Synology, Podman), the server and agent units get that group as well. On macOS, enable **Allow the default Docker socket to be used** in Docker Desktop's advanced settings. |
 | Tools | `curl`, `tar`, and `sha256sum` (or `shasum` on macOS). systemd is optional; without it the server has to be started by hand. |
 | Privileges | root or `sudo`. |
 | Ports | `8080/tcp` for the web UI and API. `8443/tcp` for remote agents, only needed if you add remote hosts. If you enable the reverse proxy, its Caddy container binds `80` and `443` on the host. See [Ports](../reference/ports.md). |
-| Resources | The setup wizard warns below 512 MB RAM or below 2 GB free on the root filesystem. Images and volumes of your stacks need space on top of that. |
+| Resources | Plan for at least 512 MB RAM. The data directory needs at least 200 MiB free (the setup wizard warns below 2 GiB); images and volumes of your stacks need space on top of that. |
 | Clock | Keep the clock synchronised (NTP). Agent TLS handshakes fail when server and host clocks drift apart. |
 
 The UI is served over plain HTTP. For anything beyond a trusted LAN, put it behind a TLS-terminating reverse proxy; see [Security hardening](../operations/hardening.md).
@@ -138,31 +138,24 @@ The setup wizard writes `/etc/dockmesh/dockmesh.env` (owner root, group `dockmes
 
 ## The setup wizard
 
-Open the link the installer printed (`http://<host>:8080/setup#<code>`) and select **Continue**: the code from the link is filled in. Without the link, open `/setup` and type the code. Before a right code is entered, the server answers only the code form, a bare status endpoint and the health checks; every other page redirects to `/setup` and every other API call, including restore and the wizard's own checks, is refused with 401.
+Open the link the installer printed (`https://<host>:8080/setup#<code>`). Your browser warns about the certificate: continue only if it shows the SHA-256 fingerprint the installer printed. The page takes the code from the link into the field, removes it from the address bar at once and waits until you select **Continue**. Without the link, open `/setup` and type the code; lower case, spaces and missing dashes are fine. Before a right code is entered, the server answers only the code form, a bare status endpoint and the health checks; every other page redirects to `/setup` and every other API call, including restore and the wizard's own checks, is refused with 401.
 
-The setup code is valid for 2 hours and cannot be shown again. `sudo dockmesh setup new-code` prints a new one and the old one stops working. After 5 wrong codes from one address, that address waits 15 minutes; after 20 wrong codes in total the code is locked until `new-code` runs again, so someone on your network guessing codes blocks setup until you create a new one. A right code opens one setup session in that browser; entering the code in another browser takes the session over. The session ends when the code expires. Once you start the install it can still follow the progress, but changes nothing more.
+The setup code is valid for 2 hours and cannot be shown again. `sudo dockmesh setup new-code` prints a new one and the old one stops working. After 5 wrong codes from one address, that address waits 15 minutes; after 20 wrong codes in total the code is locked until `new-code` runs again, so someone on your network guessing codes blocks setup until you create a new one. A right code opens one setup session in that browser; entering the code in another browser takes the session over, and the first browser then says so. The session ends when the code expires. Once you start the install it can still follow the progress, but changes nothing more.
 
-To move an existing install to this machine instead, choose **Restore from a backup instead** on the first page and upload a system backup (plus the backup key file exported from the old server if the backup is encrypted). The server checks the backup, ends setup mode and restarts into the restored install; see [Disaster recovery](../operations/disaster-recovery.md).
+After the code, choose **New installation** or **Restore from backup**. A restore uploads a system backup (plus the backup key file exported from the old server if the backup is encrypted); the server checks it, ends setup mode and restarts into the restored install, see [Disaster recovery](../operations/disaster-recovery.md).
 
-The wizard has seven steps. Nothing is written until you confirm on the review step:
+A new installation has these steps, listed on the left; select a finished step to go back to it. Nothing is written until you select **Install** on the review step:
 
-1. **Welcome** runs preflight checks: operating system, CPU, RAM, root disk space, Docker Engine, Docker socket, time synchronisation. A failed Docker check blocks the wizard.
-2. **Data** asks for the data directory. It proposes `/var/lib/dockmesh`.
-3. **Service user** asks which OS account Dockmesh runs as (`dockmesh` is recommended).
-4. **Admin** creates the first administrator: username, password (at least 12 characters), optional email.
-5. **URL** asks for the public URL users and agents use to reach the server. It defaults to the address in your browser; enter the `https://` address of your reverse proxy instead of accepting a plain `http://<host>:8080`. **Test connection** checks that the server can reach the address; it only connects to public addresses and to this host's own private addresses on ports 80, 443 and the port the wizard is served on.
-6. **Review** shows your answers. **Install** starts the installation.
-7. **Done** streams the progress of the installation and says whether it finished or failed, then shows the **Login URL** and your username.
+1. **Admin** creates the first administrator: username (3 to 32 lower-case letters, digits, dot, dash or underscore), optional email, and a password of at least 12 characters that is not the username. **Generate** fills in a 20-character password and shows it once.
+2. **Data directory** proposes `/var/lib/dockmesh` and lists the disks of the server with a **Use** button each; network shares and filesystems without Unix permissions are greyed out, Docker's own directories are not listed. The directory is checked as you leave the field, with the rules the install applies: an absolute path outside system directories and `/var/lib/docker`, whose parent exists and belongs to root alone, not a symbolic link, empty or not there yet, on a local filesystem with at least 200 MiB free (below 2 GiB you get a warning). Stacks go to `<data directory>/stacks`.
+3. **Address and TLS** asks for the base URL (it defaults to the address in your browser) and the web port. **Test connection** checks that the server can reach the address; it only connects to public addresses and to this host's own private addresses on ports 80, 443 and the port the wizard is served on. For the certificate choose the Dockmesh certificate from this server's own CA (default), your own certificate and key files (Dockmesh reloads them when they change), or **Behind my own reverse proxy**: Dockmesh then serves plain HTTP on the listen address you give (default `127.0.0.1`) and trusts only that address as a proxy. Agents always connect to port 8443 with mutual TLS; a proxy in front of them has to pass TLS through. Letting Caddy get the certificate is not available in setup; set up the proxy under **Proxy** afterwards.
+4. **Reverse proxy** and 5. **Notifications** are not set up by the wizard: turn the proxy on under **Proxy** and add notification channels under **Alerts** after you sign in.
+6. **Review** shows every answer with a link back to its step.
+7. **Apply** writes `/etc/dockmesh/dockmesh.env`, creates the data directory, the database and your account, restarts Dockmesh once and then takes you to the sign-in page at the base URL. If the server does not start with the new configuration, it goes back to setup mode and keeps what it created as `*.failed-<time>`; nothing is deleted.
 
-On install the server creates the admin account, stores the public URL as the **Base URL** setting together with an **Agent public URL** on the same host and the agent port (`wss://<host>:8443/connect`), and removes `DOCKMESH_SETUP_FORCE` from `dockmesh.env`. Sign in afterwards at the URL shown.
+The base URL is also stored as the **Base URL** setting, together with an **Agent public URL** on the same host and the agent port (`wss://<host>:8443/connect`). Agent install commands, single sign-on redirect URLs and invite links use these settings; change them under **Settings** → **General** without restarting the server. `DOCKMESH_BASE_URL` and `DOCKMESH_AGENT_PUBLIC_URL` in `dockmesh.env` win over the settings when set.
 
-Agent install commands, single sign-on redirect URLs and invite links use these settings; change them under **Settings** → **General** without restarting the server. `DOCKMESH_BASE_URL` and `DOCKMESH_AGENT_PUBLIC_URL` in `dockmesh.env` win over the settings when set.
-
-Port 8080 is plain HTTP. Before you use Dockmesh beyond a trusted LAN, put a TLS reverse proxy in front and keep 8080 off the network; see [Security hardening](../operations/hardening.md) and [Ports](../reference/ports.md).
-
-The data directory and service user answers do not relocate anything: the server keeps using the paths in `dockmesh.env` and keeps running as the user from the unit file. The wizard only creates the directory you name and, if the server runs as root, the user. To move the data root, stop the service, move the files and edit `dockmesh.env`.
-
-Only one install runs at a time. Setup mode still serves plain HTTP, so the code and the admin password cross the network unencrypted: finish the wizard from a trusted network and keep port 8080 closed to everyone else until then.
+An install from before 0.6 whose setup never finished keeps its data directory, port and TLS settings: the wizard skips those choices, creates your account, stores the base URL and does not restart. Its setup mode may still be plain HTTP, so finish it from a trusted network.
 
 ## Install without a browser
 

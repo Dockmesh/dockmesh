@@ -11,7 +11,7 @@ How you get the first admin account depends on how you installed:
 
 | Install method | First admin |
 |---|---|
-| Installer script | You created it in the setup wizard at `/setup`. Its last step shows the **Login URL** and your username. |
+| Installer script | You created it in the setup wizard at `/setup`. It takes you to the sign-in page at the base URL when it is done. |
 | Setup file (`DOCKMESH_SETUP_FILE`, `setup apply`, `init`) | The admin named in the file; `init --yes` wrote the generated password to the file it names (`/root/dockmesh-admin-password` by default). |
 | From source | You created it with `./dockmesh admin create --username <name> --role admin` before the first start, or in the setup wizard at `/setup`. |
 

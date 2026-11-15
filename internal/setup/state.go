@@ -43,6 +43,7 @@ type State struct {
 	startedAt  time.Time
 	codes      *Codes
 	tlsFP      string
+	fresh      bool
 }
 
 // NewForced returns a State pinned to active regardless of existing users,
@@ -101,6 +102,22 @@ func (s *State) SetTLSFingerprint(fp string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tlsFP = fp
+}
+
+// SetFresh records that this setup mode belongs to a new install, which
+// commits through setup-apply; a legacy unfinished install commits in
+// place and keeps its data dir and listener.
+func (s *State) SetFresh(fresh bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fresh = fresh
+}
+
+// Fresh is the value set by SetFresh.
+func (s *State) Fresh() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fresh
 }
 
 // TLSFingerprint is the fingerprint set by SetTLSFingerprint, empty when

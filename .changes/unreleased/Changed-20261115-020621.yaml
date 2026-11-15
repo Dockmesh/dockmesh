@@ -1,0 +1,3 @@
+kind: Changed
+body: 'The setup wizard follows the new layout: a setup code screen that takes the code from the installer link, a step list, a data directory step with a disk list and the same checks the installer applies, and address and TLS choices for the web listener.'
+time: 2026-11-15T02:06:21.298121459Z

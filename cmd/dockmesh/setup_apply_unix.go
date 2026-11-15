@@ -303,7 +303,7 @@ func (a *setupApplier) checkTarget(dir string) (exists bool, err error) {
 	if err := setup.CheckDataDirPath(dir); err != nil {
 		return false, err
 	}
-	if err := rootOwnedAncestors(filepath.Dir(dir)); err != nil {
+	if err := setup.RootOwnedAncestors(filepath.Dir(dir)); err != nil {
 		return false, err
 	}
 	fi, err := os.Lstat(dir)
@@ -315,7 +315,7 @@ func (a *setupApplier) checkTarget(dir string) (exists bool, err error) {
 	case !fi.IsDir():
 		return true, fmt.Errorf("%s is not a directory", dir)
 	}
-	if owner, ok := fileOwner(fi); !ok || owner != a.uid {
+	if owner, ok := setup.FileOwner(fi); !ok || owner != a.uid {
 		return true, fmt.Errorf("%s exists and does not belong to the dockmesh account; choose a new directory", dir)
 	}
 	return true, a.onlySetupLeftovers(dir)
@@ -326,7 +326,7 @@ func (a *setupApplier) checkTarget(dir string) (exists bool, err error) {
 func checkCertDirs(v setup.ApplyValues) error {
 	for _, f := range []string{v.TLSCertFile, v.TLSKeyFile} {
 		if f != "" {
-			if err := rootOwnedAncestors(filepath.Dir(f)); err != nil {
+			if err := setup.RootOwnedAncestors(filepath.Dir(f)); err != nil {
 				return fmt.Errorf("certificate file %s: %w", f, err)
 			}
 		}
@@ -348,35 +348,6 @@ func lockSetup() (func(), error) {
 		return nil, err
 	}
 	return func() { f.Close() }, nil
-}
-
-// rootOwnedAncestors checks dir and every directory above it: a real
-// directory, owned by root, writable by nobody else.
-func rootOwnedAncestors(dir string) error {
-	if !filepath.IsAbs(dir) {
-		return fmt.Errorf("%s is not absolute", dir)
-	}
-	for p := filepath.Clean(dir); ; p = filepath.Dir(p) {
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return fmt.Errorf("%s: %w", p, err)
-		}
-		owner, ok := fileOwner(fi)
-		if !fi.IsDir() || !ok || owner != 0 || fi.Mode().Perm()&0o022 != 0 {
-			return fmt.Errorf("%s must be a directory owned by root that only root may write", p)
-		}
-		if p == "/" {
-			return nil
-		}
-	}
-}
-
-func fileOwner(fi fs.FileInfo) (uint32, bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
-	}
-	return st.Uid, true
 }
 
 // onlySetupLeftovers accepts a data dir that is empty but for the state

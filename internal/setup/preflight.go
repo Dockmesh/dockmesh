@@ -331,17 +331,21 @@ func compareVersion(a, b string) int {
 type ServerInfo struct {
 	Version       string `json:"version"`
 	OS            string `json:"os"`
+	Arch          string `json:"arch"`
 	IP            string `json:"ip"`
 	DockerVersion string `json:"docker_version"`
 	UptimeSecs    int64  `json:"uptime_secs"`
 	// TLSFingerprint is the SHA-256 of the certificate setup mode
 	// serves; empty over plain HTTP.
 	TLSFingerprint string `json:"tls_fingerprint,omitempty"`
+	// Fresh is true for a new install; false for a 0.5.x install whose
+	// setup never finished.
+	Fresh bool `json:"fresh"`
 }
 
 // CollectServerInfo gathers the four-row top-bar payload.
 func CollectServerInfo(ctx context.Context, version string, dockerCli *docker.Client, requestHost string, startedAt time.Time) ServerInfo {
-	si := ServerInfo{Version: version}
+	si := ServerInfo{Version: version, Arch: runtime.GOARCH}
 	name, ver := parseOSRelease()
 	if ver != "" {
 		si.OS = name + " " + ver
