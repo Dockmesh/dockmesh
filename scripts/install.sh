@@ -70,11 +70,15 @@ die() {
   exit 1
 }
 
-# box TITLE LINE... draws a box with the title in its top border. Lines
-# are measured in bytes, so keep them ASCII.
+# box TITLE LINE... draws a box with the title in its top border, wider
+# than BOX_WIDTH when a line needs it. Lines are measured in bytes, so
+# keep them ASCII.
 box() {
   local title="$1" inner=$((BOX_WIDTH - 2)) line pad i
   shift
+  for line in "$@"; do
+    [ $((${#line} + 4)) -gt "$inner" ] && inner=$((${#line} + 4))
+  done
   printf '\n%s%s %s%s%s ' "$FG_STEP" "$BOX_TL" "$BOLD" "$title" "$RST$FG_STEP" >&2
   for ((i = ${#title} + 2; i < inner; i++)); do printf '%s' "$BOX_H" >&2; done
   printf '%s%s\n' "$BOX_TR" "$RST" >&2
@@ -735,10 +739,10 @@ else
   fi
   if [ "$IS_UPGRADE" = "1" ] && [ "$PREV_VERSION" = "$DM_VERSION" ] && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
     box "Already on ${DM_VERSION#v}" \
-      "Dockmesh ${DM_VERSION#v} is installed already. Nothing was changed." \
-      "" \
-      "Reinstall anyway:" \
-      "  curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_FORCE=1 bash"
+      "Dockmesh ${DM_VERSION#v} is installed already." \
+      "Nothing was changed. To reinstall anyway, run:" \
+      "  curl -fsSL https://get.dockmesh.dev |" \
+      "    sudo DOCKMESH_FORCE=1 bash"
     exit 0
   fi
 fi
@@ -883,6 +887,14 @@ install_release_files() {
   printf '%s' "$list"
 }
 
+# setup_data_dir creates the data dir setup mode keeps its state in until
+# the wizard has chosen where the data goes.
+setup_data_dir() {
+  $USE_SUDO mkdir -p /var/lib/dockmesh
+  $USE_SUDO chown dockmesh:docker /var/lib/dockmesh 2>/dev/null || $USE_SUDO chown dockmesh /var/lib/dockmesh
+  $USE_SUDO chmod 750 /var/lib/dockmesh
+}
+
 USER_CREATED=0
 ensure_service_user() {
   if ! id dockmesh >/dev/null 2>&1; then
@@ -1009,6 +1021,10 @@ if [ "$IS_UPGRADE" = "1" ]; then
     MIGRATE_DETAIL="config stays in $ENV_FILE"
   else
     MIGRATE_DETAIL="no config yet"
+    # Setup mode runs on the default data dir, which the unit names.
+    if ! present /var/lib/dockmesh; then
+      setup_data_dir
+    fi
   fi
   if [ "$WRITE_UNIT" = "1" ]; then
     if write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
@@ -1130,12 +1146,7 @@ EOF
 fi
 
 ensure_service_user
-# Setup mode keeps its state in the data dir until the wizard has chosen
-# where the data goes.
-DATA_DIR=/var/lib/dockmesh
-$USE_SUDO mkdir -p "$DATA_DIR"
-$USE_SUDO chown dockmesh:docker "$DATA_DIR" 2>/dev/null || $USE_SUDO chown dockmesh "$DATA_DIR"
-$USE_SUDO chmod 750 "$DATA_DIR"
+setup_data_dir
 N=$((N + 1)); step "$N" "Creating user dockmesh" "groups: $($USE_SUDO "$INSTALL_DIR/dockmesh" system unit-groups 2>/dev/null || echo docker)"
 
 if [ "$HAS_SYSTEMD" = "0" ]; then

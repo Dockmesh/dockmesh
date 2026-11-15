@@ -160,17 +160,17 @@ func systemSnapshotDB() error {
 	if os.Geteuid() != 0 {
 		return errors.New("must run as root")
 	}
+	// Without a config the server runs on the default paths.
+	env := map[string]string{}
 	envFile, err := unitConfigFile("")
-	if errors.Is(err, errNoConfig) {
-		fmt.Println("no database yet")
-		return nil
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoConfig):
+	case err != nil:
 		return err
-	}
-	env, err := layout.ReadEnvFile(envFile)
-	if err != nil {
-		return err
+	default:
+		if env, err = layout.ReadEnvFile(envFile); err != nil {
+			return err
+		}
 	}
 	dbPath := config.ResolvePaths(func(k string) string { return env[k] }).DBPath
 	if _, err := os.Lstat(dbPath); errors.Is(err, fs.ErrNotExist) {
