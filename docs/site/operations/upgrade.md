@@ -70,6 +70,7 @@ From v0.6.0, **Update now** on **Settings → Updates** installs the newer relea
 The button is only shown when the server can install updates itself. Otherwise the page says why:
 
 - On a server that runs in a container: pull the new image and recreate the container.
+- On a build that is not a release (`dev`, for example `make build` from source) the button is not shown.
 - Without the root updater (installs upgraded only by replacing the binary, Linux without systemd, macOS): run the installer once. It sets up the root updater on Linux with systemd; elsewhere keep using the installer.
 
 The first v0.6.0 release itself can only be installed with the installer, since older versions have no **Update now**.
@@ -85,14 +86,14 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: applicatio
 
 1. The server downloads `dockmesh_linux_<arch>.tar.gz`, `checksums.txt` and its signature into `<data directory>/update/` and checks them. A bad signature or checksum stops here. A version that is not newer than the running one, or a pre-release outside the **Pre-release** channel, is refused.
 2. It waits up to 10 minutes for running deploys, scales, image updates and other stack operations on every host to finish; new ones are refused with "server update" in the meantime. If a stack is still busy after 10 minutes, nothing is installed.
-3. It asks the root updater (`dockmesh-update.path` and `dockmesh-update.service`, running as root, see [`dockmesh update apply`](../reference/dockmesh-cli.md#update-apply)) to install the release. The root updater checks the files again on its own copy and refuses a version that is not newer. Then it stops the server, writes a snapshot of the database (`dockmesh.db.pre-update.bak` next to it), keeps the old binary as `dockmesh.prev`, installs the new `dockmesh`, `dmctl`, agent binaries and `install-agent.sh` (next to the installed binary and in `../share/dockmesh/`, so a custom install directory is kept), writes the units from the new version's template and starts the server. The `grype` scanner is not touched.
-4. The new version counts as up when `/api/v1/health` answers with status `ok` and the new version within 180 seconds. If it doesn't, or any step fails, the root updater puts back the old binaries, units and database snapshot and starts the old version.
+3. It asks the root updater (`dockmesh-update.path` and `dockmesh-update.service`, running as root, see [`dockmesh update apply`](../reference/dockmesh-cli.md#update-apply)) to install the release. The root updater checks the files again on its own copy and refuses a version that is not newer. Then it stops the server, writes a snapshot of the database (`dockmesh.db.pre-update.bak` next to it), keeps the old binary as `dockmesh.prev`, installs the new `dockmesh`, `dmctl`, agent binaries and `install-agent.sh` (next to the installed binary and in `../share/dockmesh/`, so a custom install directory is kept), writes the units from the new version's template and starts the server. The `grype` scanner is not touched. The installed binary and each of its parent directories must be owned and writable only by root, or the update is refused.
+4. The new version counts as up when `/api/v1/health` answers with status `ok` and the new version within 180 seconds. That only says the server started and migrated its database; it does not check Docker, agents or the proxy. If it doesn't, or any step fails, the root updater puts back the old binaries, units and database snapshot and starts the old version.
 
-After the restart the new version serves the UI and API at once, but starts no background job that changes containers or files (backup schedules, git polling and the pending git deploys a freed stack would start, auto-scaling, agent upgrades, audit retention, migration cleanup) until the root updater confirmed the update. A rollback within that window therefore never meets containers or files the new version already changed. A normal restart, without an update in flight, starts them right away. If an update stays unconfirmed for over an hour, for example because the updater was killed, admins get a critical banner and the jobs stay paused until `sudo systemctl start dockmesh-update.service` finishes or rolls back the update. The same service also runs once at boot, so an update interrupted by a crash or power cut is finished or rolled back on the next start.
+After the restart the new version serves the UI and API at once, but starts no background job that changes containers or files (backup schedules, git polling and the pending git deploys a freed stack would start, auto-scaling, agent upgrades, audit retention, migration cleanup) until the root updater confirmed the update. Actions that someone starts in the UI or API during that window, git webhooks, and the check of the proxy container at start are not held back, and a rollback does not undo what they changed outside the database. A normal restart, without an update in flight, starts them right away. If an update stays unconfirmed for over an hour, for example because the updater was killed, admins get a critical banner and the jobs stay paused until `sudo systemctl start dockmesh-update.service` finishes or rolls back the update. The same service also runs once at boot, so an update interrupted by a crash or power cut is finished or rolled back on the next start.
 
 `GET /api/v1/system/update/install` shows how far an install got and, after the restart, the root updater's result (`last_result`). Admins also see a notice when the update was refused or rolled back; a successful update raises none. If the rollback itself failed, a critical banner says so; fix the cause and run `sudo systemctl start dockmesh-update.service` to finish it.
 
-> **Note:** A rollback puts back the database as it was before the update. Everything changed in Dockmesh while the new version was running, at most about 180 seconds, is lost, audit entries included.
+> **Note:** A rollback puts back the database as it was before the update. Everything changed in Dockmesh while the new version was running is lost, audit entries included. Normally that is at most about 180 seconds; when an interrupted update is finished at the next boot, it is everything since the update started.
 
 ### Run the installer
 
@@ -168,7 +169,7 @@ journalctl -u dockmesh --since "5 min ago"
 
 The log shows `database snapshot written before migration` with the snapshot's path when migrations ran.
 
-Some releases sign everyone out once, for example when the session format changes; the sign-in page then says "You were signed out after a security update." After the restart, sign in, check the notice banner and **Needs attention**, check that every host under **Hosts** is online, and open one or two stacks. Then work through the release's upgrade notes.
+An upgrade from a version before 0.4.0 signs everyone out once, because the session format changed; the sign-in page then says "You were signed out after a security update." Other upgrades keep sessions, and API tokens keep working. After the restart, sign in, check the notice banner and **Needs attention**, check that every host under **Hosts** is online, and open one or two stacks. Then work through the release's upgrade notes.
 
 ## Rolling back
 
@@ -180,10 +181,10 @@ The way back is the previous binary together with a database snapshot from befor
 
 | Snapshot | Written by | When |
 |---|---|---|
-| `dockmesh.db.pre-update.bak` | **Update now** and the installer (from v0.6.0), with the server stopped | Before every upgrade; the next upgrade replaces it |
-| `dockmesh.db.pre-migrate-<UTC time>.bak` | The server itself | On the first start of a release with new migrations; the newest three are kept |
+| `dockmesh.db.pre-update.bak` | **Update now** and the installer (from v0.6.0), with the server stopped | Before every upgrade, also one without migrations; the next upgrade or reinstall (`DOCKMESH_FORCE=1`) replaces it |
+| `dockmesh.db.pre-migrate-<UTC time>.bak` | The server, and `dockmesh` commands that open the database (for example `doctor`) | Before it applies new migrations; the newest three are kept, so later migrating runs can rotate out an upgrade's snapshot |
 
-Use the `pre-update` snapshot of the upgrade you are undoing, or the newest `pre-migrate` snapshot that this upgrade wrote (the log line from step 3 names it). The previous binary is `dockmesh.bak` after an installer upgrade and `dockmesh.prev` after **Update now**:
+Managed agents that were already upgraded keep their newer version; they refuse to be downgraded. Use the `pre-update` snapshot of the upgrade you are undoing, or the newest `pre-migrate` snapshot that this upgrade wrote (the log line from step 3 names it). The previous binary is `dockmesh.bak` after an installer upgrade and `dockmesh.prev` after **Update now**:
 
 ```bash
 sudo systemctl stop dockmesh
@@ -197,7 +198,7 @@ sudo systemctl start dockmesh
 
 A snapshot from v0.4.x is deleted on the first start once the upgrade checks pass, because it holds secrets in plaintext (see What happens on the first start). Going back to v0.4.x after that needs the backup from step 1 or a system backup made on v0.4.x.
 
-The snapshots hold the database only. Files an upgrade changes outside the database, such as a config moved to `/etc/dockmesh` (the symlink left at the old place keeps it readable), are not undone. To undo everything, restore the copy from step 1 instead:
+The snapshots hold the database only. What an upgrade changes outside the database is not undone: a config moved to `/etc/dockmesh` (the symlink left at the old place keeps it readable), the data root's owner after a move off root, a `grype` the installer added, and the proxy container if the new version recreated it. To undo everything, restore the copy from step 1 instead:
 
 ```bash
 sudo systemctl stop dockmesh
