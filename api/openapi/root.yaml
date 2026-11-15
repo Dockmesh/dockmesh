@@ -24,7 +24,7 @@ info:
 
     ## Errors
 
-    Non-2xx responses use a uniform shape: `{"error": "<human-readable message>"}`.
+    Non-2xx responses use a uniform shape: `{"error": "<human-readable message>", "code": "<stable code>"}`.
     HTTP status carries the category (400/401/403/404/409/500).
 
     ## Maintenance
@@ -260,7 +260,9 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: Authenticated but the token's role lacks the required permission.
+      description: |
+        Authenticated but refused: `code` `forbidden` when the caller lacks the permission, `out_of_scope*`
+        when it holds it but not on this resource. A `forbidden` refusal is recorded as an `auth.scope_denied` audit entry.
       content:
         application/json:
           schema:

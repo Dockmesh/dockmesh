@@ -227,6 +227,7 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	// Self, or a caller who manages users and every assignment of the
 	// target. Resetting someone else's password needs no current password.
 	if !isSelf && !middleware.Allowed(r.Context(), rbac.PermUsersUpdate) {
+		h.AuditPermDenied(r, rbac.PermUsersUpdate)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}

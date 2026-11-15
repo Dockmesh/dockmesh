@@ -22,6 +22,7 @@ import (
 // stolen key leaves a trail.
 func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermBackupsKeyExport) {
+		h.AuditPermDenied(r, rbac.PermBackupsKeyExport)
 		writeError(w, http.StatusForbidden, "exporting the backup key needs the key export extra on everything")
 		return
 	}
