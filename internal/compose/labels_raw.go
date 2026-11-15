@@ -3,6 +3,7 @@ package compose
 import (
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -31,24 +32,39 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 		Networks map[string]*rawResource `yaml:"networks"`
 		Volumes  map[string]*rawResource `yaml:"volumes"`
 	}
-	if err := yaml.Unmarshal([]byte(composeYAML), &doc); err != nil {
+	dec := yaml.NewDecoder(strings.NewReader(composeYAML))
+	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parse compose file: %w", err)
+	}
+	// Compose merges every document of the file; this check reads one.
+	var more any
+	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("several YAML documents: %w", ErrLabelsNeedAgent)
 	}
 	if doc.Include != nil {
 		return fmt.Errorf("include: %w", ErrLabelsNeedAgent)
 	}
 	project := loader.NormalizeProjectName(stackName)
 	base := map[string]string{LabelProject: project, LabelManaged: "true"}
+	extends := false
+	for _, svc := range doc.Services {
+		extends = extends || svc.Extends != nil
+	}
 	for _, name := range slices.Sorted(maps.Keys(doc.Services)) {
 		svc := doc.Services[name]
 		if svc.LabelFile != nil {
 			return fmt.Errorf("service %q: label_file: %w", name, ErrLabelsNeedAgent)
 		}
-		if ext, ok := svc.Extends.(map[string]any); ok && ext["file"] != nil {
+		if !sameFileExtends(svc.Extends) {
 			return fmt.Errorf("service %q: extends from another file: %w", name, ErrLabelsNeedAgent)
 		}
 		tracking := maps.Clone(base)
 		tracking[LabelService] = name
+		if extends {
+			// An extended service passes its labels on, and with them a
+			// service label that is right only for itself.
+			tracking[LabelService] = ""
+		}
 		if err := checkRawLabels("service", name, tracking, svc.Labels); err != nil {
 			return err
 		}
@@ -65,6 +81,23 @@ func CheckReservedLabelsText(stackName, composeYAML string) error {
 		}
 	}
 	return nil
+}
+
+// sameFileExtends accepts no extends, or one naming only a service of this
+// file.
+func sameFileExtends(v any) bool {
+	switch x := v.(type) {
+	case nil, string:
+		return true
+	case map[string]any:
+		for k := range x {
+			if k != "service" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 type rawResource struct {

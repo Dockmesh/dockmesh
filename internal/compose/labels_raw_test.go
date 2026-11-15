@@ -30,6 +30,9 @@ func TestCheckReservedLabelsText(t *testing.T) {
 		{"extends from another file", svc + "    extends:\n      file: /dev/zero\n      service: x\n", "upgrade the agent", true},
 		{"extends in the same file", svc + "    extends:\n      service: base\n  base:\n    image: nginx\n", "", false},
 		{"label_file", svc + "    label_file: /etc/hostname\n", "upgrade the agent", true},
+		{"second document", svc + "---\nservices:\n  web:\n    labels:\n      com.docker.compose.project: billing\n", "several YAML documents", true},
+		{"extends with an odd key", svc + "    extends:\n      service: base\n      file: /tmp/x.yaml\n      1: x\n", "upgrade the agent", true},
+		{"service label passed on through extends", "services:\n  base:\n    image: nginx\n    labels:\n      com.docker.compose.service: base\n  web:\n    extends: base\n", "is reserved for Dockmesh", false},
 		{"unparsable", "services: [\n", "parse compose file", false},
 	}
 	for _, tt := range tests {
