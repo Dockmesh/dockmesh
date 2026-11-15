@@ -46,7 +46,7 @@ func serviceTrackingLabels(proj *composetypes.Project, svc string) map[string]st
 
 // CheckReservedLabels refuses a project whose services, networks or
 // volumes set one of Dockmesh's tracking labels, before anything of it
-// is created.
+// is created. Labels of external networks and volumes are never applied.
 func CheckReservedLabels(proj *composetypes.Project) error {
 	for _, name := range slices.Sorted(maps.Keys(proj.Services)) {
 		if _, err := withTrackingLabels("service", name, serviceTrackingLabels(proj, name), proj.Services[name].Labels); err != nil {
@@ -54,11 +54,17 @@ func CheckReservedLabels(proj *composetypes.Project) error {
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(proj.Networks)) {
+		if bool(proj.Networks[name].External) {
+			continue
+		}
 		if _, err := withTrackingLabels("network", name, trackingLabels(proj), proj.Networks[name].Labels); err != nil {
 			return err
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(proj.Volumes)) {
+		if bool(proj.Volumes[name].External) {
+			continue
+		}
 		if _, err := withTrackingLabels("volume", name, trackingLabels(proj), proj.Volumes[name].Labels); err != nil {
 			return err
 		}

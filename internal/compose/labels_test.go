@@ -9,11 +9,12 @@ import (
 
 func TestCheckReservedLabels(t *testing.T) {
 	tests := []struct {
-		name    string
-		service composetypes.Labels
-		network composetypes.Labels
-		volume  composetypes.Labels
-		wantErr string
+		name     string
+		service  composetypes.Labels
+		network  composetypes.Labels
+		volume   composetypes.Labels
+		external bool
+		wantErr  string
 	}{
 		{name: "no labels"},
 		{name: "own labels", service: composetypes.Labels{"traefik.enable": "true", "com.example.team": "web"}},
@@ -34,13 +35,14 @@ func TestCheckReservedLabels(t *testing.T) {
 			wantErr: `volume "data": label "com.docker.compose.project"`},
 		{name: "volume with a dockmesh label", volume: composetypes.Labels{"dockmesh.proxy.spec": "x"},
 			wantErr: `volume "data": label "dockmesh.proxy.spec"`},
+		{name: "external network labels are not applied", network: composetypes.Labels{LabelProject: "billing"}, external: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			proj := &composetypes.Project{
 				Name:     "shop",
 				Services: composetypes.Services{"web": {Name: "web", Labels: tt.service}},
-				Networks: composetypes.Networks{"back": {Labels: tt.network}},
+				Networks: composetypes.Networks{"back": {Labels: tt.network, External: composetypes.External(tt.external)}},
 				Volumes:  composetypes.Volumes{"data": {Labels: tt.volume}},
 			}
 			err := CheckReservedLabels(proj)

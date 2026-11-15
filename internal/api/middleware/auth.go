@@ -293,7 +293,6 @@ func Forbidden(w http.ResponseWriter, r *http.Request, perm rbac.Perm) {
 		fn(r, perm)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(`{"error":"forbidden","code":"forbidden"}` + "\n"))
 }

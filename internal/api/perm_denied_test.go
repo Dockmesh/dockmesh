@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
@@ -28,16 +29,19 @@ func TestPermissionDenialIsJSONAndAudited(t *testing.T) {
 	token := signIn(t, authSvc, roles, "dep", rbac.RoleDeployer, rbac.Global)
 	router := NewRouter(h, authSvc, nil, true, nil)
 
+	longID := strings.Repeat("x", 2000)
 	tests := []struct {
 		method, path string
 		perm         rbac.Perm
+		target       string
 	}{
-		{http.MethodGet, "/api/v1/users", rbac.PermUsersView},
-		{http.MethodGet, "/api/v1/audit", rbac.PermAuditView},
-		{http.MethodGet, "/api/v1/system/backup-key/export", rbac.PermBackupsKeyExport},
+		{http.MethodGet, "/api/v1/users", rbac.PermUsersView, "GET /api/v1/users"},
+		{http.MethodGet, "/api/v1/audit", rbac.PermAuditView, "GET /api/v1/audit"},
+		{http.MethodGet, "/api/v1/system/backup-key/export", rbac.PermBackupsKeyExport, "GET /api/v1/system/backup-key/export"},
+		{http.MethodGet, "/api/v1/users/" + longID, rbac.PermUsersView, "GET " + ("/api/v1/users/" + longID)[:512] + "…"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+		t.Run(tt.target[:min(len(tt.target), 60)], func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			rr := httptest.NewRecorder()
@@ -66,7 +70,7 @@ func TestPermissionDenialIsJSONAndAudited(t *testing.T) {
 				if err := json.Unmarshal([]byte(e.Details), &d); err != nil {
 					t.Fatal(err)
 				}
-				if e.Target == tt.method+" "+tt.path && d["permission"] == string(tt.perm) && e.Username == "dep" {
+				if e.Target == tt.target && d["permission"] == string(tt.perm) && e.Username == "dep" {
 					found = true
 				}
 			}
