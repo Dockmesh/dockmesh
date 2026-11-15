@@ -1263,10 +1263,8 @@ func main() {
 	}
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
-	// Backfill stack deployments (P.7): scan local containers to detect
-	// which stacks are already deployed. Remote-agent containers are
-	// handled lazily — agents reconnect after boot and their containers
-	// will be picked up on the next deploy or via a future sync.
+	// Record local stacks whose containers run without a deployment row;
+	// remote stacks get theirs on their next deploy.
 	if dockerCli != nil {
 		go func() {
 			bgCtx := context.Background()

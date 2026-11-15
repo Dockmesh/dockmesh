@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Server start no longer records a running stack without a host as deployed; deploy such a stack once to give it its host. A stack an earlier start recorded on the local host although it was created for an agent keeps that record; move it with Migrate
+time: 2026-11-15T16:47:23.441534952Z
+custom:
+    Audience: admins
+    Id: stack-backfill-host
