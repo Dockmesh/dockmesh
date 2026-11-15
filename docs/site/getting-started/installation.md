@@ -27,16 +27,62 @@ curl -fsSL https://get.dockmesh.dev | sudo bash
 
 `get.dockmesh.dev` serves `scripts/install.sh` from the latest release. If you prefer to read it first, download it from the release assets (`https://github.com/dockmesh/dockmesh/releases/latest/download/install.sh`) and run it with `sudo bash install.sh`.
 
-The script:
+The script first decides whether this is a new install or an upgrade, once, before it changes anything. It counts as an upgrade when any trace of an earlier install exists: the `dockmesh` binary, a `dockmesh.service` unit, a config (`/etc/dockmesh/dockmesh.env`, `dockmesh.env` in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh`, the one an existing unit names, or `$DOCKMESH_DATA_DIR/dockmesh.env`) or a database at any of those places. An upgrade never prints a setup code and never writes a config.
 
-1. Checks the OS, the architecture (`amd64` or `arm64`, from `uname -m`; anything else aborts), required tools (OpenSSL 3 among them, for the signature check), Docker, and whether ports 8080 and 8443 are free.
+On a new install the script:
+
+1. Checks the OS, the architecture (`amd64` or `arm64`, from `uname -m`; anything else aborts), required tools (OpenSSL 3 among them, for the signature check), systemd, Docker, and whether ports 8080 and 8443 are free.
 2. Looks up the latest release on GitHub, downloads `dockmesh_<os>_<arch>.tar.gz`, checks the minisign signature of the release's `checksums.txt` and then the archive against `checksums.txt`. It aborts when the signature is missing or doesn't verify, on a checksum mismatch, and when no checksum is published for the archive ([Verify a release](../operations/verify-release.md)).
-3. Installs the binaries and agent assets (table below).
-4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works without image scans.
-5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group if that group exists. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine.
-6. Creates the data root (mode 750) with `data/` and `stacks/` inside, all owned by `dockmesh:docker`.
-7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service. The next upgrade moves the file to `/etc/dockmesh/dockmesh.env` and leaves a symlink.
-8. Creates a setup code with `dockmesh setup new-code` and prints it with the wizard link, `http://<first IP of the host>:8080/setup#<code>`. The code goes only to the terminal.
+3. Installs the binaries and agent assets (table below), and the `grype` vulnerability scanner unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If the scanner install fails, Dockmesh still works without image scans.
+4. Creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group if that group exists. Membership in `docker` is equivalent to root on the host, since it gives full control of the Docker engine. It creates an empty `/var/lib/dockmesh` (mode 750), where setup mode keeps its state.
+5. Writes `dockmesh.service` and the updater units `dockmesh-update.path` and `dockmesh-update.service` with `dockmesh system write-unit`.
+6. Starts the service in setup mode and prints the setup link, the code and its expiry, and the SHA-256 fingerprint of the certificate setup mode serves:
+
+```
+Dockmesh installer
+
+[1/6] Checking the system        Linux amd64 · systemd · Docker 28.3.1
+[2/6] Downloading 0.6.0          verified (minisign, key 01A0941E358E1C5A)
+[3/6] Installing binaries        /usr/local/bin/dockmesh, dmctl
+[4/6] Creating user dockmesh     groups: docker
+[5/6] Installing services        dockmesh.service, dockmesh-update.path
+[6/6] Starting setup mode        ok
+
+┌ Finish the setup in your browser ─────────────────────────────┐
+│                                                               │
+│   https://192.168.1.20:8080/setup#K7QD-3MXA-9PRT              │
+│                                                               │
+│   Setup code   K7QD-3MXA-9PRT                                 │
+│   Valid until  14:32 (2 hours)                                │
+│                                                               │
+│   Your browser will warn about the certificate. Check that    │
+│   it shows this SHA-256 fingerprint before you continue:      │
+│   3F:A2:…                                                     │
+│   …:9C                                                        │
+│                                                               │
+│   New code:    sudo dockmesh setup new-code                   │
+└───────────────────────────────────────────────────────────────┘
+```
+
+The new install has no config yet: the setup wizard writes `/etc/dockmesh/dockmesh.env` when you finish it. The code goes only to the terminal, never to a log. When the group of the Docker socket is not `docker` (Synology, Podman), step 4 names it too, for example `groups: docker, dmsock (Docker socket)`. Output is plain text without colours when `NO_COLOR` is set or the output is not a terminal, and the box uses ASCII characters outside a UTF-8 locale.
+
+On an upgrade the script checks and downloads in the same way, then stops the service, writes a snapshot of the database next to it (`dockmesh.db.pre-update.bak`), installs the binaries (the previous server binary is kept as `dockmesh.bak`), moves an old config to `/etc/dockmesh/dockmesh.env` with [`dockmesh system migrate-layout`](../reference/dockmesh-cli.md#system-migrate-layout), rewrites the unit and starts the service again:
+
+```
+Dockmesh installer · upgrade 0.5.2 → 0.6.0
+
+[1/6] Checking the system        Linux amd64 · systemd · Docker 28.3.1
+[2/6] Downloading 0.6.0          verified (minisign, key 01A0941E358E1C5A)
+[3/6] Taking a snapshot          snapshot /var/lib/dockmesh/data/dockmesh.db.pre-update.bak
+[4/6] Installing binaries        /usr/local/bin/dockmesh, dmctl (previous kept as dockmesh.bak)
+[5/6] Migrating config           config in /etc/dockmesh/dockmesh.env, unit from the template
+moved  /var/lib/dockmesh/dockmesh.env → /etc/dockmesh/dockmesh.env (symlink left)
+[6/6] Restarting                 ok, down 2.4 s
+
+ok  Dockmesh 0.6.0 is running. Sign in as usual.
+```
+
+If the earlier install never finished its setup, a box follows that says how to get a setup code (`sudo dockmesh setup new-code`) and where to open the wizard. A host with only the binary and no unit, config or database gets its binaries replaced but no service.
 
 ### What goes where
 
@@ -47,14 +93,15 @@ The script:
 | `/usr/local/bin/grype` | Vulnerability scanner (unless skipped) |
 | `/usr/local/share/dockmesh/install-agent.sh` | Agent installer served to remote hosts |
 | `/usr/local/share/dockmesh/bin/dockmesh-agent-linux-amd64`, `dockmesh-agent-linux-arm64` | Agent binaries served to remote hosts; Linux archives carry both architectures |
-| `/var/lib/dockmesh/` | Data root: `dockmesh.env`, `data/` (database, keys, certificates), `stacks/` |
-| `/etc/systemd/system/dockmesh.service` | Service unit: runs `dockmesh serve` as `dockmesh:docker` with `EnvironmentFile=<data root>/dockmesh.env` |
+| `/var/lib/dockmesh/` | Data root; during setup mode only its `.setup/` state |
+| `/etc/dockmesh/dockmesh.env` | Config, written by the setup wizard |
+| `/etc/systemd/system/dockmesh.service` | Service unit: runs `dockmesh serve` as `dockmesh` with the `docker` group |
 
 The agent binaries are not installed into `/usr/local/bin`; they are only kept so the server can hand them to remote hosts. The full tree is in [Filesystem layout](../reference/filesystem-layout.md).
 
-Since 0.6 the installer no longer picks `/data` by itself; set `DOCKMESH_DATA_DIR=/data` to use it. Installs that already use `/data` keep it. On macOS the data root is `/usr/local/var/dockmesh`, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
+The installer no longer picks `/data` by itself; installs that already use `/data` keep it through their config. On a new install `DOCKMESH_DATA_DIR` is not used: choose the data directory in the setup wizard. On macOS the data root is `/usr/local/var/dockmesh`, the installer still writes `<data root>/dockmesh.env` there, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
 
-If the script finds the `dockmesh.env` of an earlier install (in `/var/lib/dockmesh`, `/data`, `/usr/local/var/dockmesh`, the one named in an existing unit, or at `$DOCKMESH_DATA_DIR/dockmesh.env`, also as the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves), it keeps that file and uses its data root, so a reinstall over kept data picks up the existing database, stacks and keys. It then does not open the setup wizard; you sign in with your existing account.
+A reinstall over kept data (for example after `uninstall.sh` without `--purge`) is an upgrade: the script keeps the config and the data next to it, recreates the `dockmesh` user and hands the data back to it, so the existing database, stacks and keys are picked up and you sign in with your existing account.
 
 The installer writes the systemd unit with `dockmesh system write-unit` on every install and upgrade, so changes made directly to `/etc/systemd/system/dockmesh.service` are replaced. Put local changes into a drop-in in `/etc/systemd/system/dockmesh.service.d/`, which Dockmesh never touches.
 
@@ -72,33 +119,19 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_CHANNEL` | `stable` | Deprecated, removed in 0.7.0: `testing` also considers pre-releases when resolving "latest" and prints a warning. Name the pre-release with `--version` instead. |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binaries go. |
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh` (full rule in [Environment variables](../reference/environment-variables.md)) | Data root. Must match the data root of an earlier install the script finds. |
+| `DOCKMESH_DATA_DIR` | unset | On an upgrade, the data root of the earlier install, if the script can't find it at the default places; it must match the config the script finds. Not used on a new install. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
-| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
+| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` on a new install installs the binaries, the `dockmesh` user, the data root and the units, but does not start setup mode. Start it later with `sudo systemctl start dockmesh && sudo dockmesh setup new-code`. |
+| `DOCKMESH_SKIP_DOWNLOAD` | unset | `1` uses a `dockmesh` binary you placed in the install directory yourself instead of downloading a release. It does not count as an earlier install. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
 | `DOCKMESH_SKIP_SIGNATURE` | unset | `1` trusts `checksums.txt` without checking its signature and prints a warning. Needed for releases before v0.6.0 (unsigned) and hosts without OpenSSL 3. |
 | `DOCKMESH_SKIP_CHECKSUM` | unset | `1` installs without checking the signature or the archive against `checksums.txt`. The binary runs as root, so skip the check only for a build you verified yourself. |
 | `NO_COLOR` | unset | Disables colored output. |
 
-### The env file
+### The config file
 
-On a host without an earlier install, the installer writes a minimal `dockmesh.env`:
-
-```bash
-DOCKMESH_HTTP_ADDR=:8080
-DOCKMESH_AGENT_LISTEN=:8443
-DOCKMESH_DB_PATH=/var/lib/dockmesh/data/dockmesh.db
-DOCKMESH_STACKS_ROOT=/var/lib/dockmesh/stacks
-DOCKMESH_SECRETS_PATH=/var/lib/dockmesh/data/secrets.env
-DOCKMESH_SECRETS_KEY_PATH=/var/lib/dockmesh/data/secrets.age-key
-DOCKMESH_AUDIT_GENESIS_PATH=/var/lib/dockmesh/data/audit-genesis.sha256
-DOCKMESH_INSTALL_SCRIPT=/usr/local/share/dockmesh/install-agent.sh
-DOCKMESH_BINARY_DIR=/usr/local/share/dockmesh/bin
-DOCKMESH_SETUP_FORCE=true
-```
-
-`DOCKMESH_SETUP_FORCE=true` marks an install whose setup wizard has not finished yet; the wizard removes the line when it finishes. The server opens the wizard only on an install with no user accounts that either has this flag or has no env file and no database at all. Any other install starts normally, even one without accounts. If the flag is still set on an install that has accounts, the server ignores it and shows admins a notice to remove it. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
+The setup wizard writes `/etc/dockmesh/dockmesh.env` (owner root, group `dockmesh`, mode 640) when it finishes. Installs from before 0.6 kept `dockmesh.env` in the data root; the next upgrade moves it to `/etc/dockmesh/dockmesh.env` and leaves a symlink. An old file that still has `DOCKMESH_SETUP_FORCE=true` belongs to an install whose wizard never finished: it opens setup mode only after `sudo dockmesh setup new-code`. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
 
 `dockmesh` subcommands such as `dockmesh admin list-users` load `/etc/dockmesh/dockmesh.env`, else the first `dockmesh.env` they find in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh`. If your data root is elsewhere, pass `--env-file <path>`. Run them as the service user (`sudo -u dockmesh dockmesh …`), because the data root is only readable by the service account and files they create keep the right owner.
 

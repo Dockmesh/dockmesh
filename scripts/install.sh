@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Dockmesh one-line installer.
+#  Dockmesh installer.
 #
 #  Usage:
 #    curl -fsSL https://get.dockmesh.dev | sudo bash
-#    curl -fsSL https://get.dockmesh.dev | DOCKMESH_VERSION=v1.2.3 bash
-#    curl -fsSL <release>/install.sh | sudo bash -s -- --version v1.3.0-rc.1
-#    curl -fsSL https://get.dockmesh.dev | DOCKMESH_INSTALL_DIR=/opt/bin bash
+#    curl -fsSL https://get.dockmesh.dev | sudo bash -s -- --version v1.3.0-rc.1
+#    curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_INSTALL_DIR=/opt/bin bash
 #
 #  Env vars:
 #    DOCKMESH_VERSION         tag to install, same as --version (default: latest
@@ -17,169 +16,96 @@
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
+#    DOCKMESH_NO_BOOTSTRAP    1 to install binaries, user and units without
+#                             starting setup mode
+#    DOCKMESH_SKIP_DOWNLOAD   1 to use a binary already placed in the bin directory
 #    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
 #    DOCKMESH_SKIP_SIGNATURE  1 to trust checksums.txt without its signature: releases
 #                             before v0.6.0, or hosts without OpenSSL 3 (default: verify)
-#    NO_COLOR                 1 to disable ANSI colors
+#    NO_COLOR                 set to disable colours
 #
-#  What this script does:
-#    - Detects OS, architecture, distribution
-#    - Preflight checks every required tool (with distro-aware install hints
-#      for anything missing)
-#    - Resolves latest release via the GitHub Releases API
-#    - Downloads the release tarball, checks the signature of checksums.txt
-#      and the tarball's sha256
-#    - Installs the binary to $DOCKMESH_INSTALL_DIR
-#    - On upgrade: backs up the old binary, auto-restarts the systemd service
-#    - On fresh install: starts the service so you can finish setup in the web wizard
-#
-#  The admin account and public URL are set in the web wizard at /setup;
-#  `dockmesh init` remains available for scripted, non-interactive setups.
+#  A new install gets the binaries, the dockmesh user, an empty data dir and
+#  the systemd units, and starts setup mode: the admin account, data dir and
+#  address are chosen in the browser, with the setup code printed at the end.
+#  A host with any trace of an earlier install (binary, unit, config or
+#  database) is upgraded instead and never gets a setup code.
 # ============================================================================
 set -euo pipefail
 
-# Pin numeric formatting to POSIX "C" locale. Without this, `awk printf
-# "%.1f"` honours the user's LC_NUMERIC — so on a German/French/etc
-# system it prints "0,6" instead of "0.6". That captured value then
-# gets interpolated into the next awk expression as `if (0,6>0)`, which
-# awk parses as a comma-separated argument list and aborts with
-# "syntax error … context is BEGIN { if (0,". Affects every non-US
-# locale, not just macOS — just more visible there because bash 3.2
-# also forced the BSD-date fallback path.
+# Box drawing follows the caller's locale; everything else runs in "C" so
+# awk prints "0.6", not "0,6", under a German or French LC_NUMERIC.
+CALLER_LOCALE="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
 export LC_ALL=C
 
 START_TS=${EPOCHREALTIME:-$SECONDS}
 
-# ------------------------------------------------------------------
-#  Color + TTY setup
-#
-#  The script writes UI to stderr so that `curl | bash` doesn't swallow
-#  colors via pipe redirection — stderr stays a TTY when piped that way.
-#  Falls back to plain text when NO_COLOR is set or TERM=dumb.
-# ------------------------------------------------------------------
+# The installer writes to stderr: under `curl | bash` that stays a TTY.
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
-  # 256-color palette — uniform across modern terminals. If the terminal
-  # only supports 8 colors, these still degrade to "close enough" hues.
   BOLD=$'\033[1m'; DIM=$'\033[2m'; RST=$'\033[0m'
-  FG_TITLE=$'\033[38;5;51m'       # bright cyan — headings, banner
-  FG_ACCENT=$'\033[38;5;44m'      # cyan — box borders, emphasis
-  FG_OK=$'\033[38;5;42m'          # green — success
-  FG_WARN=$'\033[38;5;214m'       # amber — warnings
-  FG_FAIL=$'\033[38;5;196m'       # red — failures
-  FG_INFO=$'\033[38;5;38m'        # soft cyan — info lines
-  FG_MUTED=$'\033[38;5;240m'      # gray — timestamps, paths
-  CH_OK='✔'; CH_INFO='ℹ'; CH_WARN='!'; CH_FAIL='✘'; CH_STEP='▸'
+  FG_STEP=$'\033[38;5;44m'
+  FG_OK=$'\033[38;5;42m'
+  FG_WARN=$'\033[38;5;214m'
+  FG_FAIL=$'\033[38;5;196m'
 else
   BOLD=; DIM=; RST=
-  FG_TITLE=; FG_ACCENT=; FG_OK=; FG_WARN=; FG_FAIL=; FG_INFO=; FG_MUTED=
-  CH_OK='[ok]'; CH_INFO='[i]'; CH_WARN='[!]'; CH_FAIL='[x]'; CH_STEP='>'
+  FG_STEP=; FG_OK=; FG_WARN=; FG_FAIL=
 fi
 
-# Pick the heaviest box-drawing characters the terminal supports. Users
-# on a raw TTY (no UTF-8) get ASCII pipes — script still reads cleanly.
-if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && locale 2>/dev/null | grep -qi 'utf' ; then
-  BOX_TL='╭'; BOX_TR='╮'; BOX_BL='╰'; BOX_BR='╯'
-  BOX_H='─'; BOX_V='│'
-  RULE='━'
-else
-  BOX_TL='+'; BOX_TR='+'; BOX_BL='+'; BOX_BR='+'
-  BOX_H='-'; BOX_V='|'
-  RULE='-'
-fi
+case "$CALLER_LOCALE" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*)
+    BOX_TL='┌'; BOX_TR='┐'; BOX_BL='└'; BOX_BR='┘'; BOX_H='─'; BOX_V='│' ;;
+  *)
+    BOX_TL='+'; BOX_TR='+'; BOX_BL='+'; BOX_BR='+'; BOX_H='-'; BOX_V='|' ;;
+esac
 
-BOX_WIDTH=70
+BOX_WIDTH=65
 
-# ------------------------------------------------------------------
-#  Helpers
-# ------------------------------------------------------------------
-say()   { printf '%s\n' "$*" >&2; }
-ok()    { printf '   %s%s%s %s\n' "$FG_OK" "$CH_OK" "$RST" "$*" >&2; }
-info()  { printf '   %s%s%s %s\n' "$FG_INFO" "$CH_INFO" "$RST" "$*" >&2; }
-warn()  { printf '   %s%s%s %s\n' "$FG_WARN" "$CH_WARN" "$RST" "$*" >&2; }
-fail()  { printf '   %s%s%s %s\n' "$FG_FAIL" "$CH_FAIL" "$RST" "$*" >&2; }
+say()    { printf '%s\n' "$*" >&2; }
+# A status word in front of a line: warning, notice, moved, ok.
+status() { local word="$1" colour="$2"; shift 2; printf '%s%s%s  %s\n' "$colour" "$word" "$RST" "$*" >&2; }
+warn()   { status warning "$FG_WARN" "$*"; }
+notice() { status notice "$FG_STEP" "$*"; }
+# Details of a step are not printed; the step line sums them up.
+ok()     { :; }
+info()   { :; }
 
 die() {
-  printf '\n   %s%s%s %s\n\n' "$FG_FAIL" "$CH_FAIL" "$RST" "$*" >&2
+  printf '\n%serror%s  %s\n\n' "$FG_FAIL" "$RST" "$*" >&2
   exit 1
 }
 
-# Print a rounded box with a title line and N body lines.
-# Usage: box "Title" "line1" "line2" ...
+# box TITLE LINE... draws a box with the title in its top border. Lines
+# are measured in bytes, so keep them ASCII.
 box() {
-  local title="$1"; shift
-  local w=$BOX_WIDTH inner=$((BOX_WIDTH - 4))
-  local line
-  printf '\n%s%s' "$FG_ACCENT" "$BOX_TL"
-  if [ -n "$title" ]; then
-    printf '%s %s%s%s %s' "$BOX_H" "$BOLD" "$title" "$RST$FG_ACCENT" ""
-    # pad remaining dashes
-    local used=$((${#title} + 4))
-    local i
-    for ((i=used; i<w-2; i++)); do printf '%s' "$BOX_H"; done
-  else
-    local i
-    for ((i=0; i<w-2; i++)); do printf '%s' "$BOX_H"; done
-  fi
-  printf '%s%s\n' "$BOX_TR" "$RST"
-
-  # blank line for breathing room
-  printf '%s%s%s%*s%s%s%s\n' "$FG_ACCENT" "$BOX_V" "$RST" $((w-2)) '' "$FG_ACCENT" "$BOX_V" "$RST"
-
-  for line in "$@"; do
-    # Strip ANSI sequences so ${#} measures visible width.
-    # The body line format is:
-    #   │<2sp><content><pad><2sp>│   → 1+2+N+2+1 = N+6 = w, so N = w-6.
-    # Previously we used w-4 which made every body line 2 chars too wide
-    # and left the right border misaligned.
-    local stripped
-    stripped=$(printf '%s' "$line" | sed -E $'s/\033\\[[0-9;]*m//g')
-    local pad=$((w - 6 - ${#stripped}))
-    [ $pad -lt 0 ] && pad=0
-    printf '%s%s%s  %s%*s  %s%s%s\n' \
-      "$FG_ACCENT" "$BOX_V" "$RST" \
-      "$line" "$pad" '' \
-      "$FG_ACCENT" "$BOX_V" "$RST"
+  local title="$1" inner=$((BOX_WIDTH - 2)) line pad i
+  shift
+  printf '\n%s%s %s%s%s ' "$FG_STEP" "$BOX_TL" "$BOLD" "$title" "$RST$FG_STEP" >&2
+  for ((i = ${#title} + 2; i < inner; i++)); do printf '%s' "$BOX_H" >&2; done
+  printf '%s%s\n' "$BOX_TR" "$RST" >&2
+  for line in "" "$@"; do
+    pad=$((inner - 3 - ${#line}))
+    [ "$pad" -lt 0 ] && pad=0
+    printf '%s%s%s   %s%*s%s%s%s\n' "$FG_STEP" "$BOX_V" "$RST" "$line" "$pad" '' "$FG_STEP" "$BOX_V" "$RST" >&2
   done
-
-  printf '%s%s%s%*s%s%s%s\n' "$FG_ACCENT" "$BOX_V" "$RST" $((w-2)) '' "$FG_ACCENT" "$BOX_V" "$RST"
-  printf '%s%s' "$FG_ACCENT" "$BOX_BL"
-  local i
-  for ((i=0; i<w-2; i++)); do printf '%s' "$BOX_H"; done
-  printf '%s%s\n\n' "$BOX_BR" "$RST"
+  printf '%s%s' "$FG_STEP" "$BOX_BL" >&2
+  for ((i = 0; i < inner; i++)); do printf '%s' "$BOX_H" >&2; done
+  printf '%s%s\n' "$BOX_BR" "$RST" >&2
 }
 
-# Step N/M header with right-aligned elapsed-time placeholder.
-# Usage: step N M "Title"
-__step_time=0
+# step N TITLE DETAIL prints the line of a finished step.
 step() {
-  local n="$1" m="$2" title="$3"
-  __step_time=$(get_time)
-  printf '\n%s[%s/%s]%s  %s%s%s\n' \
-    "$FG_TITLE" "$n" "$m" "$RST" "$BOLD" "$title" "$RST" >&2
+  printf '%s[%s/%s]%s %-26s %s\n' "$FG_STEP" "$1" "$TOTAL_STEPS" "$RST" "$2" "$3" >&2
 }
 
-# Finalize the current step — prints elapsed since `step` was called.
-step_done() {
-  local now=$(get_time)
-  local dur
-  dur=$(awk "BEGIN { printf \"%.1f\", $now - $__step_time }")
-  printf '   %s%ss%s\n' "$FG_MUTED" "$dur" "$RST" >&2
-}
-
-# Sub-second timing helper. Prefer $EPOCHREALTIME (bash 5+); fall back to
-# `date +%s.%N` on older bash. Returns a seconds-with-fraction string.
 get_time() {
   if [ -n "${EPOCHREALTIME:-}" ]; then
     printf '%s' "$EPOCHREALTIME"
   else
-    # BSD date (macOS, bash 3.2 default) doesn't support %N — it silently
-    # emits a literal "N", which then poisons every downstream awk math
-    # expression ("1745345678.N - …" = syntax error). Detect that and
-    # drop to whole-second precision rather than printing garbage.
+    # BSD date has no %N and prints a literal N.
     local t
     t=$(date +%s.%N 2>/dev/null || date +%s)
     case "$t" in
-      *N|*.N) date +%s ;;
+      *N) date +%s ;;
       *) printf '%s' "$t" ;;
     esac
   fi
@@ -520,29 +446,86 @@ verify_release_signature() {
   return 1
 }
 
+
+# ------------------------------------------------------------------
+#  Earlier installs
+# ------------------------------------------------------------------
+
+# Where an earlier install may have left something; the binary list gets
+# the bin directory of this run in front.
+BINARY_CANDIDATES=(/usr/local/bin/dockmesh)
+UNIT_FILES=(/etc/systemd/system/dockmesh.service /lib/systemd/system/dockmesh.service /usr/lib/systemd/system/dockmesh.service /Library/LaunchDaemons/dev.dockmesh.service.plist)
+DB_CANDIDATES=(/var/lib/dockmesh/data/dockmesh.db /data/data/dockmesh.db /usr/local/var/dockmesh/data/dockmesh.db)
+
+# present PATH succeeds for anything at PATH, a dangling symlink included.
+# A directory we can't look into counts as holding it.
+present() {
+  local dir
+  if $USE_SUDO test -e "$1" || $USE_SUDO test -L "$1"; then
+    return 0
+  fi
+  dir="$(dirname "$1")"
+  $USE_SUDO test -d "$dir" && ! $USE_SUDO test -x "$dir"
+}
+
+# detect_install STAGED UNIT_ENV decides, once, whether this run upgrades
+# an earlier install: a binary, service unit, config or database of one
+# at any known place. STAGED is the binary DOCKMESH_SKIP_DOWNLOAD placed,
+# which does not count; UNIT_ENV is the env file the loaded unit names.
+# Sets FOUND_BINARY, FOUND_UNIT, FOUND_CONFIG and FOUND_DB to the first
+# path of each kind and succeeds when any is set.
+detect_install() {
+  local staged="$1" unit_env="$2" p
+  FOUND_BINARY="" FOUND_UNIT="" FOUND_CONFIG="" FOUND_DB=""
+  for p in "${BINARY_CANDIDATES[@]}"; do
+    if [ -n "$p" ] && [ "$p" != "$staged" ] && present "$p"; then
+      FOUND_BINARY="$p"
+      break
+    fi
+  done
+  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ] || [ "${HAS_LAUNCHD_UNIT:-0}" = "1" ]; then
+    FOUND_UNIT="dockmesh.service"
+  else
+    for p in "${UNIT_FILES[@]}"; do
+      if present "$p"; then
+        FOUND_UNIT="$p"
+        break
+      fi
+    done
+  fi
+  for p in "$ETC_ENV_FILE" "$unit_env" "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/dockmesh.env}" "${ENV_FILE_CANDIDATES[@]}"; do
+    if [ -n "$p" ] && present "$p"; then
+      FOUND_CONFIG="$p"
+      break
+    fi
+  done
+  for p in "${DOCKMESH_DB_PATH:-}" "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/data/dockmesh.db}" \
+    "${unit_env:+$(dirname "$unit_env")/data/dockmesh.db}" "${DB_CANDIDATES[@]}"; do
+    if [ -n "$p" ] && present "$p"; then
+      FOUND_DB="$p"
+      break
+    fi
+  done
+  [ -n "$FOUND_BINARY$FOUND_UNIT$FOUND_CONFIG$FOUND_DB" ]
+}
+
+# kv KEY TEXT prints the value of the KEY=… line in TEXT, the --porcelain
+# output of a dockmesh subcommand.
+kv() {
+  printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -n 1
+}
+
+# fingerprint_lines FP prints a colon-separated SHA-256 fingerprint as two
+# lines of 16 bytes each.
+fingerprint_lines() {
+  printf '%s\n%s\n' "${1:0:47}" "${1:48}"
+}
+
 # ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
-cat >&2 <<BANNER
-
-
-${FG_TITLE}${BOLD}██████╗   ██████╗   ██████╗██╗  ██╗███╗   ███╗███████╗███████╗██╗  ██╗${RST}
-${FG_TITLE}${BOLD}██╔══██╗ ██╔═══██╗ ██╔════╝██║ ██╔╝████╗ ████║██╔════╝██╔════╝██║  ██║${RST}
-${FG_TITLE}${BOLD}██║  ██║ ██║   ██║ ██║     █████╔╝ ██╔████╔██║█████╗  ███████╗███████║${RST}
-${FG_TITLE}${BOLD}██║  ██║ ██║   ██║ ██║     ██╔═██╗ ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║${RST}
-${FG_TITLE}${BOLD}██████╔╝ ╚██████╔╝ ╚██████╗██║  ██╗██║ ╚═╝ ██║███████╗███████║██║  ██║${RST}
-${FG_TITLE}${BOLD}╚═════╝   ╚═════╝   ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝${RST}
-
-   ${DIM}Single-binary Docker fleet manager · dockmesh.dev${RST}
-BANNER
-
-# ------------------------------------------------------------------
-#  Inputs
-# ------------------------------------------------------------------
 REPO="dockmesh/dockmesh"
-# DM_VERSION instead of VERSION because /etc/os-release (sourced below)
-# defines $VERSION as the distro release ("12 (bookworm)" on Debian)
-# which silently clobbers any local VERSION var we set.
+# DM_VERSION, not VERSION: /etc/os-release, sourced below, sets VERSION.
 parse_args "$@"
 DM_VERSION="${DOCKMESH_VERSION:-latest}"
 if [ "$DM_VERSION" != "latest" ] && ! valid_tag "$DM_VERSION"; then
@@ -550,100 +533,33 @@ if [ "$DM_VERSION" != "latest" ] && ! valid_tag "$DM_VERSION"; then
 fi
 CHANNEL="${DOCKMESH_CHANNEL:-stable}"
 INSTALL_DIR="${DOCKMESH_INSTALL_DIR:-/usr/local/bin}"
-# Agent-enrollment assets live next to the install root, matching the
-# LSB-ish layout: bin → /usr/local/bin, assets → /usr/local/share.
-# Derived from INSTALL_DIR so `DOCKMESH_INSTALL_DIR=/opt/bin` places
-# assets at /opt/share/dockmesh. User can override via DOCKMESH_ASSET_DIR.
+# Assets sit next to the bin directory: /usr/local/bin → /usr/local/share.
 ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$INSTALL_DIR")/share/dockmesh}"
 USE_SUDO="sudo"
 if [ "$(id -u)" = "0" ] || [ "${DOCKMESH_NO_SUDO:-0}" = "1" ]; then
   USE_SUDO=""
 fi
-
-# ------------------------------------------------------------------
-#  Detect upgrade state — determines the install flow + end banner.
-# ------------------------------------------------------------------
-IS_UPGRADE=0
-PREV_VERSION_LINE=""
-PREV_VERSION=""
-if [ -x "$INSTALL_DIR/dockmesh" ]; then
-  if PREV_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1)"; then
-    IS_UPGRADE=1
-    # Extract the version tag (vX.Y.Z or vX.Y.Z-rc.N) for the summary box.
-    # `|| true` keeps `set -o pipefail` happy for dev and nightly builds,
-    # whose version line has no tag.
-    PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -1 || true)"
-  fi
-fi
-
-HAS_SYSTEMD_UNIT=0
-SYSTEMD_ACTIVE=0
-SYSTEMD_ENABLED=0
-SYSTEMD_PID=""
-HAS_LAUNCHD_UNIT=0
-LAUNCHD_ACTIVE=0
-if command -v systemctl >/dev/null 2>&1; then
-  if systemd_unit_loaded; then
-    HAS_SYSTEMD_UNIT=1
-    systemctl is-active --quiet dockmesh   && SYSTEMD_ACTIVE=1
-    systemctl is-enabled --quiet dockmesh  && SYSTEMD_ENABLED=1
-    SYSTEMD_PID="$(systemctl show -p MainPID --value dockmesh 2>/dev/null || true)"
-    [ "$SYSTEMD_PID" = "0" ] && SYSTEMD_PID=""
-  fi
-fi
-# macOS equivalent: probe the LaunchDaemon plist + whether launchd sees
-# the service. Stays 0 on Linux because launchctl doesn't exist there.
-if [ "$(uname -s)" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
-  if [ -f /Library/LaunchDaemons/dev.dockmesh.service.plist ]; then
-    HAS_LAUNCHD_UNIT=1
-    launchctl print system/dev.dockmesh.service >/dev/null 2>&1 && LAUNCHD_ACTIVE=1
-  fi
-fi
-
-if [ "$IS_UPGRADE" = "1" ]; then
-  printf '\n   %supgrade detected%s\n' "$FG_TITLE$BOLD" "$RST" >&2
-fi
-
-# ------------------------------------------------------------------
-#  [1]  System checks
-# ------------------------------------------------------------------
-TOTAL_STEPS=6
-[ "$IS_UPGRADE" = "1" ] && TOTAL_STEPS=5
-
-step 1 $TOTAL_STEPS "System checks"
+SKIP_DOWNLOAD="${DOCKMESH_SKIP_DOWNLOAD:-0}"
+NO_BOOTSTRAP="${DOCKMESH_NO_BOOTSTRAP:-0}"
+SEP='·'; ARROW='→'
+if [ "$BOX_H" = "-" ]; then SEP='-'; ARROW='->'; fi
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$OS" in
-  linux)  ok "OS              linux" ;;
-  darwin) ok "OS              macOS ($(sw_vers -productVersion 2>/dev/null || echo unknown))"
-          # Data + install paths differ on macOS — Homebrew convention.
-          # systemctl doesn't exist; launchd handles the service story.
-          : "${DOCKMESH_INSTALL_DIR:=/usr/local/bin}"
-          ;;
+  linux|darwin) ;;
   *) die "unsupported OS: $OS" ;;
 esac
-
 ARCH_RAW="$(uname -m)"
 case "$ARCH_RAW" in
-  x86_64|amd64) ARCH="amd64"; ok "Architecture    amd64 ($ARCH_RAW)" ;;
-  aarch64|arm64) ARCH="arm64"; ok "Architecture    arm64 ($ARCH_RAW)" ;;
+  x86_64|amd64) ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
   *) die "unsupported architecture: $ARCH_RAW" ;;
 esac
-
-# macOS PATH handling. Under `curl | sudo bash` we inherit sudo's
-# secure_path, which on macOS typically omits both Homebrew prefixes:
-#   /opt/homebrew/bin  (Apple Silicon default)
-#   /usr/local/bin     (Intel default, also INSTALL_DIR target)
-# Without these prepended, brew-installed deps (coreutils → sha256sum,
-# modern bash, etc.) are invisible to require_tool. Prepend both so
-# detection is consistent regardless of Mac CPU.
+# Under `sudo bash` on macOS, secure_path hides the Homebrew prefixes.
 if [ "$OS" = "darwin" ]; then
   export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:$PATH"
 fi
 
-# Distro detection — drives the "to install X, run Y" hints for any
-# missing dependency. os-release is the de-facto cross-distro standard
-# on Linux; macOS uses sw_vers / Homebrew instead.
 DISTRO_ID="unknown"
 DISTRO_NAME="$ARCH_RAW"
 if [ "$OS" = "darwin" ]; then
@@ -655,320 +571,245 @@ elif [ -r /etc/os-release ]; then
   DISTRO_ID="${ID:-unknown}"
   DISTRO_NAME="${PRETTY_NAME:-$DISTRO_ID}"
 fi
-ok "Distribution    $DISTRO_NAME"
 
-# install_hint <toolname>  — echo a distro-appropriate install command.
 install_hint() {
   local tool="$1"
   case "$DISTRO_ID" in
-    macos)
-      printf 'brew install %s' "$tool" ;;
-    ubuntu|debian|linuxmint|pop|raspbian)
-      printf 'sudo apt update && sudo apt install -y %s' "$tool" ;;
-    fedora|rhel|centos|rocky|almalinux|ol)
-      printf 'sudo dnf install -y %s' "$tool" ;;
-    alpine)
-      printf 'sudo apk add %s' "$tool" ;;
-    arch|manjaro|endeavouros)
-      printf 'sudo pacman -S --noconfirm %s' "$tool" ;;
-    opensuse*|sles|sled)
-      printf 'sudo zypper install -y %s' "$tool" ;;
-    *)
-      printf 'install "%s" via your package manager' "$tool" ;;
+    macos) printf 'brew install %s' "$tool" ;;
+    ubuntu|debian|linuxmint|pop|raspbian) printf 'sudo apt update && sudo apt install -y %s' "$tool" ;;
+    fedora|rhel|centos|rocky|almalinux|ol) printf 'sudo dnf install -y %s' "$tool" ;;
+    alpine) printf 'sudo apk add %s' "$tool" ;;
+    arch|manjaro|endeavouros) printf 'sudo pacman -S --noconfirm %s' "$tool" ;;
+    opensuse*|sles|sled) printf 'sudo zypper install -y %s' "$tool" ;;
+    *) printf 'install "%s" with your package manager' "$tool" ;;
   esac
 }
 
-# Distro-specific package-name overrides. e.g. sha256sum is coreutils.
-package_for() {
-  local tool="$1"
-  case "$tool" in
-    sha256sum) echo "coreutils" ;;
-    *) echo "$tool" ;;
+docker_hint() {
+  case "$DISTRO_ID" in
+    ubuntu|debian|linuxmint|pop|raspbian) printf 'sudo apt install -y docker.io' ;;
+    fedora|rhel|centos|rocky|almalinux|ol) printf 'sudo dnf install -y docker-ce && sudo systemctl enable --now docker' ;;
+    alpine) printf 'sudo apk add docker && sudo rc-update add docker default && sudo service docker start' ;;
+    arch|manjaro|endeavouros) printf 'sudo pacman -S --noconfirm docker && sudo systemctl enable --now docker' ;;
+    opensuse*|sles|sled) printf 'sudo zypper install -y docker && sudo systemctl enable --now docker' ;;
+    macos) printf 'https://www.docker.com/products/docker-desktop/' ;;
+    *) printf 'https://docs.docker.com/engine/install/' ;;
   esac
 }
 
-# require_tool <cmd>  — fail with a clean distro-aware hint.
-require_tool() {
-  local cmd="$1" pkg
-  if command -v "$cmd" >/dev/null 2>&1; then
-    # Extract just the version number (e.g. 7.88.1, 9.1, 1.34) from the
-    # --version output. Using the first two tokens was naive — on GNU
-    # tools the second token is often a parenthesised vendor name
-    # ("tar (GNU tar) 1.34" → "tar (GNU", ugly). Regex-pick the first
-    # digit.digit[.digit] group instead.
-    local line ver
-    line="$("$cmd" --version 2>/dev/null | head -1 || true)"
-    ver="$(printf '%s' "$line" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
-    if [ -z "$ver" ]; then
-      ver="installed"
-    fi
-    ok "$(printf '%-16s %s' "$cmd" "$ver")"
-    return 0
-  fi
-  pkg="$(package_for "$cmd")"
-  fail "$(printf '%-16s not found' "$cmd")"
-  printf '\n' >&2
-  box "Missing required tool: $cmd" \
-    "$cmd is required to continue." \
+missing_tool() {
+  box "Missing required tool: $1" \
+    "$1 is required to continue. Install it on $DISTRO_NAME:" \
+    "  $(install_hint "$2")" \
     "" \
-    "Install on $DISTRO_NAME:" \
-    "  $(install_hint "$pkg")" \
-    "" \
-    "Then re-run:" \
-    "  curl -fsSL https://get.dockmesh.dev | sudo bash"
+    "Then run the installer again."
   exit 1
 }
 
-require_tool curl
-require_tool tar
-# sha256 tool — sha256sum on Linux coreutils, `shasum -a 256` on macOS /
-# BSD. Pick whichever is available and wrap it behind a shared helper so
-# the rest of the script stays portable.
+# ------------------------------------------------------------------
+#  Upgrade or new install, decided once, before anything changes
+# ------------------------------------------------------------------
+HAS_SYSTEMD=0
+HAS_SYSTEMD_UNIT=0
+SYSTEMD_ACTIVE=0
+SYSTEMD_PID=""
+UNIT_ENV_FILE=""
+HAS_LAUNCHD_UNIT=0
+if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+  HAS_SYSTEMD=1
+  if systemd_unit_loaded; then
+    HAS_SYSTEMD_UNIT=1
+    systemctl is-active --quiet dockmesh && SYSTEMD_ACTIVE=1
+    SYSTEMD_PID="$(systemctl show -p MainPID --value dockmesh 2>/dev/null || true)"
+    [ "$SYSTEMD_PID" = "0" ] && SYSTEMD_PID=""
+    UNIT_ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' || true)"
+  fi
+fi
+if [ "$OS" = "darwin" ] && [ -f /Library/LaunchDaemons/dev.dockmesh.service.plist ]; then
+  HAS_LAUNCHD_UNIT=1
+fi
+
+STAGED=""
+if [ "$SKIP_DOWNLOAD" = "1" ]; then
+  [ -x "$INSTALL_DIR/dockmesh" ] || die "DOCKMESH_SKIP_DOWNLOAD=1 but $INSTALL_DIR/dockmesh is missing or not executable"
+  STAGED="$INSTALL_DIR/dockmesh"
+fi
+BINARY_CANDIDATES=("$INSTALL_DIR/dockmesh" "${BINARY_CANDIDATES[@]}")
+IS_UPGRADE=0
+if detect_install "$STAGED" "$UNIT_ENV_FILE"; then
+  IS_UPGRADE=1
+fi
+PREV_VERSION=""
+if [ -n "$FOUND_BINARY" ] && [ -x "$FOUND_BINARY" ]; then
+  PREV_VERSION="$("$FOUND_BINARY" --version 2>/dev/null | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -1 || true)"
+fi
+
+# The config of an earlier install, wherever it was kept. One that fails
+# the trust check stops the run here, before anything changed.
+KEPT_ENV_FILE=""
+if [ "$IS_UPGRADE" = "1" ] && [ "$OS" = "linux" ]; then
+  KEPT_ENV_FILE="$(find_existing_env_file "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/dockmesh.env}" "$UNIT_ENV_FILE" || true)"
+  if [ -n "$KEPT_ENV_FILE" ] && [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$(dirname "$KEPT_ENV_FILE")" != "${DOCKMESH_DATA_DIR%/}" ]; then
+    die "DOCKMESH_DATA_DIR=$DOCKMESH_DATA_DIR, but the earlier install's config is $KEPT_ENV_FILE; set DOCKMESH_DATA_DIR=$(dirname "$KEPT_ENV_FILE") or move that file away"
+  fi
+fi
+
+# ------------------------------------------------------------------
+#  Checks
+# ------------------------------------------------------------------
+WARNINGS=()
+command -v curl >/dev/null 2>&1 || missing_tool curl curl
+command -v tar >/dev/null 2>&1 || missing_tool tar tar
 if command -v sha256sum >/dev/null 2>&1; then
-  ok "$(printf '%-16s %s' "sha256sum" "$(sha256sum --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo installed)")"
   sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null 2>&1; then
-  ok "$(printf '%-16s %s' "shasum" "$(shasum --version 2>/dev/null | head -1 || echo installed) (sha256)")"
   sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
 else
-  fail "$(printf '%-16s not found' "sha256sum/shasum")"
-  printf '\n' >&2
-  box "Missing sha256 tool" \
-    "Need either 'sha256sum' (Linux coreutils) or 'shasum' (macOS)." \
+  missing_tool sha256sum coreutils
+fi
+if [ "$SKIP_DOWNLOAD" != "1" ] && [ "${DOCKMESH_SKIP_CHECKSUM:-0}" != "1" ] &&
+  [ "${DOCKMESH_SKIP_SIGNATURE:-0}" != "1" ] && ! signature_tool_ok; then
+  box "Cannot verify the release signature" \
+    "Dockmesh releases are signed; checking the signature needs" \
+    "OpenSSL 3 or newer ('openssl', plus 'base64' and 'od')." \
+    "Install it on $DISTRO_NAME:" \
+    "  $(install_hint openssl)" \
     "" \
-    "Install on $DISTRO_NAME:" \
-    "  $(install_hint coreutils)" \
+    "Or check the files with minisign and install them by hand:" \
+    "  https://dockmesh.dev/docs/operations/verify-release/" \
     "" \
-    "Then re-run:" \
-    "  curl -fsSL https://get.dockmesh.dev | sudo bash"
+    "DOCKMESH_SKIP_SIGNATURE=1 installs without the check (not" \
+    "recommended: the files are then trusted unchecked)."
   exit 1
 fi
-
-# Release signatures are checked with OpenSSL 3. Without it the installer
-# stops here rather than downloading something it can't authenticate.
-if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" != "1" ] && [ "${DOCKMESH_SKIP_CHECKSUM:-0}" != "1" ] &&
-  [ "${DOCKMESH_SKIP_SIGNATURE:-0}" != "1" ]; then
-  if signature_tool_ok; then
-    ok "$(printf '%-16s %s' "openssl" "$(openssl version | awk '{print $2}')")"
-  else
-    fail "$(printf '%-16s %s' "openssl" "OpenSSL 3 not found")"
-    printf '\n' >&2
-    box "Cannot verify the release signature" \
-      "Dockmesh releases are signed; checking the signature needs" \
-      "OpenSSL 3 or newer ('openssl', plus 'base64' and 'od')." \
-      "" \
-      "Install on $DISTRO_NAME:" \
-      "  $(install_hint openssl)" \
-      "" \
-      "Or check the files with minisign and install them by hand:" \
-      "  https://dockmesh.dev/docs/operations/verify-release/" \
-      "" \
-      "DOCKMESH_SKIP_SIGNATURE=1 installs without the check (not" \
-      "recommended: the files are then trusted unchecked)."
-    exit 1
-  fi
+if [ ! -w "$INSTALL_DIR" ] && [ -z "$USE_SUDO" ]; then
+  die "$INSTALL_DIR is not writable and sudo is disabled; set DOCKMESH_INSTALL_DIR to a writable path"
 fi
 
-# Service manager preflight — systemd on Linux, launchd on macOS.
-# Neither is a hard requirement; the binary runs fine without one,
-# we just lose auto-start + auto-restart-on-upgrade in that case.
-if [ "$OS" = "darwin" ]; then
-  if command -v launchctl >/dev/null 2>&1; then
-    ok "$(printf '%-16s %s' "launchctl" "present")"
-  else
-    warn "$(printf '%-16s %s' "launchctl" "not found — auto-start on boot will need manual setup")"
-  fi
+SERVICE_MANAGER="no service manager"
+if [ "$HAS_SYSTEMD" = "1" ]; then
+  SERVICE_MANAGER="systemd"
+elif [ "$OS" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+  SERVICE_MANAGER="launchd"
 else
-  if command -v systemctl >/dev/null 2>&1; then
-    ok "$(printf '%-16s %s' "systemctl" "$(systemctl --version | head -1 | awk '{print $1, $2}')")"
-  else
-    warn "$(printf '%-16s %s' "systemctl" "not found — auto-start on boot will need manual setup")"
-  fi
+  WARNINGS+=("no systemd found: Dockmesh will not start on boot by itself")
 fi
 
-# $INSTALL_DIR writable? If the script is root we're fine; else need sudo.
-if [ -w "$INSTALL_DIR" ]; then
-  ok "$(printf '%-16s writable' "$INSTALL_DIR")"
-elif [ -n "$USE_SUDO" ]; then
-  ok "$(printf '%-16s writable (via sudo)' "$INSTALL_DIR")"
-else
-  die "$INSTALL_DIR is not writable and sudo is disabled — set DOCKMESH_INSTALL_DIR to a writable path"
-fi
-
-# Docker is a soft-warn. dockmesh manages Docker — without it, 99% of
-# the app is useless, but we let the install proceed so people can set
-# up a fresh host in any order.
+DOCKER_DETAIL="no Docker"
 if command -v docker >/dev/null 2>&1; then
-  DOCKER_VER="$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',' || true)"
-  if docker info >/dev/null 2>&1; then
-    ok "$(printf '%-16s %s  (running)' "Docker" "${DOCKER_VER:-installed}")"
+  if DOCKER_VER="$(docker version --format '{{.Server.Version}}' 2>/dev/null)" && [ -n "$DOCKER_VER" ]; then
+    DOCKER_DETAIL="Docker $DOCKER_VER"
   else
-    warn "$(printf '%-16s installed but daemon is not responding' "Docker")"
+    DOCKER_DETAIL="Docker (not running)"
+    WARNINGS+=("Docker is installed but its daemon does not answer")
   fi
-  # macOS: `docker info` can succeed via the user's context socket while
-  # the server (Docker Go SDK, unix:///var/run/docker.sock by default)
-  # has no socket to connect to. Docker Desktop ships that symlink OFF
-  # by default in recent releases — operator has to tick
-  # "Allow the default Docker socket to be used" in Settings → Advanced.
-  # Catch that here so the daemon-connect failure doesn't blindside them
-  # post-`dockmesh init`.
   if [ "$OS" = "darwin" ] && [ ! -S /var/run/docker.sock ]; then
-    warn "$(printf '%-16s %s' "docker.sock" "/var/run/docker.sock missing — dockmesh can't connect to the daemon")"
-    say "                    Docker Desktop → Settings → Advanced →"
-    say "                    enable \"Allow the default Docker socket to be used\""
+    WARNINGS+=("/var/run/docker.sock is missing: in Docker Desktop, enable Settings > Advanced > \"Allow the default Docker socket to be used\"")
   fi
 else
-  warn "$(printf '%-16s %s' "Docker" "not detected")"
-  # Distro-specific install hint rather than the generic docs link —
-  # operator shouldn't have to translate "install docker" into the
-  # right command for their system.
-  case "$DISTRO_ID" in
-    ubuntu|debian|linuxmint|pop|raspbian)
-      say "                    install:  sudo apt install -y docker.io" ;;
-    fedora|rhel|centos|rocky|almalinux|ol)
-      say "                    install:  sudo dnf install -y docker-ce && sudo systemctl enable --now docker" ;;
-    alpine)
-      say "                    install:  sudo apk add docker && sudo rc-update add docker default && sudo service docker start" ;;
-    arch|manjaro|endeavouros)
-      say "                    install:  sudo pacman -S --noconfirm docker && sudo systemctl enable --now docker" ;;
-    opensuse*|sles|sled)
-      say "                    install:  sudo zypper install -y docker && sudo systemctl enable --now docker" ;;
-    macos)
-      say "                    install:  https://www.docker.com/products/docker-desktop/  (or: brew install --cask docker)" ;;
-    *)
-      say "                    install:  https://docs.docker.com/engine/install/" ;;
-  esac
+  WARNINGS+=("Docker was not found. Install it: $(docker_hint)")
 fi
 
-# Port availability for fresh installs. Upgrade case: the ports are
-# presumably already ours, don't complain.
-if [ "$IS_UPGRADE" = "0" ]; then
-  port_free() {
-    local p="$1"
-    # BSD netstat's `-t` flag isn't "TCP-only" — that's GNU-specific —
-    # so the Linux fallback never detected anything on macOS and every
-    # port showed as "free". Use lsof on darwin instead; it's preinstalled.
-    if [ "$OS" = "darwin" ]; then
-      if command -v lsof >/dev/null 2>&1; then
-        ! lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1
-      else
-        return 0
-      fi
-    elif command -v ss >/dev/null 2>&1; then
-      ! ss -Htln "sport = :$p" 2>/dev/null | grep -q .
-    elif command -v netstat >/dev/null 2>&1; then
-      ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -Eq ":$p$"
-    else
-      return 0
-    fi
-  }
-  for p in 8080 8443; do
-    if port_free "$p"; then
-      ok "$(printf ':%s  free' "$p")"
-    else
-      warn "$(printf ':%s  in use — Dockmesh default will conflict, adjust in init' "$p")"
-    fi
-  done
-else
-  ok "existing install    $INSTALL_DIR/dockmesh (${PREV_VERSION:-unknown})"
-  if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
-    local_state="installed"
-    [ "$SYSTEMD_ENABLED" = "1" ] && local_state="enabled"
-    [ "$SYSTEMD_ACTIVE" = "1" ] && local_state="$local_state, active"
-    [ -n "$SYSTEMD_PID" ] && local_state="$local_state, PID $SYSTEMD_PID"
-    ok "systemd unit        dockmesh.service ($local_state)"
-  elif [ "$HAS_LAUNCHD_UNIT" = "1" ]; then
-    local_state="installed"
-    [ "$LAUNCHD_ACTIVE" = "1" ] && local_state="$local_state, active"
-    ok "launchd service     dev.dockmesh.service ($local_state)"
+port_free() {
+  local p="$1"
+  if [ "$OS" = "darwin" ]; then
+    command -v lsof >/dev/null 2>&1 || return 0
+    ! lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1
+  elif command -v ss >/dev/null 2>&1; then
+    ! ss -Htln "sport = :$p" 2>/dev/null | grep -q .
+  elif command -v netstat >/dev/null 2>&1; then
+    ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -Eq ":$p$"
   else
-    info "no service unit     manual restart required after upgrade"
+    return 0
+  fi
+}
+if [ "$IS_UPGRADE" = "0" ]; then
+  for p in 8080 8443; do
+    port_free "$p" || WARNINGS+=("port $p is in use; Dockmesh needs it")
+  done
+  if [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$OS" = "linux" ]; then
+    WARNINGS+=("DOCKMESH_DATA_DIR is not used by a new install: choose the data directory in the setup wizard")
   fi
 fi
-step_done
+
+OS_LABEL="Linux"
+[ "$OS" = "darwin" ] && OS_LABEL="macOS"
+CHECK_DETAIL="$OS_LABEL $ARCH $SEP $SERVICE_MANAGER $SEP $DOCKER_DETAIL"
 
 # ------------------------------------------------------------------
-#  Local-binary fast-path (P.14.6 testing).
-#  When DOCKMESH_SKIP_DOWNLOAD=1 + the binary is already at
-#  $INSTALL_DIR/dockmesh, skip GitHub download / verify / install
-#  steps and jump straight to the bootstrap section. Used by CI and
-#  by the local-test wrapper that scp's a freshly-built binary
-#  before invoking the script.
+#  Release
 # ------------------------------------------------------------------
-if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" = "1" ]; then
-  if [ ! -x "$INSTALL_DIR/dockmesh" ]; then
-    die "DOCKMESH_SKIP_DOWNLOAD=1 but $INSTALL_DIR/dockmesh is missing or not executable"
+if [ "$SKIP_DOWNLOAD" = "1" ]; then
+  DM_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -1 || true)"
+  DM_VERSION="${DM_VERSION:-dev}"
+else
+  channel_warning "$CHANNEL"
+  if [ "$DM_VERSION" = "latest" ]; then
+    META_URL="https://api.github.com/repos/$REPO/releases/latest"
+    if [ "$CHANNEL" = "testing" ]; then
+      META_URL="https://api.github.com/repos/$REPO/releases?per_page=1"
+    fi
+    if ! META="$(curl -fsSL --retry 3 --retry-delay 2 "$META_URL" 2>&1)"; then
+      die "failed to query $META_URL; check the network"
+    fi
+    DM_VERSION="$(printf '%s' "$META" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+    [ -n "$DM_VERSION" ] || die "could not read the latest release tag from the GitHub API"
+    valid_tag "$DM_VERSION" || die "GitHub returned an unexpected release tag '$DM_VERSION'"
   fi
-  info "skipping download — using pre-staged $INSTALL_DIR/dockmesh"
-  DM_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 | grep -oE 'v?[0-9A-Za-z.-]+' | head -1 || echo local)"
-  # Force fresh-install behaviour even when an existing binary is on
-  # disk — we WANT to run the bootstrap section against this host,
-  # not the upgrade-restart-existing-systemd path that would normally
-  # fire for an upgrade.
-  IS_UPGRADE=0
-  TOTAL_STEPS=2  # rebrand: preflight + bootstrap from here on
-  goto_bootstrap=1
-  step_done
-fi
-
-if [ "${goto_bootstrap:-0}" != "1" ]; then
-
-# ------------------------------------------------------------------
-#  [2]  Resolve release
-# ------------------------------------------------------------------
-step 2 $TOTAL_STEPS "Resolving release"
-info "channel         $CHANNEL"
-channel_warning "$CHANNEL"
-
-if [ "$DM_VERSION" = "latest" ]; then
-  META_URL="https://api.github.com/repos/$REPO/releases/latest"
-  if [ "$CHANNEL" = "testing" ]; then
-    # 'testing' means "include pre-releases" — pull the full list and
-    # take the top entry regardless of draft/prerelease status.
-    META_URL="https://api.github.com/repos/$REPO/releases?per_page=1"
+  # An install running a release candidate is ahead of the latest stable
+  # release until the final version is out.
+  if [ "$IS_UPGRADE" = "1" ] && [ -z "${DOCKMESH_VERSION:-}" ] && [ -n "$PREV_VERSION" ] &&
+    version_older "$DM_VERSION" "$PREV_VERSION" && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
+    die "installed $PREV_VERSION is newer than $DM_VERSION; pass --version <tag> to pick a release (DOCKMESH_FORCE=1 installs $DM_VERSION anyway)"
   fi
-  if ! META="$(curl -fsSL --retry 3 --retry-delay 2 "$META_URL" 2>&1)"; then
-    die "failed to query $META_URL — check network + that the repo is public"
+  if [ "$IS_UPGRADE" = "1" ] && [ "$PREV_VERSION" = "$DM_VERSION" ] && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
+    box "Already on ${DM_VERSION#v}" \
+      "Dockmesh ${DM_VERSION#v} is installed already. Nothing was changed." \
+      "" \
+      "Reinstall anyway:" \
+      "  curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_FORCE=1 bash"
+    exit 0
   fi
-  DM_VERSION="$(printf '%s' "$META" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
-  [ -z "$DM_VERSION" ] && die "could not parse latest release tag from GitHub API response"
-  valid_tag "$DM_VERSION" || die "GitHub returned an unexpected release tag '$DM_VERSION'"
 fi
-ok "latest          $DM_VERSION"
-
-# An install running a release candidate is ahead of the latest stable
-# release until the final version is out.
-if [ "$IS_UPGRADE" = "1" ] && [ -z "${DOCKMESH_VERSION:-}" ] && [ -n "$PREV_VERSION" ] &&
-  version_older "$DM_VERSION" "$PREV_VERSION" && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
-  die "installed $PREV_VERSION is newer than $DM_VERSION; pass --version <tag> to pick a release (DOCKMESH_FORCE=1 installs $DM_VERSION anyway)"
-fi
-
-TARBALL="dockmesh_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$DM_VERSION/$TARBALL"
-CHECKSUMS_URL="https://github.com/$REPO/releases/download/$DM_VERSION/checksums.txt"
-info "artifact        $TARBALL"
-step_done
-
-# Already-on-latest early-exit. Skipped when DOCKMESH_FORCE=1 so we can
-# still test the full download + backup + restart + health-probe flow
-# against an already-current host without cutting a new release tag.
-if [ "$IS_UPGRADE" = "1" ] && [ "$PREV_VERSION" = "$DM_VERSION" ] && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
-  printf '\n' >&2
-  box "Already on latest  $DM_VERSION" \
-    "No upgrade needed — your binary is already at the newest" \
-    "published release. Nothing was changed." \
-    "" \
-    "Reinstall anyway:" \
-    "  curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_FORCE=1 bash"
-  exit 0
-fi
+SHOWN_VERSION="${DM_VERSION#v}"
 
 # ------------------------------------------------------------------
-#  [3]  Download
+#  Steps
 # ------------------------------------------------------------------
-step 3 $TOTAL_STEPS "Downloading"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+if [ "$IS_UPGRADE" = "1" ]; then
+  if [ -n "$PREV_VERSION" ]; then
+    say "${BOLD}Dockmesh installer${RST} $SEP upgrade ${PREV_VERSION#v} $ARROW $SHOWN_VERSION"
+  else
+    say "${BOLD}Dockmesh installer${RST} $SEP upgrade to $SHOWN_VERSION"
+  fi
+  TOTAL_STEPS=6
+  [ "$OS" = "darwin" ] && TOTAL_STEPS=4
+else
+  say "${BOLD}Dockmesh installer${RST}"
+  if [ "$OS" = "darwin" ] || [ "$HAS_SYSTEMD" = "0" ]; then
+    TOTAL_STEPS=4
+  elif [ "$NO_BOOTSTRAP" = "1" ]; then
+    TOTAL_STEPS=5
+  else
+    TOTAL_STEPS=6
+  fi
+fi
+say ""
+N=0
+
+TMP=""
+NEW_BINARY=""
+STOPPED=0
+cleanup() {
+  if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
+  if [ -n "$NEW_BINARY" ]; then $USE_SUDO rm -f "$NEW_BINARY"; fi
+  # A run that stopped the service for its snapshot never leaves it down.
+  if [ "$STOPPED" = "1" ]; then $USE_SUDO systemctl start dockmesh || true; fi
+}
+trap cleanup EXIT
+
+N=$((N + 1)); step "$N" "Checking the system" "$CHECK_DETAIL"
+for w in "${WARNINGS[@]+"${WARNINGS[@]}"}"; do warn "$w"; done
 
 # Grype is pinned to one release and checked against the SHA-256 below
 # before anything runs as root. Bump the version and all four sums
@@ -1001,402 +842,305 @@ install_grype() {
   $USE_SUDO install -m 0755 "$dir/grype" "$INSTALL_DIR/grype"
 }
 
-info "$TARBALL"
-
-# Silent download + post-summary (Homebrew / apt / cargo pattern).
-# A live progress bar isn't useful at sub-2-second timescales, and
-# release tarballs land in well under that on typical connections
-# (20 MiB at 30 MB/s = 0.7s). What the user actually wants is size +
-# speed confirmation after the fact — that's what this prints.
-DL_T0=$(get_time)
-if ! curl -fL --retry 3 --retry-delay 2 --silent --show-error "$URL" -o "$TMP/$TARBALL"; then
-  die "download failed — verify the release exists: $URL"
-fi
-DL_T1=$(get_time)
-DL_BYTES=$(wc -c < "$TMP/$TARBALL" | tr -d ' ')
-DL_DUR=$(awk "BEGIN { printf \"%.1f\", $DL_T1 - $DL_T0 }")
-if command -v numfmt >/dev/null 2>&1; then
-  DL_HUMAN=$(numfmt --to=iec-i --suffix=B --format='%.1f' "$DL_BYTES" 2>/dev/null || echo "${DL_BYTES}B")
+# ---- Download ------------------------------------------------------
+if [ "$SKIP_DOWNLOAD" = "1" ]; then
+  N=$((N + 1)); step "$N" "Downloading" "skipped, using $INSTALL_DIR/dockmesh (DOCKMESH_SKIP_DOWNLOAD)"
 else
-  DL_HUMAN=$(awk "BEGIN { b=$DL_BYTES; if (b>1048576) printf \"%.1fMiB\", b/1048576; else if (b>1024) printf \"%.1fKiB\", b/1024; else printf \"%dB\", b }")
-fi
-DL_SPEED="$(download_speed "$DL_BYTES" "$DL_DUR")"
-
-ok "$DL_HUMAN in ${DL_DUR}s · $DL_SPEED"
-step_done
-
-# ------------------------------------------------------------------
-#  [4]  Verify checksum
-# ------------------------------------------------------------------
-step 4 $TOTAL_STEPS "Verifying"
-if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
-  warn "checksum and signature verification skipped — DOCKMESH_SKIP_CHECKSUM=1"
-else
-  if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
-    die "no checksums.txt published for $DM_VERSION — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  TMP="$(mktemp -d)"
+  TARBALL="dockmesh_${OS}_${ARCH}.tar.gz"
+  URL="https://github.com/$REPO/releases/download/$DM_VERSION/$TARBALL"
+  CHECKSUMS_URL="https://github.com/$REPO/releases/download/$DM_VERSION/checksums.txt"
+  if ! curl -fL --retry 3 --retry-delay 2 --silent --show-error "$URL" -o "$TMP/$TARBALL"; then
+    die "download failed; check that the release exists: $URL"
   fi
-  if [ "${DOCKMESH_SKIP_SIGNATURE:-0}" = "1" ]; then
-    warn "signature check skipped — DOCKMESH_SKIP_SIGNATURE=1; checksums.txt is not authenticated"
+  if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
+    DL_DETAIL="not verified (DOCKMESH_SKIP_CHECKSUM=1)"
   else
-    if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt.minisig" "$CHECKSUMS_URL.minisig" 2>/dev/null; then
-      if version_older "$DM_VERSION" v0.6.0; then
-        die "$DM_VERSION was released before signing existed and has no checksums.txt.minisig; install it with DOCKMESH_SKIP_SIGNATURE=1"
-      fi
-      die "$DM_VERSION has no checksums.txt.minisig, but every release from v0.6.0 on is signed: the release files may have been tampered with. Do not install it; report it to security@dockmesh.dev"
+    if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
+      die "no checksums.txt published for $DM_VERSION; refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
     fi
-    mkdir -p "$TMP/sig"
-    if ! SIGNED_BY="$(verify_release_signature "$TMP/checksums.txt" "$TMP/checksums.txt.minisig" "$DM_VERSION" "$RELEASE_PUBKEYS" "$TMP/sig")"; then
-      die "the signature of checksums.txt does not verify for $DM_VERSION — refusing to install"
-    fi
-    ok "signature       key $SIGNED_BY"
-  fi
-  EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
-  if [ -z "$EXPECTED" ]; then
-    die "no checksum entry for $TARBALL — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
-  fi
-  ACTUAL="$(sha256_of "$TMP/$TARBALL")"
-  if [ "$EXPECTED" != "$ACTUAL" ]; then
-    die "checksum mismatch — expected $EXPECTED got $ACTUAL"
-  fi
-  ok "sha256          ${EXPECTED:0:16}…${EXPECTED: -16}"
-fi
-step_done
-
-# ------------------------------------------------------------------
-#  [5]  Install (fresh) or Upgrade (with backup)
-# ------------------------------------------------------------------
-if [ "$IS_UPGRADE" = "1" ]; then
-  step 5 $TOTAL_STEPS "Upgrading"
-  tar -xzf "$TMP/$TARBALL" -C "$TMP"
-  [ -x "$TMP/dockmesh" ] || die "tarball missing 'dockmesh' binary"
-
-  # Backup the existing binary so the user has a tested rollback path.
-  # Using cp (not mv) preserves the running binary for in-flight requests
-  # — most kernels hold the old inode until all fds close.
-  if $USE_SUDO cp -a "$INSTALL_DIR/dockmesh" "$INSTALL_DIR/dockmesh.bak" 2>/dev/null; then
-    ok "backup          $INSTALL_DIR/dockmesh.bak  ($PREV_VERSION)"
-  else
-    warn "backup failed — rolling forward without rollback safety net"
-  fi
-
-  $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
-  NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
-  ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
-
-  # Backfill grype on upgrade for installs predating the scanner-bundle.
-  # Same skip flag as fresh install. We keep the old binary if grype is
-  # already on the host — `grype` self-updates its DB, not its binary.
-  if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ] && ! command -v grype >/dev/null 2>&1; then
-    info "installing grype (CVE scanner)..."
-    if install_grype; then
-      GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
-      ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
+    if [ "${DOCKMESH_SKIP_SIGNATURE:-0}" = "1" ]; then
+      DL_DETAIL="checksum only (DOCKMESH_SKIP_SIGNATURE=1)"
     else
-      warn "grype install failed — CVE scanning disabled"
+      if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt.minisig" "$CHECKSUMS_URL.minisig" 2>/dev/null; then
+        if version_older "$DM_VERSION" v0.6.0; then
+          die "$DM_VERSION was released before signing existed and has no checksums.txt.minisig; install it with DOCKMESH_SKIP_SIGNATURE=1"
+        fi
+        die "$DM_VERSION has no checksums.txt.minisig, but every release from v0.6.0 on is signed: the release files may have been tampered with. Do not install it; report it to security@dockmesh.dev"
+      fi
+      mkdir -p "$TMP/sig"
+      if ! SIGNED_BY="$(verify_release_signature "$TMP/checksums.txt" "$TMP/checksums.txt.minisig" "$DM_VERSION" "$RELEASE_PUBKEYS" "$TMP/sig")"; then
+        die "the signature of checksums.txt does not verify for $DM_VERSION; refusing to install"
+      fi
+      DL_DETAIL="verified (minisign, key $SIGNED_BY)"
     fi
+    EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
+    [ -n "$EXPECTED" ] || die "no checksum entry for $TARBALL; refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+    ACTUAL="$(sha256_of "$TMP/$TARBALL")"
+    [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: expected $EXPECTED, got $ACTUAL"
   fi
+  tar -xzf "$TMP/$TARBALL" -C "$TMP"
+  [ -x "$TMP/dockmesh" ] || die "the release archive has no dockmesh binary"
+  N=$((N + 1)); step "$N" "Downloading $SHOWN_VERSION" "$DL_DETAIL"
+  if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
+    warn "checksum and signature were not checked (DOCKMESH_SKIP_CHECKSUM=1)"
+  elif [ "${DOCKMESH_SKIP_SIGNATURE:-0}" = "1" ]; then
+    warn "checksums.txt was not authenticated (DOCKMESH_SKIP_SIGNATURE=1)"
+  fi
+fi
 
-  # dmctl ships alongside the server binary since v0.2.0 (stack adopt,
-  # scripted deploys, CI). Keep it in sync on upgrades too — older
-  # installs predate dmctl entirely and an upgrade there is the first
-  # time the CLI lands on the host.
+# install_release_files installs dmctl, the scanner and the agent assets
+# from the release and prints what it installed after the server binary.
+install_release_files() {
+  local list=""
   if [ -f "$TMP/dmctl" ]; then
     $USE_SUDO install -m 0755 "$TMP/dmctl" "$INSTALL_DIR/dmctl"
-    ok "dmctl CLI       $INSTALL_DIR/dmctl"
+    list="$list, dmctl"
   fi
-
-  # Refresh agent assets on upgrade too — they carry the bundled
-  # install-agent.sh + the agent binaries for enrollment.
+  if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ] && ! command -v grype >/dev/null 2>&1; then
+    if install_grype; then
+      list="$list, grype"
+    else
+      warn "the Grype scanner could not be installed; image scans stay off (https://github.com/anchore/grype#installation)"
+    fi
+  fi
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
-  [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
+  if [ -f "$TMP/install-agent.sh" ]; then
+    $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
+  fi
   install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
-  ok "agent assets    $ASSET_DIR/"
+  printf '%s' "$list"
+}
 
-  # ----------------------------------------------------------------
-  # macOS upgrade path: restart the launchd service. No user-migration
-  # story here — launchd daemons run as root by default and creating
-  # a non-root dockmesh user on macOS requires dscl + is outside the
-  # standard single-user-Mac homelab pattern.
-  # ----------------------------------------------------------------
-  if [ "$OS" = "darwin" ]; then
-    if launchctl print system/dev.dockmesh.service >/dev/null 2>&1; then
-      info "restarting dev.dockmesh.service (launchd)..."
-      $USE_SUDO launchctl kickstart -k system/dev.dockmesh.service 2>/dev/null && \
-        ok "service restarted" || \
-        warn "restart failed — run manually: sudo launchctl kickstart -k system/dev.dockmesh.service"
-    fi
-    step_done
-    box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
-      "Data, stacks, and configuration are untouched." \
-      "" \
-      "Release notes:" \
-      "  https://github.com/$REPO/releases/tag/$DM_VERSION" \
-      "" \
-      "Logs: /usr/local/var/log/dockmesh.{log,err}"
-    exit 0
+USER_CREATED=0
+ensure_service_user() {
+  if ! id dockmesh >/dev/null 2>&1; then
+    $USE_SUDO useradd --system --no-create-home --shell /usr/sbin/nologin dockmesh
+    USER_CREATED=1
   fi
+  if getent group docker >/dev/null 2>&1; then
+    $USE_SUDO usermod -aG docker dockmesh
+  fi
+}
 
-  # ----------------------------------------------------------------
-  # Linux upgrade path with service-user migration.
-  # Older installs (v0.1.3 and earlier) ran the service as root
-  # because the systemd unit had no User= directive. v0.1.4+ ships
-  # a dedicated `dockmesh` system user in the `docker` group —
-  # smaller blast radius if the HTTP/agent handlers ever get
-  # exploited. Idempotent: if already migrated, all no-ops.
-  # ----------------------------------------------------------------
-  if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
-    CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null)"
-    if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
-      info "migrating service to non-root 'dockmesh' user..."
-      # Create user + docker-group membership (idempotent).
-      $USE_SUDO useradd --system --no-create-home --shell /usr/sbin/nologin dockmesh 2>/dev/null || true
-      $USE_SUDO usermod -aG docker dockmesh 2>/dev/null || true
-      # Find the data dir from the unit's EnvironmentFile — every install
-      # writes it as /…/dockmesh.env containing DOCKMESH_DB_PATH etc.
-      ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' )"
-      if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
-        DATA_DIR="$(dirname "$ENV_FILE")"
-        $USE_SUDO chown -R dockmesh:dockmesh "$DATA_DIR" 2>/dev/null || true
-        $USE_SUDO chmod 700 "$DATA_DIR" 2>/dev/null || true
-        # Rewrite the unit in-place by re-running `dockmesh init` with
-        # --yes? Too invasive; instead, patch the existing unit so it
-        # sets User=dockmesh Group=docker. A first-principles sed
-        # would be fragile across variant unit contents, so we just
-        # inject the two lines after [Service] if they're not present.
-        UNIT_PATH="$(systemctl show -p FragmentPath --value dockmesh 2>/dev/null)"
-        if [ -n "$UNIT_PATH" ] && [ -f "$UNIT_PATH" ]; then
-          if ! grep -q '^User=' "$UNIT_PATH"; then
-            $USE_SUDO sed -i '/^\[Service\]/a User=dockmesh\nGroup=docker' "$UNIT_PATH"
-            $USE_SUDO systemctl daemon-reload
-            ok "unit patched    $UNIT_PATH (User=dockmesh Group=docker)"
-          fi
-        fi
-        ok "data dir owner  dockmesh:dockmesh"
-      else
-        warn "could not locate data dir — run 'dockmesh init' to finish migration manually"
-      fi
-    fi
-    if ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout; then
-      warn "config left at its old place; Dockmesh keeps using it"
-    fi
-    if ! write_unit; then
-      warn "unit kept as it was; Dockmesh keeps running with it"
-    fi
-    info "restarting dockmesh.service..."
-    RESTART_T0=$(get_time)
-    # Probe the systemd state rather than HTTP because the listen port is
-    # whatever the user configured.
-    if ! start_service restart; then
-      die "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
-    fi
-    RESTART_T1=$(get_time)
-    DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
-    if ! service_runs_new_binary "$SYSTEMD_PID"; then
-      die "dockmesh.service is still running the old binary — run: $USE_SUDO systemctl restart dockmesh"
-    fi
-    ok "service restarted"
-    ok "health OK       downtime ${DOWNTIME}s"
-    RUNNING_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || true)"
-    case "$RUNNING_VERSION" in
-      *"$DM_VERSION"*) ok "running         $RUNNING_VERSION" ;;
-      *) die "installed binary reports '${RUNNING_VERSION:-unknown}', expected $DM_VERSION" ;;
-    esac
+# ------------------------------------------------------------------
+#  Upgrade
+# ------------------------------------------------------------------
+if [ "$IS_UPGRADE" = "1" ] && [ "$OS" = "darwin" ]; then
+  if [ "$SKIP_DOWNLOAD" = "1" ]; then
+    N=$((N + 1)); step "$N" "Installing binaries" "pre-staged"
   else
-    warn "no systemd unit found — restart dockmesh manually to run the new version"
+    $USE_SUDO cp -a "$INSTALL_DIR/dockmesh" "$INSTALL_DIR/dockmesh.bak" 2>/dev/null || true
+    $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
+    EXTRA="$(install_release_files)"
+    N=$((N + 1)); step "$N" "Installing binaries" "$INSTALL_DIR/dockmesh$EXTRA"
   fi
-  step_done
-
-  # Rollback commands always show `sudo` regardless of current USE_SUDO,
-  # because the user who later runs them may not be root — "mv" without
-  # sudo will silently fail to replace a 0755 root-owned binary.
-  box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
-    "Data and stacks are untouched." \
-    "" \
-    "Release notes:" \
-    "  https://github.com/$REPO/releases/tag/$DM_VERSION" \
-    "" \
-    "Rollback (keeps data, reverts the binary):" \
-    "  sudo mv $INSTALL_DIR/dockmesh.bak $INSTALL_DIR/dockmesh" \
-    "  sudo systemctl restart dockmesh"
+  if launchctl print system/dev.dockmesh.service >/dev/null 2>&1 &&
+    $USE_SUDO launchctl kickstart -k system/dev.dockmesh.service 2>/dev/null; then
+    N=$((N + 1)); step "$N" "Restarting" "ok"
+  else
+    N=$((N + 1)); step "$N" "Restarting" "not restarted: sudo launchctl kickstart -k system/dev.dockmesh.service"
+  fi
+  say ""
+  status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is installed. Sign in as usual."
   exit 0
 fi
 
-# Fresh install path.
-step 5 $TOTAL_STEPS "Installing"
-tar -xzf "$TMP/$TARBALL" -C "$TMP"
-[ -x "$TMP/dockmesh" ] || die "tarball missing 'dockmesh' binary"
-$USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
-ok "binary          $INSTALL_DIR/dockmesh"
-
-# Grype CVE scanner — drives the "Scan" action in the Resources view.
-# Without it the backend logs "scanner disabled" and the UI returns
-# 503 "scanner not configured" on every scan attempt. A failed install
-# only warns: scanning is not required to run Dockmesh. Skippable via
-# env var for air-gapped / minimal installs.
-if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ]; then
-  if command -v grype >/dev/null 2>&1; then
-    GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
-    ok "grype scanner   already installed (v${GRYPE_VER:-unknown})"
-  else
-    info "installing grype (CVE scanner)..."
-    if install_grype; then
-      GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
-      ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
-    else
-      warn "grype install failed — CVE scanning disabled"
-      say "                    install manually: https://github.com/anchore/grype#installation"
-    fi
+if [ "$IS_UPGRADE" = "1" ]; then
+  # A unit is written when the host had one, or kept a config or database
+  # for it; a lone binary someone runs by hand gets no service.
+  WRITE_UNIT=0
+  if [ "$HAS_SYSTEMD" = "1" ] && [ -n "$FOUND_UNIT$FOUND_CONFIG$FOUND_DB" ]; then
+    WRITE_UNIT=1
   fi
-else
-  info "grype scanner   skipped (DOCKMESH_NO_SCANNER=1)"
-fi
 
-# dmctl — the operator CLI (stack adopt, scripted deploys, CI). Shipped
-# inside the release tarball; drop it into the same PATH directory as
-# the server binary so `dmctl` just works without extra setup.
-if [ -f "$TMP/dmctl" ]; then
-  $USE_SUDO install -m 0755 "$TMP/dmctl" "$INSTALL_DIR/dmctl"
-  ok "dmctl CLI       $INSTALL_DIR/dmctl"
-fi
-
-# Agent assets: the server serves install-agent.sh + the agent binaries
-# to hosts that want to enroll. Both lived at relative paths in early
-# releases (./scripts/install-agent.sh, ./bin/dockmesh-agent-*), which
-# 503'd under systemd (cwd=/). Install them to $ASSET_DIR (derived
-# from $INSTALL_DIR up at the top) and point the server at them via
-# env vars in dockmesh.env (written by `dockmesh init`).
-$USE_SUDO mkdir -p "$ASSET_DIR/bin"
-if [ -f "$TMP/install-agent.sh" ]; then
-  $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
-  ok "agent installer $ASSET_DIR/install-agent.sh"
-fi
-install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
-ok "mode            0755 (root:root)"
-step_done
-
-fi  # end of "if not skipping download / upgrade-or-fresh install block"
-
-# ------------------------------------------------------------------
-#  [6]  Bootstrap for the install wizard (P.14.5)
-#
-#  Sets up the bare minimum so the dockmesh service starts and the
-#  operator can finish the install via the web wizard at /setup.
-#  Anything that needs operator input (admin user, public URL, data
-#  dir confirmation) is the wizard's job — not this script's.
-#
-#  Skipped when DOCKMESH_NO_BOOTSTRAP=1 — useful for CI / advanced
-#  operators who want to script `dockmesh init` themselves.
-# ------------------------------------------------------------------
-step 6 $TOTAL_STEPS "Bootstrapping for web setup"
-
-if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
-  info "skipped — DOCKMESH_NO_BOOTSTRAP=1"
-  info "run 'sudo dockmesh init' interactively when ready"
-  step_done
-else
-  # An env file of an earlier install (kept data, other INSTALL_DIR) wins
-  # over the defaults, so its data dir and settings are picked back up.
-  UNIT_ENV_FILE=""
-  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ]; then
-    UNIT_ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' || true)"
+  # ---- Snapshot ----------------------------------------------------
+  # The new binary takes the snapshot, so it does not depend on what the
+  # installed version knows; it is staged next to the old one first.
+  NEW_BIN="$INSTALL_DIR/dockmesh"
+  if [ "$SKIP_DOWNLOAD" != "1" ]; then
+    NEW_BINARY="$INSTALL_DIR/.dockmesh.new"
+    $USE_SUDO install -m 0755 "$TMP/dockmesh" "$NEW_BINARY"
+    NEW_BIN="$NEW_BINARY"
   fi
-  KEPT_ENV_FILE="$(find_existing_env_file "${DOCKMESH_DATA_DIR:+$DOCKMESH_DATA_DIR/dockmesh.env}" "$UNIT_ENV_FILE" || true)"
-  # Default data root: /var/lib/dockmesh on Linux, /usr/local/var/dockmesh
-  # on macOS. An existing /data install is found through its env file.
-  if [ -n "$KEPT_ENV_FILE" ]; then
-    DATA_DIR="$(dirname "$KEPT_ENV_FILE")"
-    if [ -n "${DOCKMESH_DATA_DIR:-}" ] && [ "$DATA_DIR" != "$DOCKMESH_DATA_DIR" ]; then
-      die "DOCKMESH_DATA_DIR=$DOCKMESH_DATA_DIR, but the earlier install's config is $KEPT_ENV_FILE — set DOCKMESH_DATA_DIR=$DATA_DIR or move that file away"
-    fi
-    info "earlier install $KEPT_ENV_FILE"
-  elif [ "$OS" = "darwin" ]; then
-    DATA_DIR="${DOCKMESH_DATA_DIR:-/usr/local/var/dockmesh}"
-  else
-    DATA_DIR="${DOCKMESH_DATA_DIR:-/var/lib/dockmesh}"
-  fi
-  info "data dir        $DATA_DIR"
-
-  # Service user. macOS skips — launchd daemons typically run as root
-  # and dscl-based user creation is outside the homelab pattern. On
-  # Linux: useradd is idempotent because we check first.
+  SNAP_DETAIL="skipped, no systemd"
   if [ "$OS" = "linux" ]; then
-    if id dockmesh >/dev/null 2>&1; then
-      ok "service user    dockmesh (already exists)"
-    else
-      $USE_SUDO useradd --system --no-create-home --shell /usr/sbin/nologin dockmesh
-      ok "service user    dockmesh (created)"
-    fi
-    # docker group membership — silent if docker isn't installed yet.
-    if getent group docker >/dev/null 2>&1; then
-      $USE_SUDO usermod -aG docker dockmesh
-      ok "added to        docker group"
-    fi
-  fi
-
-  # Data root + sub-dirs. Owned by dockmesh:docker on Linux so the
-  # service can write everywhere; on macOS root owns it.
-  $USE_SUDO mkdir -p "$DATA_DIR/data" "$DATA_DIR/stacks"
-  if [ "$OS" = "linux" ]; then
-    if [ -n "$KEPT_ENV_FILE" ]; then
-      # A recreated service user may have a new UID; only the dirs the
-      # service writes are handed back to it.
-      $USE_SUDO chown dockmesh:docker "$DATA_DIR"
-      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR/data" "$DATA_DIR/stacks"
-    else
-      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
-    fi
-    $USE_SUDO chmod 750 "$DATA_DIR"
-  fi
-  ok "data layout     $DATA_DIR/{data,stacks}"
-
-  # Bootstrap env file. DOCKMESH_SETUP_FORCE=true marks the install as
-  # not finished, so the server opens the setup wizard while it has no
-  # accounts; the wizard's commit handler scrubs the flag.
-  ENV_FILE="$DATA_DIR/dockmesh.env"
-  if [ -n "$KEPT_ENV_FILE" ]; then
-    ENV_FILE="$KEPT_ENV_FILE"
-    if [ "$OS" = "linux" ] && ! $USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout --from "$ENV_FILE"; then
-      warn "config left at its old place; Dockmesh keeps using it"
-    fi
-    # The old place is a symlink the service user could swap; the unit
-    # loads the root-owned file itself.
-    if $USE_SUDO test -L "$ENV_FILE" && [ "$($USE_SUDO readlink "$ENV_FILE")" = "$ETC_ENV_FILE" ]; then
-      ENV_FILE="$ETC_ENV_FILE"
-    fi
-    warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
-    ok "env file        $ENV_FILE (kept)"
-  elif [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$DATA_DIR" = "/var/lib/dockmesh" ]; then
-    # A new install has no config: setup mode runs on the defaults and
-    # the setup wizard writes $ETC_ENV_FILE.
-    ENV_FILE=""
-    ok "config          $ETC_ENV_FILE, written by the setup wizard"
-  else
-    if [ "$OS" = "linux" ]; then
-      write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
-    else
-      write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
-    fi
-    ok "env file        $ENV_FILE"
-  fi
-
-  # Service unit. Linux = systemd; macOS = launchd.
-  if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-    if ! write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
-      if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ]; then
-        warn "unit kept as it was"
-      else
-        die "could not write /etc/systemd/system/dockmesh.service"
+    ensure_service_user
+    if [ "$USER_CREATED" = "1" ]; then
+      # A recreated service user may have a new UID; the data of the
+      # earlier install is handed back to it.
+      KEPT_DATA=""
+      if [ -n "$KEPT_ENV_FILE" ]; then
+        KEPT_DATA="$(dirname "$KEPT_ENV_FILE")"
+      elif [ -n "$FOUND_DB" ] && [ "$(basename "$(dirname "$FOUND_DB")")" = "data" ]; then
+        KEPT_DATA="$(dirname "$(dirname "$FOUND_DB")")"
+      fi
+      if [ -n "$KEPT_DATA" ] && data_dir_allowed "$KEPT_DATA"; then
+        $USE_SUDO mkdir -p "$KEPT_DATA/data" "$KEPT_DATA/stacks"
+        $USE_SUDO chown dockmesh:docker "$KEPT_DATA"
+        $USE_SUDO chown -R dockmesh:docker "$KEPT_DATA/data" "$KEPT_DATA/stacks"
+        $USE_SUDO chmod 750 "$KEPT_DATA"
       fi
     fi
-    # Wait for it to come up before printing the wizard URL.
-    if start_service "enable --now"; then
-      ok "service         active"
-    else
-      fail "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
+    if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
+      # Installs up to v0.1.3 ran the service as root; the unit written
+      # below runs it as dockmesh, which needs the data dir.
+      CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null || true)"
+      if { [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; } && [ -n "$UNIT_ENV_FILE" ] && $USE_SUDO test -f "$UNIT_ENV_FILE"; then
+        ROOT_DATA="$(dirname "$UNIT_ENV_FILE")"
+        if data_dir_allowed "$ROOT_DATA"; then
+          $USE_SUDO chown -R dockmesh:dockmesh "$ROOT_DATA"
+          $USE_SUDO chmod 700 "$ROOT_DATA"
+        fi
+      fi
+      if [ "$SYSTEMD_ACTIVE" = "1" ]; then
+        STOPPED=1
+        $USE_SUDO systemctl stop dockmesh || true
+      fi
     fi
-  elif [ "$OS" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
-    PLIST="/Library/LaunchDaemons/dev.dockmesh.service.plist"
-    $USE_SUDO tee "$PLIST" >/dev/null <<EOF
+    RESTART_T0=$(get_time)
+    if SNAP_OUT="$($USE_SUDO "$NEW_BIN" system snapshot-db 2>&1)"; then
+      SNAP_DETAIL="$(printf '%s\n' "$SNAP_OUT" | tail -n 1)"
+    else
+      SNAP_DETAIL="skipped"
+      warn "no database snapshot: $(printf '%s' "$SNAP_OUT" | tail -n 1)"
+    fi
+  fi
+  N=$((N + 1)); step "$N" "Taking a snapshot" "$SNAP_DETAIL"
+
+  # ---- Binaries ----------------------------------------------------
+  if [ "$SKIP_DOWNLOAD" = "1" ]; then
+    N=$((N + 1)); step "$N" "Installing binaries" "pre-staged $INSTALL_DIR/dockmesh"
+  else
+    BAK_NOTE=""
+    if $USE_SUDO test -f "$INSTALL_DIR/dockmesh" && $USE_SUDO cp -a "$INSTALL_DIR/dockmesh" "$INSTALL_DIR/dockmesh.bak" 2>/dev/null; then
+      BAK_NOTE=" (previous kept as dockmesh.bak)"
+    fi
+    $USE_SUDO mv -f "$NEW_BINARY" "$INSTALL_DIR/dockmesh"
+    NEW_BINARY=""
+    EXTRA="$(install_release_files)"
+    N=$((N + 1)); step "$N" "Installing binaries" "$INSTALL_DIR/dockmesh$EXTRA$BAK_NOTE"
+  fi
+
+  # ---- Config and unit ---------------------------------------------
+  MIGRATE_DETAIL="no service unit"
+  if [ "$OS" = "linux" ]; then
+    MOVED_LINES=""
+    if MIGRATE_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" system migrate-layout ${KEPT_ENV_FILE:+--from "$KEPT_ENV_FILE"} 2>&1)"; then
+      MOVED_LINES="$(printf '%s\n' "$MIGRATE_OUT" | grep '^moved  ' || true)"
+    else
+      warn "config left at its old place, Dockmesh keeps using it: $(printf '%s' "$MIGRATE_OUT" | tail -n 1)"
+    fi
+    # The unit loads the root-owned file, never the symlink left behind.
+    ENV_FILE="$KEPT_ENV_FILE"
+    if [ -n "$ENV_FILE" ] && $USE_SUDO test -L "$ENV_FILE" && [ "$($USE_SUDO readlink "$ENV_FILE")" = "$ETC_ENV_FILE" ]; then
+      ENV_FILE="$ETC_ENV_FILE"
+    fi
+    if [ -n "$ENV_FILE" ]; then
+      warn_stale_asset_paths "$ENV_FILE" "$ASSET_DIR"
+    fi
+    if $USE_SUDO test -f "$ETC_ENV_FILE"; then
+      MIGRATE_DETAIL="config in $ETC_ENV_FILE"
+    elif [ -n "$ENV_FILE" ]; then
+      MIGRATE_DETAIL="config stays in $ENV_FILE"
+    else
+      MIGRATE_DETAIL="no config yet"
+    fi
+    if [ "$WRITE_UNIT" = "1" ]; then
+      if write_unit ${ENV_FILE:+--env-file "$ENV_FILE"}; then
+        MIGRATE_DETAIL="$MIGRATE_DETAIL, unit from the template"
+      else
+        warn "unit kept as it was; Dockmesh keeps running with it"
+      fi
+    fi
+  fi
+  N=$((N + 1)); step "$N" "Migrating config" "$MIGRATE_DETAIL"
+  if [ -n "${MOVED_LINES:-}" ]; then
+    printf '%s\n' "$MOVED_LINES" | while IFS= read -r line; do status moved "$FG_OK" "${line#moved  }"; done
+  fi
+
+  # ---- Restart -----------------------------------------------------
+  if [ "$WRITE_UNIT" = "1" ]; then
+    VERB="restart"
+    [ "$HAS_SYSTEMD_UNIT" = "1" ] || VERB="enable --now"
+    if ! start_service "$VERB"; then
+      die "dockmesh did not start; see: journalctl -u dockmesh --since '5 min ago'"
+    fi
+    STOPPED=0
+    if ! service_runs_new_binary "$SYSTEMD_PID"; then
+      die "dockmesh.service still runs the old binary; run: sudo systemctl restart dockmesh"
+    fi
+    RUNNING_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || true)"
+    case "$RUNNING_VERSION" in
+      *"$DM_VERSION"*) ;;
+      *) die "the installed binary reports '${RUNNING_VERSION:-unknown}', expected $DM_VERSION" ;;
+    esac
+    DOWNTIME=$(awk -v a="$(get_time)" -v b="${RESTART_T0:-0}" 'BEGIN { printf "%.1f", a - b }')
+    N=$((N + 1)); step "$N" "Restarting" "ok, down ${DOWNTIME} s"
+  else
+    N=$((N + 1)); step "$N" "Restarting" "skipped: no dockmesh service on this host, restart dockmesh yourself"
+  fi
+
+  say ""
+  STATUS_OUT=""
+  if [ "$OS" = "linux" ]; then
+    STATUS_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup status --porcelain 2>/dev/null || true)"
+  fi
+  if [ "$(kv setup "$STATUS_OUT")" = "unfinished" ]; then
+    status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is running."
+    box "Setup was never finished" \
+      "Get a setup code with: sudo dockmesh setup new-code" \
+      "Then open $(kv url "$STATUS_OUT")"
+  else
+    status ok "$FG_OK" "Dockmesh $SHOWN_VERSION is running. Sign in as usual."
+  fi
+  say ""
+  say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
+  say ""
+  exit 0
+fi
+
+# ------------------------------------------------------------------
+#  New install
+# ------------------------------------------------------------------
+if [ "$SKIP_DOWNLOAD" = "1" ]; then
+  N=$((N + 1)); step "$N" "Installing binaries" "pre-staged $INSTALL_DIR/dockmesh"
+else
+  $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
+  EXTRA="$(install_release_files)"
+  N=$((N + 1)); step "$N" "Installing binaries" "$INSTALL_DIR/dockmesh$EXTRA"
+fi
+
+# setup_box prints the setup code box from `dockmesh setup new-code`.
+setup_box() {
+  local out code fp
+  if ! out="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup new-code --porcelain 2>/dev/null)" || [ -z "$(kv code "$out")" ]; then
+    box "Finish the setup in your browser" \
+      "Get a setup code with: sudo dockmesh setup new-code" \
+      "It prints the link to open."
+    return
+  fi
+  code="$(kv code "$out")"
+  fp="$(kv fingerprint "$out")"
+  local lines=("$(kv url "$out")" "" "Setup code   $code" "Valid until  $(kv valid_until "$out") (2 hours)" "")
+  if [ -n "$fp" ]; then
+    lines+=("Your browser will warn about the certificate. Check that" "it shows this SHA-256 fingerprint before you continue:")
+    while IFS= read -r l; do lines+=("$l"); done < <(fingerprint_lines "$fp")
+    lines+=("")
+  fi
+  lines+=("New code:    sudo dockmesh setup new-code")
+  box "Finish the setup in your browser" "${lines[@]}"
+}
+
+if [ "$OS" = "darwin" ]; then
+  # macOS has no root updater to apply the setup, so the service keeps
+  # the bootstrap env file the wizard finishes.
+  DATA_DIR="${DOCKMESH_DATA_DIR:-/usr/local/var/dockmesh}"
+  $USE_SUDO mkdir -p "$DATA_DIR/data" "$DATA_DIR/stacks"
+  ENV_FILE="$DATA_DIR/dockmesh.env"
+  write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
+  PLIST="/Library/LaunchDaemons/dev.dockmesh.service.plist"
+  $USE_SUDO tee "$PLIST" >/dev/null <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1416,63 +1160,56 @@ else
 </dict>
 </plist>
 EOF
-    $USE_SUDO launchctl bootstrap system "$PLIST" 2>/dev/null || \
-      $USE_SUDO launchctl load -w "$PLIST"
-    ok "launchd unit    $PLIST"
-  else
-    warn "no service manager — start manually: $USE_SUDO $INSTALL_DIR/dockmesh serve --env-file $ENV_FILE"
-  fi
-  step_done
+  $USE_SUDO launchctl bootstrap system "$PLIST" 2>/dev/null || $USE_SUDO launchctl load -w "$PLIST"
+  N=$((N + 1)); step "$N" "Starting setup mode" "ok"
+  setup_box
+  say ""
+  say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
+  say ""
+  exit 0
 fi
 
-# ------------------------------------------------------------------
-#  [done]  Wizard URL
-# ------------------------------------------------------------------
-INSTALLED="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
-ok "installed       $INSTALLED"
-TOTAL_ELAPSED=$(awk "BEGIN { printf \"%.1f\", $(get_time) - $START_TS }")
-printf '   %s%ss total%s\n' "$FG_MUTED" "$TOTAL_ELAPSED" "$RST" >&2
+ensure_service_user
+# Setup mode keeps its state in the data dir until the wizard has chosen
+# where the data goes.
+DATA_DIR=/var/lib/dockmesh
+$USE_SUDO mkdir -p "$DATA_DIR"
+$USE_SUDO chown dockmesh:docker "$DATA_DIR" 2>/dev/null || $USE_SUDO chown dockmesh "$DATA_DIR"
+$USE_SUDO chmod 750 "$DATA_DIR"
+N=$((N + 1)); step "$N" "Creating user dockmesh" "groups: $($USE_SUDO "$INSTALL_DIR/dockmesh" system unit-groups 2>/dev/null || echo docker)"
 
-# Pick a sensible LAN IP for the printed URL — first non-loopback IPv4
-# address. Falls back to <hostname> if no IP could be derived.
-WIZARD_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-[ -z "$WIZARD_HOST" ] && WIZARD_HOST="$(hostname 2>/dev/null || echo localhost)"
-
-if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
-  box "Next step" \
-    "" \
-    "  $USE_SUDO dockmesh init" \
-    "" \
-    "Guided CLI wizard — data dir, admin user, listen port, systemd unit." \
-    "Everything defaults to sane values. ~2 minutes."
-elif [ -n "${KEPT_ENV_FILE:-}" ]; then
-  box "Dockmesh is back" \
-    "" \
-    "  http://$WIZARD_HOST:8080" \
-    "" \
-    "Reused $KEPT_ENV_FILE and the data next to it." \
-    "Sign in with your existing account."
-else
-  # The setup code goes to this terminal only, never to a log. Wait for
-  # the service first: new-code asks it whether it is in setup mode.
-  for _ in $(seq 1 30); do
-    curl -fsk "https://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
-    curl -fs "http://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
-    sleep 1
-  done
-  CODE_LINES=()
-  if CODE_OUT="$($USE_SUDO "$INSTALL_DIR/dockmesh" setup new-code 2>&1)"; then
-    while IFS= read -r line; do CODE_LINES+=("  $line"); done <<<"$CODE_OUT"
-  else
-    CODE_LINES=("  Get a setup code with:" "  sudo dockmesh setup new-code")
-  fi
-  box "Open the install wizard" \
-    "" \
-    "${CODE_LINES[@]}" \
-    "" \
-    "The code is valid for 2 hours. A new one, which replaces it:" \
-    "  sudo dockmesh setup new-code"
+if [ "$HAS_SYSTEMD" = "0" ]; then
+  box "Binaries installed" \
+    "This host has no systemd. Start Dockmesh with:" \
+    "  sudo -u dockmesh $INSTALL_DIR/dockmesh serve" \
+    "Then get a setup code with: sudo dockmesh setup new-code"
+  exit 0
 fi
 
-printf '   %sDocs%s     https://dockmesh.dev/docs\n'   "$DIM" "$RST" >&2
-printf '   %sIssues%s   https://github.com/%s/issues\n\n' "$DIM" "$RST" "$REPO" >&2
+write_unit || die "could not write /etc/systemd/system/dockmesh.service"
+N=$((N + 1)); step "$N" "Installing services" "dockmesh.service, dockmesh-update.path"
+
+if [ "$NO_BOOTSTRAP" = "1" ]; then
+  $USE_SUDO systemctl enable dockmesh >/dev/null 2>&1 || true
+  box "Binaries installed" \
+    "Start the setup with:" \
+    "  sudo systemctl start dockmesh && sudo dockmesh setup new-code"
+  say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
+  say ""
+  exit 0
+fi
+
+if ! start_service "enable --now"; then
+  die "dockmesh did not start; see: journalctl -u dockmesh --since '5 min ago'"
+fi
+# The fingerprint needs the certificate setup mode creates at its start.
+for _ in $(seq 1 30); do
+  curl -fsk "https://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
+  curl -fs "http://127.0.0.1:8080/api/v1/health" >/dev/null 2>&1 && break
+  sleep 1
+done
+N=$((N + 1)); step "$N" "Starting setup mode" "ok"
+setup_box
+say ""
+say "   ${DIM}Docs${RST}     https://dockmesh.dev/docs"
+say ""

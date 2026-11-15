@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Scripted installs: on a new install DOCKMESH_DATA_DIR is no longer used (choose the data directory in the setup wizard), and DOCKMESH_NO_BOOTSTRAP=1 now also creates the dockmesh user and the units without starting them'
+time: 2026-11-15T00:28:58.613828016Z
+custom:
+    Audience: admins
+    Id: installer-new-install

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/layout"
 )
 
@@ -148,4 +150,40 @@ func checkUnitBinary(path string) error {
 			return nil
 		}
 	}
+}
+
+// systemSnapshotDB is `dockmesh system snapshot-db`: install.sh runs it
+// with the server stopped, before it replaces the binary, and gets the
+// same copy the root updater takes. The copy is made by a child running
+// as the dockmesh account, which owns the database.
+func systemSnapshotDB() error {
+	if os.Geteuid() != 0 {
+		return errors.New("must run as root")
+	}
+	envFile, err := unitConfigFile("")
+	if errors.Is(err, errNoConfig) {
+		fmt.Println("no database yet")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	env, err := layout.ReadEnvFile(envFile)
+	if err != nil {
+		return err
+	}
+	dbPath := config.ResolvePaths(func(k string) string { return env[k] }).DBPath
+	if _, err := os.Lstat(dbPath); errors.Is(err, fs.ErrNotExist) {
+		fmt.Println("no database yet")
+		return nil
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if _, err := runAsService(context.Background(), self, dbStepTimeout, "update", updateSnapshotCmd, "--db", dbPath); err != nil {
+		return err
+	}
+	fmt.Printf("snapshot %s\n", db.UpdateSnapshotPath(dbPath))
+	return nil
 }

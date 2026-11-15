@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -21,18 +23,23 @@ import (
 
 // runSetupCmd handles `dockmesh setup <subcommand>`.
 func runSetupCmd(args []string) {
-	if len(args) > 0 && args[0] == "materialize" {
-		if err := runSetupMaterialize(args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(args) == 0 || args[0] != "new-code" {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh setup new-code")
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status>")
 		os.Exit(2)
 	}
-	if err := setupNewCode(time.Now()); err != nil {
+	var err error
+	switch args[0] {
+	case "materialize":
+		err = runSetupMaterialize(args[1:])
+	case "new-code":
+		err = runSetupNewCode(args[1:])
+	case "status":
+		runSetupStatus(args[1:])
+	default:
+		fmt.Fprintln(os.Stderr, "usage: dockmesh setup <new-code|status>")
+		os.Exit(2)
+	}
+	if err != nil {
 		if errors.Is(err, errSetUpAlready) {
 			fmt.Fprintln(os.Stderr, "This server is already set up. To add an admin, run: "+setupAdminCommand)
 		} else {
@@ -42,17 +49,56 @@ func runSetupCmd(args []string) {
 	}
 }
 
+func runSetupNewCode(args []string) error {
+	fset := flag.NewFlagSet("setup new-code", flag.ExitOnError)
+	porcelain := fset.Bool("porcelain", false, "print key=value lines for install.sh")
+	_ = fset.Parse(args)
+	c, err := setupNewCode(time.Now())
+	if err != nil {
+		return err
+	}
+	if *porcelain {
+		c.writePorcelain(os.Stdout)
+	} else {
+		c.writeText(os.Stdout)
+	}
+	return nil
+}
+
 var errSetUpAlready = errors.New("server already set up")
 
 const setupAdminCommand = "sudo dockmesh admin create --username <name> --role admin"
 
-func setupNewCode(now time.Time) error {
-	if runtime.GOOS == "windows" {
-		return errors.New("setup codes are only supported on Linux and macOS")
+// newCode is what `setup new-code` prints.
+type newCode struct {
+	Code        string
+	ValidUntil  time.Time
+	URL         string
+	Fingerprint string
+	Replaced    bool
+}
+
+func (c newCode) writeText(w io.Writer) {
+	fmt.Fprintf(w, "Setup code   %s\n", c.Code)
+	fmt.Fprintf(w, "Valid until  %s (2 hours)\n", c.ValidUntil.Local().Format("15:04"))
+	if c.Replaced {
+		fmt.Fprintln(w, "The previous code no longer works.")
 	}
-	if os.Geteuid() != 0 {
-		return errors.New("dockmesh setup new-code must run as root (" + setup.CodeCommand + ")")
+	fmt.Fprintf(w, "Open %s\n", c.URL)
+	if c.Fingerprint != "" {
+		fmt.Fprintf(w, "Certificate  SHA-256 %s\n", c.Fingerprint)
+		fmt.Fprintln(w, "Your browser warns about this certificate; continue only if it shows this fingerprint.")
 	}
+}
+
+// writePorcelain prints one key=value per line, the form install.sh reads.
+func (c newCode) writePorcelain(w io.Writer) {
+	fmt.Fprintf(w, "code=%s\nvalid_until=%s\nurl=%s\nfingerprint=%s\nreplaced=%t\n",
+		c.Code, c.ValidUntil.Local().Format("15:04"), c.URL, c.Fingerprint, c.Replaced)
+}
+
+// setupProbe gathers the setup decision's facts for this host.
+func setupProbe() (setup.Facts, config.Paths) {
 	paths := config.ResolvePaths(os.Getenv)
 	facts := setup.Probe{
 		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
@@ -61,42 +107,79 @@ func setupNewCode(now time.Time) error {
 		Paths:       paths,
 	}.Scan()
 	facts.Users = countUsersReadOnly(paths.DBPath, facts.DB)
-	httpAddr := os.Getenv("DOCKMESH_HTTP_ADDR")
-	if httpAddr == "" {
-		httpAddr = ":8080"
+	return facts, paths
+}
+
+func serverHTTPAddr() string {
+	if a := os.Getenv("DOCKMESH_HTTP_ADDR"); a != "" {
+		return a
 	}
+	return ":8080"
+}
+
+func setupNewCode(now time.Time) (newCode, error) {
+	if runtime.GOOS == "windows" {
+		return newCode{}, errors.New("setup codes are only supported on Linux and macOS")
+	}
+	if os.Geteuid() != 0 {
+		return newCode{}, errors.New("dockmesh setup new-code must run as root (" + setup.CodeCommand + ")")
+	}
+	facts, paths := setupProbe()
+	httpAddr := serverHTTPAddr()
 	webCert, err := pki.ReadUICert(setup.PKIDir(paths.DataDir))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("setup certificate: %w", err)
+		return newCode{}, fmt.Errorf("setup certificate: %w", err)
 	}
 	if !setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr, webCert) }) {
-		return errSetUpAlready
+		return newCode{}, errSetUpAlready
 	}
 
 	code, err := setup.NewCode()
 	if err != nil {
-		return err
+		return newCode{}, err
 	}
 	rec, err := setup.NewCodeRecord(code, now)
 	if err != nil {
-		return err
+		return newCode{}, err
 	}
 	_, statErr := os.Lstat(setup.CodeFile)
 	if err := setup.WriteCodeRecord(setup.CodeFile, rec, codeGroup(paths.DataDir)); err != nil {
-		return fmt.Errorf("write %s: %w", setup.CodeFile, err)
+		return newCode{}, fmt.Errorf("write %s: %w", setup.CodeFile, err)
 	}
-	shown := setup.FormatCode(code)
-	fmt.Printf("Setup code   %s\n", shown)
-	fmt.Printf("Valid until  %s (2 hours)\n", rec.ExpiresAt.Local().Format("15:04"))
-	if statErr == nil {
-		fmt.Println("The previous code no longer works.")
+	c := newCode{
+		Code:       setup.FormatCode(code),
+		ValidUntil: rec.ExpiresAt,
+		Replaced:   statErr == nil,
 	}
-	fmt.Printf("Open %s/setup#%s\n", setupBaseURL(httpAddr, webCert != nil), shown)
+	c.URL = setupBaseURL(httpAddr, webCert != nil) + "/setup#" + c.Code
 	if webCert != nil {
-		fmt.Printf("Certificate  SHA-256 %s\n", pki.Fingerprint(webCert.Raw))
-		fmt.Println("Your browser warns about this certificate; continue only if it shows this fingerprint.")
+		c.Fingerprint = pki.Fingerprint(webCert.Raw)
 	}
-	return nil
+	return c, nil
+}
+
+// runSetupStatus is `dockmesh setup status`: whether this server still
+// waits for its setup, and where the wizard is. It writes nothing; the
+// installer asks it after an upgrade, so it never has to print a code.
+func runSetupStatus(args []string) {
+	fset := flag.NewFlagSet("setup status", flag.ExitOnError)
+	porcelain := fset.Bool("porcelain", false, "print key=value lines for install.sh")
+	_ = fset.Parse(args)
+	facts, paths := setupProbe()
+	httpAddr := serverHTTPAddr()
+	webCert, _ := pki.ReadUICert(setup.PKIDir(paths.DataDir))
+	unfinished := setup.CodeAllowed(facts, func() bool { return serverInSetup(httpAddr, webCert) })
+	url := setupBaseURL(httpAddr, webCert != nil) + "/setup"
+	switch {
+	case *porcelain && unfinished:
+		fmt.Printf("setup=unfinished\nurl=%s\n", url)
+	case *porcelain:
+		fmt.Println("setup=done")
+	case unfinished:
+		fmt.Printf("Setup is not finished. Get a setup code with: %s\nThen open %s\n", setup.CodeCommand, url)
+	default:
+		fmt.Println("This server is set up.")
+	}
 }
 
 // countUsersReadOnly counts accounts without writing to the database: it
