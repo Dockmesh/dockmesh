@@ -91,25 +91,37 @@ type candidate struct {
 // the job's current target.
 func runCandidates(ctx context.Context, st *store, n *notices.Service, run *Run, job *Job) ([]candidate, error) {
 	var out []candidate
+	var refused error
 	if loc := run.Location; loc != nil && (loc.TargetID > 0 || job.TargetID == 0) {
 		t, err := targetAt(ctx, st, n, run, job, loc)
-		if err != nil {
+		switch {
+		case err == nil:
+			out = append(out, candidate{t, loc.describe()})
+		case !loc.Inferred || !errors.Is(err, ErrArchiveMissing):
 			return nil, err
+		default:
+			// An inferred location is a guess; the job's target may hold
+			// the archive after all.
+			refused = err
 		}
-		out = append(out, candidate{t, loc.describe()})
 		if !loc.Inferred {
 			return out, nil
 		}
 	}
 	t, cur, err := jobTargetAt(ctx, st, n, job)
-	if err != nil {
-		if len(out) > 0 {
-			return out, nil
-		}
+	switch {
+	case err != nil && len(out) > 0:
+		return out, nil
+	case err != nil && refused != nil:
+		return nil, refused
+	case err != nil:
 		return nil, err
 	}
-	if run.Location == nil || !targets.SameLocation(cur.Type, cur.Config, run.Location.Config) || cur.Type != run.Location.Type {
+	if !sameRunLocation(cur, run.Location) {
 		out = append(out, candidate{t, cur.describe()})
+	}
+	if len(out) == 0 && refused != nil {
+		return nil, refused
 	}
 	return out, nil
 }
@@ -188,11 +200,11 @@ func atRecorded(run *Run, loc *RunLocation, owner string, cur any, checked func(
 	}
 	cfg := targets.AtLocation(loc.Type, loc.Config, cur)
 	if k, _ := cfg["host_key"].(string); loc.Type == "sftp" && k == "" {
-		return nil, fmt.Errorf("no host key was recorded for %s, so Dockmesh won't connect to it to read the archive", loc.describe())
+		return nil, missing("no host key was recorded for %s, so Dockmesh won't connect to it to read the archive", loc.describe())
 	}
 	built, err := targets.Build(loc.Type, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", loc.describe(), err)
+		return nil, fmt.Errorf("open the place the run wrote to: %w", err)
 	}
 	return wrapRunTarget(built), nil
 }

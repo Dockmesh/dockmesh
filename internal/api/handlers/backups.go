@@ -699,6 +699,27 @@ func (h *Handlers) stackEnvValues(name string) []string {
 	return operations.EnvValues(d.Env)
 }
 
+// runTargetsVisible reports whether the caller may see the targets an
+// archive-missing message about run can name: the one the run wrote to
+// and the job's current one.
+func (h *Handlers) runTargetsVisible(r *http.Request, run *backup.Run) bool {
+	ids := []int64{run.TargetID}
+	if job, err := h.Backups.GetJob(r.Context(), run.JobID); err == nil {
+		ids = append(ids, job.TargetID)
+	} else if !h.callerIsAdmin(r) {
+		return false
+	}
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if visible, err := h.backupTargetVisible(r, id); err != nil || !visible {
+			return false
+		}
+	}
+	return true
+}
+
 // writeArchiveMissing answers a run whose archive is not where it was
 // looked for: 404 with the explanation of where it most likely is. A
 // caller who can't see the run's target gets no server or path.
@@ -707,10 +728,8 @@ func (h *Handlers) writeArchiveMissing(w http.ResponseWriter, r *http.Request, r
 		return false
 	}
 	msg := err.Error()
-	if run != nil && run.TargetID > 0 {
-		if visible, verr := h.backupTargetVisible(r, run.TargetID); verr != nil || !visible {
-			msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
-		}
+	if run != nil && !h.runTargetsVisible(r, run) {
+		msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "code": "archive_not_found"})
 	return true

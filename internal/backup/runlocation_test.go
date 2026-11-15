@@ -300,3 +300,30 @@ func TestRecordedServerNeedsItsOwnCredentials(t *testing.T) {
 		t.Fatalf("got %v (target built: %v)", err, dialed)
 	}
 }
+
+func TestRecordedLocationFallbacks(t *testing.T) {
+	cases := []struct {
+		name string
+		loc  func(lt *locTest) (targetID any, loc string)
+	}{
+		{"inline location of a job now on a saved target", func(lt *locTest) (any, string) {
+			return nil, `{"type":"local","config":{"path":"` + lt.rootA + `"}}`
+		}},
+		{"inferred location that can't be opened", func(lt *locTest) (any, string) {
+			return lt.target.ID, `{"type":"local","config":{"path":"` + lt.rootB + `","host":"elsewhere"},"inferred":true,"changed_at":"2026-11-01T00:00:00Z"}`
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLocTest(t, 0)
+			r := lt.run(t)
+			tid, loc := tc.loc(lt)
+			if _, err := lt.svc.store.db.Exec(`UPDATE backup_runs SET target_id = ?, target_location = ? WHERE id = ?`, tid, loc, r.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := lt.readable(t, r); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

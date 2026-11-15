@@ -98,7 +98,8 @@ func SameAccount(a, b map[string]any) bool {
 
 // AtLocation returns the current config cur moved to the place recorded
 // in loc on the same server and account: credentials and trusted CA stay
-// those of cur. An SFTP config without a host key takes the one recorded
+// those of cur, and a connection cur makes over TLS never falls back to
+// plain HTTP. An SFTP config without a host key takes the one recorded
 // with loc.
 func AtLocation(typ string, loc map[string]any, cur any) map[string]any {
 	out := map[string]any{}
@@ -111,12 +112,16 @@ func AtLocation(typ string, loc map[string]any, cur any) map[string]any {
 			delete(out, "host_key_pending")
 		}
 	}
+	tls, _ := out["use_ssl"].(bool)
 	for _, k := range placeFields[typ] {
 		if v, ok := loc[k]; ok {
 			out[k] = v
 		} else {
 			delete(out, k)
 		}
+	}
+	if tls {
+		out["use_ssl"] = true
 	}
 	return out
 }
