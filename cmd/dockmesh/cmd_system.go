@@ -317,7 +317,11 @@ func systemDataDir() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(config.ResolvePaths(func(k string) string { return env[k] }).DataDir)
+	dir := config.ResolvePaths(func(k string) string { return env[k] }).DataDir
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("data dir %q is not an absolute path", dir)
+	}
+	fmt.Println(filepath.Clean(dir))
 	return nil
 }
 

@@ -150,6 +150,10 @@ func TestInstallChownTargetAllowed(t *testing.T) {
 		{"/etc/dockmesh/", false},
 		{"/var/lib", false},
 		{"", false},
+		{"/var/lib/../etc", false},
+		{"//etc", false},
+		{"data", false},
+		{".", false},
 	}
 	for _, tt := range tests {
 		_, _, err := runHelper(t, helpers, nil, "chown_target_allowed", tt.dir)

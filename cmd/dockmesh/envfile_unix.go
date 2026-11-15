@@ -15,7 +15,8 @@ import (
 // current user owns it and nobody else may write it, so a file planted
 // or edited by another account cannot redirect a root CLI run.
 func readTrustedEnvFile(path string) ([]byte, error) {
-	f, err := os.Open(path) // #nosec G703 -- path is one of the fixed defaultEnvFiles locations
+	// O_NONBLOCK: a FIFO in place of the file must not hang a root run.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G703 -- path is one of the fixed defaultEnvFiles locations
 	if err != nil {
 		return nil, err
 	}
@@ -23,6 +24,9 @@ func readTrustedEnvFile(path string) ([]byte, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: not a regular file", errUntrustedEnvFile)
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {

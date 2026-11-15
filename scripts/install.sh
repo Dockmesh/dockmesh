@@ -160,7 +160,9 @@ printable() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 # never the config directory or anything else below /etc.
 chown_target_allowed() {
   case "${1%/}" in
-    /etc|/etc/*) return 1 ;;
+    /etc|/etc/*|*/../*|*/..|*/./*|*//*) return 1 ;;
+    /*) ;;
+    *) return 1 ;;
   esac
   [ -n "$1" ] && data_dir_allowed "$1"
 }
@@ -268,7 +270,8 @@ UNIT_REWRITTEN=0
 write_unit() {
   local out
   if ! out="$($USE_SUDO "$INSTALL_DIR/dockmesh" system write-unit "$@" 2>&1)"; then
-    printf '%s\n' "$out" >&2
+    printable "$out" >&2
+    printf '\n' >&2
     return 1
   fi
   case "$out" in "wrote /etc/systemd/system/dockmesh.service "*|*$'\n'"wrote /etc/systemd/system/dockmesh.service "*) UNIT_REWRITTEN=1 ;; esac
@@ -279,11 +282,11 @@ write_unit() {
 # service does not come up and write_unit replaced the unit in this run,
 # the earlier unit is restored and the service started once more.
 start_service() {
-  $USE_SUDO systemctl $1 dockmesh || true
+  $USE_SUDO systemctl $1 dockmesh >/dev/null 2>&1 || true
   wait_for_service && return 0
   [ "$UNIT_REWRITTEN" = "1" ] || return 1
   warn "dockmesh did not start with the new unit — restoring the earlier unit"
-  $USE_SUDO "$INSTALL_DIR/dockmesh" system write-unit --restore >&2 || return 1
+  $USE_SUDO "$INSTALL_DIR/dockmesh" system write-unit --restore >/dev/null 2>&1 || return 1
   UNIT_REWRITTEN=0
   $USE_SUDO systemctl restart dockmesh || true
   wait_for_service || return 1
