@@ -188,12 +188,13 @@ The way back is the previous binary together with a database snapshot from befor
 | `dockmesh.db.pre-update.bak` | **Update now** and the installer (from v0.6.0), with the server stopped | Before every upgrade, also one without migrations; the next upgrade or reinstall (`DOCKMESH_FORCE=1`) replaces it |
 | `dockmesh.db.pre-migrate-<UTC time>.bak` | The server, and `dockmesh` commands that open the database (for example `doctor`) | Before it applies new migrations; the newest three are kept, so later migrating runs can rotate out an upgrade's snapshot |
 
-Use the `pre-update` snapshot of the upgrade you are undoing, or the newest `pre-migrate` snapshot that this upgrade wrote (the log line under [3. Verify](#3-verify) names it). The previous binary is `dockmesh.bak` after an installer upgrade and `dockmesh.prev` after **Update now**:
+Use the `pre-update` snapshot of the upgrade you are undoing, or the newest `pre-migrate` snapshot that this upgrade wrote (the log line under [3. Verify](#3-verify) names it). The previous binary is `dockmesh.bak` after an installer upgrade and `dockmesh.prev` after **Update now**. `/etc/dockmesh/dockmesh.service.prev` is the unit the last rewrite replaced; when the upgrade didn't change the unit, it can be older than that. Compare it with the current unit (`diff`) before you put it back, and never put back a unit with `User=root` on an install that runs as `dockmesh`:
 
 ```bash
 sudo systemctl stop dockmesh
 sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh   # after Update now: dockmesh.prev
-sudo test -f /etc/dockmesh/dockmesh.service.prev && sudo cp /etc/dockmesh/dockmesh.service.prev /etc/systemd/system/dockmesh.service
+sudo diff /etc/systemd/system/dockmesh.service /etc/dockmesh/dockmesh.service.prev   # then, if it is the right one:
+sudo cp /etc/dockmesh/dockmesh.service.prev /etc/systemd/system/dockmesh.service
 sudo systemctl daemon-reload
 sudo rm -f /var/lib/dockmesh/data/dockmesh.db-wal /var/lib/dockmesh/data/dockmesh.db-shm
 sudo cp -p /var/lib/dockmesh/data/dockmesh.db.pre-update.bak /var/lib/dockmesh/data/dockmesh.db
@@ -207,7 +208,8 @@ The snapshots hold the database only. What an upgrade changes outside the databa
 ```bash
 sudo systemctl stop dockmesh
 sudo mv /usr/local/bin/dockmesh.bak /usr/local/bin/dockmesh   # after Update now: dockmesh.prev
-sudo test -f /etc/dockmesh/dockmesh.service.prev && sudo cp /etc/dockmesh/dockmesh.service.prev /etc/systemd/system/dockmesh.service
+sudo diff /etc/systemd/system/dockmesh.service /etc/dockmesh/dockmesh.service.prev   # then, if it is the right one:
+sudo cp /etc/dockmesh/dockmesh.service.prev /etc/systemd/system/dockmesh.service
 sudo systemctl daemon-reload
 sudo rm -rf /var/lib/dockmesh
 sudo tar -xzf /root/dockmesh-pre-upgrade-2026-11-03.tar.gz -C /var/lib
