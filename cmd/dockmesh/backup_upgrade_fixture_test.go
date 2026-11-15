@@ -225,3 +225,39 @@ func TestMovedSystemTargetNotice(t *testing.T) {
 		}
 	}
 }
+
+// A target the admin edited after the move is their choice now, not the
+// one the job was created with.
+func TestMovedSystemTargetEditedAfterMove(t *testing.T) {
+	dump := readV053Fixture(t)
+	ctx := context.Background()
+	t.Chdir(t.TempDir())
+	dataDir := filepath.Join(t.TempDir(), "data")
+	conn := openV053Fixture(t, dump, dataDir)
+	if _, err := conn.Exec(`DELETE FROM backup_jobs WHERE name <> 'sys-abs'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`UPDATE backup_jobs SET target_id = NULL, target_config = ? WHERE name = 'sys-abs'`,
+		`{"path":"`+filepath.Join(dataDir, "backups")+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	svc, n := startBackups(t, conn, dataDir)
+	if _, previous, err := svc.MovedSystemTarget(ctx); err != nil || len(previous) != 1 {
+		t.Fatalf("before the edit: MovedSystemTarget = %v, %v; want the old target", previous, err)
+	}
+	if _, err := conn.Exec(`UPDATE backup_targets SET config_json = '{"path":"/srv/nas-other"}', updated_at = datetime('now', '+1 minute') WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncMovedSystemTargetNotice(ctx, n, svc); err != nil {
+		t.Fatal(err)
+	}
+	open, err := n.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range open {
+		if o.Key == "backups.system-target-moved" {
+			t.Fatal("notice names a target edited after the move")
+		}
+	}
+}

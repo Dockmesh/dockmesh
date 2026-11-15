@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: If a restart moved the system backup job to the data directory, a notice names the target it was created with. Pick it again in the job, or delete the saved target to keep the job where it is
+body: If system backups landed in `<data>/backups` after a restart, check the notice on the Backups page. It names the target the job was created with. Pick it again in the job, or delete the saved target to keep the job where it is
 time: 2026-11-14T19:49:10.418981801Z
 custom:
     Audience: admins
