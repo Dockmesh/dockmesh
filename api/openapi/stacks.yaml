@@ -758,6 +758,11 @@ paths:
                   code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
                   stack: {type: string}
                   host_id: {type: string}
+        "422":
+          description: The compose file can't be used for the new replicas, e.g. it sets a label reserved for Dockmesh, or the agent on the host is too old to check it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
                   files:
                     type: array
                     items: {type: string}

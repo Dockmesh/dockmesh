@@ -95,7 +95,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 
 	res, err := scaling.NewHostTarget(target, name, service).Scale(r.Context(), detail.Compose, detail.Env, req.Replicas)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, deployErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
