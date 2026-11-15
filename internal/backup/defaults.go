@@ -131,8 +131,7 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 // was created with is still saved and unused. That target is saved under
 // the job's name no later than the job and not edited since the move;
 // anything created or changed later, by whoever may save targets, is not
-// taken for it. It returns the job's name
-// and the paths of those targets.
+// taken for it. It returns the job's name and the paths of those targets.
 func (s *Service) MovedSystemTarget(ctx context.Context) (job string, previous []string, err error) {
 	if s.paths.DataDir == "" {
 		return "", nil, nil
