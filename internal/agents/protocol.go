@@ -91,6 +91,10 @@ const (
 	// restarts the systemd service.
 	FrameReqAgentUpgrade = "req.agent.upgrade"
 
+	// FrameReqStacksDirApply checks a new stacks directory on the agent
+	// and, unless CheckOnly, asks the agent's root updater to switch to it.
+	FrameReqStacksDirApply = "req.stacks_dir.apply"
+
 	// Service scaling (P.8) — manual replica count adjustment.
 	FrameReqStackScale      = "req.stack.scale"
 	FrameReqStackCheckScale = "req.stack.check_scale"
@@ -431,6 +435,44 @@ type HelloPayload struct {
 	// StacksDirs lists the agent's stacks directories, the current one
 	// first; agents that predate it send none.
 	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+}
+
+// StacksDirApplyReq asks for Path as the agent's stacks directory.
+type StacksDirApplyReq struct {
+	Path      string `json:"path"`
+	CheckOnly bool   `json:"check_only,omitempty"`
+}
+
+// StacksDirCheck is the agent's check of a stacks directory, with the same
+// rules its root updater applies. Status is ok, warn or fail; Issue names
+// the first problem.
+type StacksDirCheck struct {
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	Issue      string `json:"issue,omitempty"`
+	Message    string `json:"message"`
+	WillCreate bool   `json:"will_create,omitempty"`
+	FSType     string `json:"fs_type,omitempty"`
+	TotalBytes int64  `json:"total_bytes,omitempty"`
+	FreeBytes  int64  `json:"free_bytes,omitempty"`
+}
+
+// Outcomes of a StacksDirApplyRes.
+const (
+	StacksDirChecked = "checked"
+	StacksDirRefused = "refused"
+	StacksDirDone    = "done"
+	StacksDirFailed  = "failed"
+	// StacksDirPending: the root updater took the request but had not
+	// answered when the agent stopped waiting.
+	StacksDirPending = "pending"
+)
+
+// StacksDirApplyRes answers a StacksDirApplyReq.
+type StacksDirApplyRes struct {
+	Status string         `json:"status"`
+	Check  StacksDirCheck `json:"check"`
+	Reason string         `json:"reason,omitempty"`
 }
 
 // StacksDirInfo is one stacks directory of an agent and how many stacks

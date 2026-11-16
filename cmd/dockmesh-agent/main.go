@@ -1225,6 +1225,12 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		res, err := agentCheckScale(ctx, cs, req)
 		respond(conn, f.ID, res, err)
 
+	case agents.FrameReqStacksDirApply:
+		var req agents.StacksDirApplyReq
+		_ = json.Unmarshal(f.Payload, &req)
+		res, err := applyStacksDir(ctx, req)
+		respond(conn, f.ID, res, err)
+
 	case agents.FrameReqAgentUpgrade:
 		var req agents.AgentUpgradeReq
 		_ = json.Unmarshal(f.Payload, &req)

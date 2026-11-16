@@ -92,6 +92,27 @@ func updateApply(args []string) error {
 	}
 	reqDir := updateDir(filepath.Clean(*data))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if req := requestOf(reqDir, uid); req.Type == rootupdate.RequestStacksDirApply {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		gid := 0
+		if uid != 0 {
+			if _, gid, err = lookupAccount(agentAccount); err != nil {
+				return err
+			}
+		}
+		in := hostInstaller(binary)
+		a := &stacksDirApplier{
+			dataDir: filepath.Clean(*data), reqDir: reqDir, uid: uid, gid: gid, stateDir: managedStateDir, log: logger,
+			rules: func(current string) stacksDirRules {
+				env, _, _ := in.readEnv()
+				return hostStacksDirRules(ctx, filepath.Clean(*data), current, int(uid), env["DOCKER_HOST"])
+			},
+			in: in, units: &agentService{reqDir: reqDir, uid: uid}, settle: 2 * time.Second,
+			restart: func(ctx context.Context) error { return agentSystemctl(ctx, "restart", agentUnitName) },
+		}
+		return a.run(ctx, req.Path)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
