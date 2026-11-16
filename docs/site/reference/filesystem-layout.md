@@ -100,7 +100,7 @@ Archives are written as `jobs/<job id>-<job name>/<timestamp>-r<run id>.tar.gz`,
 | `<database>.pre-update.bak` | `dockmesh update apply`, and `install.sh` on upgrade | Database as it was before the last update, put back on a rollback |
 | `/Library/LaunchDaemons/dev.dockmesh.service.plist` | macOS | launchd job; logs in `/usr/local/var/log/dockmesh.log` and `.err` |
 
-Linux release archives contain the agent for both architectures, and `install.sh` installs both, whatever the server's own architecture. On macOS, the archive has one agent binary, which `install.sh` installs as `dockmesh-agent-darwin-<arch>`; the agent installer only enrolls Linux hosts and needs the Linux binaries, so copy them from a Linux archive into the asset `bin/` directory if a macOS server should enroll agents.
+Linux release archives contain the agent for both architectures, and `install.sh` installs both, whatever the server's own architecture. On macOS, the archive has one agent binary, which `install.sh` installs as `dockmesh-agent-darwin-<arch>`; the agent installer only enrolls Linux hosts and needs the Linux binaries, so copy them from a Linux archive into the asset `bin/` directory if a macOS server should enroll agents (macOS servers are [not supported](../getting-started/supported-systems.md#not-supported)).
 
 The server writes its log to stdout and stderr, so on Linux read it with `journalctl -u dockmesh`.
 

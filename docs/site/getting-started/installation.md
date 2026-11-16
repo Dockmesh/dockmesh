@@ -9,9 +9,9 @@ The recommended path is the installer script on a Linux host that already runs D
 
 | Requirement | Details |
 |---|---|
-| Operating system | Linux with systemd on amd64 or arm64. The installer also has a macOS path, but macOS is not supported as a server. The server and agent do not run on Windows. Tested distributions and Docker versions: [Supported systems](./supported-systems.md). |
+| Operating system | Linux with systemd on amd64 or arm64. Without systemd the installer only installs the binaries ([not supported](./supported-systems.md#not-supported)). The installer also has a macOS path, but macOS is not supported as a server. The server and agent do not run on Windows. Tested distributions and Docker versions: [Supported systems](./supported-systems.md). |
 | Docker | A running Docker Engine reachable at `/var/run/docker.sock`. 20.10 or newer is recommended; the setup wizard warns below it. The installer does not install Docker; it prints the command for your distribution if Docker is missing. When the socket belongs to another group than `docker` (Synology, Podman), the server and agent units get that group as well. On macOS, enable **Allow the default Docker socket to be used** in Docker Desktop's advanced settings. |
-| Tools | `curl`, `tar`, and `sha256sum` (or `shasum` on macOS). Without systemd the installer only puts the binaries in place and the server has to be started by hand; such hosts are [not supported](./supported-systems.md#not-supported). |
+| Tools | `curl`, `tar`, and `sha256sum` (or `shasum` on macOS). |
 | Privileges | root or `sudo`. |
 | Ports | `8080/tcp` for the web UI and API. `8443/tcp` for remote agents, only needed if you add remote hosts. If you enable the reverse proxy, its Caddy container binds `80` and `443` on the host. See [Ports](../reference/ports.md). |
 | Resources | Plan for at least 512 MB RAM. The data directory needs at least 200 MiB free (the setup wizard warns below 2 GiB); images and volumes of your stacks need space on top of that. |
@@ -99,7 +99,7 @@ If the earlier install never finished its setup, a box follows that says how to 
 
 The agent binaries are not installed into `/usr/local/bin`; they are only kept so the server can hand them to remote hosts. The full tree is in [Filesystem layout](../reference/filesystem-layout.md).
 
-The installer never picks `/data` itself; installs that already use `/data` keep it through their config. On Linux a new install does not use `DOCKMESH_DATA_DIR`: choose the data directory in the setup wizard. On macOS the data root is `/usr/local/var/dockmesh`, the installer still writes `<data root>/dockmesh.env` there, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
+The installer never picks `/data` itself; installs that already use `/data` keep it through their config. On Linux a new install does not use `DOCKMESH_DATA_DIR`: choose the data directory in the setup wizard. macOS is [not supported](./supported-systems.md#not-supported); on the installer's macOS path the data root is `/usr/local/var/dockmesh`, the installer still writes `<data root>/dockmesh.env` there, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
 
 A reinstall over kept data (for example after `uninstall.sh` without `--purge`) is an upgrade: the script keeps the config and the data next to it, recreates the `dockmesh` user and hands the data back to it, so the existing database, stacks and keys are picked up and you sign in with your existing account.
 
