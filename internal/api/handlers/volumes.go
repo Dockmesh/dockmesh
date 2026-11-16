@@ -99,7 +99,7 @@ func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.inReadScope(r, target.ID(), vol.Labels["com.docker.compose.project"]) {
-		writeError(w, http.StatusForbidden, "out of scope: your role does not include this volume")
+		h.denyPerm(w, r, rbac.PermVolumesView, "out of scope: your role does not include this volume")
 		return
 	}
 	writeJSON(w, http.StatusOK, vol)

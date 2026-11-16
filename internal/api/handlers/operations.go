@@ -212,11 +212,11 @@ func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
 		res = h.hostScopeReq(hostID)
 	}
 	if perm == "" || !middleware.AllowedOn(r.Context(), perm, res) {
-		writeError(w, http.StatusForbidden, "cancelling this needs the "+string(perm)+" permission")
+		h.denyPerm(w, r, perm, "cancelling this needs the "+string(perm)+" permission")
 		return
 	}
 	if op.Kind == opImageUpdate && op.Stack != "" && !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) {
-		writeError(w, http.StatusForbidden, "cancelling an update of stack "+op.Stack+" needs the stacks.deploy permission")
+		h.denyPerm(w, r, rbac.PermStacksDeploy, "cancelling an update of stack "+op.Stack+" needs the stacks.deploy permission")
 		return
 	}
 	if err := h.Operations.Cancel(op.ID); errors.Is(err, operations.ErrNotCancellable) {

@@ -11,11 +11,11 @@ import (
 // requireFleetUpgrade allows changing or running the upgrade policy only
 // with Hosts: Manage on everything: the policy upgrades agents on every
 // host, not just the ones the caller manages.
-func requireFleetUpgrade(w http.ResponseWriter, r *http.Request) bool {
+func (h *Handlers) requireFleetUpgrade(w http.ResponseWriter, r *http.Request) bool {
 	if middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsUpdate) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "the agent upgrade policy applies to every host and needs Hosts: Manage on everything")
+	h.denyPerm(w, r, rbac.PermHostsUpdate, "the agent upgrade policy applies to every host and needs Hosts: Manage on everything")
 	return false
 }
 
@@ -33,7 +33,7 @@ func (h *Handlers) GetAgentUpgradePolicy(w http.ResponseWriter, r *http.Request)
 // UpdateAgentUpgradePolicy persists a new mode + stage params.
 // Switching to `manual` clears any in-flight staged queue.
 func (h *Handlers) UpdateAgentUpgradePolicy(w http.ResponseWriter, r *http.Request) {
-	if !requireFleetUpgrade(w, r) {
+	if !h.requireFleetUpgrade(w, r) {
 		return
 	}
 	if h.AgentUpgrade == nil {
@@ -61,7 +61,7 @@ func (h *Handlers) UpdateAgentUpgradePolicy(w http.ResponseWriter, r *http.Reque
 // configured policy against the current fleet. Useful after a server
 // version bump — without waiting 60s for the next tick.
 func (h *Handlers) RunAgentUpgradeEvaluation(w http.ResponseWriter, r *http.Request) {
-	if !requireFleetUpgrade(w, r) {
+	if !h.requireFleetUpgrade(w, r) {
 		return
 	}
 	if h.AgentUpgrade == nil {

@@ -179,7 +179,7 @@ func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, con
 		return true
 	}
 	if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
-		writeError(w, http.StatusForbidden, "updating a container of stack "+stack+" needs the stacks.deploy permission")
+		h.denyPerm(w, r, rbac.PermStacksDeploy, "updating a container of stack "+stack+" needs the stacks.deploy permission")
 		return false
 	}
 	return h.checkStackFiles(w, r, stack)

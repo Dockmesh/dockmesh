@@ -107,7 +107,7 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.inReadScope(r, target.ID(), "") {
-		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		h.denyPerm(w, r, rbac.PermImagesView, "out of scope: your role does not include this host")
 		return
 	}
 	images, err := target.ListImages(r.Context(), all)

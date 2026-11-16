@@ -201,7 +201,7 @@ func (h *Handlers) requireDrainAccess(w http.ResponseWriter, r *http.Request) bo
 	if middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsUpdate) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "draining a host moves its stacks to other hosts and needs Hosts: Manage on everything")
+	h.denyPerm(w, r, rbac.PermHostsUpdate, "draining a host moves its stacks to other hosts and needs Hosts: Manage on everything")
 	return false
 }
 

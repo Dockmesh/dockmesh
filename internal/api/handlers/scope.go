@@ -92,7 +92,7 @@ func (h *Handlers) requireHostAccess(w http.ResponseWriter, r *http.Request, hos
 	if h.canAccessHost(r, hostID) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "out of scope: none of your assignments covers this host")
+	h.denyPerm(w, r, rbac.PermHostsView, "out of scope: none of your assignments covers this host")
 	return false
 }
 
@@ -164,6 +164,23 @@ func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 		details["stack_name"] = res.StackName
 	}
 	h.auditDenied(r, perm, r.Method+" "+path, details)
+}
+
+// denyPerm refuses a request a handler-level check doesn't allow: it
+// audits the refusal of perm like a route permission and writes 403.
+func (h *Handlers) denyPerm(w http.ResponseWriter, r *http.Request, perm rbac.Perm, msg string) {
+	h.AuditPermDenied(r, perm)
+	writeError(w, http.StatusForbidden, msg)
+}
+
+// routePerm is the last permission the route required, for refusals that
+// have no permission of their own.
+func routePerm(r *http.Request) rbac.Perm {
+	perms := middleware.RoutePerms(r.Context())
+	if len(perms) == 0 {
+		return ""
+	}
+	return perms[len(perms)-1]
 }
 
 // auditDenied writes an auth.scope_denied entry through the per-actor
@@ -296,7 +313,7 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), hostID, name) {
-			writeError(w, http.StatusForbidden, "only an admin can change a stack that runs Dockmesh's own containers")
+			h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can change a stack that runs Dockmesh's own containers")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))

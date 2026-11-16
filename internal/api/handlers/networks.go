@@ -173,7 +173,7 @@ func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.inReadScope(r, target.ID(), net.Labels["com.docker.compose.project"]) {
-		writeError(w, http.StatusForbidden, "out of scope: your role does not include this network")
+		h.denyPerm(w, r, rbac.PermNetworksView, "out of scope: your role does not include this network")
 		return
 	}
 	writeJSON(w, http.StatusOK, net)

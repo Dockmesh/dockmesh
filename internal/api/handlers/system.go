@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -58,7 +59,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.inReadScope(r, hostIDFromRequest(r), "") {
-		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		h.denyPerm(w, r, rbac.PermSystemView, "out of scope: your role does not include this host")
 		return
 	}
 	// Single-host path. For local we call the system package directly
@@ -170,7 +171,7 @@ func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can manage the system backup job")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can manage the system backup job")
 		return
 	}
 	var req SetBackupEnabledRequest

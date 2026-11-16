@@ -56,7 +56,7 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !middleware.Allowed(ctx, requested) {
-		writeError(w, http.StatusForbidden, "your role is not allowed to "+string(requested))
+		h.denyPerm(w, r, requested, "your role is not allowed to "+string(requested))
 		return
 	}
 
