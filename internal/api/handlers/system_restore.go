@@ -28,7 +28,7 @@ var stageMu sync.Mutex
 //	GET /restore/system
 func (h *Handlers) GetStagedRestore(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can restore the whole system")
 		return
 	}
 	if h.RestoreConfig == nil {
@@ -57,7 +57,7 @@ func (h *Handlers) GetStagedRestore(w http.ResponseWriter, r *http.Request) {
 //	POST /restore/system
 func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can restore the whole system")
 		return
 	}
 	if h.RestoreConfig == nil {
@@ -142,7 +142,7 @@ var errHashMismatch = errors.New("archive hash mismatch")
 //	POST /restore/system/apply
 func (h *Handlers) ApplySystemRestore(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can restore the whole system")
 		return
 	}
 	if h.RestoreConfig == nil || h.RequestRestart == nil {
@@ -173,7 +173,7 @@ func (h *Handlers) ApplySystemRestore(w http.ResponseWriter, r *http.Request) {
 //	DELETE /restore/system
 func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can restore the whole system")
 		return
 	}
 	if h.RestoreConfig == nil {
@@ -202,7 +202,7 @@ func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) 
 //	DELETE /restore/system/leftovers
 func (h *Handlers) DeleteRestoreLeftovers(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can delete what a system restore kept")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can delete what a system restore kept")
 		return
 	}
 	if h.RestoreConfig == nil {

@@ -25,7 +25,7 @@ import (
 // without needing a spare host.
 func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) {
 	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can verify system backups")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can verify system backups")
 		return
 	}
 	file, header, ok := parseBackupUpload(w, r)

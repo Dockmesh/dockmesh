@@ -128,7 +128,7 @@ func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.checkGrant(r, req.Role, scope); err != nil {
-			writeGrantError(w, err)
+			h.writeGrantError(w, r, err)
 			return
 		}
 	}
@@ -227,8 +227,7 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	// Self, or a caller who manages users and every assignment of the
 	// target. Resetting someone else's password needs no current password.
 	if !isSelf && !middleware.Allowed(r.Context(), rbac.PermUsersUpdate) {
-		h.AuditPermDenied(r, rbac.PermUsersUpdate)
-		writeError(w, http.StatusForbidden, "forbidden")
+		h.denyPerm(w, r, rbac.PermUsersUpdate, "forbidden")
 		return
 	}
 	if !isSelf {

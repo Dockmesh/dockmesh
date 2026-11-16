@@ -98,7 +98,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.checkGrant(r, req.Role, req.Scope); err != nil {
-		writeGrantError(w, err)
+		h.writeGrantError(w, r, err)
 		return
 	}
 	a, err := h.Roles.AddAssignment(r.Context(), rbac.Assignment{UserID: u.ID, Role: req.Role, Scope: req.Scope, CreatedBy: actorID(r)})
@@ -129,7 +129,7 @@ func (h *Handlers) DeleteAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.checkGrant(r, a.Role, a.Scope); err != nil {
-		writeGrantError(w, err)
+		h.writeGrantError(w, r, err)
 		return
 	}
 	if err := h.checkKeepsAdmin(func(x rbac.Assignment) bool { return x.ID == id }); err != nil {

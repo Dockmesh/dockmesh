@@ -31,7 +31,7 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 		if h.callerIsAdmin(r) {
 			return true
 		}
-		writeError(w, http.StatusForbidden, "only an admin can manage or run system backup jobs")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can manage or run system backup jobs")
 		return false
 	}
 	var hosts []string
@@ -92,7 +92,7 @@ func (h *Handlers) requireNotAuditTarget(w http.ResponseWriter, r *http.Request,
 	if !h.isAuditTarget(targetID) || h.callerIsAdmin(r) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "only an admin can use or change the target the audit log is archived to")
+	h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can use or change the target the audit log is archived to")
 	return false
 }
 
@@ -105,7 +105,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 		if h.callerIsAdmin(r) {
 			return true
 		}
-		writeError(w, http.StatusForbidden, "only an admin can access system backups")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can access system backups")
 		return false
 	}
 	job, err := h.Backups.GetJob(r.Context(), run.JobID)
@@ -113,7 +113,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 		if h.callerIsAdmin(r) {
 			return true
 		}
-		writeError(w, http.StatusForbidden, "only an admin can access runs of a deleted job")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can access runs of a deleted job")
 		return false
 	}
 	if err != nil {

@@ -519,7 +519,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	case h.writeArchiveMissing(w, r, run, err):
 		return
 	case errors.Is(err, errOwnVolume):
-		writeError(w, http.StatusForbidden, err.Error())
+		h.denyPerm(w, r, rbac.PermSystemUpdate, err.Error())
 		return
 	case errors.Is(err, docker.ErrInvalidVolumeName):
 		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
@@ -555,7 +555,7 @@ func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if !middleware.Allowed(r.Context(), perm) {
-		writeError(w, http.StatusForbidden, "restoring stack "+stack+" needs the "+string(perm)+" permission")
+		h.denyPerm(w, r, perm, "restoring stack "+stack+" needs the "+string(perm)+" permission")
 		return false
 	}
 	if scopeReq := h.stackScopeReq("", stack); !h.allowedOn(r, scopeReq, perm) {
@@ -603,7 +603,7 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 		return true
 	}
 	if !middleware.Allowed(r.Context(), rbac.PermContainersExec) {
-		writeError(w, http.StatusForbidden, "backup hooks run commands in containers and need the containers.exec permission")
+		h.denyPerm(w, r, rbac.PermContainersExec, "backup hooks run commands in containers and need the containers.exec permission")
 		return false
 	}
 	for _, hk := range hooks {

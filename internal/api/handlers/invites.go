@@ -63,7 +63,7 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.checkGrant(r, in.Role, sc); err != nil {
-			writeGrantError(w, err)
+			h.writeGrantError(w, r, err)
 			return
 		}
 	}

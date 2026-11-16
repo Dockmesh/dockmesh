@@ -121,3 +121,54 @@ func TestPermissionDenialBurstIsLimited(t *testing.T) {
 		t.Fatalf("chain broken: %+v", rep)
 	}
 }
+
+// Refusals decided in a handler, after the route's permission passed,
+// leave the same auth.scope_denied entry as a refused route.
+func TestHandlerDenialIsAudited(t *testing.T) {
+	var auditSvc *audit.Service
+	authSvc, roles, h := newMatrixEnvWith(t, func(db *sql.DB, d *handlers.Deps) {
+		auditSvc = audit.NewService(db, t.TempDir()+"/genesis")
+		d.Audit = auditSvc
+	})
+	ctx := context.Background()
+	if err := auditSvc.EnsureGenesis(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hostAdmin := signIn(t, authSvc, roles, "hostadmin", rbac.RoleHostAdmin, rbac.Scope{Type: rbac.ScopeHost, Host: "local"})
+	router := NewRouter(h, authSvc, nil, true, nil)
+
+	tests := []struct {
+		name, method, path, body string
+		perm                     rbac.Perm
+	}{
+		{"agent upgrade policy", http.MethodPut, "/api/v1/agents/upgrade-policy", `{"mode":"auto"}`, rbac.PermHostsUpdate},
+		{"drain", http.MethodPost, "/api/v1/hosts/local/drain/plan", `{}`, rbac.PermHostsUpdate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer "+hostAdmin)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status %d, want 403: %s", rr.Code, rr.Body.String())
+			}
+			entries, err := auditSvc.ListFiltered(ctx, audit.ListFilter{Action: audit.ActionScopeDenied, Limit: 100})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tt.method + " " + tt.path
+			for _, e := range entries {
+				var d map[string]any
+				if err := json.Unmarshal([]byte(e.Details), &d); err != nil {
+					t.Fatal(err)
+				}
+				if e.Target == want && d["permission"] == string(tt.perm) && e.Username == "hostadmin" {
+					return
+				}
+			}
+			t.Errorf("no auth.scope_denied entry %q for %s in %+v", want, tt.perm, entries)
+		})
+	}
+}

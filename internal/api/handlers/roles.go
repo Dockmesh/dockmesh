@@ -97,7 +97,7 @@ func (h *Handlers) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.checkRoleInput(r, in); err != nil {
-		writeGrantError(w, err)
+		h.writeGrantError(w, r, err)
 		return
 	}
 	if err := h.Roles.CreateRole(r.Context(), in); err != nil {
@@ -128,7 +128,7 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		in.Display = cur.Display
 	}
 	if err := h.checkRoleInput(r, in); err != nil {
-		writeGrantError(w, err)
+		h.writeGrantError(w, r, err)
 		return
 	}
 	if err := h.checkRoleKeepsAdmin(name, rbac.IsAdminPermSet(rbac.PermsFor(in.Levels, in.Extras))); err != nil {

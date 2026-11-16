@@ -70,7 +70,7 @@ func (h *Handlers) checkAuditLocalDir(w http.ResponseWriter, r *http.Request, di
 		return true
 	}
 	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
-		writeError(w, http.StatusForbidden, "changing local_dir needs the system.upgrade permission")
+		h.denyPerm(w, r, rbac.PermSystemUpgrade, "changing local_dir needs the system.upgrade permission")
 		return false
 	}
 	return true

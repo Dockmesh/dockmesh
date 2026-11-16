@@ -1022,7 +1022,7 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), req.HostID, req.Name) {
-		writeError(w, http.StatusForbidden, "only an admin can adopt a project that runs Dockmesh's own containers")
+		h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can adopt a project that runs Dockmesh's own containers")
 		return
 	}
 	adoptReq := adopt.AdoptRequest{
