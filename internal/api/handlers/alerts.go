@@ -94,7 +94,7 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if c == nil {
-		writeError(w, http.StatusNotFound, "channel not found")
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	h.audit(r, "notify.channel_update", strconv.FormatInt(id, 10), nil)

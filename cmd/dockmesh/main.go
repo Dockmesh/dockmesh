@@ -1327,10 +1327,12 @@ func main() {
 	// server-side span (route template, method, status, duration).
 	// When OTel is disabled (Endpoint empty) the global tracer is a
 	// no-op so this adds negligible overhead.
-	tracedRouter := otelhttp.NewHandler(router, "dockmesh.http",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			return r.Method + " " + r.URL.Path
-		}))
+	tracedRouter := middleware.HidePathSecrets(router, func(next http.Handler) http.Handler {
+		return otelhttp.NewHandler(next, "dockmesh.http",
+			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+				return r.Method + " " + r.URL.Path
+			}))
+	})
 	if !setupState.Active() {
 		var err error
 		if webTLS, webLeaf, err = listenerTLS(cfg, pkiMgr); err != nil {

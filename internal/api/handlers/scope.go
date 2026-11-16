@@ -150,7 +150,7 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 	// The escaped form is plain ASCII: no line breaks or control
 	// characters from the caller end up in the audit log.
-	path := r.URL.EscapedPath()
+	path := middleware.RedactPath(r.URL.EscapedPath())
 	if len(path) > maxDeniedPathLen {
 		path = path[:maxDeniedPathLen] + "..."
 	}
