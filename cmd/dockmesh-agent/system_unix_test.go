@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
 // testInstaller runs system install inside a temp dir, as the test's own
@@ -45,6 +47,12 @@ func newTestInstaller(t *testing.T) *testInstaller {
 		dockerGID:     func() int { return 999 },
 		socketGroups:  func(string, int) ([]string, string) { return []string{"docker"}, "" },
 		rootOnly:      func(string) bool { return true },
+		checkStacks: func(path, _, _ string, _ int, _ map[string]string) stacksDirResult {
+			if strings.HasPrefix(path, "/etc") {
+				return stacksDirResult{StacksDirCheck: agents.StacksDirCheck{Status: "fail", Message: "system dir /etc"}}
+			}
+			return stacksDirResult{StacksDirCheck: agents.StacksDirCheck{Status: "ok"}}
+		},
 		legacy: func(dataDir string, _ bool) error {
 			for _, p := range []string{filepath.Join(root, "etc", "dockmesh-agent", "refresh-path-copy"), filepath.Join(dataDir, "bin", "dockmesh-agent")} {
 				if _, err := os.Lstat(p); err == nil {

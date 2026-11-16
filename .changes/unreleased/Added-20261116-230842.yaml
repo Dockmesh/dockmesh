@@ -1,0 +1,3 @@
+kind: Added
+body: 'Managed agents: the root updater can switch an agent to a new stacks directory (`stacks-dir-apply`); it checks the path itself (no symlink in any component, no system, Docker or Dockmesh data directory, no network share or filesystem without Unix permissions, new or empty only), creates it for the agent, rewrites `agent.env` and the unit and restarts the agent; `system install --stacks-dir` uses the same checks'
+time: 2026-11-16T23:08:42.421508958Z
