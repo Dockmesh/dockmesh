@@ -55,7 +55,11 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
-	h.settleIP(r, h.LoginLimiter, ipTicket, key, "login", errors.Is(err, auth.ErrInvalidCredentials))
+	// A locked account is refused before its own limit counts the attempt,
+	// so only the IP limit stops a loop on it.
+	var lockErr *auth.LockoutError
+	locked := errors.As(err, &lockErr)
+	h.settleIP(r, h.LoginLimiter, ipTicket, key, "login", locked || errors.Is(err, auth.ErrInvalidCredentials))
 	// The attempt is counted; record its outcome even if the client left.
 	ctx := context.WithoutCancel(r.Context())
 	var rateErr *auth.RateLimitError
@@ -63,18 +67,19 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeTooMany(w, "too many login attempts", time.Until(rateErr.Until))
 		return
 	}
+	failure := audit.LoginFailure{IP: key, Account: auth.NormalizeUsername(req.Username), Reason: audit.LoginReasonInvalid}
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		h.auditAccountBlocks(r, err, "login")
 		if h.Audit != nil {
-			h.Audit.Write(ctx, "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
+			h.Audit.WriteLoginFailed(ctx, failure, req.Username, map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	var lockErr *auth.LockoutError
-	if errors.As(err, &lockErr) {
+	if locked {
 		if h.Audit != nil {
-			h.Audit.Write(ctx, "", audit.ActionLoginFailed, req.Username,
+			failure.Reason = audit.LoginReasonLocked
+			h.Audit.WriteLoginFailed(ctx, failure, req.Username,
 				map[string]string{"ip": ip, "reason": "locked"})
 		}
 		writeLocked(w, lockErr.Until)

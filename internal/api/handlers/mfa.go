@@ -54,7 +54,8 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		h.auditAccountBlocks(r, err, "mfa")
 		if h.Audit != nil {
-			h.Audit.Write(ctx, "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
+			h.Audit.WriteLoginFailed(ctx, audit.LoginFailure{IP: key, Reason: audit.LoginReasonMFA},
+				"mfa", map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid code")
 		return

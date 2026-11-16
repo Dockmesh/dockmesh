@@ -285,3 +285,63 @@ func TestLoginRejectsLongUsername(t *testing.T) {
 		t.Fatalf("257-byte username: %d, want 400", rr.Code)
 	}
 }
+
+// Looping on a locked account counts against the IP limit like wrong
+// passwords, and the audit log keeps a few entries and a summary.
+func TestLoginLockedAccountLoop(t *testing.T) {
+	const lockout = 3
+	e := newLoginEnv(t, lockout)
+	e.user("alice", "viewer")
+	stop := e.h.Audit.StartLoginFailureFlusher(context.Background())
+	for i := range lockout {
+		if rr := loginAs(t, e, remoteN(i), "alice", "wrong"); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong password %d: %d", i+1, rr.Code)
+		}
+	}
+	const remote = "203.0.113.9:4000"
+	for i := range loginIPMax {
+		if rr := loginAs(t, e, remote, "alice", "wrong"); rr.Code != http.StatusLocked {
+			t.Fatalf("attempt %d on the locked account: %d %s, want 423", i+1, rr.Code, rr.Body)
+		}
+	}
+	if rr := loginAs(t, e, remote, "alice", "wrong"); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d attempts on a locked account: %d, want 429", loginIPMax, rr.Code)
+	}
+	stop()
+
+	rows, err := e.db.Query(`SELECT target, details FROM audit_log WHERE action = ? ORDER BY id`, audit.ActionLoginFailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var targets []string
+	var last string
+	for rows.Next() {
+		var target, details string
+		if err := rows.Scan(&target, &details); err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, target)
+		last = details
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// The username's budget is spent first: lockout wrong passwords plus
+	// the first locked attempts, the rest is summarised.
+	suppressed := lockout + loginIPMax - audit.LoginFailureBurst
+	if len(targets) != audit.LoginFailureBurst+1 || targets[len(targets)-1] != strconv.Itoa(suppressed)+" more failed sign-ins" {
+		t.Fatalf("login_failed entries = %d: %v", len(targets), targets)
+	}
+	var d struct {
+		Username string         `json:"username"`
+		Reasons  map[string]int `json:"reasons"`
+		IPs      map[string]int `json:"ips"`
+	}
+	if err := json.Unmarshal([]byte(last), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Username != "alice" || d.Reasons[audit.LoginReasonLocked] != suppressed || d.IPs["203.0.113.9"] != suppressed {
+		t.Fatalf("summary details = %s", last)
+	}
+}

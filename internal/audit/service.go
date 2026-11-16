@@ -141,6 +141,7 @@ type Service struct {
 	lastRowHash string
 
 	denials denials
+	logins  logins
 }
 
 // SetProm attaches a prom recorder after construction. Idempotent;
@@ -155,7 +156,7 @@ func (s *Service) SetWebhook(w WebhookDispatcher) { s.webhook = w }
 // should subsequently call EnsureGenesis to make sure the chain has a
 // starting row.
 func NewService(db *sql.DB, genesisPath string) *Service {
-	return &Service{db: db, genesisPath: genesisPath}
+	return &Service{db: db, genesisPath: genesisPath, denials: newDenials(), logins: newLogins()}
 }
 
 // EnsureGenesis creates the genesis row and seeds lastRowHash. Safe to
