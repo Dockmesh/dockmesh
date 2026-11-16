@@ -227,6 +227,55 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
+			name:    "include entry without path",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - env_file: /etc/hostname\n" + svcNginx}},
+			refused: true,
+		},
+		{
+			name:    "include entry with empty path list",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - path: []\n    project_directory: /etc\n" + svcNginx}},
+			refused: true,
+		},
+		{
+			name: "numeric project_directory",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - path: a/b/inc.yaml\n    project_directory: 1234\n" + svcNginx},
+				{name: "a/b/inc.yaml", content: "include:\n  - ../../victim/compose.yaml\n"},
+				{name: "victim/compose.yaml", content: "services:\n  db:\n    image: decoy\n"},
+			},
+			refused: true,
+		},
+		{
+			name:    "numeric include path",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - path: [1]\n" + svcNginx}},
+			refused: true,
+		},
+		{
+			name:    "numeric extends file",
+			files:   []stackFile{{name: "compose.yaml", content: "services:\n  web:\n    image: nginx\n    extends:\n      file: 1\n      service: x\n"}},
+			refused: true,
+		},
+		{
+			name: "symlink then dot-dot in absolute include",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - ${STACK}/data/l/../inc.yaml\n" + svcNginx},
+				{name: "data/l", link: "../../out"},
+				{name: "data/inc.yaml", content: "services:\n  db:\n    image: decoy\n"},
+			},
+			outside: []stackFile{{name: "out/keep", content: "x"}, {name: "inc.yaml", content: "services:\n  db:\n    image: redis\n"}},
+			refused: true,
+		},
+		{
+			name: "symlink then dot-dot in absolute env_file",
+			files: []stackFile{
+				{name: "compose.yaml", content: "services:\n  web:\n    image: nginx\n    env_file: ${STACK}/data/o/../secret.env\n"},
+				{name: "data/o", link: "../../out"},
+				{name: "data/secret.env", content: "DECOY=1\n"},
+			},
+			outside: []stackFile{{name: "out/keep", content: "x"}, {name: "secret.env", content: "OUT_SECRET=1\n"}},
+			refused: true,
+		},
+		{
 			name: "include and files inside the folder",
 			files: []stackFile{
 				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - link.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},
@@ -260,7 +309,8 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			writeStack(t, base, tc.outside)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			proj, err := LoadProject(ctx, dir, "app", tc.env)
+			env := tc.env + "STACK=" + dir + "\n"
+			proj, err := LoadProject(ctx, dir, "app", env)
 			if tc.errText != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.errText) {
 					t.Fatalf("err = %v, want %q", err, tc.errText)

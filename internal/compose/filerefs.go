@@ -61,11 +61,17 @@ func openStackFiles(dir string) (*stackFiles, error) {
 
 func (s *stackFiles) Close() { _ = s.root.Close() }
 
+// rel also refuses a path that isn't in clean form: compose-go keeps
+// absolute paths as written, and the kernel follows a symlink before it
+// applies a later "..", which a lexical check would have removed first.
 func (s *stackFiles) rel(p string) (string, error) {
 	if !filepath.IsAbs(p) {
 		return "", refused("%s: path is not absolute", p)
 	}
-	rel, err := filepath.Rel(s.dir, filepath.Clean(p))
+	if filepath.Clean(p) != p {
+		return "", refused("%s: path contains . or .. elements", p)
+	}
+	rel, err := filepath.Rel(s.dir, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", refused("%s is outside the stack folder", p)
 	}
@@ -179,15 +185,34 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 	if err := w.walkExtends(ctx, model, loaderDir, env); err != nil {
 		return err
 	}
-	includes, _ := model["include"].([]any)
+	includes, ok := model["include"].([]any)
+	if !ok && model["include"] != nil {
+		return refused("%s: include must be a list", file)
+	}
 	for _, inc := range includes {
 		entry, ok := inc.(map[string]any)
 		if !ok {
-			continue
+			return refused("%s: include entry must be a path or a mapping", file)
 		}
-		paths := stringList(entry["path"])
+		// compose-go casts numbers and booleans to strings; only plain
+		// strings are accepted so the walker reads the values it uses.
+		paths, err := strictStrings(file, "include path", entry["path"])
+		if err != nil {
+			return err
+		}
 		if len(paths) == 0 {
-			continue
+			return refused("%s: include entry without a path", file)
+		}
+		envFiles, err := strictStrings(file, "include env_file", entry["env_file"])
+		if err != nil {
+			return err
+		}
+		pd, err := strictStrings(file, "include project_directory", entry["project_directory"])
+		if err != nil {
+			return err
+		}
+		if len(pd) > 1 || (entry["project_directory"] != nil && len(pd) == 0) {
+			return refused("%s: include project_directory must be one path", file)
 		}
 		for i, p := range paths {
 			if err := noHome(file, p); err != nil {
@@ -197,7 +222,10 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 				paths[i] = filepath.Join(loaderDir, p)
 			}
 		}
-		projectDir, _ := entry["project_directory"].(string)
+		var projectDir string
+		if len(pd) == 1 {
+			projectDir = pd[0]
+		}
 		if err := noHome(file, projectDir); err != nil {
 			return err
 		}
@@ -213,7 +241,7 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 		if _, err := w.files.rel(projectDir); err != nil {
 			return err
 		}
-		incEnv, err := w.includeEnv(file, projectDir, loaderDir, stringList(entry["env_file"]), env, nested)
+		incEnv, err := w.includeEnv(file, projectDir, loaderDir, envFiles, env, nested)
 		if err != nil {
 			return err
 		}
@@ -278,7 +306,13 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
 			svc, _ := entries[name].(map[string]any)
 			ext, _ := svc["extends"].(map[string]any)
-			ref, _ := ext["file"].(string)
+			if ext["file"] == nil {
+				continue
+			}
+			ref, ok := ext["file"].(string)
+			if !ok {
+				return refused("%s: extends.file must be a string", name)
+			}
 			if ref == "" {
 				continue
 			}
@@ -352,20 +386,26 @@ func walkKey(file, dir string, env types.Mapping) string {
 	return string(h.Sum(nil))
 }
 
-func stringList(v any) []string {
+// strictStrings returns v as a list of strings: absent, one string, or a
+// list of strings. Any other type is refused.
+func strictStrings(file, field string, v any) ([]string, error) {
 	switch t := v.(type) {
+	case nil:
+		return nil, nil
 	case string:
-		return []string{t}
+		return []string{t}, nil
 	case []any:
 		out := make([]string, 0, len(t))
 		for _, e := range t {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
+			s, ok := e.(string)
+			if !ok {
+				return nil, refused("%s: %s must be a string", file, field)
 			}
+			out = append(out, s)
 		}
-		return out
+		return out, nil
 	}
-	return nil
+	return nil, refused("%s: %s must be a string", file, field)
 }
 
 // checkProjectFileRefs checks the env and label files compose-go resolved
