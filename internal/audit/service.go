@@ -139,6 +139,8 @@ type Service struct {
 
 	mu          sync.Mutex
 	lastRowHash string
+
+	denials denials
 }
 
 // SetProm attaches a prom recorder after construction. Idempotent;

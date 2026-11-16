@@ -468,7 +468,7 @@ func (h *Handlers) requireStackCreate(w http.ResponseWriter, r *http.Request, pe
 	acc := middleware.AccessOf(r.Context())
 	if !acc.AllowsOn(perm, res) {
 		if hostID == "" {
-			h.audit(r, audit.ActionScopeDenied, "stack "+name, map[string]any{"permission": string(perm), "stack_name": name})
+			h.auditDenied(r, perm, "stack "+name, map[string]any{"permission": string(perm), "stack_name": name})
 			writeError(w, http.StatusForbidden, "choose the host this stack is for: you can only create stacks on some hosts")
 			return false
 		}
