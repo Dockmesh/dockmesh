@@ -90,21 +90,25 @@ var loadedEnvFile string
 var explicitEnvFile bool
 
 // checkoutDataDir is the source run directory this process uses as its
-// data dir because no config names one (see layout.CheckoutDir).
+// data dir because no config names one (see layout.CheckoutProbe).
 var checkoutDataDir string
 
 // useCheckoutData points DOCKMESH_DATA_DIR at the working directory when
 // it holds the data of a source run and nothing else configures the
 // server, so the derived paths are the ./data and ./stacks of 0.5.x.
 func useCheckoutData() error {
-	if loadedEnvFile != "" || os.Getenv("DOCKMESH_DATA_DIR") != "" || os.Getenv("DOCKMESH_DB_PATH") != "" {
+	if loadedEnvFile != "" {
 		return nil
 	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil //nolint:nilerr // without a working directory there is no ./data to keep
 	}
-	dir := layout.CheckoutDir(wd, os.Getenv, []string{unitEnvFile()}, nil)
+	dir, distrust := layout.CheckoutProbe{WorkDir: wd, Getenv: os.Getenv, EnvFiles: []string{unitEnvFile()}}.Dir()
+	if distrust != nil {
+		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); set DOCKMESH_DATA_DIR to use it\n", wd, distrust)
+		return nil
+	}
 	if dir == "" {
 		return nil
 	}
@@ -113,6 +117,16 @@ func useCheckoutData() error {
 	}
 	checkoutDataDir = dir
 	return nil
+}
+
+// trustedWorkDir is the working directory when it may hold the data of a
+// source run, for the setup decision to count; empty otherwise.
+func trustedWorkDir() string {
+	wd, err := os.Getwd()
+	if err != nil || layout.TrustedCheckout(wd, os.Geteuid()) != nil {
+		return ""
+	}
+	return wd
 }
 
 // serverEnvFile names the env file this server most likely runs with: the
@@ -362,6 +376,7 @@ func main() {
 		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
+		WorkDir:     trustedWorkDir(),
 	}.Scan()
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
@@ -900,7 +915,7 @@ func main() {
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
-	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir))
+	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir, executablePath()))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an

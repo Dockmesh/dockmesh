@@ -65,7 +65,11 @@ func runSystemCmd(args []string) {
 func systemMigrateLayout(args []string) error {
 	fs := flag.NewFlagSet("system migrate-layout", flag.ExitOnError)
 	from := fs.String("from", "", "env file to move (default: the one the dockmesh unit names, then the old default places)")
+	checkout := fs.String("checkout", "", "source checkout whose ./data the server uses without config; writes a config naming it")
 	_ = fs.Parse(args)
+	if *from != "" && *checkout != "" {
+		return fmt.Errorf("--from and --checkout exclude each other")
+	}
 	if runtime.GOOS != "linux" {
 		fmt.Println("config stays where it is: the /etc/dockmesh layout is Linux only")
 		return nil
@@ -77,11 +81,7 @@ func systemMigrateLayout(args []string) error {
 	if *from == "" {
 		candidates = append([]string{unitEnvFile()}, layout.LegacyEnvFiles...)
 	}
-	opts := layout.MigrateOptions{Candidates: candidates, GID: configGID()}
-	if *from == "" {
-		opts.CheckoutDir = checkoutDataDir
-	}
-	res, err := layout.Migrate(opts)
+	res, err := layout.Migrate(layout.MigrateOptions{Candidates: candidates, GID: configGID(), CheckoutDir: *checkout})
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func systemMigrateLayout(args []string) error {
 	case layout.SetupPending:
 		fmt.Printf("config stays at %s until the setup wizard has finished\n", res.From)
 	case layout.CheckoutConfigured:
-		fmt.Printf("wrote  %s with DOCKMESH_DATA_DIR=%s (the data stays there)\n", layout.ConfigFile, res.DataDir)
+		fmt.Printf("wrote %s with DOCKMESH_DATA_DIR=%s (the data stays there)\n", layout.ConfigFile, res.DataDir)
 	case layout.NothingFound:
 		fmt.Println("no config found to move")
 	}
@@ -112,6 +112,15 @@ func unitEnvFile() string {
 		return ""
 	}
 	return strings.TrimPrefix(fields[0], "-")
+}
+
+// executablePath is this binary for commands shown to the admin, the bare
+// name when it cannot be found.
+func executablePath() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return "dockmesh"
 }
 
 // configGID is the group that may read the config: dockmesh, else root.

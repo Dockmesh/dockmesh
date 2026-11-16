@@ -2,6 +2,7 @@ package layout
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -42,7 +43,7 @@ func TestLegacyEnvFile(t *testing.T) {
 	}
 }
 
-func TestCheckoutDir(t *testing.T) {
+func TestCheckoutProbe(t *testing.T) {
 	root := t.TempDir()
 	lstat := func(p string) (fs.FileInfo, error) { return os.Lstat(filepath.Join(root, p)) }
 	put := func(p string) {
@@ -55,24 +56,33 @@ func TestCheckoutDir(t *testing.T) {
 		}
 	}
 	put("/opt/src/data/dockmesh.db")
+	put("/data/dockmesh.db")
 	put("/var/lib/dockmesh/data/dockmesh.db")
 	put("/opt/other/data/secrets.env")
-	none := func(string) string { return "" }
+	trusted := func(string) error { return nil }
+	distrusted := func(dir string) error { return errors.New(dir + " is writable by others") }
 	tests := []struct {
 		name, dir string
 		extra     []string
+		trust     func(string) error
 		want      string
+		wantErr   bool
 	}{
-		{"source run", "/opt/src", nil, "/opt/src"},
-		{"trailing slash", "/opt/src/", nil, "/opt/src"},
-		{"relative", "opt/src", nil, ""},
-		{"no database", "/opt/other", nil, ""},
-		{"default data dir", config.DefaultDataDir, nil, ""},
-		{"missing extra env file", "/opt/src", []string{"/srv/unit/dockmesh.env"}, "/opt/src"},
+		{name: "source run", dir: "/opt/src", trust: trusted, want: "/opt/src"},
+		{name: "trailing slash", dir: "/opt/src/", trust: trusted, want: "/opt/src"},
+		{name: "relative", dir: "opt/src", trust: trusted},
+		{name: "no database", dir: "/opt/other", trust: trusted},
+		{name: "default data dir", dir: config.DefaultDataDir, trust: trusted},
+		{name: "systemd working directory", dir: "/", trust: trusted},
+		{name: "missing extra env file", dir: "/opt/src", extra: []string{"/srv/unit/dockmesh.env"}, trust: trusted, want: "/opt/src"},
+		{name: "untrusted", dir: "/opt/src", trust: distrusted, wantErr: true},
+		{name: "untrusted without database", dir: "/opt/other", trust: distrusted},
 	}
 	for _, tt := range tests {
-		if got := CheckoutDir(tt.dir, none, tt.extra, lstat); got != tt.want {
-			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
+		p := CheckoutProbe{WorkDir: tt.dir, Getenv: func(string) string { return "" }, EnvFiles: tt.extra, Lstat: lstat, Trust: tt.trust}
+		got, err := p.Dir()
+		if got != tt.want || (err != nil) != tt.wantErr {
+			t.Errorf("%s: got %q, %v; want %q, error %v", tt.name, got, err, tt.want, tt.wantErr)
 		}
 	}
 }
@@ -89,7 +99,7 @@ func TestCheckoutNotice(t *testing.T) {
 		dir  string
 		want bool
 	}{{"/opt/dockmesh-src", true}, {"/opt/dockmesh-src", true}, {"", false}} {
-		if err := CheckoutNoticeCheck(tt.dir)(ctx, ns); err != nil {
+		if err := CheckoutNoticeCheck(tt.dir, "/opt/dockmesh-src/dockmesh")(ctx, ns); err != nil {
 			t.Fatal(err)
 		}
 		open, err := ns.Open(ctx)
@@ -108,7 +118,7 @@ func TestCheckoutNotice(t *testing.T) {
 		if tt.want && !strings.Contains(found[0].Body, tt.dir) {
 			t.Errorf("body does not name the dir: %q", found[0].Body)
 		}
-		if tt.want && runtime.GOOS == "linux" && !strings.Contains(found[0].Body, "system migrate-layout") {
+		if tt.want && runtime.GOOS == "linux" && !strings.Contains(found[0].Body, "sudo /opt/dockmesh-src/dockmesh system migrate-layout --checkout /opt/dockmesh-src") {
 			t.Errorf("body does not name migrate-layout: %q", found[0].Body)
 		}
 	}

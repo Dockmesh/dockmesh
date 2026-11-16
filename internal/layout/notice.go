@@ -48,9 +48,10 @@ func ConfigNoticeCheck(envFile string) notices.Check {
 const CheckoutNoticeKey = "install.checkout-data"
 
 // CheckoutNoticeCheck raises the admin notice while checkoutDir (see
-// CheckoutDir) is the data dir and resolves it once a config names one.
-func CheckoutNoticeCheck(checkoutDir string) notices.Check {
-	body := i18n.Msg("notice.checkout_data.body", checkoutDir, ConfigFile)
+// CheckoutProbe) is the data dir and resolves it once a config names one.
+// binary is the server's executable, for the command the notice shows.
+func CheckoutNoticeCheck(checkoutDir, binary string) notices.Check {
+	body := i18n.Msg("notice.checkout_data.body", checkoutDir, ConfigFile, binary)
 	if runtime.GOOS != "linux" {
 		body = i18n.Msg("notice.checkout_data.body_other", checkoutDir)
 	}

@@ -41,10 +41,13 @@ type MigrateOptions struct {
 	Candidates []string
 	// UID and GID own the config dir and file.
 	UID, GID int
-	// CheckoutDir is the source run directory the server uses without
-	// config (see CheckoutDir); when no candidate exists, Migrate writes a
-	// config naming it as the data dir.
+	// CheckoutDir names the directory of a source run without config
+	// (see CheckoutProbe); Migrate writes a config with it as the data
+	// dir, and refuses when a candidate exists.
 	CheckoutDir string
+	// trustTop bounds the directories TrustedCheckout checks; tests set
+	// it to their temp dir.
+	trustTop string
 }
 
 // Outcome says what Migrate did.
@@ -130,37 +133,55 @@ func KnownDBPaths(workDir string) []string {
 	return out
 }
 
-// CheckoutDir returns workDir when the server runs without any config and
-// workDir holds the database of a source run: up to 0.5.x a server without
-// config kept ./data and ./stacks below its working directory, so that
-// directory stays its data dir. envFiles are the env files to look for
-// besides ConfigFile and LegacyEnvFiles; any of them present, or
-// DOCKMESH_DATA_DIR or DOCKMESH_DB_PATH set, is config and wins. Empty
-// when workDir is not such a directory; lstat defaults to os.Lstat.
-func CheckoutDir(workDir string, getenv func(string) string, envFiles []string, lstat func(string) (fs.FileInfo, error)) string {
+// CheckoutProbe decides whether the server runs on the data of a source
+// run: up to 0.5.x a server without config kept ./data and ./stacks below
+// its working directory, so that directory stays its data dir.
+type CheckoutProbe struct {
+	WorkDir string
+	Getenv  func(string) string
+	// EnvFiles are env files to look for besides ConfigFile and
+	// LegacyEnvFiles: --env-file and the one the service unit names.
+	EnvFiles []string
+	// Lstat defaults to os.Lstat; Trust to TrustedCheckout for the euid.
+	Lstat func(string) (fs.FileInfo, error)
+	Trust func(dir string) error
+}
+
+// Dir returns WorkDir when it holds data/dockmesh.db and nothing
+// configures the server: no env file, no DOCKMESH_DATA_DIR and no
+// DOCKMESH_DB_PATH. The error explains a directory that would qualify
+// but fails Trust; Dir is empty then.
+func (p CheckoutProbe) Dir() (string, error) {
+	lstat, trust := p.Lstat, p.Trust
 	if lstat == nil {
 		lstat = os.Lstat
 	}
-	if !filepath.IsAbs(workDir) || getenv("DOCKMESH_DATA_DIR") != "" || getenv("DOCKMESH_DB_PATH") != "" {
-		return ""
+	if trust == nil {
+		trust = func(dir string) error { return TrustedCheckout(dir, os.Geteuid()) }
 	}
-	for _, f := range append(append([]string{ConfigFile}, LegacyEnvFiles...), envFiles...) {
+	if !filepath.IsAbs(p.WorkDir) || p.Getenv("DOCKMESH_DATA_DIR") != "" || p.Getenv("DOCKMESH_DB_PATH") != "" {
+		return "", nil
+	}
+	for _, f := range append(append([]string{ConfigFile}, LegacyEnvFiles...), p.EnvFiles...) {
 		if f == "" {
 			continue
 		}
 		if _, err := lstat(f); !errors.Is(err, fs.ErrNotExist) {
-			return ""
+			return "", nil
 		}
 	}
-	workDir = filepath.Clean(workDir)
-	if workDir == config.DefaultDataDir {
-		return ""
+	dir := filepath.Clean(p.WorkDir)
+	// "/" is the working directory systemd gives every service.
+	if dir == "/" || dir == config.DefaultDataDir {
+		return "", nil
 	}
-	fi, err := lstat(dbPathBelow(workDir))
-	if err != nil || fi.IsDir() {
-		return ""
+	if fi, err := lstat(dbPathBelow(dir)); err != nil || fi.IsDir() {
+		return "", nil //nolint:nilerr // no database, no source run to keep
 	}
-	return workDir
+	if err := trust(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // dbPathBelow is the database of an install configured only through

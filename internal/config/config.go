@@ -180,8 +180,33 @@ func loadOrCreateJWTSecret(path string) ([]byte, error) {
 		return nil, err
 	}
 	content := jwtSecretKey + "=" + hex.EncodeToString(buf) + "\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := writeNew(path, []byte(content)); err != nil {
 		return nil, err
 	}
 	return buf, nil
+}
+
+// writeNew puts data at path through a fresh temp file and a rename, so a
+// symlink planted at path is replaced rather than followed.
+func writeNew(path string, data []byte) error {
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	tmp := path + ".new-" + hex.EncodeToString(suffix)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- next to the configured secrets path
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }

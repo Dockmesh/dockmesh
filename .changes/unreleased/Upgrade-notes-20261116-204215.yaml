@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: Source runs started from a checkout without config keep their ./data and ./stacks and show a notice; run cd <checkout> && sudo ./dockmesh system migrate-layout to write /etc/dockmesh/dockmesh.env pointing at the checkout
+body: 'Source runs started from a checkout without config keep their ./data and ./stacks and show a notice; sudo ./dockmesh system migrate-layout --checkout <checkout> writes /etc/dockmesh/dockmesh.env pointing at the checkout. The checkout and every directory above it must be owned by root or the server''s user and not writable by others'
 time: 2026-11-16T20:42:15.119105969Z
 custom:
     Audience: admins

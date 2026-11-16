@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -253,15 +254,10 @@ func TestMigrateKeepsOwnerOnlyReadable(t *testing.T) {
 
 func TestMigrateConfiguresCheckout(t *testing.T) {
 	f := newFixture(t, "")
-	checkout := filepath.Join(filepath.Dir(f.data), "src")
+	top := filepath.Dir(f.data)
+	checkout := newCheckout(t, top)
 	db := filepath.Join(checkout, "data", "dockmesh.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(db, []byte("db"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.opts.CheckoutDir = checkout
+	f.opts.CheckoutDir, f.opts.trustTop = checkout, top
 
 	res, err := Migrate(f.opts)
 	if err != nil {
@@ -278,8 +274,17 @@ func TestMigrateConfiguresCheckout(t *testing.T) {
 	if env := parseEnv(got); len(env) != 1 || env["DOCKMESH_DATA_DIR"] != checkout {
 		t.Errorf("config env = %v", env)
 	}
-	if fi, err := os.Stat(target); err != nil || fi.Mode() != 0o640 {
-		t.Errorf("config mode = %v, %v; want 0640", fi.Mode(), err)
+	for _, c := range []struct {
+		path string
+		mode os.FileMode
+	}{{f.etc, 0o750 | os.ModeDir}, {target, 0o640}} {
+		fi, err := os.Stat(c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode() != c.mode || int(fi.Sys().(*syscall.Stat_t).Gid) != f.opts.GID {
+			t.Errorf("%s: mode %v gid %d, want %v and the config group %d", c.path, fi.Mode(), fi.Sys().(*syscall.Stat_t).Gid, c.mode, f.opts.GID)
+		}
 	}
 	if data, err := os.ReadFile(db); err != nil || string(data) != "db" {
 		t.Errorf("database changed: %q, %v", data, err)
@@ -290,18 +295,61 @@ func TestMigrateConfiguresCheckout(t *testing.T) {
 	}
 }
 
+// The installer runs migrate-layout without --checkout from wherever the
+// admin is; without the option nothing is written for a checkout.
+func TestMigrateIgnoresCheckoutWithoutOption(t *testing.T) {
+	f := newFixture(t, "")
+	newCheckout(t, filepath.Dir(f.data))
+	res, err := Migrate(f.opts)
+	if err != nil || res.Outcome != NothingFound {
+		t.Fatalf("result = %+v, %v; want NothingFound", res, err)
+	}
+}
+
 func TestMigrateCheckoutRefuses(t *testing.T) {
-	base := t.TempDir()
-	tests := []struct{ name, dir string }{
-		{"no database", filepath.Join(base, "empty")},
-		{"relative", "src"},
-		{"newline", filepath.Join(base, "a\nDOCKMESH_DB_PATH=/x")},
-		{"quote", filepath.Join(base, `a"b`)},
+	tests := []struct {
+		name string
+		// dir returns the --checkout value below top.
+		dir     func(t *testing.T, top string) string
+		envFile bool
+	}{
+		{name: "no database", dir: func(t *testing.T, top string) string {
+			d := filepath.Join(top, "empty")
+			if err := os.Mkdir(d, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			return d
+		}},
+		{name: "relative", dir: func(*testing.T, string) string { return "src" }},
+		{name: "newline", dir: func(_ *testing.T, top string) string { return filepath.Join(top, "a\nDOCKMESH_DB_PATH=/x") }},
+		{name: "quote", dir: func(_ *testing.T, top string) string { return filepath.Join(top, `a"b`) }},
+		{name: "group-writable data", dir: func(t *testing.T, top string) string {
+			d := newCheckout(t, top)
+			chmod(t, filepath.Join(d, "data"), 0o770)
+			return d
+		}},
+		{name: "symlinked database", dir: func(t *testing.T, top string) string {
+			d := newCheckout(t, top)
+			db := filepath.Join(d, "data", "dockmesh.db")
+			if err := os.Rename(db, filepath.Join(top, "real.db")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(top, "real.db"), db); err != nil {
+				t.Fatal(err)
+			}
+			return d
+		}},
+		{name: "env file exists", dir: newCheckout, envFile: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, "")
-			f.opts.CheckoutDir = tt.dir
+			body := ""
+			if tt.envFile {
+				body = oldEnv
+			}
+			f := newFixture(t, body)
+			top := filepath.Dir(f.data)
+			f.opts.CheckoutDir, f.opts.trustTop = tt.dir(t, top), top
 			if res, err := Migrate(f.opts); err == nil {
 				t.Fatalf("result = %+v, want an error", res)
 			}

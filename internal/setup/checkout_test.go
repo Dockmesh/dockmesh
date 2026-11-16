@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,11 +16,19 @@ import (
 // checkout is the working directory of a source run up to 0.5.x.
 const checkout = "/opt/dockmesh-src"
 
-// startPaths resolves the server's paths the way main does: env first,
-// then the checkout's data when nothing configures a data dir.
-func startPaths(root string, env map[string]string, extra []string) (string, config.Paths) {
+// startPaths resolves the server's paths at start: layout.CheckoutProbe
+// as main runs it, whose directory main then sets as DOCKMESH_DATA_DIR.
+// The rooted paths cannot pass the ownership check, which has its own
+// tests in layout; trust stands in for its answer.
+func startPaths(root string, env map[string]string, extra []string, trust error) (string, config.Paths) {
 	getenv := func(k string) string { return env[k] }
-	dir := layout.CheckoutDir(checkout, getenv, extra, rootedStat(root))
+	dir, _ := layout.CheckoutProbe{
+		WorkDir:  checkout,
+		Getenv:   getenv,
+		EnvFiles: extra,
+		Lstat:    rootedStat(root),
+		Trust:    func(string) error { return trust },
+	}.Dir()
 	return dir, config.ResolvePaths(func(k string) string {
 		if k == "DOCKMESH_DATA_DIR" && dir != "" {
 			return dir
@@ -36,9 +45,12 @@ func TestCheckoutDataResolution(t *testing.T) {
 		db, files []string
 		env       map[string]string
 		extra     []string
-		wantDir   string
-		wantDB    string
-		want      Mode
+		// distrust is the ownership check's answer; an untrusted checkout
+		// is neither used nor passed to the setup decision.
+		distrust error
+		wantDir  string
+		wantDB   string
+		want     Mode
 	}{
 		{name: "no checkout data", wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: NeverSetUp},
 		{name: "checkout data with database", db: []string{checkoutDB}, wantDir: checkout, wantDB: checkoutDB, want: SetUp},
@@ -65,6 +77,10 @@ func TestCheckoutDataResolution(t *testing.T) {
 			wantDB: "/srv/dm/data/dockmesh.db", want: SetUp,
 		},
 		{
+			name: "untrusted checkout is ignored", db: []string{checkoutDB}, distrust: errors.New("writable by others"),
+			wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: NeverSetUp,
+		},
+		{
 			name: "DOCKMESH_DB_PATH wins", db: []string{checkoutDB}, env: map[string]string{"DOCKMESH_DB_PATH": "/srv/db/dockmesh.db"},
 			wantDB: "/srv/db/dockmesh.db", want: SetUp,
 		},
@@ -79,7 +95,7 @@ func TestCheckoutDataResolution(t *testing.T) {
 			for _, f := range tt.files {
 				touch(t, root, f)
 			}
-			dir, paths := startPaths(root, tt.env, tt.extra)
+			dir, paths := startPaths(root, tt.env, tt.extra, tt.distrust)
 			if dir != tt.wantDir || paths.DBPath != tt.wantDB {
 				t.Fatalf("checkout dir %q, db %q; want %q, %q", dir, paths.DBPath, tt.wantDir, tt.wantDB)
 			}
@@ -87,7 +103,9 @@ func TestCheckoutDataResolution(t *testing.T) {
 				ConfigFiles: tt.extra,
 				DBPathSet:   tt.env["DOCKMESH_DB_PATH"] != "",
 				Paths:       paths,
-				WorkDir:     checkout,
+			}
+			if tt.distrust == nil {
+				p.WorkDir = checkout
 			}
 			if got := boot(t, root, p); got != tt.want {
 				t.Fatalf("mode = %v, want %v", got, tt.want)
@@ -130,7 +148,7 @@ func TestCheckoutTwoStarts(t *testing.T) {
 	}
 	var firstDB fs.FileInfo
 	for start := 1; start <= 2; start++ {
-		dir, paths := startPaths(root, nil, nil)
+		dir, paths := startPaths(root, nil, nil, nil)
 		if dir != checkout || paths != want {
 			t.Fatalf("start %d: checkout dir %q, paths %+v; want %+v", start, dir, paths, want)
 		}
