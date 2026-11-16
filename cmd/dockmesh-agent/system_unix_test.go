@@ -16,6 +16,8 @@ type testInstaller struct {
 	*agentInstaller
 	root  string
 	calls []string
+	// opts lets a setup pick options that name its temp dir.
+	opts installOptions
 }
 
 func newTestInstaller(t *testing.T) *testInstaller {
@@ -42,6 +44,7 @@ func newTestInstaller(t *testing.T) *testInstaller {
 		lookupAccount: func(string) (int, int, error) { return uid, gid, nil },
 		dockerGID:     func() int { return 999 },
 		socketGroups:  func(string, int) ([]string, string) { return []string{"docker"}, "" },
+		rootOnly:      func(string) bool { return true },
 		legacy: func(dataDir string, _ bool) error {
 			for _, p := range []string{filepath.Join(root, "etc", "dockmesh-agent", "refresh-path-copy"), filepath.Join(dataDir, "bin", "dockmesh-agent")} {
 				if _, err := os.Lstat(p); err == nil {
@@ -134,10 +137,10 @@ func TestSystemInstall(t *testing.T) {
 			name:  "fresh",
 			setup: func(*testing.T, *testInstaller, string) {},
 			opts: func(ti *testInstaller) installOptions {
-				return installOptions{DataDir: ti.path("var/agent"), StacksDir: ti.path("srv/stacks")}
+				return installOptions{DataDir: ti.path("var/agent"), StacksDir: ti.path("srv/stacks"), SocketGID: "4242"}
 			},
-			wantEnv:  []string{"DOCKMESH_DATA_DIR=<root>/var/agent", "DOCKMESH_STACKS_DIR=<root>/srv/stacks"},
-			wantUnit: []string{"User=dockmesh-agent", "SupplementaryGroups=docker", `ReadWritePaths="<root>/var/agent"`, `ReadWritePaths="-<root>/srv/stacks"`, "ExecStart=<root>/bin/dockmesh-agent"},
+			wantEnv:  []string{"DOCKMESH_DATA_DIR=<root>/var/agent", "DOCKMESH_STACKS_DIR=<root>/srv/stacks", "DOCKMESH_SOCKET_GID=4242"},
+			wantUnit: []string{"User=dockmesh-agent", "SupplementaryGroups=docker 4242", `ReadWritePaths="<root>/var/agent"`, `ReadWritePaths="-<root>/srv/stacks"`, "ExecStart=<root>/bin/dockmesh-agent"},
 		},
 		{
 			name: "legacy",
@@ -228,9 +231,30 @@ func TestSystemInstallRefuses(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, ti *testInstaller)
+		edit  func(ti *testInstaller)
 		opts  installOptions
 		want  string
 	}{
+		{
+			name: "data dir of another account",
+			setup: func(t *testing.T, ti *testInstaller) {
+				if err := os.MkdirAll(ti.path("var/agent"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				ti.opts = installOptions{DataDir: ti.path("var/agent")}
+			},
+			edit: func(ti *testInstaller) {
+				ti.lookupAccount = func(string) (int, int, error) { return os.Getuid() + 1, os.Getgid(), nil }
+			},
+			want: "belongs to another account",
+		},
+		{
+			name:  "stacks dir below a directory others may change",
+			setup: func(*testing.T, *testInstaller) {},
+			edit:  func(ti *testInstaller) { ti.rootOnly = func(string) bool { return false } },
+			opts:  installOptions{DataDir: "/srv/agent", StacksDir: "/srv/stacks"},
+			want:  "writable only by root",
+		},
 		{
 			name: "legacy copy step still there",
 			setup: func(t *testing.T, ti *testInstaller) {
@@ -306,8 +330,15 @@ func TestSystemInstallRefuses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ti := newTestInstaller(t)
 			tt.setup(t, ti)
+			if tt.edit != nil {
+				tt.edit(ti)
+			}
 			before := ti.snapshot(t)
-			_, err := ti.run(tt.opts)
+			opts := tt.opts
+			if ti.opts.DataDir != "" {
+				opts = ti.opts
+			}
+			_, err := ti.run(opts)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}

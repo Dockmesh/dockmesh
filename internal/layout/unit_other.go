@@ -4,6 +4,7 @@ package layout
 
 import (
 	"errors"
+	"io"
 	"os"
 )
 
@@ -40,7 +41,7 @@ func ReadUnitFile(string) ([]byte, error) { return nil, errNoSystemd }
 func PutUnitFile(string, []byte) error { return errNoSystemd }
 
 // WriteAgentUnits fails off Unix.
-func WriteAgentUnits(AgentUnit, string) (bool, error) { return false, errNoSystemd }
+func WriteAgentUnits(AgentUnit, string) ([]string, error) { return nil, errNoSystemd }
 
 // WriteRootFile fails off Unix.
 func WriteRootFile(string, []byte, int, int, os.FileMode) (bool, error) { return false, errNoSystemd }
@@ -50,3 +51,12 @@ func PrepareRootDir(string, int, int) error { return errNoSystemd }
 
 // PrivilegedGroup is false off Unix.
 func PrivilegedGroup(string) bool { return false }
+
+// HasOwnerMode is false off Unix.
+func HasOwnerMode(string, int, int, os.FileMode) bool { return false }
+
+// WriteRootFileFrom fails off Unix.
+func WriteRootFileFrom(string, io.Reader, int, int, os.FileMode) error { return errNoSystemd }
+
+// RootOnlyDir is false off Unix.
+func RootOnlyDir(string) bool { return false }

@@ -3,14 +3,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -99,11 +95,14 @@ type agentInstaller struct {
 	binary  string
 	envFile string
 	unitDir string
-	// rootUID and rootGID own the binary, the config dir and the units.
+	// rootUID and rootGID own the binary; rootUID also owns the config
+	// dir and agent.env, and both own the dirs of an agent running as root.
 	rootUID, rootGID int
 	lookupAccount    func(name string) (uid, gid int, err error)
 	dockerGID        func() int
 	socketGroups     func(socket string, dockerGID int) ([]string, string)
+	// rootOnly reports a directory only root can change, up to /.
+	rootOnly func(dir string) bool
 	// legacy reports what is left of the legacy layout's copy step.
 	legacy    func(dataDir string, unitExists bool) error
 	systemctl func(args ...string) error
@@ -114,7 +113,7 @@ func hostInstaller(self string) *agentInstaller {
 		self:          self,
 		binary:        pathBinary,
 		envFile:       agentEnvFile,
-		unitDir:       filepath.Dir(layout.AgentUnitFile),
+		unitDir:       filepath.Dir(agentUnitFile),
 		lookupAccount: lookupAccount,
 		dockerGID: func() int {
 			g, err := user.LookupGroup("docker")
@@ -128,6 +127,7 @@ func hostInstaller(self string) *agentInstaller {
 			return gid
 		},
 		socketGroups: layout.SocketGroups,
+		rootOnly:     layout.RootOnlyDir,
 		legacy:       hostLegacyLeftovers,
 		systemctl: func(args ...string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -141,16 +141,27 @@ func hostInstaller(self string) *agentInstaller {
 	}
 }
 
+// lookupAccount returns the uid of account name and the gid of the group
+// of the same name, which the unit runs with and which may read
+// agent.env. A primary group of another name is refused: its members
+// would read the config too.
 func lookupAccount(name string) (int, int, error) {
 	u, err := user.Lookup(name)
 	if err != nil {
 		return 0, 0, fmt.Errorf("look up %s: %w (the installer creates the account)", name, err)
 	}
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("look up the group %s: %w (the installer creates it)", name, err)
+	}
+	if u.Gid != g.Gid {
+		return 0, 0, fmt.Errorf("the primary group of %s is not the group %s", name, name)
+	}
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
 		return 0, 0, err
 	}
-	gid, err := strconv.Atoi(u.Gid)
+	gid, err := strconv.Atoi(g.Gid)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -161,14 +172,9 @@ func lookupAccount(name string) (int, int, error) {
 // ExecStartPre from a drop-in counts.
 func hostLegacyLeftovers(dataDir string, unitExists bool) error {
 	if unitExists {
-		return legacyCopyStepAt(dataDir, layout.AgentLegacyCopyStep, layout.AgentUnitFile, false)
+		return legacyCopyStepAt(dataDir, legacyRefreshScript, agentUnitFile, false)
 	}
-	for _, p := range []string{layout.AgentLegacyCopyStep, filepath.Join(dataDir, "bin", "dockmesh-agent")} {
-		if _, err := os.Lstat(p); err == nil {
-			return fmt.Errorf("%s still exists", p)
-		}
-	}
-	return nil
+	return legacyFilesLeft(dataDir, legacyRefreshScript)
 }
 
 type installResult struct {
@@ -194,7 +200,7 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if err != nil {
 		return res, err
 	}
-	unitPath := filepath.Join(in.unitDir, filepath.Base(layout.AgentUnitFile))
+	unitPath := filepath.Join(in.unitDir, agentUnitName)
 	oldUnit, err := layout.ReadUnitFile(unitPath)
 	if err != nil {
 		return res, err
@@ -236,26 +242,34 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		if stacksDir, err = checkStacksDirFlag(stacksDir, dataDir); err != nil {
 			return res, err
 		}
+		// systemd follows a symlink here at every start, so only root may
+		// be able to swap it.
+		if !strings.HasPrefix(stacksDir, dataDir+"/") && !in.rootOnly(filepath.Dir(stacksDir)) {
+			return res, fmt.Errorf("%s and every directory above it must belong to root and be writable only by root", filepath.Dir(stacksDir))
+		}
 	}
 
+	// The socket gid is kept in agent.env, so the unit an update writes
+	// without flags still has it.
+	socketGID := env["DOCKMESH_SOCKET_GID"]
+	if o.SocketGID != "" {
+		socketGID = o.SocketGID
+	}
 	var groups []string
+	unitUser := ""
 	if runUser != "root" {
+		unitUser = runUser
 		var warn string
 		groups, warn = in.socketGroups(layout.DockerSocketPath(env), in.dockerGID())
 		if warn != "" {
 			res.warnings = append(res.warnings, warn)
 		}
-		if o.SocketGID != "" {
-			g, err := checkSocketGID(o.SocketGID)
-			if err != nil {
+		if socketGID != "" {
+			if socketGID, err = checkSocketGID(socketGID); err != nil {
 				return res, err
 			}
-			groups = append(groups, g)
+			groups = append(groups, socketGID)
 		}
-	}
-	unitUser := ""
-	if runUser != "root" {
-		unitUser = runUser
 	}
 	unit := layout.AgentUnit{
 		Binary:              in.binary,
@@ -275,6 +289,18 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		return res, err
 	}
 
+	dirs := []struct {
+		path string
+		mode os.FileMode
+	}{{dataDir, 0o700}, {stacksDir, 0o750}}
+	for _, d := range dirs {
+		if d.path != "" {
+			if err := checkAgentDir(d.path, uid); err != nil {
+				return res, err
+			}
+		}
+	}
+
 	changed, err := in.installBinary()
 	if err != nil {
 		return res, fmt.Errorf("install %s: %w", in.binary, err)
@@ -282,10 +308,7 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if changed {
 		res.changed = append(res.changed, in.binary)
 	}
-	for _, d := range []struct {
-		path string
-		mode os.FileMode
-	}{{dataDir, 0o700}, {stacksDir, 0o750}} {
+	for _, d := range dirs {
 		if d.path == "" {
 			continue
 		}
@@ -300,39 +323,22 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if err := layout.PrepareRootDir(filepath.Dir(in.envFile), in.rootUID, gid); err != nil {
 		return res, err
 	}
-	envData := renderAgentEnv(envLines, map[string]string{"DOCKMESH_DATA_DIR": dataDir, "DOCKMESH_STACKS_DIR": stacksDir})
+	envData := renderAgentEnv(envLines, map[string]string{
+		"DOCKMESH_DATA_DIR": dataDir, "DOCKMESH_STACKS_DIR": stacksDir, "DOCKMESH_SOCKET_GID": socketGID,
+	})
 	if changed, err = layout.WriteRootFile(in.envFile, envData, in.rootUID, gid, 0o640); err != nil {
 		return res, err
 	}
 	if changed {
 		res.changed = append(res.changed, in.envFile)
 	}
-	before := in.unitSnapshot()
-	if res.unitsChanged, err = layout.WriteAgentUnits(unit, in.unitDir); err != nil {
+	units, err := layout.WriteAgentUnits(unit, in.unitDir)
+	if err != nil {
 		return res, err
 	}
-	after := in.unitSnapshot()
-	for _, f := range agentUnitNames {
-		if !bytes.Equal(before[f], after[f]) {
-			res.changed = append(res.changed, filepath.Join(in.unitDir, f))
-		}
-	}
+	res.unitsChanged = len(units) > 0
+	res.changed = append(res.changed, units...)
 	return res, nil
-}
-
-var agentUnitNames = []string{
-	filepath.Base(layout.AgentUnitFile),
-	filepath.Base(layout.AgentUpdatePathUnitFile),
-	filepath.Base(layout.AgentUpdateServiceUnitFile),
-}
-
-func (in *agentInstaller) unitSnapshot() map[string][]byte {
-	out := map[string][]byte{}
-	for _, f := range agentUnitNames {
-		data, _ := layout.ReadUnitFile(filepath.Join(in.unitDir, f))
-		out[f] = data
-	}
-	return out
 }
 
 // activate reloads systemd after a unit change, enables the agent and its
@@ -344,8 +350,8 @@ func (in *agentInstaller) activate(unitsChanged bool) error {
 			return err
 		}
 	}
-	path := filepath.Base(layout.AgentUpdatePathUnitFile)
-	if err := in.systemctl("enable", filepath.Base(layout.AgentUnitFile), path, filepath.Base(layout.AgentUpdateServiceUnitFile)); err != nil {
+	path := filepath.Base(managedPathUnit)
+	if err := in.systemctl("enable", agentUnitName, path, filepath.Base(managedServiceUnit)); err != nil {
 		return err
 	}
 	verb := "start"
@@ -471,16 +477,30 @@ func checkSocketGID(s string) (string, error) {
 	return strconv.FormatUint(gid, 10), nil
 }
 
-// ensureAgentDir creates dir for the agent's account. An existing one is
-// left as it is, but must be a real directory.
-func ensureAgentDir(dir string, mode os.FileMode, uid, gid int) (created bool, err error) {
+// checkAgentDir accepts a dir that does not exist yet, or a real
+// directory the agent's account owns.
+func checkAgentDir(dir string, uid int) error {
 	fi, err := os.Lstat(dir)
 	switch {
-	case err == nil && fi.IsDir():
-		return false, nil
-	case err == nil:
-		return false, fmt.Errorf("%s exists but is not a directory", dir)
-	case !errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !fi.IsDir():
+		return fmt.Errorf("%s exists but is not a directory", dir)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != uid {
+		return fmt.Errorf("%s exists and belongs to another account; move it away or choose a new directory", dir)
+	}
+	return nil
+}
+
+// ensureAgentDir creates dir for the agent's account unless it exists;
+// checkAgentDir has accepted it.
+func ensureAgentDir(dir string, mode os.FileMode, uid, gid int) (created bool, err error) {
+	if _, err := os.Lstat(dir); err == nil {
+		return false, checkAgentDir(dir, uid)
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
 	parent, err := os.OpenRoot(filepath.Dir(dir))
@@ -492,10 +512,17 @@ func ensureAgentDir(dir string, mode os.FileMode, uid, gid int) (created bool, e
 	if err := parent.Mkdir(name, mode); err != nil {
 		return false, err
 	}
-	if err := parent.Lchown(name, uid, gid); err != nil {
+	// Owner and mode go through the descriptor: in a parent the agent
+	// account owns, the name could be swapped after the mkdir.
+	f, err := parent.OpenFile(name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
 		return true, err
 	}
-	return true, parent.Chmod(name, mode)
+	defer f.Close()
+	if err := f.Chown(uid, gid); err != nil {
+		return true, err
+	}
+	return true, f.Chmod(mode)
 }
 
 // installBinary puts this binary at in.binary, owned by root and 0755, when
@@ -510,7 +537,7 @@ func (in *agentInstaller) installBinary() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if same && hasOwner(in.binary, in.rootUID, in.rootGID, 0o755) {
+	if same && layout.HasOwnerMode(in.binary, in.rootUID, in.rootGID, 0o755) {
 		return false, nil
 	}
 	src, err := os.Open(in.self)
@@ -518,37 +545,9 @@ func (in *agentInstaller) installBinary() (bool, error) {
 		return false, err
 	}
 	defer src.Close()
-	dir := filepath.Dir(in.binary)
-	tmp := filepath.Join(dir, "."+filepath.Base(in.binary)+".new-"+randHex())
-	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o700) // #nosec G304 -- fixed install path
-	if err != nil {
+	if err := layout.WriteRootFileFrom(in.binary, src, in.rootUID, in.rootGID, 0o755); err != nil {
 		return false, err
 	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(tmp)
-		}
-	}()
-	_, err = io.Copy(dst, src)
-	for _, step := range []func() error{
-		func() error { return err },
-		func() error { return dst.Chown(in.rootUID, in.rootGID) },
-		func() error { return dst.Chmod(0o755) },
-		dst.Sync,
-	} {
-		if err = step(); err != nil {
-			dst.Close()
-			return false, err
-		}
-	}
-	if err := dst.Close(); err != nil {
-		return false, err
-	}
-	if err := os.Rename(tmp, in.binary); err != nil {
-		return false, err
-	}
-	ok = true
 	selinux.Restore(slog.Default(), in.binary)
 	return true, nil
 }
@@ -566,20 +565,4 @@ func sameContent(a, b string) (bool, error) {
 		return false, err
 	}
 	return ha == hb, nil
-}
-
-// hasOwner reports a regular file, not a symlink, with this owner and mode.
-func hasOwner(p string, uid, gid int, mode os.FileMode) bool {
-	fi, err := os.Lstat(p)
-	if err != nil || !fi.Mode().IsRegular() {
-		return false
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && int(st.Uid) == uid && int(st.Gid) == gid && fi.Mode().Perm() == mode
-}
-
-func randHex() string {
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }

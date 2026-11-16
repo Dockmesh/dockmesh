@@ -373,7 +373,8 @@ func TestWriteAgentUnits(t *testing.T) {
 	for _, tt := range tests {
 		tt.edit(&u)
 		before, _ := os.ReadFile(filepath.Join(dir, "dockmesh-agent.service"))
-		changed, err := WriteAgentUnits(u, dir)
+		paths, err := WriteAgentUnits(u, dir)
+		changed := len(paths) > 0
 		if (err != nil) != tt.wantErr || changed != tt.wantChanged {
 			t.Fatalf("%s: changed=%v err=%v, want changed=%v err=%v", tt.name, changed, err, tt.wantChanged, tt.wantErr)
 		}

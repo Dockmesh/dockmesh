@@ -122,11 +122,21 @@ func updateApply(args []string) error {
 func agentServiceUID() (uint32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "/bin/systemctl", "show", "-p", "User", "--value", agentUnitName).Output() // #nosec G204 -- fixed unit name
+	out, err := exec.CommandContext(ctx, "/bin/systemctl", "show", "-p", "LoadState", "-p", "User", agentUnitName).Output() // #nosec G204 -- fixed unit name
 	if err != nil {
 		return 0, fmt.Errorf("ask systemd for the account of %s: %w", agentUnitName, err)
 	}
-	name := strings.TrimSpace(string(out))
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			props[k] = v
+		}
+	}
+	// An unknown unit shows an empty User too, which must not mean root.
+	if props["LoadState"] != "loaded" {
+		return 0, fmt.Errorf("%s is not loaded (%q)", agentUnitName, props["LoadState"])
+	}
+	name := props["User"]
 	if name == "" || name == "root" {
 		return 0, nil
 	}
@@ -216,6 +226,8 @@ func (s *agentService) RestoreUnit(data []byte) error {
 
 // WriteUnit runs the new binary's `system install`, so the units come from
 // the template of the version being installed and keep the host's values.
+// agent.env is not rolled back with the units: every version must read the
+// keys system install writes the same way.
 func (s *agentService) WriteUnit(ctx context.Context, binary string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -273,11 +285,8 @@ func legacyCopyStep(dataDir string) error {
 
 // legacyCopyStepAt with strict refuses when systemd can't be asked.
 func legacyCopyStepAt(dataDir, script, unitFile string, strict bool) error {
-	if _, err := os.Lstat(script); err == nil {
-		return fmt.Errorf("%s still exists", script)
-	}
-	if _, err := os.Lstat(filepath.Join(dataDir, "bin", "dockmesh-agent")); err == nil {
-		return fmt.Errorf("%s still exists", filepath.Join(dataDir, "bin", "dockmesh-agent"))
+	if err := legacyFilesLeft(dataDir, script); err != nil {
+		return err
 	}
 	// Drop-ins and every spelling systemd accepts count, so ask systemd.
 	pre, err := execStartPre()
@@ -295,6 +304,17 @@ func legacyCopyStepAt(dataDir, script, unitFile string, strict bool) error {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "ExecStartPre=") || strings.Contains(line, "refresh-path-copy") {
 			return fmt.Errorf("%s still has %q", unitFile, line)
+		}
+	}
+	return nil
+}
+
+// legacyFilesLeft reports the copy script or the data dir binary of the
+// legacy layout.
+func legacyFilesLeft(dataDir, script string) error {
+	for _, p := range []string{script, filepath.Join(dataDir, "bin", "dockmesh-agent")} {
+		if _, err := os.Lstat(p); err == nil {
+			return fmt.Errorf("%s still exists", p)
 		}
 	}
 	return nil
