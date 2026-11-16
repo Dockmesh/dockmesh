@@ -905,6 +905,9 @@ func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envCon
 }
 
 func (h *RemoteHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
+	if err := h.checkReservedLabels(composeYAML); err != nil {
+		return nil, err
+	}
 	data, err := h.request(ctx, agents.FrameReqStackCheckScale, agents.StackCheckScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent, Service: service,
 		Auth: h.registryAuth(ctx, name, composeYAML, envContent),
@@ -1017,9 +1020,9 @@ var (
 	ErrUnknownHost  = errors.New("unknown host")
 )
 
-// checkReservedLabels refuses tracking labels on the server for agents
-// that don't check them; agents that do load the file, and the files it
-// names, on their own host.
+// checkReservedLabels refuses tracking labels and env_file paths outside
+// the stack folder on the server for agents that don't check them. Agents
+// with CapReservedLabels also check every referenced file themselves.
 func (h *RemoteHost) checkReservedLabels(composeYAML string) error {
 	if ag, err := h.live(); err == nil && ag.Hello.Has(agents.CapReservedLabels) {
 		return nil
