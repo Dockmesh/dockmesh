@@ -86,6 +86,8 @@ type Probe struct {
 	Force     bool
 	// Paths of the server; layout.KnownDBPaths are checked as well.
 	Paths config.Paths
+	// WorkDir is the server's working directory, os.Getwd when empty.
+	WorkDir string
 	// Lstat, Stat and ReadDir default to the os functions; tests root the
 	// paths elsewhere.
 	Lstat   func(string) (fs.FileInfo, error)
@@ -125,7 +127,11 @@ func (p Probe) Scan() Facts {
 		f.DB = true
 		active = nil
 	}
-	for _, known := range layout.KnownDBPaths() {
+	workDir := p.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	for _, known := range layout.KnownDBPaths(workDir) {
 		if filepath.Clean(known) == filepath.Clean(db) {
 			continue
 		}

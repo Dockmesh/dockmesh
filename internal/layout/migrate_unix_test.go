@@ -250,3 +250,64 @@ func TestMigrateKeepsOwnerOnlyReadable(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrateConfiguresCheckout(t *testing.T) {
+	f := newFixture(t, "")
+	checkout := filepath.Join(filepath.Dir(f.data), "src")
+	db := filepath.Join(checkout, "data", "dockmesh.db")
+	if err := os.MkdirAll(filepath.Dir(db), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db, []byte("db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.opts.CheckoutDir = checkout
+
+	res, err := Migrate(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != CheckoutConfigured || res.DataDir != checkout {
+		t.Fatalf("result = %+v", res)
+	}
+	target := filepath.Join(f.etc, "dockmesh.env")
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env := parseEnv(got); len(env) != 1 || env["DOCKMESH_DATA_DIR"] != checkout {
+		t.Errorf("config env = %v", env)
+	}
+	if fi, err := os.Stat(target); err != nil || fi.Mode() != 0o640 {
+		t.Errorf("config mode = %v, %v; want 0640", fi.Mode(), err)
+	}
+	if data, err := os.ReadFile(db); err != nil || string(data) != "db" {
+		t.Errorf("database changed: %q, %v", data, err)
+	}
+	again, err := Migrate(f.opts)
+	if err != nil || again.Outcome != AlreadyMigrated {
+		t.Fatalf("second run = %+v, %v; want AlreadyMigrated", again, err)
+	}
+}
+
+func TestMigrateCheckoutRefuses(t *testing.T) {
+	base := t.TempDir()
+	tests := []struct{ name, dir string }{
+		{"no database", filepath.Join(base, "empty")},
+		{"relative", "src"},
+		{"newline", filepath.Join(base, "a\nDOCKMESH_DB_PATH=/x")},
+		{"quote", filepath.Join(base, `a"b`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, "")
+			f.opts.CheckoutDir = tt.dir
+			if res, err := Migrate(f.opts); err == nil {
+				t.Fatalf("result = %+v, want an error", res)
+			}
+			if _, err := os.Lstat(filepath.Join(f.etc, "dockmesh.env")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("config written: %v", err)
+			}
+		})
+	}
+}

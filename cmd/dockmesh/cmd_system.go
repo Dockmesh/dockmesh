@@ -77,7 +77,11 @@ func systemMigrateLayout(args []string) error {
 	if *from == "" {
 		candidates = append([]string{unitEnvFile()}, layout.LegacyEnvFiles...)
 	}
-	res, err := layout.Migrate(layout.MigrateOptions{Candidates: candidates, GID: configGID()})
+	opts := layout.MigrateOptions{Candidates: candidates, GID: configGID()}
+	if *from == "" {
+		opts.CheckoutDir = checkoutDataDir
+	}
+	res, err := layout.Migrate(opts)
 	if err != nil {
 		return err
 	}
@@ -88,6 +92,8 @@ func systemMigrateLayout(args []string) error {
 		fmt.Printf("config already at %s\n", layout.ConfigFile)
 	case layout.SetupPending:
 		fmt.Printf("config stays at %s until the setup wizard has finished\n", res.From)
+	case layout.CheckoutConfigured:
+		fmt.Printf("wrote  %s with DOCKMESH_DATA_DIR=%s (the data stays there)\n", layout.ConfigFile, res.DataDir)
 	case layout.NothingFound:
 		fmt.Println("no config found to move")
 	}

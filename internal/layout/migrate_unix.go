@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -39,6 +40,9 @@ func Migrate(opts MigrateOptions) (Result, error) {
 	}
 
 	src := findSource(opts.Candidates)
+	if src == "" && opts.CheckoutDir != "" {
+		return configureCheckout(dir, opts.CheckoutDir, opts.UID)
+	}
 	if src == "" {
 		return Result{Outcome: NothingFound}, nil
 	}
@@ -85,6 +89,38 @@ func Migrate(opts MigrateOptions) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Outcome: Moved, From: src, DataDir: dataDir}, nil
+}
+
+// configureCheckout writes a config that keeps the server on the data of
+// the source run in checkout. The file goes to the group of the database:
+// the source run may not run as root or in the dockmesh group, and it
+// must still read its config on the next start.
+func configureCheckout(dir, checkout string, uid int) (Result, error) {
+	if !filepath.IsAbs(checkout) || strings.ContainsAny(checkout, "\n\r\"'\\$`") || strings.TrimSpace(checkout) != checkout {
+		return Result{}, fmt.Errorf("%q cannot be written to an env file", checkout)
+	}
+	fi, err := os.Lstat(dbPathBelow(checkout))
+	if err != nil {
+		return Result{}, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || fi.IsDir() {
+		return Result{}, fmt.Errorf("%s is not a database file", dbPathBelow(checkout))
+	}
+	gid := int(st.Gid)
+	if err := ensureConfigDir(dir, uid, gid); err != nil {
+		return Result{}, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return Result{}, err
+	}
+	defer root.Close()
+	data := "# Written by `dockmesh system migrate-layout` for the source run in " + checkout + "; the data stays there.\nDOCKMESH_DATA_DIR=" + checkout + "\n"
+	if err := writeAtomic(root, envFileName, []byte(data), uid, gid, 0o640); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: CheckoutConfigured, DataDir: checkout}, nil
 }
 
 // findSource returns the first candidate that is a regular file named

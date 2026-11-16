@@ -89,6 +89,32 @@ var loadedEnvFile string
 // explicitEnvFile is true when loadedEnvFile came from --env-file.
 var explicitEnvFile bool
 
+// checkoutDataDir is the source run directory this process uses as its
+// data dir because no config names one (see layout.CheckoutDir).
+var checkoutDataDir string
+
+// useCheckoutData points DOCKMESH_DATA_DIR at the working directory when
+// it holds the data of a source run and nothing else configures the
+// server, so the derived paths are the ./data and ./stacks of 0.5.x.
+func useCheckoutData() error {
+	if loadedEnvFile != "" || os.Getenv("DOCKMESH_DATA_DIR") != "" || os.Getenv("DOCKMESH_DB_PATH") != "" {
+		return nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil //nolint:nilerr // without a working directory there is no ./data to keep
+	}
+	dir := layout.CheckoutDir(wd, os.Getenv, []string{unitEnvFile()}, nil)
+	if dir == "" {
+		return nil
+	}
+	if err := os.Setenv("DOCKMESH_DATA_DIR", dir); err != nil {
+		return err
+	}
+	checkoutDataDir = dir
+	return nil
+}
+
 // serverEnvFile names the env file this server most likely runs with: the
 // one loaded from --env-file or the default location, then the config in
 // /etc/dockmesh, else the file older installs keep next to the data dir.
@@ -252,6 +278,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "env-file:", err)
 		os.Exit(1)
 	}
+	if err := useCheckoutData(); err != nil {
+		fmt.Fprintln(os.Stderr, "data dir:", err)
+		os.Exit(1)
+	}
 
 	// Subcommand dispatch (§15.2, P.11.6 admin CLI suite).
 	if len(os.Args) > 1 {
@@ -321,6 +351,9 @@ func main() {
 	}
 
 	slog.Info("starting dockmesh", "version", version.Version, "commit", version.Commit)
+	if checkoutDataDir != "" {
+		slog.Info("no config found; using the data of the source run in the working directory", "data_dir", checkoutDataDir)
+	}
 
 	// Before config.Load and db.Open: they create the secrets file and the
 	// database a fresh install lacks.
@@ -867,6 +900,7 @@ func main() {
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
+	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an

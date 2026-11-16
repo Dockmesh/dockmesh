@@ -231,11 +231,11 @@ func TestUsersWithoutAdminNeverOpenSetup(t *testing.T) {
 // server does not look at; setup stays closed even with no config.
 func TestForeignDatabaseKeepsSetupClosed(t *testing.T) {
 	const activeDB = "/opt/elsewhere/data/dockmesh.db"
-	for _, known := range layout.KnownDBPaths() {
+	for _, known := range layout.KnownDBPaths(checkout) {
 		t.Run(known, func(t *testing.T) {
 			root := t.TempDir()
 			openAt(t, root, known)
-			if got := boot(t, root, Probe{Paths: config.Paths{DBPath: activeDB}, Force: true}); got != SetUp {
+			if got := boot(t, root, Probe{Paths: config.Paths{DBPath: activeDB}, WorkDir: checkout, Force: true}); got != SetUp {
 				t.Fatalf("mode = %v, want set up", got)
 			}
 		})
@@ -393,7 +393,7 @@ func TestDanglingDatabaseSymlinkIsPresent(t *testing.T) {
 
 func TestDatabaseSymlinkToKnownPathIsNotForeign(t *testing.T) {
 	root := t.TempDir()
-	known := layout.KnownDBPaths()[0]
+	known := layout.KnownDBPaths("")[0]
 	const active = "/srv/dm/data/dockmesh.db"
 	openAt(t, root, known)
 	if err := os.MkdirAll(filepath.Join(root, "/srv/dm/data"), 0o750); err != nil {

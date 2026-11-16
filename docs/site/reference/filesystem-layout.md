@@ -54,7 +54,7 @@ What each file is for:
 
 Keep `secrets.age-key` somewhere outside the server as well: it is the only way to read encrypted backups. Copy the file, or download it under **Settings** → **Encryption key** → **Download key backup** (permission `backups.key_export`, the API is `GET /api/v1/system/backup-key/export`). See [Backups](../operations/backups.md).
 
-Running `dockmesh serve` with no variables set uses `/var/lib/dockmesh`. `make dev` sets `DOCKMESH_DATA_DIR` to the checkout, so development data stays in `./data` and `./stacks`.
+Running `dockmesh serve` with no variables set uses `/var/lib/dockmesh`. `make dev` sets `DOCKMESH_DATA_DIR` to the checkout, so development data stays in `./data` and `./stacks`. A server started without any env file, `DOCKMESH_DATA_DIR` or `DOCKMESH_DB_PATH` from a directory that holds `data/dockmesh.db` uses that directory as its data root, the way source runs up to 0.5.x kept `./data` and `./stacks`; an admin notice says so until a config names the data root (`sudo ./dockmesh system migrate-layout`, run in that directory, writes one). A directory with `data/` but no `dockmesh.db` in it does not count. While such a database exists, the setup wizard never opens over it, also when the server uses another data root.
 
 ## Stack directory
 

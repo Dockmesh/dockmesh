@@ -42,3 +42,25 @@ func ConfigNoticeCheck(envFile string) notices.Check {
 		})
 	}
 }
+
+// CheckoutNoticeKey is the notice raised while the server runs on the
+// data of a source run because no config names a data dir.
+const CheckoutNoticeKey = "install.checkout-data"
+
+// CheckoutNoticeCheck raises the admin notice while checkoutDir (see
+// CheckoutDir) is the data dir and resolves it once a config names one.
+func CheckoutNoticeCheck(checkoutDir string) notices.Check {
+	body := i18n.Msg("notice.checkout_data.body", checkoutDir, ConfigFile)
+	if runtime.GOOS != "linux" {
+		body = i18n.Msg("notice.checkout_data.body_other", checkoutDir)
+	}
+	return func(ctx context.Context, n *notices.Service) error {
+		return n.Set(ctx, checkoutDir != "", notices.RaiseInput{
+			Key:      CheckoutNoticeKey,
+			Audience: notices.Admins(),
+			Severity: notices.SevInfo,
+			Title:    i18n.Msg("notice.checkout_data.title"),
+			Body:     body,
+		})
+	}
+}
