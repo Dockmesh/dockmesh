@@ -238,6 +238,17 @@ export interface UpdateInstallState {
   last_result?: UpdateResult;
 }
 
+// UnitRewriteState says which local backup directories the service can
+// write to, and whether a restart to allow the read-only ones is pending.
+export interface UnitRewriteState {
+  phase: 'idle' | 'waiting_for_stacks' | 'restarting' | 'failed';
+  error?: string;
+  restart_pending: boolean;
+  unavailable?: 'container' | 'no_updater' | 'unsupported';
+  last_result?: { status: 'done' | 'refused' | 'rolled_back' | 'failed'; step?: string; reason?: string; finished?: string };
+  dirs: Array<{ path: string; state: 'writable' | 'read_only' | 'permission_denied' | 'missing' | 'error'; error?: string }>;
+}
+
 // StackDeployment tracks which host a stack is deployed on (P.7).
 export interface StackDeployment {
   stack_name: string;
@@ -2463,9 +2474,9 @@ export const api = {
     localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
     hosts: () => request<BackupHost[]>('/backups/hosts'),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
-    testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
+    testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>
-      request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>('/backups/targets/test-config', {
+      request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean }>('/backups/targets/test-config', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'test', type, config, target_id: targetId })
       }),
     acceptTargetHostKey: (id: number) =>
@@ -2634,7 +2645,9 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version })
-      })
+      }),
+    unitRewriteState: () => request<UnitRewriteState>('/system/unit-rewrite'),
+    startUnitRewrite: () => request<UnitRewriteState>('/system/unit-rewrite', { method: 'POST' })
   },
 
   audit: {

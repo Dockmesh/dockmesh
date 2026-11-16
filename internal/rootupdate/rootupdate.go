@@ -49,7 +49,8 @@ const (
 const DefaultHealthTimeout = 180 * time.Second
 
 // Request is what the service asks for. Only Version is read for an
-// update; Type names another request, RequestSetupApply.
+// update; Type names another request, RequestSetupApply or
+// RequestUnitRewrite.
 type Request struct {
 	Type    string `json:"type,omitempty"`
 	Version string `json:"version,omitempty"`
@@ -58,6 +59,33 @@ type Request struct {
 // RequestSetupApply asks root to commit the setup of a never set up
 // server.
 const RequestSetupApply = "setup-apply"
+
+// RequestUnitRewrite asks root to write the service unit again from the
+// stored settings and restart the service, so directories added to them
+// become writable. The request carries nothing else: root reads the
+// paths itself, through the unit writer's checks.
+const RequestUnitRewrite = "unit-rewrite"
+
+// UnitResultFile is where root reports a unit rewrite.
+const UnitResultFile = "unit-result.json"
+
+// Unit rewrite states in a UnitResult. UnitRestarting is written before
+// the restart and replaced by one of the others once it is over.
+const (
+	UnitRestarting = "restarting"
+	UnitDone       = "done"
+	UnitRefused    = "refused"
+	UnitRolledBack = "rolled_back"
+	UnitFailed     = "failed"
+)
+
+// UnitResult is root's report of a unit rewrite.
+type UnitResult struct {
+	Status   string    `json:"status"`
+	Step     string    `json:"step,omitempty"`
+	Reason   string    `json:"reason,omitempty"`
+	Finished time.Time `json:"finished,omitzero"`
+}
 
 // Pending is written to PendingFile from the stop of the old version until
 // the update is confirmed or rolled back. ResultFile is written before it

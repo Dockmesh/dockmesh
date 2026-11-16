@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -136,6 +138,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if e.Key == targets.LocalRootsSetting {
+			if err := h.checkNewLocalRoots(h.Settings.Stored(e.Key), e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, targets.LocalRootsSetting+": "+err.Error())
+				return
+			}
+		}
 	}
 	for _, e := range entries {
 		if selfupdate.IsCacheKey(e.Key) {
@@ -224,4 +232,39 @@ func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 			h.audit(r, "proxy.disable", "", nil)
 		}
 	}
+}
+
+// checkNewLocalRoots applies the unit writer's rules to the roots next
+// adds to prev: the unit lists every root as writable, and a value it
+// refuses would stop every later unit write. Roots already stored stay
+// as they are, so an older value never makes the setting unsavable.
+func (h *Handlers) checkNewLocalRoots(prev, next string) error {
+	old := map[string]bool{}
+	for _, p := range splitRoots(prev) {
+		old[p] = true
+	}
+	for _, p := range splitRoots(next) {
+		if old[p] {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("%q is not an absolute path", p)
+		}
+		if err := h.AuditRetention.CheckLocalDir(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// splitRoots splits the setting as the unit writer does, keeping relative
+// entries as they are.
+func splitRoots(v string) []string {
+	var out []string
+	for _, p := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' }) {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

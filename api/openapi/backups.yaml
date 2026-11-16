@@ -1100,10 +1100,18 @@ components:
         config: {type: object}
     BackupTargetTestResult:
       type: object
-      required: [ok]
+      required: [status]
+      description: >-
+        The test lists the target, then writes a small `.dockmesh-write-test-*` file and deletes it again, as the
+        service, so a target the service can reach but not write to answers `error`.
       properties:
-        ok: {type: boolean}
-        latency_ms: {type: integer}
+        status: {type: string, enum: [connected, error]}
         total_bytes: {type: integer, format: int64}
+        used_bytes: {type: integer, format: int64}
         free_bytes: {type: integer, format: int64}
         error: {type: string}
+        read_only:
+          type: boolean
+          description: >-
+            Set when a local directory is read-only for the service, which is the case for a directory added to
+            `backups.local_roots` after the service unit was written; `POST /system/unit-rewrite` fixes it.

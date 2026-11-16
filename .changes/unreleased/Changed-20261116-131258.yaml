@@ -1,0 +1,3 @@
+kind: Changed
+body: Testing a backup target now writes and deletes a small test file as the service, so a read-only or unwritable directory is reported instead of connected
+time: 2026-11-16T13:12:58.771130137Z
