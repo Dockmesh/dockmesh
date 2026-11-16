@@ -43,6 +43,10 @@ func (h *Handlers) CreateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if err := checkConfigKeys(in.Config, notify.ConfigFields(in.Type)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	c, err := h.Notify.Create(r.Context(), in)
 	if errors.Is(err, notify.ErrUnknownType) {
 		writeError(w, http.StatusBadRequest, "unknown channel type")
@@ -69,6 +73,10 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	var in notify.ChannelInput
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := checkConfigKeys(in.Config, notify.ConfigFields(in.Type)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for _, prev := range h.Notify.Channels() {

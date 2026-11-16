@@ -655,6 +655,9 @@ func resolveJobTargetSecrets(in *backup.JobInput, prev *backup.Job) error {
 	if in.TargetID > 0 {
 		return nil
 	}
+	if err := checkConfigKeys(in.TargetConfig, backupTargetFields); err != nil {
+		return err
+	}
 	blank := blankedSecrets(in.TargetConfig)
 	var err error
 	if prev != nil && prev.TargetID == 0 && prev.TargetType == in.TargetType {

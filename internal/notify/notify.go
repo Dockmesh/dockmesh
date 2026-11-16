@@ -296,8 +296,7 @@ func (s *Service) sendWithRetry(ctx context.Context, id int64, n Notification) e
 // maxErrorLen bounds the stored error; other errors can still be long.
 const maxErrorLen = 300
 
-// recordResult persists the delivery outcome. The stored error is shown
-// to every alerts viewer, so HTTP errors are reduced to their status.
+// recordResult persists the delivery outcome.
 func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
 	now := time.Now().UTC()
 	var dbErr error

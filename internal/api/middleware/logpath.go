@@ -37,13 +37,12 @@ func RedactPath(p string) string {
 
 type realURLKey struct{}
 
-// HidePathSecrets hands wrap, a tracing middleware that records the
-// request path, a request whose path went through RedactPath; next still
-// sees the real one.
+// HidePathSecrets passes wrap (a tracing middleware) a request with its
+// path run through RedactPath; next still gets the real URL.
 func HidePathSecrets(next http.Handler, wrap func(http.Handler) http.Handler) http.Handler {
 	inner := wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := r.Context().Value(realURLKey{}).(*url.URL); ok {
-			r = r.WithContext(r.Context())
+			r = r.Clone(r.Context())
 			r.URL = u
 		}
 		next.ServeHTTP(w, r)

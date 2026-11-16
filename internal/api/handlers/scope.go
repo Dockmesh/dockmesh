@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
@@ -149,8 +150,12 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 // refused because the caller lacks perm.
 func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 	// The escaped form is plain ASCII: no line breaks or control
-	// characters from the caller end up in the audit log.
-	path := middleware.RedactPath(r.URL.EscapedPath())
+	// characters from the caller end up in the audit log. Redaction goes
+	// by the decoded path, so an escaped "invite" segment is caught too.
+	path := r.URL.EscapedPath()
+	if hidden := middleware.RedactPath(r.URL.Path); hidden != r.URL.Path {
+		path = (&url.URL{Path: hidden}).EscapedPath()
+	}
 	if len(path) > maxDeniedPathLen {
 		path = path[:maxDeniedPathLen] + "..."
 	}

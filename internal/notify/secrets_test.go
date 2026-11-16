@@ -29,6 +29,9 @@ func TestConfigFieldsClassified(t *testing.T) {
 		{"pagerduty", pagerDutyCfg{}, []string{"integration_key"}},
 		{"pushover", pushoverCfg{}, []string{"app_token", "user_key"}},
 	}
+	if len(tests) != len(secretFields) {
+		t.Fatalf("%d types tested, %d have secret fields", len(tests), len(secretFields))
+	}
 	for _, tt := range tests {
 		t.Run(tt.typ, func(t *testing.T) {
 			if !validType(tt.typ) {
@@ -38,12 +41,24 @@ func TestConfigFieldsClassified(t *testing.T) {
 			for _, s := range tt.secrets {
 				isSecret[s] = true
 			}
+			if got := secretFields[tt.typ]; !reflect.DeepEqual(got, tt.secrets) {
+				t.Errorf("secretFields = %v, want %v", got, tt.secrets)
+			}
+			fields := map[string]bool{"language": true}
 			rt := reflect.TypeOf(tt.cfg)
 			for i := range rt.NumField() {
 				name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+				fields[name] = true
 				if got := PublicConfigField(tt.typ, name); got == isSecret[name] {
 					t.Errorf("field %q: public = %v, want %v", name, got, !isSecret[name])
 				}
+			}
+			got := map[string]bool{}
+			for _, f := range ConfigFields(tt.typ) {
+				got[f] = true
+			}
+			if !reflect.DeepEqual(got, fields) {
+				t.Errorf("ConfigFields = %v, want %v", got, fields)
 			}
 			if !PublicConfigField(tt.typ, "language") {
 				t.Error("language must be public")
@@ -68,7 +83,10 @@ func TestErrorTextMasksSecrets(t *testing.T) {
 		want     string
 	}{
 		{"plain", errors.New("bad token tok-123456"), false, "bad token [redacted]"},
-		{"echoed path", &statusError{Status: "404 Not Found", Body: "Cannot POST /base/message"}, true, "404 Not Found: Cannot POST [redacted]/message"},
+		{"echoed path", &statusError{Status: "404 Not Found", Body: "Cannot POST /base/message"}, true, "404 Not Found"},
+		{"echoed segment", &statusError{Status: "404 Not Found", Body: "no app base"}, true, "404 Not Found"},
+		{"json-escaped path", &statusError{Status: "400 Bad Request", Body: `{"path":"\/base"}`}, true, "400 Bad Request"},
+		{"unrelated body", &statusError{Status: "500 Internal Server Error", Body: "disk full"}, true, "500 Internal Server Error: disk full"},
 		{"status only", &statusError{Status: "404 Not Found", Body: "tok-123456"}, false, "404 Not Found"},
 		{"public value kept", errors.New("language de"), false, "language de"},
 		{"short value kept", errors.New("ab"), false, "ab"},

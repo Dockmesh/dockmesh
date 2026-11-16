@@ -1081,7 +1081,7 @@ components:
         config:
           type: object
           description: >-
-            Target-specific settings. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
+            Target-specific settings. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty, null or omitted secret keeps the stored value, and sending `<field>_set: false` with it clears it. Field names that aren't plain ASCII or differ only in case from another field are refused with 400.
         status: {type: string, enum: [unknown, ok, degraded, unreachable]}
         total_bytes: {type: integer, format: int64}
         used_bytes: {type: integer, format: int64}

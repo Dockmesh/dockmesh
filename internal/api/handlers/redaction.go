@@ -13,6 +13,13 @@ import (
 // Credential fields in backup target configs (also embedded in jobs).
 var backupTargetSecrets = []string{"password", "secret_key", "private_key"}
 
+// backupTargetFields lists the config fields of every backup target type.
+var backupTargetFields = []string{
+	"access_key", "bucket", "ca_cert", "domain", "endpoint", "host", "host_key", "host_key_pending",
+	"password", "path", "port", "prefix", "private_key", "region", "secret_key", "share", "url",
+	"use_ssl", "username",
+}
+
 // notifySecrets lists the fields of the given configs that are
 // credentials for a channel type: every field that isn't a known public
 // one, so a field the client invented can't be read back either. A
@@ -52,6 +59,16 @@ func keepConfig(next, stored any, secrets []string) (any, error) {
 	return redact.Keep(n, redact.ToMap(stored), secrets)
 }
 
+// checkConfigKeys refuses a config whose field names the type's decoder
+// could match to another field than the one they spell; known lists the
+// field names of the type.
+func checkConfigKeys(cfg any, known []string) error {
+	if m := redact.ToMap(cfg); m != nil {
+		return redact.CheckKeys(m, known)
+	}
+	return nil
+}
+
 func redactJob(j *backup.Job) *backup.Job {
 	out := *j
 	out.TargetConfig = redactConfig(j.TargetConfig, backupTargetSecrets)
@@ -64,8 +81,8 @@ func redactTarget(t *targets.StoredTarget) *targets.StoredTarget {
 	return &out
 }
 
-// redactChannel answers a config that isn't a JSON object with an empty
-// one: it has no named fields to tell secrets from the rest.
+// redactChannel returns a config that isn't a JSON object as {}, since
+// none of it can be told apart from a secret.
 func redactChannel(c *notify.Channel) *notify.Channel {
 	out := *c
 	out.Config = json.RawMessage("{}")

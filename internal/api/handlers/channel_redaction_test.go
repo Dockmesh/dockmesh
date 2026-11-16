@@ -196,3 +196,74 @@ func TestUpdateMissingChannel(t *testing.T) {
 		t.Fatalf("update of a missing channel: %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestChannelRefusesFoldedFieldNames(t *testing.T) {
+	stored := map[string]any{"host": "smtp.example.com", "port": float64(587), "username": "alerts",
+		"password": channelCanary, "from": "a@example.com", "to": []any{"ops@example.com"}}
+	tests := []struct {
+		name  string
+		extra map[string]any
+	}{
+		{"long s host", map[string]any{"hoſt": "evil.example.com"}},
+		{"ascii Host", map[string]any{"Host": "evil.example.com"}},
+		{"upper-case from", map[string]any{"FROM": "x@evil.example.com"}},
+		{"kelvin sign", map[string]any{"Key": "x"}},
+		{"case duplicates", map[string]any{"note": "a", "Note": "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, svc := newChannelRouter(t)
+			bad := map[string]any{}
+			for k, v := range stored {
+				bad[k] = v
+			}
+			for k, v := range tt.extra {
+				bad[k] = v
+			}
+			if rr := channelCall(t, r, http.MethodPost, "/channels",
+				map[string]any{"type": "email", "name": "n", "config": bad}); rr.Code != http.StatusBadRequest {
+				t.Fatalf("create: %d, want 400: %s", rr.Code, rr.Body.String())
+			}
+			created := channelCall(t, r, http.MethodPost, "/channels",
+				map[string]any{"type": "email", "name": "n", "config": stored})
+			var c channelResp
+			if err := json.Unmarshal(created.Body.Bytes(), &c); err != nil {
+				t.Fatal(err)
+			}
+			update := map[string]any{}
+			for k, v := range c.Config {
+				update[k] = v
+			}
+			for k, v := range tt.extra {
+				update[k] = v
+			}
+			rr := channelCall(t, r, http.MethodPut, "/channels/"+strconv.FormatInt(c.ID, 10),
+				map[string]any{"type": "email", "name": "n", "config": update})
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("update with kept password: %d, want 400: %s", rr.Code, rr.Body.String())
+			}
+			if got := storedConfig(t, svc, c.ID); !reflect.DeepEqual(got, stored) {
+				t.Errorf("stored = %v, want %v", got, stored)
+			}
+		})
+	}
+}
+
+func TestChannelSecretClearedByFalseMarker(t *testing.T) {
+	r, svc := newChannelRouter(t)
+	created := channelCall(t, r, http.MethodPost, "/channels", map[string]any{"type": "ntfy", "name": "n",
+		"config": map[string]any{"url": "https://ntfy.example.com/t", "token": channelCanary}})
+	var c channelResp
+	if err := json.Unmarshal(created.Body.Bytes(), &c); err != nil {
+		t.Fatal(err)
+	}
+	rr := channelCall(t, r, http.MethodPut, "/channels/"+strconv.FormatInt(c.ID, 10), map[string]any{"type": "ntfy", "name": "n",
+		"config": map[string]any{"url": "", "url_set": true, "token": "", "token_set": false}})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rr.Code, rr.Body.String())
+	}
+	want := map[string]any{"url": "https://ntfy.example.com/t"}
+	if got := storedConfig(t, svc, c.ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored = %v, want %v", got, want)
+	}
+}
