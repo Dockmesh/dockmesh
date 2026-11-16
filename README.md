@@ -60,7 +60,7 @@ Open the link the installer prints (`http://<host>:8080/setup#<code>`) to create
 
 Other hosts: in the UI go to **Hosts → Add host** and run the command it shows on that host (Linux with systemd).
 
-Requirements, macOS, manual and from-source installs: [installation guide](https://dockmesh.dev/docs/getting-started/installation/).
+Requirements, manual and from-source installs: [installation guide](https://dockmesh.dev/docs/getting-started/installation/). Tested distributions and Docker versions: [supported systems](https://dockmesh.dev/docs/getting-started/supported-systems/).
 
 ## Upgrade
 
