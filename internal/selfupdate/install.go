@@ -129,6 +129,7 @@ type Installer struct {
 	mu    sync.Mutex
 	state InstallState
 	last  *rootupdate.Result
+	unit  UnitRewriteState
 }
 
 // NewInstaller returns an Installer; the update directory is created if
@@ -236,11 +237,18 @@ func (i *Installer) Start(ctx context.Context, version string) error {
 	if i.UpdatePending() {
 		return ErrInstallRunning
 	}
+	if res, ok := i.readUnitResult(); ok && res.Status == rootupdate.UnitRestarting {
+		return ErrUnitRewriteRunning
+	}
 	i.mu.Lock()
 	switch i.state.Phase {
 	case PhaseDownloading, PhaseWaiting, PhaseApplying:
 		i.mu.Unlock()
 		return ErrInstallRunning
+	}
+	if i.unitBusyLocked() {
+		i.mu.Unlock()
+		return ErrUnitRewriteRunning
 	}
 	i.state = InstallState{Phase: PhaseDownloading, Version: version, Started: time.Now().UTC()}
 	i.mu.Unlock()

@@ -19,6 +19,14 @@ import (
 
 const journalName = "journal.json"
 
+// Unfinished reports whether stateDir holds the journal of an update or
+// rollback that has not finished. Unlike PendingFile, the service can't
+// remove it.
+func Unfinished(stateDir string) bool {
+	_, err := os.Lstat(filepath.Join(stateDir, journalName))
+	return err == nil
+}
+
 // journal records an update from the stop of the old version on, so a
 // run that dies half-way can be rolled back by the next one (the update
 // service also runs once at boot).

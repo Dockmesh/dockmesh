@@ -421,13 +421,8 @@ func readUnitPaths(dbPath string) (unitPathsOutput, error) {
 		}
 		if k == targets.LocalRootsSetting {
 			out.RootsSet = true
-			// Split as targets.ParseRoots does, without making a relative
-			// entry absolute: the caller refuses it instead.
-			for _, r := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' }) {
-				if r = strings.TrimSpace(r); r != "" {
-					out.Paths = append(out.Paths, r)
-				}
-			}
+			// Relative entries stay relative: the caller refuses them.
+			out.Paths = append(out.Paths, targets.SplitRoots(v)...)
 		} else if v != "" {
 			out.Paths = append(out.Paths, v)
 		}

@@ -213,7 +213,7 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 	tgt, buildErr := h.BackupTargets.BuildChecked(r.Context(), stored, h.Notices)
 	if buildErr != nil {
 		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "error", 0, 0)
-		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": buildErr.Error()})
+		writeJSON(w, http.StatusOK, targetTestError(buildErr))
 		return
 	}
 
@@ -246,6 +246,14 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	warning := ""
+	if err := targets.ProbeWrite(probeCtx, tgt); errors.Is(err, targets.ErrProbeNotDeleted) {
+		warning = err.Error()
+	} else if err != nil {
+		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "error", 0, 0)
+		writeJSON(w, http.StatusOK, targetTestError(err))
+		return
+	}
 
 	_ = h.BackupTargets.UpdateStatus(r.Context(), id, "connected", total, used)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -253,6 +261,7 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		"total_bytes": total,
 		"used_bytes":  used,
 		"free_bytes":  total - used,
+		"warning":     warning,
 	})
 }
 
@@ -312,7 +321,7 @@ func (h *Handlers) TestBackupTargetConfig(w http.ResponseWriter, r *http.Request
 	}
 	tgt, err := buildTargetFromInput(in.Type, cfg)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": err.Error()})
+		writeJSON(w, http.StatusOK, targetTestError(err))
 		return
 	}
 	type storageQuerier interface {
@@ -326,9 +335,30 @@ func (h *Handlers) TestBackupTargetConfig(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	warning := ""
+	if err := targets.ProbeWrite(probeCtx, tgt); errors.Is(err, targets.ErrProbeNotDeleted) {
+		warning = err.Error()
+	} else if err != nil {
+		writeJSON(w, http.StatusOK, targetTestError(err))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "connected", "total_bytes": total, "used_bytes": used, "free_bytes": total - used,
+		"status": "connected", "total_bytes": total, "used_bytes": used, "free_bytes": total - used, "warning": warning,
 	})
+}
+
+// targetTestError is the answer of a failed target test. read_only marks
+// a local directory the service may not write to yet, which the unit
+// rewrite on the Backups page fixes.
+func targetTestError(err error) map[string]any {
+	out := map[string]any{"status": "error", "error": err.Error()}
+	if targets.IsReadOnly(err) {
+		out["read_only"] = true
+		out["error"] = err.Error() + ": the directory is read-only for the Dockmesh service; allow writing to it on the Backups page"
+	}
+	return out
 }
 
 // DiscoverSMBShares lists available shares on an SMB server.
