@@ -311,8 +311,7 @@ service_runs_new_binary() {
   return 0
 }
 
-# restore_label resets the SELinux label of the files in $@ to the policy
-# default, bin_t below /usr/local/bin, which systemd may execute.
+# restore_label resets the SELinux label of the files in $@ to the policy default.
 restore_label() {
   [ -e "${SELINUX_ENFORCE_FILE:-/sys/fs/selinux/enforce}" ] || return 0
   command -v restorecon >/dev/null 2>&1 || return 0

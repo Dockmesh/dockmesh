@@ -333,8 +333,7 @@ selinux_enabled() {
 # a symlink and none relabelled recursively: the service account owns the
 # bin dir and could plant links to other files in it. A binary created
 # later in a bin_t directory inherits the type, so a self-upgrade's rename
-# keeps it. A semanage rule also survives a relabel of the filesystem, a
-# label set with chcon does not.
+# keeps it.
 label_bin_t() {
   local path="$1" spec f
   selinux_enabled || return 0
@@ -558,17 +557,18 @@ fi
 AGENT_WAIT_SECS="${AGENT_WAIT_SECS:-60}"
 [[ "$STATE" == waiting ]] && log "waiting for agent to connect (up to ${AGENT_WAIT_SECS}s)"
 AGENT_LOGS=""
-for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
-  [[ "$STATE" != waiting ]] && break
-  if [[ "$(systemctl show -p ExecMainStatus --value dockmesh-agent.service 2>/dev/null || true)" == 203 ]]; then
-    STATE=start_failed
-    break
-  fi
-  AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
-  STATE="$(agent_log_state "$AGENT_LOGS")"
-  [[ "$STATE" != waiting ]] && break
-  sleep 1
-done
+if [[ "$STATE" == waiting ]]; then
+  for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
+    if [[ "$(systemctl show -p ExecMainStatus --value dockmesh-agent.service 2>/dev/null || true)" == 203 ]]; then
+      STATE=start_failed
+      break
+    fi
+    AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
+    STATE="$(agent_log_state "$AGENT_LOGS")"
+    [[ "$STATE" != waiting ]] && break
+    sleep 1
+  done
+fi
 
 if [[ "$STATE" == connected ]]; then
   printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and connected\n'

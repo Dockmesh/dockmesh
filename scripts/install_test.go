@@ -159,6 +159,10 @@ func TestInstallAgentBinaries(t *testing.T) {
 
 func TestInstallRestoreLabel(t *testing.T) {
 	helpers := envHelpers(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
 	tests := []struct {
 		name       string
 		selinux    bool
@@ -181,8 +185,7 @@ func TestInstallRestoreLabel(t *testing.T) {
 			}
 			if tt.restorecon >= 0 {
 				stub := "#!/bin/sh\necho \"$*\" >>" + calls + "\nexit " + strconv.Itoa(tt.restorecon) + "\n"
-				mustWrite(t, filepath.Join(bin, "restorecon"), stub)
-				if err := os.Chmod(filepath.Join(bin, "restorecon"), 0o755); err != nil {
+				if err := os.WriteFile(filepath.Join(bin, "restorecon"), []byte(stub), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -191,10 +194,6 @@ func TestInstallRestoreLabel(t *testing.T) {
 				mustWrite(t, enforce, "1")
 			}
 			script := "set -euo pipefail\nUSE_SUDO=\nwarn() { echo \"warn: $*\" >&2; }\n" + helpers + "\nrestore_label /usr/local/bin/dockmesh\n"
-			bash, err := exec.LookPath("bash")
-			if err != nil {
-				t.Skip("bash not available")
-			}
 			cmd := exec.Command(bash, "-c", script)
 			cmd.Env = []string{"PATH=" + bin, "SELINUX_ENFORCE_FILE=" + enforce}
 			out, err := cmd.CombinedOutput()

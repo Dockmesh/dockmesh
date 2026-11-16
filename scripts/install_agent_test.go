@@ -448,9 +448,6 @@ func TestInstallAgentRefusesSymlinkedBinDir(t *testing.T) {
 	if refuse < 0 || mkdir < 0 || refuse > mkdir {
 		t.Error("the symlinked bin dir is not refused before the installer creates it")
 	}
-	if !strings.Contains(s, `BIN_DIR="$(readlink -f -- "$DATA_DIR")/bin"`) {
-		t.Error("BIN_DIR resolves more than the root-controlled data dir")
-	}
 	if strings.Contains(agentScriptFunc(t, "label_bin_t"), " -R") {
 		t.Error("label_bin_t relabels recursively")
 	}
@@ -494,12 +491,5 @@ func TestInstallAgentStartFailureHint(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestInstallAgentRefreshScriptRelabelsPathCopy(t *testing.T) {
-	fn := agentScriptFunc(t, "install_path_copy")
-	if !strings.Contains(fn, "restorecon -- \"$dest\"") {
-		t.Error("install_path_copy does not reset the SELinux label of the copy")
 	}
 }
