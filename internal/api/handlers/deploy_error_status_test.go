@@ -16,6 +16,8 @@ func TestDeployErrorStatus(t *testing.T) {
 	}{
 		{fmt.Errorf("%w: /dev/zero is not a regular file", compose.ErrComposeFileRef), http.StatusUnprocessableEntity},
 		{errors.New("agent: compose file reference refused: ../x.yaml is outside the stack folder"), http.StatusUnprocessableEntity},
+		{fmt.Errorf("service \"web\": env_file \"/etc/hostname\" is absolute: %w", compose.ErrEnvFileNeedAgent), http.StatusUnprocessableEntity},
+		{fmt.Errorf("key \"LABEL_FILE\": write it as \"label_file\": %w", compose.ErrLabelsNeedAgent), http.StatusUnprocessableEntity},
 		{errors.New("port is already allocated"), http.StatusUnprocessableEntity},
 		{errors.New("docker daemon gone"), http.StatusInternalServerError},
 	}
