@@ -54,8 +54,14 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		h.auditAccountBlocks(r, err, "mfa")
 		if h.Audit != nil {
-			h.Audit.WriteLoginFailed(ctx, audit.LoginFailure{IP: key, Reason: audit.LoginReasonMFA},
-				"mfa", map[string]string{"ip": ip})
+			// Only a verified challenge names the account; a forged token
+			// draws from the IP and global budgets alone.
+			failure := audit.LoginFailure{IP: key, Reason: audit.LoginReasonMFAToken}
+			var codeErr *auth.MFACodeError
+			if errors.As(err, &codeErr) {
+				failure = audit.LoginFailure{IP: key, Account: codeErr.Username, Reason: audit.LoginReasonMFA}
+			}
+			h.Audit.WriteLoginFailed(ctx, failure, "mfa", map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid code")
 		return

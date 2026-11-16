@@ -658,7 +658,7 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 	ok, err = s.verifyMFACode(ctx, claims.UserID, code)
 	if err != nil || !ok {
 		lockout := s.recordFailedLogin(ctx, claims.UserID, key)
-		return nil, s.failedAttempt(ctx, att, lockout)
+		return nil, &MFACodeError{Username: key, Err: s.failedAttempt(ctx, att, lockout)}
 	}
 	s.clearFailures(ctx, claims.UserID)
 	u, err := s.GetUser(ctx, claims.UserID)

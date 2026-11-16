@@ -38,7 +38,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Username == "" || req.Password == "" {
+	if auth.NormalizeUsername(req.Username) == "" || req.Password == "" {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}

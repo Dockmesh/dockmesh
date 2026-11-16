@@ -11,10 +11,9 @@ import (
 // request can't grow the log without bound or push other events out of
 // the webhook queue.
 const (
-	DenialWindow      = time.Minute
-	DenialBurst       = 10
-	maxDenialActors   = 4096
-	maxDenialTokenIDs = maxSummaryNames
+	DenialWindow    = time.Minute
+	DenialBurst     = 10
+	maxDenialActors = 4096
 )
 
 // DenialActor identifies who a refusal is counted for. Key separates the
@@ -38,7 +37,7 @@ type denials struct {
 }
 
 func newDenials() denials {
-	return denials{budget[denialTally]{window: DenialWindow, burst: DenialBurst, maxKeys: maxDenialActors}}
+	return denials{budget[denialTally]{window: DenialWindow, maxKeys: maxDenialActors}}
 }
 
 // WriteDenied records an auth.scope_denied entry for actor, unless actor
@@ -84,20 +83,20 @@ func (s *Service) writeDenialSummaries(ctx context.Context, summaries []bucket[d
 		if actor.UserID == "" {
 			details["actor"] = actor.Key
 		}
-		s.Write(ctx, actor.UserID, ActionScopeDenied, fmt.Sprintf("%d more refused requests", b.suppressed), details)
+		s.writeSummary(ctx, actor.UserID, ActionScopeDenied, fmt.Sprintf("%d more refused requests", b.suppressed), details)
 	}
 }
 
 // admit reports whether this refusal is written in full, and returns the
 // windows that ended before it with refusals still to summarise.
 func (d *denials) admit(actor DenialActor, perm string) (bool, []bucket[denialTally]) {
-	return d.charge([]string{actor.Key}, func(_ string, t *denialTally) {
+	return d.charge([]budgetKey{{actor.Key, DenialBurst}}, func(_ string, t *denialTally, _ func(string) bool) {
 		if t.actor.Key == "" {
 			t.actor = actor
 		}
-		t.perms = countCapped(t.perms, perm)
+		t.perms = countCapped(t.perms, perm, false)
 		if actor.TokenID != 0 {
-			t.tokens = countCapped(t.tokens, strconv.FormatInt(actor.TokenID, 10))
+			t.tokens = countCapped(t.tokens, strconv.FormatInt(actor.TokenID, 10), false)
 		}
 	})
 }

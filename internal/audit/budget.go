@@ -2,23 +2,29 @@ package audit
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
 	"time"
 )
 
-// budget lets each key write burst entries per window. Events beyond
-// that are only counted into the window's tally T and written as one
-// summary entry when the window is over.
+// budget lets each key write a burst of entries per window. Events
+// beyond that are only counted into the window's tally T and written as
+// one summary entry when the window is over.
 type budget[T any] struct {
 	window  time.Duration
-	burst   int
 	maxKeys int
 
 	mu      sync.Mutex
 	now     func() time.Time
 	buckets map[string]*bucket[T]
+}
+
+// budgetKey is one budget an event draws from, with its burst.
+type budgetKey struct {
+	name  string
+	burst int
 }
 
 type bucket[T any] struct {
@@ -39,33 +45,44 @@ func (b *budget[T]) clock() time.Time {
 
 // charge reports whether an event counted for all of keys is written in
 // full, which needs room in the window of every key. Otherwise the event
-// is counted once, by count on the first key whose window is full. The
-// windows that ended before the event and still have events to summarise
-// are returned too.
-func (b *budget[T]) charge(keys []string, count func(key string, tally *T)) (bool, []bucket[T]) {
+// is counted once, by count on the first key whose window is full; full
+// tells count which other keys are out of room too. The windows that
+// ended before the event and still have events to summarise are returned
+// too.
+func (b *budget[T]) charge(keys []budgetKey, count func(key string, tally *T, full func(key string) bool)) (bool, []bucket[T]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.clock()
 	var out []bucket[T]
 	for _, k := range keys {
-		w := b.buckets[k]
+		w := b.buckets[k.name]
 		if w != nil && now.Sub(w.start) >= b.window {
 			if w.suppressed > 0 {
 				w.end = w.start.Add(b.window)
 				out = append(out, *w)
 			}
-			delete(b.buckets, k)
+			delete(b.buckets, k.name)
 		}
 	}
+	full := func(name string) bool {
+		for _, k := range keys {
+			if k.name == name {
+				w := b.buckets[name]
+				return w != nil && w.written >= k.burst
+			}
+		}
+		return false
+	}
 	for _, k := range keys {
-		if w := b.buckets[k]; w != nil && w.written >= b.burst {
+		if full(k.name) {
+			w := b.buckets[k.name]
 			w.suppressed++
-			count(k, &w.tally)
+			count(k.name, &w.tally, full)
 			return false, out
 		}
 	}
 	for _, k := range keys {
-		w := b.buckets[k]
+		w := b.buckets[k.name]
 		if w == nil {
 			if b.buckets == nil {
 				b.buckets = map[string]*bucket[T]{}
@@ -78,8 +95,8 @@ func (b *budget[T]) charge(keys []string, count func(key string, tally *T)) (boo
 				// written now, so no count is lost.
 				out = append(out, b.evictOldestLocked(now)...)
 			}
-			w = &bucket[T]{key: k, start: now}
-			b.buckets[k] = w
+			w = &bucket[T]{key: k.name, start: now}
+			b.buckets[k.name] = w
 		}
 		w.written++
 	}
@@ -135,16 +152,27 @@ func (b *budget[T]) expiredLocked(now time.Time, all bool) []bucket[T] {
 const maxSummaryNames = 32
 
 // countCapped adds one to m[name], counting names beyond maxSummaryNames
-// distinct ones as "other".
-func countCapped(m map[string]int, name string) map[string]int {
+// distinct ones as "other" unless keep is set.
+func countCapped(m map[string]int, name string, keep bool) map[string]int {
 	if m == nil {
 		m = map[string]int{}
 	}
-	if _, ok := m[name]; !ok && len(m) >= maxSummaryNames {
+	if _, ok := m[name]; !ok && !keep && len(m) >= maxSummaryNames {
 		name = "other"
 	}
 	m[name]++
 	return m
+}
+
+// writeSummary stores a summary entry. Its window is already forgotten,
+// so a failed write is tried once more and then logged with the count.
+func (s *Service) writeSummary(ctx context.Context, userID, action, target string, details any) {
+	if s.WriteErr(ctx, userID, action, target, details) == nil {
+		return
+	}
+	if err := s.WriteErr(ctx, userID, action, target, details); err != nil {
+		slog.Error("audit summary lost", "action", action, "target", target, "err", err)
+	}
 }
 
 // startFlusher calls flush every interval, and with all set once stop is

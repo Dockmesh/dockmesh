@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -279,10 +280,32 @@ func TestLoginMFAParallelGuesses(t *testing.T) {
 	}
 }
 
-func TestLoginRejectsLongUsername(t *testing.T) {
+func TestLoginRejectsBadUsername(t *testing.T) {
 	e := newLoginEnv(t, 0)
-	if rr := loginAs(t, e, remoteN(0), strings.Repeat("a", 257), "x"); rr.Code != http.StatusBadRequest {
-		t.Fatalf("257-byte username: %d, want 400", rr.Code)
+	for _, name := range []string{strings.Repeat("a", 257), "   ", "\t"} {
+		if rr := loginAs(t, e, remoteN(0), name, "x"); rr.Code != http.StatusBadRequest {
+			t.Fatalf("username %q: %d, want 400", name, rr.Code)
+		}
+	}
+}
+
+// A wrong code for a real challenge names its account for the audit
+// budget; a forged challenge token names none.
+func TestLoginMFAFailureNamesAccount(t *testing.T) {
+	e := newLoginEnv(t, 0)
+	u := e.user("Dave", "viewer")
+	enrollTOTP(t, e, u.ID)
+	pending := e.login("Dave").MFAToken
+	ctx := context.Background()
+
+	_, err := e.h.Auth.VerifyLoginMFA(ctx, pending, "000000", "test", "127.0.0.1")
+	var codeErr *auth.MFACodeError
+	if !errors.As(err, &codeErr) || codeErr.Username != "dave" || !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("wrong code: %v", err)
+	}
+	_, err = e.h.Auth.VerifyLoginMFA(ctx, "forged", "000000", "test", "127.0.0.1")
+	if errors.As(err, &codeErr) || !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("forged token: %v", err)
 	}
 }
 
@@ -293,6 +316,7 @@ func TestLoginLockedAccountLoop(t *testing.T) {
 	e := newLoginEnv(t, lockout)
 	e.user("alice", "viewer")
 	stop := e.h.Audit.StartLoginFailureFlusher(context.Background())
+	t.Cleanup(stop)
 	for i := range lockout {
 		if rr := loginAs(t, e, remoteN(i), "alice", "wrong"); rr.Code != http.StatusUnauthorized {
 			t.Fatalf("wrong password %d: %d", i+1, rr.Code)
