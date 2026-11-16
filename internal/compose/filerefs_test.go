@@ -484,3 +484,21 @@ func TestLoadProjectResetIncludeIsNotFollowed(t *testing.T) {
 		t.Fatal("service web missing")
 	}
 }
+
+// An overlay that includes compose.yaml makes compose-go load it again as
+// an included file, where relative include env_files resolve against the
+// process working directory.
+func TestMergeEnvironmentRefusesOverlayIncludingBase(t *testing.T) {
+	dir := t.TempDir()
+	writeStack(t, dir, []stackFile{
+		{name: "compose.yaml", content: "include:\n  - path: b.yaml\n    env_file: rel.env\n" + svcNginx},
+		{name: "rel.env", content: "X=1\n"},
+		{name: "b.yaml", content: "services:\n  db:\n    image: redis\n"},
+		{name: "compose.prod.yaml", content: "include:\n  - compose.yaml\n"},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, _, err := MergeEnvironment(ctx, dir, "app", "", "prod"); !errors.Is(err, ErrComposeFileRef) {
+		t.Fatalf("err = %v", err)
+	}
+}

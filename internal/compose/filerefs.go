@@ -188,7 +188,12 @@ type refWalker struct {
 // project_directory and env_file against the process working directory,
 // so those are refused there.
 func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.Mapping, nested bool) error {
+	// A file reached through include gets the stricter nested checks, so
+	// having walked it at top level doesn't count for it.
 	key := walkKey(file, loaderDir, env)
+	if nested {
+		key = "nested:" + key
+	}
 	if w.seen[key] {
 		return nil
 	}
@@ -520,6 +525,13 @@ func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
 		svc := proj.Services[name]
 		if err := checkSpec(&svc.ContainerSpec); err != nil {
 			return err
+		}
+		if svc.Develop != nil {
+			for _, tr := range svc.Develop.Watch {
+				if _, err := files.rel(tr.Path); err != nil {
+					return err
+				}
+			}
 		}
 		for i := range svc.PreStart {
 			if err := checkSpec(&svc.PreStart[i].ContainerSpec); err != nil {
