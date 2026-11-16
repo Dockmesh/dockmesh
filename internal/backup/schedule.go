@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/cronsched"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/robfig/cron/v3"
 )
@@ -141,12 +142,12 @@ func (s *Service) schedule(j *Job) error {
 	if !j.Enabled || j.Schedule == "" {
 		return nil
 	}
-	jobID, name := j.ID, j.Name
-	id, err := s.cron.AddFunc(j.Schedule, func() { s.runScheduled(jobID, name) })
+	sched, err := cronsched.Parse(j.Schedule)
 	if err != nil {
 		return err
 	}
-	s.entryIDs[j.ID] = id
+	jobID, name := j.ID, j.Name
+	s.entryIDs[j.ID] = s.cron.Schedule(sched, cron.FuncJob(func() { s.runScheduled(jobID, name) }))
 	return nil
 }
 

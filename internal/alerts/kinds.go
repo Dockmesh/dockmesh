@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/cronsched"
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/system"
-	"github.com/robfig/cron/v3"
 )
 
 // Rule kinds. For the event kinds, container_filter is the target filter
@@ -727,7 +727,7 @@ func (s *Service) evalBackupFailed(ctx context.Context, r *Rule, runs []failedRu
 // backupOverdue reports whether a job with the given cron schedule has
 // gone longer than one interval plus grace without a successful run.
 func backupOverdue(schedule string, since, now time.Time) (bool, time.Duration) {
-	sched, err := cron.ParseStandard(schedule)
+	sched, err := cronsched.Parse(schedule)
 	if err != nil {
 		return false, 0
 	}

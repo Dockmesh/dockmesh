@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/cronsched"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
@@ -473,7 +474,7 @@ func validateJob(in JobInput) error {
 		}
 	}
 	if in.Schedule != "" {
-		if _, err := cron.ParseStandard(in.Schedule); err != nil {
+		if _, err := cronsched.Parse(in.Schedule); err != nil {
 			return err
 		}
 	}

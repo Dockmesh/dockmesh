@@ -307,6 +307,27 @@ func TestBackupOverdue(t *testing.T) {
 	}
 }
 
+func TestBackupOverdueAcrossFallBack(t *testing.T) {
+	// 01:30 CEST on the night the clock falls back; the 02:30 run of the
+	// day before finished at 02:40 CEST.
+	now := time.Date(2027, 10, 30, 23, 30, 0, 0, time.UTC)
+	since := time.Date(2027, 10, 30, 0, 40, 0, 0, time.UTC)
+	tests := []struct {
+		schedule     string
+		want         bool
+		wantInterval time.Duration
+	}{
+		{"CRON_TZ=Europe/Vienna 30 2 * * *", false, 25 * time.Hour},
+		{"CRON_TZ=Europe/Vienna 0 * * * *", true, time.Hour},
+	}
+	for _, tt := range tests {
+		got, interval := backupOverdue(tt.schedule, since, now)
+		if got != tt.want || interval != tt.wantInterval {
+			t.Errorf("backupOverdue(%q) = %v, %s; want %v, %s", tt.schedule, got, interval, tt.want, tt.wantInterval)
+		}
+	}
+}
+
 func TestCertExpiry(t *testing.T) {
 	s, database := newEvalService(t)
 	r := eventRule(t, s, RuleInput{Kind: KindCertExpiry, Threshold: 14})
