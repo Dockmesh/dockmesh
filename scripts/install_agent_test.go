@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -241,5 +242,254 @@ func TestInstallAgentUnitRefreshesPathCopy(t *testing.T) {
 	}
 	if strings.Contains(s, "ln -sf \"$AGENT_BIN\"") {
 		t.Error("installer still links the agent into the PATH")
+	}
+}
+
+// selinuxStubs returns a PATH that holds only the tools label_bin_t needs
+// besides the SELinux ones, plus logging stubs for those named in stubs
+// (name to exit code). Calls are appended to the returned log file.
+func selinuxStubs(t *testing.T, stubs map[string]int) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	for _, tool := range []string{"sed", "readlink", "dirname", "stat"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s not available", tool)
+		}
+		if err := os.Symlink(p, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, code := range stubs {
+		script := "#!/bin/sh\necho \"" + name + " $*\" >>" + calls + "\nexit " + strconv.Itoa(code) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, calls
+}
+
+func TestInstallAgentLabelBinT(t *testing.T) {
+	fn := agentScriptFunc(t, "selinux_enabled") + agentScriptFunc(t, "label_bin_t")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	all := map[string]int{"selinuxenabled": 0, "semanage": 0, "restorecon": 0, "chcon": 0}
+	tests := []struct {
+		name       string
+		dir        string // bin dir below the temp dir
+		binLink    bool   // the binary is a symlink to a file outside
+		dirLink    bool   // the bin dir is a symlink to a directory outside
+		file       bool   // label a single file instead of dir + binary
+		stubs      map[string]int
+		semanageM  bool // semanage -a fails, -m succeeds
+		enforce    bool // SELinux detected through selinuxfs instead of selinuxenabled
+		wantCalls  []string
+		wantChcon  bool
+		wantFailed bool
+	}{
+		{
+			name:  "selinux disabled",
+			dir:   "bin",
+			stubs: map[string]int{"selinuxenabled": 1, "semanage": 0, "restorecon": 0, "chcon": 0},
+		},
+		{
+			name:      "semanage rule, dir and binary only",
+			dir:       "bin",
+			stubs:     all,
+			wantCalls: []string{"semanage fcontext -a -t bin_t @/bin(/.*)?", "restorecon -- @/bin @/bin/dockmesh-agent"},
+		},
+		{
+			name:      "single file",
+			dir:       "bin",
+			file:      true,
+			stubs:     all,
+			wantCalls: []string{"semanage fcontext -a -t bin_t @/bin/dockmesh-agent", "restorecon -- @/bin/dockmesh-agent"},
+		},
+		{
+			name:      "selinuxfs without selinuxenabled",
+			dir:       "bin",
+			stubs:     map[string]int{"semanage": 0, "restorecon": 0},
+			enforce:   true,
+			wantCalls: []string{"semanage fcontext -a -t bin_t @/bin(/.*)?", "restorecon -- @/bin @/bin/dockmesh-agent"},
+		},
+		{
+			name:      "regex characters escaped",
+			dir:       "data.dir+1/bin",
+			stubs:     all,
+			wantCalls: []string{`semanage fcontext -a -t bin_t @/data\.dir\+1/bin(/.*)?`, `restorecon -- @/data.dir+1/bin @/data.dir+1/bin/dockmesh-agent`},
+		},
+		{
+			name:      "rule exists",
+			dir:       "bin",
+			stubs:     all,
+			semanageM: true,
+			wantCalls: []string{
+				"semanage fcontext -a -t bin_t @/bin(/.*)?",
+				"semanage fcontext -m -t bin_t @/bin(/.*)?",
+				"restorecon -- @/bin @/bin/dockmesh-agent",
+			},
+		},
+		{
+			name:      "no semanage",
+			dir:       "bin",
+			stubs:     map[string]int{"selinuxenabled": 0, "restorecon": 0, "chcon": 0},
+			wantCalls: []string{"chcon -t bin_t -- @/bin @/bin/dockmesh-agent"},
+			wantChcon: true,
+		},
+		{
+			name:       "chcon fails",
+			dir:        "bin",
+			stubs:      map[string]int{"selinuxenabled": 0, "chcon": 1},
+			wantCalls:  []string{"chcon -t bin_t -- @/bin @/bin/dockmesh-agent"},
+			wantChcon:  true,
+			wantFailed: true,
+		},
+		{
+			name:       "symlinked bin dir refused",
+			dir:        "bin",
+			dirLink:    true,
+			stubs:      all,
+			wantFailed: true,
+		},
+		{
+			name:       "symlinked binary refused",
+			dir:        "bin",
+			binLink:    true,
+			stubs:      all,
+			wantFailed: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pathDir, calls := selinuxStubs(t, tt.stubs)
+			if tt.semanageM {
+				script := "#!/bin/sh\necho \"semanage $*\" >>" + calls + "\n[ \"$2\" = -m ]\n"
+				if err := os.WriteFile(filepath.Join(pathDir, "semanage"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(base, "outside")
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, filepath.Join(outside, "secret"), "x")
+			target := filepath.Join(base, tt.dir)
+			if tt.dirLink {
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(target, "dockmesh-agent")
+			switch {
+			case tt.binLink:
+				if err := os.Symlink(filepath.Join(outside, "secret"), binary); err != nil {
+					t.Fatal(err)
+				}
+			case !tt.dirLink:
+				mustWrite(t, binary, "agent")
+			}
+			enforce := filepath.Join(base, "no-selinuxfs")
+			if tt.enforce {
+				enforce = filepath.Join(base, "enforce")
+				mustWrite(t, enforce, "1")
+			}
+			args := []string{target, binary}
+			if tt.file {
+				args = []string{binary}
+			}
+			script := "warn() { echo \"$*\" >&2; }\n" + fn + "\nSELINUX_CHCON=0\nlabel_bin_t \"$@\"; rc=$?\necho \"chcon=$SELINUX_CHCON\"\nexit $rc\n"
+			cmd := exec.Command(bash, append([]string{"-c", script, "t"}, args...)...)
+			cmd.Env = []string{"PATH=" + pathDir, "SELINUX_ENFORCE_FILE=" + enforce}
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantFailed {
+				t.Fatalf("err %v, want failure %v: %s", err, tt.wantFailed, out)
+			}
+			wantChcon := "chcon=0"
+			if tt.wantChcon {
+				wantChcon = "chcon=1"
+			}
+			if !strings.Contains(string(out), wantChcon) {
+				t.Errorf("output %q, want %s", out, wantChcon)
+			}
+			b, _ := os.ReadFile(calls)
+			var got []string
+			for _, line := range strings.Split(strings.TrimSpace(strings.ReplaceAll(string(b), base, "@")), "\n") {
+				if line != "" && !strings.HasPrefix(line, "selinuxenabled") {
+					got = append(got, line)
+				}
+			}
+			if strings.Join(got, "\n") != strings.Join(tt.wantCalls, "\n") {
+				t.Errorf("calls\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.wantCalls, "\n"))
+			}
+		})
+	}
+}
+
+// TestInstallAgentRefusesSymlinkedBinDir checks that the installer stops
+// before it creates, chmods or labels a bin dir the service account
+// replaced with a symlink.
+func TestInstallAgentRefusesSymlinkedBinDir(t *testing.T) {
+	b, err := os.ReadFile("install-agent.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	refuse := strings.Index(s, `[[ -L "$BIN_DIR" ]] && die`)
+	mkdir := strings.Index(s, `install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"`)
+	if refuse < 0 || mkdir < 0 || refuse > mkdir {
+		t.Error("the symlinked bin dir is not refused before the installer creates it")
+	}
+	if strings.Contains(agentScriptFunc(t, "label_bin_t"), " -R") {
+		t.Error("label_bin_t relabels recursively")
+	}
+}
+
+func TestInstallAgentStartFailureHint(t *testing.T) {
+	fn := agentScriptFunc(t, "selinux_enabled") + agentScriptFunc(t, "start_failure_hint")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name    string
+		selinux int
+		want    []string
+		notWant []string
+	}{
+		{"selinux on", 0, []string{"SELinux is Enforcing", "needs the type bin_t", "ausearch -m avc", "chcon -t bin_t /x/bin /x/bin/dockmesh-agent", "systemctl status dockmesh-agent"}, nil},
+		{"selinux off", 1, []string{"systemctl status dockmesh-agent", "journalctl -u dockmesh-agent"}, []string{"SELinux"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pathDir, _ := selinuxStubs(t, map[string]int{"selinuxenabled": tt.selinux})
+			if err := os.WriteFile(filepath.Join(pathDir, "getenforce"), []byte("#!/bin/sh\necho Enforcing\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, "-c", fn+"\nstart_failure_hint /x/bin/dockmesh-agent\n")
+			cmd.Env = []string{"PATH=" + pathDir}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(string(out), w) {
+					t.Errorf("output lacks %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tt.notWant {
+				if strings.Contains(string(out), w) {
+					t.Errorf("output has %q:\n%s", w, out)
+				}
+			}
+		})
 	}
 }

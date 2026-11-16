@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -151,6 +152,60 @@ func TestInstallAgentBinaries(t *testing.T) {
 			}
 			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("installed %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInstallRestoreLabel(t *testing.T) {
+	helpers := envHelpers(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name       string
+		selinux    bool
+		restorecon int // exit code; -1 for no restorecon
+		wantCall   bool
+		wantWarn   bool
+	}{
+		{"selinux off", false, 0, false, false},
+		{"no restorecon", true, -1, false, false},
+		{"relabelled", true, 0, true, false},
+		{"restorecon fails", true, 1, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			bin := filepath.Join(dir, "bin")
+			if err := os.Mkdir(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.restorecon >= 0 {
+				stub := "#!/bin/sh\necho \"$*\" >>" + calls + "\nexit " + strconv.Itoa(tt.restorecon) + "\n"
+				if err := os.WriteFile(filepath.Join(bin, "restorecon"), []byte(stub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			enforce := filepath.Join(dir, "enforce")
+			if tt.selinux {
+				mustWrite(t, enforce, "1")
+			}
+			script := "set -euo pipefail\nUSE_SUDO=\nwarn() { echo \"warn: $*\" >&2; }\n" + helpers + "\nrestore_label /usr/local/bin/dockmesh\n"
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = []string{"PATH=" + bin, "SELINUX_ENFORCE_FILE=" + enforce}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			b, _ := os.ReadFile(calls)
+			if got := strings.TrimSpace(string(b)) == "-- /usr/local/bin/dockmesh"; got != tt.wantCall {
+				t.Errorf("restorecon calls %q, want call %v", b, tt.wantCall)
+			}
+			if got := strings.Contains(string(out), "warn: could not reset"); got != tt.wantWarn {
+				t.Errorf("output %q, want warning %v", out, tt.wantWarn)
 			}
 		})
 	}

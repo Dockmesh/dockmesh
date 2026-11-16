@@ -318,6 +318,62 @@ if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$D
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
+# selinux_enabled succeeds while SELinux is on, enforcing or permissive.
+selinux_enabled() {
+  if command -v selinuxenabled >/dev/null 2>&1; then
+    selinuxenabled
+    return
+  fi
+  [[ -e "${SELINUX_ENFORCE_FILE:-/sys/fs/selinux/enforce}" ]]
+}
+# end selinux_enabled
+
+# label_bin_t gives the type bin_t, which systemd may execute, to the
+# directory or file $1 and to the files after it, none of them followed if
+# a symlink and none relabelled recursively: the service account owns the
+# bin dir and could plant links to other files in it. A binary created
+# later in a bin_t directory inherits the type, so a self-upgrade's rename
+# keeps it.
+label_bin_t() {
+  local path="$1" spec f
+  selinux_enabled || return 0
+  for f in "$@"; do
+    [[ ! -L "$f" ]] || { warn "$f is a symlink; not labelled"; return 1; }
+  done
+  [[ -d "$path" || -f "$path" ]] || return 1
+  for f in "${@:2}"; do
+    [[ -f "$f" ]] || return 1
+  done
+  if command -v semanage >/dev/null 2>&1; then
+    spec="$(printf '%s' "$path" | sed 's/[][\\.*^$+?(){}|]/\\&/g')"
+    [[ -d "$path" ]] && spec="$spec(/.*)?"
+    if semanage fcontext -a -t bin_t "$spec" 2>/dev/null || semanage fcontext -m -t bin_t "$spec"; then
+      restorecon -- "$@"
+      return
+    fi
+  fi
+  SELINUX_CHCON=1
+  chcon -t bin_t -- "$@"
+}
+# end label_bin_t
+
+# start_failure_hint tells what to check when the service does not run
+# the agent binary $1, SELinux first when it is on.
+start_failure_hint() {
+  local bin="$1" mode label
+  if selinux_enabled; then
+    mode="$(getenforce 2>/dev/null || echo enabled)"
+    label="$(stat -c %C -- "$bin" 2>/dev/null || echo unknown)"
+    printf 'SELinux is %s on this host. The agent binary needs the type bin_t and has %s.\n' "$mode" "$label"
+    printf '  denials:  ausearch -m avc -ts recent | grep dockmesh\n'
+    printf '  fix:      chcon -t bin_t %s %s && systemctl restart dockmesh-agent\n' "$(dirname -- "$bin")" "$bin"
+  fi
+  printf '  status:   systemctl status dockmesh-agent\n'
+  printf '  logs:     journalctl -u dockmesh-agent -n 50\n'
+  printf 'Run the install command again once the cause is fixed.\n'
+}
+# end start_failure_hint
+
 # install_path_copy replaces dest (a file or an old symlink) with a
 # root-owned copy of src, leaving the symlink's target alone. src lives in
 # a directory the service user owns, so it is read as that user: root only
@@ -331,6 +387,9 @@ install_path_copy() {
     setpriv --reuid="$user" --regid="$group" --clear-groups cat -- "$src" >"$tmp" || { rm -f "$tmp"; return 1; }
   fi
   chmod 0755 "$tmp" && chown root:root "$tmp" && mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+  if [[ -e /sys/fs/selinux/enforce ]] && command -v restorecon >/dev/null 2>&1; then
+    restorecon -- "$dest" || true
+  fi
 }
 # end install_path_copy
 
@@ -351,8 +410,11 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 # self-upgrade (UpgradeAgent frame) can atomic-rename a new binary in
 # place without needing root. /usr/local/bin is root-owned everywhere
 # in the Linux world and non-root users can't create siblings there.
-BIN_DIR="$DATA_DIR/bin"
+# Only the root-controlled part of the path is resolved: bin/ belongs to
+# the service account, which could swap it for a symlink.
+BIN_DIR="$(readlink -f -- "$DATA_DIR")/bin"
 AGENT_BIN="$BIN_DIR/dockmesh-agent"
+[[ -L "$BIN_DIR" ]] && die "$BIN_DIR is a symlink. Move it away, then re-run."
 install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
 chmod 0750 "$BIN_DIR"
 
@@ -382,6 +444,17 @@ REFRESH_SCRIPT="$ENV_DIR/refresh-path-copy"
 } >"$REFRESH_SCRIPT"
 chown root:root "$REFRESH_SCRIPT"
 chmod 0755 "$REFRESH_SCRIPT"
+# The unit runs both as executables, which SELinux allows only for types
+# like bin_t; systemd fails with 203/EXEC on the data dir's var_lib_t.
+SELINUX_CHCON=0
+if selinux_enabled; then
+  log "setting the SELinux type bin_t on $BIN_DIR and $REFRESH_SCRIPT"
+  label_bin_t "$BIN_DIR" "$AGENT_BIN" || die "could not set the SELinux type bin_t on $BIN_DIR"
+  label_bin_t "$REFRESH_SCRIPT" || die "could not set the SELinux type bin_t on $REFRESH_SCRIPT"
+  if [[ $SELINUX_CHCON -eq 1 ]]; then
+    warn "semanage not found: labelled with chcon, which a full relabel of the filesystem undoes. Install policycoreutils-python-utils and re-run the install command to keep the label."
+  fi
+fi
 "$REFRESH_SCRIPT" || log "warning: could not copy the agent to $PATH_BIN"
 
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
@@ -474,18 +547,28 @@ EOF
 log "reloading systemd"
 systemctl daemon-reload
 START_TS="$(date +"%Y-%m-%d %H:%M:%S")"
-systemctl enable --now dockmesh-agent.service
+STATE=waiting
+# restart, not enable --now: a re-run must start the binary it just
+# installed, and a status from an earlier failed start must not count.
+if ! systemctl enable dockmesh-agent.service || ! systemctl restart dockmesh-agent.service; then
+  STATE=start_failed
+fi
 
 AGENT_WAIT_SECS="${AGENT_WAIT_SECS:-60}"
-log "waiting for agent to connect (up to ${AGENT_WAIT_SECS}s)"
-STATE=waiting
+[[ "$STATE" == waiting ]] && log "waiting for agent to connect (up to ${AGENT_WAIT_SECS}s)"
 AGENT_LOGS=""
-for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
-  AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
-  STATE="$(agent_log_state "$AGENT_LOGS")"
-  [[ "$STATE" != waiting ]] && break
-  sleep 1
-done
+if [[ "$STATE" == waiting ]]; then
+  for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
+    if [[ "$(systemctl show -p ExecMainStatus --value dockmesh-agent.service 2>/dev/null || true)" == 203 ]]; then
+      STATE=start_failed
+      break
+    fi
+    AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
+    STATE="$(agent_log_state "$AGENT_LOGS")"
+    [[ "$STATE" != waiting ]] && break
+    sleep 1
+  done
+fi
 
 if [[ "$STATE" == connected ]]; then
   printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and connected\n'
@@ -503,8 +586,14 @@ else
     printf '\n\033[1;31m!!\033[0m This install command has expired or was already used. Copy a new one: Hosts > Add host > New command.\n'
   elif [[ "$STATE" == failed ]]; then
     printf '\n\033[1;31m!!\033[0m The agent could not enroll. The agent service is stopped; run the install command again once the cause below is fixed.\n'
+  elif [[ "$STATE" == start_failed ]]; then
+    printf '\n\033[1;31m!!\033[0m systemd could not start the agent (%s).\n' "$AGENT_BIN"
+    start_failure_hint "$AGENT_BIN"
   else
     printf '\n\033[1;31m!!\033[0m the agent did not connect to the server within %ss.\n' "$AGENT_WAIT_SECS"
+    if ! systemctl is-active --quiet dockmesh-agent.service; then
+      start_failure_hint "$AGENT_BIN"
+    fi
   fi
   printf 'Last agent log lines:\n\n'
   journalctl -u dockmesh-agent --no-pager -n 20 -o cat || true

@@ -240,6 +240,17 @@ docker pull <image>
 
 ## Agents
 
+### The agent never starts: 203/EXEC
+
+**Cause:** `systemctl status dockmesh-agent` shows `status=203/EXEC` and the journal `Failed to locate executable /var/lib/dockmesh-agent/bin/dockmesh-agent: Permission denied`. SELinux is enforcing (`getenforce`) and the binary has the data directory's type `var_lib_t`, which systemd may not execute. Installers up to v0.5.x did not set the type.
+
+**Fix:** copy a new install command (**Hosts → Add host → New command**) and run it; the installer gives the binary the type `bin_t`. Check with:
+
+```bash
+ls -Z /var/lib/dockmesh-agent/bin/dockmesh-agent   # ...:bin_t:...
+sudo ausearch -m avc -ts recent | grep dockmesh
+```
+
 ### The host shows offline
 
 **Cause:** the agent isn't running, can't reach the server's agent port, or its certificate is rejected.

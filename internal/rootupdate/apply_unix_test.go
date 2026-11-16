@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -880,5 +881,58 @@ func TestApplyRecoversWithUnusableUpdateDir(t *testing.T) {
 	res, err := Apply(context.Background(), f.config())
 	if err != nil || res.Status != StatusRolledBack {
 		t.Fatalf("recovery with a world-writable update dir: %+v, %v", res, err)
+	}
+}
+
+func TestApplyRelabelsSwappedFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		tgz  func(t *testing.T) []byte
+		want func(f *fixture) []string
+	}{
+		{
+			name: "update",
+			tgz:  func(t *testing.T) []byte { return goodTarball(t, "v0.6.1") },
+			want: func(f *fixture) []string {
+				return []string{
+					filepath.Join(f.binDir, "dockmesh") + " " + filepath.Join(f.binDir, "dockmesh.prev"),
+					filepath.Join(f.binDir, "dmctl"),
+					filepath.Join(f.shareDir, "dockmesh-agent-linux-amd64"),
+				}
+			},
+		},
+		{
+			name: "rollback",
+			tgz: func(t *testing.T) []byte {
+				return tarball(t, entry{name: "dockmesh", content: "crashes"}, entry{name: "dmctl", content: "dmctl v0.6.1"},
+					entry{name: "dockmesh-agent-linux-amd64", content: "agent v0.6.1"})
+			},
+			want: func(f *fixture) []string {
+				return []string{
+					filepath.Join(f.binDir, "dockmesh") + " " + filepath.Join(f.binDir, "dockmesh.prev"),
+					filepath.Join(f.binDir, "dmctl"),
+					filepath.Join(f.shareDir, "dockmesh-agent-linux-amd64"),
+					filepath.Join(f.binDir, "dmctl"),
+					filepath.Join(f.binDir, "dockmesh"),
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			old := relabel
+			relabel = func(_ *slog.Logger, paths ...string) { got = append(got, strings.Join(paths, " ")) }
+			t.Cleanup(func() { relabel = old })
+			f := newFixture(t)
+			f.release("v0.6.1", "v0.6.1", tt.tgz(t))
+			f.apply()
+			want := tt.want(f)
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("relabelled\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+		})
 	}
 }
