@@ -21,7 +21,8 @@ if [ -e /usr/local/bin/dockmesh ] || [ -e /var/lib/dockmesh ]; then
 fi
 
 BASE=https://127.0.0.1:8080
-WORK="$(mktemp -d)"
+# The setup file and its password file must sit below root-only directories.
+WORK="$(mktemp -d -p /root)"
 trap 'rm -rf "$WORK"' EXIT
 CURL=(curl -fsS -k --max-time 120)
 step() { printf '\n== %s\n' "$*"; }
