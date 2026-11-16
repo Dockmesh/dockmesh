@@ -103,6 +103,22 @@ func (s *stackFiles) stat(p string) (string, fs.FileInfo, error) {
 	return rel, fi, nil
 }
 
+// checkDir refuses p unless it is a directory inside the folder.
+func (s *stackFiles) checkDir(p string) error {
+	rel, err := s.rel(p)
+	if err != nil {
+		return err
+	}
+	fi, err := s.root.Stat(rel)
+	if err != nil {
+		return refused("%s: %v", p, err)
+	}
+	if !fi.IsDir() {
+		return refused("%s is not a directory", p)
+	}
+	return nil
+}
+
 func (s *stackFiles) count(n int64) error {
 	s.files++
 	s.total += n
@@ -194,6 +210,14 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 		if !ok {
 			return refused("%s: include entry must be a path or a mapping", file)
 		}
+		// compose-go matches these keys case-insensitively and ignores
+		// unknown ones; only the exact names are read here, so any other
+		// key is refused.
+		for k := range entry {
+			if !includeKeys[k] {
+				return refused("%s: unsupported include key %q", file, k)
+			}
+		}
 		// compose-go casts numbers and booleans to strings; only plain
 		// strings are accepted so the walker reads the values it uses.
 		paths, err := strictStrings(file, "include path", entry["path"])
@@ -222,6 +246,11 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 				paths[i] = filepath.Join(loaderDir, p)
 			}
 		}
+		for _, p := range paths {
+			if _, err := w.files.rel(p); err != nil {
+				return err
+			}
+		}
 		var projectDir string
 		if len(pd) == 1 {
 			projectDir = pd[0]
@@ -238,7 +267,10 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 			}
 			projectDir = filepath.Join(loaderDir, projectDir)
 		}
-		if _, err := w.files.rel(projectDir); err != nil {
+		// compose-go bases nested paths on the parent of a project
+		// directory that doesn't exist, so it must be a real directory
+		// inside the folder for both sides to agree.
+		if err := w.files.checkDir(projectDir); err != nil {
 			return err
 		}
 		incEnv, err := w.includeEnv(file, projectDir, loaderDir, envFiles, env, nested)
@@ -306,6 +338,11 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
 			svc, _ := entries[name].(map[string]any)
 			ext, _ := svc["extends"].(map[string]any)
+			for k := range ext {
+				if k != "file" && k != "service" {
+					return refused("%s: unsupported extends key %q", name, k)
+				}
+			}
 			if ext["file"] == nil {
 				continue
 			}
@@ -385,6 +422,8 @@ func walkKey(file, dir string, env types.Mapping) string {
 	}
 	return string(h.Sum(nil))
 }
+
+var includeKeys = map[string]bool{"path": true, "env_file": true, "project_directory": true}
 
 // strictStrings returns v as a list of strings: absent, one string, or a
 // list of strings. Any other type is refused.

@@ -25,3 +25,10 @@ func TestDeployErrorStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestFriendlyDeployErrorKeepsRefusal(t *testing.T) {
+	err := errors.New("agent: compose file reference refused: /stacks/x/compose.yaml: path ~/x.yaml starts with ~")
+	if got := friendlyDeployError(err); got != err.Error() {
+		t.Fatalf("friendlyDeployError = %q", got)
+	}
+}

@@ -276,6 +276,51 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
+			name: "include env_file key in other case",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - path: inc.yaml\n    ENV_FILE: /etc/hostname\n" + svcNginx},
+				{name: "inc.yaml", content: "services:\n  db:\n    image: redis\n"},
+			},
+			refused: true,
+		},
+		{
+			name: "include project_directory key in other case",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - path: inc.yaml\n    project_directory: .\n    Project_Directory: /etc\n" + svcNginx},
+				{name: "inc.yaml", content: "services:\n  db:\n    image: redis\n"},
+			},
+			refused: true,
+		},
+		{
+			name: "include path key in other case",
+			files: []stackFile{{name: "compose.yaml", content: "include:\n  - PATH: /dev/zero\n" + svcNginx}},
+			refused: true,
+		},
+		{
+			name:    "extends key in other case",
+			files:   []stackFile{{name: "compose.yaml", content: "services:\n  web:\n    image: nginx\n    extends:\n      FILE: /etc/passwd\n      service: x\n"}},
+			refused: true,
+		},
+		{
+			name: "include project_directory that does not exist",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - path: inc.yaml\n    project_directory: a/b\n"},
+				{name: "inc.yaml", content: "services:\n  web:\n    image: nginx\n    extends:\n      file: ../../base.yaml\n      service: b\n"},
+				{name: "base.yaml", content: "services:\n  b:\n"},
+			},
+			outside: []stackFile{{name: "base.yaml", content: "services:\n  b:\n    image: postgres\n"}},
+			refused: true,
+		},
+		{
+			name: "include project_directory symlinked outside",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - path: inc.yaml\n    project_directory: p\n" + svcNginx},
+				{name: "inc.yaml", content: "services:\n  db:\n    image: redis\n"},
+				{name: "p", link: ".."},
+			},
+			refused: true,
+		},
+		{
 			name: "include and files inside the folder",
 			files: []stackFile{
 				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - link.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},
