@@ -99,7 +99,7 @@ func configureCheckout(dir, checkout string, uid int) (Result, error) {
 	if !filepath.IsAbs(checkout) || strings.ContainsAny(checkout, "\n\r\"'\\$`") || strings.TrimSpace(checkout) != checkout {
 		return Result{}, fmt.Errorf("%q cannot be written to an env file", checkout)
 	}
-	fi, err := os.Lstat(dbPathBelow(checkout))
+	fi, err := os.Stat(dbPathBelow(checkout))
 	if err != nil {
 		return Result{}, err
 	}
