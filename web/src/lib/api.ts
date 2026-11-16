@@ -2474,9 +2474,9 @@ export const api = {
     localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
     hosts: () => request<BackupHost[]>('/backups/hosts'),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
-    testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean }>(`/backups/targets/${id}/test`, { method: 'POST' }),
+    testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean; warning?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>
-      request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean }>('/backups/targets/test-config', {
+      request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string; read_only?: boolean; warning?: string }>('/backups/targets/test-config', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'test', type, config, target_id: targetId })
       }),
     acceptTargetHostKey: (id: number) =>

@@ -114,7 +114,7 @@ func TestProbeWrite(t *testing.T) {
 		{name: "writes and deletes", tgt: &probeTarget{}, wantDelete: true},
 		{name: "read-only directory", tgt: &probeTarget{openErr: rofs}, wantErr: "read-only", readOnly: true},
 		{name: "upload fails on close", tgt: &probeTarget{closeErr: errors.New("403 forbidden")}, wantErr: "403", wantDelete: true},
-		{name: "can't delete", tgt: &probeTarget{deleteErr: errors.New("denied")}, wantErr: "delete the test file", wantDelete: true},
+		{name: "can't delete", tgt: &probeTarget{deleteErr: errors.New("denied")}, wantErr: "could not be deleted", wantDelete: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

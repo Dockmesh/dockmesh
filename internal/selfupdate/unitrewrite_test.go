@@ -106,6 +106,17 @@ func TestUnitRewriteRefusedByRoot(t *testing.T) {
 
 func TestUnitRewriteRefusals(t *testing.T) {
 	f := newInstallFixture(t)
+	b, _ := json.Marshal(rootupdate.UnitResult{Status: rootupdate.UnitRestarting})
+	if err := os.WriteFile(filepath.Join(f.dir, rootupdate.UnitResultFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.inst.StartUnitRewrite(context.Background()); !errors.Is(err, ErrUnitRewriteRunning) {
+		t.Fatalf("while root checks an earlier restart: %v", err)
+	}
+	if err := f.inst.Start(context.Background(), "v0.6.1"); !errors.Is(err, ErrUnitRewriteRunning) {
+		t.Fatalf("update while root checks an earlier restart: %v", err)
+	}
+	_ = os.Remove(filepath.Join(f.dir, rootupdate.UnitResultFile))
 	if err := os.WriteFile(filepath.Join(f.dir, rootupdate.PendingFile), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}

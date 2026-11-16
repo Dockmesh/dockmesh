@@ -209,6 +209,7 @@
       const res = await api.backups.testTarget(t.id);
       if (res.status === 'connected') toast.success(m.backups_target_connected({ name: t.name }), res.total_bytes > 0 ? m.backups_free_of({ free: fmtBytes(res.free_bytes), total: fmtBytes(res.total_bytes) }) : undefined);
       else toast.error(m.backups_target_connection_failed({ name: t.name }), res.error);
+      if (res.status === 'connected' && res.warning) toast.info(res.warning);
       if (res.read_only) await writableDirs?.refresh(true);
       await loadTargets();
     } catch (err) {

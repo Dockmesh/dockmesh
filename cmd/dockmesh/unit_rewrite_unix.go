@@ -36,8 +36,11 @@ type unitService interface {
 type unitRewriter struct {
 	reqDir string
 	uid    uint32
-	svc    unitService
-	log    *slog.Logger
+	// stateDir is root's update state dir, layout.UpdateStateDir unless a
+	// test sets it.
+	stateDir string
+	svc      unitService
+	log      *slog.Logger
 	// healthTimeout defaults to the updater's.
 	healthTimeout time.Duration
 	poll          time.Duration
@@ -69,7 +72,13 @@ func (u *unitRewriter) run(ctx context.Context) error {
 	if err := rootupdate.RemoveServiceFile(u.reqDir, u.uid, rootupdate.RequestFile); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(filepath.Join(u.reqDir, rootupdate.PendingFile)); err == nil {
+	stateDir := u.stateDir
+	if stateDir == "" {
+		stateDir = layout.UpdateStateDir
+	}
+	// The journal is root's own record; the pending marker lives in the
+	// service's directory and only covers the start of an update.
+	if _, err := os.Lstat(filepath.Join(u.reqDir, rootupdate.PendingFile)); err == nil || rootupdate.Unfinished(stateDir) {
 		u.result(rootupdate.UnitRefused, "request", errors.New("an update is in flight"))
 		return nil
 	}

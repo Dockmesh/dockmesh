@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // Writability of a local directory as the service sees it.
@@ -38,10 +39,27 @@ type DirCheck struct {
 // writeTestPrefix names the files the write checks create and remove.
 const writeTestPrefix = ".dockmesh-write-test-"
 
+// dirCheckTimeout bounds one directory check, so a hung network mount
+// can't hold the request.
+const dirCheckTimeout = 5 * time.Second
+
 // CheckDirWritable creates and removes a file in dir to see whether the
-// service can write there. A missing dir counts as writable when its
-// nearest existing parent is, since local targets create it on first use.
+// service can write there. A missing dir counts as writable when the
+// service may create entries in its nearest existing parent, since local
+// targets create it on first use; that parent is only asked, never
+// written to, as it may lie outside every allowed root.
 func CheckDirWritable(dir string) DirCheck {
+	done := make(chan DirCheck, 1)
+	go func() { done <- checkDirWritable(dir) }()
+	select {
+	case c := <-done:
+		return c
+	case <-time.After(dirCheckTimeout):
+		return DirCheck{Path: dir, State: DirError, Error: "timed out"}
+	}
+}
+
+func checkDirWritable(dir string) DirCheck {
 	out := DirCheck{Path: dir}
 	probe := dir
 	missing := false
@@ -66,6 +84,14 @@ func CheckDirWritable(dir string) DirCheck {
 		}
 		probe = parent
 	}
+	if missing {
+		if err := canCreateIn(probe); err != nil {
+			out.State, out.Error = DirMissing, err.Error()
+			return out
+		}
+		out.State = DirWritable
+		return out
+	}
 	f, err := os.CreateTemp(probe, writeTestPrefix+"*")
 	if err == nil {
 		name := f.Name()
@@ -74,14 +100,11 @@ func CheckDirWritable(dir string) DirCheck {
 			err = rerr
 		}
 	}
-	switch {
-	case err == nil:
-		out.State = DirWritable
-	case missing:
-		out.State, out.Error = DirMissing, err.Error()
-	default:
+	if err != nil {
 		out.State, out.Error = classifyWriteErr(err), err.Error()
+		return out
 	}
+	out.State = DirWritable
 	return out
 }
 
@@ -120,6 +143,11 @@ func AllowedDirs() []string {
 	return out
 }
 
+// ErrProbeNotDeleted reports a test file that was written but could not
+// be deleted, as on targets whose credentials may not delete. Backups
+// still work there; only pruning old runs doesn't.
+var ErrProbeNotDeleted = errors.New("the test file could not be deleted")
+
 // ProbeWrite writes a small file to t and deletes it again, so a target
 // test fails where a backup run would.
 func ProbeWrite(ctx context.Context, t Target) error {
@@ -144,7 +172,7 @@ func ProbeWrite(ctx context.Context, t Target) error {
 		return fmt.Errorf("write a test file: %w", err)
 	}
 	if err := t.Delete(ctx, name); err != nil {
-		return fmt.Errorf("delete the test file %s: %w", name, err)
+		return fmt.Errorf("%w (%s): %w", ErrProbeNotDeleted, name, err)
 	}
 	return nil
 }

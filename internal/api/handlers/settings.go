@@ -138,9 +138,9 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if e.Key == targets.LocalRootsSetting {
+		if e.Key == targets.LocalRootsSetting || e.Key == targets.EmptyPathSetting {
 			if err := h.checkNewLocalRoots(h.Settings.Stored(e.Key), e.Value); err != nil {
-				writeError(w, http.StatusBadRequest, targets.LocalRootsSetting+": "+err.Error())
+				writeError(w, http.StatusBadRequest, e.Key+": "+err.Error())
 				return
 			}
 		}

@@ -237,6 +237,9 @@ func (i *Installer) Start(ctx context.Context, version string) error {
 	if i.UpdatePending() {
 		return ErrInstallRunning
 	}
+	if res, ok := i.readUnitResult(); ok && res.Status == rootupdate.UnitRestarting {
+		return ErrUnitRewriteRunning
+	}
 	i.mu.Lock()
 	switch i.state.Phase {
 	case PhaseDownloading, PhaseWaiting, PhaseApplying:

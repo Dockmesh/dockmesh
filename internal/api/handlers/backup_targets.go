@@ -237,7 +237,10 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := targets.ProbeWrite(probeCtx, tgt); err != nil {
+	warning := ""
+	if err := targets.ProbeWrite(probeCtx, tgt); errors.Is(err, targets.ErrProbeNotDeleted) {
+		warning = err.Error()
+	} else if err != nil {
 		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "error", 0, 0)
 		writeJSON(w, http.StatusOK, targetTestError(err))
 		return
@@ -249,6 +252,7 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		"total_bytes": total,
 		"used_bytes":  used,
 		"free_bytes":  total - used,
+		"warning":     warning,
 	})
 }
 
@@ -324,12 +328,15 @@ func (h *Handlers) TestBackupTargetConfig(w http.ResponseWriter, r *http.Request
 	}
 	probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := targets.ProbeWrite(probeCtx, tgt); err != nil {
+	warning := ""
+	if err := targets.ProbeWrite(probeCtx, tgt); errors.Is(err, targets.ErrProbeNotDeleted) {
+		warning = err.Error()
+	} else if err != nil {
 		writeJSON(w, http.StatusOK, targetTestError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "connected", "total_bytes": total, "used_bytes": used, "free_bytes": total - used,
+		"status": "connected", "total_bytes": total, "used_bytes": used, "free_bytes": total - used, "warning": warning,
 	})
 }
 

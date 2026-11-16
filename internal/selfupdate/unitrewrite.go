@@ -95,6 +95,10 @@ func (i *Installer) StartUnitRewrite(ctx context.Context) error {
 	if i.UpdatePending() {
 		return ErrInstallRunning
 	}
+	// Root still checks the restart of a rewrite an earlier process asked for.
+	if res, ok := i.readUnitResult(); ok && res.Status == rootupdate.UnitRestarting {
+		return ErrUnitRewriteRunning
+	}
 	i.mu.Lock()
 	switch {
 	case i.unitBusyLocked():

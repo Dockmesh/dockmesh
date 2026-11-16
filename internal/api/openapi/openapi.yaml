@@ -9512,6 +9512,7 @@ components:
         used_bytes: {type: integer, format: int64}
         free_bytes: {type: integer, format: int64}
         error: {type: string}
+        warning: {type: string, description: "Set when the test file was written but could not be deleted (credentials without delete permission); backups work, pruning old runs does not."}
         read_only:
           type: boolean
           description: >-

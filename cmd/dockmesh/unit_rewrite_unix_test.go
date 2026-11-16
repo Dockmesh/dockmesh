@@ -64,7 +64,7 @@ func newUnitRewriter(t *testing.T, svc unitService) *unitRewriter {
 		t.Fatal(err)
 	}
 	return &unitRewriter{reqDir: dir, uid: uint32(os.Getuid()), svc: svc, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		healthTimeout: 50 * time.Millisecond, poll: 5 * time.Millisecond,
+		stateDir: t.TempDir(), healthTimeout: 50 * time.Millisecond, poll: 5 * time.Millisecond,
 		lock: func() (func(), error) { return func() {}, nil }}
 }
 
@@ -86,6 +86,7 @@ func TestUnitRewriter(t *testing.T) {
 		name     string
 		svc      *fakeUnitService
 		pending  bool
+		journal  bool
 		status   string
 		unit     string
 		restarts int
@@ -101,6 +102,8 @@ func TestUnitRewriter(t *testing.T) {
 			status: rootupdate.UnitFailed, unit: "old", restarts: 2, reason: "boom"},
 		{name: "old unit does not come up either", svc: &fakeUnitService{unit: "old", written: "new", healthy: map[string]bool{}},
 			status: rootupdate.UnitFailed, unit: "old", restarts: 2, reason: "rollback"},
+		{name: "unfinished update journal", journal: true, svc: &fakeUnitService{unit: "old", written: "new"},
+			status: rootupdate.UnitRefused, unit: "old", reason: "update"},
 		{name: "update in flight", pending: true, svc: &fakeUnitService{unit: "old", written: "new"},
 			status: rootupdate.UnitRefused, unit: "old", reason: "update"},
 	}
@@ -109,6 +112,11 @@ func TestUnitRewriter(t *testing.T) {
 			u := newUnitRewriter(t, tt.svc)
 			if tt.pending {
 				if err := os.WriteFile(filepath.Join(u.reqDir, rootupdate.PendingFile), []byte("{}"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.journal {
+				if err := os.WriteFile(filepath.Join(u.stateDir, "journal.json"), []byte("{}"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
