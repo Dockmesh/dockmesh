@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,44 @@ func TestTimezone(t *testing.T) {
 	}
 	if info := svc.ScheduleInfo(); info.Source != "server" {
 		t.Fatalf("empty setting should fall back to the server zone: %+v", info)
+	}
+}
+
+func TestScheduledJobRunsOnceAcrossFallBack(t *testing.T) {
+	svc, _, root := newExecTest(t, false)
+	ctx := context.Background()
+	if err := svc.SetTimezone(ctx, "Europe/Vienna"); err != nil {
+		t.Fatal(err)
+	}
+	in := volumeJob("dst", root)
+	in.Schedule = "30 2 * * *"
+	job, err := svc.CreateJob(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	entry := svc.cron.Entry(svc.entryIDs[job.ID])
+	svc.mu.Unlock()
+	if entry.Schedule == nil {
+		t.Fatal("job not scheduled")
+	}
+	loc, _ := time.LoadLocation("Europe/Vienna")
+
+	// Walk the scheduler's own entry the way its run loop does.
+	var fired []string
+	end := time.Date(2027, 11, 1, 12, 0, 0, 0, time.UTC)
+	for at := entry.Schedule.Next(time.Date(2027, 10, 30, 12, 0, 0, 0, time.UTC).In(loc)); at.Before(end); at = entry.Schedule.Next(at) {
+		fired = append(fired, at.UTC().Format(time.RFC3339))
+	}
+	want := []string{"2027-10-31T00:30:00Z", "2027-11-01T01:30:00Z"}
+	if strings.Join(fired, " ") != strings.Join(want, " ") {
+		t.Fatalf("fired at %v, want %v", fired, want)
+	}
+
+	ran := time.Date(2027, 10, 31, 2, 30, 0, 0, time.FixedZone("CEST", 2*3600)).In(loc)
+	next := entry.Schedule.Next(ran)
+	if want := "2027-11-01T02:30:00+01:00"; next.Format(time.RFC3339) != want {
+		t.Fatalf("next run after the 02:30 CEST run = %s, want %s", next.Format(time.RFC3339), want)
 	}
 }
 

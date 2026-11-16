@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Backup schedules that list hours instead of using `*` (such as `0 0-23 * * *` or `0 1,2,3 * * *`) now count as fixed-time: they run once in the hour repeated when daylight saving ends, and runs in the skipped spring hour become one run at its end; write the hour field with `*` to keep running in both passes'
+time: 2026-11-16T21:30:00.000000000Z
+custom:
+    Audience: admins
+    Id: dst-fixed-time
