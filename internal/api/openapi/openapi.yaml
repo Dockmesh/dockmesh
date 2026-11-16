@@ -4179,6 +4179,48 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /system/unit-rewrite:
+    get:
+      operationId: system.unit_rewrite_state
+      tags: [metrics]
+      summary: Whether the service can write to the local backup directories
+      description: |
+        Checks every directory local backup targets may use (`backups.local_roots` and `backups.empty_path_dir`)
+        by creating and removing a small file as the service. `read_only` in `dirs` means the service unit does not
+        let the service write there yet, which `POST` fixes. Also reports the unit rewrite this process started last
+        and root's result of the last one. Needs `system.upgrade`.
+      responses:
+        "200":
+          description: Directory checks and rewrite state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UnitRewriteState"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: system.unit_rewrite
+      tags: [metrics]
+      summary: Rewrite the service unit and restart the server
+      description: |
+        Waits up to 10 minutes for running stack operations on every host, holds all stacks and asks the root
+        updater (`dockmesh-update.service`) to write the service unit again from the stored settings and restart
+        the server, so directories added to `backups.local_roots` become writable. The request carries no paths:
+        root reads them through the same checks as `dockmesh system write-unit`, and a refused value leaves the
+        unit unchanged. If the server does not report healthy within 180 s, root puts the old unit back and
+        restarts again. Returns `202` with `restart_pending` as soon as the wait started. Needs `system.upgrade`.
+      responses:
+        "202":
+          description: Rewrite requested; the server restarts for a few seconds.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UnitRewriteState"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A rewrite or an update is already pending, the root updater is not installed on this host, or the server runs in a container.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /system/backup-key/export:
     get:
       operationId: system.backup_key_export
@@ -9466,13 +9508,20 @@ components:
         config: {type: object}
     BackupTargetTestResult:
       type: object
-      required: [ok]
+      required: [status]
+      description: >-
+        The test lists the target, then writes a small `.dockmesh-write-test-*` file and deletes it again, as the service, so a target the service can reach but not write to answers `error`.
       properties:
-        ok: {type: boolean}
-        latency_ms: {type: integer}
+        status: {type: string, enum: [connected, error]}
         total_bytes: {type: integer, format: int64}
+        used_bytes: {type: integer, format: int64}
         free_bytes: {type: integer, format: int64}
         error: {type: string}
+        warning: {type: string, description: "Set when the test file was written but could not be deleted (credentials without delete permission); backups work, pruning old runs does not."}
+        read_only:
+          type: boolean
+          description: >-
+            Set when a local directory is read-only for the service, which is the case for a directory added to `backups.local_roots` after the service unit was written; `POST /system/unit-rewrite` fixes it.
     MigrationHookCommands:
       type: object
       description: |
@@ -9923,6 +9972,38 @@ components:
             step: {type: string}
             reason: {type: string}
             finished: {type: string, format: date-time}
+    UnitRewriteState:
+      type: object
+      required: [phase, restart_pending, dirs]
+      properties:
+        phase: {type: string, enum: [idle, waiting_for_stacks, restarting, failed]}
+        error: {type: string}
+        restart_pending: {type: boolean, description: The server restarts once the stacks are free and root took the request.}
+        unavailable:
+          type: string
+          enum: [container, no_updater, unsupported]
+          description: Set when this host can't rewrite its unit through the root updater.
+        last_result:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [done, refused, rolled_back, failed]}
+            step: {type: string}
+            reason: {type: string}
+            finished: {type: string, format: date-time}
+        dirs:
+          type: array
+          items:
+            type: object
+            required: [path, state]
+            properties:
+              path: {type: string}
+              state:
+                type: string
+                enum: [writable, read_only, permission_denied, missing, error]
+                description: "`missing`: the directory does not exist and the service can't create it; create it owned by the `dockmesh` user first."
+              error: {type: string}
+              in_use: {type: boolean, description: A local backup target writes below this directory.}
     HostMetricsSample:
       type: object
       required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]

@@ -16,6 +16,7 @@
   import CancelOpButton from '$lib/components/operations/CancelOpButton.svelte';
   import JobWizard from './_JobWizard.svelte';
   import TargetWizard from './_TargetWizard.svelte';
+  import WritableDirs from './_WritableDirs.svelte';
   import RestoreDialog from './_RestoreDialog.svelte';
   import SystemRestoreDialog from './_SystemRestoreDialog.svelte';
   import {
@@ -200,6 +201,7 @@
     if (!(await confirm.ask({ title: m.backups_delete_target_title(), message: m.backups_delete_target_message({ name: t.name }), body: m.backups_delete_target_body(), confirmLabel: m.common_delete(), danger: true }))) return;
     try { await api.backups.deleteTarget(t.id); toast.success(m.backups_deleted(), t.name); await loadTargets(); } catch (err) { toast.error(m.backups_delete_failed(), err instanceof ApiError ? err.message : undefined); }
   }
+  let writableDirs = $state<ReturnType<typeof WritableDirs> | null>(null);
   let testing = $state<Record<number, boolean>>({});
   async function testTarget(t: BackupTarget) {
     testing[t.id] = true;
@@ -207,6 +209,8 @@
       const res = await api.backups.testTarget(t.id);
       if (res.status === 'connected') toast.success(m.backups_target_connected({ name: t.name }), res.total_bytes > 0 ? m.backups_free_of({ free: fmtBytes(res.free_bytes), total: fmtBytes(res.total_bytes) }) : undefined);
       else toast.error(m.backups_target_connection_failed({ name: t.name }), res.error);
+      if (res.status === 'connected' && res.warning) toast.info(res.warning);
+      if (res.read_only) await writableDirs?.refresh(true);
       await loadTargets();
     } catch (err) {
       toast.error(m.backups_test_failed(), err instanceof ApiError ? err.message : undefined);
@@ -263,6 +267,7 @@
       wizardTargetOpen = false;
       wizardTargetEdit = null;
       await loadTargets();
+      if (payload.type === 'local') await writableDirs?.refresh(true);
     } catch (err) {
       toast.error(m.backups_save_failed(), err instanceof ApiError ? err.message : (err as Error).message);
     }
@@ -398,6 +403,8 @@
       {/each}
     </div>
   {/if}
+
+  <WritableDirs bind:this={writableDirs} />
 
   <Tabs
     tabs={[
