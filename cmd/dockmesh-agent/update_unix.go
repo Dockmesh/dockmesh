@@ -181,7 +181,8 @@ func agentServiceUID() (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("look up %s: %w", name, err)
 	}
-	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	// 31 bits: the uid is also used as an int.
+	uid, err := strconv.ParseUint(u.Uid, 10, 31)
 	if err != nil {
 		return 0, err
 	}
