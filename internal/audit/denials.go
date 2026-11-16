@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// Limits for auth.scope_denied entries. Every refused request used to
-// write one chained row and one webhook delivery, so a caller looping a
-// refused request could grow the log without bound and push real events
-// out of the webhook queue.
+// Limits for auth.scope_denied entries, so a caller looping a refused
+// request can't grow the log without bound or push other events out of
+// the webhook queue.
 const (
 	DenialWindow       = time.Minute
 	DenialBurst        = 10
@@ -20,15 +19,23 @@ const (
 	maxDenialPermNames = 32
 )
 
+// DenialActor identifies who a refusal is counted for. Key separates the
+// budgets: a user's sessions and each of its API tokens count apart.
+type DenialActor struct {
+	Key     string
+	UserID  string
+	TokenID int64
+}
+
 // denialBucket counts the refusals of one actor in the current window.
 // The first DenialBurst are written as usual; the rest are only counted
 // and written as one summary entry when the window is over.
 type denialBucket struct {
+	actor      DenialActor
 	start      time.Time
 	written    int
 	suppressed int
 	perms      map[string]int
-	userID     string
 }
 
 type denials struct {
@@ -37,63 +44,69 @@ type denials struct {
 	buckets map[string]*denialBucket
 }
 
-// denialSummary is a finished window with refusals that were not written.
-type denialSummary struct {
-	actor  string
-	userID string
-	bucket denialBucket
-}
-
-// WriteDenied records an auth.scope_denied entry for actor (the user id,
-// or "ip:<addr>" without one), unless actor already had DenialBurst
-// entries in the current window; then the refusal is counted for the
-// window's summary entry. perm names the refused permission in that
-// summary.
-func (s *Service) WriteDenied(ctx context.Context, actor, userID, perm, target string, details any) {
-	write, summaries := s.denials.admit(actor, userID, perm)
+// WriteDenied records an auth.scope_denied entry for actor, unless actor
+// already had DenialBurst entries in the current window; then the refusal
+// is counted for the window's summary entry, which names the refused
+// permissions. Entries are written even if the request is cancelled
+// meanwhile, so a dropped connection can't discard a window's count.
+func (s *Service) WriteDenied(ctx context.Context, actor DenialActor, perm, target string, details any) {
+	ctx = context.WithoutCancel(ctx)
+	write, summaries := s.denials.admit(actor, perm)
 	s.writeDenialSummaries(ctx, summaries)
 	if write {
-		s.Write(ctx, userID, ActionScopeDenied, target, details)
+		s.Write(ctx, actor.UserID, ActionScopeDenied, target, details)
 	}
 }
 
-// FlushDenials writes the summary entries of every window that is over.
-func (s *Service) FlushDenials(ctx context.Context) {
-	s.writeDenialSummaries(ctx, s.denials.expired(false))
+// flushDenials writes the summary entries of every window that is over,
+// or of every open window when all is set.
+func (s *Service) flushDenials(ctx context.Context, all bool) {
+	s.writeDenialSummaries(ctx, s.denials.expired(all))
 }
 
 // StartDenialFlusher writes finished summaries every DenialWindow, so the
-// count of a burst is logged even when no further refusal follows, and
-// writes the open ones when ctx ends.
-func (s *Service) StartDenialFlusher(ctx context.Context) {
+// count of a burst is logged even when no further refusal follows. The
+// returned stop writes the open windows and returns once they are
+// stored; call it before the webhook and the database are closed.
+func (s *Service) StartDenialFlusher(ctx context.Context) (stop func()) {
+	quit := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		t := time.NewTicker(DenialWindow)
 		defer t.Stop()
 		for {
 			select {
-			case <-ctx.Done():
-				s.writeDenialSummaries(context.WithoutCancel(ctx), s.denials.expired(true))
+			case <-quit:
+				s.flushDenials(context.WithoutCancel(ctx), true)
 				return
 			case <-t.C:
-				s.FlushDenials(ctx)
+				s.flushDenials(context.WithoutCancel(ctx), false)
 			}
 		}
 	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
 }
 
-func (s *Service) writeDenialSummaries(ctx context.Context, summaries []denialSummary) {
-	for _, sum := range summaries {
-		b := sum.bucket
+func (s *Service) writeDenialSummaries(ctx context.Context, summaries []denialBucket) {
+	for _, b := range summaries {
 		details := map[string]any{
 			"suppressed":   b.suppressed,
 			"window_start": b.start.UTC().Format(time.RFC3339),
 			"window_end":   b.start.Add(DenialWindow).UTC().Format(time.RFC3339),
 			"permissions":  b.perms,
 		}
-		if sum.userID == "" {
-			details["actor"] = sum.actor
+		if b.actor.TokenID != 0 {
+			details["api_token_id"] = b.actor.TokenID
 		}
-		s.Write(ctx, sum.userID, ActionScopeDenied, fmt.Sprintf("%d more refused requests", b.suppressed), details)
+		if b.actor.UserID == "" {
+			details["actor"] = b.actor.Key
+		}
+		s.Write(ctx, b.actor.UserID, ActionScopeDenied, fmt.Sprintf("%d more refused requests", b.suppressed), details)
 	}
 }
 
@@ -105,18 +118,18 @@ func (d *denials) clock() time.Time {
 }
 
 // admit reports whether this refusal is written in full, and returns the
-// summaries of windows that ended before it.
-func (d *denials) admit(actor, userID, perm string) (bool, []denialSummary) {
+// windows that ended before it with refusals still to summarise.
+func (d *denials) admit(actor DenialActor, perm string) (bool, []denialBucket) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.clock()
-	var out []denialSummary
-	b := d.buckets[actor]
+	var out []denialBucket
+	b := d.buckets[actor.Key]
 	if b != nil && now.Sub(b.start) >= DenialWindow {
 		if b.suppressed > 0 {
-			out = append(out, denialSummary{actor: actor, userID: b.userID, bucket: *b})
+			out = append(out, *b)
 		}
-		delete(d.buckets, actor)
+		delete(d.buckets, actor.Key)
 		b = nil
 	}
 	if b == nil {
@@ -127,16 +140,12 @@ func (d *denials) admit(actor, userID, perm string) (bool, []denialSummary) {
 			out = append(out, d.expiredLocked(now, false)...)
 		}
 		if len(d.buckets) >= maxDenialActors {
-			// Every slot holds a live window: count this refusal in a
-			// shared bucket rather than letting distinct actors evict
-			// each other's counts.
-			actor, userID = "overflow", ""
-			b = d.buckets[actor]
+			// Evicting ends the oldest window early: its summary is written
+			// now, so no count is lost and every entry keeps its actor.
+			out = append(out, d.evictOldestLocked()...)
 		}
-		if b == nil {
-			b = &denialBucket{start: now, userID: userID}
-			d.buckets[actor] = b
-		}
+		b = &denialBucket{actor: actor, start: now}
+		d.buckets[actor.Key] = b
 	}
 	if b.written < DenialBurst {
 		b.written++
@@ -153,23 +162,40 @@ func (d *denials) admit(actor, userID, perm string) (bool, []denialSummary) {
 	return false, out
 }
 
-func (d *denials) expired(all bool) []denialSummary {
+func (d *denials) evictOldestLocked() []denialBucket {
+	var oldest *denialBucket
+	for _, b := range d.buckets {
+		if oldest == nil || b.start.Before(oldest.start) {
+			oldest = b
+		}
+	}
+	if oldest == nil {
+		return nil
+	}
+	delete(d.buckets, oldest.actor.Key)
+	if oldest.suppressed == 0 {
+		return nil
+	}
+	return []denialBucket{*oldest}
+}
+
+func (d *denials) expired(all bool) []denialBucket {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.expiredLocked(d.clock(), all)
 }
 
-func (d *denials) expiredLocked(now time.Time, all bool) []denialSummary {
-	var out []denialSummary
-	for _, actor := range slices.Sorted(maps.Keys(d.buckets)) {
-		b := d.buckets[actor]
+func (d *denials) expiredLocked(now time.Time, all bool) []denialBucket {
+	var out []denialBucket
+	for _, key := range slices.Sorted(maps.Keys(d.buckets)) {
+		b := d.buckets[key]
 		if !all && now.Sub(b.start) < DenialWindow {
 			continue
 		}
 		if b.suppressed > 0 {
-			out = append(out, denialSummary{actor: actor, userID: b.userID, bucket: *b})
+			out = append(out, *b)
 		}
-		delete(d.buckets, actor)
+		delete(d.buckets, key)
 	}
 	return out
 }
