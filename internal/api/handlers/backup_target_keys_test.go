@@ -52,13 +52,13 @@ func TestBackupTargetRefusesFoldedFieldNames(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := checkConfigKeys(tt.next, backupTargetFields); !errors.Is(err, redact.ErrFieldName) {
-				t.Errorf("checkConfigKeys = %v, want ErrFieldName", err)
+			if _, err := cleanConfig(tt.next, backupTargetFields); !errors.Is(err, redact.ErrFieldName) {
+				t.Errorf("cleanConfig = %v, want ErrFieldName", err)
 			}
 			if tt.check {
 				return
 			}
-			if _, err := keepConfig(tt.next, tt.prev, backupTargetSecrets); !errors.Is(err, redact.ErrFieldName) {
+			if _, err := keepConfig(tt.next, tt.prev, backupTargetSecrets, backupTargetFields); !errors.Is(err, redact.ErrFieldName) {
 				t.Errorf("keepConfig = %v, want ErrFieldName", err)
 			}
 			in := &backup.JobInput{TargetType: "smb", TargetConfig: tt.next}

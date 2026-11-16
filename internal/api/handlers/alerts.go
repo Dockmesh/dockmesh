@@ -43,7 +43,7 @@ func (h *Handlers) CreateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := checkConfigKeys(in.Config, notify.ConfigFields(in.Type)); err != nil {
+	if err := cleanChannelConfig(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -75,14 +75,14 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := checkConfigKeys(in.Config, notify.ConfigFields(in.Type)); err != nil {
+	if err := cleanChannelConfig(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for _, prev := range h.Notify.Channels() {
 		if prev.ID == id && prev.Type == in.Type {
 			secrets := notifySecrets(in.Type, redact.ToMap(in.Config), redact.ToMap(prev.Config))
-			cfg, err := keepConfig(in.Config, prev.Config, secrets)
+			cfg, err := keepConfig(in.Config, prev.Config, secrets, notify.ConfigFields(in.Type))
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return

@@ -31,17 +31,17 @@ func TestMapAndKeepRoundTrip(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Keep(tt.next, stored, secrets)
+			got, err := Keep(tt.next, stored, secrets, secrets)
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Keep = %v, %v, want %v", got, err, tt.want)
 			}
 		})
 	}
 	// Reusing the stored password against another server would hand it over.
-	if _, err := Keep(map[string]any{"host": "attacker"}, stored, secrets); !errors.Is(err, ErrReenter) {
+	if _, err := Keep(map[string]any{"host": "attacker"}, stored, secrets, secrets); !errors.Is(err, ErrReenter) {
 		t.Errorf("changed host with kept password: err = %v, want ErrReenter", err)
 	}
-	if _, err := Keep(map[string]any{"host": "attacker", "password": "typed"}, stored, secrets); err != nil {
+	if _, err := Keep(map[string]any{"host": "attacker", "password": "typed"}, stored, secrets, secrets); err != nil {
 		t.Errorf("changed host with a new password: %v", err)
 	}
 }
@@ -104,7 +104,7 @@ func TestKeepFoldedNamesAndClear(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Keep(tt.next, prev, secrets)
+			got, err := Keep(tt.next, prev, secrets, secrets)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -115,8 +115,52 @@ func TestKeepFoldedNamesAndClear(t *testing.T) {
 	}
 	// A stored name the decoder folds elsewhere isn't carried over.
 	legacy := map[string]any{"host": "nas", "hoſt": "evil", "password": "hunter2"}
-	got, err := Keep(map[string]any{"host": "nas"}, legacy, []string{"password", "hoſt"})
+	got, err := Keep(map[string]any{"host": "nas"}, legacy, []string{"password", "hoſt"}, secrets)
 	if err != nil || got["hoſt"] != nil || got["password"] != "hunter2" {
 		t.Errorf("Keep with a legacy folded name = %v, %v", got, err)
+	}
+}
+
+func TestKeepLegacyCaseVariant(t *testing.T) {
+	fields := []string{"host", "password"}
+	prev := map[string]any{"host": "nas", "Host": "old", "password": "hunter2"}
+	want := map[string]any{"host": "nas", "password": "hunter2"}
+	tests := []struct {
+		name string
+		next map[string]any
+	}{
+		{"canonical fields only", map[string]any{"host": "nas", "password": ""}},
+		{"redacted variant echoed back", map[string]any{"host": "nas", "Host": "", "Host_set": true, "password": "", "password_set": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The variant is a secret for channel types that treat every
+			// unknown field as one.
+			got, err := Keep(tt.next, prev, []string{"password", "Host"}, fields)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Errorf("Keep = %v, %v, want %v", got, err, want)
+			}
+		})
+	}
+	if _, err := Keep(map[string]any{"host": "nas", "Host": "evil"}, prev, []string{"password"}, fields); !errors.Is(err, ErrFieldName) {
+		t.Errorf("variant with a value: err = %v, want ErrFieldName", err)
+	}
+}
+
+func TestHasForeignKey(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want bool
+	}{
+		{`{"host":"a","Host":"b"}`, false},
+		{`{"ho\u017ft":"evil"}`, true},
+		{`{"access_\u212aey":"x"}`, true},
+		{`[1]`, false},
+		{`not json`, false},
+	}
+	for _, tt := range tests {
+		if got := HasForeignKey([]byte(tt.raw)); got != tt.want {
+			t.Errorf("HasForeignKey(%s) = %v, want %v", tt.raw, got, tt.want)
+		}
 	}
 }

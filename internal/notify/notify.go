@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
+	"github.com/dockmesh/dockmesh/internal/redact"
 )
 
 // Level controls the visual severity of the notification (icon/color).
@@ -211,6 +212,9 @@ var (
 	errQueueFull       = errors.New("too many deliveries in flight; notification dropped")
 	errChannelNotFound = errors.New("channel not found")
 	errChannelDisabled = errors.New("channel disabled")
+	// A non-ASCII field name may be decoded as another field than the
+	// one the API checked when the channel was saved.
+	errForeignKey = errors.New("channel config has a field name that isn't plain ASCII; edit the channel and save it again")
 )
 
 // prepare resolves an enabled channel to its implementation. A nil impl
@@ -425,6 +429,9 @@ func (s *Service) byID(id int64) *Channel {
 
 // buildChannel converts a stored row into a runtime channelImpl.
 func buildChannel(c *Channel, hc *http.Client) (channelImpl, error) {
+	if redact.HasForeignKey(c.Config) {
+		return nil, errForeignKey
+	}
 	switch c.Type {
 	case "webhook":
 		return parseWebhook(c.Config, hc)

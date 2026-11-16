@@ -67,7 +67,8 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := checkConfigKeys(in.Config, backupTargetFields); err != nil {
+	var err error
+	if in.Config, err = cleanConfig(in.Config, backupTargetFields); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -113,12 +114,12 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := checkConfigKeys(in.Config, backupTargetFields); err != nil {
+	if in.Config, err = cleanConfig(in.Config, backupTargetFields); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if prev.Type == in.Type {
-		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets); err != nil {
+		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets, backupTargetFields); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

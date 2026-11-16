@@ -50,22 +50,42 @@ func redactConfig(cfg any, secrets []string) any {
 	return cfg
 }
 
-// keepConfig fills secrets the client left empty from the stored config.
-func keepConfig(next, stored any, secrets []string) (any, error) {
+// keepConfig fills secrets the client left empty from the stored config;
+// fields lists the field names of the config type.
+func keepConfig(next, stored any, secrets, fields []string) (any, error) {
 	n := redact.ToMap(next)
 	if n == nil {
 		return next, nil
 	}
-	return redact.Keep(n, redact.ToMap(stored), secrets)
+	return redact.Keep(n, redact.ToMap(stored), secrets, fields)
 }
 
-// checkConfigKeys refuses a config whose field names the type's decoder
-// could match to another field than the one they spell; known lists the
-// field names of the type.
-func checkConfigKeys(cfg any, known []string) error {
-	if m := redact.ToMap(cfg); m != nil {
-		return redact.CheckKeys(m, known)
+// cleanConfig drops the valueless field names a redacted legacy config
+// echoes back and refuses names the type's decoder could match to
+// another field than the one they spell (see redact.Clean).
+func cleanConfig(cfg any, fields []string) (any, error) {
+	m := redact.ToMap(cfg)
+	if m == nil {
+		return cfg, nil
 	}
+	return redact.Clean(m, fields)
+}
+
+// cleanChannelConfig is cleanConfig for a channel's raw JSON config.
+func cleanChannelConfig(in *notify.ChannelInput) error {
+	m := redact.ToMap(in.Config)
+	if m == nil {
+		return nil
+	}
+	m, err := redact.Clean(m, notify.ConfigFields(in.Type))
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	in.Config = b
 	return nil
 }
 

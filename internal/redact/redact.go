@@ -56,10 +56,10 @@ var ErrFieldName = errors.New("config field name is ambiguous")
 // CheckKeys refuses field names a struct decoder would fold onto another
 // field: non-ASCII names (json folds "ſ" to "s" and the Kelvin sign to
 // "k"), names that differ only in case from another name in cfg, and
-// case variants of known or Bound names. Otherwise a second "Host" or
-// "hoſt" could redirect a config that compares equal on "host".
-func CheckKeys(cfg map[string]any, known []string) error {
-	canon := canonicalNames(known)
+// case variants of the type's fields or of Bound. Otherwise a second
+// "Host" or "hoſt" could redirect a config that compares equal on "host".
+func CheckKeys(cfg map[string]any, fields []string) error {
+	canon := canonicalNames(fields)
 	seen := make(map[string]bool, len(cfg))
 	for k := range cfg {
 		low := strings.ToLower(k)
@@ -71,9 +71,49 @@ func CheckKeys(cfg map[string]any, known []string) error {
 	return nil
 }
 
-func canonicalNames(known []string) map[string]string {
-	canon := make(map[string]string, len(known)+len(Bound))
-	for _, list := range [][]string{Bound, known} {
+// Clean returns a copy of cfg without the ambiguous names (see CheckKeys)
+// that carry no value, and without their "<field>_set" markers: that is
+// how a redacted legacy config comes back from a client. It fails with
+// ErrFieldName if an ambiguous name with a value, or a case duplicate,
+// remains.
+func Clean(cfg map[string]any, fields []string) (map[string]any, error) {
+	canon := canonicalNames(fields)
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		if ambiguous(k, canon) && (v == nil || v == "") {
+			continue
+		}
+		if base, ok := strings.CutSuffix(k, SetSuffix); ok && ambiguous(base, canon) {
+			if _, isBool := v.(bool); isBool {
+				continue
+			}
+		}
+		out[k] = v
+	}
+	if err := CheckKeys(out, fields); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HasForeignKey reports whether the JSON object raw has a field name that
+// isn't plain ASCII, which a struct decoder may fold onto another field.
+func HasForeignKey(raw []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	for k := range m {
+		if !isASCII(k) {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalNames(fields []string) map[string]string {
+	canon := make(map[string]string, len(fields)+len(Bound))
+	for _, list := range [][]string{Bound, fields} {
 		for _, k := range list {
 			canon[strings.ToLower(k)] = k
 		}
@@ -81,11 +121,18 @@ func canonicalNames(known []string) map[string]string {
 	return canon
 }
 
-func ambiguous(k string, canon map[string]string) bool {
+func isASCII(k string) bool {
 	for i := 0; i < len(k); i++ {
 		if k[i] >= utf8.RuneSelf {
-			return true
+			return false
 		}
+	}
+	return true
+}
+
+func ambiguous(k string, canon map[string]string) bool {
+	if !isASCII(k) {
+		return true
 	}
 	c, ok := canon[strings.ToLower(k)]
 	return ok && c != k
@@ -93,19 +140,18 @@ func ambiguous(k string, canon map[string]string) bool {
 
 // Keep returns next with empty (missing, null or "") secret fields taken
 // from prev and the "<field>_set" markers removed; a secret sent with
-// "<field>_set": false is cleared instead. It fails with ErrFieldName for
-// field names CheckKeys refuses and with ErrReenter when a secret would
-// be kept while a Bound field differs from prev; a Bound field that is a
-// secret itself counts too, so a new URL can't take a kept token along.
-func Keep(next, prev map[string]any, secrets []string) (map[string]any, error) {
-	if err := CheckKeys(next, secrets); err != nil {
+// "<field>_set": false is cleared instead. fields lists the field names
+// of the config type. next goes through Clean first, and stored names
+// that are ambiguous against fields are dropped rather than kept. Keep
+// fails with ErrReenter when a secret would be kept while a Bound field
+// differs from prev; a Bound field that is a secret itself counts too,
+// so a new URL can't take a kept token along.
+func Keep(next, prev map[string]any, secrets, fields []string) (map[string]any, error) {
+	out, err := Clean(next, fields)
+	if err != nil {
 		return nil, err
 	}
-	canon := canonicalNames(secrets)
-	out := make(map[string]any, len(next))
-	for k, v := range next {
-		out[k] = v
-	}
+	canon := canonicalNames(fields)
 	kept := false
 	for _, k := range secrets {
 		wipe := out[k+SetSuffix] == false
@@ -117,8 +163,6 @@ func Keep(next, prev map[string]any, secrets []string) (map[string]any, error) {
 			delete(out, k)
 			continue
 		}
-		// A legacy stored name the decoder would fold elsewhere isn't
-		// carried over.
 		if ambiguous(k, canon) {
 			continue
 		}

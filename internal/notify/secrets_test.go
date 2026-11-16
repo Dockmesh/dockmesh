@@ -113,3 +113,19 @@ func TestSendToMasksEchoedToken(t *testing.T) {
 		t.Fatalf("SendTo error = %v, want the status without the token", err)
 	}
 }
+
+func TestBuildChannelRefusesForeignKey(t *testing.T) {
+	s := newNotifyService(t)
+	cfg := json.RawMessage(`{"url":"http://127.0.0.1:1/hook","urł":"x"}`)
+	c, err := s.Create(context.Background(), ChannelInput{Type: "webhook", Name: "n", Config: cfg, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SendTo(context.Background(), c.ID, Notification{Title: "t"}); err == nil || !strings.Contains(err.Error(), "edit the channel") {
+		t.Fatalf("SendTo = %v, want the foreign key error", err)
+	}
+	_ = s.sendWithRetry(context.Background(), c.ID, Notification{Title: "t"})
+	if got := s.byID(c.ID).LastError; !strings.Contains(got, "edit the channel") {
+		t.Fatalf("last_error = %q", got)
+	}
+}

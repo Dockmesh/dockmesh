@@ -267,3 +267,58 @@ func TestChannelSecretClearedByFalseMarker(t *testing.T) {
 		t.Errorf("stored = %v, want %v", got, want)
 	}
 }
+
+// Channels stored before field names were checked stay editable: the
+// redacted variant comes back empty and is dropped on save.
+func TestLegacyChannelVariantRoundTrip(t *testing.T) {
+	base := map[string]any{"host": "smtp.example.com", "port": float64(587), "username": "alerts",
+		"password": channelCanary, "from": "a@example.com", "to": []any{"ops@example.com"}}
+	tests := []struct {
+		name    string
+		variant string
+	}{
+		{"ascii case variant", "Host"},
+		{"long s", "hoſt"},
+	}
+	for _, tt := range tests {
+		for _, echoAll := range []bool{false, true} {
+			t.Run(tt.name+"/echo all="+strconv.FormatBool(echoAll), func(t *testing.T) {
+				r, svc := newChannelRouter(t)
+				legacy := map[string]any{tt.variant: "evil.example.com"}
+				for k, v := range base {
+					legacy[k] = v
+				}
+				raw, err := json.Marshal(legacy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err := svc.Create(t.Context(), notify.ChannelInput{Type: "email", Name: "n", Config: raw, Enabled: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var list []channelResp
+				if err := json.Unmarshal(channelCall(t, r, http.MethodGet, "/channels", nil).Body.Bytes(), &list); err != nil {
+					t.Fatal(err)
+				}
+				shown := list[0].Config
+				if shown[tt.variant] != "" || shown[tt.variant+"_set"] != true {
+					t.Fatalf("variant not redacted: %v", shown)
+				}
+				update := map[string]any{}
+				for k, v := range shown {
+					if echoAll || notify.PublicConfigField("email", k) || k == "password" {
+						update[k] = v
+					}
+				}
+				rr := channelCall(t, r, http.MethodPut, "/channels/"+strconv.FormatInt(c.ID, 10),
+					map[string]any{"type": "email", "name": "n", "config": update, "enabled": true})
+				if rr.Code != http.StatusOK {
+					t.Fatalf("update: %d %s", rr.Code, rr.Body.String())
+				}
+				if got := storedConfig(t, svc, c.ID); !reflect.DeepEqual(got, base) {
+					t.Errorf("stored = %v, want %v", got, base)
+				}
+			})
+		}
+	}
+}
