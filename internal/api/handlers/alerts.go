@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -72,7 +73,8 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	}
 	for _, prev := range h.Notify.Channels() {
 		if prev.ID == id && prev.Type == in.Type {
-			cfg, err := keepConfig(in.Config, prev.Config, notifySecrets(in.Type))
+			secrets := notifySecrets(in.Type, redact.ToMap(in.Config), redact.ToMap(prev.Config))
+			cfg, err := keepConfig(in.Config, prev.Config, secrets)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -89,6 +91,10 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	c, err := h.Notify.Update(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if c == nil {
+		writeError(w, http.StatusNotFound, "channel not found")
 		return
 	}
 	h.audit(r, "notify.channel_update", strconv.FormatInt(id, 10), nil)

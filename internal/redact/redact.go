@@ -47,20 +47,20 @@ var ErrReenter = errors.New("re-enter the credentials when changing the server, 
 // can't send the stored secret somewhere else.
 var Bound = []string{"host", "port", "url", "endpoint", "username", "access_key", "share", "from"}
 
-// Keep returns next with empty or missing secret fields taken from prev
-// and the "<field>_set" markers removed. It fails with ErrReenter when a
-// secret would be kept while a Bound field differs from prev.
+// Keep returns next with empty (missing, null or "") secret fields taken
+// from prev and the "<field>_set" markers removed. It fails with
+// ErrReenter when a secret would be kept while a Bound field differs from
+// prev; a Bound field that is a secret itself counts too, so a new URL
+// can't take a kept token along.
 func Keep(next, prev map[string]any, secrets []string) (map[string]any, error) {
 	out := make(map[string]any, len(next))
 	for k, v := range next {
 		out[k] = v
 	}
-	isSecret := make(map[string]bool, len(secrets))
 	kept := false
 	for _, k := range secrets {
-		isSecret[k] = true
 		delete(out, k+SetSuffix)
-		if s, _ := out[k].(string); s != "" {
+		if v := out[k]; v != nil && v != "" {
 			continue
 		}
 		if pv, ok := prev[k]; ok {
@@ -72,7 +72,7 @@ func Keep(next, prev map[string]any, secrets []string) (map[string]any, error) {
 	}
 	if kept {
 		for _, k := range Bound {
-			if !isSecret[k] && fmt.Sprint(out[k]) != fmt.Sprint(prev[k]) {
+			if fmt.Sprint(out[k]) != fmt.Sprint(prev[k]) {
 				return nil, ErrReenter
 			}
 		}

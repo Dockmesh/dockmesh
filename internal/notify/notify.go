@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -188,7 +187,20 @@ func (s *Service) SendTo(ctx context.Context, id int64, n Notification) error {
 	}
 	err = impl.Send(ctx, n)
 	s.recordResult(ctx, id, err)
-	return err
+	if err != nil {
+		return errors.New(errorText(err, true, s.secretsOf(id)))
+	}
+	return nil
+}
+
+// secretsOf returns the secret values of channel id for masking errors.
+func (s *Service) secretsOf(id int64) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if c, ok := s.cache[id]; ok {
+		return secretValues(c)
+	}
+	return nil
 }
 
 // maxConcurrentSends caps deliveries in flight; each can take ~45 s
@@ -245,7 +257,7 @@ func (s *Service) SendToAll(ctx context.Context, ids []int64, n Notification) {
 		go func(id int64) {
 			defer func() { <-s.sending }()
 			if err := s.sendWithRetry(ctx, id, n); err != nil {
-				slog.Warn("notify send failed", "channel_id", id, "err", err)
+				slog.Warn("notify send failed", "channel_id", id, "err", errorText(err, false, s.secretsOf(id)))
 			}
 		}(id)
 	}
@@ -285,8 +297,7 @@ func (s *Service) sendWithRetry(ctx context.Context, id int64, n Notification) e
 const maxErrorLen = 300
 
 // recordResult persists the delivery outcome. The stored error is shown
-// to every alerts viewer, so URL errors are reduced to their cause and
-// HTTP errors to their status: both can carry a webhook token.
+// to every alerts viewer, so HTTP errors are reduced to their status.
 func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
 	now := time.Now().UTC()
 	var dbErr error
@@ -295,16 +306,7 @@ func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
 		_, dbErr = s.db.ExecContext(ctx,
 			`UPDATE notification_channels SET last_sent_at = ? WHERE id = ?`, now, id)
 	} else {
-		var uerr *url.Error
-		var serr *statusError
-		switch {
-		case errors.As(sendErr, &uerr):
-			msg = uerr.Op + ": " + uerr.Err.Error()
-		case errors.As(sendErr, &serr):
-			msg = serr.Status
-		default:
-			msg = sendErr.Error()
-		}
+		msg = errorText(sendErr, false, s.secretsOf(id))
 		if len(msg) > maxErrorLen {
 			msg = msg[:maxErrorLen]
 		}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -12,16 +13,25 @@ import (
 // Credential fields in backup target configs (also embedded in jobs).
 var backupTargetSecrets = []string{"password", "secret_key", "private_key"}
 
-// notifySecrets lists the credential fields of a channel type. For
-// webhook-style channels the URL itself can be the credential (tokens in
-// the path or query, topic names that grant access).
-func notifySecrets(channelType string) []string {
-	s := []string{"password", "token", "integration_key", "app_token", "user_key"}
-	switch channelType {
-	case "discord", "slack", "teams", "webhook", "ntfy", "gotify":
-		s = append(s, "url")
+// notifySecrets lists the fields of the given configs that are
+// credentials for a channel type: every field that isn't a known public
+// one, so a field the client invented can't be read back either. A
+// boolean "<field>_set" is a redaction marker, not a field of its own.
+func notifySecrets(channelType string, cfgs ...map[string]any) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, cfg := range cfgs {
+		for k, v := range cfg {
+			if _, isBool := v.(bool); isBool && strings.HasSuffix(k, redact.SetSuffix) {
+				continue
+			}
+			if !seen[k] && !notify.PublicConfigField(channelType, k) {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
 	}
-	return s
+	return out
 }
 
 // redactConfig blanks secrets in a JSON-object config; other shapes have
@@ -54,10 +64,13 @@ func redactTarget(t *targets.StoredTarget) *targets.StoredTarget {
 	return &out
 }
 
+// redactChannel answers a config that isn't a JSON object with an empty
+// one: it has no named fields to tell secrets from the rest.
 func redactChannel(c *notify.Channel) *notify.Channel {
 	out := *c
+	out.Config = json.RawMessage("{}")
 	if m := redact.ToMap(c.Config); m != nil {
-		if b, err := json.Marshal(redact.Map(m, notifySecrets(c.Type))); err == nil {
+		if b, err := json.Marshal(redact.Map(m, notifySecrets(c.Type, m))); err == nil {
 			out.Config = b
 		}
 	}
