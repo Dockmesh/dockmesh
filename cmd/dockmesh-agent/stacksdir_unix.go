@@ -3,21 +3,29 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
-// Stacks dir issues, in the order checkStacksDir tests them.
+// Statuses of a stacks dir check.
+const (
+	sdOK   = "ok"
+	sdWarn = "warn"
+	sdFail = "fail"
+)
+
+// Stacks dir issues.
 const (
 	sdUnchanged    = "unchanged"
 	sdNotAbsolute  = "not_absolute"
@@ -27,6 +35,9 @@ const (
 	sdDockerRoot   = "docker_root_unknown"
 	sdAgentData    = "agent_data_dir"
 	sdServerData   = "server_data_dir"
+	sdInStacks     = "inside_stacks_dir"
+	sdBindMount    = "bind_mount"
+	sdFUSE         = "fuse"
 	sdSymlink      = "symlink"
 	sdNotDir       = "not_a_directory"
 	sdUnsafeParent = "unsafe_parent"
@@ -45,8 +56,12 @@ const (
 )
 
 // denyRoots may never hold a stacks dir. Any top-level directory whose
-// name starts with "lib" is refused as well.
-var denyRoots = []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev", "/run", "/root", "/var/lib/docker"}
+// name starts with "lib" is refused as well. All of /var is refused, not
+// only Docker's data: root services load drop-in directories from there
+// (polkit's localauthority, systemd-sysext, k3s manifests), and a
+// directory the agent may write in one of them would be a way to root
+// that needs no Docker. The agent's default stacks dir is the exception.
+var denyRoots = []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/efi", "/proc", "/sys", "/dev", "/run", "/root", "/var", "/tmp", "/snap", "/nix"}
 
 // defaultServerDataDir is refused whether or not a server runs here.
 const defaultServerDataDir = "/var/lib/dockmesh"
@@ -59,16 +74,27 @@ type stacksDirRules struct {
 	current string
 	// serverDataDirs are data dirs of a Dockmesh server on this host.
 	serverDataDirs []string
-	// dockerRoot is Docker's data root; empty when Docker could not be
-	// asked, which refuses every path.
-	dockerRoot string
+	// stackDirs are the current and earlier stacks dirs; the agent owns
+	// them, so nothing may be created inside one.
+	stackDirs []string
+	// dockerRoots are the data roots of the Docker daemons on this host;
+	// none when Docker could not be asked, which refuses every path.
+	dockerRoots []string
 	// uid must own a target that exists already.
 	uid int
 	// parentOK accepts a directory above the target; nil accepts only one
 	// root owns and nobody else may write.
-	parentOK func(path string, uid, mode uint32) bool
-	// mountinfo returns /proc/self/mountinfo.
+	parentOK  func(path string, uid, mode uint32) bool
 	mountinfo func() (io.ReadCloser, error)
+	// deny replaces denyRoots in tests, which work below /tmp.
+	deny []string
+}
+
+func (r stacksDirRules) denied() []string {
+	if r.deny != nil {
+		return r.deny
+	}
+	return denyRoots
 }
 
 // stacksDirResult is a check and, for root, the walk it decided on.
@@ -85,17 +111,18 @@ func (r stacksDirRules) parentAllowed(path string, uid, mode uint32) bool {
 	return uid == 0 && mode&0o022 == 0
 }
 
-func (r stacksDirResult) ok() bool { return r.Status != "fail" }
+func (r stacksDirResult) ok() bool { return r.Status != sdFail }
 
 // checkStacksDir checks p as a new stacks dir with the rules of root's
 // stacks-dir-apply. It writes nothing. Every component is opened with
 // O_NOFOLLOW from the one before, so a symlink anywhere is refused, and
-// compared by device and inode with the refused directories, so a bind
-// mount or another spelling of one is refused too.
+// compared by device and inode with the refused directories, which
+// catches another spelling of one. A path on a bind mount of a
+// subdirectory is refused, since its real place is not known.
 func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 	res := stacksDirResult{StacksDirCheck: agents.StacksDirCheck{Path: p}}
 	fail := func(issue, format string, a ...any) stacksDirResult {
-		res.Status, res.Issue, res.Message = "fail", issue, fmt.Sprintf(format, a...)
+		res.Status, res.Issue, res.Message = sdFail, issue, fmt.Sprintf(format, a...)
 		return res
 	}
 	if !filepath.IsAbs(p) {
@@ -105,22 +132,30 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		return fail(sdBadChars, "Use a clean path of only letters, digits and . _ - /.")
 	}
 	if p == r.current {
-		res.Status, res.Issue, res.Message = "ok", sdUnchanged, "This is the stacks directory already."
+		res.Status, res.Issue, res.Message = sdOK, sdUnchanged, "This is the stacks directory already."
 		return res
 	}
 	defaultDir := filepath.Join(r.dataDir, "stacks")
 	switch {
-	case p == "/" || deniedByName(p):
+	case p == "/" || p != defaultDir && deniedByName(p, r.denied()):
 		return fail(sdSystemDir, "%s is a system directory. Choose a directory of its own, for example /srv/dockmesh/stacks.", p)
-	case r.dockerRoot == "":
+	case len(r.dockerRoots) == 0:
 		return fail(sdDockerRoot, "Docker's data directory is not known, so no path can be checked against it.")
-	case within(r.dockerRoot, p) || within(p, r.dockerRoot):
-		return fail(sdInsideDocker, "Choose a directory outside Docker's data directory %s.", r.dockerRoot)
-	case p != defaultDir && (within(r.dataDir, p) || within(p, r.dataDir)):
+	case p != defaultDir && (layout.Within(r.dataDir, p) || layout.Within(p, r.dataDir)):
 		return fail(sdAgentData, "%s overlaps the agent's data directory; only %s may lie in it.", p, defaultDir)
 	}
+	for _, d := range r.dockerRoots {
+		if layout.Within(d, p) || layout.Within(p, d) {
+			return fail(sdInsideDocker, "Choose a directory outside Docker's data directory %s.", d)
+		}
+	}
+	for _, d := range r.stackDirs {
+		if p != d && layout.Within(d, p) {
+			return fail(sdInStacks, "%s lies in the stacks directory %s. Choose a directory outside it.", p, d)
+		}
+	}
 	for _, s := range r.serverDataDirs {
-		if within(s, p) || within(p, s) {
+		if layout.Within(s, p) || layout.Within(p, s) {
 			return fail(sdServerData, "%s overlaps the Dockmesh server's data directory %s.", p, s)
 		}
 	}
@@ -137,6 +172,7 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		return fail(sdUnreadable, "Cannot read /: %v.", err)
 	}
 	cur := "/"
+walk:
 	for i, c := range comps {
 		next := filepath.Join(cur, c)
 		// O_DIRECTORY keeps a FIFO or device from blocking the open; what
@@ -144,6 +180,7 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		nfd, err := unix.Openat(fd, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		switch {
 		case errors.Is(err, unix.ENOENT):
+			break walk
 		case errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR):
 			var lst unix.Stat_t
 			if unix.Fstatat(fd, c, &lst, unix.AT_SYMLINK_NOFOLLOW) == nil && lst.Mode&unix.S_IFMT == unix.S_IFLNK {
@@ -153,15 +190,14 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		case err != nil:
 			return fail(sdUnreadable, "Cannot read %s: %v.", next, err)
 		}
-		if errors.Is(err, unix.ENOENT) {
-			break
-		}
 		unix.Close(fd)
 		fd = nfd
 		if err := unix.Fstat(fd, &st); err != nil {
 			return fail(sdUnreadable, "Cannot read %s: %v.", next, err)
 		}
-		if why, bad := denied[fileID{uint64(st.Dev), uint64(st.Ino)}]; bad { //nolint:unconvert // the types differ per OS
+		// A refused dir under its own name was decided by name above;
+		// this catches other spellings of one.
+		if why, bad := denied[fileID{uint64(st.Dev), uint64(st.Ino)}]; bad && why != next { //nolint:unconvert // the types differ per OS
 			return fail(sdSystemDir, "%s is the same directory as %s.", next, why)
 		}
 		res.existing = i + 1
@@ -175,17 +211,20 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		cur = next
 	}
 
-	probe := cur
-	fsType, err := mountFSType(r.mountinfo, probe)
+	m, err := mountOf(r.mountinfo, cur)
 	if err != nil {
 		return fail(sdUnreadable, "Cannot read the mount table: %v.", err)
 	}
-	res.FSType = fsType
+	res.FSType = m.FSType
 	switch {
-	case setup.NetworkFS(fsType):
-		return fail(sdNetworkShare, "%s is on a network share (%s). Choose a local filesystem such as ext4, xfs or btrfs.", p, fsType)
-	case setup.NoUnixPermsFS(fsType):
-		return fail(sdNoUnixPerms, "%s is on a filesystem without Unix permissions (%s). Choose a local filesystem such as ext4, xfs or btrfs.", p, fsType)
+	case setup.NoUnixPermsFS(m.FSType):
+		return fail(sdNoUnixPerms, "%s is on a filesystem without Unix permissions (%s). Choose a local filesystem such as ext4, xfs or btrfs.", p, m.FSType)
+	case setup.NetworkFS(m.FSType):
+		return fail(sdNetworkShare, "%s is on a network share (%s). Choose a local filesystem such as ext4, xfs or btrfs.", p, m.FSType)
+	case m.FSType == "fuse" || strings.HasPrefix(m.FSType, "fuse."):
+		return fail(sdFUSE, "%s is on a FUSE filesystem (%s). Choose a local filesystem such as ext4, xfs or btrfs.", p, m.FSType)
+	case m.Root != "/" && !m.Subvolume:
+		return fail(sdBindMount, "%s is on a bind mount of %s. Enter a path on the mounted filesystem itself.", p, m.Root)
 	}
 
 	if res.existing == len(comps) {
@@ -210,24 +249,24 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		res.FreeBytes = int64(sfs.Bavail) * bsize  // #nosec G115 -- filesystem sizes fit int64
 		switch {
 		case res.FreeBytes < minStacksFree:
-			return fail(sdTooSmall, "Only %d MiB free on %s. Stacks need at least 200 MiB.", res.FreeBytes>>20, probe)
+			return fail(sdTooSmall, "Only %d MiB free on %s. Stacks need at least 200 MiB.", res.FreeBytes>>20, cur)
 		case res.FreeBytes < warnStacksFree:
-			res.Status, res.Issue = "warn", sdLowSpace
+			res.Status, res.Issue = sdWarn, sdLowSpace
 			res.Message = fmt.Sprintf("Only %.1f GiB free. Images and bind data can fill this quickly.", float64(res.FreeBytes)/(1<<30))
 			return res
 		}
 	}
-	res.Status = "ok"
+	res.Status = sdOK
 	res.Message = "The directory can be used."
 	return res
 }
 
 // deniedByName refuses the deny roots and top-level lib* directories by
 // name, ignoring case for filesystems that do.
-func deniedByName(p string) bool {
+func deniedByName(p string, deny []string) bool {
 	lower := strings.ToLower(p)
-	for _, d := range denyRoots {
-		if within(d, lower) {
+	for _, d := range deny {
+		if layout.Within(d, lower) {
 			return true
 		}
 	}
@@ -244,7 +283,7 @@ type fileID struct {
 // that exists to its name. The agent's data dir is left out for its
 // default stacks dir, which lies in it.
 func deniedIdentities(r stacksDirRules, inDataDir bool) map[fileID]string {
-	dirs := append([]string{r.dockerRoot}, denyRoots...)
+	dirs := append(slices.Clone(r.dockerRoots), r.denied()...)
 	dirs = append(dirs, r.serverDataDirs...)
 	if entries, err := os.ReadDir("/"); err == nil {
 		for _, e := range entries {
@@ -266,33 +305,14 @@ func deniedIdentities(r stacksDirRules, inDataDir bool) map[fileID]string {
 	return out
 }
 
-// mountFSType is the filesystem type of the mount that holds path.
-func mountFSType(mountinfo func() (io.ReadCloser, error), path string) (string, error) {
+// mountOf is the mount that holds path.
+func mountOf(mountinfo func() (io.ReadCloser, error), path string) (setup.Mount, error) {
 	f, err := mountinfo()
 	if err != nil {
-		return "", err
+		return setup.Mount{}, err
 	}
 	defer f.Close()
-	best, fsType := "", ""
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		sep := -1
-		for i, fl := range fields {
-			if fl == "-" {
-				sep = i
-				break
-			}
-		}
-		if sep < 5 || sep+1 >= len(fields) {
-			continue
-		}
-		mp := setup.UnescapeMount(fields[4])
-		if within(mp, path) && len(mp) >= len(best) {
-			best, fsType = mp, fields[sep+1]
-		}
-	}
-	return fsType, sc.Err()
+	return setup.MountAt(f, path)
 }
 
 func procMountinfo() (io.ReadCloser, error) { return os.Open("/proc/self/mountinfo") }
@@ -311,9 +331,4 @@ func emptyDirAt(dirFD int) (bool, error) {
 		return true, nil
 	}
 	return len(names) == 0, err
-}
-
-// within reports whether p is root or lies below it; both are clean.
-func within(root, p string) bool {
-	return p == root || strings.HasPrefix(p, strings.TrimSuffix(root, "/")+"/")
 }

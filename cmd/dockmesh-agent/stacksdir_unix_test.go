@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 )
 
@@ -22,7 +23,7 @@ import (
 func testStacksRules(t *testing.T) (string, stacksDirRules) {
 	t.Helper()
 	root := t.TempDir()
-	for _, d := range []string{"data/stacks", "docker", "srv", "full/x", "empty", "loose", "nfs", "usb"} {
+	for _, d := range []string{"data/stacks", "docker", "srv", "full/x", "empty", "loose", "nfs", "usb", "bind", "fuse", "cur/s"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -38,13 +39,18 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 	}
 	mounts := "22 1 8:1 / / rw - ext4 /dev/sda1 rw\n" +
 		"40 22 0:50 / " + filepath.Join(root, "nfs") + " rw - nfs4 nas:/export rw\n" +
-		"41 22 8:17 / " + filepath.Join(root, "usb") + " rw - vfat /dev/sdb1 rw\n"
+		"41 22 8:17 / " + filepath.Join(root, "usb") + " rw - vfat /dev/sdb1 rw\n" +
+		"42 22 8:1 /etc/ssh " + filepath.Join(root, "bind") + " rw - ext4 /dev/sda1 rw\n" +
+		"43 22 0:60 / " + filepath.Join(root, "fuse") + " rw - fuse.mergerfs pool rw\n" +
+		"44 22 0:61 /@data " + filepath.Join(root, "srv") + " rw - btrfs /dev/sdc rw,subvol=/@data\n"
 	me := uint32(os.Getuid())
 	return root, stacksDirRules{
 		dataDir:        filepath.Join(root, "data"),
 		current:        filepath.Join(root, "data", "stacks"),
 		serverDataDirs: []string{defaultServerDataDir, filepath.Join(root, "server")},
-		dockerRoot:     filepath.Join(root, "docker"),
+		dockerRoots:    []string{filepath.Join(root, "docker")},
+		stackDirs:      []string{filepath.Join(root, "data", "stacks"), filepath.Join(root, "cur")},
+		deny:           []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/efi", "/proc", "/sys", "/dev", "/run", "/root", "/var", "/snap", "/nix"},
 		uid:            os.Getuid(),
 		mountinfo:      func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(mounts)), nil },
 		parentOK: func(p string, uid, mode uint32) bool {
@@ -86,11 +92,18 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "run", path: "/run/stacks", issue: sdSystemDir},
 		{name: "root home", path: "/root/stacks", issue: sdSystemDir},
 		{name: "docker root", path: root + "/docker/stacks", issue: sdInsideDocker},
-		{name: "parent of the docker root", path: root, issue: sdInsideDocker},
-		{name: "docker root unknown", path: root + "/srv/x", edit: func(r *stacksDirRules) { r.dockerRoot = "" }, issue: sdDockerRoot},
+		{name: "docker root unknown", path: root + "/srv/x", edit: func(r *stacksDirRules) { r.dockerRoots = nil }, issue: sdDockerRoot},
+		{name: "second docker root", path: root + "/srv/d/x", edit: func(r *stacksDirRules) { r.dockerRoots = append(r.dockerRoots, root+"/srv/d") }, issue: sdInsideDocker},
+		{name: "var lib", path: "/var/lib/polkit-1/localauthority/60-dm.d", issue: sdSystemDir},
+		{name: "var lib extensions", path: "/var/lib/extensions/dm", issue: sdSystemDir},
+		{name: "tmp", path: "/tmp/stacks", edit: func(r *stacksDirRules) { r.deny = denyRoots }, issue: sdSystemDir},
+		{name: "default dir in var", path: "/var/lib/dockmesh-agent/stacks", edit: func(r *stacksDirRules) { r.dataDir = "/var/lib/dockmesh-agent"; r.current = "/srv/s" }, ok: true, create: true},
+		{name: "inside a stacks dir", path: root + "/cur/s/x", issue: sdInStacks},
+		{name: "bind mount of a subdirectory", path: root + "/bind/x", issue: sdBindMount},
+		{name: "fuse", path: root + "/fuse/stacks", issue: sdFUSE},
 		{name: "inside the data dir", path: root + "/data/other", issue: sdAgentData},
 		{name: "the data dir", path: root + "/data", issue: sdAgentData},
-		{name: "server data dir", path: "/var/lib/dockmesh/stacks", issue: sdServerData},
+		{name: "server data dir", path: "/var/lib/dockmesh/stacks", issue: sdSystemDir},
 		{name: "configured server data dir", path: root + "/server/stacks", issue: sdServerData},
 		{name: "symlink in the path", path: root + "/link/stacks", issue: sdSymlink},
 		{name: "symlink as the target", path: root + "/link", issue: sdSymlink},
@@ -128,15 +141,15 @@ func FuzzCheckStacksDir(f *testing.F) {
 	f.Fuzz(func(t *testing.T, p string) {
 		rules := stacksDirRules{
 			dataDir: "/var/lib/dockmesh-agent", current: "/var/lib/dockmesh-agent/stacks",
-			serverDataDirs: []string{defaultServerDataDir}, dockerRoot: "/var/lib/docker", uid: os.Getuid(),
+			serverDataDirs: []string{defaultServerDataDir}, dockerRoots: []string{"/var/lib/docker"}, uid: os.Getuid(),
 			mountinfo: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil },
 		}
 		got := checkStacksDir(p, rules)
 		if !got.ok() || got.Issue == sdUnchanged {
 			return
 		}
-		if filepath.Clean(p) != p || !filepath.IsAbs(p) || strings.ContainsAny(p, " \n\t\"'\\$%") || deniedByName(p) ||
-			within(rules.dataDir, p) && p != "/var/lib/dockmesh-agent/stacks" || within(defaultServerDataDir, p) {
+		if filepath.Clean(p) != p || !filepath.IsAbs(p) || strings.ContainsAny(p, " \n\t\"'\\$%") || deniedByName(p, denyRoots) ||
+			layout.Within(rules.dataDir, p) && p != "/var/lib/dockmesh-agent/stacks" || layout.Within(defaultServerDataDir, p) {
 			t.Fatalf("accepted %q: %+v", p, got.StacksDirCheck)
 		}
 	})
@@ -184,8 +197,9 @@ func TestCreateStacksDir(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "a", "b", "stacks")
 	existing := len(strings.Split(strings.TrimPrefix(root, "/"), "/"))
-	if err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err != nil {
-		t.Fatal(err)
+	created, err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid())
+	if err != nil || len(created) != 3 {
+		t.Fatal(created, err)
 	}
 	for dir, mode := range map[string]os.FileMode{filepath.Join(root, "a"): 0o755, filepath.Join(root, "a", "b"): 0o755, p: 0o750} {
 		fi, err := os.Lstat(dir)
@@ -193,13 +207,13 @@ func TestCreateStacksDir(t *testing.T) {
 			t.Errorf("%s: %v %v, want dir %v", dir, fi, err, mode)
 		}
 	}
-	if err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
+	if _, err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
 		t.Error("an existing last component was created again")
 	}
 	if err := os.Symlink(root, filepath.Join(root, "l")); err != nil {
 		t.Fatal(err)
 	}
-	if err := createStacksDir(filepath.Join(root, "l", "x"), existing+1, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
+	if _, err := createStacksDir(filepath.Join(root, "l", "x"), existing+1, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
 		t.Error("a symlink in the path was followed")
 	}
 }
@@ -232,9 +246,9 @@ func testApplier(t *testing.T) (*testInstaller, *stacksDirApplier, string, *int)
 	a := &stacksDirApplier{
 		dataDir: data, reqDir: reqDir, uid: uint32(os.Getuid()), gid: os.Getgid(),
 		stateDir: filepath.Join(ti.root, "state"), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		rules: func(current string) stacksDirRules {
+		rules: func(dirs stackDirs) stacksDirRules {
 			r := rules
-			r.dataDir, r.current = data, current
+			r.dataDir, r.current, r.stackDirs = data, dirs.current, dirs.all()
 			return r
 		},
 		in: ti.agentInstaller, units: &memUnits{},

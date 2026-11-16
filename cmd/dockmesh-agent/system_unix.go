@@ -75,6 +75,11 @@ func systemInstall(args []string) error {
 	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
 	}
+	unlock, err := lockStacksDir(managedStateDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	in := hostInstaller(self)
 	res, err := in.run(o)
 	if err != nil {
@@ -136,7 +141,8 @@ func hostInstaller(self string) *agentInstaller {
 		socketGroups: layout.SocketGroups,
 		rootOnly:     layout.RootOnlyDir,
 		checkStacks: func(path, dataDir, current string, uid int, env map[string]string) stacksDirResult {
-			return checkStacksDir(path, hostStacksDirRules(context.Background(), dataDir, current, uid, env["DOCKER_HOST"]))
+			dirs := resolveStackDirs(current, env["DOCKMESH_EARLIER_STACKS_DIRS"], dataDir)
+			return checkStacksDir(path, hostStacksDirRules(context.Background(), dataDir, dirs, uid, env["DOCKER_HOST"]))
 		},
 		legacy: hostLegacyLeftovers,
 		systemctl: func(args ...string) error {

@@ -371,6 +371,9 @@ func coveredBy(d string, dirs []string) bool {
 	return false
 }
 
+// Within reports whether p is root or lies below it; both are clean.
+func Within(root, p string) bool { return within(root, p) }
+
 // within reports whether p is root or lies below it; both are clean.
 func within(root, p string) bool {
 	return p == root || strings.HasPrefix(p, strings.TrimSuffix(root, "/")+"/")

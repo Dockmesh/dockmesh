@@ -85,9 +85,9 @@ func parseDisks(r io.Reader, usage func(string) (int64, int64, error)) []Disk {
 			d.Suggested = "/var/lib/dockmesh"
 		}
 		switch {
-		case networkFS[fsType] || strings.HasPrefix(fsType, "nfs"):
+		case NetworkFS(fsType):
 			d.Usable, d.Reason = false, "network share"
-		case noPermFS[fsType]:
+		case NoUnixPermsFS(fsType):
 			d.Usable, d.Reason = false, "no Unix permissions"
 		case CheckDataDirPath(d.Suggested) != nil:
 			d.Usable, d.Reason = false, "not allowed as a data dir"
@@ -126,9 +126,6 @@ func NetworkFS(fsType string) bool { return networkFS[fsType] || strings.HasPref
 
 // NoUnixPermsFS reports a filesystem type without Unix permissions.
 func NoUnixPermsFS(fsType string) bool { return noPermFS[fsType] }
-
-// UnescapeMount undoes the escapes of a mountinfo path field.
-func UnescapeMount(s string) string { return unescapeMount(s) }
 
 // unescapeMount undoes the octal escapes mountinfo uses for space, tab,
 // newline and backslash.

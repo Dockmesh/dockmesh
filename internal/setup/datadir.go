@@ -143,9 +143,9 @@ func checkDataDir(path string, r dataDirRules) DataDirCheck {
 
 	d.FSType = r.fsType(probe)
 	switch {
-	case networkFS[d.FSType] || strings.HasPrefix(d.FSType, "nfs"):
+	case NetworkFS(d.FSType):
 		return fail(IssueNetworkShare, "%s is on a network share (%s). Dockmesh needs a local filesystem such as ext4, xfs or btrfs.", path, d.FSType)
-	case noPermFS[d.FSType]:
+	case NoUnixPermsFS(d.FSType):
 		return fail(IssueNoUnixPerms, "%s is on a filesystem without Unix permissions (%s). Dockmesh needs a local filesystem such as ext4, xfs or btrfs.", path, d.FSType)
 	}
 	if t, f, err := r.usage(probe); err == nil {
@@ -237,7 +237,25 @@ func mountFSType(path string) string {
 }
 
 func fsTypeOf(r io.Reader, path string) string {
-	best, fsType := "", ""
+	m, _ := MountAt(r, path)
+	return m.FSType
+}
+
+// Mount is the entry of /proc/self/mountinfo that holds a path.
+type Mount struct {
+	Mountpoint string
+	// Root is the directory of the filesystem mounted there: "/" unless
+	// it is a bind mount of a subdirectory or a btrfs subvolume.
+	Root   string
+	FSType string
+	// Subvolume is set when Root is the btrfs subvolume the mount names.
+	Subvolume bool
+}
+
+// MountAt returns the mount of the mountinfo table r that holds path,
+// the one with the longest mountpoint.
+func MountAt(r io.Reader, path string) (Mount, error) {
+	var best Mount
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
@@ -252,9 +270,10 @@ func fsTypeOf(r io.Reader, path string) string {
 			continue
 		}
 		mp := unescapeMount(fields[4])
-		if (path == mp || mp == "/" || strings.HasPrefix(path, mp+"/")) && len(mp) >= len(best) {
-			best, fsType = mp, fields[sep+1]
+		if (path == mp || mp == "/" || strings.HasPrefix(path, mp+"/")) && len(mp) >= len(best.Mountpoint) {
+			root := unescapeMount(fields[3])
+			best = Mount{Mountpoint: mp, Root: root, FSType: fields[sep+1], Subvolume: mountsSubvolume(root, fields[sep+3:])}
 		}
 	}
-	return fsType
+	return best, sc.Err()
 }

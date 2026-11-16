@@ -107,10 +107,11 @@ The host's details page shows the stacks directories the agent reports, with the
 On a managed agent the root updater switches the stacks directory (`stacks-dir-apply`). The agent checks the path first with the same rules and only asks root when they pass; root then checks everything again on its own, because the request comes from the agent's account:
 
 - an absolute, clean path of letters, digits and `. _ - /`; no component may be a symbolic link;
-- not `/` and not in `/etc`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/boot`, `/proc`, `/sys`, `/dev`, `/run`, `/root`, `/var/lib/docker` or Docker's actual data directory, also not the same directory under another name or through a bind mount;
+- not `/` and not in `/etc`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/boot`, `/efi`, `/proc`, `/sys`, `/dev`, `/run`, `/root`, `/var` (except the agent's default `<data dir>/stacks`), `/tmp`, `/snap`, `/nix` or Docker's actual data directory, also not the same directory under another name; root services load drop-in directories from below `/var`, so none of it is offered;
+- not inside the current or an earlier stacks directory, and not on a bind mount of a subdirectory;
 - not in the agent's data directory (except its default `stacks/`) or a Dockmesh server's data directory;
 - every directory above it belongs to root and only root may write it;
-- on a local filesystem with Unix permissions, not on a network share; at least 200 MiB free (a warning below 2 GiB);
+- on a local filesystem with Unix permissions, not on a network share or a FUSE filesystem; at least 200 MiB free (a warning below 2 GiB);
 - new, or an empty directory that belongs to `dockmesh-agent`.
 
 Root creates the missing directories (root-owned, 0755, the last one `dockmesh-agent`, 0750), writes `DOCKMESH_STACKS_DIR` to `agent.env`, rewrites the unit, reloads systemd and restarts the agent. It never changes the owner or mode of anything that exists and never deletes anything. Earlier stacks directories stay writable while they hold stacks; a switch is refused while two earlier ones still do. One switch runs at a time, and every switch and refusal is logged in `journalctl -u dockmesh-agent-update`. `sudo dockmesh-agent system install --stacks-dir <dir>` applies the same checks.

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -24,10 +25,8 @@ import (
 
 // stacksDirResultMsg is root's report of a stacks-dir-apply.
 type stacksDirResultMsg struct {
-	Status   string                `json:"status"`
-	Check    agents.StacksDirCheck `json:"check"`
-	Reason   string                `json:"reason,omitempty"`
-	Finished time.Time             `json:"finished"`
+	agents.StacksDirApplyRes
+	Finished time.Time `json:"finished"`
 }
 
 // requestOf returns the type and path of the request in reqDir, empty
@@ -44,22 +43,40 @@ func requestOf(reqDir string, uid uint32) rootupdate.Request {
 // hostStacksDirRules collects the facts checkStacksDir needs on this host.
 // The server's data dir comes from its config when this account may read
 // it; the default is refused in any case.
-func hostStacksDirRules(ctx context.Context, dataDir, current string, uid int, dockerHost string) stacksDirRules {
+func hostStacksDirRules(ctx context.Context, dataDir string, dirs stackDirs, uid int, dockerHost string) stacksDirRules {
 	servers := []string{defaultServerDataDir}
 	if env, err := layout.ReadEnvFile(layout.ConfigFile); err == nil && filepath.IsAbs(env["DOCKMESH_DATA_DIR"]) {
 		servers = append(servers, filepath.Clean(env["DOCKMESH_DATA_DIR"]))
 	}
 	return stacksDirRules{
 		dataDir:        dataDir,
-		current:        current,
+		current:        dirs.current,
+		stackDirs:      dirs.all(),
 		serverDataDirs: servers,
-		dockerRoot:     dockerRootDir(ctx, dockerHost),
+		dockerRoots:    dockerRootDirs(ctx, dockerHost),
 		uid:            uid,
 		mountinfo:      procMountinfo,
 	}
 }
 
-// dockerRootDir asks Docker for its data root, empty when it can't.
+// dockerRootDirs asks the daemon at the default socket and the one
+// DOCKER_HOST names for their data roots. Both count: a daemon the agent
+// is pointed at may not be the one that owns the host's Docker data.
+func dockerRootDirs(ctx context.Context, host string) []string {
+	var out []string
+	for _, h := range []string{"", host} {
+		if h == "" && len(out) > 0 {
+			continue
+		}
+		if d := dockerRootDir(ctx, h); d != "" && !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// dockerRootDir asks one daemon, the default one for an empty host, for
+// its data root; empty when it can't.
 func dockerRootDir(ctx context.Context, host string) string {
 	opts := []client.Opt{}
 	if host != "" {
@@ -95,10 +112,9 @@ type stacksDirApplier struct {
 	stateDir string
 	log      *slog.Logger
 	// rules returns the host facts for the current stacks dir.
-	rules func(current string) stacksDirRules
-	in    *agentInstaller
-	units unitStore
-	// restart restarts the agent unit.
+	rules   func(dirs stackDirs) stacksDirRules
+	in      *agentInstaller
+	units   unitStore
 	restart func(ctx context.Context) error
 	// settle gives the agent a moment to read the result before the
 	// restart ends its connection.
@@ -106,7 +122,7 @@ type stacksDirApplier struct {
 }
 
 func (a *stacksDirApplier) result(status string, check agents.StacksDirCheck, err error) {
-	m := stacksDirResultMsg{Status: status, Check: check, Finished: time.Now().UTC()}
+	m := stacksDirResultMsg{StacksDirApplyRes: agents.StacksDirApplyRes{Status: status, Check: check}, Finished: time.Now().UTC()}
 	if err != nil {
 		m.Reason = err.Error()
 	}
@@ -134,7 +150,7 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 		a.result(agents.StacksDirRefused, check, errors.New("an update is in flight"))
 		return nil
 	}
-	unlock, err := lockStateFile(a.stateDir, "stacks-dir.lock")
+	unlock, err := lockStacksDir(a.stateDir)
 	if err != nil {
 		a.result(agents.StacksDirFailed, check, err)
 		return nil
@@ -148,7 +164,7 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 		return nil
 	}
 	dirs := resolveStackDirs(env["DOCKMESH_STACKS_DIR"], env["DOCKMESH_EARLIER_STACKS_DIRS"], a.dataDir)
-	res := checkStacksDir(path, a.rules(dirs.current))
+	res := checkStacksDir(path, a.rules(dirs))
 	check = res.StacksDirCheck
 	switch {
 	case !res.ok():
@@ -174,26 +190,33 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 		a.result(agents.StacksDirFailed, check, err)
 		return nil
 	}
-	if res.WillCreate && !strings.HasPrefix(path, a.dataDir+"/") {
-		if err := createStacksDir(path, res.existing, int(a.uid), a.gid, a.in.rootUID, a.in.rootGID); err != nil {
-			a.result(agents.StacksDirFailed, check, fmt.Errorf("create %s: %w", path, err))
-			return nil
-		}
-	}
-	if _, err := a.in.run(installOptions{StacksDir: path, earlier: earlier, setEarlier: true}); err != nil { //nolint:contextcheck // short local file writes
-		rerr := errors.Join(a.units.RestoreUnit(prevUnits), restoreEnv(envFile, prevEnv, a.in.rootUID))
+	var created []string
+	// Nothing written so far is deleted again; the result names it.
+	failed := func(err error) error {
+		rerr := errors.Join(a.units.RestoreUnit(prevUnits), restoreEnv(envFile, prevEnv, a.in.rootUID), a.in.systemctl("daemon-reload"))
 		if rerr != nil {
 			err = fmt.Errorf("%w; restoring the old config failed: %w", err, rerr)
 		}
-		a.result(agents.StacksDirRefused, check, err)
-		return nil
-	}
-	if err := a.in.activate(true); err != nil {
+		if len(created) > 0 {
+			err = fmt.Errorf("%w; created and left in place: %s", err, strings.Join(created, ", "))
+		}
 		a.result(agents.StacksDirFailed, check, err)
 		return nil
 	}
+	if res.WillCreate && !layout.Within(a.dataDir, path) {
+		created, err = createStacksDir(path, res.existing, int(a.uid), a.gid, a.in.rootUID, a.in.rootGID)
+		if err != nil {
+			return failed(fmt.Errorf("create %s: %w", path, err))
+		}
+	}
+	if _, err := a.in.run(installOptions{StacksDir: path, earlier: earlier, setEarlier: true}); err != nil { //nolint:contextcheck // short local file writes
+		return failed(err)
+	}
+	if err := a.in.activate(true); err != nil {
+		return failed(err)
+	}
 	a.result(agents.StacksDirDone, check, nil)
-	sleepFor(ctx, a.settle)
+	sleepCtx(ctx, a.settle)
 	if err := a.restart(ctx); err != nil {
 		a.result(agents.StacksDirFailed, check, err)
 	}
@@ -207,7 +230,7 @@ func keptStackDirs(dataDir, target string, d stackDirs) ([]string, error) {
 	var kept []string
 	outside := 0
 	for _, e := range d.all() {
-		if e == target || containsString(kept, e) {
+		if e == target || slices.Contains(kept, e) {
 			continue
 		}
 		n, err := countStacks(e)
@@ -218,7 +241,7 @@ func keptStackDirs(dataDir, target string, d stackDirs) ([]string, error) {
 			continue
 		}
 		kept = append(kept, e)
-		if !strings.HasPrefix(e, dataDir+"/") {
+		if !layout.Within(dataDir, e) {
 			outside++
 		}
 	}
@@ -226,15 +249,6 @@ func keptStackDirs(dataDir, target string, d stackDirs) ([]string, error) {
 		return nil, fmt.Errorf("%s still hold stacks; move or delete them first, the agent keeps at most %d earlier stacks directories", strings.Join(kept, ", "), maxEarlierStacksDirs)
 	}
 	return kept, nil
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func restoreEnv(envFile string, data []byte, rootUID int) error {
@@ -253,12 +267,12 @@ func restoreEnv(envFile string, data []byte, rootUID int) error {
 // createStacksDir creates the components of p from the existing-th on,
 // each through the descriptor of the one before and without following a
 // symlink: rootUID:rootGID 0755 in between, the last owned by uid:gid
-// 0750.
-func createStacksDir(p string, existing, uid, gid, rootUID, rootGID int) error {
+// 0750. It returns the directories it created, also on failure.
+func createStacksDir(p string, existing, uid, gid, rootUID, rootGID int) (created []string, err error) {
 	comps := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { unix.Close(fd) }()
 	for i, c := range comps {
@@ -269,12 +283,13 @@ func createStacksDir(p string, existing, uid, gid, rootUID, rootGID int) error {
 				mode = 0o750
 			}
 			if err := unix.Mkdirat(fd, c, mode); err != nil {
-				return err
+				return created, err
 			}
+			created = append(created, "/"+strings.Join(comps[:i+1], "/"))
 		}
 		nfd, err := unix.Openat(fd, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != nil {
-			return err
+			return created, err
 		}
 		unix.Close(fd)
 		fd = nfd
@@ -284,34 +299,34 @@ func createStacksDir(p string, existing, uid, gid, rootUID, rootGID int) error {
 				owner, group, mode = uid, gid, 0o750
 			}
 			if err := unix.Fchown(fd, owner, group); err != nil {
-				return err
+				return created, err
 			}
 			if err := unix.Fchmod(fd, mode); err != nil {
-				return err
+				return created, err
 			}
 		}
 	}
-	return nil
+	return created, nil
 }
 
-// lockStateFile takes an exclusive lock on name in root's state dir, so
-// only one stacks-dir-apply runs at a time.
-func lockStateFile(stateDir, name string) (func(), error) {
+// lockStacksDir takes the lock in root's state dir that a stacks-dir-apply
+// and `system install` hold while they rewrite agent.env and the unit.
+func lockStacksDir(stateDir string) (func(), error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(stateDir, name), os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- root's state dir
+	f, err := os.OpenFile(filepath.Join(stateDir, "stacks-dir.lock"), os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- root's state dir
 	if err != nil {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, errors.New("another stacks-dir-apply is running")
+		return nil, errors.New("another change of the agent's config is running")
 	}
 	return func() { f.Close() }, nil
 }
 
-func sleepFor(ctx context.Context, d time.Duration) {
+func sleepCtx(ctx context.Context, d time.Duration) {
 	if d <= 0 {
 		return
 	}
@@ -329,7 +344,7 @@ const stacksDirWait = 60 * time.Second
 // to switch and waits for its answer. Root restarts the agent once done.
 func applyStacksDir(ctx context.Context, req agents.StacksDirApplyReq) (agents.StacksDirApplyRes, error) {
 	dirs := agentStackDirs()
-	res := checkStacksDir(req.Path, hostStacksDirRules(ctx, dataDir(), dirs.current, os.Getuid(), os.Getenv("DOCKER_HOST")))
+	res := checkStacksDir(req.Path, hostStacksDirRules(ctx, dataDir(), dirs, os.Getuid(), os.Getenv("DOCKER_HOST")))
 	out := agents.StacksDirApplyRes{Status: agents.StacksDirChecked, Check: res.StacksDirCheck}
 	switch {
 	case !res.ok():
@@ -389,7 +404,6 @@ func applyStacksDir(ctx context.Context, req agents.StacksDirApplyReq) (agents.S
 			continue
 		}
 		_ = os.Remove(resultPath)
-		out.Status, out.Check, out.Reason = m.Status, m.Check, m.Reason
-		return out, nil
+		return m.StacksDirApplyRes, nil
 	}
 }
