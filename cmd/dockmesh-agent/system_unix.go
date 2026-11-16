@@ -280,8 +280,8 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		DataDir:             dataDir,
 		SupplementaryGroups: groups,
 	}
-	if stacksDir != "" {
-		unit.WritablePaths = []string{stacksDir}
+	if unit.WritablePaths, err = writableStackDirs(dataDir, stacksDir, env["DOCKMESH_EARLIER_STACKS_DIRS"], in.rootOnly); err != nil {
+		return res, err
 	}
 	// Render before anything is written: a refused value changes nothing.
 	if _, err := layout.RenderAgentUnit(unit); err != nil {
@@ -466,6 +466,41 @@ func checkStacksDirFlag(p, dataDir string) (string, error) {
 		return "", err
 	}
 	return p, nil
+}
+
+// maxReadWritePaths caps the unit's ReadWritePaths= entries: the data dir,
+// the current stacks dir and earlier ones that still hold stacks.
+const maxReadWritePaths = 4
+
+// writableStackDirs returns the stacks dirs the unit makes writable: the
+// current one, unless it is the default inside the data dir, and every
+// earlier one that still holds a stack.
+func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) bool) ([]string, error) {
+	var out []string
+	if current != "" {
+		out = append(out, current)
+	}
+	dirs := resolveStackDirs(current, earlier, dataDir)
+	for _, e := range dirs.earlier {
+		p, err := checkStacksDirFlag(e, dataDir)
+		if err != nil {
+			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %w", err)
+		}
+		if !strings.HasPrefix(p, dataDir+"/") && !rootOnly(filepath.Dir(p)) {
+			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %s and every directory above it must belong to root and be writable only by root", filepath.Dir(p))
+		}
+		n, err := countStacks(p)
+		if err != nil {
+			return nil, fmt.Errorf("count the stacks in %s: %w", p, err)
+		}
+		if n > 0 {
+			out = append(out, p)
+		}
+	}
+	if len(out)+1 > maxReadWritePaths {
+		return nil, fmt.Errorf("%d stacks dirs still hold stacks; the unit takes at most %d with the data dir", len(out), maxReadWritePaths)
+	}
+	return out, nil
 }
 
 func checkSocketGID(s string) (string, error) {

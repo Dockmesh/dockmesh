@@ -426,6 +426,17 @@ type HelloPayload struct {
 	// UpdateResult is the root updater's result of the last managed
 	// update, sent until a server welcomed it.
 	UpdateResult *AgentUpdateResult `json:"update_result,omitempty"`
+	// StacksDirs lists the agent's stacks directories, the current one
+	// first; agents that predate it send none.
+	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+}
+
+// StacksDirInfo is one stacks directory of an agent and how many stacks
+// it holds.
+type StacksDirInfo struct {
+	Path    string `json:"path"`
+	Current bool   `json:"current"`
+	Stacks  int    `json:"stacks"`
 }
 
 // Install layouts an agent reports in its hello.
@@ -454,6 +465,29 @@ func (h HelloPayload) HelloLayout() string {
 		return LayoutManaged
 	}
 	return LayoutLegacy
+}
+
+// maxStacksDirs bounds what an agent's hello may list: the unit makes at
+// most three stacks dirs writable, the data dir takes the fourth slot.
+const maxStacksDirs = 3
+
+// ReportedStacksDirs returns the stacks dirs of the hello, at most
+// maxStacksDirs, with paths cut to 4096 bytes.
+func (h HelloPayload) ReportedStacksDirs() []StacksDirInfo {
+	out := make([]StacksDirInfo, 0, min(len(h.StacksDirs), maxStacksDirs))
+	for _, d := range h.StacksDirs {
+		if len(out) == maxStacksDirs {
+			break
+		}
+		if len(d.Path) > 4096 {
+			d.Path = d.Path[:4096]
+		}
+		out = append(out, d)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Has reports whether the agent advertised capability c.

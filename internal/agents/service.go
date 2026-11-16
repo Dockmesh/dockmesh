@@ -57,9 +57,12 @@ type Agent struct {
 	ProtocolVersion   int  `json:"protocol_version,omitempty"`
 	UpdateRecommended bool `json:"update_recommended,omitempty"`
 	// Layout is the install layout the connected agent reports.
-	Layout    string    `json:"layout,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Layout string `json:"layout,omitempty"`
+	// StacksDirs are the connected agent's stacks directories, the
+	// current one first.
+	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 // CreateResult is what the admin sees right after creating an agent — the
@@ -600,6 +603,7 @@ func (s *Service) fillStatus(a *Agent) {
 		a.ProtocolVersion = ag.Hello.ProtocolVersion
 		a.UpdateRecommended = ag.UpdateRecommended()
 		a.Layout = ag.Hello.HelloLayout()
+		a.StacksDirs = ag.Hello.ReportedStacksDirs()
 	} else if a.Status != "pending" {
 		a.Status = "offline"
 	}

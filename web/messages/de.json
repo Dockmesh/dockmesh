@@ -2712,6 +2712,24 @@
   "hosts_expires": "läuft ab {date}",
   "hosts_filter": "Hosts filtern",
   "hosts_filter_ph": "Nach Name, Hostname oder Tag filtern…",
+  "hosts_stacks_dir": "Stack-Verzeichnis",
+  "hosts_stacks_dir_current": "Neue Stacks landen hier",
+  "hosts_stacks_dir_earlier": "früher, bleibt, solange es Stacks enthält",
+  "hosts_stacks_dir_count": [
+    {
+      "declarations": [
+        "input n",
+        "local nPlural = n: plural"
+      ],
+      "selectors": [
+        "nPlural"
+      ],
+      "match": {
+        "nPlural=one": "{n} Stack",
+        "nPlural=*": "{n} Stacks"
+      }
+    }
+  ],
   "hosts_hostname": "Hostname",
   "hosts_in_use": "In Verwendung:",
   "hosts_install_copied": "Installationsbefehl kopiert",

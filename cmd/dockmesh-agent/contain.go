@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,10 +19,39 @@ import (
 // name the server sends is re-validated here with the server's own rules
 // before it reaches the filesystem or a bind mount.
 
-// openStacksRoot opens <dataDir>/stacks as an os.Root, so the per-stack
-// operations below cannot leave it even through symlinks.
-func openStacksRoot(base string) (*os.Root, error) {
-	dir, err := filepath.Abs(filepath.Join(base, "stacks"))
+// stackDirs are the agent's stacks directories: current takes new stacks,
+// earlier ones were current before and may still hold some.
+type stackDirs struct {
+	current string
+	earlier []string
+}
+
+// home is the stacks directory that holds stack name: current unless only
+// an earlier one has it.
+func (d stackDirs) home(name string) string {
+	if isDir(filepath.Join(d.current, name)) {
+		return d.current
+	}
+	for _, e := range d.earlier {
+		if isDir(filepath.Join(e, name)) {
+			return e
+		}
+	}
+	return d.current
+}
+
+func (d stackDirs) all() []string { return append([]string{d.current}, d.earlier...) }
+
+func isDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.IsDir()
+}
+
+// openStacksRoot opens the stacks directory that holds stack name as an
+// os.Root, so the per-stack operations below cannot leave it even through
+// symlinks.
+func openStacksRoot(dirs stackDirs, name string) (*os.Root, error) {
+	dir, err := filepath.Abs(dirs.home(name))
 	if err != nil {
 		return nil, err
 	}
@@ -31,14 +61,59 @@ func openStacksRoot(base string) (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
+// maxStackEntries bounds how many entries of a stacks directory are read
+// to count its stacks.
+const maxStackEntries = 10000
+
+// countStacks returns the number of stacks in dir: directories, not
+// symlinks, with a compose.yaml. A missing dir holds none.
+func countStacks(dir string) (int, error) {
+	f, err := os.OpenFile(dir, os.O_RDONLY|oNoFollow|oDirectory, 0) // #nosec G304 -- a configured stacks dir
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(maxStackEntries)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if fi, err := os.Lstat(filepath.Join(dir, e.Name(), "compose.yaml")); err == nil && fi.Mode().IsRegular() {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// stacksDirReport lists the stacks directories with their stack counts
+// for the hello.
+func stacksDirReport(dirs stackDirs) []agents.StacksDirInfo {
+	var out []agents.StacksDirInfo
+	for i, d := range dirs.all() {
+		n, err := countStacks(d)
+		if err != nil {
+			slog.Warn("count stacks", "dir", d, "err", err)
+		}
+		out = append(out, agents.StacksDirInfo{Path: d, Current: i == 0, Stacks: n})
+	}
+	return out
+}
+
 // syncStack writes the compose and meta files to the agent's local stacks
 // directory so the agent can survive a server loss. The .env file is not
 // mirrored: it may hold secrets, and deploys bring their own copy.
-func syncStack(base string, req agents.StackSyncReq) error {
+func syncStack(dirs stackDirs, req agents.StackSyncReq) error {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return err
 	}
-	root, err := openStacksRoot(base)
+	root, err := openStacksRoot(dirs, req.Name)
 	if err != nil {
 		return err
 	}
@@ -60,10 +135,14 @@ func syncStack(base string, req agents.StackSyncReq) error {
 
 // hasMirroredEnv reports whether an older agent left a plaintext .env copy
 // in any stack directory.
-func hasMirroredEnv(base string) bool {
-	matches, err := filepath.Glob(filepath.Join(base, "stacks", "*", ".env"))
-	if err != nil {
-		return false
+func hasMirroredEnv(dirs stackDirs) bool {
+	var matches []string
+	for _, d := range dirs.all() {
+		m, err := filepath.Glob(filepath.Join(d, "*", ".env"))
+		if err != nil {
+			return false
+		}
+		matches = append(matches, m...)
 	}
 	for _, m := range matches {
 		// A directory here is what Docker creates for a missing bind
@@ -79,11 +158,11 @@ func hasMirroredEnv(base string) bool {
 // name, unless a container of the project bind-mounts it or a directory
 // holding it: then someone relies on that file. binds are the bind sources
 // of the deployed project and of its containers.
-func removeMirroredEnv(base, name string, binds []string) error {
+func removeMirroredEnv(dirs stackDirs, name string, binds []string) error {
 	if err := stacks.ValidateName(name); err != nil {
 		return err
 	}
-	root, err := openStacksRoot(base)
+	root, err := openStacksRoot(dirs, name)
 	if err != nil {
 		return err
 	}
@@ -122,11 +201,11 @@ func removeMirroredEnv(base, name string, binds []string) error {
 // deleteStack removes the agent's local copy of a stack's files. Bind data
 // owned by another user goes through the helper, so an agent that does not
 // run as root can delete it too.
-func deleteStack(ctx context.Context, files *stackhelper.Helper, base, name string) error {
+func deleteStack(ctx context.Context, files *stackhelper.Helper, dirs stackDirs, name string) error {
 	if err := stacks.ValidateName(name); err != nil {
 		return err
 	}
-	root, err := openStacksRoot(base)
+	root, err := openStacksRoot(dirs, name)
 	if err != nil {
 		return err
 	}

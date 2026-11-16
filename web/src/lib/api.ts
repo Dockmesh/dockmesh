@@ -1045,8 +1045,16 @@ export interface Agent {
   cert_expires_at?: string;
   protocol_version?: number;
   update_recommended?: boolean;
+  layout?: 'legacy' | 'managed';
+  stacks_dirs?: AgentStacksDir[];
   created_at: string;
   updated_at: string;
+}
+
+export interface AgentStacksDir {
+  path: string;
+  current: boolean;
+  stacks: number;
 }
 
 export interface AgentCreateResult {
