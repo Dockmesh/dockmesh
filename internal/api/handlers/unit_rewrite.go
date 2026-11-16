@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -16,16 +17,35 @@ type unitRewriteState struct {
 	Dirs []targets.DirCheck `json:"dirs"`
 }
 
-func (h *Handlers) unitRewriteState() unitRewriteState {
+func (h *Handlers) unitRewriteState(ctx context.Context) unitRewriteState {
 	st := unitRewriteState{UnitRewriteState: selfupdate.UnitRewriteState{
 		Phase: selfupdate.UnitPhaseIdle, Unavailable: selfupdate.UnavailableUnsupported,
 	}}
 	if h.UpdateInstaller != nil {
 		st.UnitRewriteState = h.UpdateInstaller.UnitState()
 	}
+	var used []string
+	if h.BackupTargets != nil {
+		if list, err := h.BackupTargets.List(ctx); err == nil {
+			for _, t := range list {
+				if t.Type == "local" {
+					if dir, err := targets.LocalDir(t.Config); err == nil {
+						used = append(used, dir)
+					}
+				}
+			}
+		}
+	}
 	st.Dirs = []targets.DirCheck{}
 	for _, d := range targets.AllowedDirs() {
-		st.Dirs = append(st.Dirs, targets.CheckDirWritable(d))
+		c := targets.CheckDirWritable(d)
+		for _, u := range used {
+			if targets.Within(d, u) {
+				c.InUse = true
+				break
+			}
+		}
+		st.Dirs = append(st.Dirs, c)
 	}
 	return st
 }
@@ -35,7 +55,7 @@ func (h *Handlers) unitRewriteState() unitRewriteState {
 //
 //	GET /api/v1/system/unit-rewrite
 func (h *Handlers) GetUnitRewrite(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.unitRewriteState())
+	writeJSON(w, http.StatusOK, h.unitRewriteState(r.Context()))
 }
 
 // StartUnitRewrite asks the root updater to write the service unit again
@@ -59,5 +79,5 @@ func (h *Handlers) StartUnitRewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "system.unit_rewrite", "", nil)
-	writeJSON(w, http.StatusAccepted, h.unitRewriteState())
+	writeJSON(w, http.StatusAccepted, h.unitRewriteState(r.Context()))
 }

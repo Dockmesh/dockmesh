@@ -35,6 +35,8 @@ type DirCheck struct {
 	Path  string `json:"path"`
 	State string `json:"state"`
 	Error string `json:"error,omitempty"`
+	// InUse is set when a local target writes below Path.
+	InUse bool `json:"in_use"`
 }
 
 // writeTestPrefix names the files the write checks create and remove.
@@ -196,4 +198,19 @@ func ProbeWrite(ctx context.Context, t Target) error {
 		return fmt.Errorf("%w (%s): %w", ErrProbeNotDeleted, name, err)
 	}
 	return nil
+}
+
+// LocalDir returns the directory a stored local target config writes to.
+func LocalDir(raw any) (string, error) {
+	var cfg LocalConfig
+	if err := decodeConfig(raw, &cfg); err != nil {
+		return "", err
+	}
+	if cfg.Path == "" {
+		if emptyPathDir == "" {
+			return "", ErrLocalPathUnset
+		}
+		return emptyPathDir, nil
+	}
+	return filepath.Abs(cfg.Path)
 }

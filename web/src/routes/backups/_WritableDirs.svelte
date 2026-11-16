@@ -12,7 +12,9 @@
   let restarting = $state(false);
 
   const readOnly = $derived(st?.dirs.filter((d) => d.state === 'read_only') ?? []);
-  const blocked = $derived(st?.dirs.filter((d) => d.state === 'missing' || d.state === 'permission_denied') ?? []);
+  // A default root nobody writes to may well not exist; only report the
+  // ones a target needs.
+  const blocked = $derived(st?.dirs.filter((d) => d.in_use && (d.state === 'missing' || d.state === 'permission_denied')) ?? []);
   const canRewrite = $derived(!!st && !st.unavailable && !st.restart_pending);
 
   // refresh re-checks the directories; with prompt it offers the restart

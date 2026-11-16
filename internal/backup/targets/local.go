@@ -107,9 +107,15 @@ func DefaultLocalDir(dataDir string) string {
 }
 
 // CheckLocalConfig rejects a local target config whose path is outside
-// the allowed roots, so such a path is never stored.
+// the allowed roots, so such a path is never stored. A directory the
+// service can't create yet because its root is read-only is accepted:
+// every access goes through an os.Root below the root anyway, and the
+// Backups page offers the restart that makes it writable.
 func CheckLocalConfig(raw any) error {
 	_, err := NewLocal(raw)
+	if IsReadOnly(err) {
+		return nil
+	}
 	return err
 }
 

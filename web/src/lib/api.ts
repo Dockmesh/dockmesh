@@ -246,7 +246,7 @@ export interface UnitRewriteState {
   restart_pending: boolean;
   unavailable?: 'container' | 'no_updater' | 'unsupported';
   last_result?: { status: 'done' | 'refused' | 'rolled_back' | 'failed'; step?: string; reason?: string; finished?: string };
-  dirs: Array<{ path: string; state: 'writable' | 'read_only' | 'permission_denied' | 'missing' | 'error'; error?: string }>;
+  dirs: Array<{ path: string; state: 'writable' | 'read_only' | 'permission_denied' | 'missing' | 'error'; error?: string; in_use: boolean }>;
 }
 
 // StackDeployment tracks which host a stack is deployed on (P.7).

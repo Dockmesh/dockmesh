@@ -464,6 +464,7 @@ components:
                 enum: [writable, read_only, permission_denied, missing, error]
                 description: "`missing`: the directory does not exist and the service can't create it; create it owned by the `dockmesh` user first."
               error: {type: string}
+              in_use: {type: boolean, description: A local backup target writes below this directory.}
     HostMetricsSample:
       type: object
       required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]
