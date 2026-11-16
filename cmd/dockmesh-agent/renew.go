@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/gorilla/websocket"
 )
@@ -81,10 +82,10 @@ func finishPendingRenewal(certPath, keyPath string) error {
 // session, so the agent reconnects with the new cert right away and the
 // server retires the old one.
 func renewLoop(ctx context.Context, conn *websocket.Conn, store *certStore) {
-	t := time.NewTicker(renewCheckInterval)
+	t := time.NewTicker(labtime.Tick(renewCheckInterval))
 	defer t.Stop()
 	for {
-		if time.Until(store.notAfter()) < agents.RenewBefore {
+		if time.Until(store.notAfter()) < labtime.Scale(agents.RenewBefore) {
 			if err := renewCert(ctx, conn, store); err != nil {
 				if ctx.Err() == nil {
 					slog.Warn("client cert renewal failed", "expires", store.notAfter(), "err", err)

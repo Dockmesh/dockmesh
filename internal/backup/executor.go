@@ -18,6 +18,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/operations"
@@ -636,7 +637,7 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 		e.logf(ctx, runID, "warn", "retention: %s", err)
 		return
 	}
-	maxAge := time.Duration(job.RetentionDays) * 24 * time.Hour
+	maxAge := labtime.Scale(time.Duration(job.RetentionDays) * 24 * time.Hour)
 	now := time.Now()
 	for i, r := range kept {
 		if i == 0 {
