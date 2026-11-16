@@ -800,7 +800,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/system/update-check", h.CheckUpdateNow)
 				r.Get("/system/update/install", h.GetUpdateInstall)
 				r.Post("/system/update/install", h.InstallUpdate)
-				// The restart rewrites which directories the service may write.
+				// Rewriting the unit restarts the server, so it needs the same permission.
 				r.Get("/system/unit-rewrite", h.GetUnitRewrite)
 				r.Post("/system/unit-rewrite", h.StartUnitRewrite)
 				// Restoring the whole system replaces every user, key and

@@ -240,10 +240,10 @@ func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 // as they are, so an older value never makes the setting unsavable.
 func (h *Handlers) checkNewLocalRoots(prev, next string) error {
 	old := map[string]bool{}
-	for _, p := range splitRoots(prev) {
+	for _, p := range targets.SplitRoots(prev) {
 		old[p] = true
 	}
-	for _, p := range splitRoots(next) {
+	for _, p := range targets.SplitRoots(next) {
 		if old[p] {
 			continue
 		}
@@ -255,16 +255,4 @@ func (h *Handlers) checkNewLocalRoots(prev, next string) error {
 		}
 	}
 	return nil
-}
-
-// splitRoots splits the setting as the unit writer does, keeping relative
-// entries as they are.
-func splitRoots(v string) []string {
-	var out []string
-	for _, p := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' }) {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }

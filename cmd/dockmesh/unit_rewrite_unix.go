@@ -38,7 +38,7 @@ type unitRewriter struct {
 	uid    uint32
 	svc    unitService
 	log    *slog.Logger
-	// healthTimeout and poll default to the updater's.
+	// healthTimeout defaults to the updater's.
 	healthTimeout time.Duration
 	poll          time.Duration
 	// settle gives the page that asked a moment to see the restart coming.

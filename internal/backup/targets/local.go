@@ -58,14 +58,24 @@ var localRoots func() []string
 // target can be built.
 func SetLocalRoots(f func() []string) { localRoots = f }
 
-// ParseRoots splits the setting value into absolute, cleaned paths.
-func ParseRoots(v string) []string {
+// SplitRoots splits the setting value into its trimmed entries, keeping
+// relative ones as they are.
+func SplitRoots(v string) []string {
 	var out []string
 	for _, line := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' }) {
 		if line = strings.TrimSpace(line); line != "" {
-			if abs, err := filepath.Abs(line); err == nil {
-				out = append(out, abs)
-			}
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// ParseRoots splits the setting value into absolute, cleaned paths.
+func ParseRoots(v string) []string {
+	var out []string
+	for _, line := range SplitRoots(v) {
+		if abs, err := filepath.Abs(line); err == nil {
+			out = append(out, abs)
 		}
 	}
 	return out

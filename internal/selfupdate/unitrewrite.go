@@ -148,7 +148,7 @@ func (i *Installer) unitRewrite(ctx context.Context) error {
 	var taken time.Time
 	for {
 		if res, ok := i.readUnitResult(); ok && res.Status != rootupdate.UnitRestarting {
-			// Root refused before it restarted anything.
+			// Root answered without restarting this process.
 			i.CheckUnitResult(ctx)
 			if res.Status == rootupdate.UnitDone {
 				i.setUnit(UnitPhaseIdle, nil)

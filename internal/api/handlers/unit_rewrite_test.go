@@ -25,7 +25,7 @@ func TestCheckNewLocalRoots(t *testing.T) {
 		{name: "remove a root", prev: "/srv/backups\n/mnt/nas", next: "/srv/backups"},
 		{name: "relative", prev: "/srv/backups", next: "/srv/backups\nbackups", wantErr: "absolute"},
 		{name: "system tree", prev: "", next: "/etc/dockmesh-backups", wantErr: "/etc"},
-		{name: "newline in the value is a separator, a quote is refused", prev: "", next: `/srv/a"b`, wantErr: "quote"},
+		{name: "quote", prev: "", next: `/srv/a"b`, wantErr: "quote"},
 		// A stored value from before the check stays savable.
 		{name: "stored value kept", prev: "/etc/old\n/srv/backups", next: "/etc/old\n/srv/backups\n/srv/more"},
 		{name: "comma separated", prev: "", next: "/srv/a,/srv/b"},
