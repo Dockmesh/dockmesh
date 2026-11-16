@@ -175,7 +175,7 @@ func TestDenialFlusherStopWritesOpenWindows(t *testing.T) {
 	ctx := context.Background()
 	s, _, _ := newDenialService(t)
 	stop := s.StartDenialFlusher(ctx)
-	actor := DenialActor{Key: "user:u1:token:7", UserID: "u1", TokenID: 7}
+	actor := DenialActor{Key: "user:u1", UserID: "u1", TokenID: 7}
 	for i := 0; i < DenialBurst+3; i++ {
 		s.WriteDenied(ctx, actor, "users.view", "GET /x", nil)
 	}
@@ -189,7 +189,7 @@ func TestDenialFlusherStopWritesOpenWindows(t *testing.T) {
 	if err := json.Unmarshal([]byte(entries[0].Details), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d["api_token_id"] != float64(7) {
+	if tokens, _ := d["api_tokens"].(map[string]any); tokens["7"] != float64(3) {
 		t.Fatalf("summary details = %s", entries[0].Details)
 	}
 }
@@ -208,5 +208,33 @@ func TestWriteDeniedCancelledRequestKeepsSummary(t *testing.T) {
 	entries := deniedEntries(t, s)
 	if len(entries) != DenialBurst+2 || entries[1].Target != "4 more refused requests" {
 		t.Fatalf("entries = %d: %+v", len(entries), entries[:2])
+	}
+}
+
+// Minting tokens gives no extra budget: every token of a user draws from
+// the user's one.
+func TestWriteDeniedTokenRotation(t *testing.T) {
+	ctx := context.Background()
+	s, _, now := newDenialService(t)
+	for i := 1; i <= maxDenialActors+200; i++ {
+		s.WriteDenied(ctx, DenialActor{Key: "user:u1", UserID: "u1", TokenID: int64(i)}, "users.view", "GET /x", nil)
+	}
+	if got := len(deniedEntries(t, s)); got != DenialBurst {
+		t.Fatalf("entries = %d, want %d", got, DenialBurst)
+	}
+	*now = now.Add(DenialWindow)
+	s.flushDenials(ctx, false)
+	entries := deniedEntries(t, s)
+	if len(entries) != DenialBurst+1 {
+		t.Fatalf("entries after flush = %d", len(entries))
+	}
+	var d struct {
+		Tokens map[string]int `json:"api_tokens"`
+	}
+	if err := json.Unmarshal([]byte(entries[0].Details), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Tokens) != maxDenialTokenIDs+1 || d.Tokens["other"] == 0 {
+		t.Fatalf("token breakdown has %d keys: %v", len(d.Tokens), d.Tokens)
 	}
 }

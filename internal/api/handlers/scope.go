@@ -3,12 +3,12 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/audit"
-	"github.com/dockmesh/dockmesh/internal/clientip"
 	"net/http"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -167,8 +167,8 @@ func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 }
 
 // auditDenied writes an auth.scope_denied entry through the per-actor
-// limit of the audit service. A user's sessions share one budget and each
-// API token has its own; a legacy token without an owner counts by its id.
+// limit of the audit service. A user's sessions and API tokens share one
+// budget; a legacy token without an owner counts by its id.
 func (h *Handlers) auditDenied(r *http.Request, perm rbac.Perm, target string, details map[string]any) {
 	if h.Audit == nil {
 		return
@@ -176,8 +176,6 @@ func (h *Handlers) auditDenied(r *http.Request, perm rbac.Perm, target string, d
 	ctx := r.Context()
 	actor := audit.DenialActor{UserID: actorID(r), TokenID: middleware.APITokenID(ctx)}
 	switch {
-	case actor.UserID != "" && actor.TokenID != 0:
-		actor.Key = fmt.Sprintf("user:%s:token:%d", actor.UserID, actor.TokenID)
 	case actor.UserID != "":
 		actor.Key = "user:" + actor.UserID
 	case actor.TokenID != 0:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -17,10 +18,12 @@ const (
 	DenialBurst        = 10
 	maxDenialActors    = 4096
 	maxDenialPermNames = 32
+	maxDenialTokenIDs  = 32
 )
 
 // DenialActor identifies who a refusal is counted for. Key separates the
-// budgets: a user's sessions and each of its API tokens count apart.
+// budgets; a user's sessions and API tokens share one, so minting tokens
+// doesn't buy more entries. TokenID is the token of this request, if any.
 type DenialActor struct {
 	Key     string
 	UserID  string
@@ -33,9 +36,11 @@ type DenialActor struct {
 type denialBucket struct {
 	actor      DenialActor
 	start      time.Time
+	end        time.Time
 	written    int
 	suppressed int
 	perms      map[string]int
+	tokens     map[string]int
 }
 
 type denials struct {
@@ -97,11 +102,11 @@ func (s *Service) writeDenialSummaries(ctx context.Context, summaries []denialBu
 		details := map[string]any{
 			"suppressed":   b.suppressed,
 			"window_start": b.start.UTC().Format(time.RFC3339),
-			"window_end":   b.start.Add(DenialWindow).UTC().Format(time.RFC3339),
+			"window_end":   b.end.UTC().Format(time.RFC3339),
 			"permissions":  b.perms,
 		}
-		if b.actor.TokenID != 0 {
-			details["api_token_id"] = b.actor.TokenID
+		if len(b.tokens) > 0 {
+			details["api_tokens"] = b.tokens
 		}
 		if b.actor.UserID == "" {
 			details["actor"] = b.actor.Key
@@ -127,6 +132,7 @@ func (d *denials) admit(actor DenialActor, perm string) (bool, []denialBucket) {
 	b := d.buckets[actor.Key]
 	if b != nil && now.Sub(b.start) >= DenialWindow {
 		if b.suppressed > 0 {
+			b.end = b.start.Add(DenialWindow)
 			out = append(out, *b)
 		}
 		delete(d.buckets, actor.Key)
@@ -142,7 +148,7 @@ func (d *denials) admit(actor DenialActor, perm string) (bool, []denialBucket) {
 		if len(d.buckets) >= maxDenialActors {
 			// Evicting ends the oldest window early: its summary is written
 			// now, so no count is lost and every entry keeps its actor.
-			out = append(out, d.evictOldestLocked()...)
+			out = append(out, d.evictOldestLocked(now)...)
 		}
 		b = &denialBucket{actor: actor, start: now}
 		d.buckets[actor.Key] = b
@@ -159,10 +165,20 @@ func (d *denials) admit(actor DenialActor, perm string) (bool, []denialBucket) {
 		perm = "other"
 	}
 	b.perms[perm]++
+	if actor.TokenID != 0 {
+		if b.tokens == nil {
+			b.tokens = map[string]int{}
+		}
+		tok := strconv.FormatInt(actor.TokenID, 10)
+		if _, ok := b.tokens[tok]; !ok && len(b.tokens) >= maxDenialTokenIDs {
+			tok = "other"
+		}
+		b.tokens[tok]++
+	}
 	return false, out
 }
 
-func (d *denials) evictOldestLocked() []denialBucket {
+func (d *denials) evictOldestLocked(now time.Time) []denialBucket {
 	var oldest *denialBucket
 	for _, b := range d.buckets {
 		if oldest == nil || b.start.Before(oldest.start) {
@@ -176,6 +192,7 @@ func (d *denials) evictOldestLocked() []denialBucket {
 	if oldest.suppressed == 0 {
 		return nil
 	}
+	oldest.end = now
 	return []denialBucket{*oldest}
 }
 
@@ -193,6 +210,10 @@ func (d *denials) expiredLocked(now time.Time, all bool) []denialBucket {
 			continue
 		}
 		if b.suppressed > 0 {
+			b.end = b.start.Add(DenialWindow)
+			if now.Before(b.end) {
+				b.end = now
+			}
 			out = append(out, *b)
 		}
 		delete(d.buckets, key)
