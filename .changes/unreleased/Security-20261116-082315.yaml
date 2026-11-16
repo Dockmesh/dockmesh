@@ -1,0 +1,3 @@
+kind: Security
+body: 'Deploys refuse compose files whose include, extends, env_file or label_file point outside the stack folder or at a device, FIFO or file over 4 MiB; before, a stack with include: /dev/zero could exhaust the memory of the server or agent deploying it'
+time: 2026-11-16T08:23:15.272714048Z

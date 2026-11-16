@@ -1321,6 +1321,7 @@ func deployErrorStatus(err error) int {
 		strings.Contains(msg, "yaml:"),
 		strings.Contains(msg, "invalid compose"),
 		strings.Contains(msg, "is reserved for dockmesh"),
+		strings.Contains(msg, "compose file reference refused"),
 		strings.Contains(msg, "upgrade the agent from the hosts page"):
 		return http.StatusUnprocessableEntity
 	}
@@ -1342,6 +1343,8 @@ func friendlyDeployError(err error) string {
 		return "could not pull image — check the tag exists and, for private registries, that credentials are configured: " + raw
 	case strings.Contains(lc, "unauthorized"):
 		return "registry authentication failed — configure credentials under Settings → Registries: " + raw
+	case strings.Contains(lc, "compose file reference refused"):
+		return raw
 	case strings.Contains(lc, "yaml:") || strings.Contains(lc, "invalid compose"):
 		return "compose file could not be parsed: " + raw
 	}
