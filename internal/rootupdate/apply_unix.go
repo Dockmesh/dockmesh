@@ -14,10 +14,14 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/releasesig"
+	"github.com/dockmesh/dockmesh/internal/selinux"
 	"github.com/dockmesh/dockmesh/internal/semver"
 )
 
 const journalName = "journal.json"
+
+// relabel resets the SELinux label of files swapped in; tests record it.
+var relabel = selinux.Restore
 
 // Unfinished reports whether stateDir holds the journal of an update or
 // rollback that has not finished. Unlike PendingFile, the service can't
@@ -297,7 +301,15 @@ func (u *updater) install(j *journal, i int, f staged) error {
 	if err := u.saveJournal(j); err != nil {
 		return err
 	}
-	return os.Rename(f.tmp, f.Dest)
+	if err := os.Rename(f.tmp, f.Dest); err != nil {
+		return err
+	}
+	if f.KeepPrev && jf.Backup != "" {
+		relabel(u.cfg.Log, f.Dest, jf.Backup)
+	} else {
+		relabel(u.cfg.Log, f.Dest)
+	}
+	return nil
 }
 
 func (u *updater) waitHealthy(ctx context.Context, version string) bool {
@@ -357,6 +369,9 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 			}
 		} else {
 			err = copyRootFile(f.Backup, f.Dest, 0o755)
+			if err == nil {
+				relabel(u.cfg.Log, f.Dest)
+			}
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("restore %s: %w", f.Dest, err))
