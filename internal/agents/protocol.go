@@ -469,9 +469,9 @@ func (h HelloPayload) HelloLayout() string {
 	return LayoutLegacy
 }
 
-// maxStacksDirs bounds what an agent's hello may list: the unit makes at
-// most three stacks dirs writable, the data dir takes the fourth slot.
-const maxStacksDirs = 3
+// maxStacksDirs bounds what an agent's hello may list: the current
+// stacks dir, the default one in the data dir and two earlier ones.
+const maxStacksDirs = 4
 
 // maxStacksDirPath cuts a reported stacks dir path.
 const maxStacksDirPath = 4096

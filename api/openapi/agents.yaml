@@ -322,7 +322,7 @@ components:
           description: Install layout of the live session; only set while online. `legacy` agents replace their own binary, `managed` agents are updated by their root updater (`dockmesh-agent update apply`).
         stacks_dirs:
           type: array
-          maxItems: 3
+          maxItems: 4
           description: Stacks directories of the live session, the current one (where new stacks go) first, then earlier ones the agent still keeps writable while they hold stacks; only set while online and for agents that report them.
           items:
             type: object
