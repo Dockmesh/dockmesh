@@ -255,6 +255,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if o.SocketGID != "" {
 		socketGID = o.SocketGID
 	}
+	if socketGID != "" {
+		if socketGID, err = checkSocketGID(socketGID); err != nil {
+			return res, err
+		}
+	}
 	var groups []string
 	unitUser := ""
 	if runUser != "root" {
@@ -265,9 +270,6 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 			res.warnings = append(res.warnings, warn)
 		}
 		if socketGID != "" {
-			if socketGID, err = checkSocketGID(socketGID); err != nil {
-				return res, err
-			}
 			groups = append(groups, socketGID)
 		}
 	}

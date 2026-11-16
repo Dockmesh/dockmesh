@@ -320,6 +320,15 @@ func TestSystemInstallRefuses(t *testing.T) {
 			want:  "clean absolute path",
 		},
 		{
+			name: "socket gid with a newline on a root agent",
+			setup: func(t *testing.T, ti *testInstaller) {
+				ti.write(t, "etc/dockmesh-agent/agent.env", "DOCKMESH_DATA_DIR="+ti.path("var/agent")+"\n", 0o640)
+				ti.write(t, "units/dockmesh-agent.service", legacyRootUnit, 0o644)
+			},
+			opts: installOptions{SocketGID: "5\nDOCKMESH_X=1"},
+			want: "--socket-gid",
+		},
+		{
 			name:  "socket gid 0",
 			setup: func(*testing.T, *testInstaller) {},
 			opts:  installOptions{DataDir: "/srv/agent", SocketGID: "0"},
