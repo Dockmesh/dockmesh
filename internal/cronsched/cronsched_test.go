@@ -197,13 +197,20 @@ func TestMaxShiftCoversTzdata(t *testing.T) {
 		"America/Asuncion", "America/Caracas", "Africa/Casablanca", "Africa/Cairo",
 		"Asia/Tehran", "Asia/Jerusalem", "Asia/Gaza", "Asia/Pyongyang", "Asia/Kolkata",
 		"Asia/Dhaka", "Australia/Sydney", "Australia/Lord_Howe", "Australia/Adelaide",
-		"Antarctica/Troll", "Antarctica/Casey", "Pacific/Auckland", "Pacific/Chatham",
-		"Pacific/Norfolk", "Pacific/Fiji", "Pacific/Apia", "Pacific/Fakaofo",
+		"Antarctica/Troll", "Antarctica/Casey", "Antarctica/Vostok", "Pacific/Auckland",
+		"Pacific/Chatham", "Pacific/Norfolk", "Pacific/Fiji", "Pacific/Apia", "Pacific/Fakaofo",
 		"Pacific/Kiritimati", "Pacific/Kwajalein",
 	}
-	// Date-line moves drop or repeat a whole day; the gap case refuses
-	// those explicitly.
+	// Forward date-line moves skip a whole day; the gap case refuses those
+	// explicitly. Vostok's 1994 changes of 7 hours are the only other ones
+	// tzdata has since 1970.
 	const dateLine = 24 * time.Hour
+	allowed := func(zone string, at time.Time, shift time.Duration) bool {
+		if shift == dateLine {
+			return true
+		}
+		return zone == "Antarctica/Vostok" && at.Year() == 1994 && (shift == 7*time.Hour || shift == -7*time.Hour)
+	}
 	end := time.Date(2040, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, zone := range zones {
 		loc, err := time.LoadLocation(zone)
@@ -216,10 +223,7 @@ func TestMaxShiftCoversTzdata(t *testing.T) {
 			_, off := at.In(loc).Zone()
 			shift := time.Duration(off-prev) * time.Second
 			prev = off
-			if shift < 0 {
-				shift = -shift
-			}
-			if shift > maxShift && shift != dateLine {
+			if (shift > maxShift || shift < -maxShift) && !allowed(zone, at, shift) {
 				t.Errorf("%s: change near %s moves the clock by %s, more than %s", zone, at, shift, maxShift)
 			}
 		}
