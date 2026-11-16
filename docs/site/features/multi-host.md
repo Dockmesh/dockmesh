@@ -58,7 +58,7 @@ Adding a host needs the `hosts.create` permission.
 
 The script served at `/install/agent.sh` on the agent port is `scripts/install-agent.sh` with the URLs, the listener's key pin, the agent CA and the agent binary checksums filled in. It holds no secret; the token comes from `--token`. It:
 
-- supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`,
+- supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`; tested distributions are listed in [Supported systems](../getting-started/supported-systems.md),
 - installs Docker from `get.docker.com` if it's missing (skip this with `--skip-docker`),
 - creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host (use `--as-root` to run as root instead),
 - downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin and refuses to install it if its SHA-256 doesn't match,
