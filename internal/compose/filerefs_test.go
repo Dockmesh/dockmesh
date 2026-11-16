@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,9 +199,37 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
+			name:    "second document resets include",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - path: /dev/zero\n    project_directory: .\n---\ninclude: !reset []\n" + svcNginx}},
+			refused: true,
+		},
+		{
+			name: "second document replaces extends file",
+			files: []stackFile{
+				{name: "compose.yaml", content: "services:\n  web:\n    extends:\n      file: ../other.yaml\n      service: db\n---\nservices:\n  web:\n    extends:\n      file: decoy.yaml\n      service: db\n"},
+				{name: "decoy.yaml", content: "services:\n  db:\n    image: decoy\n"},
+			},
+			outside: []stackFile{{name: "other.yaml", content: "services:\n  db:\n    image: redis\n"}},
+			refused: true,
+		},
+		{
+			name: "home directory in extends base file",
+			files: []stackFile{
+				{name: "compose.yaml", content: "services:\n  web:\n    extends:\n      file: sub/base.yaml\n      service: a\n"},
+				{name: "sub/base.yaml", content: "services:\n  a:\n    extends:\n      file: \"~/../secret.yaml\"\n      service: x\n"},
+				{name: "sub/~/../secret.yaml", content: "services:\n  x:\n    image: decoy\n"},
+			},
+			refused: true,
+		},
+		{
+			name:    "home directory in include",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - \"~/x.yaml\"\n" + svcNginx}},
+			refused: true,
+		},
+		{
 			name: "include and files inside the folder",
 			files: []stackFile{
-				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},
+				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - link.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},
 				{name: "inc.env", content: "DBIMG=redis\n"},
 				{name: "web.env", content: "FROM_FILE=yes\n"},
 				{name: "web.labels", content: "team=ops\n"},
@@ -307,26 +336,39 @@ func TestLoadProjectIncludeFanOutIsBounded(t *testing.T) {
 	// Each level includes the next twice with a different env, so an
 	// unbounded walk would visit 2^30 files.
 	var files []stackFile
-	files = append(files, stackFile{name: "compose.yaml", content: "include:\n  - path: l0.yaml\n    env_file: a.env\n  - path: l0.yaml\n    env_file: b.env\n" + svcNginx})
+	files = append(files, stackFile{name: "compose.yaml", content: "include:\n  - path: l00.yaml\n    env_file: a.env\n  - path: l00.yaml\n    env_file: b.env\n" + svcNginx})
 	files = append(files, stackFile{name: "a.env", content: "X=a\n"}, stackFile{name: "b.env", content: "X=b\n"})
 	for i := 0; i < 30; i++ {
-		next := "l" + string(rune('a'+i)) + ".yaml"
-		cur := "l0.yaml"
-		if i > 0 {
-			cur = "l" + string(rune('a'+i-1)) + ".yaml"
-		}
-		files = append(files, stackFile{name: cur, content: "include:\n  - path: " + next + "\n    env_file: /dev/null\n  - " + next + "\n"})
+		files = append(files, stackFile{name: fmt.Sprintf("l%02d.yaml", i), content: fmt.Sprintf("include:\n  - path: l%02d.yaml\n    env_file: /dev/null\n  - l%02d.yaml\n", i+1, i+1)})
 	}
-	files = append(files, stackFile{name: "l" + string(rune('a'+29)) + ".yaml", content: "services:\n  deep:\n    image: redis${X}\n"})
+	files = append(files, stackFile{name: "l30.yaml", content: "services:\n  deep:\n    image: redis${X}\n"})
 	writeStack(t, dir, files)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	start := time.Now()
+	// The two branches define service deep with different images, which
+	// compose-go may refuse as a conflict; only the time matters here.
 	_, err := LoadProject(ctx, dir, "app", "")
 	if err != nil && !strings.Contains(err.Error(), "conflict") {
 		t.Fatalf("err = %v", err)
 	}
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("load took %s", time.Since(start))
+	}
+}
+
+// A reset include is dropped before compose-go follows it, in the walker
+// and in the load alike.
+func TestLoadProjectResetIncludeIsNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	writeStack(t, dir, []stackFile{{name: "compose.yaml", content: "include: !reset\n  - /dev/zero\n" + svcNginx}})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	proj, err := LoadProject(ctx, dir, "app", "")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := proj.Services["web"]; !ok {
+		t.Fatal("service web missing")
 	}
 }

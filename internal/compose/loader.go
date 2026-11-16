@@ -30,11 +30,15 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 		return nil, err
 	}
 	defer files.Close()
+	paths := make([]string, len(composeFiles))
 	for i, f := range composeFiles {
-		if !filepath.IsAbs(f) {
-			composeFiles[i] = filepath.Join(files.dir, f)
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			return nil, err
 		}
+		paths[i] = abs
 	}
+	composeFiles = paths
 	envSlice := parseEnvContent(envContent)
 	opts, err := cli.NewProjectOptions(
 		composeFiles,
@@ -65,11 +69,11 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 	}
 	proj, err = proj.WithServicesEnvironmentResolved(false)
 	if err != nil {
-		return nil, fmt.Errorf("load project: %w", err)
+		return nil, fmt.Errorf("resolve environment: %w", err)
 	}
 	proj, err = proj.WithServicesLabelsResolved(false)
 	if err != nil {
-		return nil, fmt.Errorf("load project: %w", err)
+		return nil, fmt.Errorf("resolve labels: %w", err)
 	}
 	return proj, nil
 }

@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: Stacks whose compose files reference files outside their own folder (an absolute include, extends, env_file or label_file path, or one going through ../ or a symlink) now fail to deploy with a clear error; move those files into the stack folder. Agents get the same check after they are upgraded
+body: Stacks whose compose files reference files outside their own folder (an absolute include, extends, env_file or label_file path, or one going through ../ or a symlink) now fail to deploy with a clear error; move those files into the stack folder. Paths starting with ~ and compose files with more than one YAML document are refused as well. Agents get the same check after they are upgraded
 time: 2026-11-16T08:23:16.900439115Z
 custom:
     Audience: admins

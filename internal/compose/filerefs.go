@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -189,11 +190,17 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 			continue
 		}
 		for i, p := range paths {
+			if err := noHome(file, p); err != nil {
+				return err
+			}
 			if !filepath.IsAbs(p) {
 				paths[i] = filepath.Join(loaderDir, p)
 			}
 		}
 		projectDir, _ := entry["project_directory"].(string)
+		if err := noHome(file, projectDir); err != nil {
+			return err
+		}
 		switch {
 		case projectDir == "":
 			projectDir = filepath.Dir(paths[0])
@@ -226,6 +233,9 @@ func (w *refWalker) includeEnv(file, projectDir, loaderDir string, envFiles []st
 	var files []string
 	if len(envFiles) == 0 {
 		dotEnv := filepath.Join(projectDir, ".env")
+		// compose-go reads the .env of an included project when it exists
+		// and is not a directory; a symlink leaving the folder is refused
+		// by check below.
 		if fi, err := os.Stat(dotEnv); err == nil && !fi.IsDir() {
 			files = append(files, dotEnv)
 		}
@@ -233,6 +243,9 @@ func (w *refWalker) includeEnv(file, projectDir, loaderDir string, envFiles []st
 	for _, f := range envFiles {
 		if f == "/dev/null" {
 			continue
+		}
+		if err := noHome(file, f); err != nil {
+			return nil, err
 		}
 		if !filepath.IsAbs(f) {
 			if nested {
@@ -268,6 +281,9 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 			ref, _ := ext["file"].(string)
 			if ref == "" {
 				continue
+			}
+			if err := noHome(name, ref); err != nil {
+				return err
 			}
 			if !filepath.IsAbs(ref) {
 				ref = filepath.Join(loaderDir, ref)
@@ -316,6 +332,15 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 		o.ResolvePaths = false
 		o.SetProjectName(w.name, true)
 	})
+}
+
+// noHome refuses a path starting with ~: compose-go expands it to the
+// home directory of the Dockmesh process in some places and not in others.
+func noHome(file, p string) error {
+	if strings.HasPrefix(p, "~") {
+		return refused("%s: path %s starts with ~", file, p)
+	}
+	return nil
 }
 
 func walkKey(file, dir string, env types.Mapping) string {
@@ -386,8 +411,12 @@ func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
 // checkPlainYAML refuses a compose file that doesn't decode as plain YAML
 // before compose-go sees it: compose's merge-key handling never finishes
 // on an anchor that merges itself, and grows until the process dies.
+// Files with several YAML documents are refused as well: compose-go
+// follows include and extends per document, so a later document could
+// hide a reference from the merged model the walker checks.
 func checkPlainYAML(raw []byte) error {
-	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	docs := 0
 	for {
 		var doc any
 		err := dec.Decode(&doc)
@@ -396,6 +425,10 @@ func checkPlainYAML(raw []byte) error {
 		}
 		if err != nil {
 			return fmt.Errorf("invalid compose file: %w", err)
+		}
+		docs++
+		if docs > 1 {
+			return refused("compose files with more than one YAML document are not supported")
 		}
 	}
 }
