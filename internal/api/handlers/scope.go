@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -136,7 +137,7 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 			target = "<unknown>"
 		}
 	}
-	h.audit(r, audit.ActionScopeDenied, target, map[string]any{
+	h.auditDenied(r, perm, target, map[string]any{
 		"permission": string(perm),
 		"host_id":    req.HostID,
 		"stack_name": req.StackName,
@@ -162,7 +163,27 @@ func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 		details["host_id"] = res.HostID
 		details["stack_name"] = res.StackName
 	}
-	h.audit(r, audit.ActionScopeDenied, r.Method+" "+path, details)
+	h.auditDenied(r, perm, r.Method+" "+path, details)
+}
+
+// auditDenied writes an auth.scope_denied entry through the per-actor
+// limit of the audit service. A user's sessions and API tokens share one
+// budget; a legacy token without an owner counts by its id.
+func (h *Handlers) auditDenied(r *http.Request, perm rbac.Perm, target string, details map[string]any) {
+	if h.Audit == nil {
+		return
+	}
+	ctx := r.Context()
+	actor := audit.DenialActor{UserID: actorID(r), TokenID: middleware.APITokenID(ctx)}
+	switch {
+	case actor.UserID != "":
+		actor.Key = "user:" + actor.UserID
+	case actor.TokenID != 0:
+		actor.Key = fmt.Sprintf("token:%d", actor.TokenID)
+	default:
+		actor.Key = "ip:" + clientip.LimitKey(clientIP(r))
+	}
+	h.Audit.WriteDenied(ctx, actor, string(perm), target, withTokenID(ctx, details))
 }
 
 // maxDeniedPathLen caps the request path kept in a denial entry; any

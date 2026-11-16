@@ -987,6 +987,8 @@ func main() {
 	auditWebhook.Start(ctx)
 	auditSvc.SetWebhook(auditWebhook)
 	defer auditWebhook.Stop()
+	stopDenialFlusher := auditSvc.StartDenialFlusher(ctx)
+	defer stopDenialFlusher()
 
 	// Agent upgrade controller (P.11.16) — auto / manual / staged
 	// rollout modes. Starts a 60s evaluator loop that pushes

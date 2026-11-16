@@ -81,3 +81,43 @@ func TestPermissionDenialIsJSONAndAudited(t *testing.T) {
 		})
 	}
 }
+
+// A caller looping a refused request leaves DenialBurst entries per
+// window, not one per request, and the chain stays intact.
+func TestPermissionDenialBurstIsLimited(t *testing.T) {
+	var auditSvc *audit.Service
+	authSvc, roles, h := newMatrixEnvWith(t, func(db *sql.DB, d *handlers.Deps) {
+		auditSvc = audit.NewService(db, t.TempDir()+"/genesis")
+		d.Audit = auditSvc
+	})
+	ctx := context.Background()
+	if err := auditSvc.EnsureGenesis(ctx); err != nil {
+		t.Fatal(err)
+	}
+	token := signIn(t, authSvc, roles, "viewer", rbac.RoleViewer, rbac.Global)
+	router := NewRouter(h, authSvc, nil, true, nil)
+
+	for i := 0; i < 10000; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("request %d: status %d, want 403", i, rr.Code)
+		}
+	}
+	entries, err := auditSvc.ListFiltered(ctx, audit.ListFilter{Action: audit.ActionScopeDenied, Limit: 100000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) > audit.DenialBurst+1 {
+		t.Fatalf("%d auth.scope_denied entries for 10000 refusals, want at most %d", len(entries), audit.DenialBurst+1)
+	}
+	rep, err := auditSvc.Verify(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Broken != 0 {
+		t.Fatalf("chain broken: %+v", rep)
+	}
+}
