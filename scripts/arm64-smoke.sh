@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install, use and uninstall Dockmesh on the host it runs on, as root:
-#   sudo bash scripts/arm64-smoke.sh <dir with dockmesh, dockmesh-agent, dmctl>
+#   sudo DOCKMESH_SMOKE_DESTRUCTIVE=1 bash scripts/arm64-smoke.sh <dir with dockmesh, dockmesh-agent, dmctl>
 # Used by the arm64 smoke workflow on a throw-away runner. It installs into
-# the default places and purges them again, so never run it on a host that
-# has a Dockmesh install you want to keep.
+# the default places and purges them again, so it only runs on a GitHub
+# runner or with DOCKMESH_SMOKE_DESTRUCTIVE=1.
 set -euo pipefail
 
 DIST="$(cd "${1:?usage: arm64-smoke.sh <dist dir>}" && pwd)"
@@ -15,7 +15,11 @@ case "$ARCH" in
   *) echo "unsupported arch $ARCH" >&2; exit 1 ;;
 esac
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
-if [ -e /usr/local/bin/dockmesh ] || [ -e /var/lib/dockmesh ]; then
+if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${DOCKMESH_SMOKE_DESTRUCTIVE:-}" != 1 ]; then
+  echo "purges the Dockmesh install of this host; set DOCKMESH_SMOKE_DESTRUCTIVE=1 to run it outside CI" >&2
+  exit 1
+fi
+if [ -e /usr/local/bin/dockmesh ] || [ -e /var/lib/dockmesh ] || [ -e /etc/dockmesh ] || systemctl cat dockmesh.service >/dev/null 2>&1; then
   echo "this host already has a Dockmesh install; refusing" >&2
   exit 1
 fi
@@ -25,16 +29,19 @@ BASE=https://127.0.0.1:8080
 WORK="$(mktemp -d -p /root)"
 trap 'rm -rf "$WORK"' EXIT
 CURL=(curl -sS -k --fail-with-body --max-time 120)
+ALPINE=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# The token and request bodies go through a file and stdin, never curl's
+# command line, where every local user could read them.
 api() {
   local method=$1 path=$2 body=${3:-}
   if [ -n "$body" ]; then
-    "${CURL[@]}" -X "$method" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-      --data "$body" "$BASE$path"
+    printf '%s' "$body" | "${CURL[@]}" -X "$method" -H @"$WORK/auth-header" -H 'Content-Type: application/json' \
+      --data-binary @- "$BASE$path"
   else
-    "${CURL[@]}" -X "$method" -H "Authorization: Bearer $TOKEN" "$BASE$path"
+    "${CURL[@]}" -X "$method" -H @"$WORK/auth-header" "$BASE$path"
   fi
 }
 
@@ -71,14 +78,15 @@ for _ in $(seq 1 60); do
 done
 "${CURL[@]}" "$BASE/healthz/ready" >/dev/null || fail "server not ready"
 
-TOKEN="$("${CURL[@]}" -H 'Content-Type: application/json' \
-  --data "$(jq -n --arg p "$PW" '{username:"admin",password:$p}')" "$BASE/api/v1/auth/login" | jq -r .access_token)"
+TOKEN="$(jq -n --arg p "$PW" '{username:"admin",password:$p}' | "${CURL[@]}" -H 'Content-Type: application/json' \
+  --data-binary @- "$BASE/api/v1/auth/login" | jq -r .access_token)"
 [ -n "$TOKEN" ] && [ "$TOKEN" != null ] || fail "admin sign-in failed"
+(umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > "$WORK/auth-header")
 
 step "deploy a stack"
 COMPOSE='services:
   app:
-    image: alpine:3.20
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
     command: ["sh", "-c", "[ -f /data/marker ] || echo smoke-marker > /data/marker; exec sleep 3600"]
     volumes:
       - data:/data
@@ -88,10 +96,10 @@ volumes:
 api POST /api/v1/stacks "$(jq -n --arg c "$COMPOSE" '{name:"smoke",compose:$c,host_id:"local"}')" >/dev/null
 api POST '/api/v1/stacks/smoke/deploy?host=local' >/dev/null
 for _ in $(seq 1 60); do
-  [ "$(docker volume inspect smoke_data >/dev/null 2>&1 && docker run --rm -v smoke_data:/d alpine:3.20 cat /d/marker 2>/dev/null)" = smoke-marker ] && break
+  [ "$(docker run --rm -v smoke_data:/d "$ALPINE" cat /d/marker 2>/dev/null)" = smoke-marker ] && break
   sleep 2
 done
-[ "$(docker run --rm -v smoke_data:/d alpine:3.20 cat /d/marker)" = smoke-marker ] || fail "stack volume has no marker"
+[ "$(docker run --rm -v smoke_data:/d "$ALPINE" cat /d/marker)" = smoke-marker ] || fail "stack volume has no marker"
 
 step "back up the volume"
 TID="$(api POST /api/v1/backups/targets '{"name":"smoke-local","type":"local","config":{"path":""}}' | jq -r .id)"
@@ -101,7 +109,7 @@ RID="$(api POST "/api/v1/backups/jobs/$JID/run" '{}' | jq -r .id)"
 STATUS=""
 for _ in $(seq 1 90); do
   STATUS="$(api GET "/api/v1/backups/runs/$RID" | jq -r .status)"
-  case "$STATUS" in running|pending|queued|null|"") sleep 2 ;; *) break ;; esac
+  case "$STATUS" in running|null|"") sleep 2 ;; *) break ;; esac
 done
 [ "$STATUS" = success ] || fail "backup run ended with status $STATUS"
 
@@ -109,7 +117,7 @@ step "restore into a new volume"
 api POST "/api/v1/backups/runs/$RID/restore" '{"dest_volume":"smoke_restored","host_id":"local"}' >/dev/null
 GOT=""
 for _ in $(seq 1 60); do
-  GOT="$(docker run --rm -v smoke_restored:/d alpine:3.20 sh -c 'find /d -name marker -exec cat {} \;' 2>/dev/null || true)"
+  GOT="$(docker run --rm -v smoke_restored:/d "$ALPINE" sh -c 'find /d -name marker -exec cat {} \;' 2>/dev/null || true)"
   [ "$GOT" = smoke-marker ] && break
   sleep 2
 done
@@ -121,12 +129,12 @@ bash "$HERE/uninstall.sh" --purge
 for p in /usr/local/bin/dockmesh /var/lib/dockmesh /etc/systemd/system/dockmesh.service; do
   [ ! -e "$p" ] || fail "$p still exists after uninstall --purge"
 done
-if systemctl list-unit-files dockmesh.service >/dev/null 2>&1 && systemctl list-unit-files dockmesh.service | grep -q dockmesh; then
+if systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q dockmesh; then
   fail "dockmesh.service still known to systemd"
 fi
 
 echo
-echo "arm64 smoke: ok ($(uname -m), $("$DIST/dockmesh" version | head -1))"
+echo "arm64 smoke: ok ($ARCH, $("$DIST/dockmesh" version | head -1))"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  echo "arm64 smoke passed on $(uname -m): install, deploy, backup, restore, uninstall" >> "$GITHUB_STEP_SUMMARY"
+  echo "arm64 smoke passed on $ARCH: install, deploy, backup, restore, uninstall" >> "$GITHUB_STEP_SUMMARY"
 fi

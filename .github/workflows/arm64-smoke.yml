@@ -71,7 +71,7 @@ jobs:
           sudo chown root:root /usr/local /usr/local/bin
           sudo chmod 0755 /usr/local /usr/local/bin
       - name: install, deploy, back up, restore, uninstall
-        run: sudo --preserve-env=GITHUB_STEP_SUMMARY bash scripts/arm64-smoke.sh dist
+        run: sudo --preserve-env=GITHUB_ACTIONS,GITHUB_STEP_SUMMARY bash scripts/arm64-smoke.sh dist
       - name: server log
         if: failure()
         run: sudo journalctl -u dockmesh --no-pager -n 300 || true
