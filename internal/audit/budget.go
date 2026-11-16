@@ -45,11 +45,10 @@ func (b *budget[T]) clock() time.Time {
 
 // charge reports whether an event counted for all of keys is written in
 // full, which needs room in the window of every key. Otherwise the event
-// is counted once, by count on the first key whose window is full; full
-// tells count which other keys are out of room too. The windows that
-// ended before the event and still have events to summarise are returned
-// too.
-func (b *budget[T]) charge(keys []budgetKey, count func(key string, tally *T, full func(key string) bool)) (bool, []bucket[T]) {
+// is counted once, by count on the first key whose window is full. The
+// windows that ended before the event and still have events to summarise
+// are returned too.
+func (b *budget[T]) charge(keys []budgetKey, count func(key string, tally *T)) (bool, []bucket[T]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.clock()
@@ -64,20 +63,10 @@ func (b *budget[T]) charge(keys []budgetKey, count func(key string, tally *T, fu
 			delete(b.buckets, k.name)
 		}
 	}
-	full := func(name string) bool {
-		for _, k := range keys {
-			if k.name == name {
-				w := b.buckets[name]
-				return w != nil && w.written >= k.burst
-			}
-		}
-		return false
-	}
 	for _, k := range keys {
-		if full(k.name) {
-			w := b.buckets[k.name]
+		if w := b.buckets[k.name]; w != nil && w.written >= k.burst {
 			w.suppressed++
-			count(k.name, &w.tally, full)
+			count(k.name, &w.tally)
 			return false, out
 		}
 	}
@@ -152,15 +141,40 @@ func (b *budget[T]) expiredLocked(now time.Time, all bool) []bucket[T] {
 const maxSummaryNames = 32
 
 // countCapped adds one to m[name], counting names beyond maxSummaryNames
-// distinct ones as "other" unless keep is set.
-func countCapped(m map[string]int, name string, keep bool) map[string]int {
+// distinct ones as "other".
+func countCapped(m map[string]int, name string) map[string]int {
 	if m == nil {
 		m = map[string]int{}
 	}
-	if _, ok := m[name]; !ok && !keep && len(m) >= maxSummaryNames {
+	if _, ok := m[name]; !ok && len(m) >= maxSummaryNames {
 		name = "other"
 	}
 	m[name]++
+	return m
+}
+
+// countTop adds one to m, which keeps the maxSummaryNames most frequent
+// names (Space-Saving): a new name takes the place of the least counted
+// one and inherits its count. Whoever floods a summary with names first
+// can't push out a name that keeps coming; the counts add up to the
+// events, but a name's count may include up to the smallest count of
+// the names it replaced.
+func countTop(m map[string]int, name string) map[string]int {
+	if m == nil {
+		m = map[string]int{}
+	}
+	if _, ok := m[name]; ok || len(m) < maxSummaryNames {
+		m[name]++
+		return m
+	}
+	minName, minCount := "", 0
+	for n, c := range m {
+		if minName == "" || c < minCount || (c == minCount && n < minName) {
+			minName, minCount = n, c
+		}
+	}
+	delete(m, minName)
+	m[name] = minCount + 1
 	return m
 }
 

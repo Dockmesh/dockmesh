@@ -228,32 +228,40 @@ func TestWriteLoginFailedBudgets(t *testing.T) {
 	}
 }
 
-// A username that ran out of room stays named in the summary of the
-// address it was tried from, past the cap on distinct names.
-func TestWriteLoginFailedKeepsFullAccountsNamed(t *testing.T) {
+// Names flooded into a summary first can't hide the address and
+// username of an attack that comes later.
+func TestWriteLoginFailedSummaryKeepsFrequentNames(t *testing.T) {
 	ctx := context.Background()
 	s, _, _ := newLoginService(t)
-	const ip = "192.0.2.1"
-	for range LoginFailureBurst {
-		s.WriteLoginFailed(ctx, LoginFailure{IP: ip, Account: "admin", Reason: LoginReasonLocked}, "admin", nil)
+	for i := range LoginFailureGlobalBurst {
+		ip := fmt.Sprintf("2001:db8:%x::", i/LoginFailureBurst)
+		s.WriteLoginFailed(ctx, LoginFailure{IP: ip, Account: fmt.Sprintf("fill%d", i), Reason: LoginReasonInvalid}, "x", nil)
 	}
-	const fresh = 2 * maxSummaryNames
-	for i := range fresh {
-		s.WriteLoginFailed(ctx, LoginFailure{IP: ip, Account: fmt.Sprintf("u%d", i), Reason: LoginReasonInvalid}, "x", nil)
+	for i := range maxSummaryNames {
+		s.WriteLoginFailed(ctx, LoginFailure{IP: fmt.Sprintf("10.0.0.%d", i), Account: fmt.Sprintf("junk%d", i), Reason: LoginReasonInvalid}, "x", nil)
 	}
-	s.WriteLoginFailed(ctx, LoginFailure{IP: ip, Account: "admin", Reason: LoginReasonLocked}, "admin", nil)
+	const attacks = 20
+	for range attacks {
+		s.WriteLoginFailed(ctx, LoginFailure{IP: "198.51.100.7", Account: "alice", Reason: LoginReasonInvalid}, "alice", nil)
+	}
 	s.flushLogins(ctx, true)
-	_, sums := splitLoginEntries(t, loginFailedEntries(t, s))
-	if len(sums) != 1 {
-		t.Fatalf("summaries = %+v", sums)
+	full, sums := splitLoginEntries(t, loginFailedEntries(t, s))
+	if full != LoginFailureGlobalBurst || len(sums) != 1 {
+		t.Fatalf("entries = %d, summaries = %+v", full, sums)
 	}
 	d := sums[0]
-	total := 0
-	for _, c := range d.Usernames {
-		total += c
+	var ips, names int
+	for _, c := range d.IPs {
+		ips += c
 	}
-	if d.IP != ip || d.Suppressed != fresh+1 || d.Usernames["admin"] != 1 || d.Usernames["other"] == 0 || total != d.Suppressed {
+	for _, c := range d.Usernames {
+		names += c
+	}
+	if d.Scope != loginKeyGlobal || d.Suppressed != maxSummaryNames+attacks || ips != d.Suppressed || names != d.Suppressed {
 		t.Fatalf("summary = %+v", d)
+	}
+	if d.Usernames["alice"] < attacks || d.IPs["198.51.100.7"] < attacks || len(d.Usernames) > maxSummaryNames || len(d.IPs) > maxSummaryNames {
+		t.Fatalf("attack not named: %+v", d)
 	}
 }
 
@@ -303,7 +311,7 @@ func TestLoginFailureFlusherStopWritesOpenWindows(t *testing.T) {
 func TestBudgetKeyCap(t *testing.T) {
 	now := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
 	b := budget[int]{window: time.Minute, maxKeys: 3, now: func() time.Time { return now }}
-	count := func(_ string, n *int, _ func(string) bool) { *n++ }
+	count := func(_ string, n *int) { *n++ }
 	b.charge([]budgetKey{{"a", 1}}, count)
 	b.charge([]budgetKey{{"a", 1}}, count)
 	for _, k := range []string{"b", "c"} {

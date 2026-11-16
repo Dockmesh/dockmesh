@@ -119,15 +119,13 @@ func (l *logins) admit(f LoginFailure) (bool, []bucket[loginTally]) {
 		keys = append(keys, budgetKey{accountKey, LoginFailureBurst})
 	}
 	keys = append(keys, budgetKey{loginKeyGlobal, LoginFailureGlobalBurst})
-	return l.charge(keys, func(key string, t *loginTally, full func(string) bool) {
-		t.reasons = countCapped(t.reasons, f.Reason, false)
-		// An address or account that ran out of room is named even past
-		// the cap, so a targeted one doesn't disappear into "other".
+	return l.charge(keys, func(key string, t *loginTally) {
+		t.reasons = countCapped(t.reasons, f.Reason)
 		if key != ipKey {
-			t.ips = countCapped(t.ips, f.IP, full(ipKey))
+			t.ips = countTop(t.ips, f.IP)
 		}
 		if accountKey != "" && key != accountKey {
-			t.usernames = countCapped(t.usernames, f.Account, full(accountKey))
+			t.usernames = countTop(t.usernames, f.Account)
 		}
 	})
 }

@@ -90,13 +90,13 @@ func (s *Service) writeDenialSummaries(ctx context.Context, summaries []bucket[d
 // admit reports whether this refusal is written in full, and returns the
 // windows that ended before it with refusals still to summarise.
 func (d *denials) admit(actor DenialActor, perm string) (bool, []bucket[denialTally]) {
-	return d.charge([]budgetKey{{actor.Key, DenialBurst}}, func(_ string, t *denialTally, _ func(string) bool) {
+	return d.charge([]budgetKey{{actor.Key, DenialBurst}}, func(_ string, t *denialTally) {
 		if t.actor.Key == "" {
 			t.actor = actor
 		}
-		t.perms = countCapped(t.perms, perm, false)
+		t.perms = countCapped(t.perms, perm)
 		if actor.TokenID != 0 {
-			t.tokens = countCapped(t.tokens, strconv.FormatInt(actor.TokenID, 10), false)
+			t.tokens = countCapped(t.tokens, strconv.FormatInt(actor.TokenID, 10))
 		}
 	})
 }
