@@ -63,6 +63,13 @@ jobs:
             CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o "dist/$cmd" "./cmd/$cmd"
           done
           ./dist/dockmesh version
+      # The runner image leaves /usr/local and /usr/local/bin writable by
+      # the runner user; the unit refuses binaries in such a directory, as
+      # it would on a real server.
+      - name: make the bin directory root-owned
+        run: |
+          sudo chown root:root /usr/local /usr/local/bin
+          sudo chmod 0755 /usr/local /usr/local/bin
       - name: install, deploy, back up, restore, uninstall
         run: sudo --preserve-env=GITHUB_STEP_SUMMARY bash scripts/arm64-smoke.sh dist
       - name: server log
