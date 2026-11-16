@@ -28,9 +28,9 @@ const (
 	maxComposeFiles     = 128
 )
 
-// ErrComposeFileRef marks a compose file that references a file Dockmesh
-// refuses to read: outside the stack folder, not a regular file, or too
-// large.
+// ErrComposeFileRef marks a compose file Dockmesh refuses to load because
+// of a file it references or a form that would let compose-go read files
+// the checks don't see.
 var ErrComposeFileRef = errors.New("compose file reference refused")
 
 func refused(format string, args ...any) error {
@@ -173,9 +173,9 @@ func (s *stackFiles) read(p string) ([]byte, error) {
 
 // refWalker follows include and extends.file the way compose-go does, but
 // reads every file through stackFiles, so compose-go only ever opens files
-// that were checked before. Env and label files of services are checked
-// on the loaded project (checkProjectFileRefs), where compose-go has
-// already resolved their final paths.
+// that were checked before. Env and label files and develop.watch paths of
+// services are checked on the loaded project (checkProjectFileRefs), where
+// compose-go has already resolved their final paths.
 type refWalker struct {
 	files *stackFiles
 	name  string
@@ -203,7 +203,7 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 	if err != nil {
 		return err
 	}
-	if err := w.walkExtends(ctx, model, loaderDir, env, key); err != nil {
+	if err := w.walkExtends(ctx, file, model, loaderDir, env, key); err != nil {
 		return err
 	}
 	includes, ok := model["include"].([]any)
@@ -219,7 +219,9 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 		// unknown ones; only the exact names are read here, so any other
 		// key is refused.
 		for k := range entry {
-			if !includeKeys[k] {
+			switch k {
+			case "path", "env_file", "project_directory":
+			default:
 				return refused("%s: unsupported include key %q", file, k)
 			}
 		}
@@ -341,7 +343,7 @@ func (w *refWalker) includeEnv(file, projectDir, loaderDir string, envFiles []st
 // compose-go parses a base again in every include scope that extends it,
 // so each scope is counted against the read limits, even though the walker
 // reads the base only once.
-func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loaderDir string, env types.Mapping, scope string) error {
+func (w *refWalker) walkExtends(ctx context.Context, file string, model map[string]any, loaderDir string, env types.Mapping, scope string) error {
 	for _, section := range []string{"services", "jobs"} {
 		entries, _ := model[section].(map[string]any)
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
@@ -349,7 +351,7 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 			ext, _ := svc["extends"].(map[string]any)
 			for k := range ext {
 				if k != "file" && k != "service" {
-					return refused("%s: unsupported extends key %q", name, k)
+					return refused("%s: %s.%s: unsupported extends key %q", file, section, name, k)
 				}
 			}
 			if ext["file"] == nil {
@@ -357,12 +359,12 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 			}
 			ref, ok := ext["file"].(string)
 			if !ok {
-				return refused("%s: extends.file must be a string", name)
+				return refused("%s: %s.%s: extends.file must be a string", file, section, name)
 			}
 			if ref == "" {
 				continue
 			}
-			if err := noHome(name, ref); err != nil {
+			if err := noHome(file, ref); err != nil {
 				return err
 			}
 			if !filepath.IsAbs(ref) {
@@ -383,7 +385,7 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 			if err != nil {
 				return err
 			}
-			if err := w.walkExtends(ctx, base, filepath.Dir(ref), env, scope); err != nil {
+			if err := w.walkExtends(ctx, ref, base, filepath.Dir(ref), env, scope); err != nil {
 				return err
 			}
 		}
@@ -402,7 +404,7 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 		return nil, err
 	}
 	if err := checkPlainYAML(content); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	model, err := loader.LoadModelWithContext(ctx, types.ConfigDetails{
 		WorkingDir:  workingDir,
@@ -486,8 +488,6 @@ func walkKey(file, dir string, env types.Mapping) string {
 	return string(h.Sum(nil))
 }
 
-var includeKeys = map[string]bool{"path": true, "env_file": true, "project_directory": true}
-
 // strictStrings returns v as a list of strings: absent, one string, or a
 // list of strings. Any other type is refused.
 func strictStrings(file, field string, v any) ([]string, error) {
@@ -512,7 +512,8 @@ func strictStrings(file, field string, v any) ([]string, error) {
 
 // checkProjectFileRefs checks the env and label files compose-go resolved
 // for every service and pre_start hook, mirroring when compose-go would
-// read them: a missing optional env file is skipped.
+// read them (a missing optional env file is skipped), and the services'
+// develop.watch paths.
 func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
 	checkSpec := func(spec *types.ContainerSpec) error {
 		for _, ef := range spec.EnvFiles {

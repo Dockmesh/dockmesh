@@ -292,8 +292,8 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
-			name: "include path key in other case",
-			files: []stackFile{{name: "compose.yaml", content: "include:\n  - PATH: /dev/zero\n" + svcNginx}},
+			name:    "include path key in other case",
+			files:   []stackFile{{name: "compose.yaml", content: "include:\n  - PATH: /dev/zero\n" + svcNginx}},
 			refused: true,
 		},
 		{

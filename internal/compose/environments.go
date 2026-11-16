@@ -75,7 +75,6 @@ func ValidateEnvironmentName(name string) error {
 // The re-serialised YAML is what the host abstraction ships to the
 // deploy target (local or agent) — downstream code sees a single
 // flattened compose file and doesn't need to know about overrides.
-// P.12.8.
 //
 // When overrideName is empty or no matching file exists, returns an
 // error for the "requested-but-missing" case (caller bug); the "not

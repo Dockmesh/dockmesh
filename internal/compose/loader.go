@@ -30,18 +30,17 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 		return nil, err
 	}
 	defer files.Close()
-	paths := make([]string, len(composeFiles))
+	abs := make([]string, len(composeFiles))
 	for i, f := range composeFiles {
-		abs, err := filepath.Abs(f)
+		p, err := filepath.Abs(f)
 		if err != nil {
 			return nil, err
 		}
-		paths[i] = abs
+		abs[i] = p
 	}
-	composeFiles = paths
 	envSlice := parseEnvContent(envContent)
 	opts, err := cli.NewProjectOptions(
-		composeFiles,
+		abs,
 		cli.WithName(stackName),
 		cli.WithWorkingDirectory(files.dir),
 		cli.WithEnv(envSlice),
@@ -55,7 +54,7 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 	env := opts.Environment.Clone()
 	env[consts.ComposeProjectName] = stackName
 	w := &refWalker{files: files, name: stackName, seen: map[string]bool{}}
-	for _, f := range composeFiles {
+	for _, f := range abs {
 		if err := w.walk(ctx, f, files.dir, env, false); err != nil {
 			return nil, err
 		}
