@@ -49,12 +49,21 @@ const (
 const DefaultHealthTimeout = 180 * time.Second
 
 // Request is what the service asks for. Only Version is read for an
-// update; Type names another request, RequestSetupApply or
-// RequestUnitRewrite.
+// update; Type names another request, RequestSetupApply,
+// RequestUnitRewrite or RequestStacksDirApply.
 type Request struct {
 	Type    string `json:"type,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Path is the directory of a RequestStacksDirApply.
+	Path string `json:"path,omitempty"`
 }
+
+// RequestStacksDirApply asks an agent's root updater to make Path the
+// agent's stacks directory. Root checks the path itself.
+const RequestStacksDirApply = "stacks-dir-apply"
+
+// StacksDirResultFile is where root reports a stacks-dir-apply.
+const StacksDirResultFile = "stacks-dir-result.json"
 
 // RequestSetupApply asks root to commit the setup of a never set up
 // server.

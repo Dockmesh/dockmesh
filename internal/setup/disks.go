@@ -121,6 +121,15 @@ func underAny(p string, dirs []string) bool {
 	return false
 }
 
+// NetworkFS reports a network filesystem type, such as nfs4 or cifs.
+func NetworkFS(fsType string) bool { return networkFS[fsType] || strings.HasPrefix(fsType, "nfs") }
+
+// NoUnixPermsFS reports a filesystem type without Unix permissions.
+func NoUnixPermsFS(fsType string) bool { return noPermFS[fsType] }
+
+// UnescapeMount undoes the escapes of a mountinfo path field.
+func UnescapeMount(s string) string { return unescapeMount(s) }
+
 // unescapeMount undoes the octal escapes mountinfo uses for space, tab,
 // newline and backslash.
 func unescapeMount(s string) string {

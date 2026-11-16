@@ -1,6 +1,7 @@
 # Written by `dockmesh-agent system install` on install and upgrade.
-# Runs as root when the agent asks for an update (dockmesh-agent-update.path),
-# and once at boot to finish an update a crash or power cut interrupted.
+# Runs as root when the agent asks for an update or a new stacks directory
+# (dockmesh-agent-update.path), and once at boot to finish an update a crash
+# or power cut interrupted.
 [Unit]
 Description=Apply a Dockmesh agent update
 After=dockmesh-agent.service
