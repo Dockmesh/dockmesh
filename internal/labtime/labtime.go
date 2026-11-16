@@ -23,7 +23,8 @@ func Scale(d time.Duration) time.Duration {
 	return time.Duration(float64(d) * float64(ld) / float64(24*time.Hour))
 }
 
-// Tick is Scale for ticker intervals, never shorter than one second.
+// Tick is Scale for ticker intervals, floored at one second (or at d, if d
+// is shorter).
 func Tick(d time.Duration) time.Duration {
 	return max(Scale(d), min(d, minTick))
 }

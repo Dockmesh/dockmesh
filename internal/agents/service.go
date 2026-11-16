@@ -630,7 +630,8 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, err
 	}
 
-	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, labtime.Scale(ClientCertValidity))
+	validity := labtime.Scale(ClientCertValidity)
+	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, validity)
 	if err != nil {
 		return nil, err
 	}
@@ -655,7 +656,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		   AND enrollment_token_hash = ?
 		   AND enrollment_token_expires_at > ?
 		   AND status != 'revoked'`,
-		fingerprint, sqliteTime(s.now().Add(labtime.Scale(ClientCertValidity))), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
+		fingerprint, sqliteTime(s.now().Add(validity)), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
 		id, tokenHash, now)
 	if err != nil {
 		return nil, err
