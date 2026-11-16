@@ -328,24 +328,33 @@ selinux_enabled() {
 }
 # end selinux_enabled
 
-# label_bin_t gives $1 and everything below it the type bin_t, which
-# systemd may execute; a binary in the data dir is var_lib_t otherwise.
-# Files created later in a bin_t directory inherit the type, so a
-# self-upgrade's rename keeps it. A semanage rule also survives a relabel
-# of the filesystem, a label set with chcon does not.
+# label_bin_t gives the type bin_t, which systemd may execute, to the
+# directory or file $1 and to the files after it, none of them followed if
+# a symlink and none relabelled recursively: the service account owns the
+# bin dir and could plant links to other files in it. A binary created
+# later in a bin_t directory inherits the type, so a self-upgrade's rename
+# keeps it. A semanage rule also survives a relabel of the filesystem, a
+# label set with chcon does not.
 label_bin_t() {
-  local path spec
+  local path="$1" spec f
   selinux_enabled || return 0
-  path="$(readlink -f -- "$1")" || return 1
+  for f in "$@"; do
+    [[ ! -L "$f" ]] || { warn "$f is a symlink; not labelled"; return 1; }
+  done
+  [[ -d "$path" || -f "$path" ]] || return 1
+  for f in "${@:2}"; do
+    [[ -f "$f" ]] || return 1
+  done
   if command -v semanage >/dev/null 2>&1; then
-    spec="$(printf '%s' "$path" | sed 's/[][\\.*^$+?(){}|]/\\&/g')(/.*)?"
+    spec="$(printf '%s' "$path" | sed 's/[][\\.*^$+?(){}|]/\\&/g')"
+    [[ -d "$path" ]] && spec="$spec(/.*)?"
     if semanage fcontext -a -t bin_t "$spec" 2>/dev/null || semanage fcontext -m -t bin_t "$spec"; then
-      restorecon -R -- "$path"
+      restorecon -- "$@"
       return
     fi
   fi
   SELINUX_CHCON=1
-  chcon -R -t bin_t -- "$path"
+  chcon -t bin_t -- "$@"
 }
 # end label_bin_t
 
@@ -358,7 +367,7 @@ start_failure_hint() {
     label="$(stat -c %C -- "$bin" 2>/dev/null || echo unknown)"
     printf 'SELinux is %s on this host. The agent binary needs the type bin_t and has %s.\n' "$mode" "$label"
     printf '  denials:  ausearch -m avc -ts recent | grep dockmesh\n'
-    printf '  fix:      chcon -R -t bin_t %s && systemctl restart dockmesh-agent\n' "$(dirname -- "$bin")"
+    printf '  fix:      chcon -t bin_t %s %s && systemctl restart dockmesh-agent\n' "$(dirname -- "$bin")" "$bin"
   fi
   printf '  status:   systemctl status dockmesh-agent\n'
   printf '  logs:     journalctl -u dockmesh-agent -n 50\n'
@@ -402,8 +411,11 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 # self-upgrade (UpgradeAgent frame) can atomic-rename a new binary in
 # place without needing root. /usr/local/bin is root-owned everywhere
 # in the Linux world and non-root users can't create siblings there.
-BIN_DIR="$DATA_DIR/bin"
+# Only the root-controlled part of the path is resolved: bin/ belongs to
+# the service account, which could swap it for a symlink.
+BIN_DIR="$(readlink -f -- "$DATA_DIR")/bin"
 AGENT_BIN="$BIN_DIR/dockmesh-agent"
+[[ -L "$BIN_DIR" ]] && die "$BIN_DIR is a symlink. Move it away, then re-run."
 install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
 chmod 0750 "$BIN_DIR"
 
@@ -438,7 +450,7 @@ chmod 0755 "$REFRESH_SCRIPT"
 SELINUX_CHCON=0
 if selinux_enabled; then
   log "setting the SELinux type bin_t on $BIN_DIR and $REFRESH_SCRIPT"
-  label_bin_t "$BIN_DIR" || die "could not set the SELinux type bin_t on $BIN_DIR"
+  label_bin_t "$BIN_DIR" "$AGENT_BIN" || die "could not set the SELinux type bin_t on $BIN_DIR"
   label_bin_t "$REFRESH_SCRIPT" || die "could not set the SELinux type bin_t on $REFRESH_SCRIPT"
   if [[ $SELINUX_CHCON -eq 1 ]]; then
     warn "semanage not found: labelled with chcon, which a full relabel of the filesystem undoes. Install policycoreutils-python-utils and re-run the install command to keep the label."
