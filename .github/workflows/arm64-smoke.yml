@@ -1,0 +1,77 @@
+name: arm64 smoke
+
+# End-to-end check on a native arm64 host: build, install with the
+# installer, deploy a stack, back up and restore its volume, uninstall.
+# The build-cross job only runs the arm64 binaries under qemu; this one
+# exercises the installer, systemd, Docker and the backup path for real.
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/arm64-smoke.yml
+      - scripts/arm64-smoke.sh
+  workflow_dispatch:
+
+concurrency:
+  group: arm64-smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-smoke:
+    name: arm64 smoke
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+          mkdir -p ../cmd/dockmesh/web_dist
+          cp -r build/* ../cmd/dockmesh/web_dist/
+      - name: build binaries
+        run: |
+          # The installer compares the started binary's version with a
+          # tag-shaped string, so a branch build needs one too.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v0.0.0-smoke.${GITHUB_SHA::7}"
+          fi
+          LDFLAGS="-s -w -X github.com/dockmesh/dockmesh/pkg/version.Version=${VERSION} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Commit=${GITHUB_SHA::7} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p dist
+          for cmd in dockmesh dockmesh-agent dmctl; do
+            CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o "dist/$cmd" "./cmd/$cmd"
+          done
+          ./dist/dockmesh version
+      # The runner image leaves /usr/local and /usr/local/bin writable by
+      # the runner user; the unit refuses binaries in such a directory, as
+      # it would on a real server.
+      - name: make the bin directory root-owned
+        run: |
+          sudo chown root:root /usr/local /usr/local/bin
+          sudo chmod 0755 /usr/local /usr/local/bin
+      - name: install, deploy, back up, restore, uninstall
+        run: sudo --preserve-env=GITHUB_ACTIONS,GITHUB_STEP_SUMMARY bash scripts/arm64-smoke.sh dist
+      - name: server log
+        if: failure()
+        run: sudo journalctl -u dockmesh --no-pager -n 300 || true
