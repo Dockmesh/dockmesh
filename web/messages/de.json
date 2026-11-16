@@ -6245,5 +6245,22 @@
   "sw_w1_again": "Der Neustart hat diese Einrichtungssitzung beendet. Gib den Setup-Code erneut ein, um weiterzumachen.",
   "sw_r2_err_needs_key": "Dieses Backup ist verschlüsselt. Füge die Backup-Schlüsseldatei hinzu, die du auf dem ursprünglichen Server exportiert hast.",
   "sw_r2_err_key": "Die Schlüsseldatei öffnet dieses Backup nicht.",
-  "sw_r2_err_no_admin": "Dieses Backup enthält kein Admin-Konto, nach der Wiederherstellung könnte sich also niemand anmelden. Führe auf dem ursprünglichen Server sudo dockmesh admin create aus, erstelle ein neues Systembackup und lade dieses hoch."
+  "sw_r2_err_no_admin": "Dieses Backup enthält kein Admin-Konto, nach der Wiederherstellung könnte sich also niemand anmelden. Führe auf dem ursprünglichen Server sudo dockmesh admin create aus, erstelle ein neues Systembackup und lade dieses hoch.",
+  "backups_unit_title": "Backup-Verzeichnisse, in die Dockmesh nicht schreiben kann",
+  "backups_unit_hint": "Backups dorthin schlagen fehl, bis das behoben ist",
+  "backups_unit_allow": "Schreiben erlauben",
+  "backups_unit_restarting_short": "Neustart…",
+  "backups_unit_read_only": "für den Dienst schreibgeschützt: nach dem Schreiben der Service-Unit hinzugefügt",
+  "backups_unit_read_only_manual": "für den Dienst schreibgeschützt: sudo dockmesh system write-unit und sudo systemctl restart dockmesh ausführen",
+  "backups_unit_missing": "fehlt: sudo install -d -o dockmesh -g dockmesh -m 0750 {path}",
+  "backups_unit_permission": "keine Berechtigung: sudo chown dockmesh:dockmesh {path}",
+  "backups_unit_confirm_title": "Schreiben in Backup-Verzeichnisse erlauben",
+  "backups_unit_confirm_message": "Dockmesh startet für ein paar Sekunden neu, um Schreiben in {paths} zu erlauben.",
+  "backups_unit_confirm_body": "Dockmesh wartet zuerst auf laufende Deployments und Updates. Kommt es mit den neuen Einstellungen nicht hoch, wird die bisherige Service-Unit wiederhergestellt.",
+  "backups_unit_confirm_action": "Dockmesh neu starten",
+  "backups_unit_restarting": "Dockmesh startet neu, um Schreiben in die neuen Verzeichnisse zu erlauben",
+  "backups_unit_done": "Backup-Verzeichnisse sind beschreibbar",
+  "backups_unit_failed": "Schreiben konnte nicht erlaubt werden",
+  "backups_unit_still_read_only": "Dockmesh wurde neu gestartet, aber ein Verzeichnis ist weiter schreibgeschützt: sein Dateisystem ist vielleicht schreibgeschützt eingehängt",
+  "backups_unit_timeout": "Dockmesh hat sich nicht innerhalb von 5 Minuten zurückgemeldet"
 }

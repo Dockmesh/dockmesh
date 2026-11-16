@@ -171,6 +171,7 @@ var categories = map[string]string{
 	"settings.update_channel_update":   CategorySystem,
 	"system.update_check":              CategorySystem,
 	"system.update_install":            CategorySystem,
+	"system.unit_rewrite":              CategorySystem,
 	ActionUpdateApplied:                CategorySystem,
 	ActionUpdateRefused:                CategorySystem,
 	ActionUpdateRolledBack:             CategorySystem,
