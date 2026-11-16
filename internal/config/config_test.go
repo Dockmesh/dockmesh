@@ -111,3 +111,32 @@ func TestJWTSecretReplacesSymlink(t *testing.T) {
 		})
 	}
 }
+
+// A secrets file without the key that a root CLI rewrites keeps its owner
+// and mode, so the service still reads it.
+func TestJWTSecretKeepsOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.env")
+	if err := os.WriteFile(path, []byte("OTHER=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrCreateJWTSecret(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("the file was rewritten in place")
+	}
+	if after.Mode() != before.Mode() || !sameOwner(before, after) {
+		t.Errorf("mode %v, want %v; owner kept: %v", after.Mode(), before.Mode(), sameOwner(before, after))
+	}
+}

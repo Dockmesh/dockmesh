@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -106,7 +107,7 @@ func useCheckoutData() error {
 	}
 	dir, distrust := layout.CheckoutProbe{WorkDir: wd, Getenv: os.Getenv, EnvFiles: []string{unitEnvFile()}}.Dir()
 	if distrust != nil {
-		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); set DOCKMESH_DATA_DIR to use it\n", wd, distrust)
+		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); a server started here keeps setup closed while its database exists; set DOCKMESH_DATA_DIR=%s to use it\n", wd, distrust, layout.ShellQuote(wd))
 		return nil
 	}
 	if dir == "" {
@@ -116,14 +117,17 @@ func useCheckoutData() error {
 		return err
 	}
 	checkoutDataDir = dir
+	if len(os.Args) > 1 && !slices.Contains([]string{"serve", "version", "--version", "-v", "help", "--help", "-h", "completion"}, os.Args[1]) {
+		fmt.Fprintf(os.Stderr, "dockmesh: using the data in %s\n", dir)
+	}
 	return nil
 }
 
-// trustedWorkDir is the working directory when it may hold the data of a
+// setupWorkDir is the working directory when it holds the database of a
 // source run, for the setup decision to count; empty otherwise.
-func trustedWorkDir() string {
+func setupWorkDir() string {
 	wd, err := os.Getwd()
-	if err != nil || layout.TrustedCheckout(wd, os.Geteuid()) != nil {
+	if err != nil || !layout.HasCheckoutDB(wd, nil) {
 		return ""
 	}
 	return wd
@@ -376,7 +380,7 @@ func main() {
 		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
-		WorkDir:     trustedWorkDir(),
+		WorkDir:     setupWorkDir(),
 	}.Scan()
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
@@ -915,7 +919,7 @@ func main() {
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
-	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir, executablePath()))
+	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir, executablePath(), checkoutDataDir != "" && layout.TrustedCheckout(checkoutDataDir, 0) == nil))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an

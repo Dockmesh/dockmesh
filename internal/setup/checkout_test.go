@@ -46,7 +46,7 @@ func TestCheckoutDataResolution(t *testing.T) {
 		env       map[string]string
 		extra     []string
 		// distrust is the ownership check's answer; an untrusted checkout
-		// is neither used nor passed to the setup decision.
+		// is not used as data but still counts for the setup decision.
 		distrust error
 		wantDir  string
 		wantDB   string
@@ -59,7 +59,7 @@ func TestCheckoutDataResolution(t *testing.T) {
 			files:  []string{checkout + "/data/secrets.env", checkout + "/data/agents-ca.crt", checkout + "/stacks/web/compose.yaml"},
 			wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: NeverSetUp,
 		},
-		{name: "database path is a directory", files: []string{checkoutDB + "/x"}, wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: SetUp},
+		{name: "database path is a directory", files: []string{checkoutDB + "/x"}, wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: NeverSetUp},
 		{
 			name: "config file wins", db: []string{checkoutDB}, files: []string{layout.ConfigFile},
 			wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: SetUp,
@@ -77,8 +77,8 @@ func TestCheckoutDataResolution(t *testing.T) {
 			wantDB: "/srv/dm/data/dockmesh.db", want: SetUp,
 		},
 		{
-			name: "untrusted checkout is ignored", db: []string{checkoutDB}, distrust: errors.New("writable by others"),
-			wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: NeverSetUp,
+			name: "untrusted checkout still keeps setup closed", db: []string{checkoutDB}, distrust: errors.New("writable by others"),
+			wantDB: "/var/lib/dockmesh/data/dockmesh.db", want: SetUp,
 		},
 		{
 			name: "DOCKMESH_DB_PATH wins", db: []string{checkoutDB}, env: map[string]string{"DOCKMESH_DB_PATH": "/srv/db/dockmesh.db"},
@@ -104,7 +104,7 @@ func TestCheckoutDataResolution(t *testing.T) {
 				DBPathSet:   tt.env["DOCKMESH_DB_PATH"] != "",
 				Paths:       paths,
 			}
-			if tt.distrust == nil {
+			if layout.HasCheckoutDB(checkout, rootedStat(root)) {
 				p.WorkDir = checkout
 			}
 			if got := boot(t, root, p); got != tt.want {

@@ -184,6 +184,21 @@ func (p CheckoutProbe) Dir() (string, error) {
 	return dir, nil
 }
 
+// HasCheckoutDB reports a regular file at workDir/data/dockmesh.db. The
+// setup decision counts it as an install whether or not TrustedCheckout
+// accepts the directory: it can only keep setup closed and is never used
+// as data. lstat defaults to os.Lstat.
+func HasCheckoutDB(workDir string, lstat func(string) (fs.FileInfo, error)) bool {
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	if !filepath.IsAbs(workDir) {
+		return false
+	}
+	fi, err := lstat(dbPathBelow(filepath.Clean(workDir)))
+	return err == nil && fi.Mode().IsRegular()
+}
+
 // dbPathBelow is the database of an install configured only through
 // DOCKMESH_DATA_DIR=dataDir.
 func dbPathBelow(dataDir string) string {

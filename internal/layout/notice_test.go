@@ -89,18 +89,33 @@ func TestCheckoutProbe(t *testing.T) {
 
 func TestCheckoutNotice(t *testing.T) {
 	ctx := context.Background()
-	conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	ns := notices.NewService(conn)
+	const migrate = "sudo /opt/dockmesh-src/dockmesh system migrate-layout --checkout /opt/dockmesh-src"
 	for _, tt := range []struct {
-		dir  string
-		want bool
-	}{{"/opt/dockmesh-src", true}, {"/opt/dockmesh-src", true}, {"", false}} {
-		if err := CheckoutNoticeCheck(tt.dir, "/opt/dockmesh-src/dockmesh")(ctx, ns); err != nil {
+		name, dir, binary string
+		rootTrusted       bool
+		want              bool
+		// wantBody must appear in the body on Linux.
+		wantBody, notBody string
+	}{
+		{name: "root-owned checkout", dir: "/opt/dockmesh-src", binary: "/opt/dockmesh-src/dockmesh", rootTrusted: true, want: true, wantBody: migrate},
+		{name: "user-owned checkout", dir: "/opt/dockmesh-src", binary: "/opt/dockmesh-src/dockmesh", want: true, wantBody: "DOCKMESH_DATA_DIR=/opt/dockmesh-src", notBody: "migrate-layout"},
+		{
+			name: "paths with spaces", dir: "/srv/my src", binary: "/srv/my src/dockmesh", rootTrusted: true, want: true,
+			wantBody: "sudo '/srv/my src/dockmesh' system migrate-layout --checkout '/srv/my src'",
+		},
+		{name: "no checkout", binary: "/opt/dockmesh-src/dockmesh"},
+	} {
+		conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
+		if err != nil {
 			t.Fatal(err)
+		}
+		defer conn.Close()
+		ns := notices.NewService(conn)
+		// Every start runs the check; the second must not add a notice.
+		for range 2 {
+			if err := CheckoutNoticeCheck(tt.dir, tt.binary, tt.rootTrusted)(ctx, ns); err != nil {
+				t.Fatal(err)
+			}
 		}
 		open, err := ns.Open(ctx)
 		if err != nil {
@@ -113,13 +128,51 @@ func TestCheckoutNotice(t *testing.T) {
 			}
 		}
 		if len(found) > 1 || (len(found) == 1) != tt.want {
-			t.Fatalf("dir %q: %d notices open, want open = %v", tt.dir, len(found), tt.want)
+			t.Fatalf("%s: %d notices open, want open = %v", tt.name, len(found), tt.want)
 		}
-		if tt.want && !strings.Contains(found[0].Body, tt.dir) {
-			t.Errorf("body does not name the dir: %q", found[0].Body)
+		if !tt.want || runtime.GOOS != "linux" {
+			continue
 		}
-		if tt.want && runtime.GOOS == "linux" && !strings.Contains(found[0].Body, "sudo /opt/dockmesh-src/dockmesh system migrate-layout --checkout /opt/dockmesh-src") {
-			t.Errorf("body does not name migrate-layout: %q", found[0].Body)
+		if body := found[0].Body; !strings.Contains(body, tt.wantBody) || tt.notBody != "" && strings.Contains(body, tt.notBody) {
+			t.Errorf("%s: body = %q, want %q in it and not %q", tt.name, body, tt.wantBody, tt.notBody)
+		}
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"/opt/dockmesh-src", "/opt/dockmesh-src"},
+		{"/srv/my src", "'/srv/my src'"},
+		{"/srv/it's", `'/srv/it'\''s'`},
+		{"/srv/$HOME;x", "'/srv/$HOME;x'"},
+		{"", "''"},
+	} {
+		if got := ShellQuote(tt.in); got != tt.want {
+			t.Errorf("ShellQuote(%q) = %s, want %s", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestHasCheckoutDB(t *testing.T) {
+	root := t.TempDir()
+	lstat := func(p string) (fs.FileInfo, error) { return os.Lstat(filepath.Join(root, p)) }
+	for _, d := range []string{"/reg/data", "/link/data", "/dir/data/dockmesh.db"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "/reg/data/dockmesh.db"), nil, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "/reg/data/dockmesh.db"), filepath.Join(root, "/link/data/dockmesh.db")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		dir  string
+		want bool
+	}{{"/reg", true}, {"/link", false}, {"/dir", false}, {"/missing", false}, {"reg", false}} {
+		if got := HasCheckoutDB(tt.dir, lstat); got != tt.want {
+			t.Errorf("HasCheckoutDB(%q) = %v, want %v", tt.dir, got, tt.want)
 		}
 	}
 }

@@ -187,8 +187,14 @@ func loadOrCreateJWTSecret(path string) ([]byte, error) {
 }
 
 // writeNew puts data at path through a fresh temp file and a rename, so a
-// symlink planted at path is replaced rather than followed.
+// symlink planted at path is replaced rather than followed. A regular file
+// at path passes its owner and mode on, so a root CLI rewriting the
+// service's file does not lock the service out.
 func writeNew(path string, data []byte) error {
+	old, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
 		return err
@@ -198,7 +204,12 @@ func writeNew(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
+	if old != nil && old.Mode().IsRegular() {
+		err = keepOwner(f, old)
+	}
+	if err == nil {
+		_, err = f.Write(data)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
