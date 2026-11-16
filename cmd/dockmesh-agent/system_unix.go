@@ -466,9 +466,9 @@ func checkStacksDirFlag(p, dataDir string) (string, error) {
 	return p, nil
 }
 
-// maxEarlierStacksDirs caps the earlier stacks dirs that still hold
-// stacks, so the unit has at most four ReadWritePaths= entries: the data
-// dir, the current stacks dir and these.
+// maxEarlierStacksDirs caps the earlier stacks dirs outside the data dir
+// that still hold stacks, so the unit has at most four ReadWritePaths=
+// entries: the data dir, the current stacks dir and these.
 const maxEarlierStacksDirs = 2
 
 // checkStacksDirParent refuses a stacks dir outside the data dir whose
@@ -490,7 +490,6 @@ func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) b
 		out = append(out, current)
 	}
 	dirs := resolveStackDirs(current, earlier, dataDir)
-	holding := 0
 	for _, e := range dirs.earlier {
 		p, err := checkStacksDirFlag(e, dataDir)
 		if err == nil {
@@ -506,16 +505,13 @@ func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) b
 			slog.Warn("earlier stacks dir left out", "dir", p, "err", err)
 			continue
 		}
-		if n == 0 {
+		if n == 0 || strings.HasPrefix(p, dataDir+"/") {
 			continue
 		}
-		holding++
-		if !strings.HasPrefix(p, dataDir+"/") {
-			out = append(out, p)
-		}
+		out = append(out, p)
 	}
-	if holding > maxEarlierStacksDirs {
-		return nil, fmt.Errorf("%d earlier stacks dirs still hold stacks; the agent keeps at most %d", holding, maxEarlierStacksDirs)
+	if len(out) > 1+maxEarlierStacksDirs {
+		return nil, fmt.Errorf("%d stacks dirs outside the data dir still hold stacks; the unit takes at most %d", len(out), 1+maxEarlierStacksDirs)
 	}
 	return out, nil
 }

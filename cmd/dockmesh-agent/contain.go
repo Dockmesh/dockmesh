@@ -64,14 +64,17 @@ func openStacksDir(stacksDir string) (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
-// stacksDirReport lists the stacks directories with their stack counts
-// for the hello.
+// stacksDirReport lists the current stacks directory and the earlier ones
+// that still hold stacks, with their stack counts, for the hello.
 func stacksDirReport(dirs stackDirs) []agents.StacksDirInfo {
 	var out []agents.StacksDirInfo
 	for i, d := range dirs.all() {
 		n, err := countStacks(d)
 		if err != nil {
 			slog.Warn("count stacks", "dir", d, "err", err)
+		}
+		if i > 0 && n == 0 {
+			continue
 		}
 		out = append(out, agents.StacksDirInfo{Path: d, Current: i == 0, Stacks: n})
 	}

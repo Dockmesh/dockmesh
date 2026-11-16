@@ -117,6 +117,7 @@ func TestWritableStackDirs(t *testing.T) {
 		{"default as earlier is no entry", filepath.Join(root, "cur"), data + "/stacks", 1, false},
 		{"default as current is no entry", data + "/stacks", full("e8"), 1, false},
 		{"too many", filepath.Join(root, "cur"), full("e4", "e5", "e6"), 0, true},
+		{"default earlier does not count", filepath.Join(root, "cur"), data + "/stacks:" + full("e9", "e10"), 3, false},
 		{"earlier in a system tree", filepath.Join(root, "cur"), "/etc/x", 0, true},
 	}
 	if _, err := writableStackDirs(data, filepath.Join(root, "cur"), full("e7"), func(string) bool { return false }); err == nil {

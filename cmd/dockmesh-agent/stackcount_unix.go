@@ -34,7 +34,8 @@ func countStacks(dir string) (int, error) {
 	}
 	n := 0
 	for _, name := range names {
-		sub, err := unix.Openat(fd, name, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		// O_DIRECTORY fails on a FIFO or device without blocking.
+		sub, err := unix.Openat(fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != nil {
 			continue
 		}
