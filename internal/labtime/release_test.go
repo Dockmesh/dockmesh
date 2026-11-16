@@ -8,7 +8,7 @@ import (
 )
 
 // TestReleaseBuildsIgnoreLabDay runs in every build without the labkeys
-// tag, which is what the release workflow builds.
+// tag and fails if the hook is ever set outside the tagged file.
 func TestReleaseBuildsIgnoreLabDay(t *testing.T) {
 	t.Setenv("DOCKMESH_LAB_DAY", "1s")
 	if day != nil {

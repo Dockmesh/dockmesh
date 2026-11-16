@@ -5,8 +5,8 @@ package selfupdate
 import "testing"
 
 // TestReleaseBuildsHaveNoLabOverrides runs in every build without the
-// labkeys tag: the lab environment variables must not move downloads,
-// the release lookup or the stack wait of a published binary.
+// labkeys tag and fails if a lab override is ever set outside the tagged
+// file.
 func TestReleaseBuildsHaveNoLabOverrides(t *testing.T) {
 	t.Setenv("DOCKMESH_LAB_RELEASE_BASE", "http://127.0.0.1:1/")
 	if labReleaseBase != nil || labAPIBase != nil || labLockWait != nil {

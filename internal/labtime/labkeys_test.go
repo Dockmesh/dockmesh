@@ -25,7 +25,8 @@ func TestLabDay(t *testing.T) {
 		{"1m", 7 * d, 7 * time.Minute, 7 * time.Minute},
 	}
 	for _, tc := range tests {
-		t.Setenv("DOCKMESH_LAB_DAY", tc.env)
+		ld, _ := time.ParseDuration(tc.env)
+		day = func() time.Duration { return ld }
 		if got := Scale(tc.in); got != tc.scale {
 			t.Errorf("%q: Scale(%v) = %v, want %v", tc.env, tc.in, got, tc.scale)
 		}
