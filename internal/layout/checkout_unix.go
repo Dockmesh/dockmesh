@@ -59,7 +59,7 @@ func trustedCheckout(dir string, euid int, top string) error {
 		if err := closedToOthers(fi, euid); err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
-		if p == top || p == "/" {
+		if p == top {
 			break
 		}
 	}

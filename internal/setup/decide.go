@@ -86,8 +86,8 @@ type Probe struct {
 	Force     bool
 	// Paths of the server; layout.KnownDBPaths are checked as well.
 	Paths config.Paths
-	// WorkDir is the server's working directory when it may hold the
-	// data of a source run (layout.TrustedCheckout); empty for none.
+	// WorkDir is the server's working directory when it holds the
+	// database of a source run (layout.HasCheckoutDB); empty for none.
 	WorkDir string
 	// Lstat, Stat and ReadDir default to the os functions; tests root the
 	// paths elsewhere.

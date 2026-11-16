@@ -90,6 +90,10 @@ var loadedEnvFile string
 // explicitEnvFile is true when loadedEnvFile came from --env-file.
 var explicitEnvFile bool
 
+// quietDataCommands do not name the checkout data they use: serve logs it,
+// the others never touch data.
+var quietDataCommands = []string{"serve", "version", "--version", "-v", "help", "--help", "-h", "completion"}
+
 // checkoutDataDir is the source run directory this process uses as its
 // data dir because no config names one (see layout.CheckoutProbe).
 var checkoutDataDir string
@@ -117,7 +121,7 @@ func useCheckoutData() error {
 		return err
 	}
 	checkoutDataDir = dir
-	if len(os.Args) > 1 && !slices.Contains([]string{"serve", "version", "--version", "-v", "help", "--help", "-h", "completion"}, os.Args[1]) {
+	if len(os.Args) > 1 && !slices.Contains(quietDataCommands, os.Args[1]) {
 		fmt.Fprintf(os.Stderr, "dockmesh: using the data in %s\n", dir)
 	}
 	return nil

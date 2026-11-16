@@ -93,12 +93,13 @@ func TestTrustedCheckout(t *testing.T) {
 	}
 }
 
-// Owned by someone else: root's files pass, but this test cannot create
-// a foreign file, so it checks the uid the process does not have.
 func TestTrustedCheckoutOtherOwner(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root's files pass the owner check")
+	}
 	top := t.TempDir()
 	dir := newCheckout(t, top)
-	if err := trustedCheckout(dir, os.Geteuid()+1, top); os.Geteuid() != 0 && (err == nil || !strings.Contains(err.Error(), "owned by")) {
+	if err := trustedCheckout(dir, os.Geteuid()+1, top); err == nil || !strings.Contains(err.Error(), "owned by") {
 		t.Fatalf("err = %v, want owned by", err)
 	}
 }

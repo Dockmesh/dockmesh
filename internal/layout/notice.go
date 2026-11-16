@@ -54,7 +54,7 @@ const CheckoutNoticeKey = "install.checkout-data"
 // That command only succeeds when root can trust the checkout
 // (rootTrusted); otherwise the notice suggests DOCKMESH_DATA_DIR.
 func CheckoutNoticeCheck(checkoutDir, binary string, rootTrusted bool) notices.Check {
-	body := i18n.Msg("notice.checkout_data.body_other", checkoutDir)
+	body := i18n.Msg("notice.checkout_data.body_other", checkoutDir, ShellQuote(checkoutDir))
 	if runtime.GOOS == "linux" && rootTrusted {
 		body = i18n.Msg("notice.checkout_data.body", checkoutDir, ConfigFile,
 			"sudo "+ShellQuote(binary)+" system migrate-layout --checkout "+ShellQuote(checkoutDir))

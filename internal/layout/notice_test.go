@@ -94,7 +94,6 @@ func TestCheckoutNotice(t *testing.T) {
 		name, dir, binary string
 		rootTrusted       bool
 		want              bool
-		// wantBody must appear in the body on Linux.
 		wantBody, notBody string
 	}{
 		{name: "root-owned checkout", dir: "/opt/dockmesh-src", binary: "/opt/dockmesh-src/dockmesh", rootTrusted: true, want: true, wantBody: migrate},
@@ -103,39 +102,42 @@ func TestCheckoutNotice(t *testing.T) {
 			name: "paths with spaces", dir: "/srv/my src", binary: "/srv/my src/dockmesh", rootTrusted: true, want: true,
 			wantBody: "sudo '/srv/my src/dockmesh' system migrate-layout --checkout '/srv/my src'",
 		},
+		{name: "user-owned checkout with spaces", dir: "/srv/my src", binary: "/srv/my src/dockmesh", want: true, wantBody: "DOCKMESH_DATA_DIR='/srv/my src'", notBody: "migrate-layout"},
 		{name: "no checkout", binary: "/opt/dockmesh-src/dockmesh"},
 	} {
-		conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer conn.Close()
-		ns := notices.NewService(conn)
-		// Every start runs the check; the second must not add a notice.
-		for range 2 {
-			if err := CheckoutNoticeCheck(tt.dir, tt.binary, tt.rootTrusted)(ctx, ns); err != nil {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
+			if err != nil {
 				t.Fatal(err)
 			}
-		}
-		open, err := ns.Open(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var found []notices.Notice
-		for _, n := range open {
-			if n.Key == CheckoutNoticeKey {
-				found = append(found, n)
+			defer conn.Close()
+			ns := notices.NewService(conn)
+			// Every start runs the check; the second must not add a notice.
+			for range 2 {
+				if err := CheckoutNoticeCheck(tt.dir, tt.binary, tt.rootTrusted)(ctx, ns); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-		if len(found) > 1 || (len(found) == 1) != tt.want {
-			t.Fatalf("%s: %d notices open, want open = %v", tt.name, len(found), tt.want)
-		}
-		if !tt.want || runtime.GOOS != "linux" {
-			continue
-		}
-		if body := found[0].Body; !strings.Contains(body, tt.wantBody) || tt.notBody != "" && strings.Contains(body, tt.notBody) {
-			t.Errorf("%s: body = %q, want %q in it and not %q", tt.name, body, tt.wantBody, tt.notBody)
-		}
+			open, err := ns.Open(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found []notices.Notice
+			for _, n := range open {
+				if n.Key == CheckoutNoticeKey {
+					found = append(found, n)
+				}
+			}
+			if len(found) > 1 || (len(found) == 1) != tt.want {
+				t.Fatalf("%d notices open, want open = %v", len(found), tt.want)
+			}
+			if !tt.want || runtime.GOOS != "linux" {
+				return
+			}
+			if body := found[0].Body; !strings.Contains(body, tt.wantBody) || tt.notBody != "" && strings.Contains(body, tt.notBody) {
+				t.Errorf("body = %q, want %q in it and not %q", body, tt.wantBody, tt.notBody)
+			}
+		})
 	}
 }
 
