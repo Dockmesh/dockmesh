@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: Stacks whose compose files reference files outside their own folder (an absolute include, extends, env_file or label_file path, or one going through ../ or a symlink) now fail to deploy with a clear error; move those files into the stack folder. Also refused: paths starting with ~ or containing . or .. in an absolute path, compose files with more than one YAML document, empty service definitions, include entries with keys other than path, env_file and project_directory, and a project_directory that isn't an existing folder in the stack. Agents get the same check after they are upgraded
+body: "Stacks whose compose files reference files outside their own folder (an absolute include, extends, env_file or label_file path, or one going through ../ or a symlink) now fail to deploy with a clear error; move those files into the stack folder. Also refused: paths starting with ~ or containing . or .. in an absolute path, compose files with more than one YAML document, empty service definitions, include entries with keys other than path, env_file and project_directory, and a project_directory that isn't an existing folder in the stack. Agents get the same check after they are upgraded"
 time: 2026-11-16T08:23:16.900439115Z
 custom:
     Audience: admins
