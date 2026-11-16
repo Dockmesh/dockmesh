@@ -256,7 +256,7 @@ func (h *Handlers) GetHostMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	hostID := chi.URLParam(r, "id")
 	if !h.inReadScope(r, hostID, "") {
-		h.denyPerm(w, r, rbac.PermMetricsView, "out of scope: your role does not include this host")
+		h.denyPerm(w, r, routePerm(r), "out of scope: your role does not include this host")
 		return
 	}
 	if !h.knownHost(r.Context(), hostID) {

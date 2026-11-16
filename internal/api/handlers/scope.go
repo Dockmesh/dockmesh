@@ -92,7 +92,7 @@ func (h *Handlers) requireHostAccess(w http.ResponseWriter, r *http.Request, hos
 	if h.canAccessHost(r, hostID) {
 		return true
 	}
-	h.denyPerm(w, r, rbac.PermHostsView, "out of scope: none of your assignments covers this host")
+	h.denyPerm(w, r, routePerm(r), "out of scope: none of your assignments covers this host")
 	return false
 }
 

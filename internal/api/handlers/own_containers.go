@@ -136,7 +136,7 @@ func (h *Handlers) requireNotOwnContainer(w http.ResponseWriter, r *http.Request
 		return true
 	}
 	if perm == rbac.PermContainersFiles {
-		h.denyPerm(w, r, rbac.PermContainersFiles, "the file browser is not available for Dockmesh's own containers")
+		writeError(w, http.StatusForbidden, "the file browser is not available for Dockmesh's own containers")
 		return false
 	}
 	if h.callerIsAdmin(r) {

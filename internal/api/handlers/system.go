@@ -59,7 +59,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.inReadScope(r, hostIDFromRequest(r), "") {
-		h.denyPerm(w, r, rbac.PermSystemView, "out of scope: your role does not include this host")
+		h.denyPerm(w, r, routePerm(r), "out of scope: your role does not include this host")
 		return
 	}
 	// Single-host path. For local we call the system package directly

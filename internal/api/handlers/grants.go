@@ -72,7 +72,7 @@ func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, nam
 	}
 	perms, _ := h.Roles.RolePerms(name)
 	if err := h.checkPermsGrant(r, perms, rbac.Global); err != nil {
-		h.denyPerm(w, r, rbac.PermRolesUpdate, "you can't manage this role: "+err.Error())
+		h.denyPerm(w, r, routePerm(r), "you can't manage this role: "+err.Error())
 		return rbac.Role{}, false
 	}
 	return rd, true
@@ -95,7 +95,7 @@ func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id 
 			continue
 		}
 		if err := h.checkGrant(r, a.Role, a.Scope); err != nil {
-			h.denyPerm(w, r, rbac.PermUsersUpdate, "you can't manage this user: "+err.Error())
+			h.denyPerm(w, r, routePerm(r), "you can't manage this user: "+err.Error())
 			return false
 		}
 	}
