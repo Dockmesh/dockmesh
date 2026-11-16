@@ -228,6 +228,10 @@ jobs:
           fi
           go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl           ./cmd/dmctl
 
+      # Refuses lab builds: extra update-signing key, lab hooks or lab tag.
+      - name: check binaries
+        run: go run ./scripts/checkrelease dist/*
+
       - name: package tarball
         run: |
           TARBALL="dockmesh_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
