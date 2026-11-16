@@ -41,6 +41,26 @@ func TestCheckNewLocalRoots(t *testing.T) {
 	}
 }
 
+func TestCheckEmptyPathDir(t *testing.T) {
+	h := &Handlers{}
+	for _, tt := range []struct {
+		prev, next string
+		ok         bool
+	}{
+		{"", "/srv/backups/default", true},
+		{"/etc/old", "/etc/old", true},
+		{"", "relative", false},
+		{"", "/etc/x", false},
+		// One path: a comma is part of it, not a separator.
+		{"", "/srv/a,/x", true},
+		{"", "/srv/a\n/etc", false},
+	} {
+		if err := h.checkEmptyPathDir(tt.prev, tt.next); (err == nil) != tt.ok {
+			t.Errorf("checkEmptyPathDir(%q, %q) = %v, want ok=%v", tt.prev, tt.next, err, tt.ok)
+		}
+	}
+}
+
 func TestTargetTestErrorMarksReadOnly(t *testing.T) {
 	ro := targetTestError(&os.PathError{Op: "openat", Path: "jobs/x", Err: syscall.EROFS})
 	if ro["read_only"] != true || ro["status"] != "error" || !strings.Contains(ro["error"].(string), "Backups page") {

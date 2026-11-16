@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -43,14 +44,34 @@ const writeTestPrefix = ".dockmesh-write-test-"
 // can't hold the request.
 const dirCheckTimeout = 5 * time.Second
 
+var (
+	probesMu sync.Mutex
+	probes   = map[string]bool{}
+)
+
 // CheckDirWritable creates and removes a file in dir to see whether the
 // service can write there. A missing dir counts as writable when the
 // service may create entries in its nearest existing parent, since local
 // targets create it on first use; that parent is only asked, never
 // written to, as it may lie outside every allowed root.
 func CheckDirWritable(dir string) DirCheck {
+	// A check stuck on a hung mount keeps its goroutine; later calls for
+	// the same dir answer at once instead of starting another one.
+	probesMu.Lock()
+	if probes[dir] {
+		probesMu.Unlock()
+		return DirCheck{Path: dir, State: DirError, Error: "an earlier check of this directory has not returned"}
+	}
+	probes[dir] = true
+	probesMu.Unlock()
 	done := make(chan DirCheck, 1)
-	go func() { done <- checkDirWritable(dir) }()
+	go func() {
+		c := checkDirWritable(dir)
+		probesMu.Lock()
+		delete(probes, dir)
+		probesMu.Unlock()
+		done <- c
+	}()
 	select {
 	case c := <-done:
 		return c

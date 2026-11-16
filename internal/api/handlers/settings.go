@@ -139,7 +139,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if e.Key == targets.LocalRootsSetting || e.Key == targets.EmptyPathSetting {
-			if err := h.checkNewLocalRoots(h.Settings.Stored(e.Key), e.Value); err != nil {
+			check := h.checkNewLocalRoots
+			if e.Key == targets.EmptyPathSetting {
+				check = h.checkEmptyPathDir
+			}
+			if err := check(h.Settings.Stored(e.Key), e.Value); err != nil {
 				writeError(w, http.StatusBadRequest, e.Key+": "+err.Error())
 				return
 			}
@@ -255,4 +259,16 @@ func (h *Handlers) checkNewLocalRoots(prev, next string) error {
 		}
 	}
 	return nil
+}
+
+// checkEmptyPathDir applies the unit writer's rules to a changed
+// backups.empty_path_dir, which is one path, not a list.
+func (h *Handlers) checkEmptyPathDir(prev, next string) error {
+	if next == prev || next == "" {
+		return nil
+	}
+	if !filepath.IsAbs(next) {
+		return fmt.Errorf("%q is not an absolute path", next)
+	}
+	return h.AuditRetention.CheckLocalDir(next)
 }
