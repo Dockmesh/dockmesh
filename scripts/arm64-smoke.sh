@@ -24,7 +24,7 @@ BASE=https://127.0.0.1:8080
 # The setup file and its password file must sit below root-only directories.
 WORK="$(mktemp -d -p /root)"
 trap 'rm -rf "$WORK"' EXIT
-CURL=(curl -fsS -k --max-time 120)
+CURL=(curl -sS -k --fail-with-body --max-time 120)
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -95,7 +95,7 @@ done
 
 step "back up the volume"
 TID="$(api POST /api/v1/backups/targets '{"name":"smoke-local","type":"local","config":{"path":""}}' | jq -r .id)"
-JID="$(api POST /api/v1/backups/jobs "$(jq -n --arg t "$TID" '{name:"smoke-vol",host_id:"local",target_id:$t,
+JID="$(api POST /api/v1/backups/jobs "$(jq -n --argjson t "$TID" '{name:"smoke-vol",host_id:"local",target_id:$t,
   sources:[{type:"volume",name:"smoke_data"}],schedule:"0 3 * * *",retention_count:0,retention_days:0,encrypt:true,enabled:true}')" | jq -r .id)"
 RID="$(api POST "/api/v1/backups/jobs/$JID/run" '{}' | jq -r .id)"
 STATUS=""
