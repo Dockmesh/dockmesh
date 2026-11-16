@@ -48,7 +48,7 @@ func CheckReservedLabelsText(composeYAML string) error {
 	if err := dec.Decode(&root); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parse compose file: %w", err)
 	}
-	if d := unsupportedNode(&root); d != "" {
+	if d := unsupportedNode(&root, strings.Split(composeYAML, "\n")); d != "" {
 		return fmt.Errorf("%s: %w", d, ErrLabelsNeedAgent)
 	}
 	var plain any
@@ -119,19 +119,54 @@ func sameFileExtends(v any) bool {
 // scalar ending in ":" (in a flow map, "{key:}" is a key with an empty
 // value to compose but a key ending in ":" to this parser). Aliases
 // aren't followed: their anchor is part of the tree itself.
-func unsupportedNode(n *yaml.Node) string {
+func unsupportedNode(n *yaml.Node, lines []string) string {
 	if n.Style&yaml.TaggedStyle != 0 || (strings.HasPrefix(n.Tag, "!") && !strings.HasPrefix(n.Tag, "!!")) {
 		return "YAML tag " + n.Tag
+	}
+	if nonSpecificTag(n, lines) {
+		return "YAML tag !"
 	}
 	if n.Kind == yaml.ScalarNode && n.Style == 0 && strings.HasSuffix(n.Value, ":") {
 		return fmt.Sprintf("plain value %q", n.Value)
 	}
 	for _, c := range n.Content {
-		if d := unsupportedNode(c); d != "" {
+		if d := unsupportedNode(c, lines); d != "" {
 			return d
 		}
 	}
 	return ""
+}
+
+// nonSpecificTag reports a bare "!" before n. yaml.v3 drops it from the
+// node and resolves the value as if it were untagged, where compose's
+// parser reads a string. A node's position is that of its properties,
+// and no untagged node starts with "!" after its anchor.
+func nonSpecificTag(n *yaml.Node, lines []string) bool {
+	if n.Line < 1 || n.Line > len(lines) || n.Column < 1 {
+		return false
+	}
+	line := []rune(lines[n.Line-1])
+	if n.Column > len(line) {
+		return false
+	}
+	rest := string(line[n.Column-1:])
+	if !strings.HasPrefix(rest, "&") {
+		return strings.HasPrefix(rest, "!")
+	}
+	i := strings.IndexAny(rest, " \t")
+	if i < 0 {
+		rest = ""
+	} else {
+		rest = strings.TrimLeft(rest[i:], " \t")
+	}
+	// The tag may follow the anchor on a later line.
+	for next := n.Line; rest == "" || strings.HasPrefix(rest, "#"); next++ {
+		if next >= len(lines) {
+			return false
+		}
+		rest = strings.TrimLeft(lines[next], " \t")
+	}
+	return strings.HasPrefix(rest, "!")
 }
 
 type rawResource struct {
