@@ -251,6 +251,8 @@ For a managed agent the server needs the signed release of its own version. It d
 
 ### Root updater units of a managed agent
 
+`sudo dockmesh-agent system install` writes these two units and `dockmesh-agent.service` from the template built into the agent binary, and every update rewrites them from the new version. Local changes go into drop-ins (`/etc/systemd/system/dockmesh-agent.service.d/*.conf`), which Dockmesh never touches. The units look like this:
+
 ```ini
 # /etc/systemd/system/dockmesh-agent-update.path
 [Unit]
@@ -285,7 +287,7 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-`dockmesh-agent.service` of a managed agent runs `/usr/local/bin/dockmesh-agent` as `dockmesh-agent`, without any `ExecStartPre` step. Remove the `ExecStartPre` line (also from drop-ins), `/etc/dockmesh-agent/refresh-path-copy` and `/var/lib/dockmesh-agent/bin/` before you enable the updater units: the legacy step copies a file the agent's account can write over `/usr/local/bin/dockmesh-agent` as root. While the script exists, systemd does not start the updater units at all; while any `ExecStartPre` or the binary in the data directory is left, the agent reports itself as legacy and `update apply` refuses to run. Enable both updater units with `sudo systemctl enable --now dockmesh-agent-update.path dockmesh-agent-update.service`. `dockmesh-agent update apply` only runs as root, refuses a binary other than the root-owned `/usr/local/bin/dockmesh-agent`, reads only the version from the request, and refuses symlinks and anything that is not a regular file in the update directory as well as a version that is not newer.
+`dockmesh-agent.service` of a managed agent runs `/usr/local/bin/dockmesh-agent` as `dockmesh-agent` (as root for an agent that was installed with `--as-root`), without any `ExecStartPre` step. To move a legacy agent by hand, remove the `ExecStartPre` line (also from drop-ins), `/etc/dockmesh-agent/refresh-path-copy` and `/var/lib/dockmesh-agent/bin/` first: the legacy step copies a file the agent's account can write over `/usr/local/bin/dockmesh-agent` as root. While the script exists, systemd does not start the updater units at all; while any `ExecStartPre` or the binary in the data directory is left, the agent reports itself as legacy and `update apply` refuses to run. Then run `sudo dockmesh-agent system install`, which refuses while any of these is left, and `sudo systemctl restart dockmesh-agent`. `dockmesh-agent update apply` only runs as root, refuses a binary other than the root-owned `/usr/local/bin/dockmesh-agent`, reads only the version from the request, and refuses symlinks and anything that is not a regular file in the update directory as well as a version that is not newer.
 
 ### Upgrade an agent by hand
 

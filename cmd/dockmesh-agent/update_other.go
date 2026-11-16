@@ -17,4 +17,9 @@ func runUpdateCmd([]string) {
 	os.Exit(1)
 }
 
+func runSystemCmd([]string) {
+	fmt.Fprintln(os.Stderr, "system install: the agent is installed with systemd on Linux only")
+	os.Exit(1)
+}
+
 func legacyCopyStep(string) error { return errors.New("managed agents need Linux") }

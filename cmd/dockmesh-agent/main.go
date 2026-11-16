@@ -87,6 +87,9 @@ func main() {
 		case "update":
 			runUpdateCmd(os.Args[2:])
 			return
+		case "system":
+			runSystemCmd(os.Args[2:])
+			return
 		}
 	}
 	insecureEnroll := os.Getenv("DOCKMESH_INSECURE_ENROLL") == "true"

@@ -83,15 +83,10 @@ func updateApply(args []string) error {
 	if err := legacyCopyStepAt(filepath.Clean(*data), legacyRefreshScript, agentUnitFile, true); err != nil {
 		return fmt.Errorf("not a managed agent: %w", err)
 	}
-	u, err := user.Lookup(agentAccount)
-	if err != nil {
-		return fmt.Errorf("look up %s: %w", agentAccount, err)
-	}
-	uid64, err := strconv.ParseUint(u.Uid, 10, 32)
+	uid, err := agentServiceUID()
 	if err != nil {
 		return err
 	}
-	uid := uint32(uid64)
 	reqDir := updateDir(filepath.Clean(*data))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -120,6 +115,33 @@ func updateApply(args []string) error {
 		return errors.New("the rollback did not finish; it is retried on the next run")
 	}
 	return nil
+}
+
+// agentServiceUID is the account systemd runs the agent unit as, drop-ins
+// included: root for an agent installed as root.
+func agentServiceUID() (uint32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/bin/systemctl", "show", "-p", "User", "--value", agentUnitName).Output() // #nosec G204 -- fixed unit name
+	if err != nil {
+		return 0, fmt.Errorf("ask systemd for the account of %s: %w", agentUnitName, err)
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" || name == "root" {
+		return 0, nil
+	}
+	if name != agentAccount {
+		return 0, fmt.Errorf("%s runs as %q, not %s or root", agentUnitName, name, agentAccount)
+	}
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, fmt.Errorf("look up %s: %w", name, err)
+	}
+	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(uid), nil
 }
 
 // agentService is the agent's side of rootupdate.Service. Only the binary
@@ -192,7 +214,20 @@ func (s *agentService) RestoreUnit(data []byte) error {
 	return errors.Join(errs...)
 }
 
-func (s *agentService) WriteUnit(context.Context, string) error { return nil }
+// WriteUnit runs the new binary's `system install`, so the units come from
+// the template of the version being installed and keep the host's values.
+func (s *agentService) WriteUnit(ctx context.Context, binary string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "system", "install") // #nosec G204 -- the verified binary just installed
+	cmd.Dir = "/"
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s system install: %w: %s", binary, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 func (s *agentService) Snapshot(context.Context) error { return nil }
 

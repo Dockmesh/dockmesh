@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"syscall"
 )
@@ -88,26 +89,81 @@ func WriteUpdateUnits(binary, dataDir, dir string) (changed bool, err error) {
 	if dir == "" {
 		dir = filepath.Dir(UpdatePathUnitFile)
 	}
-	for _, f := range []struct {
-		path string
-		data []byte
-	}{
-		{filepath.Join(dir, filepath.Base(UpdatePathUnitFile)), pathUnit},
-		{filepath.Join(dir, filepath.Base(UpdateServiceUnitFile)), serviceUnit},
-	} {
-		old, err := readUnit(f.path)
-		if err == nil && bytes.Equal(old, f.data) {
-			continue
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	return writeUnits(map[string][]byte{
+		filepath.Join(dir, filepath.Base(UpdatePathUnitFile)):    pathUnit,
+		filepath.Join(dir, filepath.Base(UpdateServiceUnitFile)): serviceUnit,
+	})
+}
+
+// WriteAgentUnits writes the agent's unit and its root updater's path and
+// service units; changed reports whether any file changed. Every unit is
+// rendered before the first is written, so a refused value changes
+// nothing. dir defaults to the directory of AgentUnitFile.
+func WriteAgentUnits(u AgentUnit, dir string) (changed bool, err error) {
+	unit, err := RenderAgentUnit(u)
+	if err != nil {
+		return false, err
+	}
+	pathUnit, serviceUnit, err := RenderAgentUpdateUnits(u.Binary, u.DataDir)
+	if err != nil {
+		return false, err
+	}
+	if dir == "" {
+		dir = filepath.Dir(AgentUnitFile)
+	}
+	return writeUnits(map[string][]byte{
+		filepath.Join(dir, filepath.Base(AgentUnitFile)):              unit,
+		filepath.Join(dir, filepath.Base(AgentUpdatePathUnitFile)):    pathUnit,
+		filepath.Join(dir, filepath.Base(AgentUpdateServiceUnitFile)): serviceUnit,
+	})
+}
+
+func writeUnits(files map[string][]byte) (changed bool, err error) {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	for _, p := range paths {
+		c, err := WriteRootFile(p, files[p], os.Geteuid(), os.Getegid(), 0o644)
+		if err != nil {
 			return changed, err
 		}
-		if err := writeRootFileAtomic(f.path, f.data, 0o644); err != nil {
-			return changed, err
-		}
-		changed = true
+		changed = changed || c
 	}
 	return changed, nil
+}
+
+// WriteRootFile replaces path with data, owned by uid:gid with mode, unless
+// it already is exactly that; changed reports a write. A symlink or
+// anything but a regular file at path is refused.
+func WriteRootFile(path string, data []byte, uid, gid int, mode os.FileMode) (changed bool, err error) {
+	old, err := readUnit(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return false, err
+	case bytes.Equal(old, data) && hasOwnerMode(path, uid, gid, mode):
+		return false, nil
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	if err := writeAtomic(root, filepath.Base(path), data, uid, gid, mode); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func hasOwnerMode(path string, uid, gid int, mode os.FileMode) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == uid && int(st.Gid) == gid && fi.Mode().Perm() == mode
 }
 
 // ReadUnitFile returns the unit file at path, nil when it does not exist.
@@ -174,6 +230,12 @@ func writeRootFileAtomic(path string, data []byte, mode os.FileMode) error {
 // mode the server's group may read and nobody else may enter.
 func PrepareConfigDir(gid int) error {
 	return ensureConfigDir(ConfigDir, 0, gid)
+}
+
+// PrepareRootDir creates dir or resets it to uid:gid 0750, like
+// PrepareConfigDir for another config dir.
+func PrepareRootDir(dir string, uid, gid int) error {
+	return ensureConfigDir(dir, uid, gid)
 }
 
 // ReadEnvFile returns the KEY=VALUE pairs of the env file a unit is
@@ -256,6 +318,9 @@ var privilegedGroups = map[string]bool{
 	"kmem": true, "lxd": true, "incus": true, "incus-admin": true, "libvirt": true, "kvm": true,
 	"microk8s": true, "systemd-journal": true, "tty": true, "input": true, "video": true,
 }
+
+// PrivilegedGroup reports a group that is never handed to a service.
+func PrivilegedGroup(name string) bool { return privilegedGroups[name] }
 
 // SocketGroups returns the supplementary groups a service needs for Docker:
 // "docker" when that group exists (dockerGID >= 0), and the numeric gid of

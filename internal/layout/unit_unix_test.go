@@ -347,3 +347,81 @@ func TestCheckWritablePath(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteAgentUnits(t *testing.T) {
+	dir := t.TempDir()
+	dropIn := filepath.Join(dir, "dockmesh-agent.service.d", "local.conf")
+	if err := os.MkdirAll(filepath.Dir(dropIn), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropIn, []byte("[Service]\nEnvironment=FOO=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u := AgentUnit{Binary: "/usr/local/bin/dockmesh-agent", EnvFile: "/etc/dockmesh-agent/agent.env",
+		User: "dockmesh-agent", DataDir: "/var/lib/dockmesh-agent", WritablePaths: []string{"/srv/stacks"}}
+	tests := []struct {
+		name        string
+		edit        func(*AgentUnit)
+		wantChanged bool
+		wantErr     bool
+	}{
+		{"first write", func(*AgentUnit) {}, true, false},
+		{"same values", func(*AgentUnit) {}, false, false},
+		{"new stacks dir", func(u *AgentUnit) { u.WritablePaths = []string{"/mnt/data/stacks"} }, true, false},
+		{"refused value writes nothing", func(u *AgentUnit) { u.WritablePaths = []string{"/etc/x"} }, false, true},
+	}
+	for _, tt := range tests {
+		tt.edit(&u)
+		before, _ := os.ReadFile(filepath.Join(dir, "dockmesh-agent.service"))
+		changed, err := WriteAgentUnits(u, dir)
+		if (err != nil) != tt.wantErr || changed != tt.wantChanged {
+			t.Fatalf("%s: changed=%v err=%v, want changed=%v err=%v", tt.name, changed, err, tt.wantChanged, tt.wantErr)
+		}
+		after, _ := os.ReadFile(filepath.Join(dir, "dockmesh-agent.service"))
+		if tt.wantErr && string(before) != string(after) {
+			t.Errorf("%s: the unit changed after a refused value", tt.name)
+		}
+	}
+	for _, f := range []string{"dockmesh-agent.service", "dockmesh-agent-update.path", "dockmesh-agent-update.service"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("%s: %v", f, err)
+		}
+	}
+	if got, _ := os.ReadFile(dropIn); string(got) != "[Service]\nEnvironment=FOO=1\n" {
+		t.Errorf("drop-in changed: %q", got)
+	}
+}
+
+func TestWriteRootFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.env")
+	uid, gid := os.Getuid(), os.Getgid()
+	steps := []struct {
+		name        string
+		data        string
+		mode        os.FileMode
+		wantChanged bool
+	}{
+		{"new file", "A=1\n", 0o640, true},
+		{"unchanged", "A=1\n", 0o640, false},
+		{"other mode", "A=1\n", 0o600, true},
+		{"other content", "A=2\n", 0o600, true},
+	}
+	for _, s := range steps {
+		changed, err := WriteRootFile(p, []byte(s.data), uid, gid, s.mode)
+		if err != nil || changed != s.wantChanged {
+			t.Fatalf("%s: changed=%v err=%v, want %v", s.name, changed, err, s.wantChanged)
+		}
+		fi, err := os.Stat(p)
+		if err != nil || fi.Mode().Perm() != s.mode {
+			t.Fatalf("%s: mode %v, want %v", s.name, fi.Mode().Perm(), s.mode)
+		}
+	}
+	link := filepath.Join(dir, "link.env")
+	if err := os.Symlink(p, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteRootFile(link, []byte("B=1\n"), uid, gid, 0o640); err == nil {
+		t.Error("a symlink was written through")
+	}
+}

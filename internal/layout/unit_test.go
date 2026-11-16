@@ -235,3 +235,15 @@ func TestRenderUpdateUnitsRefuses(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderAgentUpdateUnitsGolden(t *testing.T) {
+	pathUnit, serviceUnit, err := RenderAgentUpdateUnits("/usr/local/bin/dockmesh-agent", "/var/lib/dockmesh-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "agent-update.path", pathUnit)
+	checkGolden(t, "agent-update.service", serviceUnit)
+	if _, _, err := RenderAgentUpdateUnits("/usr/local/bin/dockmesh-agent", "/data dir"); !errors.Is(err, ErrBadUnitValue) {
+		t.Errorf("data dir with a space: %v, want ErrBadUnitValue", err)
+	}
+}

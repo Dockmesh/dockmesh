@@ -2,7 +2,10 @@
 
 package layout
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 var errNoSystemd = errors.New("systemd units are only written on Linux")
 
@@ -35,3 +38,15 @@ func ReadUnitFile(string) ([]byte, error) { return nil, errNoSystemd }
 
 // PutUnitFile fails off Unix.
 func PutUnitFile(string, []byte) error { return errNoSystemd }
+
+// WriteAgentUnits fails off Unix.
+func WriteAgentUnits(AgentUnit, string) (bool, error) { return false, errNoSystemd }
+
+// WriteRootFile fails off Unix.
+func WriteRootFile(string, []byte, int, int, os.FileMode) (bool, error) { return false, errNoSystemd }
+
+// PrepareRootDir fails off Unix.
+func PrepareRootDir(string, int, int) error { return errNoSystemd }
+
+// PrivilegedGroup is false off Unix.
+func PrivilegedGroup(string) bool { return false }

@@ -1,0 +1,21 @@
+# Written by `dockmesh-agent system install` on install and upgrade.
+# Runs as root when the agent asks for an update (dockmesh-agent-update.path),
+# and once at boot to finish an update a crash or power cut interrupted.
+[Unit]
+Description=Apply a Dockmesh agent update
+After=dockmesh-agent.service
+# The legacy copy step would put a file the agent account can write here.
+ConditionPathExists=!/etc/dockmesh-agent/refresh-path-copy
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dockmesh-agent update apply --data-dir=/var/lib/dockmesh-agent
+TimeoutStartSec=60min
+# Time to roll back after a stop or a start timeout.
+TimeoutStopSec=30min
+# Whatever happened to this run, the agent must not stay stopped.
+ExecStopPost=-/bin/systemctl start --no-block dockmesh-agent.service
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -40,6 +40,11 @@ const (
 	UpdateServiceUnitFile = "/etc/systemd/system/dockmesh-update.service"
 	// UpdateStateDir is the oneshot's root-only working directory.
 	UpdateStateDir = "/var/lib/dockmesh-update"
+
+	// Units of an agent in the managed layout.
+	AgentUnitFile              = "/etc/systemd/system/dockmesh-agent.service"
+	AgentUpdatePathUnitFile    = "/etc/systemd/system/dockmesh-agent-update.path"
+	AgentUpdateServiceUnitFile = "/etc/systemd/system/dockmesh-agent-update.service"
 )
 
 // UpdateRequestDir is the directory below the data dir where the server
@@ -135,6 +140,21 @@ func RenderAgentUnit(u AgentUnit) ([]byte, error) {
 // root updater for the server binary and data dir. Both values go into
 // settings systemd takes as one unquoted word.
 func RenderUpdateUnits(binary, dataDir string) (pathUnit, serviceUnit []byte, err error) {
+	return renderUpdatePair("dockmesh-update", binary, dataDir)
+}
+
+// AgentLegacyCopyStep is the root ExecStartPre script of the legacy agent
+// layout. While it exists the agent's updater units do not start: it copies
+// a file the agent account can write over the root-owned binary.
+const AgentLegacyCopyStep = "/etc/dockmesh-agent/refresh-path-copy"
+
+// RenderAgentUpdateUnits returns the path unit and the oneshot service of
+// the agent's root updater.
+func RenderAgentUpdateUnits(binary, dataDir string) (pathUnit, serviceUnit []byte, err error) {
+	return renderUpdatePair("dockmesh-agent-update", binary, dataDir)
+}
+
+func renderUpdatePair(name, binary, dataDir string) (pathUnit, serviceUnit []byte, err error) {
 	bin, err := plainPath("binary", binary)
 	if err != nil {
 		return nil, nil, err
@@ -143,12 +163,14 @@ func RenderUpdateUnits(binary, dataDir string) (pathUnit, serviceUnit []byte, er
 	if err != nil {
 		return nil, nil, err
 	}
-	v := struct{ Binary, DataDir, RequestFile string }{bin, dir, UpdateRequestDir(dir) + "/request"}
+	v := struct{ Binary, DataDir, RequestFile, LegacyCopyStep string }{
+		bin, dir, UpdateRequestDir(dir) + "/request", AgentLegacyCopyStep,
+	}
 	var p, s bytes.Buffer
-	if err := unitTemplates.ExecuteTemplate(&p, "dockmesh-update.path.tmpl", v); err != nil {
+	if err := unitTemplates.ExecuteTemplate(&p, name+".path.tmpl", v); err != nil {
 		return nil, nil, err
 	}
-	if err := unitTemplates.ExecuteTemplate(&s, "dockmesh-update.service.tmpl", v); err != nil {
+	if err := unitTemplates.ExecuteTemplate(&s, name+".service.tmpl", v); err != nil {
 		return nil, nil, err
 	}
 	return p.Bytes(), s.Bytes(), nil
