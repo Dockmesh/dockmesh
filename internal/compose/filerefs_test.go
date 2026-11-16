@@ -321,6 +321,23 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
+			name: "extends of an empty service applied again by the parent",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - sub/inc.yaml\nservices:\n  web:\n    extends:\n      service: evil\n"},
+				{name: "sub/.env", content: "P=inside.yaml\n"},
+				{name: "sub/inc.yaml", content: "services:\n  web:\n    image: nginx\n    extends:\n      file: x.yaml\n      service: nullsvc\n"},
+				{name: "sub/x.yaml", content: "services:\n  nullsvc:\n  evil:\n    extends:\n      file: \"${P:-${STACK}/../base.yaml}\"\n      service: b\n"},
+				{name: "sub/inside.yaml", content: "services:\n  b:\n    image: decoy\n"},
+			},
+			outside: []stackFile{{name: "base.yaml", content: "services:\n  b:\n    image: postgres\n"}},
+			refused: true,
+		},
+		{
+			name:    "develop watch path outside",
+			files:   []stackFile{{name: "compose.yaml", content: "services:\n  web:\n    image: nginx\n    develop:\n      watch:\n        - path: /etc\n          action: sync\n          target: /x\n"}},
+			refused: true,
+		},
+		{
 			name: "include and files inside the folder",
 			files: []stackFile{
 				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - link.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},

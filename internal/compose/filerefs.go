@@ -389,7 +389,7 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 	if err := checkPlainYAML(content); err != nil {
 		return nil, err
 	}
-	return loader.LoadModelWithContext(ctx, types.ConfigDetails{
+	model, err := loader.LoadModelWithContext(ctx, types.ConfigDetails{
 		WorkingDir:  workingDir,
 		ConfigFiles: []types.ConfigFile{{Filename: file, Content: content}},
 		Environment: env.Clone(),
@@ -403,6 +403,49 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 		o.ResolvePaths = false
 		o.SetProjectName(w.name, true)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := w.checkServices(file, workingDir, model); err != nil {
+		return nil, err
+	}
+	return model, nil
+}
+
+// checkServices refuses empty service definitions and develop.watch
+// paths outside the folder. compose-go leaves an extends of an empty
+// service unresolved, and a parent file then applies it again with its
+// own environment, past what the walker followed. Watch paths are
+// resolved through symlinks while loading.
+func (w *refWalker) checkServices(file, workingDir string, model map[string]any) error {
+	for _, section := range []string{"services", "jobs"} {
+		entries, _ := model[section].(map[string]any)
+		for _, name := range slices.Sorted(maps.Keys(entries)) {
+			svc, ok := entries[name].(map[string]any)
+			if !ok {
+				return refused("%s: %s.%s is empty", file, section, name)
+			}
+			dev, _ := svc["develop"].(map[string]any)
+			watch, _ := dev["watch"].([]any)
+			for _, item := range watch {
+				rule, _ := item.(map[string]any)
+				p, ok := rule["path"].(string)
+				if !ok {
+					continue
+				}
+				if err := noHome(file, p); err != nil {
+					return err
+				}
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(workingDir, p)
+				}
+				if _, err := w.files.rel(p); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // noHome refuses a path starting with ~: compose-go expands it to the
