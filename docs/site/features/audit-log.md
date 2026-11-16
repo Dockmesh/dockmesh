@@ -20,7 +20,7 @@ Every action belongs to one of four categories. The page shows them as tabs and 
 | **Sign-in & security** | `auth` | sign-in, sessions, tokens, 2FA, identity providers, denied requests | `auth.login`, `auth.login_failed`, `auth.lockout`, `auth.sso_login`, `auth.session_revoke`, `auth.policy_update`, `auth.scope_denied`, `api_token.revoke`, `user.password`, `user.unlock`, `user.mfa_enroll`, `user.mfa_reset`, `oidc.provider_update`, `auth.sso_rekey` |
 | **System** | `system` | the server itself and the audit trail | `audit.genesis`, `audit.chain_bridge`, `audit.retention_configure`, `audit.webhook_configure`, `secrets.rotate`, `system.update_check`, `system.update_install`, `system.update_applied`, `system.update_refused`, `system.update_rolled_back`, `system.update_failed`, `system.restore_apply` |
 
-Actions the server doesn't know, for example ones a newer or older version wrote, count as system. `auth.scope_denied` is a request that a user's assignments didn't allow.
+Actions the server doesn't know, for example ones a newer or older version wrote, count as system. `auth.scope_denied` is a request that a user's assignments didn't allow. Only the first 10 refusals per user and minute are written one by one; the rest of that minute is written afterwards as one `auth.scope_denied` entry such as "250 more refused requests", with the count per permission in its details. The audit webhook receives the same entries.
 
 ## Filter through the API
 

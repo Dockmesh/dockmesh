@@ -1,0 +1,3 @@
+kind: Changed
+body: Refused requests are audited as the first 10 per user and minute plus one auth.scope_denied summary entry with the count and the refused permissions, so a looping client can't flood the audit log or push other events out of the audit webhook
+time: 2026-11-16T08:30:26.358320882Z

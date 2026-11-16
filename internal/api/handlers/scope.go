@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
-	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -136,7 +135,7 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 			target = "<unknown>"
 		}
 	}
-	h.audit(r, audit.ActionScopeDenied, target, map[string]any{
+	h.auditDenied(r, perm, target, map[string]any{
 		"permission": string(perm),
 		"host_id":    req.HostID,
 		"stack_name": req.StackName,
@@ -162,7 +161,22 @@ func (h *Handlers) AuditPermDenied(r *http.Request, perm rbac.Perm) {
 		details["host_id"] = res.HostID
 		details["stack_name"] = res.StackName
 	}
-	h.audit(r, audit.ActionScopeDenied, r.Method+" "+path, details)
+	h.auditDenied(r, perm, r.Method+" "+path, details)
+}
+
+// auditDenied writes an auth.scope_denied entry through the per-actor
+// limit of the audit service, keyed by the caller or, without one, its
+// address.
+func (h *Handlers) auditDenied(r *http.Request, perm rbac.Perm, target string, details map[string]any) {
+	if h.Audit == nil {
+		return
+	}
+	uid := actorID(r)
+	actor := uid
+	if actor == "" {
+		actor = "ip:" + clientIP(r)
+	}
+	h.Audit.WriteDenied(r.Context(), actor, uid, string(perm), target, withTokenID(r.Context(), details))
 }
 
 // maxDeniedPathLen caps the request path kept in a denial entry; any
