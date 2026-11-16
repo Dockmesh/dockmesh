@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -222,7 +223,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 
 	var expiresAt *time.Time
 	if in.ExpiresInDays > 0 {
-		t := time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
+		t := time.Now().Add(labtime.Scale(time.Duration(in.ExpiresInDays) * 24 * time.Hour))
 		expiresAt = &t
 	}
 	if in.NotAfter != nil && (expiresAt == nil || expiresAt.After(*in.NotAfter)) {

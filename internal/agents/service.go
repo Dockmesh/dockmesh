@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -629,7 +630,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, err
 	}
 
-	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, ClientCertValidity)
+	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, labtime.Scale(ClientCertValidity))
 	if err != nil {
 		return nil, err
 	}
@@ -654,7 +655,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		   AND enrollment_token_hash = ?
 		   AND enrollment_token_expires_at > ?
 		   AND status != 'revoked'`,
-		fingerprint, sqliteTime(s.now().Add(ClientCertValidity)), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
+		fingerprint, sqliteTime(s.now().Add(labtime.Scale(ClientCertValidity))), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
 		id, tokenHash, now)
 	if err != nil {
 		return nil, err
