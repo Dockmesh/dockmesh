@@ -125,6 +125,8 @@ The server writes its log to stdout and stderr, so on Linux read it with `journa
 | `/etc/dockmesh-agent/refresh-path-copy` | Script the service runs to refresh the copy in `/usr/local/bin` |
 | `/etc/systemd/system/dockmesh-agent.service` | Service unit |
 
+With SELinux on, the installer gives `/var/lib/dockmesh-agent/bin/` and `/etc/dockmesh-agent/refresh-path-copy` the type `bin_t` (a `semanage fcontext` rule, or `chcon` without `semanage`); a new binary written by a self-upgrade inherits it from the directory. The root updaters reset the label of every file they swap in with `restorecon`.
+
 Agents installed by older releases used `/var/lib/dockmesh` as their data directory, the same as the server default. A re-run of the installer keeps the data directory named in `agent.env`, but moves the agent's files out of a directory that belongs to a Dockmesh server. The agent binary itself falls back to `/var/lib/dockmesh` when `DOCKMESH_DATA_DIR` is not set.
 
 Re-running the installer with a new token removes the old certificate, key, CA files, URL file and `staging/` first.

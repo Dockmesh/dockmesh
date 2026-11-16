@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'On hosts with SELinux enforcing where the agent never connected, copy a new install command for the pending host (Hosts > Add host > New command) and run it again. An agent that runs with SELinux permissive needs `semanage fcontext -a -t bin_t ''/var/lib/dockmesh-agent/bin(/.*)?''` and `restorecon -R /var/lib/dockmesh-agent/bin` before SELinux is set to enforcing'
+time: 2026-11-16T13:10:52.919098922Z
+custom:
+    Audience: admins
+    Id: selinux-agent-label
