@@ -20,10 +20,10 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 	}
 
 	for _, name := range []string{"../outside", "..", "a/../../outside", "/etc", "Web", ""} {
-		if err := syncStack(base, agents.StackSyncReq{Name: name, Compose: "services: {}"}); err == nil {
+		if err := syncStack(dirsAt(base), agents.StackSyncReq{Name: name, Compose: "services: {}"}); err == nil {
 			t.Errorf("syncStack accepted %q", name)
 		}
-		if err := deleteStack(context.Background(), nil, base, name); err == nil {
+		if err := deleteStack(context.Background(), nil, dirsAt(base), name); err == nil {
 			t.Errorf("deleteStack accepted %q", name)
 		}
 	}
@@ -32,7 +32,7 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 	}
 
 	req := agents.StackSyncReq{Name: "web", Compose: "services: {}", Env: "A=1", Meta: "{}"}
-	if err := syncStack(base, req); err != nil {
+	if err := syncStack(dirsAt(base), req); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []string{"compose.yaml", ".dockmesh.meta.json"} {
@@ -43,13 +43,13 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(base, "stacks", "web", ".env")); !os.IsNotExist(err) {
 		t.Errorf(".env mirrored: %v", err)
 	}
-	if err := deleteStack(context.Background(), nil, base, "web"); err != nil {
+	if err := deleteStack(context.Background(), nil, dirsAt(base), "web"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "stacks", "web")); !os.IsNotExist(err) {
 		t.Errorf("stack dir not removed: %v", err)
 	}
-	if err := deleteStack(context.Background(), nil, base, "never-existed"); err != nil {
+	if err := deleteStack(context.Background(), nil, dirsAt(base), "never-existed"); err != nil {
 		t.Errorf("deleting a missing stack: %v", err)
 	}
 }
@@ -63,11 +63,11 @@ func TestSyncKeepsOldEnvCopy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("A=1\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if !hasMirroredEnv(base) {
+	if !hasMirroredEnv(dirsAt(base)) {
 		t.Fatal("old .env copy not detected")
 	}
 	for _, env := range []string{"", "A=2\n"} {
-		if err := syncStack(base, agents.StackSyncReq{Name: "web", Compose: "services: {}", Env: env}); err != nil {
+		if err := syncStack(dirsAt(base), agents.StackSyncReq{Name: "web", Compose: "services: {}", Env: env}); err != nil {
 			t.Fatal(err)
 		}
 		if b, err := os.ReadFile(filepath.Join(dir, ".env")); err != nil || string(b) != "A=1\n" {
@@ -107,22 +107,22 @@ func TestRemoveMirroredEnv(t *testing.T) {
 			if err := os.WriteFile(env, []byte("A=1\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			if err := removeMirroredEnv(base, "web", tt.binds(t, dir)); err != nil {
+			if err := removeMirroredEnv(dirsAt(base), "web", tt.binds(t, dir)); err != nil {
 				t.Fatal(err)
 			}
 			_, err := os.Stat(env)
 			if kept := err == nil; kept != tt.keep {
 				t.Fatalf("kept = %v, want %v (%v)", kept, tt.keep, err)
 			}
-			if !tt.keep && hasMirroredEnv(base) {
+			if !tt.keep && hasMirroredEnv(dirsAt(base)) {
 				t.Error("copy still reported after removal")
 			}
 		})
 	}
-	if err := removeMirroredEnv(t.TempDir(), "web", nil); err != nil {
+	if err := removeMirroredEnv(dirsAt(t.TempDir()), "web", nil); err != nil {
 		t.Errorf("stack without a copy: %v", err)
 	}
-	if err := removeMirroredEnv(t.TempDir(), "../x", nil); err == nil {
+	if err := removeMirroredEnv(dirsAt(t.TempDir()), "../x", nil); err == nil {
 		t.Error("invalid name accepted")
 	}
 }
@@ -132,7 +132,9 @@ func TestHasMirroredEnvIgnoresDirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(base, "stacks", "web", ".env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if hasMirroredEnv(base) {
+	if hasMirroredEnv(dirsAt(base)) {
 		t.Error("a .env directory created by Docker counted as a copy")
 	}
 }
+
+func dirsAt(base string) stackDirs { return stackDirs{current: filepath.Join(base, "stacks")} }

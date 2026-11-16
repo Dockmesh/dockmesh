@@ -242,10 +242,8 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		if stacksDir, err = checkStacksDirFlag(stacksDir, dataDir); err != nil {
 			return res, err
 		}
-		// systemd follows a symlink here at every start, so only root may
-		// be able to swap it.
-		if !strings.HasPrefix(stacksDir, dataDir+"/") && !in.rootOnly(filepath.Dir(stacksDir)) {
-			return res, fmt.Errorf("%s and every directory above it must belong to root and be writable only by root", filepath.Dir(stacksDir))
+		if err := checkStacksDirParent(stacksDir, dataDir, in.rootOnly); err != nil {
+			return res, err
 		}
 	}
 
@@ -280,8 +278,8 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		DataDir:             dataDir,
 		SupplementaryGroups: groups,
 	}
-	if stacksDir != "" {
-		unit.WritablePaths = []string{stacksDir}
+	if unit.WritablePaths, err = writableStackDirs(dataDir, stacksDir, env["DOCKMESH_EARLIER_STACKS_DIRS"], in.rootOnly); err != nil {
+		return res, err
 	}
 	// Render before anything is written: a refused value changes nothing.
 	if _, err := layout.RenderAgentUnit(unit); err != nil {
@@ -466,6 +464,56 @@ func checkStacksDirFlag(p, dataDir string) (string, error) {
 		return "", err
 	}
 	return p, nil
+}
+
+// maxEarlierStacksDirs caps the earlier stacks dirs outside the data dir
+// that still hold stacks, so the unit has at most four ReadWritePaths=
+// entries: the data dir, the current stacks dir and these.
+const maxEarlierStacksDirs = 2
+
+// checkStacksDirParent refuses a stacks dir outside the data dir whose
+// parent another account could change: systemd follows a symlink there
+// at every start.
+func checkStacksDirParent(p, dataDir string, rootOnly func(string) bool) error {
+	if !strings.HasPrefix(p, dataDir+"/") && !rootOnly(filepath.Dir(p)) {
+		return fmt.Errorf("%s and every directory above it must belong to root and be writable only by root", filepath.Dir(p))
+	}
+	return nil
+}
+
+// writableStackDirs returns the stacks dirs the unit makes writable: the
+// current one and every earlier one that still holds a stack. Those in
+// the data dir are left out, it is writable already.
+func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) bool) ([]string, error) {
+	var out []string
+	if current != "" && !strings.HasPrefix(current, dataDir+"/") {
+		out = append(out, current)
+	}
+	dirs := resolveStackDirs(current, earlier, dataDir)
+	for _, e := range dirs.earlier {
+		p, err := checkStacksDirFlag(e, dataDir)
+		if err == nil {
+			err = checkStacksDirParent(p, dataDir, rootOnly)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %w", err)
+		}
+		// The agent can make its own dir unreadable; that must not stop a
+		// root update, so such a dir counts as empty.
+		n, err := countStacks(p)
+		if err != nil {
+			slog.Warn("earlier stacks dir left out", "dir", p, "err", err)
+			continue
+		}
+		if n == 0 || strings.HasPrefix(p, dataDir+"/") {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) > 1+maxEarlierStacksDirs {
+		return nil, fmt.Errorf("%d stacks dirs outside the data dir still hold stacks; the unit takes at most %d", len(out), 1+maxEarlierStacksDirs)
+	}
+	return out, nil
 }
 
 func checkSocketGID(s string) (string, error) {

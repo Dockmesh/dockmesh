@@ -28,7 +28,10 @@ import (
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
-const oNoFollow = syscall.O_NOFOLLOW
+const (
+	oNoFollow  = syscall.O_NOFOLLOW
+	oDirectory = syscall.O_DIRECTORY
+)
 
 // agentAccount runs a managed agent.
 const agentAccount = "dockmesh-agent"

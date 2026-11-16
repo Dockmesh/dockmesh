@@ -253,6 +253,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	dockerVersion := dockerDaemonVersion(infoCtx)
 	daemonInfo := dockerDaemonInfo(infoCtx)
 	cancelInfo()
+	stackDirs := agentStackDirs()
 	hello := agents.HelloPayload{
 		Version:         version.Version,
 		Commit:          version.Commit,
@@ -262,10 +263,11 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		DockerVersion:   dockerVersion,
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
-		MirroredEnv:     hasMirroredEnv(dataDir()),
+		MirroredEnv:     hasMirroredEnv(stackDirs),
 		Daemon:          daemonInfo,
 		Layout:          agentLayout,
 		UpdateResult:    lastUpdateResult(dataDir()),
+		StacksDirs:      stacksDirReport(stackDirs),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -1263,13 +1265,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqStackSync:
 		var req agents.StackSyncReq
 		_ = json.Unmarshal(f.Payload, &req)
-		err := syncStack(dataDir(), req)
+		err := syncStack(agentStackDirs(), req)
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqStackDelete:
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
-		err := deleteStack(ctx, stackhelper.New(cli), dataDir(), req.Name)
+		err := deleteStack(ctx, stackhelper.New(cli), agentStackDirs(), req.Name)
 		respond(conn, f.ID, struct{}{}, err)
 
 	default:
@@ -1316,7 +1318,7 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 	}
 	binds, berr := projectBinds(ctx, cli, proj)
 	if berr == nil {
-		berr = removeMirroredEnv(dataDir(), req.Name, binds)
+		berr = removeMirroredEnv(agentStackDirs(), req.Name, binds)
 	}
 	if berr != nil {
 		slog.Warn("remove mirrored .env", "stack", req.Name, "err", berr)
@@ -1364,7 +1366,7 @@ func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.
 	}
 	// Created through an os.Root on the stacks directory, so the name can
 	// only ever create a directory inside it.
-	root, err := openStacksRoot(dataDir())
+	root, err := openStacksRoot(agentStackDirs(), name)
 	if err != nil {
 		return nil, err
 	}
@@ -1416,7 +1418,7 @@ func agentRolePaths(cli *client.Client) system.RolePathsFn {
 		paths := []system.RolePath{
 			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
 			{Role: system.RoleData, Path: dir},
-			{Role: system.RoleStacks, Path: filepath.Join(dir, "stacks")},
+			{Role: system.RoleStacks, Path: resolveStackDirs(os.Getenv("DOCKMESH_STACKS_DIR"), "", dir).current},
 		}
 		if cli == nil {
 			return paths

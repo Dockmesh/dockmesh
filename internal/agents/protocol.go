@@ -9,6 +9,8 @@ package agents
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 )
 
 // Frame is the message envelope that flows in both directions.
@@ -426,6 +428,17 @@ type HelloPayload struct {
 	// UpdateResult is the root updater's result of the last managed
 	// update, sent until a server welcomed it.
 	UpdateResult *AgentUpdateResult `json:"update_result,omitempty"`
+	// StacksDirs lists the agent's stacks directories, the current one
+	// first; agents that predate it send none.
+	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+}
+
+// StacksDirInfo is one stacks directory of an agent and how many stacks
+// it holds.
+type StacksDirInfo struct {
+	Path    string `json:"path"`
+	Current bool   `json:"current"`
+	Stacks  int    `json:"stacks"`
 }
 
 // Install layouts an agent reports in its hello.
@@ -454,6 +467,38 @@ func (h HelloPayload) HelloLayout() string {
 		return LayoutManaged
 	}
 	return LayoutLegacy
+}
+
+// maxStacksDirs bounds what an agent's hello may list: the current
+// stacks dir, the default one in the data dir and two earlier ones.
+const maxStacksDirs = 4
+
+// maxStacksDirPath cuts a reported stacks dir path.
+const maxStacksDirPath = 4096
+
+// ReportedStacksDirs returns the stacks dirs of the hello, at most
+// maxStacksDirs, with long paths cut, each path once, no negative counts
+// and only the first entry as the current one.
+func (h HelloPayload) ReportedStacksDirs() []StacksDirInfo {
+	out := make([]StacksDirInfo, 0, min(len(h.StacksDirs), maxStacksDirs))
+	for _, d := range h.StacksDirs {
+		if len(out) == maxStacksDirs {
+			break
+		}
+		if len(d.Path) > maxStacksDirPath {
+			d.Path = strings.ToValidUTF8(d.Path[:maxStacksDirPath], "")
+		}
+		if slices.ContainsFunc(out, func(o StacksDirInfo) bool { return o.Path == d.Path }) {
+			continue
+		}
+		d.Stacks = max(d.Stacks, 0)
+		d.Current = d.Current && len(out) == 0
+		out = append(out, d)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Has reports whether the agent advertised capability c.

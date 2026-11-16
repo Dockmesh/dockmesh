@@ -8,7 +8,10 @@ import (
 	"os"
 )
 
-const oNoFollow = 0
+const (
+	oNoFollow  = 0
+	oDirectory = 0
+)
 
 func rootOwnedBinary(string) bool { return false }
 

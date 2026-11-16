@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,30 @@ const (
 
 func dataDir() string {
 	return resolveDataDir(os.Getenv("DOCKMESH_DATA_DIR"), fileExists)
+}
+
+// agentStackDirs reads the stacks directories from the environment:
+// DOCKMESH_STACKS_DIR (default <data>/stacks) and the colon-separated
+// DOCKMESH_EARLIER_STACKS_DIRS root keeps while they still hold stacks.
+func agentStackDirs() stackDirs {
+	return resolveStackDirs(os.Getenv("DOCKMESH_STACKS_DIR"), os.Getenv("DOCKMESH_EARLIER_STACKS_DIRS"), dataDir())
+}
+
+func resolveStackDirs(current, earlier, data string) stackDirs {
+	d := stackDirs{current: filepath.Join(data, "stacks")}
+	if filepath.IsAbs(current) {
+		d.current = filepath.Clean(current)
+	}
+	for _, e := range strings.Split(earlier, ":") {
+		if !filepath.IsAbs(e) {
+			continue
+		}
+		e = filepath.Clean(e)
+		if e != d.current && !slices.Contains(d.earlier, e) {
+			d.earlier = append(d.earlier, e)
+		}
+	}
+	return d
 }
 
 func resolveDataDir(env string, exists func(string) bool) string {

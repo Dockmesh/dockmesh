@@ -422,6 +422,14 @@
                 <dt>{m.hosts_online_since()}</dt><dd>{agent.online_since ? `${fmtAgoNever(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
                 <dt>{m.hosts_certificate()}</dt><dd class="dm-mono" title={agent.cert_fingerprint}>{m.hosts_expires({ date: fmtDate(agent.cert_expires_at) })}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
                 <dt>{m.hosts_enrolled()}</dt><dd>{fmtDate(agent.created_at)}</dd>
+                {#if agent.stacks_dirs?.length}
+                  <dt>{agent.stacks_dirs.length > 1 ? m.hosts_stacks_dirs() : m.hosts_stacks_dir()}</dt>
+                  <dd class="dm-mono">
+                    {#each agent.stacks_dirs as d (d.path)}
+                      <div>{d.path} · {m.hosts_stacks_dir_count({ n: d.stacks })} · {d.current ? m.hosts_stacks_dir_current() : m.hosts_stacks_dir_earlier()}</div>
+                    {/each}
+                  </dd>
+                {/if}
               {:else}
                 <dt>{m.hosts_server()}</dt><dd class="dm-mono">{hostVersion ? fmtVersion(hostVersion) : '—'}</dd>
                 {#if metrics}<dt>{m.hosts_capacity()}</dt><dd>{m.hosts_cores({ n: metrics.cpu_cores })} · {fmtMem(metrics.mem_total)}</dd>{/if}

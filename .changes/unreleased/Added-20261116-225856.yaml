@@ -1,0 +1,3 @@
+kind: Added
+body: 'Agents: `DOCKMESH_STACKS_DIR` in `agent.env` sets where an agent keeps its stacks (default `<data dir>/stacks`); stacks already in an earlier directory stay there and stay writable while it holds stacks, and the host page shows each directory with its number of stacks'
+time: 2026-11-16T22:58:56.130927315Z
