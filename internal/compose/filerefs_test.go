@@ -338,6 +338,14 @@ func TestLoadProjectFileRefs(t *testing.T) {
 			refused: true,
 		},
 		{
+			name: "develop watch in included file",
+			files: []stackFile{
+				{name: "compose.yaml", content: "include:\n  - inc/inc.yaml\n" + svcNginx},
+				{name: "inc/inc.yaml", content: "services:\n  db:\n    image: redis\n    develop:\n      watch:\n        - path: src\n          action: sync\n          target: /app\n"},
+			},
+			refused: true,
+		},
+		{
 			name: "include and files inside the folder",
 			files: []stackFile{
 				{name: "compose.yaml", content: "include:\n  - path: sub/inc.yaml\n    env_file: inc.env\nservices:\n  web:\n    image: nginx\n    env_file:\n      - web.env\n      - link.env\n      - path: missing.env\n        required: false\n    label_file: web.labels\n    extends:\n      file: base.yaml\n      service: base\n"},

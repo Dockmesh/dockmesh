@@ -199,11 +199,11 @@ func (w *refWalker) walk(ctx context.Context, file, loaderDir string, env types.
 	}
 	w.seen[key] = true
 
-	model, err := w.model(ctx, file, loaderDir, env)
+	model, err := w.model(ctx, file, loaderDir, env, !nested)
 	if err != nil {
 		return err
 	}
-	if err := w.walkExtends(ctx, model, loaderDir, env); err != nil {
+	if err := w.walkExtends(ctx, model, loaderDir, env, key); err != nil {
 		return err
 	}
 	includes, ok := model["include"].([]any)
@@ -337,7 +337,11 @@ func (w *refWalker) includeEnv(file, projectDir, loaderDir string, envFiles []st
 
 // walkExtends follows extends.file of every service and job. A base file
 // resolves its own extends.file against its directory.
-func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loaderDir string, env types.Mapping) error {
+//
+// compose-go parses a base again in every include scope that extends it,
+// so each scope is counted against the read limits, even though the walker
+// reads the base only once.
+func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loaderDir string, env types.Mapping, scope string) error {
 	for _, section := range []string{"services", "jobs"} {
 		entries, _ := model[section].(map[string]any)
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
@@ -364,16 +368,22 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 			if !filepath.IsAbs(ref) {
 				ref = filepath.Join(loaderDir, ref)
 			}
+			if scoped := scope + "|" + ref; !w.seen[scoped] {
+				w.seen[scoped] = true
+				if err := w.files.check(ref); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+			}
 			key := walkKey(ref, "extends", env)
 			if w.seen[key] {
 				continue
 			}
 			w.seen[key] = true
-			base, err := w.model(ctx, ref, filepath.Dir(ref), env)
+			base, err := w.model(ctx, ref, filepath.Dir(ref), env, false)
 			if err != nil {
 				return err
 			}
-			if err := w.walkExtends(ctx, base, filepath.Dir(ref), env); err != nil {
+			if err := w.walkExtends(ctx, base, filepath.Dir(ref), env, scope); err != nil {
 				return err
 			}
 		}
@@ -383,7 +393,7 @@ func (w *refWalker) walkExtends(ctx context.Context, model map[string]any, loade
 
 // model reads file through the checked reader and has compose-go parse
 // and interpolate it on its own, without following anything.
-func (w *refWalker) model(ctx context.Context, file, workingDir string, env types.Mapping) (map[string]any, error) {
+func (w *refWalker) model(ctx context.Context, file, workingDir string, env types.Mapping, top bool) (map[string]any, error) {
 	content, err := w.files.read(file)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -411,7 +421,7 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 	if err != nil {
 		return nil, err
 	}
-	if err := w.checkServices(file, workingDir, model); err != nil {
+	if err := w.checkServices(file, workingDir, model, top); err != nil {
 		return nil, err
 	}
 	return model, nil
@@ -421,8 +431,10 @@ func (w *refWalker) model(ctx context.Context, file, workingDir string, env type
 // paths outside the folder. compose-go leaves an extends of an empty
 // service unresolved, and a parent file then applies it again with its
 // own environment, past what the walker followed. Watch paths are
-// resolved through symlinks while loading.
-func (w *refWalker) checkServices(file, workingDir string, model map[string]any) error {
+// resolved through symlinks while loading, and in included or extended
+// files relative to the process working directory, so they are only
+// accepted in the stack's own compose files.
+func (w *refWalker) checkServices(file, workingDir string, model map[string]any, top bool) error {
 	for _, section := range []string{"services", "jobs"} {
 		entries, _ := model[section].(map[string]any)
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
@@ -432,6 +444,9 @@ func (w *refWalker) checkServices(file, workingDir string, model map[string]any)
 			}
 			dev, _ := svc["develop"].(map[string]any)
 			watch, _ := dev["watch"].([]any)
+			if len(watch) > 0 && !top {
+				return refused("%s: develop.watch is only supported in the stack's own compose files", file)
+			}
 			for _, item := range watch {
 				rule, _ := item.(map[string]any)
 				p, ok := rule["path"].(string)
