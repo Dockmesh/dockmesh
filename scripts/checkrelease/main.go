@@ -1,8 +1,9 @@
 // Command checkrelease refuses binaries that must not be published: built
-// with the labkeys tag, trusting an update-signing key other than the
+// with any build tag (lab builds use labkeys), trusting an update-signing key other than the
 // release and rotation keys, or carrying a DOCKMESH_LAB_ hook. The release
 // workflow runs it on every binary it built, before anything is packaged or
-// signed.
+// signed. The build info is the primary control; the string scans are a
+// backstop.
 //
 //	checkrelease dist/dockmesh dist/dockmesh-agent dist/dmctl
 package main
@@ -15,7 +16,6 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
-	"strings"
 
 	"aead.dev/minisign"
 
@@ -31,7 +31,36 @@ var keyedCommands = map[string]bool{
 	"github.com/dockmesh/dockmesh/cmd/dmctl":          false,
 }
 
-var releaseKeys = []string{releasesig.ReleaseKey, releasesig.RotationKey}
+// releaseKeys are spelled out instead of taken from releasesig, so a commit
+// that swaps a key there fails here instead of passing its own check.
+type releaseKey struct {
+	key string
+	id  uint64
+}
+
+var releaseKeys = []releaseKey{
+	{"RWRaHI41HpSgAcJDtFP8X2HnLIjHDLUdnj0GyCoGiGCdDW1rlLDWXzK1", 0x01A0941E358E1C5A},
+	{"RWQDX3H4Uce7c0kKscCE0WRymm/CkSETtzGn4IKKN3tdJyfO9y6ZyuLA", 0x73BBC751F8715F03},
+}
+
+func checkReleaseKeys(want []releaseKey, embedded ...string) error {
+	if len(embedded) != len(want) {
+		return fmt.Errorf("releasesig embeds %d keys, want %d", len(embedded), len(want))
+	}
+	for i, rk := range want {
+		if embedded[i] != rk.key {
+			return fmt.Errorf("releasesig key %d is %s, want %s", i, embedded[i], rk.key)
+		}
+		var pk minisign.PublicKey
+		if err := pk.UnmarshalText([]byte(rk.key)); err != nil {
+			return fmt.Errorf("release key %d: %w", i, err)
+		}
+		if pk.ID() != rk.id {
+			return fmt.Errorf("release key %d has id %016X, want %016X", i, pk.ID(), rk.id)
+		}
+	}
+	return nil
+}
 
 const labHookPrefix = "DOCKMESH_LAB_"
 
@@ -45,6 +74,9 @@ func main() {
 func run(paths []string, stdout io.Writer) error {
 	if len(paths) == 0 {
 		return errors.New("usage: checkrelease binary [binary ...]")
+	}
+	if err := checkReleaseKeys(releaseKeys, releasesig.ReleaseKey, releasesig.RotationKey); err != nil {
+		return err
 	}
 	failed := 0
 	for _, p := range paths {
@@ -86,7 +118,7 @@ func check(info *debug.BuildInfo, data []byte) []string {
 		problems = append(problems, fmt.Sprintf("unknown command %q, add it to keyedCommands", info.Path))
 	}
 	for _, s := range info.Settings {
-		if s.Key == "-tags" && strings.Contains(s.Value, "labkeys") {
+		if s.Key == "-tags" && s.Value != "" {
 			problems = append(problems, "built with -tags="+s.Value)
 		}
 	}
@@ -102,8 +134,8 @@ func check(info *debug.BuildInfo, data []byte) []string {
 	}
 	if keyed {
 		for _, k := range releaseKeys {
-			if !found[k] {
-				problems = append(problems, fmt.Sprintf("misses release key %s", describeKey(k)))
+			if !found[k.key] {
+				problems = append(problems, fmt.Sprintf("misses release key %s", describeKey(k.key)))
 			}
 		}
 	}
@@ -112,7 +144,7 @@ func check(info *debug.BuildInfo, data []byte) []string {
 
 func isReleaseKey(k string) bool {
 	for _, r := range releaseKeys {
-		if k == r {
+		if k == r.key {
 			return true
 		}
 	}
