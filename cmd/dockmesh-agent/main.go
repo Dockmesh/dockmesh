@@ -45,6 +45,7 @@ import (
 	"time"
 
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/layout"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
@@ -318,7 +319,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	}
 	if slices.Contains(welcome.Capabilities, agents.CapCertRenew) {
 		go renewLoop(ctxConn, conn, store)
-	} else if time.Until(store.notAfter()) < agents.RenewBefore {
+	} else if time.Until(store.notAfter()) < labtime.Scale(agents.RenewBefore) {
 		slog.Warn("client cert expires soon and this server can't renew it; update the server",
 			"expires", store.notAfter())
 	}

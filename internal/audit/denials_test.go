@@ -234,7 +234,7 @@ func TestWriteDeniedTokenRotation(t *testing.T) {
 	if err := json.Unmarshal([]byte(entries[0].Details), &d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Tokens) != maxDenialTokenIDs+1 || d.Tokens["other"] == 0 {
+	if len(d.Tokens) != maxSummaryNames+1 || d.Tokens["other"] == 0 {
 		t.Fatalf("token breakdown has %d keys: %v", len(d.Tokens), d.Tokens)
 	}
 }

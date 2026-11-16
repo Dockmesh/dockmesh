@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
@@ -63,7 +64,7 @@ func (s *Service) handleCertRenew(ctx context.Context, ag *ConnectedAgent, f Fra
 }
 
 func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.RawMessage) (*CertRenewRes, error) {
-	if ag.certNotAfter.Sub(s.now()) > RenewBefore {
+	if ag.certNotAfter.Sub(s.now()) > labtime.Scale(RenewBefore) {
 		return nil, errRenewNotDue
 	}
 	if ag.renewed.Load() {
@@ -73,7 +74,7 @@ func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.Ra
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, fmt.Errorf("decode renew request: %w", err)
 	}
-	certPEM, fingerprint, _, err := s.pki.SignClientCSR([]byte(req.CSR), ag.ID, ClientCertValidity)
+	certPEM, fingerprint, _, err := s.pki.SignClientCSR([]byte(req.CSR), ag.ID, labtime.Scale(ClientCertValidity))
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +98,7 @@ func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.Ra
 
 // RunCertNotices keeps the cert-expiry notices current until ctx ends.
 func (s *Service) RunCertNotices(ctx context.Context, n *notices.Service) {
-	t := time.NewTicker(time.Hour)
+	t := time.NewTicker(labtime.Tick(time.Hour))
 	defer t.Stop()
 	for {
 		if err := s.SyncCertNotices(ctx, n); err != nil && ctx.Err() == nil {
@@ -126,7 +127,7 @@ func (s *Service) SyncCertNotices(ctx context.Context, n *notices.Service) error
 			continue
 		}
 		left := a.CertExpiresAt.Sub(now)
-		if left > certNoticeBefore {
+		if left > labtime.Scale(certNoticeBefore) {
 			continue
 		}
 		key := certNoticePrefix + a.ID

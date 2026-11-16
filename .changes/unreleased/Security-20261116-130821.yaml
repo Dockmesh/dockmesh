@@ -1,0 +1,3 @@
+kind: Security
+body: Notification channel secrets are no longer returned by the API or shown in delivery errors
+time: 2026-11-16T13:08:21.538076732Z

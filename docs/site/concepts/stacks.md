@@ -113,6 +113,8 @@ Data in such a directory on the server's host is part of every stack and system 
 
 Other relative paths still resolve against the staging directory, which only holds `compose.yaml` and `.env`: `env_file:` entries other than `.env`, and `extends` or `include` of other files, are not found.
 
+On hosts whose agent is older than the server, the server checks the compose file before sending it, without reading any other file: `env_file:` must be a relative path inside the stack folder, without `..`, `~` or variables, and `include`, `label_file`, `extends` from another file, top-level `jobs`, compose keys written in upper case and explicit YAML tags such as `!reset`, `!override` or `!!merge` are refused. Such a deploy or scale answers with a hint to upgrade the agent from the **Hosts** page.
+
 Stacks deployed by earlier versions may still run with bind mounts into an old staging directory, which no longer exists on disk. Admins get a notice per stack ("Redeploy stack … on …"); on agent hosts, upgrade the agent first. The next deploy moves the files the old container wrote into the stack directory, if that directory is still empty, and then recreates the container. If the copy fails, the deploy stops, the old container is started again, and admins get a notice. Scaling and rolling updates are refused until the stack has been redeployed.
 
 When an environment override is active, the files are merged in the stack directory on the server first, so relative paths become absolute paths under the server's stacks root. That works on the server's host; on an agent host the path usually does not exist.

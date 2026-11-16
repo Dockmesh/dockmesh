@@ -6245,5 +6245,22 @@
   "sw_w1_again": "The restart ended this setup session. Enter the setup code again to continue.",
   "sw_r2_err_needs_key": "This backup is encrypted. Add the backup key file exported from the server it came from.",
   "sw_r2_err_key": "The key file does not open this backup.",
-  "sw_r2_err_no_admin": "This backup contains no admin account, so nobody could sign in after the restore. On the server it came from, run sudo dockmesh admin create, make a new system backup and upload that one."
+  "sw_r2_err_no_admin": "This backup contains no admin account, so nobody could sign in after the restore. On the server it came from, run sudo dockmesh admin create, make a new system backup and upload that one.",
+  "backups_unit_title": "Backup directories Dockmesh can't write to",
+  "backups_unit_hint": "backups to them fail until this is fixed",
+  "backups_unit_allow": "Allow writing",
+  "backups_unit_restarting_short": "Restarting…",
+  "backups_unit_read_only": "read-only for the service: added after the service unit was written",
+  "backups_unit_read_only_manual": "read-only for the service: run sudo dockmesh system write-unit and sudo systemctl restart dockmesh",
+  "backups_unit_missing": "missing: sudo install -d -o dockmesh -g dockmesh -m 0750 {path}",
+  "backups_unit_permission": "no permission: sudo chown dockmesh:dockmesh {path}",
+  "backups_unit_confirm_title": "Allow writing to backup directories",
+  "backups_unit_confirm_message": "Dockmesh restarts for a few seconds to allow writing to {paths}.",
+  "backups_unit_confirm_body": "Dockmesh waits for running deploys and updates first. If it doesn't come back with the new settings, the previous service unit is restored.",
+  "backups_unit_confirm_action": "Restart Dockmesh",
+  "backups_unit_restarting": "Dockmesh restarts to allow writing to the new directories",
+  "backups_unit_done": "Backup directories are writable",
+  "backups_unit_failed": "Could not allow writing",
+  "backups_unit_still_read_only": "Dockmesh restarted, but a directory is still read-only: its file system may be mounted read-only",
+  "backups_unit_timeout": "Dockmesh did not report back within 5 minutes"
 }

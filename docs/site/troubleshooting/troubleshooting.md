@@ -410,7 +410,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 
 **Cause:** local targets may only write below the directories in the `backups.local_roots` setting, by default `/srv/backups` and `<data directory>/backups`.
 
-**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs Settings & audit: Manage on everything (`system.upgrade` and `system.update`). The service may only write to the directories its unit lists in `ReadWritePaths`; after changing the list, run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh`. Until then a backup to a new directory fails with "read-only file system".
+**Fix:** use a path below one of them. Changing the list is done with `PUT /api/v1/settings` and needs Settings & audit: Manage on everything (`system.upgrade` and `system.update`). The service may only write to the directories its unit lists in `ReadWritePaths`; until the unit is written again, a backup to a new directory fails with "read-only file system", and testing the target says so. Use **Allow writing** on the Backups page, which restarts Dockmesh with a rewritten unit, or run `sudo dockmesh system write-unit` and `sudo systemctl restart dockmesh`.
 
 ### "this job is already running"
 

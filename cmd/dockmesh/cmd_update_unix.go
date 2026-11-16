@@ -66,7 +66,14 @@ func updateApply(args []string) error {
 		return err
 	}
 	reqDir := layout.UpdateRequestDir(filepath.Clean(*dataDir))
-	if requestType(reqDir, uid) == rootupdate.RequestSetupApply {
+	switch requestType(reqDir, uid) {
+	case rootupdate.RequestUnitRewrite:
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		u := &unitRewriter{reqDir: reqDir, uid: uid, svc: serverUnitService{&serverService{binary: binary}},
+			log: slog.New(slog.NewTextHandler(os.Stderr, nil)), settle: 3 * time.Second}
+		return u.run(ctx)
+	case rootupdate.RequestSetupApply:
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 		defer stop()
 		_, gid, err := serviceAccount()

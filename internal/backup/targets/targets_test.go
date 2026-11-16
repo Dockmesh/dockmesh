@@ -121,3 +121,24 @@ func TestDefaultLocalDir(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRefusesForeignKey(t *testing.T) {
+	tests := []struct {
+		typ string
+		cfg map[string]any
+	}{
+		{"sftp", map[string]any{"host": "nas", "hoſt": "evil", "username": "u"}},
+		{"smb", map[string]any{"host": "nas", "share": "bk", "ſhare": "evil"}},
+		{"s3", map[string]any{"bucket": "b", "access_key": "AK", "access_Key": "evil"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.typ, func(t *testing.T) {
+			if _, err := Build(tt.typ, tt.cfg); !errors.Is(err, ErrForeignKey) {
+				t.Errorf("Build = %v, want ErrForeignKey", err)
+			}
+		})
+	}
+	if _, err := Build("sftp", map[string]any{"host": "nas", "Host": "old", "username": "u"}); errors.Is(err, ErrForeignKey) {
+		t.Error("an ASCII case variant must keep working")
+	}
+}

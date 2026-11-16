@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 )
 
@@ -58,14 +59,24 @@ var localRoots func() []string
 // target can be built.
 func SetLocalRoots(f func() []string) { localRoots = f }
 
-// ParseRoots splits the setting value into absolute, cleaned paths.
-func ParseRoots(v string) []string {
+// SplitRoots splits the setting value into its trimmed entries, keeping
+// relative ones as they are.
+func SplitRoots(v string) []string {
 	var out []string
 	for _, line := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' }) {
 		if line = strings.TrimSpace(line); line != "" {
-			if abs, err := filepath.Abs(line); err == nil {
-				out = append(out, abs)
-			}
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// ParseRoots splits the setting value into absolute, cleaned paths.
+func ParseRoots(v string) []string {
+	var out []string
+	for _, line := range SplitRoots(v) {
+		if abs, err := filepath.Abs(line); err == nil {
+			out = append(out, abs)
 		}
 	}
 	return out
@@ -97,9 +108,15 @@ func DefaultLocalDir(dataDir string) string {
 }
 
 // CheckLocalConfig rejects a local target config whose path is outside
-// the allowed roots, so such a path is never stored.
+// the allowed roots, so such a path is never stored. A directory the
+// service can't create yet because its root is read-only is accepted:
+// every access goes through an os.Root below the root anyway, and the
+// Backups page offers the restart that makes it writable.
 func CheckLocalConfig(raw any) error {
 	_, err := NewLocal(raw)
+	if IsReadOnly(err) {
+		return nil
+	}
 	return err
 }
 
@@ -287,8 +304,15 @@ func decodeConfig(raw any, out any) error {
 	if err != nil {
 		return err
 	}
+	if redact.HasForeignKey(b) {
+		return ErrForeignKey
+	}
 	return json.Unmarshal(b, out)
 }
+
+// ErrForeignKey refuses a stored config with a non-ASCII field name: the
+// decoder may read it as another field than the one the API checked.
+var ErrForeignKey = errors.New("target config has a field name that isn't plain ASCII; edit the target and save it again")
 
 // HasPrefix is a tiny helper kept here so other targets can share it.
 func HasPrefix(s, p string) bool { return strings.HasPrefix(s, p) }

@@ -1,0 +1,3 @@
+kind: Changed
+body: A directory added to backups.local_roots must be an absolute path outside system directories; it is refused when saved instead of stopping the next service unit write
+time: 2026-11-16T13:12:59.222773413Z

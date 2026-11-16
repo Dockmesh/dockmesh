@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -136,6 +138,16 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if e.Key == targets.LocalRootsSetting || e.Key == targets.EmptyPathSetting {
+			check := h.checkNewLocalRoots
+			if e.Key == targets.EmptyPathSetting {
+				check = h.checkEmptyPathDir
+			}
+			if err := check(h.Settings.Stored(e.Key), e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, e.Key+": "+err.Error())
+				return
+			}
+		}
 	}
 	for _, e := range entries {
 		if selfupdate.IsCacheKey(e.Key) {
@@ -224,4 +236,39 @@ func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 			h.audit(r, "proxy.disable", "", nil)
 		}
 	}
+}
+
+// checkNewLocalRoots applies the unit writer's rules to the roots next
+// adds to prev: the unit lists every root as writable, and a value it
+// refuses would stop every later unit write. Roots already stored stay
+// as they are, so an older value never makes the setting unsavable.
+func (h *Handlers) checkNewLocalRoots(prev, next string) error {
+	old := map[string]bool{}
+	for _, p := range targets.SplitRoots(prev) {
+		old[p] = true
+	}
+	for _, p := range targets.SplitRoots(next) {
+		if old[p] {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("%q is not an absolute path", p)
+		}
+		if err := h.AuditRetention.CheckLocalDir(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkEmptyPathDir applies the unit writer's rules to a changed
+// backups.empty_path_dir, which is one path, not a list.
+func (h *Handlers) checkEmptyPathDir(prev, next string) error {
+	if next == prev || next == "" {
+		return nil
+	}
+	if !filepath.IsAbs(next) {
+		return fmt.Errorf("%q is not an absolute path", next)
+	}
+	return h.AuditRetention.CheckLocalDir(next)
 }

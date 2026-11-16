@@ -54,6 +54,7 @@ func newUpdateInstaller(ctx context.Context, locks *stacklock.Locks, agentsSvc *
 		return nil, err
 	}
 	go inst.AwaitResult(ctx)
+	go inst.AwaitUnitResult(ctx)
 	return inst, nil
 }
 

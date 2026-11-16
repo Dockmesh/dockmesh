@@ -1,0 +1,3 @@
+kind: Added
+body: The Backups page lists local backup directories the service can't write to and, after you confirm, restarts Dockmesh with a rewritten service unit so it may write to directories added to backups.local_roots; the old unit is restored if the server doesn't come back
+time: 2026-11-16T13:12:58.321782715Z
