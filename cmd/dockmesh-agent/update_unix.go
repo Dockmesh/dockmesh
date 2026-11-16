@@ -98,6 +98,11 @@ func updateApply(args []string) error {
 	// never keep a rollback from running.
 	req := requestOf(reqDir, uid)
 	if req.Type == rootupdate.RequestStacksDirApply && rootupdate.Unfinished(managedStateDir) {
+		// Removed first: the path unit would start the request again once
+		// the recovery below is over.
+		if err := rootupdate.RemoveServiceFile(reqDir, uid, rootupdate.RequestFile); err != nil {
+			return err
+		}
 		(&stacksDirApplier{reqDir: reqDir, uid: uid, log: logger}).result(agents.StacksDirRefused,
 			agents.StacksDirCheck{Path: req.Path}, errors.New("an interrupted update is finished first"))
 	}
