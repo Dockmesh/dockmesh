@@ -22,7 +22,11 @@ func TestReportedStacksDirs(t *testing.T) {
 			t.Errorf("%s: %d entries, want %d", tt.name, len(got), tt.want)
 		}
 	}
-	got := HelloPayload{StacksDirs: []StacksDirInfo{{Path: long}}}.ReportedStacksDirs()
+	got := HelloPayload{StacksDirs: []StacksDirInfo{{Path: "/a", Current: true}, {Path: "/a"}, {Path: "/b", Current: true, Stacks: -3}}}.ReportedStacksDirs()
+	if len(got) != 2 || !got[0].Current || got[1].Current || got[1].Stacks != 0 {
+		t.Errorf("sanitized = %+v", got)
+	}
+	got = HelloPayload{StacksDirs: []StacksDirInfo{{Path: long}}}.ReportedStacksDirs()
 	if len(got[0].Path) != maxStacksDirPath {
 		t.Errorf("path kept %d bytes", len(got[0].Path))
 	}

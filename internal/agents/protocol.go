@@ -9,6 +9,8 @@ package agents
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 )
 
 // Frame is the message envelope that flows in both directions.
@@ -475,7 +477,8 @@ const maxStacksDirs = 3
 const maxStacksDirPath = 4096
 
 // ReportedStacksDirs returns the stacks dirs of the hello, at most
-// maxStacksDirs, with long paths cut.
+// maxStacksDirs, with long paths cut, each path once, no negative counts
+// and only the first entry as the current one.
 func (h HelloPayload) ReportedStacksDirs() []StacksDirInfo {
 	out := make([]StacksDirInfo, 0, min(len(h.StacksDirs), maxStacksDirs))
 	for _, d := range h.StacksDirs {
@@ -483,8 +486,13 @@ func (h HelloPayload) ReportedStacksDirs() []StacksDirInfo {
 			break
 		}
 		if len(d.Path) > maxStacksDirPath {
-			d.Path = d.Path[:maxStacksDirPath]
+			d.Path = strings.ToValidUTF8(d.Path[:maxStacksDirPath], "")
 		}
+		if slices.ContainsFunc(out, func(o StacksDirInfo) bool { return o.Path == d.Path }) {
+			continue
+		}
+		d.Stacks = max(d.Stacks, 0)
+		d.Current = d.Current && len(out) == 0
 		out = append(out, d)
 	}
 	if len(out) == 0 {

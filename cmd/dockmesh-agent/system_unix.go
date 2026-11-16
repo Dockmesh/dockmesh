@@ -499,9 +499,12 @@ func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) b
 		if err != nil {
 			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %w", err)
 		}
+		// The agent can make its own dir unreadable; that must not stop a
+		// root update, so such a dir counts as empty.
 		n, err := countStacks(p)
 		if err != nil {
-			return nil, fmt.Errorf("count the stacks in %s: %w", p, err)
+			slog.Warn("earlier stacks dir left out", "dir", p, "err", err)
+			continue
 		}
 		if n == 0 {
 			continue

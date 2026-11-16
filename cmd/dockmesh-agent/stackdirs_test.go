@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,5 +127,24 @@ func TestWritableStackDirs(t *testing.T) {
 		if (err != nil) != tt.wantErr || (!tt.wantErr && len(got) != tt.want) {
 			t.Errorf("%s: %v, %v; want %d entries, err %v", tt.name, got, err, tt.want, tt.wantErr)
 		}
+	}
+}
+
+func TestDeleteStackInEveryDir(t *testing.T) {
+	root := t.TempDir()
+	d := stackDirs{current: filepath.Join(root, "new"), earlier: []string{filepath.Join(root, "old")}}
+	mkStack(t, d.current, "web")
+	mkStack(t, d.earlier[0], "web")
+	mkStack(t, d.earlier[0], "db")
+	if err := deleteStack(context.Background(), nil, d, "web"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(d.current, "web"), filepath.Join(d.earlier[0], "web")} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still there: %v", p, err)
+		}
+	}
+	if !isDir(filepath.Join(d.earlier[0], "db")) {
+		t.Error("another stack was removed")
 	}
 }

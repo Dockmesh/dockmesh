@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -51,7 +50,11 @@ func isDir(p string) bool {
 // os.Root, so the per-stack operations below cannot leave it even through
 // symlinks.
 func openStacksRoot(dirs stackDirs, name string) (*os.Root, error) {
-	dir, err := filepath.Abs(dirs.home(name))
+	return openStacksDir(dirs.home(name))
+}
+
+func openStacksDir(stacksDir string) (*os.Root, error) {
+	dir, err := filepath.Abs(stacksDir)
 	if err != nil {
 		return nil, err
 	}
@@ -59,37 +62,6 @@ func openStacksRoot(dirs stackDirs, name string) (*os.Root, error) {
 		return nil, fmt.Errorf("stacks dir: %w", err)
 	}
 	return os.OpenRoot(dir)
-}
-
-// maxStackEntries bounds how many entries of a stacks directory are read
-// to count its stacks.
-const maxStackEntries = 10000
-
-// countStacks returns the number of stacks in dir: directories, not
-// symlinks, with a compose.yaml. A missing dir holds none.
-func countStacks(dir string) (int, error) {
-	f, err := os.OpenFile(dir, os.O_RDONLY|oNoFollow|oDirectory, 0) // #nosec G304 -- a configured stacks dir
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	entries, err := f.ReadDir(maxStackEntries)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if fi, err := os.Lstat(filepath.Join(dir, e.Name(), "compose.yaml")); err == nil && fi.Mode().IsRegular() {
-			n++
-		}
-	}
-	return n, nil
 }
 
 // stacksDirReport lists the stacks directories with their stack counts
@@ -162,7 +134,17 @@ func removeMirroredEnv(dirs stackDirs, name string, binds []string) error {
 	if err := stacks.ValidateName(name); err != nil {
 		return err
 	}
-	root, err := openStacksRoot(dirs, name)
+	var errs []error
+	for _, d := range dirs.all() {
+		if isDir(filepath.Join(d, name)) {
+			errs = append(errs, removeMirroredEnvIn(d, name, binds))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func removeMirroredEnvIn(stacksDir, name string, binds []string) error {
+	root, err := openStacksDir(stacksDir)
 	if err != nil {
 		return err
 	}
@@ -205,11 +187,19 @@ func deleteStack(ctx context.Context, files *stackhelper.Helper, dirs stackDirs,
 	if err := stacks.ValidateName(name); err != nil {
 		return err
 	}
-	root, err := openStacksRoot(dirs, name)
-	if err != nil {
-		return err
+	var errs []error
+	for _, d := range dirs.all() {
+		if d != dirs.current && !isDir(filepath.Join(d, name)) {
+			continue
+		}
+		root, err := openStacksDir(d)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		dir := filepath.Join(root.Name(), name)
+		_ = root.Close()
+		errs = append(errs, files.RemoveAll(ctx, root.Name(), dir))
 	}
-	dir := filepath.Join(root.Name(), name)
-	_ = root.Close()
-	return files.RemoveAll(ctx, root.Name(), dir)
+	return errors.Join(errs...)
 }
