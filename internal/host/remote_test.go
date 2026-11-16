@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/compose"
 )
 
 type fakeLive struct{ ag *agents.ConnectedAgent }
@@ -52,5 +53,26 @@ func TestRemoteResourceManageNeedsCapability(t *testing.T) {
 	}
 	if _, err := h.PruneNetworks(ctx); !errors.Is(err, ErrAgentNoResourceManage) {
 		t.Errorf("network prune on an old agent: %v", err)
+	}
+}
+
+// Without an agent that reports its own check, every request that makes
+// the agent load the compose file is refused on the server first.
+func TestRemoteStackRequestsRefuseOutsideEnvFile(t *testing.T) {
+	h := &RemoteHost{id: "agent1"}
+	yaml := "services:\n  app:\n    image: nginx\n    env_file: /etc/hostname\n"
+	ctx := context.Background()
+	calls := []struct {
+		name string
+		run  func() error
+	}{
+		{"deploy", func() error { _, err := h.DeployStack(ctx, "web", yaml, ""); return err }},
+		{"scale", func() error { _, err := h.ScaleService(ctx, "web", yaml, "", "app", 2); return err }},
+		{"check scale", func() error { _, err := h.CheckScale(ctx, "web", yaml, "", "app"); return err }},
+	}
+	for _, c := range calls {
+		if err := c.run(); !errors.Is(err, compose.ErrEnvFileNeedAgent) {
+			t.Errorf("%s: err = %v, want ErrEnvFileNeedAgent", c.name, err)
+		}
 	}
 }

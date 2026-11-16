@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: On hosts whose agent is older than the server, compose files whose env_file points outside the stack folder (an absolute path, or one starting with ~ or containing .. or a variable) are refused until the agent is upgraded; so are compose keys such as Include or LABEL_FILE written in upper case
+time: 2026-11-16T13:07:40.809903148Z
+custom:
+    Audience: all
+    Id: old-agent-env-file

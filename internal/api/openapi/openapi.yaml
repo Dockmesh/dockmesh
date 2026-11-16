@@ -7427,6 +7427,11 @@ paths:
                     items: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The compose file can't be loaded for the check, e.g. it references a file outside the stack folder, or the agent on the host is too old to check it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     post:
       operationId: stacks.scale_set
       tags: [stacks]
