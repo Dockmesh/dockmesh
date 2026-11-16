@@ -5,6 +5,8 @@ package layout
 
 import (
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +41,13 @@ type MigrateOptions struct {
 	Candidates []string
 	// UID and GID own the config dir and file.
 	UID, GID int
+	// CheckoutDir names the directory of a source run without config
+	// (see CheckoutProbe); Migrate writes a config with it as the data
+	// dir, and refuses when a candidate exists.
+	CheckoutDir string
+	// trustTop bounds the directories TrustedCheckout checks; tests set
+	// it to their temp dir.
+	trustTop string
 }
 
 // Outcome says what Migrate did.
@@ -55,6 +64,9 @@ const (
 	// the setup wizard removes; the file stays until then because the
 	// service cannot rewrite ConfigFile.
 	SetupPending
+	// CheckoutConfigured: ConfigFile was written with DOCKMESH_DATA_DIR
+	// naming MigrateOptions.CheckoutDir.
+	CheckoutConfigured
 )
 
 // Result reports a Migrate run.
@@ -99,26 +111,101 @@ func parseEnv(data []byte) map[string]string {
 }
 
 // KnownDBPaths are where an install keeps its database when only the data
-// dir is configured: below the default data dir and below every directory
-// of LegacyEnvFiles.
-func KnownDBPaths() []string {
+// dir is configured: below the default data dir, below every directory of
+// LegacyEnvFiles and, for a source run up to 0.5.x, below workDir.
+func KnownDBPaths(workDir string) []string {
 	dirs := []string{config.DefaultDataDir}
 	for _, f := range LegacyEnvFiles {
 		dirs = append(dirs, filepath.Dir(f))
 	}
+	if workDir != "" {
+		dirs = append(dirs, workDir)
+	}
 	var out []string
 	seen := map[string]bool{}
 	for _, d := range dirs {
-		p := config.ResolvePaths(func(k string) string {
-			if k == "DOCKMESH_DATA_DIR" {
-				return d
-			}
-			return ""
-		}).DBPath
+		p := dbPathBelow(d)
 		if !seen[p] {
 			seen[p] = true
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// CheckoutProbe decides whether the server runs on the data of a source
+// run: up to 0.5.x a server without config kept ./data and ./stacks below
+// its working directory, so that directory stays its data dir.
+type CheckoutProbe struct {
+	WorkDir string
+	Getenv  func(string) string
+	// EnvFiles are env files to look for besides ConfigFile and
+	// LegacyEnvFiles: --env-file and the one the service unit names.
+	EnvFiles []string
+	// Lstat defaults to os.Lstat; Trust to TrustedCheckout for the euid.
+	Lstat func(string) (fs.FileInfo, error)
+	Trust func(dir string) error
+}
+
+// Dir returns WorkDir when it holds data/dockmesh.db and nothing
+// configures the server: no env file, no DOCKMESH_DATA_DIR and no
+// DOCKMESH_DB_PATH. The error explains a directory that would qualify
+// but fails Trust; Dir is empty then.
+func (p CheckoutProbe) Dir() (string, error) {
+	lstat, trust := p.Lstat, p.Trust
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	if trust == nil {
+		trust = func(dir string) error { return TrustedCheckout(dir, os.Geteuid()) }
+	}
+	if !filepath.IsAbs(p.WorkDir) || p.Getenv("DOCKMESH_DATA_DIR") != "" || p.Getenv("DOCKMESH_DB_PATH") != "" {
+		return "", nil
+	}
+	for _, f := range append(append([]string{ConfigFile}, LegacyEnvFiles...), p.EnvFiles...) {
+		if f == "" {
+			continue
+		}
+		if _, err := lstat(f); !errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+	}
+	dir := filepath.Clean(p.WorkDir)
+	// "/" is the working directory systemd gives every service.
+	if dir == "/" || dir == config.DefaultDataDir {
+		return "", nil
+	}
+	if fi, err := lstat(dbPathBelow(dir)); err != nil || fi.IsDir() {
+		return "", nil //nolint:nilerr // no database, no source run to keep
+	}
+	if err := trust(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// HasCheckoutDB reports a regular file at workDir/data/dockmesh.db. The
+// setup decision counts it as an install whether or not TrustedCheckout
+// accepts the directory: it can only keep setup closed and is never used
+// as data. lstat defaults to os.Lstat.
+func HasCheckoutDB(workDir string, lstat func(string) (fs.FileInfo, error)) bool {
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	if !filepath.IsAbs(workDir) {
+		return false
+	}
+	fi, err := lstat(dbPathBelow(filepath.Clean(workDir)))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// dbPathBelow is the database of an install configured only through
+// DOCKMESH_DATA_DIR=dataDir.
+func dbPathBelow(dataDir string) string {
+	return config.ResolvePaths(func(k string) string {
+		if k == "DOCKMESH_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}).DBPath
 }

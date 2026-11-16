@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -41,4 +42,39 @@ func ConfigNoticeCheck(envFile string) notices.Check {
 			Body:     i18n.Msg("notice.config_location.body", legacyFile, ConfigDir),
 		})
 	}
+}
+
+// CheckoutNoticeKey is the notice raised while the server runs on the
+// data of a source run because no config names a data dir.
+const CheckoutNoticeKey = "install.checkout-data"
+
+// CheckoutNoticeCheck raises the admin notice while checkoutDir (see
+// CheckoutProbe) is the data dir and resolves it once a config names one.
+// binary is the server's executable, for the command the notice shows.
+// That command only succeeds when root can trust the checkout
+// (rootTrusted); otherwise the notice suggests DOCKMESH_DATA_DIR.
+func CheckoutNoticeCheck(checkoutDir, binary string, rootTrusted bool) notices.Check {
+	body := i18n.Msg("notice.checkout_data.body_other", checkoutDir, ShellQuote(checkoutDir))
+	if runtime.GOOS == "linux" && rootTrusted {
+		body = i18n.Msg("notice.checkout_data.body", checkoutDir, ConfigFile,
+			"sudo "+ShellQuote(binary)+" system migrate-layout --checkout "+ShellQuote(checkoutDir))
+	}
+	return func(ctx context.Context, n *notices.Service) error {
+		return n.Set(ctx, checkoutDir != "", notices.RaiseInput{
+			Key:      CheckoutNoticeKey,
+			Audience: notices.Admins(),
+			Severity: notices.SevInfo,
+			Title:    i18n.Msg("notice.checkout_data.title"),
+			Body:     body,
+		})
+	}
+}
+
+// ShellQuote returns s as one shell word: unchanged when it only holds
+// characters no shell treats specially, else in single quotes.
+func ShellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-+:@=,") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

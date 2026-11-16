@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -39,6 +40,12 @@ func Migrate(opts MigrateOptions) (Result, error) {
 	}
 
 	src := findSource(opts.Candidates)
+	if opts.CheckoutDir != "" {
+		if src != "" {
+			return Result{}, fmt.Errorf("%s exists; the server uses that config, not the source run in %s", src, opts.CheckoutDir)
+		}
+		return configureCheckout(dir, opts)
+	}
 	if src == "" {
 		return Result{Outcome: NothingFound}, nil
 	}
@@ -85,6 +92,36 @@ func Migrate(opts MigrateOptions) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Outcome: Moved, From: src, DataDir: dataDir}, nil
+}
+
+// configureCheckout writes a config that keeps the server on the data of
+// the source run in opts.CheckoutDir, which root must be able to trust.
+func configureCheckout(dir string, opts MigrateOptions) (Result, error) {
+	checkout := opts.CheckoutDir
+	if !filepath.IsAbs(checkout) || strings.ContainsAny(checkout, "\n\r\"'\\$`") || strings.TrimSpace(checkout) != checkout {
+		return Result{}, fmt.Errorf("%q cannot be written to an env file", checkout)
+	}
+	checkout = filepath.Clean(checkout)
+	top := opts.trustTop
+	if top == "" {
+		top = "/"
+	}
+	if err := trustedCheckout(checkout, os.Geteuid(), top); err != nil {
+		return Result{}, fmt.Errorf("%w: %w", ErrUntrusted, err)
+	}
+	if err := ensureConfigDir(dir, opts.UID, opts.GID); err != nil {
+		return Result{}, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return Result{}, err
+	}
+	defer root.Close()
+	data := "# Written by `dockmesh system migrate-layout --checkout` for the source run in " + checkout + "; the data stays there.\nDOCKMESH_DATA_DIR=" + checkout + "\n"
+	if err := writeAtomic(root, envFileName, []byte(data), opts.UID, opts.GID, 0o640); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: CheckoutConfigured, DataDir: checkout}, nil
 }
 
 // findSource returns the first candidate that is a regular file named

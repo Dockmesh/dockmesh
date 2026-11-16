@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -88,6 +89,53 @@ var loadedEnvFile string
 
 // explicitEnvFile is true when loadedEnvFile came from --env-file.
 var explicitEnvFile bool
+
+// quietDataCommands do not name the checkout data they use: serve logs it,
+// the others never touch data.
+var quietDataCommands = []string{"serve", "version", "--version", "-v", "help", "--help", "-h", "completion"}
+
+// checkoutDataDir is the source run directory this process uses as its
+// data dir because no config names one (see layout.CheckoutProbe).
+var checkoutDataDir string
+
+// useCheckoutData points DOCKMESH_DATA_DIR at the working directory when
+// it holds the data of a source run and nothing else configures the
+// server, so the derived paths are the ./data and ./stacks of 0.5.x.
+func useCheckoutData() error {
+	if loadedEnvFile != "" {
+		return nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil //nolint:nilerr // without a working directory there is no ./data to keep
+	}
+	dir, distrust := layout.CheckoutProbe{WorkDir: wd, Getenv: os.Getenv, EnvFiles: []string{unitEnvFile()}}.Dir()
+	if distrust != nil {
+		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); a server started here keeps setup closed while its database exists; set DOCKMESH_DATA_DIR=%s to use it\n", wd, distrust, layout.ShellQuote(wd))
+		return nil
+	}
+	if dir == "" {
+		return nil
+	}
+	if err := os.Setenv("DOCKMESH_DATA_DIR", dir); err != nil {
+		return err
+	}
+	checkoutDataDir = dir
+	if len(os.Args) > 1 && !slices.Contains(quietDataCommands, os.Args[1]) {
+		fmt.Fprintf(os.Stderr, "dockmesh: using the data in %s\n", dir)
+	}
+	return nil
+}
+
+// setupWorkDir is the working directory when it holds the database of a
+// source run, for the setup decision to count; empty otherwise.
+func setupWorkDir() string {
+	wd, err := os.Getwd()
+	if err != nil || !layout.HasCheckoutDB(wd, nil) {
+		return ""
+	}
+	return wd
+}
 
 // serverEnvFile names the env file this server most likely runs with: the
 // one loaded from --env-file or the default location, then the config in
@@ -252,6 +300,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "env-file:", err)
 		os.Exit(1)
 	}
+	if err := useCheckoutData(); err != nil {
+		fmt.Fprintln(os.Stderr, "data dir:", err)
+		os.Exit(1)
+	}
 
 	// Subcommand dispatch (§15.2, P.11.6 admin CLI suite).
 	if len(os.Args) > 1 {
@@ -321,6 +373,9 @@ func main() {
 	}
 
 	slog.Info("starting dockmesh", "version", version.Version, "commit", version.Commit)
+	if checkoutDataDir != "" {
+		slog.Info("no config found; using the data of the source run in the working directory", "data_dir", checkoutDataDir)
+	}
 
 	// Before config.Load and db.Open: they create the secrets file and the
 	// database a fresh install lacks.
@@ -329,6 +384,7 @@ func main() {
 		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
+		WorkDir:     setupWorkDir(),
 	}.Scan()
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
@@ -867,6 +923,7 @@ func main() {
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
+	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir, executablePath(), checkoutDataDir != "" && layout.TrustedCheckout(checkoutDataDir, 0) == nil))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
 	// Wire the registries service into every code path that pulls an

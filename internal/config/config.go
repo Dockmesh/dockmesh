@@ -180,8 +180,44 @@ func loadOrCreateJWTSecret(path string) ([]byte, error) {
 		return nil, err
 	}
 	content := jwtSecretKey + "=" + hex.EncodeToString(buf) + "\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := writeNew(path, []byte(content)); err != nil {
 		return nil, err
 	}
 	return buf, nil
+}
+
+// writeNew puts data at path through a fresh temp file and a rename, so a
+// symlink planted at path is replaced rather than followed. A regular file
+// at path passes its owner and mode on, so a root CLI rewriting the
+// service's file does not lock the service out.
+func writeNew(path string, data []byte) error {
+	old, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	tmp := path + ".new-" + hex.EncodeToString(suffix)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- next to the configured secrets path
+	if err != nil {
+		return err
+	}
+	if old != nil && old.Mode().IsRegular() {
+		err = keepOwner(f, old)
+	}
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }

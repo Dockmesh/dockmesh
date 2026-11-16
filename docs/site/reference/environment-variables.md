@@ -40,7 +40,7 @@ When `DOCKMESH_BASE_URL` or `DOCKMESH_AGENT_PUBLIC_URL` is set in `dockmesh.env`
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh`, or, when only `DOCKMESH_DB_PATH` is set, the directory above its `data/` | Data root. All paths below default to places in it |
+| `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh`, or, when only `DOCKMESH_DB_PATH` is set, the directory above its `data/`; without any config, the working directory when it holds `data/dockmesh.db` of a source run up to 0.5.x and passes the ownership check in [Filesystem layout](./filesystem-layout.md#server-data-root) | Data root. All paths below default to places in it |
 | `DOCKMESH_DB_PATH` | `<data root>/data/dockmesh.db` | SQLite database. Its directory is the data directory: PKI files and `git-cache/` go there too |
 | `DOCKMESH_STACKS_ROOT` | `<data root>/stacks` | Stacks directory, one subdirectory per stack |
 | `DOCKMESH_SECRETS_PATH` | `<data root>/data/secrets.env` | File holding `DOCKMESH_JWT_SECRET`; created on first start |
