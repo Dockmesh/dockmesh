@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/types"
 )
 
@@ -97,20 +96,9 @@ func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, over
 		files = append(files, overlay)
 	}
 
-	envSlice := parseEnvContent(envContent)
-	opts, err := cli.NewProjectOptions(
-		files,
-		cli.WithName(stackName),
-		cli.WithWorkingDirectory(stackDir),
-		cli.WithEnv(envSlice),
-		cli.WithResolvedPaths(true),
-	)
+	proj, err := loadChecked(ctx, stackDir, files, stackName, envContent)
 	if err != nil {
-		return nil, "", fmt.Errorf("project options: %w", err)
-	}
-	proj, err := opts.LoadProject(ctx)
-	if err != nil {
-		return nil, "", fmt.Errorf("load project: %w", err)
+		return nil, "", err
 	}
 	out, err := proj.MarshalYAML()
 	if err != nil {
