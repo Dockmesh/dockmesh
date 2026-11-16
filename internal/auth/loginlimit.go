@@ -66,6 +66,17 @@ type AttemptError struct {
 func (e *AttemptError) Error() string        { return ErrInvalidCredentials.Error() }
 func (e *AttemptError) Is(target error) bool { return target == ErrInvalidCredentials }
 
+// MFACodeError is a wrong code for a valid MFA challenge. It names the
+// account, which a forged challenge token can't, and matches what it
+// wraps: ErrInvalidCredentials or an *AttemptError.
+type MFACodeError struct {
+	Username string
+	Err      error
+}
+
+func (e *MFACodeError) Error() string { return e.Err.Error() }
+func (e *MFACodeError) Unwrap() error { return e.Err }
+
 // NormalizeUsername is the key the per-account limit counts under.
 func NormalizeUsername(u string) string {
 	return strings.ToLower(strings.TrimSpace(u))
