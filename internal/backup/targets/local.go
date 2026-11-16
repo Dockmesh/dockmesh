@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 )
 
@@ -303,8 +304,15 @@ func decodeConfig(raw any, out any) error {
 	if err != nil {
 		return err
 	}
+	if redact.HasForeignKey(b) {
+		return ErrForeignKey
+	}
 	return json.Unmarshal(b, out)
 }
+
+// ErrForeignKey refuses a stored config with a non-ASCII field name: the
+// decoder may read it as another field than the one the API checked.
+var ErrForeignKey = errors.New("target config has a field name that isn't plain ASCII; edit the target and save it again")
 
 // HasPrefix is a tiny helper kept here so other targets can share it.
 func HasPrefix(s, p string) bool { return strings.HasPrefix(s, p) }

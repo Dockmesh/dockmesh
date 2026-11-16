@@ -14,7 +14,7 @@ func TestTargetPrivateKeyIsWriteOnly(t *testing.T) {
 		t.Fatalf("private key leaked or unmarked: %v", out)
 	}
 
-	kept, err := keepConfig(map[string]any{"host": "h", "private_key": ""}, stored, backupTargetSecrets)
+	kept, err := keepConfig(map[string]any{"host": "h", "private_key": ""}, stored, backupTargetSecrets, backupTargetFields)
 	if err != nil {
 		t.Fatal(err)
 	}
