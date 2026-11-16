@@ -311,6 +311,14 @@ service_runs_new_binary() {
   return 0
 }
 
+# restore_label resets the SELinux label of the files in $@ to the policy
+# default, bin_t below /usr/local/bin, which systemd may execute.
+restore_label() {
+  [ -e "${SELINUX_ENFORCE_FILE:-/sys/fs/selinux/enforce}" ] || return 0
+  command -v restorecon >/dev/null 2>&1 || return 0
+  $USE_SUDO restorecon -- "$@" || warn "could not reset the SELinux label of $*"
+}
+
 # install_agent_binaries copies the agent binaries from an extracted release
 # ($1) into $2/bin. Linux tarballs carry one per architecture; older ones and
 # the macOS tarballs carry a single dockmesh-agent for the host's own $3-$4.
@@ -830,6 +838,7 @@ install_grype() {
   fi
   tar -xzf "$dir/$tarball" -C "$dir" grype || return 1
   $USE_SUDO install -m 0755 "$dir/grype" "$INSTALL_DIR/grype"
+  restore_label "$INSTALL_DIR/grype"
 }
 
 # ---- Download ------------------------------------------------------
@@ -885,6 +894,7 @@ install_release_files() {
   local list=""
   if [ -f "$TMP/dmctl" ]; then
     $USE_SUDO install -m 0755 "$TMP/dmctl" "$INSTALL_DIR/dmctl"
+    restore_label "$INSTALL_DIR/dmctl"
     list="$list, dmctl"
   fi
   if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ] && ! command -v grype >/dev/null 2>&1; then
@@ -1011,6 +1021,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
     fi
     $USE_SUDO mv -f "$NEW_BINARY" "$INSTALL_DIR/dockmesh"
     NEW_BINARY=""
+    restore_label "$INSTALL_DIR/dockmesh"
     EXTRA="$(install_release_files)"
     N=$((N + 1)); step "$N" "Installing binaries" "$INSTALL_DIR/dockmesh$EXTRA$BAK_NOTE"
   fi
@@ -1103,6 +1114,7 @@ if [ "$SKIP_DOWNLOAD" = "1" ]; then
   N=$((N + 1)); step "$N" "Installing binaries" "pre-staged $INSTALL_DIR/dockmesh"
 else
   $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
+  restore_label "$INSTALL_DIR/dockmesh"
   EXTRA="$(install_release_files)"
   N=$((N + 1)); step "$N" "Installing binaries" "$INSTALL_DIR/dockmesh$EXTRA"
 fi

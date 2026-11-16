@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -241,5 +242,196 @@ func TestInstallAgentUnitRefreshesPathCopy(t *testing.T) {
 	}
 	if strings.Contains(s, "ln -sf \"$AGENT_BIN\"") {
 		t.Error("installer still links the agent into the PATH")
+	}
+}
+
+// selinuxStubs returns a PATH that holds only the tools label_bin_t needs
+// besides the SELinux ones, plus logging stubs for those named in stubs
+// (name to exit code). Calls are appended to the returned log file.
+func selinuxStubs(t *testing.T, stubs map[string]int) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	for _, tool := range []string{"sed", "readlink", "dirname", "stat"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s not available", tool)
+		}
+		if err := os.Symlink(p, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, code := range stubs {
+		script := "#!/bin/sh\necho \"" + name + " $*\" >>" + calls + "\nexit " + strconv.Itoa(code) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, calls
+}
+
+func TestInstallAgentLabelBinT(t *testing.T) {
+	fn := agentScriptFunc(t, "selinux_enabled") + agentScriptFunc(t, "label_bin_t")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name       string
+		dir        string // below the temp dir
+		stubs      map[string]int
+		enforce    bool // SELinux detected through selinuxfs instead of selinuxenabled
+		wantCalls  []string
+		wantChcon  bool
+		wantFailed bool
+	}{
+		{
+			name:  "selinux disabled",
+			dir:   "bin",
+			stubs: map[string]int{"selinuxenabled": 1, "semanage": 0, "restorecon": 0, "chcon": 0},
+		},
+		{
+			name:      "semanage rule",
+			dir:       "bin",
+			stubs:     map[string]int{"selinuxenabled": 0, "semanage": 0, "restorecon": 0, "chcon": 0},
+			wantCalls: []string{"semanage fcontext -a -t bin_t @/bin(/.*)?", "restorecon -R -- @/bin"},
+		},
+		{
+			name:      "selinuxfs without selinuxenabled",
+			dir:       "bin",
+			stubs:     map[string]int{"semanage": 0, "restorecon": 0},
+			enforce:   true,
+			wantCalls: []string{"semanage fcontext -a -t bin_t @/bin(/.*)?", "restorecon -R -- @/bin"},
+		},
+		{
+			name:      "regex characters escaped",
+			dir:       "data.dir+1/bin",
+			stubs:     map[string]int{"selinuxenabled": 0, "semanage": 0, "restorecon": 0},
+			wantCalls: []string{`semanage fcontext -a -t bin_t @/data\.dir\+1/bin(/.*)?`, `restorecon -R -- @/data.dir+1/bin`},
+		},
+		{
+			name:  "rule exists",
+			dir:   "bin",
+			stubs: map[string]int{"selinuxenabled": 0, "restorecon": 0, "semanage": 0},
+			wantCalls: []string{
+				"semanage fcontext -a -t bin_t @/bin(/.*)?",
+				"semanage fcontext -m -t bin_t @/bin(/.*)?",
+				"restorecon -R -- @/bin",
+			},
+		},
+		{
+			name:      "no semanage",
+			dir:       "bin",
+			stubs:     map[string]int{"selinuxenabled": 0, "restorecon": 0, "chcon": 0},
+			wantCalls: []string{"chcon -R -t bin_t -- @/bin"},
+			wantChcon: true,
+		},
+		{
+			name:       "chcon fails",
+			dir:        "bin",
+			stubs:      map[string]int{"selinuxenabled": 0, "chcon": 1},
+			wantCalls:  []string{"chcon -R -t bin_t -- @/bin"},
+			wantChcon:  true,
+			wantFailed: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pathDir, calls := selinuxStubs(t, tt.stubs)
+			if tt.name == "rule exists" {
+				// -a fails because the rule is there, -m succeeds.
+				script := "#!/bin/sh\necho \"semanage $*\" >>" + calls + "\n[ \"$2\" = -m ]\n"
+				if err := os.WriteFile(filepath.Join(pathDir, "semanage"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(base, tt.dir)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			enforce := filepath.Join(base, "no-selinuxfs")
+			if tt.enforce {
+				enforce = filepath.Join(base, "enforce")
+				if err := os.WriteFile(enforce, []byte("1"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := fn + "\nSELINUX_CHCON=0\nlabel_bin_t \"$1\"; rc=$?\necho \"chcon=$SELINUX_CHCON\"\nexit $rc\n"
+			cmd := exec.Command(bash, "-c", script, "t", target)
+			cmd.Env = []string{"PATH=" + pathDir, "SELINUX_ENFORCE_FILE=" + enforce}
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantFailed {
+				t.Fatalf("err %v, want failure %v: %s", err, tt.wantFailed, out)
+			}
+			wantChcon := "chcon=0"
+			if tt.wantChcon {
+				wantChcon = "chcon=1"
+			}
+			if !strings.Contains(string(out), wantChcon) {
+				t.Errorf("output %q, want %s", out, wantChcon)
+			}
+			b, _ := os.ReadFile(calls)
+			var got []string
+			for _, line := range strings.Split(strings.TrimSpace(strings.ReplaceAll(string(b), base, "@")), "\n") {
+				if line != "" && !strings.HasPrefix(line, "selinuxenabled") {
+					got = append(got, line)
+				}
+			}
+			if strings.Join(got, "\n") != strings.Join(tt.wantCalls, "\n") {
+				t.Errorf("calls\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.wantCalls, "\n"))
+			}
+		})
+	}
+}
+
+func TestInstallAgentStartFailureHint(t *testing.T) {
+	fn := agentScriptFunc(t, "selinux_enabled") + agentScriptFunc(t, "start_failure_hint")
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name    string
+		selinux int
+		want    []string
+		notWant []string
+	}{
+		{"selinux on", 0, []string{"SELinux is Enforcing", "needs the type bin_t", "ausearch -m avc", "chcon -R -t bin_t /x/bin", "systemctl status dockmesh-agent"}, nil},
+		{"selinux off", 1, []string{"systemctl status dockmesh-agent", "journalctl -u dockmesh-agent"}, []string{"SELinux"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pathDir, _ := selinuxStubs(t, map[string]int{"selinuxenabled": tt.selinux})
+			if err := os.WriteFile(filepath.Join(pathDir, "getenforce"), []byte("#!/bin/sh\necho Enforcing\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, "-c", fn+"\nstart_failure_hint /x/bin/dockmesh-agent\n")
+			cmd.Env = []string{"PATH=" + pathDir}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(string(out), w) {
+					t.Errorf("output lacks %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tt.notWant {
+				if strings.Contains(string(out), w) {
+					t.Errorf("output has %q:\n%s", w, out)
+				}
+			}
+		})
+	}
+}
+
+func TestInstallAgentRefreshScriptRelabelsPathCopy(t *testing.T) {
+	fn := agentScriptFunc(t, "install_path_copy")
+	if !strings.Contains(fn, "restorecon -- \"$dest\"") {
+		t.Error("install_path_copy does not reset the SELinux label of the copy")
 	}
 }

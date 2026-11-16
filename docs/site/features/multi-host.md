@@ -63,9 +63,10 @@ The script served at `/install/agent.sh` on the agent port is `scripts/install-a
 - creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host (use `--as-root` to run as root instead),
 - downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin and refuses to install it if its SHA-256 doesn't match,
 - installs the binary to `/var/lib/dockmesh-agent/bin/dockmesh-agent` and a root-owned copy to `/usr/local/bin/dockmesh-agent`, which the service refreshes at every start,
+- with SELinux on (RHEL, Rocky, Alma, Fedora), gives `/var/lib/dockmesh-agent/bin/` and `/etc/dockmesh-agent/refresh-path-copy` the type `bin_t` so systemd may run them: through a `semanage fcontext` rule when `semanage` is installed (package `policycoreutils-python-utils`), otherwise with `chcon`, which a full relabel of the filesystem undoes,
 - writes the agent CA to `/var/lib/dockmesh-agent/enroll-ca.pem`, `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,
 - removes certificates from an earlier enrollment so the new token takes effect,
-- waits up to 60 seconds for the agent to connect and prints the last log lines if it doesn't.
+- waits up to 60 seconds for the agent to connect and prints the last log lines if it doesn't; when systemd cannot start the binary it says so, with the SELinux label and what to run.
 
 Pass flags like this:
 
