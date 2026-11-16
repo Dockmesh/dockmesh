@@ -30,7 +30,7 @@ func Logging(next http.Handler) http.Handler {
 		status := ww.Status()
 		attrs := []any{
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", RedactPath(r.URL.Path),
 			"status", status,
 			"bytes", ww.BytesWritten(),
 			"dur_ms", time.Since(start).Milliseconds(),

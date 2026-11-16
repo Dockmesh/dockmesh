@@ -1,0 +1,3 @@
+kind: Security
+body: Invite tokens are no longer written to the request log, audit entries or traces
+time: 2026-11-16T13:11:49.706124901Z

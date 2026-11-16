@@ -1325,14 +1325,15 @@ func main() {
 		}
 	}
 
-	// P.12.3 — wrap the router in otelhttp so every request gets a
-	// server-side span (route template, method, status, duration).
-	// When OTel is disabled (Endpoint empty) the global tracer is a
-	// no-op so this adds negligible overhead.
-	tracedRouter := otelhttp.NewHandler(router, "dockmesh.http",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			return r.Method + " " + r.URL.Path
-		}))
+	// Every request gets a server-side span named after method and path;
+	// HidePathSecrets keeps invite tokens out of the span. When OTel is
+	// disabled (Endpoint empty) the global tracer is a no-op.
+	tracedRouter := middleware.HidePathSecrets(router, func(next http.Handler) http.Handler {
+		return otelhttp.NewHandler(next, "dockmesh.http",
+			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+				return r.Method + " " + r.URL.Path
+			}))
+	})
 	if !setupState.Active() {
 		var err error
 		if webTLS, webLeaf, err = listenerTLS(cfg, pkiMgr); err != nil {

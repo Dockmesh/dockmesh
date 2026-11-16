@@ -70,7 +70,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 	// Pre-flight check.
 	check, err := target.CheckScale(r.Context(), name, detail.Compose, detail.Env, service)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, deployErrorStatus(err), err.Error())
 		return
 	}
 	if req.Replicas > 1 && check.HasContainerName {
@@ -267,7 +267,7 @@ func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
 
 	check, err := target.CheckScale(r.Context(), name, detail.Compose, detail.Env, service)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, deployErrorStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, check)
