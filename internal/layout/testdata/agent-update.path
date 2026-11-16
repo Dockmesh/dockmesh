@@ -1,0 +1,11 @@
+# Written by `dockmesh-agent system install` on install and upgrade.
+[Unit]
+Description=Watch for Dockmesh agent update requests
+ConditionPathExists=!/etc/dockmesh-agent/refresh-path-copy
+
+[Path]
+PathExists=/var/lib/dockmesh-agent/update/request
+Unit=dockmesh-agent-update.service
+
+[Install]
+WantedBy=paths.target

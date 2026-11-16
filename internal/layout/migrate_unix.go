@@ -3,6 +3,7 @@
 package layout
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -239,6 +240,10 @@ func ensureConfigDir(dir string, uid, gid int) error {
 // writeAtomic writes name below root through a temp file and a rename,
 // so a reader sees the old state or the complete new file.
 func writeAtomic(root *os.Root, name string, data []byte, uid, gid int, mode os.FileMode) error {
+	return writeAtomicFrom(root, name, bytes.NewReader(data), uid, gid, mode)
+}
+
+func writeAtomicFrom(root *os.Root, name string, r io.Reader, uid, gid int, mode os.FileMode) error {
 	tmp := "." + name + ".new-" + randSuffix()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -250,7 +255,7 @@ func writeAtomic(root *os.Root, name string, data []byte, uid, gid int, mode os.
 			_ = root.Remove(tmp)
 		}
 	}()
-	if _, err := f.Write(data); err != nil {
+	if _, err := io.Copy(f, r); err != nil {
 		f.Close()
 		return err
 	}

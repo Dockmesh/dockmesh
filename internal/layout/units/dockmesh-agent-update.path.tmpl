@@ -1,0 +1,11 @@
+# Written by `dockmesh-agent system install` on install and upgrade.
+[Unit]
+Description=Watch for Dockmesh agent update requests
+ConditionPathExists=!{{.LegacyCopyStep}}
+
+[Path]
+PathExists={{.RequestFile}}
+Unit=dockmesh-agent-update.service
+
+[Install]
+WantedBy=paths.target

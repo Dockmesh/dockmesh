@@ -1,0 +1,3 @@
+kind: Added
+body: 'Managed agents: `sudo dockmesh-agent system install` writes `/etc/dockmesh-agent/agent.env`, the agent unit and the root updater units from the template built into the binary (`--data-dir`, `--stacks-dir`, `--user`, `--socket-gid`); a re-run changes nothing, drop-ins are never touched, and each agent update rewrites the units from the new version'
+time: 2026-11-16T22:44:25.86589475Z

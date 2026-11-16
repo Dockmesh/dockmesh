@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/releasesig"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 	"github.com/dockmesh/dockmesh/internal/semver"
@@ -27,9 +28,9 @@ import (
 // Managed layout: the binary belongs to root and the root oneshot behind
 // managedPathUnit installs what the agent stages in its update dir.
 const (
-	managedPathUnit    = "/etc/systemd/system/dockmesh-agent-update.path"
-	managedServiceUnit = "/etc/systemd/system/dockmesh-agent-update.service"
-	agentUnitFile      = "/etc/systemd/system/dockmesh-agent.service"
+	managedPathUnit    = layout.AgentUpdatePathUnitFile
+	managedServiceUnit = layout.AgentUpdateServiceUnitFile
+	agentUnitFile      = layout.AgentUnitFile
 	agentUnitName      = "dockmesh-agent.service"
 	managedStateDir    = "/var/lib/dockmesh-agent-update"
 	// runningFile tells the root oneshot which version connected to the
@@ -37,7 +38,7 @@ const (
 	runningFile = "running"
 	// legacyRefreshScript is the legacy unit's root ExecStartPre that
 	// copies the agent-owned data dir binary to pathBinary.
-	legacyRefreshScript = "/etc/dockmesh-agent/refresh-path-copy"
+	legacyRefreshScript = layout.AgentLegacyCopyStep
 )
 
 // stagedRequestLimit is how long a request may wait for the root oneshot
@@ -57,9 +58,10 @@ var agentLayout = agents.LayoutLegacy
 func updateDir(dataDir string) string { return filepath.Join(dataDir, "update") }
 
 // detectLayout reports managed when the running binary is the root-owned
-// pathBinary, which this account can't write, the oneshot's path unit is
-// installed and nothing of the legacy copy step is left. Everything else,
-// including agents running as root, keeps replacing itself.
+// pathBinary, the oneshot's path unit is installed and nothing of the
+// legacy copy step is left. Everything else keeps replacing itself. An
+// agent running as root counts as managed too: ProtectSystem= keeps it
+// from replacing pathBinary itself.
 func detectLayout(dataDir string) string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -68,7 +70,7 @@ func detectLayout(dataDir string) string {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	if exe != pathBinary || os.Geteuid() == 0 || !rootOwnedBinary(exe) {
+	if exe != pathBinary || !rootOwnedBinary(exe) {
 		return agents.LayoutLegacy
 	}
 	if _, err := os.Stat(managedPathUnit); err != nil {
