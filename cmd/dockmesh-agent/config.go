@@ -34,8 +34,12 @@ func resolveStackDirs(current, earlier, data string) stackDirs {
 		d.current = filepath.Clean(current)
 	}
 	for _, e := range strings.Split(earlier, ":") {
-		if filepath.IsAbs(e) && filepath.Clean(e) != d.current && !slices.Contains(d.earlier, filepath.Clean(e)) {
-			d.earlier = append(d.earlier, filepath.Clean(e))
+		if !filepath.IsAbs(e) {
+			continue
+		}
+		e = filepath.Clean(e)
+		if e != d.current && !slices.Contains(d.earlier, e) {
+			d.earlier = append(d.earlier, e)
 		}
 	}
 	return d

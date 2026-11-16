@@ -2713,7 +2713,8 @@
   "hosts_filter": "Filter hosts",
   "hosts_filter_ph": "Filter by name, hostname or tag…",
   "hosts_stacks_dir": "Stacks directory",
-  "hosts_stacks_dir_current": "New stacks go here",
+  "hosts_stacks_dirs": "Stacks directories",
+  "hosts_stacks_dir_current": "new stacks go here",
   "hosts_stacks_dir_earlier": "earlier, kept while it holds stacks",
   "hosts_stacks_dir_count": [
     {

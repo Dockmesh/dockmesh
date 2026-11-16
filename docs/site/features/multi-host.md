@@ -92,7 +92,7 @@ The agent reads these from its environment (the installer puts them in `agent.en
 |---|---|---|
 | `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when only that directory holds an enrollment) | Certificates, the saved agent URL, the stack mirror unless `DOCKMESH_STACKS_DIR` moves it |
 | `DOCKMESH_STACKS_DIR` | `<data dir>/stacks` | Where the mirror of new stacks goes. A stack that is already in an earlier directory stays there |
-| `DOCKMESH_EARLIER_STACKS_DIRS` | none | Colon-separated stacks directories used before; the agent keeps finding its stacks there. The unit keeps one writable while it holds stacks, at most two of them. Written by root, not by hand |
+| `DOCKMESH_EARLIER_STACKS_DIRS` | none | Colon-separated stacks directories used before; the agent keeps finding its stacks there. The unit keeps each writable while it holds stacks; at most two may still hold stacks. Written by root, not by hand |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint, `https://<agent host>:8443/enroll`. Required on first start |
 | `DOCKMESH_TOKEN` | none | Enrollment token. Required on first start |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA. Required to enroll over `https://` |

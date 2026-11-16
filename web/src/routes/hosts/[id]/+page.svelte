@@ -423,10 +423,10 @@
                 <dt>{m.hosts_certificate()}</dt><dd class="dm-mono" title={agent.cert_fingerprint}>{m.hosts_expires({ date: fmtDate(agent.cert_expires_at) })}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
                 <dt>{m.hosts_enrolled()}</dt><dd>{fmtDate(agent.created_at)}</dd>
                 {#if agent.stacks_dirs?.length}
-                  <dt>{m.hosts_stacks_dir()}</dt>
+                  <dt>{agent.stacks_dirs.length > 1 ? m.hosts_stacks_dirs() : m.hosts_stacks_dir()}</dt>
                   <dd class="dm-mono">
                     {#each agent.stacks_dirs as d (d.path)}
-                      <div title={d.current ? m.hosts_stacks_dir_current() : m.hosts_stacks_dir_earlier()}>{d.path} · {m.hosts_stacks_dir_count({ n: d.stacks })}{d.current ? '' : ` · ${m.hosts_stacks_dir_earlier()}`}</div>
+                      <div>{d.path} · {m.hosts_stacks_dir_count({ n: d.stacks })} · {d.current ? m.hosts_stacks_dir_current() : m.hosts_stacks_dir_earlier()}</div>
                     {/each}
                   </dd>
                 {/if}

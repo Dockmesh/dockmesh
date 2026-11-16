@@ -43,7 +43,8 @@ func TestStackDirsHome(t *testing.T) {
 	mkStack(t, d.earlier[0], "web")
 	mkStack(t, d.earlier[0], "both")
 	mkStack(t, d.current, "both")
-	if err := os.Symlink(filepath.Join(root, "old", "web"), filepath.Join(root, "linked")); err != nil {
+	// A symlink of that name in current is not the stack's directory.
+	if err := os.Symlink(filepath.Join(root, "old", "web"), filepath.Join(d.current, "web")); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{"web": d.earlier[0], "both": d.current, "fresh": d.current} {
@@ -87,6 +88,7 @@ func TestCountStacks(t *testing.T) {
 func TestWritableStackDirs(t *testing.T) {
 	root := t.TempDir()
 	data := filepath.Join(root, "data")
+	mkStack(t, filepath.Join(data, "stacks"), "s")
 	full := func(names ...string) string {
 		var out []string
 		for _, n := range names {
@@ -110,7 +112,9 @@ func TestWritableStackDirs(t *testing.T) {
 		{"current outside", filepath.Join(root, "cur"), "", 1, false},
 		{"empty earlier dropped", filepath.Join(root, "cur"), empty, 1, false},
 		{"earlier with stacks kept", filepath.Join(root, "cur"), full("e1") + ":" + empty, 2, false},
-		{"default earlier kept", filepath.Join(root, "cur"), full("e2", "e3"), 3, false},
+		{"two earlier with stacks kept", filepath.Join(root, "cur"), full("e2", "e3"), 3, false},
+		{"default as earlier is no entry", filepath.Join(root, "cur"), data + "/stacks", 1, false},
+		{"default as current is no entry", data + "/stacks", full("e8"), 1, false},
 		{"too many", filepath.Join(root, "cur"), full("e4", "e5", "e6"), 0, true},
 		{"earlier in a system tree", filepath.Join(root, "cur"), "/etc/x", 0, true},
 	}

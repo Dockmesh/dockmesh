@@ -2713,7 +2713,8 @@
   "hosts_filter": "Hosts filtern",
   "hosts_filter_ph": "Nach Name, Hostname oder Tag filtern…",
   "hosts_stacks_dir": "Stack-Verzeichnis",
-  "hosts_stacks_dir_current": "Neue Stacks landen hier",
+  "hosts_stacks_dirs": "Stack-Verzeichnisse",
+  "hosts_stacks_dir_current": "neue Stacks landen hier",
   "hosts_stacks_dir_earlier": "früher, bleibt, solange es Stacks enthält",
   "hosts_stacks_dir_count": [
     {

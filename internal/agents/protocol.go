@@ -471,16 +471,19 @@ func (h HelloPayload) HelloLayout() string {
 // most three stacks dirs writable, the data dir takes the fourth slot.
 const maxStacksDirs = 3
 
+// maxStacksDirPath cuts a reported stacks dir path.
+const maxStacksDirPath = 4096
+
 // ReportedStacksDirs returns the stacks dirs of the hello, at most
-// maxStacksDirs, with paths cut to 4096 bytes.
+// maxStacksDirs, with long paths cut.
 func (h HelloPayload) ReportedStacksDirs() []StacksDirInfo {
 	out := make([]StacksDirInfo, 0, min(len(h.StacksDirs), maxStacksDirs))
 	for _, d := range h.StacksDirs {
 		if len(out) == maxStacksDirs {
 			break
 		}
-		if len(d.Path) > 4096 {
-			d.Path = d.Path[:4096]
+		if len(d.Path) > maxStacksDirPath {
+			d.Path = d.Path[:maxStacksDirPath]
 		}
 		out = append(out, d)
 	}

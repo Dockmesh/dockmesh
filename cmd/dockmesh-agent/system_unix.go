@@ -242,10 +242,8 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		if stacksDir, err = checkStacksDirFlag(stacksDir, dataDir); err != nil {
 			return res, err
 		}
-		// systemd follows a symlink here at every start, so only root may
-		// be able to swap it.
-		if !strings.HasPrefix(stacksDir, dataDir+"/") && !in.rootOnly(filepath.Dir(stacksDir)) {
-			return res, fmt.Errorf("%s and every directory above it must belong to root and be writable only by root", filepath.Dir(stacksDir))
+		if err := checkStacksDirParent(stacksDir, dataDir, in.rootOnly); err != nil {
+			return res, err
 		}
 	}
 
@@ -468,37 +466,53 @@ func checkStacksDirFlag(p, dataDir string) (string, error) {
 	return p, nil
 }
 
-// maxReadWritePaths caps the unit's ReadWritePaths= entries: the data dir,
-// the current stacks dir and earlier ones that still hold stacks.
-const maxReadWritePaths = 4
+// maxEarlierStacksDirs caps the earlier stacks dirs that still hold
+// stacks, so the unit has at most four ReadWritePaths= entries: the data
+// dir, the current stacks dir and these.
+const maxEarlierStacksDirs = 2
+
+// checkStacksDirParent refuses a stacks dir outside the data dir whose
+// parent another account could change: systemd follows a symlink there
+// at every start.
+func checkStacksDirParent(p, dataDir string, rootOnly func(string) bool) error {
+	if !strings.HasPrefix(p, dataDir+"/") && !rootOnly(filepath.Dir(p)) {
+		return fmt.Errorf("%s and every directory above it must belong to root and be writable only by root", filepath.Dir(p))
+	}
+	return nil
+}
 
 // writableStackDirs returns the stacks dirs the unit makes writable: the
-// current one, unless it is the default inside the data dir, and every
-// earlier one that still holds a stack.
+// current one and every earlier one that still holds a stack. Those in
+// the data dir are left out, it is writable already.
 func writableStackDirs(dataDir, current, earlier string, rootOnly func(string) bool) ([]string, error) {
 	var out []string
-	if current != "" {
+	if current != "" && !strings.HasPrefix(current, dataDir+"/") {
 		out = append(out, current)
 	}
 	dirs := resolveStackDirs(current, earlier, dataDir)
+	holding := 0
 	for _, e := range dirs.earlier {
 		p, err := checkStacksDirFlag(e, dataDir)
+		if err == nil {
+			err = checkStacksDirParent(p, dataDir, rootOnly)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %w", err)
-		}
-		if !strings.HasPrefix(p, dataDir+"/") && !rootOnly(filepath.Dir(p)) {
-			return nil, fmt.Errorf("DOCKMESH_EARLIER_STACKS_DIRS: %s and every directory above it must belong to root and be writable only by root", filepath.Dir(p))
 		}
 		n, err := countStacks(p)
 		if err != nil {
 			return nil, fmt.Errorf("count the stacks in %s: %w", p, err)
 		}
-		if n > 0 {
+		if n == 0 {
+			continue
+		}
+		holding++
+		if !strings.HasPrefix(p, dataDir+"/") {
 			out = append(out, p)
 		}
 	}
-	if len(out)+1 > maxReadWritePaths {
-		return nil, fmt.Errorf("%d stacks dirs still hold stacks; the unit takes at most %d with the data dir", len(out), maxReadWritePaths)
+	if holding > maxEarlierStacksDirs {
+		return nil, fmt.Errorf("%d earlier stacks dirs still hold stacks; the agent keeps at most %d", holding, maxEarlierStacksDirs)
 	}
 	return out, nil
 }

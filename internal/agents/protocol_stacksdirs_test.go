@@ -23,7 +23,7 @@ func TestReportedStacksDirs(t *testing.T) {
 		}
 	}
 	got := HelloPayload{StacksDirs: []StacksDirInfo{{Path: long}}}.ReportedStacksDirs()
-	if len(got[0].Path) != 4096 {
+	if len(got[0].Path) != maxStacksDirPath {
 		t.Errorf("path kept %d bytes", len(got[0].Path))
 	}
 }

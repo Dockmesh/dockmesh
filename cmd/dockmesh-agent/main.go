@@ -253,6 +253,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	dockerVersion := dockerDaemonVersion(infoCtx)
 	daemonInfo := dockerDaemonInfo(infoCtx)
 	cancelInfo()
+	stackDirs := agentStackDirs()
 	hello := agents.HelloPayload{
 		Version:         version.Version,
 		Commit:          version.Commit,
@@ -262,11 +263,11 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		DockerVersion:   dockerVersion,
 		ProtocolVersion: agents.ProtocolVersion,
 		Capabilities:    agentCapabilities,
-		MirroredEnv:     hasMirroredEnv(agentStackDirs()),
+		MirroredEnv:     hasMirroredEnv(stackDirs),
 		Daemon:          daemonInfo,
 		Layout:          agentLayout,
 		UpdateResult:    lastUpdateResult(dataDir()),
-		StacksDirs:      stacksDirReport(agentStackDirs()),
+		StacksDirs:      stacksDirReport(stackDirs),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -1417,7 +1418,7 @@ func agentRolePaths(cli *client.Client) system.RolePathsFn {
 		paths := []system.RolePath{
 			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
 			{Role: system.RoleData, Path: dir},
-			{Role: system.RoleStacks, Path: agentStackDirs().current},
+			{Role: system.RoleStacks, Path: resolveStackDirs(os.Getenv("DOCKMESH_STACKS_DIR"), "", dir).current},
 		}
 		if cli == nil {
 			return paths
