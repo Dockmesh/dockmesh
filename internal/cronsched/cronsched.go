@@ -18,7 +18,8 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// maxShift bounds how far a daylight-saving change moves the clock.
+// maxShift bounds how far a daylight-saving change moves the clock; a
+// test checks it against tzdata.
 const maxShift = 3 * time.Hour
 
 // Parse parses a standard cron expression as cron.ParseStandard does.
@@ -97,17 +98,37 @@ func (s *schedule) instants(w time.Time, loc *time.Location) []time.Time {
 	}
 	switch len(out) {
 	case 0:
-		// w lies in a skipped hour: w read with the old offset is already
-		// past the change, whose zone period starts when the gap ends.
-		start, _ := w.Add(-time.Duration(before) * time.Second).In(loc).ZoneBounds()
-		if start.IsZero() {
+		// A jump longer than maxShift is a date-line change that drops a
+		// whole day; like cron, treat it as a clock reset without catch-up,
+		// or the job would also run at its normal time on the new date.
+		if time.Duration(after-before)*time.Second > maxShift {
 			return nil
 		}
-		return []time.Time{start}
+		// w lies in a skipped hour: read with the new offset it is still
+		// before the change, read with the old one already after it.
+		return []time.Time{changeAt(loc,
+			w.Add(-time.Duration(after)*time.Second),
+			w.Add(-time.Duration(before)*time.Second))}
 	case 2:
 		return out[:1]
 	}
 	return out
+}
+
+// changeAt finds the first second in (lo, hi] whose offset in loc is the
+// one hi has. time.ZoneBounds is not used because it also reports year
+// boundaries of zones whose rules extend past the tzdata table.
+func changeAt(loc *time.Location, lo, hi time.Time) time.Time {
+	_, want := hi.In(loc).Zone()
+	for hi.Sub(lo) > time.Second {
+		mid := lo.Add(hi.Sub(lo) / 2).Truncate(time.Second)
+		if _, off := mid.In(loc).Zone(); off == want {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return hi
 }
 
 func wallClock(t time.Time) time.Time {

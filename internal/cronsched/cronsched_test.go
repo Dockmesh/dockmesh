@@ -60,6 +60,10 @@ func TestNextAcrossDaylightSaving(t *testing.T) {
 		{"spring-forward 2025", "Europe/Vienna", "30 2 * * *", "2025-03-29T12:00:00Z",
 			[]string{"2025-03-30T01:00:00Z", "2025-03-31T00:30:00Z"}},
 
+		// Samoa skipped 2011-12-30 entirely, moving from UTC-10 to UTC+14.
+		{"date-line jump", "Pacific/Apia", "30 2 * * *", "2011-12-28T22:00:00Z",
+			[]string{"2011-12-29T12:30:00Z", "2011-12-30T12:30:00Z"}},
+
 		{"UTC daily", "UTC", "30 2 * * *", "2027-10-30T12:00:00Z",
 			[]string{"2027-10-31T02:30:00Z", "2027-11-01T02:30:00Z"}},
 		{"UTC 03:00", "UTC", "0 3 * * *", "2027-03-27T12:00:00Z",
@@ -181,6 +185,43 @@ func TestParseRejectsInvalid(t *testing.T) {
 	for _, spec := range []string{"", "61 * * * *", "* * * *", "0 0 * * 7"} {
 		if _, err := Parse(spec); err == nil {
 			t.Errorf("Parse(%q) = nil error", spec)
+		}
+	}
+}
+
+func TestMaxShiftCoversTzdata(t *testing.T) {
+	zones := []string{
+		"Europe/Vienna", "Europe/London", "Europe/Lisbon", "Europe/Moscow", "Europe/Dublin",
+		"America/New_York", "America/Chicago", "America/Los_Angeles", "America/Sao_Paulo",
+		"America/Santiago", "America/Havana", "America/St_Johns", "America/Godthab",
+		"America/Asuncion", "America/Caracas", "Africa/Casablanca", "Africa/Cairo",
+		"Asia/Tehran", "Asia/Jerusalem", "Asia/Gaza", "Asia/Pyongyang", "Asia/Kolkata",
+		"Asia/Dhaka", "Australia/Sydney", "Australia/Lord_Howe", "Australia/Adelaide",
+		"Antarctica/Troll", "Antarctica/Casey", "Pacific/Auckland", "Pacific/Chatham",
+		"Pacific/Norfolk", "Pacific/Fiji", "Pacific/Apia", "Pacific/Fakaofo",
+		"Pacific/Kiritimati", "Pacific/Kwajalein",
+	}
+	// Date-line moves drop or repeat a whole day; the gap case refuses
+	// those explicitly.
+	const dateLine = 24 * time.Hour
+	end := time.Date(2040, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, zone := range zones {
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+		_, prev := at.In(loc).Zone()
+		for ; at.Before(end); at = at.Add(time.Hour) {
+			_, off := at.In(loc).Zone()
+			shift := time.Duration(off-prev) * time.Second
+			prev = off
+			if shift < 0 {
+				shift = -shift
+			}
+			if shift > maxShift && shift != dateLine {
+				t.Errorf("%s: change near %s moves the clock by %s, more than %s", zone, at, shift, maxShift)
+			}
 		}
 	}
 }
