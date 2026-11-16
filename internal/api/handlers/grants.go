@@ -72,7 +72,7 @@ func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, nam
 	}
 	perms, _ := h.Roles.RolePerms(name)
 	if err := h.checkPermsGrant(r, perms, rbac.Global); err != nil {
-		writeError(w, http.StatusForbidden, "you can't manage this role: "+err.Error())
+		h.denyPerm(w, r, routePerm(r), "you can't manage this role: "+err.Error())
 		return rbac.Role{}, false
 	}
 	return rd, true
@@ -95,7 +95,7 @@ func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id 
 			continue
 		}
 		if err := h.checkGrant(r, a.Role, a.Scope); err != nil {
-			writeError(w, http.StatusForbidden, "you can't manage this user: "+err.Error())
+			h.denyPerm(w, r, routePerm(r), "you can't manage this user: "+err.Error())
 			return false
 		}
 	}
@@ -202,9 +202,9 @@ func writeLastAdminError(w http.ResponseWriter, err error) {
 }
 
 // writeGrantError maps a checkGrant error to a response.
-func writeGrantError(w http.ResponseWriter, err error) {
+func (h *Handlers) writeGrantError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errGrantExceedsCaller) {
-		writeError(w, http.StatusForbidden, err.Error())
+		h.denyPerm(w, r, routePerm(r), err.Error())
 		return
 	}
 	writeError(w, http.StatusBadRequest, err.Error())
@@ -216,7 +216,7 @@ func writeGrantError(w http.ResponseWriter, err error) {
 func (h *Handlers) requireIdPGrants(w http.ResponseWriter, r *http.Request, defaultRole string, rules []rbac.GroupRule) bool {
 	if defaultRole != "" {
 		if err := h.checkGrant(r, defaultRole, rbac.Global); err != nil {
-			writeGrantError(w, fmt.Errorf("default role: %w", err))
+			h.writeGrantError(w, r, fmt.Errorf("default role: %w", err))
 			return false
 		}
 	}
@@ -226,7 +226,7 @@ func (h *Handlers) requireIdPGrants(w http.ResponseWriter, r *http.Request, defa
 			scope = rbac.Global
 		}
 		if err := h.checkGrant(r, rule.Role, scope); err != nil {
-			writeGrantError(w, fmt.Errorf("group %s: %w", rule.Group, err))
+			h.writeGrantError(w, r, fmt.Errorf("group %s: %w", rule.Group, err))
 			return false
 		}
 	}

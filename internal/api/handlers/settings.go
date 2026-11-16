@@ -92,7 +92,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// pointing it elsewhere is as powerful as handing out invites.
 		if e.Key == settings.KeyBaseURL && h.Settings.Stored(e.Key) != e.Value {
 			if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermUsersCreate) {
-				writeError(w, http.StatusForbidden, "changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it")
+				h.denyPerm(w, r, rbac.PermUsersCreate, "changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it")
 				return
 			}
 			if e.Value != "" {
@@ -106,7 +106,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// it elsewhere is as powerful as enrolling hosts.
 		if e.Key == settings.KeyAgentPublicURL && h.Settings.Stored(e.Key) != e.Value {
 			if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsCreate) {
-				writeError(w, http.StatusForbidden, "changing agent_public_url needs the hosts.create permission as well, because install commands use it")
+				h.denyPerm(w, r, rbac.PermHostsCreate, "changing agent_public_url needs the hosts.create permission as well, because install commands use it")
 				return
 			}
 			if e.Value != "" {
@@ -123,7 +123,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if h.Settings.Stored(e.Key) != e.Value && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
-				writeError(w, http.StatusForbidden, "changing update_channel needs the system.upgrade permission")
+				h.denyPerm(w, r, rbac.PermSystemUpgrade, "changing update_channel needs the system.upgrade permission")
 				return
 			}
 		}
@@ -145,7 +145,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// server binary, so it needs that permission rather than settings
 		// access.
 		if (e.Key == targets.LocalRootsSetting || e.Key == targets.LocalRootsSeededSetting || e.Key == targets.EmptyPathSetting) && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
-			writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
+			h.denyPerm(w, r, rbac.PermSystemUpgrade, "changing "+e.Key+" needs the system.upgrade permission")
 			return
 		}
 		if e.Key == backup.TimezoneSetting {

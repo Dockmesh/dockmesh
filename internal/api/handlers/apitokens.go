@@ -124,8 +124,7 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	// Legacy tokens have no owner to hand down.
 	creator := callerTokenOwner(r)
 	if creator == "" {
-		writeError(w, http.StatusForbidden,
-			"legacy API tokens can't create tokens; sign in, or use a token created after the upgrade")
+		writeError(w, http.StatusForbidden, "legacy API tokens can't create tokens; sign in, or use a token created after the upgrade")
 		return
 	}
 
@@ -145,7 +144,7 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 				in.Role, scope = parent.Role, parent.Scope
 			}
 			if !h.restrictionWithin(parent, in.Role, scope) {
-				writeError(w, http.StatusForbidden, "a token can only create tokens restricted at least as far as itself")
+				h.denyPerm(w, r, routePerm(r), "a token can only create tokens restricted at least as far as itself")
 				return
 			}
 		}

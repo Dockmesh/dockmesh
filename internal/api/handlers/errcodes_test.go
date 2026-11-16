@@ -34,11 +34,22 @@ func TestErrorMessagesHaveCodes(t *testing.T) {
 			if !ok {
 				return true
 			}
-			id, ok := c.Fun.(*ast.Ident)
-			if !ok || id.Name != "writeError" || len(c.Args) != 3 {
+			// writeError(w, status, msg) and h.denyPerm(w, r, perm, msg).
+			var msgArg ast.Expr
+			switch fn := c.Fun.(type) {
+			case *ast.Ident:
+				if fn.Name == "writeError" && len(c.Args) == 3 {
+					msgArg = c.Args[2]
+				}
+			case *ast.SelectorExpr:
+				if fn.Sel.Name == "denyPerm" && len(c.Args) == 4 {
+					msgArg = c.Args[3]
+				}
+			}
+			if msgArg == nil {
 				return true
 			}
-			bl, ok := c.Args[2].(*ast.BasicLit)
+			bl, ok := msgArg.(*ast.BasicLit)
 			if !ok || bl.Kind != token.STRING {
 				return true
 			}

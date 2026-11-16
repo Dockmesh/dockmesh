@@ -142,7 +142,7 @@ func (h *Handlers) requireNotOwnContainer(w http.ResponseWriter, r *http.Request
 	if h.callerIsAdmin(r) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "only an admin can change or open a shell in Dockmesh's own containers")
+	h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can change or open a shell in Dockmesh's own containers")
 	return false
 }
 
@@ -152,7 +152,7 @@ func (h *Handlers) requireVolumeNotOwn(w http.ResponseWriter, r *http.Request, n
 	if !ownVolumes[name] || h.callerIsAdmin(r) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "only an admin can access Dockmesh's own volumes")
+	h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can access Dockmesh's own volumes")
 	return false
 }
 

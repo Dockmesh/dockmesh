@@ -154,11 +154,11 @@ func (h *Handlers) TestNotificationChannel(w http.ResponseWriter, r *http.Reques
 const errAlertsGlobal = "alert rules are instance-wide and need alert access on everything"
 
 // alertsGlobally writes 403 unless the caller holds perm on everything.
-func alertsGlobally(w http.ResponseWriter, r *http.Request, perm rbac.Perm) bool {
+func (h *Handlers) alertsGlobally(w http.ResponseWriter, r *http.Request, perm rbac.Perm) bool {
 	if middleware.AccessOf(r.Context()).AllowsGlobally(perm) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, errAlertsGlobal)
+	h.denyPerm(w, r, perm, errAlertsGlobal)
 	return false
 }
 
@@ -180,7 +180,7 @@ func (h *Handlers) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
-	if !alertsGlobally(w, r, rbac.PermAlertsCreate) {
+	if !h.alertsGlobally(w, r, rbac.PermAlertsCreate) {
 		return
 	}
 	var in alerts.RuleInput
@@ -202,7 +202,7 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
-	if !alertsGlobally(w, r, rbac.PermAlertsUpdate) {
+	if !h.alertsGlobally(w, r, rbac.PermAlertsUpdate) {
 		return
 	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -229,7 +229,7 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
-	if !alertsGlobally(w, r, rbac.PermAlertsDelete) {
+	if !h.alertsGlobally(w, r, rbac.PermAlertsDelete) {
 		return
 	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -260,7 +260,7 @@ func (h *Handlers) GetAlertRuleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
 		return
 	}
-	if !alertsGlobally(w, r, rbac.PermAlertsView) {
+	if !h.alertsGlobally(w, r, rbac.PermAlertsView) {
 		return
 	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
