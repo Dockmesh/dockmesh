@@ -1020,11 +1020,9 @@ var (
 	ErrUnknownHost  = errors.New("unknown host")
 )
 
-// checkReservedLabels refuses tracking labels, and env_file paths that
-// could leave the stack folder, on the server for agents that don't check
-// them; agents that do load the file, and the files it names, on their
-// own host. Every agent reporting CapReservedLabels also checks those
-// files inside the stack folder, so the one capability covers both.
+// checkReservedLabels refuses tracking labels and env_file paths outside
+// the stack folder on the server for agents that don't check them. Agents
+// with CapReservedLabels also check every referenced file themselves.
 func (h *RemoteHost) checkReservedLabels(composeYAML string) error {
 	if ag, err := h.live(); err == nil && ag.Hello.Has(agents.CapReservedLabels) {
 		return nil
