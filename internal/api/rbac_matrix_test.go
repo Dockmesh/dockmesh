@@ -479,23 +479,23 @@ func fillPath(p string) string {
 }
 
 type matrixCaller struct {
-	name  string
-	perms map[rbac.Perm]bool
-	scope rbac.Scope
-	token string
-	// noBase: an API token that gets only what its role grants.
-	noBase bool
+	name   string
+	perms  map[rbac.Perm]bool
+	scope  rbac.Scope
+	token  string
+	noBase bool // a token that gets only what its role grants
+
 }
 
-// signInUser creates name with role on everything.
-func signInUser(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string) string {
+// createUser creates name with role on scope and returns its id.
+func createUser(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
 	t.Helper()
 	ctx := context.Background()
 	u, err := authSvc.CreateUser(ctx, name, "", "correct horse battery", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: u.ID, Role: role, Scope: rbac.Global}); err != nil {
+	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: u.ID, Role: role, Scope: scope}); err != nil {
 		t.Fatal(err)
 	}
 	return u.ID
@@ -518,15 +518,8 @@ func apiToken(t *testing.T, owner, role string, scope rbac.Scope) string {
 
 func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
 	t.Helper()
-	ctx := context.Background()
-	u, err := authSvc.CreateUser(ctx, name, "", "correct horse battery", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: u.ID, Role: role, Scope: scope}); err != nil {
-		t.Fatal(err)
-	}
-	res, err := authSvc.Login(ctx, name, "correct horse battery", "test", "127.0.0.1")
+	createUser(t, authSvc, roles, name, role, scope)
+	res, err := authSvc.Login(context.Background(), name, "correct horse battery", "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +571,7 @@ func TestRouteGateMatrix(t *testing.T) {
 // while the routes run.
 func TestRouteGateMatrixAPITokens(t *testing.T) {
 	authSvc, roles, h := newMatrixEnv(t)
-	owner := signInUser(t, authSvc, roles, "token-owner", rbac.RoleAdmin)
+	owner := createUser(t, authSvc, roles, "token-owner", rbac.RoleAdmin, rbac.Global)
 	var callers []matrixCaller
 	for _, b := range rbac.BuiltinRoles {
 		for _, scope := range []rbac.Scope{rbac.Global, {Type: rbac.ScopeHost, Host: "local"}} {
@@ -587,13 +580,10 @@ func TestRouteGateMatrixAPITokens(t *testing.T) {
 				token: apiToken(t, owner, b.Name, scope), noBase: !scope.IsGlobal() || !rbac.IsAdminPermSet(perms)})
 		}
 	}
-	viewer := signInUser(t, authSvc, roles, "viewer-owner", rbac.RoleViewer)
-	for _, b := range rbac.BuiltinRoles {
-		if b.Name == rbac.RoleViewer {
-			callers = append(callers, matrixCaller{name: "token-unrestricted-viewer", perms: rbac.PermsFor(b.Levels, b.Extras),
-				scope: rbac.Global, token: apiToken(t, viewer, "", rbac.Global)})
-		}
-	}
+	viewer, _ := rbac.BuiltinRole(rbac.RoleViewer)
+	viewerID := createUser(t, authSvc, roles, "viewer-owner", rbac.RoleViewer, rbac.Global)
+	callers = append(callers, matrixCaller{name: "token-unrestricted-viewer", perms: rbac.PermsFor(viewer.Levels, viewer.Extras),
+		scope: rbac.Global, token: apiToken(t, viewerID, "", rbac.Global)})
 	runGateMatrix(t, NewRouter(h, authSvc, nil, true, nil), h, callers)
 }
 

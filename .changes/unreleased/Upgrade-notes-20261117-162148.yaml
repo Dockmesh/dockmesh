@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'An API token restricted to a role now gets only what that role grants: a scrape or other restricted token can no longer list or create tokens or read the server status and event stream. Give a token that needs this no restriction, or restrict it to Admin on everything'
+body: 'An API token restricted to a role now gets only what that role grants: a scrape or other restricted token can no longer list or create tokens or read the server status and event stream. Tokens created before 0.5.0 count as restricted to their role. Give a token that needs this no restriction, or restrict it to Admin on everything. A token restricted to Users & roles: Manage without Admin can no longer list or revoke other users' tokens'
 time: 2026-11-17T16:21:48.976770206Z
 custom:
     Audience: admins

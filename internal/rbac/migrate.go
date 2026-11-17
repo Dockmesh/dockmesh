@@ -247,7 +247,7 @@ func lostText(lost map[Perm]bool) string {
 }
 
 // diffPerms is before minus after, without the base rights. The template
-// catalog every account could read counts: it now comes with Stacks View.
+// catalog counts as lost when after lacks Stacks View.
 func diffPerms(before, after map[Perm]bool) map[Perm]bool {
 	out := map[Perm]bool{}
 	for p := range before {
