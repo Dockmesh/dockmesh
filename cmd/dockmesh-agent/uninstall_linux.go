@@ -435,7 +435,7 @@ func (u *uninstaller) stackDirs(dataDir string) []string {
 func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared bool, mounts []string) []string {
 	inData := layout.Within(dataDir, dir)
 	if _, err := checkPlainDir("stacks dir", dir); err != nil {
-		p.keep(dir, err.Error())
+		p.keepDir(dir, dir, err.Error())
 		return nil
 	}
 	if real, err := filepath.EvalSymlinks(u.path(dir)); err != nil || real != u.path(dir) {
@@ -445,13 +445,13 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 	}
 	if !inData {
 		if err := layout.CheckWritablePath(dir, dataDir); err != nil {
-			p.keep(dir, err.Error())
+			p.keepDir(dir, dir, err.Error())
 			return nil
 		}
 	}
 	scan, err := scanStacks(u.path(dir), dir, mounts)
 	if err != nil {
-		p.keep(dir, err.Error())
+		p.keepDir(dir, dir, err.Error())
 		return nil
 	}
 	label := fmt.Sprintf("%s (%s)", dir, plural(len(scan.stacks), "stack"))
@@ -609,7 +609,7 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		return
 	}
 	if err != nil {
-		p.keep(dataDir, err.Error())
+		p.keepDir(dataDir, dataDir, err.Error())
 		return
 	}
 	// Every known name, as the agent writes uninstalledFile after the plan.
@@ -786,8 +786,12 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	}
 	pr.line(header)
 	pr.line("")
-	for _, l := range p.lines {
-		pr.line(fmt.Sprintf("  %-6s  %s", l.verb, l.text))
+	for _, verb := range []string{"remove", "keep"} {
+		for _, l := range p.lines {
+			if l.verb == verb {
+				pr.line(fmt.Sprintf("  %-6s  %s", l.verb, l.text))
+			}
+		}
 	}
 	if p.running > 0 {
 		pr.line("")
