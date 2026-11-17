@@ -212,3 +212,26 @@ func countUsers(t *testing.T, path string) int {
 	}
 	return n
 }
+
+// An untrusted checkout resolves to the default paths; the start is
+// refused there before anything creates them, also on a second try.
+func TestUntrustedCheckoutRefusesStart(t *testing.T) {
+	root := t.TempDir()
+	db := filepath.Join(checkout, "data", "dockmesh.db")
+	openAt(t, root, db)
+	seedAccounts(t, root, db, true, true)
+	before := tree(t, root)
+	for start := 1; start <= 2; start++ {
+		dir, paths := startPaths(root, nil, nil, errors.New("group-writable"))
+		if dir != "" {
+			t.Fatalf("start %d: untrusted checkout used as data dir %q", start, dir)
+		}
+		p := Probe{Paths: paths, WorkDir: checkout, Lstat: rootedStat(root), Stat: rootedFollow(root), ReadDir: rootedReadDir(root)}
+		if f := p.Scan(); !RefusesStart(f) {
+			t.Fatalf("start %d: facts %+v, want a refused start", start, f)
+		}
+		if after := tree(t, root); after != before {
+			t.Fatalf("start %d changed the file system: %v, was %v", start, after, before)
+		}
+	}
+}

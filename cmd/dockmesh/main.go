@@ -111,7 +111,7 @@ func useCheckoutData() error {
 	}
 	dir, distrust := layout.CheckoutProbe{WorkDir: wd, Getenv: os.Getenv, EnvFiles: []string{unitEnvFile()}}.Dir()
 	if distrust != nil {
-		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); a server started here keeps setup closed while its database exists; set DOCKMESH_DATA_DIR=%s to use it\n", wd, distrust, layout.ShellQuote(wd))
+		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); serve refuses to start here; set DOCKMESH_DATA_DIR=%s to use it or start it from another directory\n", wd, distrust, layout.ShellQuote(wd))
 		return nil
 	}
 	if dir == "" {
@@ -382,10 +382,17 @@ func main() {
 	setupFacts := setup.Probe{
 		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
 		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
+		DataDirSet:  os.Getenv("DOCKMESH_DATA_DIR") != "" && checkoutDataDir == "",
 		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
 		Paths:       config.ResolvePaths(os.Getenv),
 		WorkDir:     setupWorkDir(),
 	}.Scan()
+	if setup.RefusesStart(setupFacts) {
+		slog.Error("the working directory holds the data of a source run this server may not use; "+
+			"set DOCKMESH_DATA_DIR to it once only root or you can write it, or start the server from another directory",
+			"dir", setupWorkDir())
+		os.Exit(1)
+	}
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
 	// over plain HTTP.

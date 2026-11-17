@@ -199,6 +199,9 @@ func HasCheckoutDB(workDir string, lstat func(string) (fs.FileInfo, error)) bool
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// CheckoutDBPath is the database of a source run started in workDir.
+func CheckoutDBPath(workDir string) string { return dbPathBelow(filepath.Clean(workDir)) }
+
 // dbPathBelow is the database of an install configured only through
 // DOCKMESH_DATA_DIR=dataDir.
 func dbPathBelow(dataDir string) string {
