@@ -172,7 +172,7 @@ func TestHasCheckoutDB(t *testing.T) {
 	for _, tt := range []struct {
 		dir  string
 		want bool
-	}{{"/reg", true}, {"/link", false}, {"/dir", false}, {"/missing", false}, {"reg", false}} {
+	}{{"/reg", true}, {"/link", true}, {"/dir", false}, {"/missing", false}, {"reg", false}} {
 		if got := HasCheckoutDB(tt.dir, lstat); got != tt.want {
 			t.Errorf("HasCheckoutDB(%q) = %v, want %v", tt.dir, got, tt.want)
 		}

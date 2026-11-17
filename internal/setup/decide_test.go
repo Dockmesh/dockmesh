@@ -503,6 +503,7 @@ func TestRefusesStart(t *testing.T) {
 		name     string
 		files    []string
 		dbs      []string
+		links    []string
 		probe    Probe
 		activeDB string
 		want     bool
@@ -515,6 +516,7 @@ func TestRefusesStart(t *testing.T) {
 		{name: "DOCKMESH_DB_PATH", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true, DBPathSet: true}, activeDB: defaultDB},
 		{name: "DOCKMESH_DATA_DIR", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true, DataDirSet: true}, activeDB: "/srv/new/dockmesh.db"},
 		{name: "no checkout database", probe: Probe{}, activeDB: defaultDB},
+		{name: "symlinked checkout database", links: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true}, activeDB: defaultDB, want: true},
 		{name: "checkout the probe did not judge", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout}, activeDB: defaultDB},
 		{name: "working directory /", dbs: []string{layout.CheckoutDBPath("/")}, probe: Probe{WorkDir: "/"}, activeDB: defaultDB},
 		{name: "database at another known location", dbs: []string{otherKnown}, probe: Probe{}, activeDB: defaultDB},
@@ -527,6 +529,15 @@ func TestRefusesStart(t *testing.T) {
 			}
 			for _, db := range tt.dbs {
 				openAt(t, root, db)
+			}
+			for _, l := range tt.links {
+				full := filepath.Join(root, l)
+				if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("/elsewhere/dockmesh.db", full); err != nil {
+					t.Fatal(err)
+				}
 			}
 			p := tt.probe
 			p.Paths = config.Paths{DBPath: tt.activeDB}

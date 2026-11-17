@@ -184,7 +184,8 @@ func (p CheckoutProbe) Dir() (string, error) {
 	return dir, nil
 }
 
-// HasCheckoutDB reports a regular file at workDir/data/dockmesh.db. The
+// HasCheckoutDB reports a file or symlink at workDir/data/dockmesh.db,
+// what CheckoutProbe.Dir counts as a database before its trust check. The
 // setup decision counts it as an install whether or not TrustedCheckout
 // accepts the directory: it can only keep setup closed and is never used
 // as data. lstat defaults to os.Lstat.
@@ -196,7 +197,7 @@ func HasCheckoutDB(workDir string, lstat func(string) (fs.FileInfo, error)) bool
 		return false
 	}
 	fi, err := lstat(CheckoutDBPath(workDir))
-	return err == nil && fi.Mode().IsRegular()
+	return err == nil && !fi.IsDir()
 }
 
 // CheckoutDBPath is the database of a source run started in workDir.
