@@ -173,7 +173,7 @@ func (s *Service) runScheduled(jobID int64, name string) {
 	if err != nil {
 		return
 	}
-	_, _ = s.exec.Run(s.runCtx, job)
+	_, _ = s.exec.Run(withHostWait(s.runCtx), job)
 }
 
 // notifySkipped tells the job's audience that a scheduled run did not

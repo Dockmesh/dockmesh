@@ -1,0 +1,3 @@
+kind: Fixed
+body: A scheduled backup of an agent host that is reconnecting, for example right after a server restart or upgrade, waits up to 5 minutes for the agent instead of failing at once and skipping that day's backup
+time: 2026-11-17T16:33:05.546601785Z
