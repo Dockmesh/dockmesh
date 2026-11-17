@@ -46,7 +46,7 @@ func TestTarSystemSkipsSnapshotsAndBackups(t *testing.T) {
 
 	var buf bytes.Buffer
 	paths := SystemPaths{DBPath: dbPath, StacksRoot: t.TempDir(), DataDir: dataDir}
-	if _, err := tarSystem(context.Background(), database, paths, &buf); err != nil {
+	if _, err := tarSystem(context.Background(), database, paths, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 

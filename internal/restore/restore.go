@@ -22,6 +22,8 @@ import (
 	"filippo.io/age"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	_ "modernc.org/sqlite"
 )
 
@@ -32,6 +34,9 @@ type Counts struct {
 	// SkippedLinks counts symlink/hardlink entries. Dockmesh's own
 	// backups never contain links, so they are dropped, not followed.
 	SkippedLinks int `json:"skipped_links,omitempty"`
+	// LostOwners counts stack entries of other owners that were restored
+	// as the restoring account's own because no helper could write them.
+	LostOwners int `json:"lost_owners,omitempty"`
 }
 
 // Options controls Extract behaviour.
@@ -43,6 +48,49 @@ type Options struct {
 	MaxBytes   int64
 	MaxEntries int
 	TmpBase    string // where to stage the DB temp file; default: same dir as cfg.DBPath
+	// Files writes stack data of other owners, such as a database
+	// directory a container created as uid 999. Nil restores it as the
+	// restoring account's own unless that is root.
+	Files FileHelper
+	// liveOwners maps a destination root to the owner of the live
+	// directory it replaces. A restore run as root gives the server's own
+	// files that owner instead of root.
+	liveOwners map[string]fileOwner
+}
+
+type fileOwner struct{ uid, gid int }
+
+// FileHelper writes and removes stack data of other owners, which the
+// unprivileged service cannot do itself.
+type FileHelper interface {
+	EntryWriter(ctx context.Context, base, dir string) EntryWriter
+	RemoveAll(ctx context.Context, base, dir string) error
+}
+
+// EntryWriter writes entries named relative to its directory with the
+// owner, mode and times of their headers.
+type EntryWriter interface {
+	WriteEntry(hdr *tar.Header, rel string, r io.Reader) error
+	Close() error
+	Abort()
+}
+
+// Helper returns h as a FileHelper, nil for a nil h.
+func Helper(h *stackhelper.Helper) FileHelper {
+	if h == nil {
+		return nil
+	}
+	return helperFiles{h}
+}
+
+type helperFiles struct{ h *stackhelper.Helper }
+
+func (f helperFiles) EntryWriter(ctx context.Context, base, dir string) EntryWriter {
+	return f.h.NewWriter(ctx, base, dir)
+}
+
+func (f helperFiles) RemoveAll(ctx context.Context, base, dir string) error {
+	return f.h.RemoveAll(ctx, base, dir)
 }
 
 // SanityResult is the structured output of the post-restore checks.
@@ -290,6 +338,12 @@ func walkTarDryRun(tr *tar.Reader) (*Counts, error) {
 	return c, nil
 }
 
+// extractAll writes the archive's entries. Directories and files get the
+// mode of their header; directory modes are set last, so a read-only
+// directory can still be filled. The server that wrote the archive owned
+// its database snapshot, so stack entries with another owner were written
+// by a container: they go through opts.Files to keep that owner, or get it
+// directly when the restore runs as root.
 func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string, opts Options) (*Counts, error) {
 	c := &Counts{}
 	dataDir := filepath.Dir(cfg.DBPath)
@@ -297,6 +351,11 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 	entries := 0
 	roots := rootSet{}
 	defer roots.close()
+	var owner *int
+	asRoot := os.Geteuid() == 0
+	var dirModes []dirMode
+	foreign := &foreignStacks{files: opts.Files, root: cfg.StacksRoot}
+	defer foreign.abort()
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -323,6 +382,9 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		var root, rel string
 		switch {
 		case clean == "dockmesh.db":
+			if owner == nil {
+				owner = &hdr.Uid
+			}
 		case strings.HasPrefix(clean, "stacks/"):
 			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
 		case strings.HasPrefix(clean, "data/") && db.IsSnapshotName("", filepath.Base(clean)):
@@ -342,6 +404,9 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			// fields we don't understand).
 			continue
 		}
+		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
+			continue
+		}
 		fsys, name := hostFS(), dbTmp
 		if root != "" {
 			r, err := roots.open(root)
@@ -350,13 +415,47 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			}
 			fsys, name = rootFS(r), filepath.FromSlash(rel)
 		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := fsys.mkdirAll(name, 0o755); err != nil {
+		otherOwner := root == cfg.StacksRoot && owner != nil && hdr.Uid != *owner && containerData(rel)
+		if root == cfg.StacksRoot {
+			viaHelper, err := foreign.take(ctx, rel, otherOwner)
+			if err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
-		case tar.TypeReg, tar.TypeRegA:
-			if err := fsys.mkdirAll(filepath.Dir(name), 0o755); err != nil {
+			if viaHelper {
+				if opts.MaxBytes > 0 && c.Bytes+hdr.Size > opts.MaxBytes {
+					return nil, ErrTooLarge
+				}
+				if err := foreign.write(hdr, rel, tr); err != nil {
+					return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+				}
+				if hdr.Typeflag != tar.TypeDir {
+					c.Files++
+					c.Bytes += hdr.Size
+				}
+				continue
+			}
+		}
+		own := entryOwner{}
+		switch live, known := opts.liveOwners[ownerKey(root, dataDir)]; {
+		case otherOwner && !asRoot:
+			c.LostOwners++
+		case otherOwner:
+			own = entryOwner{hdr.Uid, hdr.Gid, true}
+		case asRoot && known:
+			own = entryOwner{live.uid, live.gid, true}
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := fsys.mkdirAll(name, 0o750); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+			}
+			fi, err := fsys.lstat(name)
+			if err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+			}
+			dirModes = append(dirModes, dirMode{fsys, name, fi, restoredMode(hdr, otherOwner, 0o1777), own})
+		case tar.TypeReg:
+			if err := fsys.mkdirAll(filepath.Dir(name), 0o750); err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 			// DR bootstrap: the user has to pre-seed secrets.age-key (0400)
@@ -374,6 +473,15 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 				src = io.LimitReader(tr, opts.MaxBytes-c.Bytes+1)
 			}
 			n, err := io.Copy(out, src)
+			// Owner and mode are set on the descriptor, so no name swapped
+			// in meanwhile can redirect them; the umask must not narrow
+			// the archive's mode.
+			if err == nil && own.set {
+				err = out.Chown(own.uid, own.gid)
+			}
+			if err == nil {
+				err = out.Chmod(restoredMode(hdr, otherOwner, 0o777))
+			}
 			out.Close()
 			if err != nil {
 				return nil, fmt.Errorf("write %q: %w", hdr.Name, err)
@@ -386,7 +494,164 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			c.Bytes += n
 		}
 	}
+	if err := foreign.close(); err != nil {
+		return nil, fmt.Errorf("restore stack data of other owners: %w", err)
+	}
+	for i := len(dirModes) - 1; i >= 0; i-- {
+		if err := dirModes[i].apply(); err != nil {
+			return nil, err
+		}
+	}
 	return c, nil
+}
+
+// ownerKey is the liveOwners key of an entry's root; the database snapshot
+// ends up in the data directory.
+func ownerKey(root, dataDir string) string {
+	if root == "" {
+		return dataDir
+	}
+	return root
+}
+
+// entryOwner is the owner a restored entry gets, if set.
+type entryOwner struct {
+	uid, gid int
+	set      bool
+}
+
+// dirMode is the mode and owner a restored directory gets once it is
+// filled. fi identifies the directory that was created, so a name swapped
+// for a symlink meanwhile is refused instead of followed.
+type dirMode struct {
+	fsys  entryFS
+	name  string
+	fi    os.FileInfo
+	mode  os.FileMode
+	owner entryOwner
+}
+
+func (d dirMode) apply() error {
+	f, err := d.fsys.openFile(d.name, os.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("restore: set the mode of %s: %w", d.name, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(fi, d.fi) {
+		return fmt.Errorf("restore: %s was replaced during the restore", d.name)
+	}
+	if d.owner.set {
+		if err := f.Chown(d.owner.uid, d.owner.gid); err != nil {
+			return err
+		}
+	}
+	return f.Chmod(d.mode)
+}
+
+// restoredMode is the mode an entry gets. Container data keeps the
+// archive's mode; the server's own files never become writable for other
+// accounts, whatever the archive says.
+func restoredMode(hdr *tar.Header, otherOwner bool, bits int64) os.FileMode {
+	mode := os.FileMode(hdr.Mode & bits) //nolint:gosec // masked to permission bits
+	if otherOwner {
+		return mode
+	}
+	return mode &^ 0o022
+}
+
+// foreignStacks sends the entries of each stack that belong to another
+// owner through the helper, together with everything below a directory
+// it wrote: the service could not create files in there. A stack's own
+// directory and the files the stacks manager writes stay the service's.
+type foreignStacks struct {
+	files FileHelper
+	root  string
+	stack string
+	w     EntryWriter
+	dirs  []string
+	// left are the stacks already done: a system backup writes each
+	// stack in one piece, and going back would start another helper.
+	left map[string]bool
+}
+
+// take reports whether the stacks entry rel goes to the helper and opens
+// a writer for its stack when it does.
+func (f *foreignStacks) take(ctx context.Context, rel string, otherOwner bool) (bool, error) {
+	if f.files == nil {
+		return false, nil
+	}
+	stack, inner, _ := strings.Cut(rel, "/")
+	if stack != f.stack {
+		if f.left[stack] {
+			return false, fmt.Errorf("the archive returns to stack %q after another one", stack)
+		}
+		if err := f.close(); err != nil {
+			return false, err
+		}
+		if f.stack != "" {
+			if f.left == nil {
+				f.left = map[string]bool{}
+			}
+			f.left[f.stack] = true
+		}
+		f.stack, f.dirs = stack, nil
+	}
+	if !containerData(rel) || (!otherOwner && !f.below(inner)) {
+		return false, nil
+	}
+	if f.w == nil {
+		dir := filepath.Join(f.root, stack)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return false, err
+		}
+		f.w = f.files.EntryWriter(ctx, f.root, dir)
+	}
+	return true, nil
+}
+
+// containerData reports whether the stacks entry rel may hold data a
+// container wrote: anything inside a stack directory except the files the
+// stacks manager writes.
+func containerData(rel string) bool {
+	_, inner, nested := strings.Cut(rel, "/")
+	return nested && inner != "" && !stacks.ManagerFile(inner)
+}
+
+func (f *foreignStacks) below(inner string) bool {
+	for _, d := range f.dirs {
+		if strings.HasPrefix(inner, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *foreignStacks) write(hdr *tar.Header, rel string, r io.Reader) error {
+	_, inner, _ := strings.Cut(rel, "/")
+	if hdr.Typeflag == tar.TypeDir {
+		f.dirs = append(f.dirs, inner)
+	}
+	return f.w.WriteEntry(hdr, inner, r)
+}
+
+func (f *foreignStacks) close() error {
+	if f.w == nil {
+		return nil
+	}
+	w := f.w
+	f.w = nil
+	return w.Close()
+}
+
+func (f *foreignStacks) abort() {
+	if f.w != nil {
+		f.w.Abort()
+		f.w = nil
+	}
 }
 
 // rootSet opens one os.Root per destination directory. Writing through
@@ -398,7 +663,7 @@ func (rs rootSet) open(dir string) (*os.Root, error) {
 	if r, ok := rs[dir]; ok {
 		return r, nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
 	r, err := os.OpenRoot(dir)
@@ -423,12 +688,13 @@ type entryFS struct {
 	remove   func(string) error
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	chtimes  func(string, time.Time, time.Time) error
+	lstat    func(string) (os.FileInfo, error)
 }
 
 func rootFS(r *os.Root) entryFS {
-	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes}
+	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes, r.Lstat}
 }
 
 func hostFS() entryFS {
-	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes}
+	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes, os.Lstat}
 }

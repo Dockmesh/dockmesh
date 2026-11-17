@@ -78,7 +78,7 @@ func TestLeftoversAfterApply(t *testing.T) {
 		t.Fatalf("notices %+v, want one naming %s", open, list[0].Path)
 	}
 
-	removed, err := RemoveLeftovers(cfg)
+	removed, err := RemoveLeftovers(context.Background(), cfg, nil)
 	if err != nil || removed != 2 {
 		t.Fatalf("remove: %d %v", removed, err)
 	}

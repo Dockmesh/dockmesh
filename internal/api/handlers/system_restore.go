@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 )
 
 // stageMu keeps staging, applying and discarding from running at once.
@@ -124,6 +125,7 @@ func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 	}
+	opts.Files = h.restoreFiles()
 	counts, result, err := restore.Stage(r.Context(), src, h.RestoreConfig, source, opts)
 	if err != nil {
 		writeStageError(w, err, result)
@@ -185,7 +187,7 @@ func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer stageMu.Unlock()
-	if err := restore.DiscardStaged(h.RestoreConfig); errors.Is(err, restore.ErrNothingStaged) {
+	if err := restore.DiscardStaged(r.Context(), h.RestoreConfig, h.restoreFiles()); errors.Is(err, restore.ErrNothingStaged) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	} else if err != nil {
@@ -214,7 +216,7 @@ func (h *Handlers) DeleteRestoreLeftovers(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer stageMu.Unlock()
-	n, err := restore.RemoveLeftovers(h.RestoreConfig)
+	n, err := restore.RemoveLeftovers(r.Context(), h.RestoreConfig, h.restoreFiles())
 	if n > 0 {
 		h.audit(r, "system.restore_cleanup", "", map[string]any{"removed": n})
 	}
@@ -276,7 +278,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		done = h.restoreNewInstall(w, r, rc, name)
 		return
 	}
-	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
+	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{Files: h.restoreFiles()})
 	if err != nil {
 		writeStageError(w, err, result)
 		return
@@ -310,7 +312,7 @@ func (h *Handlers) restoreNewInstall(w http.ResponseWriter, r *http.Request, rc 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return false
 	}
-	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
+	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{Files: h.restoreFiles()})
 	if err != nil {
 		writeStageError(w, err, result)
 		return false
@@ -344,10 +346,19 @@ func (h *Handlers) restoreNewInstall(w http.ResponseWriter, r *http.Request, rc 
 	return true
 }
 
+// restoreFiles writes and removes restored stack data of other owners;
+// nil without Docker.
+func (h *Handlers) restoreFiles() restore.FileHelper {
+	if h.Docker == nil {
+		return nil
+	}
+	return restore.Helper(stackhelper.New(h.Docker.Raw()))
+}
+
 // discardSetupRestore drops a staged setup restore that was refused; if
 // that fails it would be applied at the next start, so it is logged loudly.
 func (h *Handlers) discardSetupRestore() {
-	if err := restore.DiscardStaged(h.RestoreConfig); err != nil {
+	if err := restore.DiscardStaged(context.Background(), h.RestoreConfig, h.restoreFiles()); err != nil {
 		slog.Error("discard the refused setup restore failed; remove the staging directory before the next restart", "err", err)
 	}
 }

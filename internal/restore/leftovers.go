@@ -72,6 +72,11 @@ func leftoverDirs(cfg *config.Config) ([]leftoverDir, error) {
 	return out, nil
 }
 
+func validStamp(s string) bool {
+	_, ok := parseStamp(s)
+	return ok
+}
+
 func parseStamp(s string) (time.Time, bool) {
 	if !stampPattern.MatchString(s) {
 		return time.Time{}, false
@@ -96,8 +101,9 @@ func Leftovers(cfg *config.Config) ([]Leftover, error) {
 
 // RemoveLeftovers deletes every copy Leftovers lists. Only directories
 // with the names a restore creates are touched, each opened below its
-// parent so a symlink can't point the removal elsewhere.
-func RemoveLeftovers(cfg *config.Config) (int, error) {
+// parent so a symlink can't point the removal elsewhere. Stack data of
+// other owners is removed through files.
+func RemoveLeftovers(ctx context.Context, cfg *config.Config, files FileHelper) (int, error) {
 	if info, err := Staged(cfg); err != nil {
 		return 0, err
 	} else if info != nil && info.PrevDir != "" {
@@ -115,6 +121,9 @@ func RemoveLeftovers(cfg *config.Config) (int, error) {
 		}
 		err = root.RemoveAll(d.name)
 		_ = root.Close()
+		if errors.Is(err, os.ErrPermission) && files != nil {
+			err = files.RemoveAll(ctx, d.parent, filepath.Join(d.parent, d.name))
+		}
 		if err != nil {
 			return removed, err
 		}

@@ -552,3 +552,17 @@ func (m *Manager) RecordFile(name, file string) error {
 	m.recordSum(filepath.Join(dir, file))
 	return nil
 }
+
+// ManagerFile reports the top-level files of a stack directory the manager
+// reads and writes itself. A restore always writes them as the service's
+// own, whoever owned them at backup time.
+func ManagerFile(rel string) bool {
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	switch rel {
+	case "compose.yaml", ".env", ".env.age", MetaFileName:
+		return true
+	}
+	return strings.HasPrefix(rel, "compose.") && (strings.HasSuffix(rel, ".yaml") || strings.HasSuffix(rel, ".yml"))
+}
