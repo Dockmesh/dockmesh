@@ -93,6 +93,9 @@ func (f *fakeSweep) ContainerRemove(_ context.Context, id string, _ client.Conta
 }
 
 func (f *fakeSweep) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	if id == "" {
+		return client.ImageInspectResult{}, errors.New("no such image")
+	}
 	var r client.ImageInspectResult
 	r.Config = &dockerspec.DockerOCIImageConfig{}
 	r.Config.Labels = f.imageLabels[id]
@@ -137,6 +140,9 @@ func TestRemoveOrphanHelpers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.c.ID = "a"
+			if tt.c.ImageID == "" {
+				tt.c.ImageID = "sha256:helper"
+			}
 			f := &fakeSweep{
 				items:       []container.Summary{tt.c},
 				imageLabels: map[string]map[string]string{"sha256:forged": {"dockmesh.component": BackupHelperComponent}},
@@ -160,13 +166,23 @@ func TestRemoveOrphanHelpersContinuesAfterError(t *testing.T) {
 	l := BackupHelperLabels(HelperOwnerServer)
 	f := &fakeSweep{
 		items: []container.Summary{
-			{ID: "a", Labels: l, State: container.StateExited, Created: 1},
-			{ID: "b", Labels: l, State: container.StateExited, Created: 1},
+			{ID: "a", ImageID: "sha256:helper", Labels: l, State: container.StateExited, Created: 1},
+			{ID: "b", ImageID: "sha256:helper", Labels: l, State: container.StateExited, Created: 1},
 		},
 		failIDs: map[string]bool{"a": true},
 	}
 	n, err := RemoveOrphanHelpers(context.Background(), f, HelperOwnerServer, start)
 	if err == nil || n != 1 || len(f.removed) != 1 || f.removed[0] != "b" {
+		t.Fatalf("n=%d removed=%v err=%v", n, f.removed, err)
+	}
+}
+
+func TestRemoveOrphanHelpersKeepsHelperWhenImageInspectFails(t *testing.T) {
+	f := &fakeSweep{items: []container.Summary{
+		{ID: "a", Labels: BackupHelperLabels(HelperOwnerServer), State: container.StateExited, Created: 1},
+	}}
+	n, err := RemoveOrphanHelpers(context.Background(), f, HelperOwnerServer, time.Unix(1_800_000_000, 0))
+	if err == nil || n != 0 || len(f.removed) != 0 {
 		t.Fatalf("n=%d removed=%v err=%v", n, f.removed, err)
 	}
 }
