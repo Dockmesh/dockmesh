@@ -80,7 +80,7 @@ Other pages, API error messages and `dmctl whoami -o json` name single permissio
 | `containers.env` | extra **See environment values (inspect, .env)** |
 | `backups.download` | extra **Download backup archives** |
 | `backups.key_export` | extra **Export the backup encryption key** |
-| `tokens.view`, `tokens.create`, `tokens.delete`, `system.view` | every signed-in user (own tokens, server status) |
+| `tokens.view`, `tokens.create`, `tokens.delete`, `system.view` | every signed-in user and API tokens without a restriction (own tokens, server status); a token restricted to a role gets them only when that role is Admin on everything |
 
 ## Scopes
 

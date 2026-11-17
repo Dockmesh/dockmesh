@@ -18,6 +18,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
@@ -47,6 +48,25 @@ type Executor struct {
 
 	// runOps carries the operation of a run from begin to complete.
 	runOps sync.Map
+	// after is time.After; tests replace it to wait without sleeping.
+	after func(time.Duration) <-chan time.Time
+	// waiting holds the ids of jobs whose run waits for its agent.
+	waiting sync.Map
+}
+
+// A scheduled run of an agent host that is not connected waits this long
+// for it, checking every agentPoll: a run that fires while agents
+// reconnect after a server restart would otherwise skip a whole day.
+const (
+	agentWait = 5 * time.Minute
+	agentPoll = 5 * time.Second
+)
+
+type waitForHostKey struct{}
+
+// withHostWait marks ctx as a scheduled run that waits for its host.
+func withHostWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, waitForHostKey{}, true)
 }
 
 // Steps of a backup run, in order, as reported to its operation.
@@ -88,7 +108,7 @@ type hostBackupTarget interface {
 }
 
 func newExecutor(s *store, db *sql.DB, dc *docker.Client, hosts hostResolver, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Executor {
-	return &Executor{store: s, db: db, docker: dc, hosts: hosts, stacks: sm, secrets: sec, paths: paths}
+	return &Executor{store: s, db: db, docker: dc, hosts: hosts, stacks: sm, secrets: sec, paths: paths, after: time.After}
 }
 
 // logf appends one captured line to the run-log. Best-effort: if the
@@ -206,6 +226,14 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 
 	op.StepStart(StepPrepare, "")
 	resolved, err := e.resolveHost(job.HostID)
+	if errors.Is(err, host.ErrAgentOffline) && ctx.Value(waitForHostKey{}) != nil {
+		e.waiting.Store(job.ID, true)
+		resolved, err = e.waitForHost(ctx, runID, job.HostID)
+		e.waiting.Delete(job.ID)
+		if err == nil {
+			err = e.reloadJob(ctx, job)
+		}
+	}
 	if err != nil {
 		return fail("resolve host", err), nil, nil
 	}
@@ -546,6 +574,54 @@ func (e *Executor) resolveHost(hostID string) (hostBackupTarget, error) {
 		return nil, fmt.Errorf("host registry not configured — backup of remote hosts unavailable")
 	}
 	return e.hosts.Pick(hostID)
+}
+
+// waitForHost polls for an offline agent until it connects, agentWait
+// passes or the run is cancelled.
+func (e *Executor) waitForHost(ctx context.Context, runID int64, hostID string) (hostBackupTarget, error) {
+	e.logf(ctx, runID, "info", "agent %s is not connected; waiting up to %s for it", hostID, agentWait)
+	for waited := time.Duration(0); waited < agentWait; waited += agentPoll {
+		select {
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-e.after(agentPoll):
+		}
+		resolved, err := e.resolveHost(hostID)
+		if !errors.Is(err, host.ErrAgentOffline) {
+			if err == nil {
+				e.logf(ctx, runID, "info", "agent %s connected", hostID)
+			}
+			return resolved, err
+		}
+	}
+	return nil, fmt.Errorf("%w (waited %s)", host.ErrAgentOffline, agentWait)
+}
+
+// errJobChanged ends a run whose job was deleted, disabled or moved to
+// another host while it waited for its agent.
+var errJobChanged = errors.New("the job was deleted, disabled or moved to another host while the run waited")
+
+// reloadJob replaces job with its current settings after a wait, so an
+// edit made meanwhile applies to the run.
+func (e *Executor) reloadJob(ctx context.Context, job *Job) error {
+	fresh, err := e.store.getJob(ctx, job.ID)
+	if errors.Is(err, ErrJobNotFound) {
+		return errJobChanged
+	}
+	if err != nil {
+		return err
+	}
+	if !fresh.Enabled || fresh.HostID != job.HostID {
+		return errJobChanged
+	}
+	*job = *fresh
+	return nil
+}
+
+// waitingForHost reports whether a run of the job waits for its agent.
+func (e *Executor) waitingForHost(jobID int64) bool {
+	_, ok := e.waiting.Load(jobID)
+	return ok
 }
 
 // localBackupTarget adapts the central docker client to hostBackupTarget.

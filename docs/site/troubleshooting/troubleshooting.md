@@ -195,6 +195,8 @@ docker pull <image>
 
 **Fix:** bring the agent back (see [The host shows offline](#the-host-shows-offline)), then deploy again.
 
+A scheduled backup of an agent host that isn't connected waits up to 5 minutes for the agent (its run log says so), then fails with `resolve host: agent offline (waited 5m0s)`. A backup you start by hand fails at once.
+
 ### "out of scope: none of your assignments allows this here"
 
 **Cause:** your roles allow deploying, but none of your assignments covers this stack on this host (HTTP 403). A plain `forbidden` means none of your roles includes the permission at all. Stacks created before 0.5.0 have no host until their first deploy, so users limited to some hosts can't deploy them.
