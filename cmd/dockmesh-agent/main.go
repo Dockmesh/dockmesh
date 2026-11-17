@@ -123,27 +123,16 @@ func main() {
 	agentLayout = detectLayout(cfg.dataDir)
 	legacyOpenBinDir(cfg.dataDir)
 
-	certPath := filepath.Join(cfg.dataDir, "agent.crt")
-	keyPath := filepath.Join(cfg.dataDir, "agent.key")
-	caPath := filepath.Join(cfg.dataDir, "ca.crt")
-	urlPath := filepath.Join(cfg.dataDir, "agent.url")
+	paths := dataDirEnrollPaths(cfg.dataDir)
+	certPath, keyPath, caPath, urlPath := paths.cert, paths.key, paths.ca, paths.url
 
-	// Step 1: enrollment, only if no cert on disk yet.
-	if !fileExists(certPath) || !fileExists(keyPath) || !fileExists(caPath) {
-		if cfg.enrollURL == "" || cfg.token == "" {
-			slog.Error("first run: DOCKMESH_ENROLL_URL and DOCKMESH_TOKEN are required")
-			os.Exit(1)
+	if err := enrollOnStart(cfg, paths, func(c agentConfig, p enrollPaths) error {
+		return enroll(c, p.cert, p.key, p.ca, p.url)
+	}); err != nil {
+		if errors.Is(err, errEnrollRejected) || errors.Is(err, errNotEnrolled) {
+			os.Exit(layout.AgentExitEnrollRejected)
 		}
-		slog.Info("enrolling", "url", cfg.enrollURL)
-		if err := enroll(cfg, certPath, keyPath, caPath, urlPath); err != nil {
-			if errors.Is(err, errEnrollRejected) {
-				slog.Error("enrollment failed", "err", err, "hint", reenrollHint)
-				os.Exit(layout.AgentExitEnrollRejected)
-			}
-			slog.Error("enrollment failed", "err", err)
-			os.Exit(1)
-		}
-		slog.Info("enrolled successfully")
+		os.Exit(1)
 	}
 
 	// Resolve the agent URL: env override > persisted file > error.
@@ -158,10 +147,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := finishPendingRenewal(certPath, keyPath); err != nil {
-		slog.Error("finish cert renewal", "err", err)
-		os.Exit(1)
-	}
 	store, err := newCertStore(certPath, keyPath, caPath)
 	if err != nil {
 		slog.Error("tls config", "err", err)

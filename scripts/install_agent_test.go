@@ -493,3 +493,33 @@ func TestInstallAgentStartFailureHint(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallAgentWriteEnrollToken(t *testing.T) {
+	fn := agentScriptFunc(t, "write_enroll_token")
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "enroll-token")
+	if err := os.Symlink(victim, dest); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+fn+"\nwrite_enroll_token \"$1\" \"$2\" root root", "t", "tok_0123456789abcdef", dest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	fi, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
+		t.Errorf("enroll-token mode %v, want a regular 0600 file", fi.Mode())
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "tok_0123456789abcdef\n" {
+		t.Errorf("enroll-token = %q", b)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Errorf("symlink target written: %q", b)
+	}
+}

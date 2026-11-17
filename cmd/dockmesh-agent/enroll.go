@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -178,17 +179,22 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 			return fmt.Errorf("server CA: %w", err)
 		}
 	}
-	if err := os.WriteFile(certPath, []byte(er.ClientCert), 0o600); err != nil {
+	// The pair goes through .next files, as a renewal does: a re-enrolled
+	// host keeps its previous pair until both new files are complete.
+	if err := pki.WriteFileAtomic(caPath, []byte(er.CACert), 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(keyPath, []byte(er.ClientKey), 0o600); err != nil {
+	if err := pki.WriteFileAtomic(keyPath+".next", []byte(er.ClientKey), 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(caPath, []byte(er.CACert), 0o600); err != nil {
+	if err := pki.WriteFileAtomic(certPath+".next", []byte(er.ClientCert), 0o600); err != nil {
+		return err
+	}
+	if err := finishPendingRenewal(certPath, keyPath); err != nil {
 		return err
 	}
 	if er.AgentURL != "" {
-		_ = os.WriteFile(urlPath, []byte(er.AgentURL), 0o600)
+		_ = pki.WriteFileAtomic(urlPath, []byte(er.AgentURL), 0o600)
 	}
 	slog.Info("cert persisted", "agent_id", er.AgentID, "cn", er.AgentName)
 	return nil

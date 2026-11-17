@@ -1,0 +1,3 @@
+kind: Changed
+body: The agent installer writes the enrollment token to a one-time file in the agent's data directory instead of agent.env; the agent deletes it after enrollment, and a host whose token is missing or refused stops the agent service instead of retrying every 10 seconds
+time: 2026-11-17T11:15:18.765038033Z
