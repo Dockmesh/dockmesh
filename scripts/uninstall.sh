@@ -996,7 +996,7 @@ if [ "$DO_DATA" = "1" ]; then
     resolve_purge_paths "" "$DATA_DIR_DEFAULT"
     purge_root || true
   fi
-  if [ -d /etc/dockmesh ]; then
+  if [ "$PURGE_OK" = "1" ] && [ -d /etc/dockmesh ]; then
     run rm -rf /etc/dockmesh
     ok "removed /etc/dockmesh (config)"
   fi

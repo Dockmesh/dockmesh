@@ -147,6 +147,8 @@ type agentInstaller struct {
 	// legacyScript is the legacy layout's root copy script.
 	legacyScript string
 	systemctl    func(args ...string) error
+	// stateDir, when set, records the directories run creates.
+	stateDir string
 }
 
 func hostInstaller(self string) *agentInstaller {
@@ -175,6 +177,7 @@ func hostInstaller(self string) *agentInstaller {
 		},
 		legacy:       hostLegacyLeftovers,
 		legacyScript: legacyRefreshScript,
+		stateDir:     managedStateDir,
 		systemctl: func(args ...string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -424,6 +427,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		}
 		if created {
 			res.changed = append(res.changed, d.path)
+			if in.stateDir != "" {
+				if err := recordCreatedDir(in.stateDir, d.path); err != nil {
+					res.warnings = append(res.warnings, fmt.Sprintf("record %s for uninstall: %v", d.path, err))
+				}
+			}
 		}
 	}
 	if err := layout.PrepareRootDir(filepath.Dir(in.envFile), in.rootUID, gid); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -36,6 +37,9 @@ const (
 	heartbeatGrace = 60 * time.Second
 	pingInterval   = 30 * time.Second
 	writeWait      = 10 * time.Second
+	// uninstalledGrace is how long a removed host's session may stay open
+	// to read the confirmation.
+	uninstalledGrace = 5 * time.Second
 )
 
 func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +53,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fp := pki.FingerprintFromCert(peer)
 
 	agent, err := h.svc.LookupByFingerprint(r.Context(), fp)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		// Agents read "agent not registered" as a deleted host and slow
+		// their retries to hourly; a lookup failure is not that.
+		slog.Error("agent connect: lookup", "fp", fp[:12], "err", err)
+		http.Error(w, "try again later", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		slog.Warn("agent connect: unknown fingerprint", "fp", fp[:12], "err", err)
 		http.Error(w, "agent not registered", http.StatusUnauthorized)
@@ -147,7 +158,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		var f Frame
-		if err := json.Unmarshal(raw, &f); err != nil {
+		if err := json.Unmarshal(raw, &f); err != nil || ag.removed.Load() {
 			continue
 		}
 		switch f.Type {
@@ -165,6 +176,18 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer ag.renewing.Store(false)
 				h.svc.handleCertRenew(ctx, ag, f)
 			}(f)
+		case FrameAgentUninstalled:
+			if err := h.svc.markUninstalled(ctx, ag); err != nil {
+				slog.Warn("mark agent uninstalled", "id", agent.ID, "name", agent.Name, "err", err)
+				return
+			}
+			slog.Info("agent removed from its host", "id", agent.ID, "name", agent.Name)
+			// The pump is the only writer; ack through the send queue and
+			// let the agent close the session.
+			_ = ag.enqueue(ctx, Frame{Type: FrameServerUninstalled})
+			// Revoke and delete no longer reach a removed session, so it
+			// ends here even if the agent keeps it open.
+			time.AfterFunc(uninstalledGrace, ag.shutdown)
 		case FrameAgentMetrics:
 			in := h.svc.intake(ag.ID)
 			if len(f.Payload) > maxMetricsBytes || !in.begin(time.Now()) {

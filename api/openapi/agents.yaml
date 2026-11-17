@@ -297,7 +297,7 @@ components:
         name: {type: string}
         status:
           type: string
-          enum: [pending, online, offline, revoked]
+          enum: [pending, online, offline, removed, revoked]
         version: {type: string}
         os: {type: string}
         arch: {type: string}
@@ -320,6 +320,9 @@ components:
           type: string
           enum: [legacy, managed]
           description: Install layout of the live session; only set while online. `legacy` agents replace their own binary, `managed` agents are updated by their root updater (`dockmesh-agent update apply`).
+        rerun_command:
+          type: string
+          description: Installer one-liner without a token. Run on the host it keeps the enrollment and moves the agent to the managed layout. Only set for online `legacy` agents and while an agent URL is configured; carries no secret, the key pin is public.
         stacks_dirs:
           type: array
           maxItems: 4

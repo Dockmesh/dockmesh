@@ -2737,6 +2737,14 @@
   "hosts_kind_agent": "Agent",
   "hosts_kind_local": "lokal",
   "hosts_last_seen": "Zuletzt gesehen",
+  "hosts_legacy_badge": "Altes Layout",
+  "hosts_legacy_badge_title": "Altes Installations-Layout: Updates werden nur gegen die Prüfsumme des Servers geprüft. Öffne den Host, um auf signierte Updates umzustellen.",
+  "hosts_legacy_copied": "Befehl kopiert",
+  "hosts_legacy_docs": "Doku ↗",
+  "hosts_legacy_hide": "Für 30 Tage ausblenden",
+  "hosts_legacy_text": "Er wird weiter aktualisiert, prüft Updates aber nur gegen die Prüfsumme dieses Servers. Führe dies auf dem Host aus, um auf signierte Updates umzustellen:",
+  "hosts_legacy_text_no_cmd": "Er wird weiter aktualisiert, prüft Updates aber nur gegen die Prüfsumme dieses Servers. Führe den Agent-Installer auf dem Host erneut ohne Token aus, um auf signierte Updates umzustellen.",
+  "hosts_legacy_title": "Dieser Agent nutzt das alte Layout",
   "hosts_lens_current": "Aktueller Fokus",
   "hosts_lens_hint": "Jede Seite nach diesem Host filtern",
   "hosts_lens_set": "Als Fokus setzen",
@@ -6281,5 +6289,9 @@
   "backups_unit_done": "Backup-Verzeichnisse sind beschreibbar",
   "backups_unit_failed": "Schreiben konnte nicht erlaubt werden",
   "backups_unit_still_read_only": "Dockmesh wurde neu gestartet, aber ein Verzeichnis ist weiter schreibgeschützt: sein Dateisystem ist vielleicht schreibgeschützt eingehängt",
-  "backups_unit_timeout": "Dockmesh hat sich nicht innerhalb von 5 Minuten zurückgemeldet"
+  "backups_unit_timeout": "Dockmesh hat sich nicht innerhalb von 5 Minuten zurückgemeldet",
+  "label_host_removed": "Vom Host entfernt",
+  "hosts_removed_title": "Der Agent wurde von {name} entfernt",
+  "hosts_removed_text": "Stacks auf diesem Host laufen weiter, werden aber nicht mehr verwaltet.",
+  "hosts_delete_host": "Host löschen"
 }

@@ -90,6 +90,9 @@ func main() {
 		case "system":
 			runSystemCmd(os.Args[2:])
 			return
+		case "uninstall":
+			runUninstallCmd(os.Args[2:])
+			return
 		}
 	}
 	insecureEnroll := os.Getenv("DOCKMESH_INSECURE_ENROLL") == "true"
@@ -180,6 +183,7 @@ func main() {
 		slog.Info("shutting down")
 		cancel()
 	}()
+	watchUninstallSignal(ctx)
 
 	// Host-metrics sampler: mirrors the central server so every host
 	// (local and every remote agent) emits CPU% averaged over a 5s
@@ -191,21 +195,18 @@ func main() {
 	go removeOrphanHelpers(ctx, startedAt)
 
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
-	attempt := 0
+	var rc reconnects
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := runOnce(ctx, dialURL, tlsCfg, store)
+		err := runOnce(ctx, dialURL, tlsCfg, store, !rc.quiet())
 		if ctx.Err() != nil {
 			break
 		}
-		if time.Since(started) >= stableSession {
-			attempt = 0
+		if uninstalled.Load() {
+			<-ctx.Done()
+			break
 		}
-		delay := reconnectDelay(attempt, rng)
-		attempt++
-		if err != nil {
-			slog.Warn("disconnected, reconnecting", "err", err, "backoff", delay)
-		}
+		delay := rc.next(err, time.Since(started), rng)
 		select {
 		case <-ctx.Done():
 			return
@@ -214,7 +215,7 @@ func main() {
 	}
 }
 
-func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *certStore) error {
+func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *certStore, logDial bool) error {
 	u, err := url.Parse(dialURL)
 	if err != nil {
 		return fmt.Errorf("parse url: %w", err)
@@ -223,10 +224,12 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		TLSClientConfig:  tlsCfg,
 		HandshakeTimeout: 15 * time.Second,
 	}
-	slog.Info("dialing", "url", u.String())
-	conn, _, err := dialer.DialContext(ctx, u.String(), nil)
+	if logDial {
+		slog.Info("dialing", "url", u.String())
+	}
+	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return dialError(resp, err)
 	}
 	defer conn.Close()
 	defer closeOnDone(ctx, conn)()
@@ -276,6 +279,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName,
 		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion, "layout", agentLayout)
 	clearUpdateResult(dataDir(), hello.UpdateResult)
+	rememberAgentName(dataDir(), welcome.AgentName)
 	if agentLayout == agents.LayoutManaged {
 		markRunning(dataDir())
 	}
@@ -287,6 +291,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	if agentLayout == agents.LayoutManaged {
 		go reconnectForResult(ctxConn, conn, dataDir())
 	}
+	go reportUninstall(ctxConn, conn, dataDir())
 	// A failed write closes the socket so the read loop doesn't wait on
 	// a dead connection.
 	go func() {
@@ -351,6 +356,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 			deliverResponse(f)
 		case agents.FrameReqCancel:
 			cancelRequest(f.ID)
+		case agents.FrameServerUninstalled:
+			ackUninstall()
 		case agents.FrameStreamOpen:
 			var open agents.StreamOpen
 			if err := json.Unmarshal(f.Payload, &open); err != nil {

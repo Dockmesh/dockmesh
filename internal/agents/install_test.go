@@ -106,6 +106,59 @@ func TestInstallURLFromAgentURL(t *testing.T) {
 	}
 }
 
+func TestRerunCommand(t *testing.T) {
+	svc, mgr := newTestService(t)
+	tests := []struct {
+		name, agentURL, want string
+	}{
+		{"configured", "wss://dockmesh.test:8443/connect",
+			"curl -fsSLk --pinnedpubkey '" + mgr.ServerKeyPin() + "' 'https://dockmesh.test:8443/install/agent.sh' | sudo bash"},
+		{"plain ws", "ws://dockmesh.test:8443/connect", ""},
+		{"no agent URL", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc.UseEndpoints(Endpoints{AgentURL: tt.agentURL})
+			got := svc.RerunCommand()
+			if got != tt.want {
+				t.Fatalf("RerunCommand() = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(got, "--token") {
+				t.Fatalf("RerunCommand() carries a token: %q", got)
+			}
+		})
+	}
+}
+
+func TestFillStatusRerunCommand(t *testing.T) {
+	svc, _ := newTestService(t)
+	tests := []struct {
+		name   string
+		layout string
+		want   bool
+	}{
+		{"legacy", LayoutLegacy, true},
+		{"no layout reported", "", true},
+		{"managed", LayoutManaged, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc.connected["a1"] = &ConnectedAgent{ID: "a1", Hello: HelloPayload{Layout: tt.layout}}
+			a := Agent{ID: "a1", Status: "offline"}
+			svc.fillStatus(&a)
+			if got := a.RerunCommand != ""; got != tt.want {
+				t.Fatalf("rerun command set = %v, want %v (%q)", got, tt.want, a.RerunCommand)
+			}
+		})
+	}
+	delete(svc.connected, "a1")
+	a := Agent{ID: "a1", Status: "offline"}
+	svc.fillStatus(&a)
+	if a.RerunCommand != "" {
+		t.Fatalf("offline agent got a rerun command: %q", a.RerunCommand)
+	}
+}
+
 func TestInstallHandlerRateLimit(t *testing.T) {
 	svc, _ := newTestService(t)
 	setupInstallAssets(t)

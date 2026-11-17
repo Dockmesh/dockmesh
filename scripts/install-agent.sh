@@ -596,7 +596,8 @@ if [[ $MODE == fresh ]]; then
     "Stacks      ${STACKS_DIR:-$DATA_DIR/stacks}" \
     "" \
     "Status      systemctl status dockmesh-agent" \
-    "Logs        journalctl -u dockmesh-agent -f"
+    "Logs        journalctl -u dockmesh-agent -f" \
+    "Remove      sudo dockmesh-agent uninstall"
   exit 0
 fi
 

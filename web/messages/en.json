@@ -2737,6 +2737,14 @@
   "hosts_kind_agent": "agent",
   "hosts_kind_local": "local",
   "hosts_last_seen": "Last seen",
+  "hosts_legacy_badge": "Legacy layout",
+  "hosts_legacy_badge_title": "Old install layout: updates are checked only against the server checksum. Open the host to switch to signed updates.",
+  "hosts_legacy_copied": "Command copied",
+  "hosts_legacy_docs": "Docs ↗",
+  "hosts_legacy_hide": "Hide for 30 days",
+  "hosts_legacy_text": "It keeps updating, but checks updates only against this server's checksum. Run this on the host to switch to signed updates:",
+  "hosts_legacy_text_no_cmd": "It keeps updating, but checks updates only against this server's checksum. Re-run the agent installer on the host without a token to switch to signed updates.",
+  "hosts_legacy_title": "This agent uses the old layout",
   "hosts_lens_current": "Current lens",
   "hosts_lens_hint": "Filter every page by this host",
   "hosts_lens_set": "Set as lens",
@@ -6281,5 +6289,9 @@
   "backups_unit_done": "Backup directories are writable",
   "backups_unit_failed": "Could not allow writing",
   "backups_unit_still_read_only": "Dockmesh restarted, but a directory is still read-only: its file system may be mounted read-only",
-  "backups_unit_timeout": "Dockmesh did not report back within 5 minutes"
+  "backups_unit_timeout": "Dockmesh did not report back within 5 minutes",
+  "label_host_removed": "Removed from host",
+  "hosts_removed_title": "The agent was removed from {name}",
+  "hosts_removed_text": "Stacks on this host keep running but are no longer managed.",
+  "hosts_delete_host": "Delete host"
 }
