@@ -208,6 +208,15 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 	if err := os.MkdirAll(info.PrevDir, 0o700); err != nil {
 		return false, err
 	}
+	// Run as root, the directories holding the copies get the data
+	// directory's owner, or the server could not list or delete them.
+	if o, ok := ownerOf(dataDir); ok && os.Geteuid() == 0 {
+		for _, d := range []string{filepath.Dir(info.PrevDir), info.PrevDir} {
+			if err := os.Lchown(d, o.uid, o.gid); err != nil {
+				return false, err
+			}
+		}
+	}
 
 	// Database first, with the WAL and SHM files of the old one.
 	db := filepath.Base(cfg.DBPath)
