@@ -161,17 +161,22 @@ PURGE_DB_NAME="dockmesh.db"
 PURGE_STACKS=""
 PURGE_FILES=()
 PURGE_KEPT=0
+KEPT_OWNED=0
 AGENT_DIRS=()
 # IN_USE holds the host paths containers mount; IN_USE_KNOWN is 1 once
-# Docker answered. SERVICE_USERS own what Dockmesh writes.
+# Docker answered. SERVICE_USERS own what Dockmesh writes; root is added
+# for installs whose data root root owns.
 IN_USE=()
 IN_USE_KNOWN=0
-SERVICE_USERS="dockmesh root"
+SERVICE_USERS="dockmesh"
 
 # keep P WHY reports a kept path. Names can come from container data, so
 # control characters are dropped before they reach the terminal.
 keep() {
   PURGE_KEPT=1
+  if [ "$(stat -c %U -- "$1" 2>/dev/null)" = "dockmesh" ]; then
+    KEPT_OWNED=1
+  fi
   warn "keep    $(printf '%s' "$1" | tr -d '\000-\037\177'): $(printf '%s' "$2" | tr -d '\000-\037\177')"
 }
 
@@ -195,9 +200,44 @@ read_container_mounts() {
   ids="$(docker ps -aq 2>/dev/null)" || return 0
   IN_USE_KNOWN=1
   [ -n "$ids" ] || return 0
+  local out
+  if ! out="$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' $ids 2>/dev/null)"; then
+    IN_USE_KNOWN=0
+    return 0
+  fi
   while IFS= read -r src; do
-    [ -n "$src" ] && IN_USE+=("$src")
-  done < <(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' $ids 2>/dev/null)
+    if [ -n "$src" ]; then
+      IN_USE+=("$src")
+    fi
+  done <<<"$out"
+}
+
+# host_procs_of USER prints the pids of USER's processes in the host's pid
+# namespace; container processes that share the uid are not Dockmesh's.
+host_procs_of() {
+  local pid host
+  host="$(readlink /proc/1/ns/pid 2>/dev/null)" || return 0
+  for pid in $(pgrep -u "$1" 2>/dev/null); do
+    if [ "$(readlink "/proc/$pid/ns/pid" 2>/dev/null)" = "$host" ]; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+# stop_service_procs kills the service account's host processes and
+# succeeds once none is left.
+stop_service_procs() {
+  local pids
+  pids="$(host_procs_of dockmesh)"
+  [ -z "$pids" ] && return 0
+  # shellcheck disable=SC2086
+  run kill -KILL $pids 2>/dev/null || true
+  [ "$DRYRUN" = "1" ] && return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -z "$(host_procs_of dockmesh)" ] && return 0
+    sleep 1
+  done
+  return 1
 }
 
 # mounted_below DIR prints a container bind source in or below DIR.
@@ -709,6 +749,10 @@ purge_root() {
   if [ ! -d "$root" ]; then
     return 0
   fi
+  if [ -z "$(find -P "$root" -mindepth 1 -print -quit 2>/dev/null)" ] && owner_ok "$root"; then
+    finish_dir "$root" 0
+    return
+  fi
   if ! looks_like_data_root "$root"; then
     keep "$root" "does not look like a Dockmesh data directory"
     return 1
@@ -938,16 +982,17 @@ fi
 if [ "$DO_DATA" = "1" ]; then
   # Nothing running as the service account may swap a checked directory
   # for a link while root removes files below it.
-  if [ "$OS" = "linux" ] && id dockmesh >/dev/null 2>&1; then
-    run pkill -KILL -u dockmesh 2>/dev/null || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      pgrep -u dockmesh >/dev/null 2>&1 || break
-      sleep 1
-    done
+  PURGE_OK=1
+  if [ "$OS" = "linux" ] && id dockmesh >/dev/null 2>&1 && ! stop_service_procs; then
+    PURGE_OK=0
+    keep "$DATA_DIR" "processes of the dockmesh account are still running; stop them and run again"
+  fi
+  if [ "$OS" = "darwin" ] || { [ -d "$DATA_DIR" ] && [ "$(stat -c %U -- "$DATA_DIR" 2>/dev/null)" = "root" ]; }; then
+    SERVICE_USERS="dockmesh root"
   fi
   read_container_mounts
-  purge_root || true
-  if [ "$DATA_DIR_DEFAULT" != "$DATA_DIR" ] && [ -d "$DATA_DIR_DEFAULT" ]; then
+  [ "$PURGE_OK" = "1" ] && { purge_root || true; }
+  if [ "$PURGE_OK" = "1" ] && [ "$DATA_DIR_DEFAULT" != "$DATA_DIR" ] && [ -d "$DATA_DIR_DEFAULT" ]; then
     resolve_purge_paths "" "$DATA_DIR_DEFAULT"
     purge_root || true
   fi
@@ -957,18 +1002,14 @@ if [ "$DO_DATA" = "1" ]; then
   fi
 fi
 
-# Remove service user. Two fixes for prior bugs:
-#   1. systemctl stop sends SIGTERM and waits up to ~10s for the
-#      process to exit. Doing userdel right after sometimes raced —
-#      userdel refuses while any process owns the UID. We pkill -u
-#      dockmesh first to clear any straggler before deleting.
-#   2. The previous version emitted `ok "removed user"` unconditionally,
-#      even when userdel had failed and warn already fired — claiming
-#      success when none happened. Now: only emit ok when userdel
-#      actually returns 0.
+# userdel refuses while a process still runs as the account.
+if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ] && [ "$KEPT_OWNED" = "1" ]; then
+  keep "user dockmesh" "owns files that were kept; a new account could get its uid"
+  DO_USER=0
+fi
 if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ]; then
   if id dockmesh >/dev/null 2>&1; then
-    run pkill -KILL -u dockmesh 2>/dev/null || true
+    stop_service_procs || true
     if run userdel dockmesh 2>/dev/null; then
       ok "removed 'dockmesh' system user"
     else

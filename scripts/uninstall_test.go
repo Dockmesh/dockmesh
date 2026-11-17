@@ -224,10 +224,12 @@ func TestUninstallPurge(t *testing.T) {
 		// inUse are colon-separated container bind sources.
 		inUse      string
 		dockerDown bool
-		gone       []string
-		present    []string
-		out        []string
-		notOut     []string
+		// owners replaces the accounts that may own Dockmesh's trees.
+		owners  string
+		gone    []string
+		present []string
+		out     []string
+		notOut  []string
 	}{
 		{
 			name: "foreign file in a stack dir",
@@ -399,6 +401,20 @@ func TestUninstallPurge(t *testing.T) {
 			out:   []string{"removed {root}/fallback\n"},
 		},
 		{
+			name:  "empty default dir left by setup mode",
+			files: map[string]string{"fallback": "/"},
+			gone:  []string{"fallback"},
+		},
+		{
+			name:    "trees owned by another account",
+			files:   dockmeshFiles,
+			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			owners:  "nobody",
+			gone:    []string{"dm-root/data/dockmesh.db"},
+			present: []string{"dm-root/update/result.json", "dm-root/stacks/web/compose.yaml", "dm-root/data/grype-db/5/vulnerability.db"},
+			out:     []string{"keep    {root}/dm-root/update: not owned by the dockmesh account\n", "keep    {root}/dm-root/stacks: not owned by the dockmesh account\n"},
+		},
+		{
 			name: "empty bind source of a container",
 			files: with(map[string]string{
 				"dm-root/stacks/app/compose.yaml": "services: {}",
@@ -456,12 +472,15 @@ func TestUninstallPurge(t *testing.T) {
 IFS=: read -ra AGENT_DIRS <<<"${TEST_AGENTS:-}"
 IFS=: read -ra IN_USE <<<"${TEST_IN_USE:-}"
 IN_USE_KNOWN="${TEST_IN_USE_KNOWN:-1}"
-SERVICE_USERS="$(id -un)"
+SERVICE_USERS="${TEST_SERVICE_USERS:-$(id -un)}"
 purge_root || true`
 			cmd := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", env, root+"/fallback")
 			cmd.Env = append(os.Environ(), "NO_COLOR=1", "TEST_AGENTS="+sub(tt.agents), "TEST_IN_USE="+sub(tt.inUse))
 			if tt.dockerDown {
 				cmd.Env = append(cmd.Env, "TEST_IN_USE_KNOWN=0")
+			}
+			if tt.owners != "" {
+				cmd.Env = append(cmd.Env, "TEST_SERVICE_USERS="+tt.owners)
 			}
 			if tt.dryRun {
 				cmd.Env = append(cmd.Env, "DRYRUN=1")
@@ -566,5 +585,27 @@ func TestUninstallLeavesAgentAlone(t *testing.T) {
 	}
 	if strings.Contains(s, "dockmesh-agent\"\n") || regexp.MustCompile(`rm [^\n]*dockmesh-agent`).MatchString(s) {
 		t.Error("uninstall.sh removes an agent file")
+	}
+}
+
+func TestUninstallReadsContainerMounts(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	bin := t.TempDir()
+	fake := "#!/bin/sh\ncase \"$1\" in\n  ps) printf 'aaa\\nbbb\\n' ;;\n  inspect) printf '\\n/srv/dm/stacks/app/uploads\\n\\n' ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	call := `read_container_mounts
+echo "known=$IN_USE_KNOWN mounts=${IN_USE[*]}"`
+	cmd := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test")
+	cmd.Env = append(os.Environ(), "NO_COLOR=1", "PATH="+bin+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read_container_mounts failed under set -e: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "known=1 mounts=/srv/dm/stacks/app/uploads" {
+		t.Fatalf("got %q", got)
 	}
 }
