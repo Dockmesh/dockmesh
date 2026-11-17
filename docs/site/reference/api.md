@@ -196,6 +196,16 @@ The client address is the TCP peer unless the peer is a trusted proxy: only then
 
 These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/ready` (503 while shutting down or when the database does not answer), the OpenAPI paths above, the sign-in routes under `/api/v1/auth/` (login, MFA, refresh, logout, SSO), `GET /api/v1/setup/status` and `POST /api/v1/setup/code` during setup (the other `/api/v1/setup/*` routes need the setup session cookie `POST /api/v1/setup/code` sets), `/api/v1/invite/{token}`, `POST /api/v1/stacks/{name}/git/webhook` (checked with the webhook secret, see [Git sources](../features/git-sources.md#push-webhook)), and `/install/agent.sh` and `/install/{name}`. The agent listener (port 8443) accepts enrollment at `/enroll` and serves `/install/agent.sh` and the agent binaries under `/install/` without a client certificate, limited per IP address. `/metrics` is public only with `DOCKMESH_METRICS_AUTH=false`; otherwise it needs a token with `metrics.view`. See [Monitoring](../features/monitoring.md).
 
+## Breaking API changes
+
+Changes that break clients written against an earlier release. The release notes list them as well.
+
+| Release | Change |
+|---|---|
+| 0.5.0 | `GET /api/v1/roles/permissions` was removed. Roles are built from areas with levels and extras now; `GET /api/v1/roles/catalog` lists them. |
+| 0.5.0 | `GET /api/v1/roles/{name}` returns `{"role": …, "assignments": […]}` instead of the bare role. |
+| 0.5.0 | `GET /api/v1/containers/{id}/metrics` and `GET /api/v1/hosts/{id}/stats/containers` return an object with `host_id`, `history` and the samples instead of a bare array; `cpu_percent` is 0-100 of the host, `cpu_percent_core` keeps the per-core value. |
+
 ## dmctl
 
 [dmctl](./dmctl.md) wraps the common calls (sign-in with refresh, stacks, containers, logs, exec, backups, alerts, enrollment) and is the quickest way to script against the API without handling tokens yourself.
