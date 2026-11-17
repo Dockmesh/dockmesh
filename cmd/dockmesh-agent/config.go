@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +33,14 @@ func agentStackDirs() stackDirs {
 // stacksDirChosen reports whether the stacks directory was set explicitly;
 // root writes DOCKMESH_STACKS_DIR only then.
 func stacksDirChosen() bool { return filepath.IsAbs(os.Getenv("DOCKMESH_STACKS_DIR")) }
+
+// runUser is the account the agent runs as, for the host's Setup tab.
+func runUser() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return strconv.Itoa(os.Getuid())
+}
 
 func resolveStackDirs(current, earlier, data string) stackDirs {
 	d := stackDirs{current: filepath.Join(data, "stacks")}

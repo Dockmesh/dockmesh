@@ -29,6 +29,8 @@
         return m.setup_disk_network_share();
       case 'no Unix permissions':
         return m.setup_disk_no_unix();
+      case 'not allowed as a stacks dir':
+        return m.setup_disk_not_stacks_place();
       default:
         return m.setup_disk_not_allowed();
     }

@@ -444,6 +444,10 @@ type HelloPayload struct {
 	// StacksDirSet: the stacks directory was chosen explicitly
 	// (DOCKMESH_STACKS_DIR is set), not left at the default.
 	StacksDirSet bool `json:"stacks_dir_set,omitempty"`
+	// DataDir and User are the agent's data directory and the account it
+	// runs as.
+	DataDir string `json:"data_dir,omitempty"`
+	User    string `json:"user,omitempty"`
 }
 
 // StacksDirApplyReq asks for Path as the agent's stacks directory.

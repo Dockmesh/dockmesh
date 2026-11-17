@@ -332,3 +332,28 @@ func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool,
 	go s.applyClaimed(context.Background(), ag, p)
 	return false, nil
 }
+
+// CheckStacksDir asks the connected host id to check p with the rules its
+// root updater applies, without changing anything.
+func (s *Service) CheckStacksDir(ctx context.Context, id, p string) (StacksDirCheck, error) {
+	if err := ValidateStacksDir(p); err != nil {
+		return StacksDirCheck{}, err
+	}
+	ag := s.GetConnected(id)
+	if ag == nil {
+		return StacksDirCheck{}, ErrAgentNotConnected
+	}
+	payload, _ := json.Marshal(StacksDirApplyReq{Path: p, CheckOnly: true})
+	env, err := ag.Request(ctx, Frame{Type: FrameReqStacksDirApply, Payload: payload})
+	if err != nil {
+		return StacksDirCheck{}, err
+	}
+	var res StacksDirApplyRes
+	if err := json.Unmarshal(env.Data, &res); err != nil {
+		return StacksDirCheck{}, fmt.Errorf("decode stacks dir check: %w", err)
+	}
+	if len(res.Check.Message) > maxStacksDirError {
+		res.Check.Message = strings.ToValidUTF8(res.Check.Message[:maxStacksDirError], "")
+	}
+	return res.Check, nil
+}

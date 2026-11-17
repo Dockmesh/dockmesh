@@ -3647,6 +3647,104 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /hosts/{id}/stacks-dir/check:
+    post:
+      operationId: hosts.checkStacksDir
+      tags: [hosts]
+      summary: Check a stacks directory on a connected host
+      description: |
+        Needs `hosts.update` on the host. The agent checks the path with
+        the rules its root updater applies (allowed place, owner, empty,
+        local disk, free space) and changes nothing. `status` is `ok`,
+        `warn` (usable, e.g. little free space) or `fail` with the reason in
+        `message`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: {type: string, maxLength: 4096}
+      responses:
+        "200":
+          description: The agent's check.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StacksDirCheck"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent is not connected.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The agent did not answer the check.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /hosts/{id}/stacks-dir/disks:
+    get:
+      operationId: hosts.stacksDirDisks
+      tags: [hosts]
+      summary: Disks of a connected host with a suggested stacks directory
+      description: |
+        Needs `hosts.update` on the host. Pseudo filesystems and Docker's
+        own directories are left out. The root filesystem suggests
+        `<data dir>/stacks`; disks at or below /srv, /opt, /data, /mnt or
+        /media suggest `<mount>/stacks`. Network shares, filesystems
+        without Unix permissions and other places are listed as not usable.
+        `unsupported` is set for agents that do not report their disks.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Disk list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [disks]
+                properties:
+                  disks:
+                    type: array
+                    items:
+                      type: object
+                      required: [mountpoint, fs_type, total_bytes, free_bytes, suggested, usable]
+                      properties:
+                        mountpoint: {type: string}
+                        fs_type: {type: string}
+                        total_bytes: {type: integer, format: int64}
+                        free_bytes: {type: integer, format: int64}
+                        suggested: {type: string}
+                        usable: {type: boolean}
+                        reason: {type: string, enum: [network share, no Unix permissions, not allowed as a stacks dir]}
+                  unsupported: {type: boolean}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent is not connected.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The agent did not report its disks.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /images:
     get:
       operationId: images.list
@@ -9014,6 +9112,12 @@ components:
               path: {type: string}
               current: {type: boolean}
               stacks: {type: integer, description: Number of stacks in the directory.}
+        data_dir:
+          type: string
+          description: Data directory of the live session's agent (chosen at install); only set while online and for agents that report it.
+        run_user:
+          type: string
+          description: Account the live session's agent runs as, e.g. `dockmesh-agent` or `root`; only set while online and for agents that report it.
         needs_setup:
           type: boolean
           description: The host is "Waiting for setup". It refuses deploys, migrations to it and backup runs on it until its stacks directory is confirmed. Never set for hosts enrolled before this field existed.
@@ -9985,6 +10089,18 @@ components:
         encrypted:
           type: boolean
           description: Marks the value as secret, so it is stored encrypted and never returned by the API. A secret variable stays secret on update.
+    StacksDirCheck:
+      type: object
+      required: [path, status, message]
+      properties:
+        path: {type: string}
+        status: {type: string, enum: [ok, warn, fail]}
+        issue: {type: string, description: Machine-readable name of the first problem, or `unchanged`.: ''}
+        message: {type: string}
+        will_create: {type: boolean, description: The root updater would create the directory.}
+        fs_type: {type: string}
+        total_bytes: {type: integer, format: int64}
+        free_bytes: {type: integer, format: int64}
     HostInfo:
       type: object
       required: [id, name, kind, status]

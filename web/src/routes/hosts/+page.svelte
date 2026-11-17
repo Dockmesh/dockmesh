@@ -434,6 +434,9 @@
                   {m.label_host_removed()}
                 {:else if waitingSetup(r)}
                   <span class="dm-pill dm-pill-warning setup">{m.label_host_waiting_setup()}</span>
+                  {#if allowed('hosts.update')}
+                    <button type="button" class="dm-btn dm-btn-xs setupbtn" data-testid="row-setup" onclick={(e) => { e.stopPropagation(); goto(`/hosts/${r.id}?tab=setup`); }}>{m.hosts_setup_row()}</button>
+                  {/if}
                   {r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}
                 {:else}
                   {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
@@ -519,6 +522,7 @@
 </Modal>
 
 <style>
+  .setupbtn { margin-right: 6px; }
   .setup { margin-right: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .legacy { margin-left: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .tagf {
