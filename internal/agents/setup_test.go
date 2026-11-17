@@ -55,9 +55,8 @@ func connectWith(t *testing.T, svc *Service, id, fp string, hello HelloPayload, 
 	}
 }
 
-func createdHost(t *testing.T, svc *Service, o CreateOptions) (id, fp string) {
+func createdHost(ctx context.Context, t *testing.T, svc *Service, o CreateOptions) (id, fp string) {
 	t.Helper()
-	ctx := context.Background()
 	res, err := svc.CreateWith(ctx, o)
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +72,9 @@ func createdHost(t *testing.T, svc *Service, o CreateOptions) (id, fp string) {
 	return a.ID, a.CertFingerprint
 }
 
-func mustGet(t *testing.T, svc *Service, id string) *Agent {
+func mustGet(ctx context.Context, t *testing.T, svc *Service, id string) *Agent {
 	t.Helper()
-	a, err := svc.Get(context.Background(), id)
+	a, err := svc.Get(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +88,11 @@ func defaultDirHello() HelloPayload {
 func TestNewHostWaitsForSetupUntilConfirmed(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
-	id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1"})
+	id, fp := createdHost(context.Background(), t, svc, CreateOptions{Name: "edge-1"})
 
 	for start := 1; start <= 2; start++ {
 		connectWith(t, svc, id, fp, defaultDirHello(), nil)
-		if a := mustGet(t, svc, id); !a.NeedsSetup || a.StacksDir != nil {
+		if a := mustGet(context.Background(), t, svc, id); !a.NeedsSetup || a.StacksDir != nil {
 			t.Fatalf("start %d: needs_setup %v stacks_dir %+v, want waiting without a request", start, a.NeedsSetup, a.StacksDir)
 		}
 	}
@@ -111,7 +110,7 @@ func TestNewHostWaitsForSetupUntilConfirmed(t *testing.T) {
 	}
 	for start := 1; start <= 2; start++ {
 		connectWith(t, svc, id, fp, defaultDirHello(), nil)
-		if a := mustGet(t, svc, id); a.NeedsSetup {
+		if a := mustGet(context.Background(), t, svc, id); a.NeedsSetup {
 			t.Fatalf("start %d after confirm: still waiting", start)
 		}
 	}
@@ -131,7 +130,7 @@ func TestEnrolledHostNeverWaitsForSetup(t *testing.T) {
 	for start := 1; start <= 2; start++ {
 		connectWith(t, svc, "old-1", "fp-old", HelloPayload{}, nil)
 		connectWith(t, svc, "old-1", "fp-old", defaultDirHello(), nil)
-		if a := mustGet(t, svc, "old-1"); a.NeedsSetup || a.StacksDir != nil {
+		if a := mustGet(context.Background(), t, svc, "old-1"); a.NeedsSetup || a.StacksDir != nil {
 			t.Fatalf("start %d: needs_setup %v stacks_dir %+v", start, a.NeedsSetup, a.StacksDir)
 		}
 	}
@@ -145,18 +144,18 @@ func TestEnrolledHostNeverWaitsForSetup(t *testing.T) {
 	if _, err := svc.Enroll(ctx, enrollReq(rot.Token)); err != nil {
 		t.Fatal(err)
 	}
-	if a := mustGet(t, svc, "old-1"); a.NeedsSetup || a.Name != "old-1" {
+	if a := mustGet(context.Background(), t, svc, "old-1"); a.NeedsSetup || a.Name != "old-1" {
 		t.Fatalf("after re-enroll: needs_setup %v name %q", a.NeedsSetup, a.Name)
 	}
 }
 
 func TestStacksDirFromInstallSkipsSetup(t *testing.T) {
 	svc, _ := newTestService(t)
-	id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1"})
+	id, fp := createdHost(context.Background(), t, svc, CreateOptions{Name: "edge-1"})
 	hello := HelloPayload{Layout: LayoutManaged, StacksDirSet: true, StacksDirs: []StacksDirInfo{{Path: "/srv/stacks", Current: true}}}
 	for start := 1; start <= 2; start++ {
 		connectWith(t, svc, id, fp, hello, nil)
-		if a := mustGet(t, svc, id); a.NeedsSetup {
+		if a := mustGet(context.Background(), t, svc, id); a.NeedsSetup {
 			t.Fatalf("start %d: still waiting", start)
 		}
 	}
@@ -177,12 +176,12 @@ func TestStacksDirFromAPIIsAppliedOnFirstConnect(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, _ := newTestService(t)
-			id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1", StacksDir: "/srv/stacks"})
-			if a := mustGet(t, svc, id); !a.NeedsSetup || a.StacksDir == nil || a.StacksDir.Status != StacksDirStatePending {
+			id, fp := createdHost(context.Background(), t, svc, CreateOptions{Name: "edge-1", StacksDir: "/srv/stacks"})
+			if a := mustGet(context.Background(), t, svc, id); !a.NeedsSetup || a.StacksDir == nil || a.StacksDir.Status != StacksDirStatePending {
 				t.Fatalf("before connect: needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
 			}
 			connectWith(t, svc, id, fp, defaultDirHello(), &tc.answer)
-			a := mustGet(t, svc, id)
+			a := mustGet(context.Background(), t, svc, id)
 			if a.NeedsSetup != tc.wantWait || a.StacksDir.Status != tc.wantStatus || a.StacksDir.Error != tc.wantError {
 				t.Fatalf("needs_setup %v stacks_dir %+v, want %v %s %q", a.NeedsSetup, a.StacksDir, tc.wantWait, tc.wantStatus, tc.wantError)
 			}
@@ -193,14 +192,14 @@ func TestStacksDirFromAPIIsAppliedOnFirstConnect(t *testing.T) {
 			switch tc.wantStatus {
 			case StacksDirStatePending:
 				connectWith(t, svc, id, fp, moved, nil)
-				a = mustGet(t, svc, id)
+				a = mustGet(context.Background(), t, svc, id)
 				if a.NeedsSetup || a.StacksDir.Status != StacksDirStateApplied {
 					t.Fatalf("after the restart: needs_setup %v stacks_dir %+v, want applied", a.NeedsSetup, a.StacksDir)
 				}
 			default:
 				before := *a.StacksDir
 				connectWith(t, svc, id, fp, defaultDirHello(), nil)
-				a = mustGet(t, svc, id)
+				a = mustGet(context.Background(), t, svc, id)
 				if *a.StacksDir != before || a.NeedsSetup != tc.wantWait {
 					t.Fatalf("second start changed the state: %+v → %+v", before, *a.StacksDir)
 				}
@@ -227,7 +226,7 @@ func TestHostWithoutNameTakesTheHostname(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := mustGet(t, svc, enr.AgentID)
+		a := mustGet(ctx, t, svc, enr.AgentID)
 		if enr.AgentName != a.Name {
 			t.Fatalf("enroll answered %q, host is named %q", enr.AgentName, a.Name)
 		}
@@ -254,7 +253,7 @@ func TestHostWithoutNameTakesTheHostname(t *testing.T) {
 	if _, err := svc.Enroll(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if a := mustGet(t, svc, second.ID); a.Name != "web-1-2" {
+	if a := mustGet(context.Background(), t, svc, second.ID); a.Name != "web-1-2" {
 		t.Fatalf("re-enroll renamed the host to %q", a.Name)
 	}
 }
@@ -292,14 +291,14 @@ func TestSetStacksDir(t *testing.T) {
 	ctx := context.Background()
 	online := func(t *testing.T, svc *Service, hello HelloPayload) (*ConnectedAgent, string) {
 		t.Helper()
-		id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1"})
+		id, fp := createdHost(ctx, t, svc, CreateOptions{Name: "edge-1"})
 		ag := newConnectedAgent(id, "edge-1", func() {})
 		ag.certFP = fp
 		ag.Hello = hello
 		if err := svc.markOnline(ctx, ag, hello); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { svc.markOffline(ag) })
+		t.Cleanup(func() { svc.markOffline(ag) }) //nolint:contextcheck // markOffline has no caller context
 		return ag, id
 	}
 
@@ -311,7 +310,7 @@ func TestSetStacksDir(t *testing.T) {
 			if err != nil || !applied {
 				t.Fatalf("SetStacksDir = %v, %v; want applied", applied, err)
 			}
-			if a := mustGet(t, svc, id); a.NeedsSetup || a.StacksDir.Status != StacksDirStateApplied {
+			if a := mustGet(ctx, t, svc, id); a.NeedsSetup || a.StacksDir.Status != StacksDirStateApplied {
 				t.Fatalf("needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
 			}
 		}
@@ -325,7 +324,7 @@ func TestSetStacksDir(t *testing.T) {
 			t.Fatalf("SetStacksDir = %v, %v; want sent", applied, err)
 		}
 		f := nextFrame(t, ag)
-		if a := mustGet(t, svc, id); !a.NeedsSetup || a.StacksDir.Status != StacksDirStatePending {
+		if a := mustGet(ctx, t, svc, id); !a.NeedsSetup || a.StacksDir.Status != StacksDirStatePending {
 			t.Fatalf("while waiting: needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
 		}
 		if _, err := svc.SetStacksDir(ctx, id, "/opt/stacks"); !errors.Is(err, ErrApplyRunning) {
@@ -338,7 +337,7 @@ func TestSetStacksDir(t *testing.T) {
 		ag.deliverResponse(Frame{Type: FrameRes, ID: f.ID, Payload: payload})
 		deadline := time.Now().Add(5 * time.Second)
 		for {
-			a := mustGet(t, svc, id)
+			a := mustGet(ctx, t, svc, id)
 			if a.StacksDir.Status == StacksDirStateRefused {
 				if a.StacksDir.Error != "unknown frame type" || !a.NeedsSetup {
 					t.Fatalf("refused state %+v needs_setup %v", a.StacksDir, a.NeedsSetup)
@@ -361,7 +360,7 @@ func TestSetStacksDir(t *testing.T) {
 		if _, err := svc.SetStacksDir(ctx, id, "srv"); !errors.Is(err, ErrInvalidStacksDir) {
 			t.Fatalf("relative path = %v", err)
 		}
-		offline, _ := createdHost(t, svc, CreateOptions{Name: "edge-2"})
+		offline, _ := createdHost(ctx, t, svc, CreateOptions{Name: "edge-2"})
 		if _, err := svc.SetStacksDir(ctx, offline, "/srv/stacks"); !errors.Is(err, ErrAgentNotConnected) {
 			t.Fatalf("offline host = %v", err)
 		}
@@ -372,10 +371,10 @@ func TestSetStacksDir(t *testing.T) {
 // install set a stacks directory of its own.
 func TestPendingRequestOutranksInstallDir(t *testing.T) {
 	svc, _ := newTestService(t)
-	id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1", StacksDir: "/srv/stacks"})
+	id, fp := createdHost(context.Background(), t, svc, CreateOptions{Name: "edge-1", StacksDir: "/srv/stacks"})
 	installDir := HelloPayload{Layout: LayoutManaged, StacksDirSet: true, StacksDirs: []StacksDirInfo{{Path: "/opt/stacks", Current: true}}}
 	connectWith(t, svc, id, fp, installDir, &StacksDirApplyRes{Status: StacksDirPending})
-	if a := mustGet(t, svc, id); !a.NeedsSetup {
+	if a := mustGet(context.Background(), t, svc, id); !a.NeedsSetup {
 		t.Fatal("the install's directory ended the setup while a request was pending")
 	}
 }
