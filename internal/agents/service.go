@@ -33,6 +33,15 @@ import (
 // cheap passthrough.
 var rpcTracer = otel.Tracer("dockmesh.agent")
 
+// StatusRemoved is the status of a host whose agent ran `dockmesh-agent
+// uninstall`. The row stays until an admin deletes the host; an agent
+// that enrolls or connects again leaves the status.
+const StatusRemoved = "removed"
+
+// errNotActive: the host is pending or revoked, or the session's
+// certificate is no longer the host's.
+var errNotActive = errors.New("agent is not an active host with this certificate")
+
 // Agent is the public-facing record returned to the UI.
 //
 // OnlineSince tracks the last status-transition into "online". Reset to
@@ -906,11 +915,6 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// StatusRemoved is the status of a host whose agent ran `dockmesh-agent
-// uninstall`. The row stays until an admin deletes the host; an agent
-// that enrolls or connects again leaves the status.
-const StatusRemoved = "removed"
-
 // markUninstalled records that the agent of ag removed itself from its
 // host. Only the session's own certificate may do that.
 func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error {
@@ -925,7 +929,7 @@ func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return ErrCertReplaced
+		return errNotActive
 	}
 	ag.removed.Store(true)
 	s.mu.Lock()

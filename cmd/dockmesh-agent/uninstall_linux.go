@@ -272,7 +272,7 @@ func (u *uninstaller) plan(o uninstallOptions) (*uninstallPlan, error) {
 func (u *uninstaller) planUnits(p *uninstallPlan) {
 	var names []string
 	var steps []planStep
-	for _, f := range []string{agentUnitFile, managedPathUnit, managedServiceUnit} {
+	for _, f := range agentUnits {
 		if !u.exists(f) {
 			continue
 		}
@@ -282,7 +282,7 @@ func (u *uninstaller) planUnits(p *uninstallPlan) {
 	if len(names) > 0 {
 		p.remove(unitList(names), steps...)
 	}
-	for _, f := range []string{agentUnitFile, managedPathUnit, managedServiceUnit} {
+	for _, f := range agentUnits {
 		if u.exists(f + ".d") {
 			p.keep(f+".d", "drop-ins are not written by Dockmesh; remove them yourself")
 		}
@@ -684,7 +684,7 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 
 	removed := u.tellServer(p.dataDir)
 	units := []string{"disable", "--now"}
-	for _, f := range []string{agentUnitFile, managedPathUnit, managedServiceUnit} {
+	for _, f := range agentUnits {
 		if u.exists(f) {
 			units = append(units, filepath.Base(f))
 		}
@@ -713,7 +713,7 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	if removed {
 		pr.ok(fmt.Sprintf("The agent is removed. Dockmesh shows %s as \"Removed from host\".", p.name))
 	} else {
-		pr.ok(fmt.Sprintf("The agent is removed. Delete %s in Dockmesh: Hosts › %s › Delete host.", p.name, p.name))
+		pr.ok(fmt.Sprintf("The agent is removed. Delete %s in Dockmesh: Hosts › %s › Maintenance › Revoke.", p.name, p.name))
 	}
 	if len(p.foreign) > 0 {
 		pr.line(fmt.Sprintf("    Kept: %s. Remove it yourself if you no longer need it.", strings.Join(p.foreign, ", ")))

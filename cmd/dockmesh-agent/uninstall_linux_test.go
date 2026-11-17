@@ -49,7 +49,7 @@ func (h *fakeHost) exists(p string) bool {
 
 // managed lays out an agent of the managed layout with two stacks.
 func (h *fakeHost) managed(data string) {
-	for _, f := range []string{agentUnitFile, managedPathUnit, managedServiceUnit} {
+	for _, f := range agentUnits {
 		h.file(f, "[Unit]\n")
 	}
 	h.file(pathBinary, "bin")
@@ -128,7 +128,7 @@ func TestUninstallDefaultKeepsStacksAndUser(t *testing.T) {
 		"  keep    user dockmesh-agent: kept by default, use --purge to remove\n",
 		"! 2 containers of Dockmesh stacks are running. They keep running.\n",
 		"  Manage them with docker compose in /var/lib/dockmesh-agent/stacks/<stack>.\n",
-		"ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Delete host.\n",
+		"ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Maintenance › Revoke.\n",
 	)
 	for _, gone := range []string{agentUnitFile, managedPathUnit, managedServiceUnit, pathBinary, "/etc/dockmesh-agent",
 		defaultDataDir + "/agent.key", defaultDataDir + "/staging", defaultDataDir + "/update", managedStateDir} {
@@ -366,8 +366,8 @@ func TestUninstallTellsTheServer(t *testing.T) {
 		want   string
 	}{
 		{"confirmed", true, true, `ok  The agent is removed. Dockmesh shows edge-1 as "Removed from host".`},
-		{"no answer", true, false, "ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Delete host."},
-		{"agent stopped", false, true, "ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Delete host."},
+		{"no answer", true, false, "ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Maintenance › Revoke."},
+		{"agent stopped", false, true, "ok  The agent is removed. Delete edge-1 in Dockmesh: Hosts › edge-1 › Maintenance › Revoke."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newFakeHost(t)

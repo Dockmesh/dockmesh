@@ -70,7 +70,19 @@ func TestReportUninstall(t *testing.T) {
 func TestRememberAgentName(t *testing.T) {
 	dir := t.TempDir()
 	rememberAgentName(dir, "edge-1")
+	before, err := os.Stat(filepath.Join(dir, agentNameFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rememberAgentName(dir, "edge-1")
 	rememberAgentName(dir, "")
+	after, err := os.Stat(filepath.Join(dir, agentNameFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("an unchanged name was written again")
+	}
 	b, err := readDataFile(dir, agentNameFile, maxAgentName)
 	if err != nil || cleanAgentName(b) != "edge-1" {
 		t.Fatalf("stored name %q, %v", b, err)

@@ -167,7 +167,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}(f)
 		case FrameAgentUninstalled:
 			if err := h.svc.markUninstalled(ctx, ag); err != nil {
-				slog.Warn("agent uninstalled", "agent", agent.Name, "err", err)
+				slog.Warn("mark agent uninstalled", "id", agent.ID, "name", agent.Name, "err", err)
 				return
 			}
 			slog.Info("agent removed from its host", "id", agent.ID, "name", agent.Name)

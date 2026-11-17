@@ -23,8 +23,8 @@ func TestUninstalledKeepsRemovedStatus(t *testing.T) {
 	}
 	other := newConnectedAgent(enr.AgentID, "edge-1", func() {})
 	other.certFP = "not-the-hosts-cert"
-	if err := svc.markUninstalled(ctx, other); !errors.Is(err, ErrCertReplaced) {
-		t.Fatalf("markUninstalled with a foreign cert = %v, want ErrCertReplaced", err)
+	if err := svc.markUninstalled(ctx, other); !errors.Is(err, errNotActive) {
+		t.Fatalf("markUninstalled with a foreign cert = %v, want errNotActive", err)
 	}
 
 	ag := newConnectedAgent(enr.AgentID, "edge-1", func() {})

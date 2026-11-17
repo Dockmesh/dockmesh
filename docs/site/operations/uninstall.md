@@ -84,7 +84,7 @@ It lists what it removes and what it keeps, then asks before it changes anything
 - **Kept:** the stacks directory and the `dockmesh-agent` user. Drop-in files you wrote for the service (`dockmesh-agent.service.d`) are kept as well.
 - **Never touched:** containers, volumes, images and Docker itself. Stacks keep running; manage them with `docker compose` in `<stacks dir>/<stack>`.
 
-When the agent is connected, it tells Dockmesh before it stops, and the host shows **Removed from host**. Dockmesh does not delete the host on its own: open the host and click **Delete host**. If the agent was not connected, delete the host in Dockmesh yourself (**Hosts** › the host › **Delete host**).
+When the agent is connected, it tells Dockmesh before it stops, and the host shows **Removed from host**. Dockmesh does not delete the host on its own: open the host and click **Delete host**. If the agent was not connected, revoke the host in Dockmesh yourself (**Hosts** › the host › **Maintenance** › **Revoke…**).
 
 Options:
 
