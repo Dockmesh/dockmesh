@@ -9,8 +9,9 @@
 # Use either admin (a new installation) or restore (bring back a system
 # backup); not both.
 
-# Where Dockmesh keeps its database, keys and stacks. It must be empty or
-# not exist yet. Default: /var/lib/dockmesh
+# Where Dockmesh keeps its database, keys and stacks. Setup creates it;
+# if it exists already, it must be empty and belong to the dockmesh
+# account. Default: /var/lib/dockmesh
 data_dir: /var/lib/dockmesh
 
 # New installation: the first admin account.
@@ -26,7 +27,8 @@ admin:
   # password_hash: $argon2id$v=19$m=65536,t=3,p=4$...
 
 # Restore from a system backup instead of admin. The accounts, settings
-# and stacks come from the backup.
+# and stacks come from the backup, except what this file sets: a
+# base_url below replaces the backup's Base URL.
 # restore:
 #   backup_file: /root/dockmesh-backup.tar.gz.age
 #   # The backup key file exported from the old server, for an encrypted
@@ -35,7 +37,8 @@ admin:
 
 address:
   # The address users and agents use. Default: <first IP>:8080, https
-  # unless tls mode is caddy or proxy
+  # unless tls mode is caddy or proxy; a restore keeps the backup's
+  # unless set here
   base_url: https://dockmesh.example.com:8080
   # Web listener. Default: :8080 (127.0.0.1:8080 with tls mode proxy).
   # The agent port stays 8443.

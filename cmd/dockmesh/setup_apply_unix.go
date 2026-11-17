@@ -242,6 +242,9 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 		return "restore", err
 	case a.restoreFrom != nil:
 		args := []string{"restore", "--from", "-"}
+		if a.fromFile && v.BaseURL != "" {
+			args = append(args, "--base-url", v.BaseURL)
+		}
 		var extra []*os.File
 		if a.restoreKey != nil {
 			extra = []*os.File{a.restoreKey}
