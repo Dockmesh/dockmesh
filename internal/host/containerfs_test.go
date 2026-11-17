@@ -759,3 +759,11 @@ func TestVolumeImportOnOldAgentNamesVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestVolumeImportMergeNeedsNoStaging(t *testing.T) {
+	h := fakeAgentSession(t, newFakeFS(), agents.CapStreamCredit)
+	err := h.VolumeImport(context.Background(), "data", strings.NewReader(""), false, 0)
+	if errors.Is(err, ErrAgentTooOld) {
+		t.Fatalf("merge onto an agent with flow control was refused: %v", err)
+	}
+}

@@ -585,7 +585,7 @@ var ErrAgentTooOld = errors.New("the agent on this host is too old to restore vo
 type agentTooOldError struct{ mode string }
 
 func (e agentTooOldError) Error() string {
-	return e.mode + " restore needs agent 0.5.0 or newer on this host; update the agent from the Hosts page"
+	return "a " + e.mode + " restore needs agent 0.5.0 or newer on this host; update the agent from the Hosts page"
 }
 
 func (agentTooOldError) Is(target error) bool { return target == ErrAgentTooOld }
@@ -606,10 +606,11 @@ func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reade
 	// tar reads it; an older agent's replace empties the volume before
 	// any data arrives.
 	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeStaged)) {
+		mode := "merge"
 		if replace {
-			return agentTooOldError{mode: "a replace"}
+			mode = "replace"
 		}
-		return agentTooOldError{mode: "a merge"}
+		return agentTooOldError{mode: mode}
 	}
 	if err := docker.CheckVolumeName(name); err != nil {
 		return err
