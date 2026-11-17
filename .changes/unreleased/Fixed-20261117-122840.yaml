@@ -1,0 +1,3 @@
+kind: Fixed
+body: A server or agent killed during a volume backup or restore no longer leaves its stopped backup-helper container behind; the next start removes it
+time: 2026-11-17T12:28:40.613833234Z

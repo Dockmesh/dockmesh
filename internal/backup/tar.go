@@ -49,10 +49,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 		Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 		AttachStdout: true,
 		AttachStderr: true,
-		Labels: map[string]string{
-			"dockmesh.managed":   "true",
-			"dockmesh.component": "backup-helper",
-		},
+		Labels:       docker.BackupHelperLabels(docker.HelperOwnerServer),
 	}
 	hostCfg := &container.HostConfig{
 		Binds:     []string{volumeName + ":/source:ro"},
@@ -134,10 +131,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		AttachStderr: true,
 		OpenStdin:    true,
 		StdinOnce:    true,
-		Labels: map[string]string{
-			"dockmesh.managed":   "true",
-			"dockmesh.component": "backup-helper",
-		},
+		Labels:       docker.BackupHelperLabels(docker.HelperOwnerServer),
 	}
 	hostCfg := &container.HostConfig{
 		AutoRemove: false,
@@ -214,7 +208,7 @@ func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
 		Config: &container.Config{
 			Image:  helperImage,
 			Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
-			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
+			Labels: docker.BackupHelperLabels(docker.HelperOwnerServer),
 		},
 		HostConfig: &container.HostConfig{
 			Binds:     []string{volumeName + ":/dest"},
