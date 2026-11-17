@@ -494,3 +494,57 @@ func TestRestartBeforeSetupFinished(t *testing.T) {
 		})
 	}
 }
+
+func TestRefusesStart(t *testing.T) {
+	defaultDB := layout.KnownDBPaths("")[0]
+	checkoutDB := layout.CheckoutDBPath(checkout)
+	otherKnown := layout.KnownDBPaths("")[1]
+	tests := []struct {
+		name     string
+		files    []string
+		dbs      []string
+		links    []string
+		probe    Probe
+		activeDB string
+		want     bool
+	}{
+		{name: "untrusted checkout, nothing configured", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true}, activeDB: defaultDB, want: true},
+		{name: "untrusted checkout, force", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true, Force: true}, activeDB: defaultDB, want: true},
+		{name: "trusted checkout is the data dir", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout}, activeDB: checkoutDB},
+		{name: "server database exists", dbs: []string{checkoutDB, defaultDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true}, activeDB: defaultDB},
+		{name: "env file", files: []string{layout.ConfigFile}, dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true}, activeDB: defaultDB},
+		{name: "DOCKMESH_DB_PATH", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true, DBPathSet: true}, activeDB: defaultDB},
+		{name: "DOCKMESH_DATA_DIR", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true, DataDirSet: true}, activeDB: "/srv/new/dockmesh.db"},
+		{name: "no checkout database", probe: Probe{}, activeDB: defaultDB},
+		{name: "symlinked checkout database", links: []string{checkoutDB}, probe: Probe{WorkDir: checkout, CheckoutDistrusted: true}, activeDB: defaultDB, want: true},
+		{name: "checkout the probe did not judge", dbs: []string{checkoutDB}, probe: Probe{WorkDir: checkout}, activeDB: defaultDB},
+		{name: "working directory /", dbs: []string{layout.CheckoutDBPath("/")}, probe: Probe{WorkDir: "/"}, activeDB: defaultDB},
+		{name: "database at another known location", dbs: []string{otherKnown}, probe: Probe{}, activeDB: defaultDB},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, f := range tt.files {
+				touch(t, root, f)
+			}
+			for _, db := range tt.dbs {
+				openAt(t, root, db)
+			}
+			for _, l := range tt.links {
+				full := filepath.Join(root, l)
+				if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("/elsewhere/dockmesh.db", full); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := tt.probe
+			p.Paths = config.Paths{DBPath: tt.activeDB}
+			p.Lstat, p.Stat, p.ReadDir = rootedStat(root), rootedFollow(root), rootedReadDir(root)
+			if got := RefusesStart(p.Scan()); got != tt.want {
+				t.Fatalf("RefusesStart = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

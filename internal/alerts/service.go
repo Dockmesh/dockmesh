@@ -166,6 +166,13 @@ type Service struct {
 	rate        map[string]eventBucket
 	watching    map[string]context.CancelFunc
 	unsupported string
+	// unsupportedSeen is set by the first report this process trusts;
+	// until then the stored notice may name agents that were upgraded
+	// while the server was down.
+	unsupportedSeen bool
+	// reconnectUntil ends the window after start in which agents are
+	// still dialling back in, so an empty list means nothing yet.
+	reconnectUntil time.Time
 
 	lastRunID int64 // backup_runs high-water mark; -1 until first read
 	certsAt   time.Time
@@ -186,21 +193,22 @@ func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
 
 func NewService(db *sql.DB, notifier *notify.Service) *Service {
 	return &Service{
-		db:           db,
-		notify:       notifier,
-		interval:     DefaultSampleInterval,
-		stop:         make(chan struct{}),
-		firing:       targetMap[bool]{},
-		lastNotified: targetMap[time.Time]{},
-		lastRows:     targetMap[lastRow]{},
-		capWarned:    map[ruleHost]bool{},
-		groupWindow:  groupWindow,
-		outbox:       map[groupKey]*outGroup{},
-		stopping:     make(map[string]time.Time),
-		dies:         targetMap[[]time.Time]{},
-		rate:         make(map[string]eventBucket),
-		watching:     make(map[string]context.CancelFunc),
-		lastRunID:    -1,
+		db:             db,
+		notify:         notifier,
+		interval:       DefaultSampleInterval,
+		stop:           make(chan struct{}),
+		firing:         targetMap[bool]{},
+		lastNotified:   targetMap[time.Time]{},
+		lastRows:       targetMap[lastRow]{},
+		capWarned:      map[ruleHost]bool{},
+		groupWindow:    groupWindow,
+		outbox:         map[groupKey]*outGroup{},
+		stopping:       make(map[string]time.Time),
+		dies:           targetMap[[]time.Time]{},
+		rate:           make(map[string]eventBucket),
+		watching:       make(map[string]context.CancelFunc),
+		lastRunID:      -1,
+		reconnectUntil: time.Now().Add(agentReconnectGrace),
 	}
 }
 
