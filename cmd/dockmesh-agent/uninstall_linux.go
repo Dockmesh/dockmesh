@@ -83,9 +83,11 @@ type uninstaller struct {
 	// notify asks the running agent to send the uninstalled frame.
 	notify     func() error
 	notifyWait time.Duration
-	// containers lists the running containers; nil when Docker can't be
-	// asked.
-	containers  func() []runningContainer
+	// containers lists the running containers of the daemon at dockerHost.
+	containers func(dockerHost string) ([]runningContainer, error)
+	// keepAnyway holds what the plan the admin confirmed kept; a plan made
+	// later keeps it too.
+	keepAnyway  map[string]bool
 	lookupUser  func(name string) (uid int, gecos string, ok bool)
 	deleteUser  func(name string) error
 	lockState   func() (func(), error)
@@ -146,17 +148,21 @@ type runningContainer struct {
 	mounts []string
 }
 
-func runningContainers() []runningContainer {
-	cli, err := client.New(client.FromEnv)
+func runningContainers(dockerHost string) ([]runningContainer, error) {
+	opts := []client.Opt{client.FromEnv}
+	if dockerHost != "" {
+		opts = append(opts, client.WithHost(dockerHost))
+	}
+	cli, err := client.New(opts...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer cli.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]runningContainer, 0, len(res.Items))
 	for _, c := range res.Items {
@@ -168,7 +174,7 @@ func runningContainers() []runningContainer {
 		}
 		out = append(out, rc)
 	}
-	return out
+	return out, nil
 }
 
 // Files the agent and the installer write in the data dir. staging/ and
@@ -206,11 +212,15 @@ type uninstallPlan struct {
 	steps []planStep
 	// foreign are kept dirs with files Dockmesh did not write; kept are
 	// all kept paths.
-	foreign  []string
-	kept     []string
-	running  int
-	stackDir string
-	purge    bool
+	foreign []string
+	kept    []string
+	// emptied are kept dirs whose contents go.
+	emptied map[string]bool
+	// dockerErr is why Docker could not list the running containers.
+	dockerErr error
+	running   int
+	stackDir  string
+	purge     bool
 }
 
 type planStep struct {
@@ -225,6 +235,13 @@ func (p *uninstallPlan) remove(text string, steps ...planStep) {
 
 func (p *uninstallPlan) keep(text, reason string) {
 	p.lines = append(p.lines, planLine{"keep", printable(text + ": " + reason)})
+}
+
+func (p *uninstallPlan) markEmptied(dir string) {
+	if p.emptied == nil {
+		p.emptied = map[string]bool{}
+	}
+	p.emptied[dir] = true
 }
 
 // keepDir is keep for a directory that stays on the host.
@@ -284,9 +301,11 @@ func (u *uninstaller) plan(o uninstallOptions) (*uninstallPlan, error) {
 	})
 	dirs := u.stackDirs(dataDir)
 	var running []runningContainer
+	dockerErr := errors.New("not asked")
 	if u.containers != nil {
-		running = u.containers()
+		running, dockerErr = u.containers(u.env["DOCKER_HOST"])
 	}
+	p.dockerErr = dockerErr
 	var mounts []string
 	for _, c := range running {
 		mounts = append(mounts, c.mounts...)
@@ -447,6 +466,18 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 		p.keepDir(dir, dir, "contains files not written by Dockmesh (e.g. "+scan.foreign+")")
 		p.foreign = append(p.foreign, dir)
 		return scan.stacks
+	case p.dockerErr != nil:
+		p.keepDir(dir, label, "Docker could not say which directories running containers mount")
+		p.foreign = append(p.foreign, dir)
+		return scan.stacks
+	case u.keepAnyway[dir]:
+		p.keepDir(dir, label, "kept as listed before you confirmed")
+		p.foreign = append(p.foreign, dir)
+		return scan.stacks
+	case !inData && u.root == "/" && !layout.RootOnlyDir(filepath.Dir(dir)):
+		p.keepDir(dir, label, filepath.Dir(dir)+" is not owned by root alone, so it is left to you")
+		p.foreign = append(p.foreign, dir)
+		return scan.stacks
 	}
 	steps := []planStep{u.removeScanned(dir, dataDir, scan)}
 	if inData {
@@ -460,6 +491,7 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 	}
 	p.remove(label+" contents", steps...)
 	p.keepDir(dir, dir, "the directory was not created by Dockmesh; it is empty now")
+	p.markEmptied(dir)
 	return scan.stacks
 }
 
@@ -619,9 +651,14 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		p.remove("the agent's files in "+dataDir, steps...)
 		p.keepDir(dataDir, dataDir, "contains files not written by Dockmesh (e.g. "+other[0]+")")
 		p.foreign = append(p.foreign, dataDir)
+	case u.keepAnyway[dataDir]:
+		p.remove("the agent's files in "+dataDir, steps...)
+		p.keepDir(dataDir, dataDir, "kept as listed before you confirmed")
+		p.foreign = append(p.foreign, dataDir)
 	case !u.createdByDockmesh(dataDir):
 		p.remove("the agent's files in "+dataDir, steps...)
 		p.keepDir(dataDir, dataDir, "the directory was not created by Dockmesh; it is empty now")
+		p.markEmptied(dataDir)
 	default:
 		what := dataDir + " (data)"
 		if u.exists(filepath.Join(dataDir, "stacks")) {
@@ -642,6 +679,10 @@ func (u *uninstaller) planUser(p *uninstallPlan) {
 	label := "user " + agentAccount
 	if !p.purge {
 		p.keep(label, "kept by default, use --purge to remove")
+		return
+	}
+	if u.keepAnyway[label] {
+		p.keep(label, "kept as listed before you confirmed")
 		return
 	}
 	if uid == 0 || uid >= u.systemUIDTo || gecos != "Dockmesh Agent" {
@@ -788,12 +829,19 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	}
 	// Planned again now that the agent's account runs nothing: what it
 	// changed while the prompt was open counts.
-	confirmed := p
+	u.keepAnyway = map[string]bool{}
+	for _, k := range p.kept {
+		if !p.emptied[k] {
+			u.keepAnyway[k] = true
+		}
+	}
+	for _, l := range p.lines {
+		if l.verb == "keep" && strings.HasPrefix(l.text, "user "+agentAccount+":") {
+			u.keepAnyway["user "+agentAccount] = true
+		}
+	}
 	if p, err = u.plan(o); err != nil {
 		return err
-	}
-	if p.purge {
-		p.foreign = append(p.foreign, missing(confirmed.foreign, p.foreign)...)
 	}
 	var failed []error
 	for _, s := range p.steps {
@@ -816,8 +864,14 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	} else {
 		pr.ok(fmt.Sprintf("The agent is removed. Delete %s in Dockmesh: Hosts › %s › Maintenance › Revoke.", p.name, p.name))
 	}
-	if len(p.foreign) > 0 {
-		pr.line(fmt.Sprintf("    Kept: %s. Remove it yourself if you no longer need it.", strings.Join(p.foreign, ", ")))
+	var left []string
+	for _, f := range p.foreign {
+		if u.exists(f) {
+			left = append(left, f)
+		}
+	}
+	if len(left) > 0 {
+		pr.line(fmt.Sprintf("    Kept: %s. Remove it yourself if you no longer need it.", strings.Join(left, ", ")))
 	}
 	return nil
 }
@@ -841,17 +895,6 @@ func (u *uninstaller) tellServer(dataDir string) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
-}
-
-// missing returns the entries of a that b lacks.
-func missing(a, b []string) []string {
-	var out []string
-	for _, x := range a {
-		if !slices.Contains(b, x) {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func isAre(n int) string {

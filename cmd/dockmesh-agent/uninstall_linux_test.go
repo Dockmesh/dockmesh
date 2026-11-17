@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -18,9 +19,10 @@ type fakeHost struct {
 	deleted []string
 	active  bool
 	// ack makes the fake agent confirm the uninstalled frame.
-	ack     bool
-	running []runningContainer
-	uid     int
+	ack       bool
+	running   []runningContainer
+	dockerErr error
+	uid       int
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -88,7 +90,7 @@ func (h *fakeHost) uninstaller(env map[string]string) *uninstaller {
 			return nil
 		},
 		notifyWait: time.Second,
-		containers: func() []runningContainer { return h.running },
+		containers: func(string) ([]runningContainer, error) { return h.running, h.dockerErr },
 		lookupUser: func(name string) (int, string, bool) { return h.uid, "Dockmesh Agent", name == agentAccount },
 		deleteUser: func(name string) error {
 			h.deleted = append(h.deleted, name)
@@ -490,4 +492,37 @@ func TestUninstallKeepsAccountsTheInstallerDidNotMake(t *testing.T) {
 	if len(h.deleted) != 0 {
 		t.Fatalf("deleted %v", h.deleted)
 	}
+}
+
+func TestUninstallPurgeWithoutDockerKeepsStacks(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	h.dockerErr = errors.New("cannot connect")
+	out, err := runUninstall(t, h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir}), uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	wantLines(t, out, "  keep    /var/lib/dockmesh-agent/stacks (2 stacks): Docker could not say which directories running containers mount\n")
+	if !h.exists(defaultDataDir + "/stacks/web/data") {
+		t.Fatal("a possible bind mount was removed without asking Docker")
+	}
+}
+
+func TestUninstallKeepsWhatTheConfirmedPlanKept(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	h.file(defaultDataDir+"/stacks/web/data/db.sqlite", "rows")
+	h.active = true
+	u := h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir})
+	u.notifyWait = 50 * time.Millisecond
+	// The foreign file goes away after the admin confirmed the plan.
+	u.notify = func() error { return os.Remove(filepath.Join(h.root, defaultDataDir, "stacks/web/data/db.sqlite")) }
+	out, err := runUninstall(t, u, uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !h.exists(defaultDataDir+"/stacks/web/compose.yaml") || len(h.deleted) != 0 {
+		t.Fatalf("removed what the confirmed plan kept (deleted users %v):\n%s", h.deleted, out)
+	}
+	wantLines(t, out, "Kept: /var/lib/dockmesh-agent/stacks, /var/lib/dockmesh-agent.")
 }
