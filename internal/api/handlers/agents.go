@@ -276,3 +276,67 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		"version": req.Version,
 	})
 }
+
+type setStacksDirReq struct {
+	Path string `json:"path"`
+}
+
+// SetHostStacksDir sets where new stacks go on a connected host. The
+// directory the agent uses now is confirmed at once (200), which also
+// ends "Waiting for setup"; another path goes to the agent's root
+// updater (202) and its answer shows as stacks_dir in GET /agents/{id}.
+//
+//	PUT /api/v1/hosts/{id}/stacks-dir
+func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
+	if h.Agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	scopeReq := h.hostScopeReq(id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+		return
+	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
+	var req setStacksDirReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if _, err := h.Agents.Get(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	applied, err := h.Agents.SetStacksDir(r.Context(), id, req.Path)
+	switch {
+	case errors.Is(err, agents.ErrInvalidStacksDir):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, agents.ErrAgentNotConnected):
+		writeError(w, http.StatusConflict, "agent not connected")
+		return
+	case errors.Is(err, agents.ErrLegacyLayout), errors.Is(err, agents.ErrApplyRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "host.stacks_dir_set", "agent:"+id, map[string]any{"path": req.Path, "applied": applied})
+	a, err := h.Agents.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status := http.StatusAccepted
+	if applied {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, a)
+}

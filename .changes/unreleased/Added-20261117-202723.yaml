@@ -1,3 +1,3 @@
 kind: Added
-body: New hosts show "Waiting for setup" until their stacks directory is confirmed, and refuse deploys, migrations to them and backup runs on them until then; POST /api/v1/agents takes tags and stacks_dir, and the name is optional (the host then takes its own hostname)
+body: New hosts show "Waiting for setup" until their stacks directory is confirmed, and refuse deploys, migrations to them and backup runs on them until then; POST /api/v1/agents takes tags and stacks_dir, and the name is optional (the host then takes its own hostname); PUT /api/v1/hosts/{id}/stacks-dir confirms or changes the stacks directory
 time: 2026-11-17T20:27:23.901777047Z

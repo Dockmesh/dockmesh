@@ -23,8 +23,8 @@ const (
 	StacksDirStateRefused = "refused"
 )
 
-// StacksDirState is the stacks directory asked for through the API or the
-// Setup tab and how the host answered.
+// StacksDirState is the stacks directory last asked for and how the host
+// answered.
 type StacksDirState struct {
 	Path   string `json:"path"`
 	Status string `json:"status"`
@@ -115,25 +115,33 @@ func (s *Service) CreateWith(ctx context.Context, o CreateOptions) (*CreateResul
 var hostnamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
 // nameFromHostname gives a host created without a name the hostname its
-// agent reported, or hostname-2, -3 … when that name is taken.
-func (s *Service) nameFromHostname(ctx context.Context, id, hostname string) {
-	if !hostnamePattern.MatchString(hostname) {
-		_, _ = s.db.ExecContext(ctx, `UPDATE agents SET name_from_host = 0 WHERE id = ?`, id)
-		return
-	}
-	for i := 1; i <= 20; i++ {
-		name := hostname
-		if i > 1 {
-			name = hostname + "-" + strconv.Itoa(i)
+// agent reported, or hostname-2, -3 … when that name is taken, and
+// returns the name the host has afterwards. "local" is the central host's
+// name in the host switcher and is never taken from an agent.
+func (s *Service) nameFromHostname(ctx context.Context, id, current, hostname string) string {
+	if hostnamePattern.MatchString(hostname) && !strings.EqualFold(hostname, "local") {
+		for i := 1; i <= 20; i++ {
+			name := hostname
+			if i > 1 {
+				name = hostname + "-" + strconv.Itoa(i)
+			}
+			_, err := s.db.ExecContext(ctx, `
+				UPDATE agents SET name = ?, name_from_host = 0, updated_at = CURRENT_TIMESTAMP
+				 WHERE id = ? AND name_from_host = 1`, name, id)
+			if err == nil {
+				slog.Info("host named after its hostname", "id", id, "from", current, "name", name)
+				return name
+			}
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				slog.Warn("name host after its hostname", "id", id, "err", err)
+				return current
+			}
 		}
-		_, err := s.db.ExecContext(ctx, `
-			UPDATE agents SET name = ?, name_from_host = 0, updated_at = CURRENT_TIMESTAMP
-			 WHERE id = ? AND name_from_host = 1`, name, id)
-		if err == nil {
-			return
-		}
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE agents SET name_from_host = 0 WHERE id = ?`, id)
+	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET name_from_host = 0 WHERE id = ?`, id); err != nil {
+		slog.Warn("keep generated host name", "id", id, "err", err)
+	}
+	return current
 }
 
 // SetupError is a WaitingForSetupError when host id waits for setup.
@@ -173,15 +181,18 @@ func (s *Service) setupFromHello(ctx context.Context, id string, hello HelloPayl
 	if err != nil {
 		return "", err
 	}
-	if sdStatus.String == StacksDirStatePending && currentStacksDir(hello) == sdPath.String {
+	pending := sdStatus.String == StacksDirStatePending
+	if pending && currentStacksDir(hello) == sdPath.String {
 		return "", s.recordStacksDir(ctx, id, sdPath.String, StacksDirStateApplied, "")
 	}
-	if needs && hello.StacksDirSet {
+	// A pending request for another directory decides the setup, so no
+	// deploy lands in the install's directory just before the switch.
+	if needs && hello.StacksDirSet && !pending {
 		if err := s.ConfirmSetup(ctx, id); err != nil {
 			return "", err
 		}
 	}
-	if sdStatus.String == StacksDirStatePending {
+	if pending {
 		return sdPath.String, nil
 	}
 	return "", nil
@@ -201,6 +212,9 @@ func currentStacksDir(hello HelloPayload) string {
 // left alone.
 func (s *Service) recordStacksDir(ctx context.Context, id, p, status, msg string) error {
 	var errCol sql.NullString
+	if len(msg) > maxStacksDirError {
+		msg = strings.ToValidUTF8(msg[:maxStacksDirError], "")
+	}
 	if msg != "" {
 		errCol = sql.NullString{String: msg, Valid: true}
 	}
@@ -213,6 +227,9 @@ func (s *Service) recordStacksDir(ctx context.Context, id, p, status, msg string
 		 WHERE id = ? AND stacks_dir_path = ?`, status, errCol, status, id, p)
 	return err
 }
+
+// maxStacksDirError cuts the reason an agent gives for a refusal.
+const maxStacksDirError = 512
 
 // stacksDirApplyWait covers the agent's own minute of waiting for root.
 const stacksDirApplyWait = 3 * time.Minute
@@ -229,12 +246,14 @@ func (s *Service) applyStacksDir(ctx context.Context, ag *ConnectedAgent, p stri
 	ctx, cancel := context.WithTimeout(ctx, stacksDirApplyWait)
 	defer cancel()
 	env, err := ag.Request(ctx, Frame{Type: FrameReqStacksDirApply, Payload: payload})
-	if err != nil {
-		slog.Info("stacks dir apply: no answer yet", "agent", ag.Name, "path", p, "err", err)
+	if env != nil && !env.OK {
+		if err := s.recordStacksDir(context.WithoutCancel(ctx), ag.ID, p, StacksDirStateRefused, env.Error); err != nil {
+			slog.Warn("stacks dir apply: record", "agent", ag.Name, "err", err)
+		}
 		return
 	}
-	if !env.OK {
-		slog.Info("stacks dir apply: agent error", "agent", ag.Name, "path", p, "err", env.Error)
+	if err != nil {
+		slog.Info("stacks dir apply: no answer yet", "agent", ag.Name, "path", p, "err", err)
 		return
 	}
 	var res StacksDirApplyRes
@@ -256,4 +275,49 @@ func (s *Service) applyStacksDir(ctx context.Context, ag *ConnectedAgent, p stri
 	if rerr != nil {
 		slog.Warn("stacks dir apply: record", "agent", ag.Name, "err", rerr)
 	}
+}
+
+var (
+	// ErrLegacyLayout: only the root updater of a managed agent can switch
+	// the stacks directory.
+	ErrLegacyLayout = errors.New("changing the stacks directory needs the managed layout; run the install command on the host again")
+	// ErrApplyRunning: the host is still answering an earlier request.
+	ErrApplyRunning = errors.New("the host is still applying a stacks directory")
+)
+
+// SetStacksDir makes p the stacks directory of the connected host id.
+// The directory the agent uses now is confirmed at once (applied true),
+// which also ends "Waiting for setup"; any other path is sent to the
+// agent and its answer recorded in the background.
+func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool, err error) {
+	if err := ValidateStacksDir(p); err != nil {
+		return false, err
+	}
+	ag := s.GetConnected(id)
+	if ag == nil {
+		return false, ErrAgentNotConnected
+	}
+	if currentStacksDir(ag.Hello) == p {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE agents
+			   SET stacks_dir_path = ?, stacks_dir_status = 'applied', stacks_dir_error = NULL,
+			       needs_setup = 0, updated_at = CURRENT_TIMESTAMP
+			 WHERE id = ?`, p, id)
+		return err == nil, err
+	}
+	if ag.Hello.HelloLayout() != LayoutManaged {
+		return false, ErrLegacyLayout
+	}
+	if ag.applying.Load() {
+		return false, ErrApplyRunning
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		   SET stacks_dir_path = ?, stacks_dir_status = 'pending', stacks_dir_error = NULL,
+		       updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`, p, id); err != nil {
+		return false, err
+	}
+	go s.applyStacksDir(context.Background(), ag, p)
+	return false, nil
 }

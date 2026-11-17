@@ -88,3 +88,50 @@ func TestCreateAgentWithTagsAndStacksDir(t *testing.T) {
 		t.Fatalf("refused requests left %d hosts (%v)", n, err)
 	}
 }
+
+func TestSetHostStacksDirScope(t *testing.T) {
+	e := newAuthzEnv(t)
+	ctx := context.Background()
+	for _, id := range []string{"agent-prod", "agent-dev"} {
+		if _, err := e.db.ExecContext(ctx, `INSERT INTO agents (id, name, status) VALUES (?, ?, 'offline')`, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tags := hosttags.New(e.db)
+	if err := tags.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tags.Set(ctx, "agent-prod", []string{"prod"}); err != nil {
+		t.Fatal(err)
+	}
+	e.h.HostTags = tags
+	e.h.Agents = agents.NewService(e.db, nil, "http://dockmesh.test", "")
+	e.h.Audit = audit.NewService(e.db, "")
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermHostsUpdate)).Put("/hosts/{id}/stacks-dir", e.h.SetHostStacksDir)
+	})
+	e.user("boss", "admin")
+	prod := e.user("prodadmin", "admin")
+	e.scopeUser(prod.ID, "prod")
+	e.role("viewer-only", []rbac.Perm{rbac.PermHostsView})
+	e.user("viewer", "viewer-only")
+
+	tests := []struct {
+		user, host, path string
+		want             int
+	}{
+		{"boss", "agent-dev", "/srv/stacks", http.StatusConflict},
+		{"boss", "agent-dev", "srv", http.StatusBadRequest},
+		{"boss", "missing", "/srv/stacks", http.StatusNotFound},
+		{"prodadmin", "agent-prod", "/srv/stacks", http.StatusConflict},
+		{"prodadmin", "agent-dev", "/srv/stacks", http.StatusForbidden},
+		{"viewer", "agent-prod", "/srv/stacks", http.StatusForbidden},
+	}
+	for _, tc := range tests {
+		rr := e.do(http.MethodPut, "/hosts/"+tc.host+"/stacks-dir", e.login(tc.user).AccessToken, map[string]string{"path": tc.path})
+		if rr.Code != tc.want {
+			t.Errorf("%s on %s (%q): %d %s, want %d", tc.user, tc.host, tc.path, rr.Code, rr.Body, tc.want)
+		}
+	}
+}

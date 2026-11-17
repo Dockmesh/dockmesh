@@ -686,10 +686,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 	// with the old cert must not outlive it or block the new agent.
 	s.disconnect(id)
 	if fromHost {
-		s.nameFromHostname(ctx, id, req.Hostname)
-		if err := s.db.QueryRowContext(ctx, `SELECT name FROM agents WHERE id = ?`, id).Scan(&name); err != nil {
-			return nil, err
-		}
+		name = s.nameFromHostname(ctx, id, name, req.Hostname)
 	}
 
 	return &EnrollResponse{

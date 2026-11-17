@@ -287,3 +287,110 @@ func TestValidateStacksDir(t *testing.T) {
 		t.Fatalf("CreateWith with a relative stacks dir = %v", err)
 	}
 }
+
+func TestSetStacksDir(t *testing.T) {
+	ctx := context.Background()
+	online := func(t *testing.T, svc *Service, hello HelloPayload) (*ConnectedAgent, string) {
+		t.Helper()
+		id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1"})
+		ag := newConnectedAgent(id, "edge-1", func() {})
+		ag.certFP = fp
+		ag.Hello = hello
+		if err := svc.markOnline(ctx, ag, hello); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { svc.markOffline(ag) })
+		return ag, id
+	}
+
+	t.Run("current dir confirms the setup", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		_, id := online(t, svc, defaultDirHello())
+		for range 2 {
+			applied, err := svc.SetStacksDir(ctx, id, "/var/lib/dockmesh-agent/stacks")
+			if err != nil || !applied {
+				t.Fatalf("SetStacksDir = %v, %v; want applied", applied, err)
+			}
+			if a := mustGet(t, svc, id); a.NeedsSetup || a.StacksDir.Status != StacksDirStateApplied {
+				t.Fatalf("needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
+			}
+		}
+	})
+
+	t.Run("another dir goes to the agent", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		ag, id := online(t, svc, defaultDirHello())
+		applied, err := svc.SetStacksDir(ctx, id, "/srv/stacks")
+		if err != nil || applied {
+			t.Fatalf("SetStacksDir = %v, %v; want sent", applied, err)
+		}
+		f := nextFrame(t, ag)
+		if a := mustGet(t, svc, id); !a.NeedsSetup || a.StacksDir.Status != StacksDirStatePending {
+			t.Fatalf("while waiting: needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
+		}
+		if _, err := svc.SetStacksDir(ctx, id, "/opt/stacks"); !errors.Is(err, ErrApplyRunning) {
+			t.Fatalf("second request while the first runs = %v", err)
+		}
+		payload, _ := json.Marshal(ResponseEnvelope{OK: false, Error: "unknown frame type"})
+		ag.deliverResponse(Frame{Type: FrameRes, ID: f.ID, Payload: payload})
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			a := mustGet(t, svc, id)
+			if a.StacksDir.Status == StacksDirStateRefused {
+				if a.StacksDir.Error != "unknown frame type" || !a.NeedsSetup {
+					t.Fatalf("refused state %+v needs_setup %v", a.StacksDir, a.NeedsSetup)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("agent error not recorded: %+v", a.StacksDir)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		_, id := online(t, svc, HelloPayload{Layout: LayoutLegacy, StacksDirs: []StacksDirInfo{{Path: "/var/lib/dockmesh/stacks", Current: true}}})
+		if _, err := svc.SetStacksDir(ctx, id, "/srv/stacks"); !errors.Is(err, ErrLegacyLayout) {
+			t.Fatalf("legacy agent = %v", err)
+		}
+		if _, err := svc.SetStacksDir(ctx, id, "srv"); !errors.Is(err, ErrInvalidStacksDir) {
+			t.Fatalf("relative path = %v", err)
+		}
+		offline, _ := createdHost(t, svc, CreateOptions{Name: "edge-2"})
+		if _, err := svc.SetStacksDir(ctx, offline, "/srv/stacks"); !errors.Is(err, ErrAgentNotConnected) {
+			t.Fatalf("offline host = %v", err)
+		}
+	})
+}
+
+// A request for another directory decides the setup, even when the
+// install set a stacks directory of its own.
+func TestPendingRequestOutranksInstallDir(t *testing.T) {
+	svc, _ := newTestService(t)
+	id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1", StacksDir: "/srv/stacks"})
+	installDir := HelloPayload{Layout: LayoutManaged, StacksDirSet: true, StacksDirs: []StacksDirInfo{{Path: "/opt/stacks", Current: true}}}
+	connectWith(t, svc, id, fp, installDir, &StacksDirApplyRes{Status: StacksDirPending})
+	if a := mustGet(t, svc, id); !a.NeedsSetup {
+		t.Fatal("the install's directory ended the setup while a request was pending")
+	}
+}
+
+func TestLocalIsNeverTakenFromTheHostname(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	res, err := svc.CreateWith(ctx, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := enrollReq(res.Token)
+	req.Hostname = "LOCAL"
+	enr, err := svc.Enroll(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enr.AgentName != res.Agent.Name {
+		t.Fatalf("host named %q, want the generated %q", enr.AgentName, res.Agent.Name)
+	}
+}

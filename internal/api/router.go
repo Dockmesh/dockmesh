@@ -733,6 +733,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
 				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
+				r.Put("/hosts/{id}/stacks-dir", h.SetHostStacksDir)
 				r.Put("/agents/upgrade-policy", h.UpdateAgentUpgradePolicy)
 				r.Post("/agents/upgrade-policy/run", h.RunAgentUpgradeEvaluation)
 			})
