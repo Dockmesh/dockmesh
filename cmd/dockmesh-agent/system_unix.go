@@ -228,14 +228,22 @@ type installResult struct {
 // in the units: no quoting is needed in either.
 var plainDir = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
 
-// serverDataDir reports a directory a Dockmesh server keeps its data in.
+// serverDataDir reports a directory a Dockmesh server keeps its data in,
+// by the rule of install-agent.sh's is_server_data_dir.
 func serverDataDir(dir string) bool {
+	return serverDataDirAt(dir, "/", fileExists)
+}
+
+func serverDataDirAt(dir, root string, exists func(string) bool) bool {
 	for _, f := range []string{"dockmesh.db", filepath.Join("data", "dockmesh.db"), "dockmesh.env"} {
-		if fileExists(filepath.Join(dir, f)) {
+		if exists(filepath.Join(dir, f)) {
 			return true
 		}
 	}
-	return false
+	if filepath.Clean(dir) != legacyDataDir {
+		return false
+	}
+	return exists(filepath.Join(root, "etc/dockmesh/dockmesh.env")) || exists(filepath.Join(root, "etc/systemd/system/dockmesh.service"))
 }
 
 func checkPlainDir(what, p string) (string, error) {
@@ -715,7 +723,7 @@ func ensureAgentDir(dir string, mode os.FileMode, uid, gid int, fixMode bool) (c
 		if !fixMode {
 			return false, nil
 		}
-		return false, fixDirMode(dir, mode)
+		return false, fixDirMode(dir, mode, uid)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
@@ -741,10 +749,10 @@ func ensureAgentDir(dir string, mode os.FileMode, uid, gid int, fixMode bool) (c
 	return true, f.Chmod(mode)
 }
 
-// fixDirMode sets mode on the existing dir through a descriptor opened
-// without following a link: a legacy agent may have opened its data dir
-// to 0711.
-func fixDirMode(dir string, mode os.FileMode) error {
+// fixDirMode closes a data dir a legacy agent opened to 0711, through a
+// descriptor opened without following a link and owned by uid. Any other
+// mode is the admin's choice and stays.
+func fixDirMode(dir string, mode os.FileMode, uid int) error {
 	parent, err := os.OpenRoot(filepath.Dir(dir))
 	if err != nil {
 		return err
@@ -759,7 +767,10 @@ func fixDirMode(dir string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if fi.Mode().Perm() == mode {
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != uid {
+		return fmt.Errorf("%s changed owner while it was checked", dir)
+	}
+	if fi.Mode().Perm() != 0o711 {
 		return nil
 	}
 	return f.Chmod(mode)

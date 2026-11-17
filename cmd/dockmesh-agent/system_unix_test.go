@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -440,6 +441,9 @@ func TestSystemInstallConvertsLegacy(t *testing.T) {
 	ti.write(t, "units/dockmesh-agent.service", legacyUnit, 0o644)
 	ti.write(t, "var/agent/bin/dockmesh-agent", "old binary", 0o755)
 	ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+	if err := os.Chmod(data, 0o711); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := ti.run(installOptions{}); err == nil || !strings.Contains(err.Error(), "--convert-legacy") {
 		t.Fatalf("run without --convert-legacy: %v", err)
@@ -515,6 +519,47 @@ func TestConnectionSettings(t *testing.T) {
 			_, err := connectionSettings(tt.o)
 			if (err == nil) != tt.ok {
 				t.Errorf("err = %v, want ok %v", err, tt.ok)
+			}
+		})
+	}
+}
+
+func TestSystemInstallKeepsDataDirMode(t *testing.T) {
+	ti := newTestInstaller(t)
+	data := ti.path("var/agent")
+	ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+	if err := os.Chmod(data, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := ti.run(installOptions{DataDir: data}); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(data); err != nil || fi.Mode().Perm() != 0o750 {
+			t.Fatalf("run %d: data dir mode %v, want the admin's 0750", i+1, fi.Mode())
+		}
+	}
+}
+
+func TestServerDataDir(t *testing.T) {
+	tests := []struct {
+		name, dir string
+		files     []string
+		want      bool
+	}{
+		{"database", "/srv/x", []string{"/srv/x/dockmesh.db"}, true},
+		{"database in data", "/srv/x", []string{"/srv/x/data/dockmesh.db"}, true},
+		{"env file", "/srv/x", []string{"/srv/x/dockmesh.env"}, true},
+		{"agent only", legacyDataDir, nil, false},
+		{"server env in /etc", legacyDataDir, []string{"/r/etc/dockmesh/dockmesh.env"}, true},
+		{"server unit", legacyDataDir, []string{"/r/etc/systemd/system/dockmesh.service"}, true},
+		{"server unit, other dir", "/srv/x", []string{"/r/etc/systemd/system/dockmesh.service"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exists := func(p string) bool { return slices.Contains(tt.files, p) }
+			if got := serverDataDirAt(tt.dir, "/r", exists); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
 	}

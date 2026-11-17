@@ -139,8 +139,8 @@ func TestInstallAgentMigrateFiles(t *testing.T) {
 			t.Errorf("server file %s copied to agent dir", f)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(from, "bin")); !os.IsNotExist(err) {
-		t.Error("legacy bin dir left behind")
+	if _, err := os.Stat(filepath.Join(from, "bin", "dockmesh-agent")); err != nil {
+		t.Error("legacy binary removed before the new units are in place")
 	}
 	if _, err := os.Stat(filepath.Join(to, "bin")); !os.IsNotExist(err) {
 		t.Error("legacy binary moved to the new data dir")

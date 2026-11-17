@@ -162,9 +162,9 @@ is_server_data_dir() {
 }
 # end is_server_data_dir
 
-# migrate_agent_files moves the agent's own files from $1 to $2, removes
-# the legacy binary in $1/bin and leaves everything else in $1 alone. It
-# runs as the account that owns both directories (as_agent).
+# migrate_agent_files moves the agent's own files from $1 to $2 and leaves
+# everything else in $1 alone. It runs as the account that owns both
+# directories (as_agent).
 migrate_agent_files() {
   local from="${1%/}" to="${2%/}" f
   for f in agent.crt agent.key agent.crt.next agent.key.next agent.url ca.crt enroll-ca.pem enroll-token certs staging; do
@@ -173,12 +173,18 @@ migrate_agent_files() {
       mv -T "$from/$f" "$to/$f"
     fi
   done
-  if [[ -d "$from/bin" && ! -L "$from/bin" ]]; then
-    rm -f "$from/bin/dockmesh-agent"
-    rmdir "$from/bin" 2>/dev/null || true
-  fi
 }
 # end migrate_agent_files
+
+# remove_legacy_bin removes the legacy binary in $1/bin once nothing runs
+# it any more; as_agent runs it as the account that owns $1.
+remove_legacy_bin() {
+  if [[ -d "$1/bin" && ! -L "$1/bin" ]]; then
+    rm -f "$1/bin/dockmesh-agent"
+    rmdir "$1/bin" 2>/dev/null || true
+  fi
+}
+# end remove_legacy_bin
 
 # write_agent_file writes stdin to $1 as the account $2:$3 that owns the
 # data dir, mode 0600: written as root, a link the account planted there
@@ -388,6 +394,7 @@ step "Downloading agent ${AGENT_VERSION:-}" "verified (sha256, pinned server)"
 OLD_DATA_DIR=""
 on_exit() {
   local rc=$?
+  rm -f "$TMP_BIN"
   [[ $rc -eq 0 ]] && return
   if [[ -n "$OLD_DATA_DIR" ]]; then
     as_agent "$RUN_USER" "$RUN_GROUP" migrate_agent_files "$DATA_DIR" "$OLD_DATA_DIR" || true
@@ -467,7 +474,10 @@ if ! SYS_OUT="$("$PATH_BIN" system install "${SYS_ARGS[@]}" 2>&1)"; then
   printf '%s\n' "$SYS_OUT" >&2
   die "The agent's services could not be installed. Fix the cause above and run again."
 fi
-OLD_DATA_DIR=""
+if [[ -n "$OLD_DATA_DIR" ]]; then
+  as_agent "$RUN_USER" "$RUN_GROUP" remove_legacy_bin "$OLD_DATA_DIR" || warn "could not remove $OLD_DATA_DIR/bin/dockmesh-agent"
+  OLD_DATA_DIR=""
+fi
 printf '%s\n' "$CA_CERT_PEM" | write_agent_file "$DATA_DIR/enroll-ca.pem" "$RUN_USER" "$RUN_GROUP" ||
   die "Could not write the agents CA to $DATA_DIR/enroll-ca.pem."
 if [[ -n "$TOKEN" ]]; then
