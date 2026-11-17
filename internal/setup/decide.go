@@ -56,8 +56,7 @@ type Facts struct {
 	// the agent CA, stacks) exist.
 	Data bool
 	// CheckoutDB: the working directory holds the database of a source
-	// run that the server does not use, so the checkout was not trusted
-	// as its data dir.
+	// run that layout.TrustedCheckout refused as the data dir.
 	CheckoutDB bool
 	// DataDirSet is DOCKMESH_DATA_DIR set by the caller.
 	DataDirSet bool
@@ -99,7 +98,9 @@ type Probe struct {
 	// DataDirSet is DOCKMESH_DATA_DIR set by the caller, not by the
 	// checkout probe.
 	DataDirSet bool
-	Force      bool
+	// CheckoutDistrusted: layout.CheckoutProbe refused WorkDir.
+	CheckoutDistrusted bool
+	Force              bool
 	// Paths of the server; layout.KnownDBPaths are checked as well.
 	Paths config.Paths
 	// WorkDir is the server's working directory when it holds the
@@ -154,7 +155,7 @@ func (p Probe) Scan() Facts {
 		}
 		if err != nil || active == nil || !sameFile(stat, fi, active, known, db) {
 			f.ForeignDB = true
-			if p.WorkDir != "" && known == layout.CheckoutDBPath(p.WorkDir) {
+			if p.CheckoutDistrusted && p.WorkDir != "" && known == layout.CheckoutDBPath(p.WorkDir) {
 				f.CheckoutDB = true
 			}
 		}

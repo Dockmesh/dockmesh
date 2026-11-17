@@ -195,7 +195,7 @@ func HasCheckoutDB(workDir string, lstat func(string) (fs.FileInfo, error)) bool
 	if !filepath.IsAbs(workDir) {
 		return false
 	}
-	fi, err := lstat(dbPathBelow(filepath.Clean(workDir)))
+	fi, err := lstat(CheckoutDBPath(workDir))
 	return err == nil && fi.Mode().IsRegular()
 }
 

@@ -226,7 +226,7 @@ func TestUntrustedCheckoutRefusesStart(t *testing.T) {
 		if dir != "" {
 			t.Fatalf("start %d: untrusted checkout used as data dir %q", start, dir)
 		}
-		p := Probe{Paths: paths, WorkDir: checkout, Lstat: rootedStat(root), Stat: rootedFollow(root), ReadDir: rootedReadDir(root)}
+		p := Probe{Paths: paths, WorkDir: checkout, CheckoutDistrusted: true, Lstat: rootedStat(root), Stat: rootedFollow(root), ReadDir: rootedReadDir(root)}
 		if f := p.Scan(); !RefusesStart(f) {
 			t.Fatalf("start %d: facts %+v, want a refused start", start, f)
 		}
