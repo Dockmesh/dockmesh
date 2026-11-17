@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,6 +62,7 @@ func newTestInstaller(t *testing.T) *testInstaller {
 			}
 			return nil
 		},
+		legacyScript: filepath.Join(root, "etc", "dockmesh-agent", "refresh-path-copy"),
 		systemctl: func(args ...string) error {
 			ti.calls = append(ti.calls, strings.Join(args, " "))
 			return nil
@@ -428,5 +430,137 @@ func TestActivate(t *testing.T) {
 	}
 	if strings.Join(ti.calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("systemctl calls:\n%s", strings.Join(ti.calls, "\n"))
+	}
+}
+
+func TestSystemInstallConvertsLegacy(t *testing.T) {
+	ti := newTestInstaller(t)
+	data := ti.path("var/agent")
+	ti.write(t, "etc/dockmesh-agent/agent.env", "DOCKMESH_DATA_DIR="+data+"\nDOCKMESH_TOKEN=spent\n", 0o640)
+	ti.write(t, "etc/dockmesh-agent/refresh-path-copy", "#!/bin/bash\n", 0o755)
+	ti.write(t, "units/dockmesh-agent.service", legacyUnit, 0o644)
+	ti.write(t, "var/agent/bin/dockmesh-agent", "old binary", 0o755)
+	ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+	if err := os.Chmod(data, 0o711); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ti.run(installOptions{}); err == nil || !strings.Contains(err.Error(), "--convert-legacy") {
+		t.Fatalf("run without --convert-legacy: %v", err)
+	}
+	if got := ti.read(t, "units/dockmesh-agent.service"); got != legacyUnit {
+		t.Fatalf("refused run changed the unit:\n%s", got)
+	}
+
+	res, err := ti.run(installOptions{
+		ConvertLegacy: true,
+		EnrollURL:     "https://srv:8443/enroll",
+		AgentURL:      "wss://srv:8443/connect",
+		CAFingerprint: "AB:" + strings.Repeat("cd", 31),
+		EnrollCAFile:  data + "/enroll-ca.pem",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(data); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("data dir mode %v, want 0700 (err %v)", fi.Mode(), err)
+	}
+	if len(res.removed) != 2 {
+		t.Errorf("removed %v, want the copy script and the data dir binary", res.removed)
+	}
+	for _, p := range []string{"etc/dockmesh-agent/refresh-path-copy", "var/agent/bin"} {
+		if _, err := os.Lstat(ti.path(p)); err == nil {
+			t.Errorf("%s still there", p)
+		}
+	}
+	unit := ti.read(t, "units/dockmesh-agent.service")
+	if strings.Contains(unit, "ExecStartPre") || !strings.Contains(unit, "ExecStart="+ti.path("bin/dockmesh-agent")+"\n") {
+		t.Errorf("unit:\n%s", unit)
+	}
+	env := ti.read(t, "etc/dockmesh-agent/agent.env")
+	for _, l := range []string{"DOCKMESH_ENROLL_URL=https://srv:8443/enroll", "DOCKMESH_AGENT_URL=wss://srv:8443/connect",
+		"DOCKMESH_CA_FINGERPRINT=ab" + strings.Repeat("cd", 31), "DOCKMESH_ENROLL_CA_FILE=" + data + "/enroll-ca.pem"} {
+		if !strings.Contains(env, l+"\n") {
+			t.Errorf("agent.env lacks %q:\n%s", l, env)
+		}
+	}
+	if strings.Contains(env, "DOCKMESH_TOKEN") {
+		t.Errorf("agent.env keeps the spent token:\n%s", env)
+	}
+
+	res, err = ti.run(installOptions{ConvertLegacy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.changed)+len(res.removed) != 0 {
+		t.Errorf("second run changed %v, removed %v", res.changed, res.removed)
+	}
+}
+
+func TestConnectionSettings(t *testing.T) {
+	fp := strings.Repeat("ab", 32)
+	tests := []struct {
+		name string
+		o    installOptions
+		ok   bool
+	}{
+		{"none", installOptions{}, true},
+		{"all", installOptions{EnrollURL: "https://10.0.0.1:8443/enroll", AgentURL: "wss://h.example:8443/connect", CAFingerprint: fp, EnrollCAFile: "/var/lib/dockmesh-agent/enroll-ca.pem"}, true},
+		{"http enroll", installOptions{EnrollURL: "http://h/enroll"}, false},
+		{"ws agent url", installOptions{AgentURL: "ws://h/connect"}, false},
+		{"newline in url", installOptions{EnrollURL: "https://h/enroll\nDOCKMESH_DATA_DIR=/etc"}, false},
+		{"dollar in url", installOptions{AgentURL: "wss://h/$HOME"}, false},
+		{"no host", installOptions{EnrollURL: "https:///enroll"}, false},
+		{"short fingerprint", installOptions{CAFingerprint: "abcd"}, false},
+		{"relative ca file", installOptions{EnrollCAFile: "enroll-ca.pem"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := connectionSettings(tt.o)
+			if (err == nil) != tt.ok {
+				t.Errorf("err = %v, want ok %v", err, tt.ok)
+			}
+		})
+	}
+}
+
+func TestSystemInstallKeepsDataDirMode(t *testing.T) {
+	ti := newTestInstaller(t)
+	data := ti.path("var/agent")
+	ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+	if err := os.Chmod(data, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := ti.run(installOptions{DataDir: data}); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(data); err != nil || fi.Mode().Perm() != 0o750 {
+			t.Fatalf("run %d: data dir mode %v, want the admin's 0750", i+1, fi.Mode())
+		}
+	}
+}
+
+func TestServerDataDir(t *testing.T) {
+	tests := []struct {
+		name, dir string
+		files     []string
+		want      bool
+	}{
+		{"database", "/srv/x", []string{"/srv/x/dockmesh.db"}, true},
+		{"database in data", "/srv/x", []string{"/srv/x/data/dockmesh.db"}, true},
+		{"env file", "/srv/x", []string{"/srv/x/dockmesh.env"}, true},
+		{"agent only", legacyDataDir, nil, false},
+		{"server env in /etc", legacyDataDir, []string{"/r/etc/dockmesh/dockmesh.env"}, true},
+		{"server unit", legacyDataDir, []string{"/r/etc/systemd/system/dockmesh.service"}, true},
+		{"server unit, other dir", "/srv/x", []string{"/r/etc/systemd/system/dockmesh.service"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exists := func(p string) bool { return slices.Contains(tt.files, p) }
+			if got := serverDataDirAt(tt.dir, "/r", exists); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

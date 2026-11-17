@@ -59,14 +59,23 @@ Adding a host needs the `hosts.create` permission.
 The script served at `/install/agent.sh` on the agent port is `scripts/install-agent.sh` with the URLs, the listener's key pin, the agent CA and the agent binary checksums filled in. It holds no secret; the token comes from `--token`. It:
 
 - supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`; tested distributions are listed in [Supported systems](../getting-started/supported-systems.md),
-- installs Docker from `get.docker.com` if it's missing (skip this with `--skip-docker`),
-- creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host (use `--as-root` to run as root instead),
-- downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin and refuses to install it if its SHA-256 doesn't match,
-- installs the binary to `/var/lib/dockmesh-agent/bin/dockmesh-agent` and a root-owned copy to `/usr/local/bin/dockmesh-agent`, which the service refreshes at every start,
-- with SELinux on (RHEL, Rocky, Alma, Fedora), gives `/var/lib/dockmesh-agent/bin/` and `/etc/dockmesh-agent/refresh-path-copy` the type `bin_t` so systemd may run them: through a `semanage fcontext` rule when `semanage` is installed (package `policycoreutils-python-utils`), otherwise with `chcon`, which a full relabel of the filesystem undoes,
-- writes the agent CA to `/var/lib/dockmesh-agent/enroll-ca.pem`, `/etc/dockmesh-agent/agent.env` and a hardened `dockmesh-agent.service` unit, then starts it,
-- removes certificates from an earlier enrollment so the new token takes effect,
-- waits up to 60 seconds for the agent to connect and prints the last log lines if it doesn't; when systemd cannot start the binary it says so, with the SELinux label and what to run.
+- installs Docker from `get.docker.com` if it's missing (with `--skip-docker` it stops instead),
+- downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin, refuses it if its SHA-256 doesn't match, and installs it root-owned to `/usr/local/bin/dockmesh-agent`,
+- creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host; when the Docker socket belongs to another group, the service gets that group too,
+- runs `dockmesh-agent system install`, which writes `/etc/dockmesh-agent/agent.env`, the hardened `dockmesh-agent.service` unit and the `dockmesh-agent-update.path` and `.service` units of the root updater from templates in the binary,
+- writes the agent CA and the token to the data directory as the agent's account, starts the agent and waits up to 60 seconds for it to connect; when systemd cannot start the binary it says so, with the SELinux label and what to run.
+
+The output uses colours only on a terminal; with `NO_COLOR`, `TERM=dumb` or when the output is not a terminal it is plain text with an ASCII box.
+
+Flags: `--token <token>`, `--data-dir <path>` (first install only, default `/var/lib/dockmesh-agent`), `--stacks-dir <path>`, `--skip-docker` and `--as-root` (runs the agent as root instead of a dedicated user).
+
+### Running the installer again
+
+Run the same command without `--token` to repair an agent: it keeps the certificate and the host's identity, installs the current binary and rewrites the config and units. An agent installed by an earlier release moves to the layout above: its binary in `<data dir>/bin/` and the copy script `/etc/dockmesh-agent/refresh-path-copy` are removed, and from then on it gets its updates through the root updater, checked against the release signature. On a host with an agent unit but no enrollment it stops with "This host is not enrolled"; run the command with a token there.
+
+With `--token` the host enrolls again (for example with a token from the host's Maintenance › Re-issue). The previous certificate stays in place until the new one is written; when the server refuses the token the agent keeps its previous enrollment and the installer says why.
+
+A re-run never switches an agent that runs as root to the `dockmesh-agent` user, and it never deletes the certificates first. Installers of 0.5.x and earlier did both.
 
 Pass flags like this:
 
@@ -78,7 +87,7 @@ The installer and binary routes on the agent port need no sign-in. They and `/en
 
 Commands created before this version used `<base-url>/install/agent.sh?token=…` on the web port. That route still works for automation in 0.6.x and goes away in 0.7.0; the script it serves downloads the binary from the agent port with the pin, but the script itself still travels over the web port. Each use writes a warning to the server log and counts against the same per-IP limit as the installer on the agent port, and admins get a notice at most once a day while the route is in use.
 
-Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`; the installer moves the agent's own files out of a directory that belongs to a Dockmesh server. The stack copies in `stacks/`, with the data of relative bind mounts, are not moved, so those stacks start with empty bind directories at the next deploy. On a host without a Dockmesh server, move `<old data directory>/stacks/` to `/var/lib/dockmesh-agent/stacks/` first and `chown -R dockmesh-agent:dockmesh-agent` it (skip the chown with `--as-root`). On a host that also runs the server, `/var/lib/dockmesh/stacks/` is the server's own stacks directory: never move it; copy only the directories of the stacks deployed to this agent.
+Re-running the installer keeps the data directory of an earlier install. Agents installed by older releases kept their files in `/var/lib/dockmesh`. On a host without a Dockmesh server the agent keeps using that directory. On a host that also runs the server, the installer moves the agent's own files out of the server's directory to `/var/lib/dockmesh-agent`. The stack copies in `stacks/`, with the data of relative bind mounts, are not moved, so those stacks start with empty bind directories at the next deploy: `/var/lib/dockmesh/stacks/` is the server's own stacks directory, so never move it; copy only the directories of the stacks deployed to this agent to `/var/lib/dockmesh-agent/stacks/`.
 
 The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it). Without a binary for the host's architecture the installer stops.
 
@@ -152,7 +161,7 @@ sudo -u dockmesh dockmesh ca rotate --reissue-all-agents --env-file <data-dir>/d
 sudo systemctl start dockmesh
 ```
 
-The command prints one install command per host. Run each on its host. The installer removes the old certificates before enrolling. `dockmesh ca export --out ca.pem` writes the current CA certificate. To add names or IPs to the listener certificate without touching the CA, use `dockmesh ca reissue-server --add-san <name-or-ip>`. See [dockmesh CLI](../reference/dockmesh-cli.md).
+The command prints one install command per host. Run each on its host. The agent enrolls again with the new token and replaces its old certificate once the new one is written. `dockmesh ca export --out ca.pem` writes the current CA certificate. To add names or IPs to the listener certificate without touching the CA, use `dockmesh ca reissue-server --add-san <name-or-ip>`. See [dockmesh CLI](../reference/dockmesh-cli.md).
 
 ## Host tags
 

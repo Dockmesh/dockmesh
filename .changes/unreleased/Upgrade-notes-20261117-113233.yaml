@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Running the agent install command again no longer deletes the agent''s certificates and no longer needs a token: without --token it keeps the enrollment and moves an agent installed by 0.5.x or earlier to the managed layout with signed updates; with --token it enrolls again and keeps the old certificate until the new one is in place. A re-run never switches an agent that runs as root to the dockmesh-agent user. Agents that are not re-run keep their layout and their web update'
+time: 2026-11-17T11:32:33.08484721Z
+custom:
+    Audience: admins
+    Id: agent-installer-rerun
