@@ -116,6 +116,9 @@ const (
 	diskHysteresis = 2.0
 	certRefresh    = 6 * time.Hour
 	watchInterval  = 30 * time.Second
+	// agentReconnectGrace covers the agents' reconnect backoff after a
+	// server restart.
+	agentReconnectGrace = 2 * time.Minute
 )
 
 // SetSources wires the event inputs. Safe to call after Start.
@@ -263,14 +266,16 @@ const unsupportedNoticeKey = "alerts.agents-without-events"
 func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 	sort.Strings(names)
 	joined := strings.Join(names, ", ")
-	if joined == s.unsupported {
+	if s.unsupportedSeen && joined == s.unsupported {
+		return
+	}
+	if !s.unsupportedSeen && joined == "" && time.Now().Before(s.reconnectUntil) {
 		return
 	}
 	s.srcMu.Lock()
 	n := s.notices
 	s.srcMu.Unlock()
 	if n == nil {
-		s.unsupported = joined
 		return
 	}
 	body := i18n.Msg("notice.agents_no_events.body", joined)
@@ -281,7 +286,7 @@ func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 			return
 		}
 		if same {
-			s.unsupported = joined
+			s.unsupported, s.unsupportedSeen = joined, true
 			return
 		}
 	}
@@ -289,7 +294,7 @@ func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 		slog.Warn("alerts: resolve notice", "err", err)
 		return
 	}
-	s.unsupported = joined
+	s.unsupported, s.unsupportedSeen = joined, true
 	if joined == "" {
 		return
 	}

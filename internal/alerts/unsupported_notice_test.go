@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
@@ -35,11 +36,16 @@ func readUnsupportedNotice(t *testing.T, database *sql.DB) noticeRow {
 // startAlerts is one server start: the engine begins with no agent
 // connected and sees the old agents once they are back.
 func startAlerts(database *sql.DB, old ...string) {
-	s := NewService(database, nil)
-	s.SetNotices(notices.NewService(database))
+	s := newNoticeAlerts(database)
 	ctx := context.Background()
 	s.reportUnsupported(ctx, nil)
 	s.reportUnsupported(ctx, old)
+}
+
+func newNoticeAlerts(database *sql.DB) *Service {
+	s := NewService(database, nil)
+	s.SetNotices(notices.NewService(database))
+	return s
 }
 
 func dismissUnsupported(t *testing.T, database *sql.DB) {
@@ -75,8 +81,7 @@ func TestUnsupportedNoticeDismissalSurvivesRestarts(t *testing.T) {
 		t.Fatalf("a changed agent list must show the notice again: %+v", changed)
 	}
 
-	s := NewService(database, nil)
-	s.SetNotices(notices.NewService(database))
+	s := newNoticeAlerts(database)
 	s.reportUnsupported(context.Background(), []string{"edge-1"})
 	s.reportUnsupported(context.Background(), nil)
 	if got := readUnsupportedNotice(t, database); !got.resolved {
@@ -84,9 +89,7 @@ func TestUnsupportedNoticeDismissalSurvivesRestarts(t *testing.T) {
 	}
 }
 
-// Servers before stored text keys wrote only the English body; such a row
-// must count as the same notice, or the first start after the upgrade
-// would clear its dismissals.
+// Rows from before stored text keys have only the English body.
 func TestUnsupportedNoticeKeepsDismissalOfPlainTextRow(t *testing.T) {
 	_, database := newEvalService(t)
 	startAlerts(database, "edge-1")
@@ -101,5 +104,21 @@ func TestUnsupportedNoticeKeepsDismissalOfPlainTextRow(t *testing.T) {
 	}
 	if got := readUnsupportedNotice(t, database); got != before {
 		t.Fatalf("plain-text row was reopened: %+v, was %+v", got, before)
+	}
+}
+
+func TestUnsupportedNoticeResolvedWhenAgentsUpgradedWhileDown(t *testing.T) {
+	_, database := newEvalService(t)
+	startAlerts(database, "edge-1")
+
+	s := newNoticeAlerts(database)
+	s.reportUnsupported(context.Background(), nil)
+	if got := readUnsupportedNotice(t, database); got.resolved {
+		t.Fatal("resolved while agents may still be reconnecting")
+	}
+	s.reconnectUntil = time.Now().Add(-time.Second)
+	s.reportUnsupported(context.Background(), nil)
+	if got := readUnsupportedNotice(t, database); !got.resolved {
+		t.Fatalf("no old agent after the reconnect window, notice still open: %+v", got)
 	}
 }

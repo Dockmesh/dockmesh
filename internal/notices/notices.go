@@ -276,10 +276,9 @@ func (s *Service) Resolve(ctx context.Context, key string) error {
 }
 
 // OpenWithBody reports whether the notice for key is open with body, so a
-// producer that lost its state in a restart can tell an unchanged
-// condition from a new one without resolving and reopening the notice,
-// which would clear its dismissals. Rows written before texts were stored
-// as keys match on their English body.
+// producer can tell an unchanged condition from a new one without
+// reopening the notice, which clears its dismissals. Rows from before
+// stored text keys match on their English body.
 func (s *Service) OpenWithBody(ctx context.Context, key string, body i18n.Text) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
