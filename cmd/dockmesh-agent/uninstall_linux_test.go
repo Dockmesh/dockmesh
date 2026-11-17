@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,11 +18,14 @@ type fakeHost struct {
 	deleted []string
 	active  bool
 	// ack makes the fake agent confirm the uninstalled frame.
-	ack bool
+	ack     bool
+	running []runningContainer
+	uid     int
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
-	return &fakeHost{t: t, root: t.TempDir()}
+	return &fakeHost{t: t, root: t.TempDir(), uid: os.Getuid(),
+		running: []runningContainer{{project: "web"}, {project: "db"}, {project: "other"}}}
 }
 
 func (h *fakeHost) file(p, data string) {
@@ -84,14 +88,15 @@ func (h *fakeHost) uninstaller(env map[string]string) *uninstaller {
 			return nil
 		},
 		notifyWait: time.Second,
-		runningIn:  func(names []string) int { return len(names) },
-		lookupUser: func(name string) (int, bool) { return 990, name == agentAccount },
+		containers: func() []runningContainer { return h.running },
+		lookupUser: func(name string) (int, string, bool) { return h.uid, "Dockmesh Agent", name == agentAccount },
 		deleteUser: func(name string) error {
 			h.deleted = append(h.deleted, name)
 			return nil
 		},
-		lockState:   func() (func(), error) { return func() {}, nil },
-		systemUIDTo: 1000,
+		lockState: func() (func(), error) { return func() {}, nil },
+		// Files in the temp root belong to the test's own account.
+		systemUIDTo: math.MaxInt32,
 	}
 }
 
@@ -399,5 +404,90 @@ func TestUnitList(t *testing.T) {
 		if got := unitList(tc.in); got != tc.want {
 			t.Errorf("unitList(%v) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestUninstallSharedKeepsServerUpdateFiles(t *testing.T) {
+	for _, purge := range []bool{false, true} {
+		h := newFakeHost(t)
+		h.managed(legacyDataDir)
+		h.file(legacyDataDir+"/data/dockmesh.db", "db")
+		h.file(legacyDataDir+"/update/server-result.json", "{}")
+		h.file(legacyDataDir+"/staging/server-stack/compose.yaml", "x")
+		out, err := runUninstall(t, h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": legacyDataDir}), uninstallOptions{yes: true, purge: purge})
+		if err != nil {
+			t.Fatalf("purge=%v: %v\n%s", purge, err, out)
+		}
+		for _, kept := range []string{legacyDataDir + "/update/server-result.json", legacyDataDir + "/staging/server-stack/compose.yaml"} {
+			if !h.exists(kept) {
+				t.Errorf("purge=%v: the server's %s was removed", purge, kept)
+			}
+		}
+	}
+}
+
+func TestUninstallKeepsMountsOfRunningContainers(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	h.running = append(h.running, runningContainer{project: "web", mounts: []string{defaultDataDir + "/stacks/web/data"}})
+	out, err := runUninstall(t, h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir}), uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	wantLines(t, out, "  keep    /var/lib/dockmesh-agent/stacks: contains files not written by Dockmesh (e.g. web/data (mounted by a running container))\n")
+	if !h.exists(defaultDataDir + "/stacks/web/data") {
+		t.Fatal("the bind mount of a running container was removed")
+	}
+}
+
+func TestUninstallReplansAfterTheAgentStopped(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	h.file("victim/web/compose.yaml", "someone else's")
+	h.active = true
+	u := h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir})
+	u.notifyWait = 50 * time.Millisecond
+	// The agent's account swaps its stacks dir for a link after the plan.
+	u.notify = func() error {
+		stacks := filepath.Join(h.root, defaultDataDir, "stacks")
+		if err := os.Rename(stacks, stacks+".old"); err != nil {
+			t.Fatal(err)
+		}
+		return os.Symlink(filepath.Join(h.root, "victim"), stacks)
+	}
+	out, err := runUninstall(t, u, uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !h.exists("victim/web/compose.yaml") {
+		t.Fatal("root removed a file through the swapped link")
+	}
+}
+
+func TestUninstallPrintsNoTerminalControls(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	h.file(defaultDataDir+"/stacks/web/\x1b[2Jx", "mine")
+	out, err := runUninstall(t, h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir}), uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("output carries an escape character: %q", out)
+	}
+}
+
+func TestUninstallKeepsAccountsTheInstallerDidNotMake(t *testing.T) {
+	h := newFakeHost(t)
+	h.managed(defaultDataDir)
+	u := h.uninstaller(map[string]string{"DOCKMESH_DATA_DIR": defaultDataDir})
+	u.lookupUser = func(string) (int, string, bool) { return h.uid, "someone's service", true }
+	out, err := runUninstall(t, u, uninstallOptions{yes: true, purge: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	wantLines(t, out, "  keep    user dockmesh-agent: not the account the installer creates\n")
+	if len(h.deleted) != 0 {
+		t.Fatalf("deleted %v", h.deleted)
 	}
 }

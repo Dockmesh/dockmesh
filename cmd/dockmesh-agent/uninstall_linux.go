@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -80,10 +81,12 @@ type uninstaller struct {
 	systemctl          func(args ...string) error
 	unitActive         func() bool
 	// notify asks the running agent to send the uninstalled frame.
-	notify      func() error
-	notifyWait  time.Duration
-	runningIn   func(stackNames []string) int
-	lookupUser  func(name string) (uid int, ok bool)
+	notify     func() error
+	notifyWait time.Duration
+	// containers lists the running containers; nil when Docker can't be
+	// asked.
+	containers  func() []runningContainer
+	lookupUser  func(name string) (uid int, gecos string, ok bool)
 	deleteUser  func(name string) error
 	lockState   func() (func(), error)
 	systemUIDTo int
@@ -110,21 +113,22 @@ func hostUninstaller() *uninstaller {
 			return in.systemctl("kill", "--kill-whom=main", "--signal=SIGUSR1", agentUnitName)
 		},
 		notifyWait: 15 * time.Second,
-		runningIn:  runningStackContainers,
-		lookupUser: func(name string) (int, bool) {
+		containers: runningContainers,
+		lookupUser: func(name string) (int, string, bool) {
 			u, err := user.Lookup(name)
 			if err != nil {
-				return 0, false
+				return 0, "", false
 			}
 			uid, err := strconv.Atoi(u.Uid)
-			return uid, err == nil
+			return uid, u.Name, err == nil
 		},
 		deleteUser: func(name string) error {
 			out, err := exec.Command("userdel", name).CombinedOutput() // #nosec G204 -- fixed account name
 			if err != nil {
 				return fmt.Errorf("userdel %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 			}
-			if _, gerr := user.LookupGroup(name); gerr == nil {
+			// userdel keeps a group that others still belong to; so does this.
+			if out, err := exec.Command("getent", "group", name).Output(); err == nil && strings.HasSuffix(strings.TrimSpace(string(out)), ":") { // #nosec G204 -- fixed group name
 				if out, err := exec.Command("groupdel", name).CombinedOutput(); err != nil { // #nosec G204 -- fixed group name
 					return fmt.Errorf("groupdel %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 				}
@@ -136,30 +140,35 @@ func hostUninstaller() *uninstaller {
 	}
 }
 
-// runningStackContainers counts the running containers of the compose
-// projects named like the stacks; -1 when Docker can't be asked.
-func runningStackContainers(names []string) int {
-	if len(names) == 0 {
-		return 0
-	}
+type runningContainer struct {
+	project string
+	// mounts are the host paths of its bind mounts.
+	mounts []string
+}
+
+func runningContainers() []runningContainer {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
-		return -1
+		return nil
 	}
 	defer cli.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
-		return -1
+		return nil
 	}
-	n := 0
+	out := make([]runningContainer, 0, len(res.Items))
 	for _, c := range res.Items {
-		if slices.Contains(names, c.Labels["com.docker.compose.project"]) {
-			n++
+		rc := runningContainer{project: c.Labels["com.docker.compose.project"]}
+		for _, m := range c.Mounts {
+			if m.Source != "" {
+				rc.mounts = append(rc.mounts, filepath.Clean(m.Source))
+			}
 		}
+		out = append(out, rc)
 	}
-	return n
+	return out
 }
 
 // Files the agent and the installer write in the data dir. staging/ and
@@ -195,8 +204,10 @@ type uninstallPlan struct {
 	lines   []planLine
 	// steps run after the agent stopped, in order.
 	steps []planStep
-	// foreign are kept dirs with files Dockmesh did not write.
+	// foreign are kept dirs with files Dockmesh did not write; kept are
+	// all kept paths.
 	foreign  []string
+	kept     []string
 	running  int
 	stackDir string
 	purge    bool
@@ -208,12 +219,29 @@ type planStep struct {
 }
 
 func (p *uninstallPlan) remove(text string, steps ...planStep) {
-	p.lines = append(p.lines, planLine{"remove", text})
+	p.lines = append(p.lines, planLine{"remove", printable(text)})
 	p.steps = append(p.steps, steps...)
 }
 
 func (p *uninstallPlan) keep(text, reason string) {
-	p.lines = append(p.lines, planLine{"keep", text + ": " + reason})
+	p.lines = append(p.lines, planLine{"keep", printable(text + ": " + reason)})
+}
+
+// keepDir is keep for a directory that stays on the host.
+func (p *uninstallPlan) keepDir(dir, text, reason string) {
+	p.keep(text, reason)
+	p.kept = append(p.kept, dir)
+}
+
+// printable drops what a terminal would interpret from names that
+// containers or the agent's account chose.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 func (u *uninstaller) path(p string) string { return filepath.Join(u.root, p) }
@@ -255,14 +283,26 @@ func (u *uninstaller) plan(o uninstallOptions) (*uninstallPlan, error) {
 		return err == nil
 	})
 	dirs := u.stackDirs(dataDir)
+	var running []runningContainer
+	if u.containers != nil {
+		running = u.containers()
+	}
+	var mounts []string
+	for _, c := range running {
+		mounts = append(mounts, c.mounts...)
+	}
 	var names []string
 	for _, d := range dirs {
-		names = append(names, u.planStacks(p, d, dataDir, shared)...)
+		names = append(names, u.planStacks(p, d, dataDir, shared, mounts)...)
 	}
 	u.planData(p, dataDir, shared)
 	u.planUser(p)
-	if len(names) > 0 && u.runningIn != nil {
-		p.running = u.runningIn(names)
+	for _, c := range running {
+		if slices.Contains(names, c.project) {
+			p.running++
+		}
+	}
+	if p.running > 0 {
 		p.stackDir = dirs[0]
 	}
 	u.planState(p)
@@ -373,14 +413,14 @@ func (u *uninstaller) stackDirs(dataDir string) []string {
 }
 
 // planStacks plans one stacks dir and returns the names of its stacks.
-func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared bool) []string {
+func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared bool, mounts []string) []string {
 	inData := layout.Within(dataDir, dir)
 	if _, err := checkPlainDir("stacks dir", dir); err != nil {
 		p.keep(dir, err.Error())
 		return nil
 	}
 	if real, err := filepath.EvalSymlinks(u.path(dir)); err != nil || real != u.path(dir) {
-		p.keep(dir, "its path contains a symbolic link; it is never followed")
+		p.keepDir(dir, dir, "its path contains a symbolic link; it is never followed")
 		p.foreign = append(p.foreign, dir)
 		return nil
 	}
@@ -390,7 +430,7 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 			return nil
 		}
 	}
-	scan, err := scanStacks(u.path(dir))
+	scan, err := scanStacks(u.path(dir), dir, mounts)
 	if err != nil {
 		p.keep(dir, err.Error())
 		return nil
@@ -398,17 +438,17 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 	label := fmt.Sprintf("%s (%s)", dir, plural(len(scan.stacks), "stack"))
 	switch {
 	case shared && inData:
-		p.keep(label, "shared with the Dockmesh server on this host")
+		p.keepDir(dir, label, "shared with the Dockmesh server on this host")
 		return scan.stacks
 	case !p.purge:
-		p.keep(label, "kept by default, use --purge to remove")
+		p.keepDir(dir, label, "kept by default, use --purge to remove")
 		return scan.stacks
 	case scan.foreign != "":
-		p.keep(dir, "contains files not written by Dockmesh (e.g. "+scan.foreign+")")
+		p.keepDir(dir, dir, "contains files not written by Dockmesh (e.g. "+scan.foreign+")")
 		p.foreign = append(p.foreign, dir)
 		return scan.stacks
 	}
-	steps := []planStep{u.removeScanned(dir, scan)}
+	steps := []planStep{u.removeScanned(dir, dataDir, scan)}
 	if inData {
 		// Shown with the data dir.
 		p.steps = append(p.steps, steps...)
@@ -419,7 +459,7 @@ func (u *uninstaller) planStacks(p *uninstallPlan, dir, dataDir string, shared b
 		return scan.stacks
 	}
 	p.remove(label+" contents", steps...)
-	p.keep(dir, "the directory was not created by Dockmesh; it is empty now")
+	p.keepDir(dir, dir, "the directory was not created by Dockmesh; it is empty now")
 	return scan.stacks
 }
 
@@ -438,10 +478,11 @@ type stacksScan struct {
 	foreign string
 }
 
-// scanStacks walks dir below an os.Root without following links. A stack
-// dir may hold the agent's files and directories that hold nothing else,
-// such as the empty bind sources Docker creates; anything else is foreign.
-func scanStacks(dir string) (stacksScan, error) {
+// scanStacks walks dir (shown as shownDir) below an os.Root without
+// following links. A stack dir may hold the agent's files and directories
+// that hold nothing else, such as the empty bind sources Docker creates;
+// anything else, and a directory a running container mounts, is foreign.
+func scanStacks(dir, shownDir string, mounts []string) (stacksScan, error) {
 	var s stacksScan
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -456,6 +497,14 @@ func scanStacks(dir string) (stacksScan, error) {
 			return nil
 		}
 		depth := strings.Count(p, "/") + 1
+		if d.IsDir() && slices.Contains(mounts, filepath.Join(shownDir, p)) {
+			// A running container's bind mount: removing it, even empty,
+			// breaks the container.
+			if s.foreign == "" {
+				s.foreign = p + " (mounted by a running container)"
+			}
+			return fs.SkipDir
+		}
 		switch {
 		case d.IsDir() && depth == 1 && stacks.ValidateName(p) == nil:
 			s.stacks = append(s.stacks, p)
@@ -480,11 +529,11 @@ func scanStacks(dir string) (stacksScan, error) {
 // removeScanned removes the scanned entries one by one, so a file a
 // container writes meanwhile makes its directory stay instead of being
 // deleted with it.
-func (u *uninstaller) removeScanned(dir string, s stacksScan) planStep {
+func (u *uninstaller) removeScanned(dir, dataDir string, s stacksScan) planStep {
 	return planStep{what: dir, do: func() error {
-		root, err := os.OpenRoot(u.path(dir))
+		root, err := u.openStacksRoot(dir, dataDir)
 		if err != nil {
-			return err
+			return fmt.Errorf("%s: %w", dir, err)
 		}
 		defer root.Close()
 		var errs []error
@@ -495,6 +544,30 @@ func (u *uninstaller) removeScanned(dir string, s stacksScan) planStep {
 		}
 		return errors.Join(errs...)
 	}}
+}
+
+// openStacksRoot opens a stacks dir without following a link the agent's
+// account could have put at its name: one in the data dir is opened below
+// the data dir's root, one outside must sit in a root-only parent.
+func (u *uninstaller) openStacksRoot(dir, dataDir string) (*os.Root, error) {
+	if rel, err := filepath.Rel(dataDir, dir); err == nil && layout.Within(dataDir, dir) {
+		data, err := os.OpenRoot(u.path(dataDir))
+		if err != nil {
+			return nil, err
+		}
+		defer data.Close()
+		if fi, err := data.Lstat(rel); err != nil || !fi.IsDir() {
+			return nil, errors.New("no longer a directory")
+		}
+		return data.OpenRoot(rel)
+	}
+	if fi, err := os.Lstat(u.path(dir)); err != nil || !fi.IsDir() {
+		return nil, errors.New("no longer a directory")
+	}
+	if u.root == "/" && !layout.RootOnlyDir(filepath.Dir(dir)) {
+		return nil, errors.New("its parent is not root-only")
+	}
+	return os.OpenRoot(u.path(dir))
 }
 
 func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
@@ -519,6 +592,8 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		case e.Type().IsRegular() && slices.Contains(agentDataFiles, n):
 		case e.Type().IsRegular() && ownFile(n, agentDataFiles):
 			steps = append(steps, u.removeBelow(dataDir, n))
+		case e.IsDir() && slices.Contains(agentDataDirs, n) && shared:
+			// The server keeps its own update and staging files there.
 		case e.IsDir() && slices.Contains(agentDataDirs, n):
 			steps = append(steps, u.removeAllBelow(dataDir, n))
 		case n == "bin" && p.legacy && e.IsDir():
@@ -528,20 +603,25 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		}
 	}
 	if !p.purge {
-		p.remove("certificate and key, staging/, update/ in "+dataDir, steps...)
+		if shared {
+			p.remove("certificate and key in "+dataDir, steps...)
+		} else {
+			p.remove("certificate and key, staging/, update/ in "+dataDir, steps...)
+		}
+		p.kept = append(p.kept, dataDir)
 		return
 	}
 	switch {
 	case shared:
 		p.remove("the agent's files in "+dataDir, steps...)
-		p.keep(dataDir, "the Dockmesh server keeps its data here")
+		p.keepDir(dataDir, dataDir, "the Dockmesh server keeps its data here")
 	case len(other) > 0:
 		p.remove("the agent's files in "+dataDir, steps...)
-		p.keep(dataDir, "contains files not written by Dockmesh (e.g. "+other[0]+")")
+		p.keepDir(dataDir, dataDir, "contains files not written by Dockmesh (e.g. "+other[0]+")")
 		p.foreign = append(p.foreign, dataDir)
 	case !u.createdByDockmesh(dataDir):
 		p.remove("the agent's files in "+dataDir, steps...)
-		p.keep(dataDir, "the directory was not created by Dockmesh; it is empty now")
+		p.keepDir(dataDir, dataDir, "the directory was not created by Dockmesh; it is empty now")
 	default:
 		what := dataDir + " (data)"
 		if u.exists(filepath.Join(dataDir, "stacks")) {
@@ -551,24 +631,32 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 	}
 }
 
-// planUser removes the agent's account on --purge unless kept files still
-// belong to it. Only a system account of that name is removed.
+// planUser removes the agent's account on --purge when the installer
+// made it (a system account with its comment) and no kept directory
+// belongs to it.
 func (u *uninstaller) planUser(p *uninstallPlan) {
-	uid, ok := u.lookupUser(agentAccount)
+	uid, gecos, ok := u.lookupUser(agentAccount)
 	if !ok {
 		return
 	}
 	label := "user " + agentAccount
-	switch {
-	case !p.purge:
+	if !p.purge {
 		p.keep(label, "kept by default, use --purge to remove")
-	case uid == 0 || uid >= u.systemUIDTo:
-		p.keep(label, "not a system account, so not created by the installer")
-	case len(p.foreign) > 0:
-		p.keep(label, "owns the kept "+p.foreign[0])
-	default:
-		p.remove(label, planStep{what: label, do: func() error { return u.deleteUser(agentAccount) }})
+		return
 	}
+	if uid == 0 || uid >= u.systemUIDTo || gecos != "Dockmesh Agent" {
+		p.keep(label, "not the account the installer creates")
+		return
+	}
+	for _, k := range p.kept {
+		if fi, err := os.Lstat(u.path(k)); err == nil {
+			if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == uid {
+				p.keep(label, "owns the kept "+k)
+				return
+			}
+		}
+	}
+	p.remove(label, planStep{what: label, do: func() error { return u.deleteUser(agentAccount) }})
 }
 
 // planState removes root's update state; nothing else writes there.
@@ -691,8 +779,21 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	}
 	if len(units) > 2 {
 		if err := u.systemctl(units...); err != nil {
+			if removed {
+				// Back online, the host leaves "Removed from host" again.
+				_ = u.systemctl("restart", agentUnitName)
+			}
 			return fmt.Errorf("stop the agent: %w; nothing was removed", err)
 		}
+	}
+	// Planned again now that the agent's account runs nothing: what it
+	// changed while the prompt was open counts.
+	confirmed := p
+	if p, err = u.plan(o); err != nil {
+		return err
+	}
+	if p.purge {
+		p.foreign = append(p.foreign, missing(confirmed.foreign, p.foreign)...)
 	}
 	var failed []error
 	for _, s := range p.steps {
@@ -705,7 +806,7 @@ func (u *uninstaller) run(o uninstallOptions, stdin io.Reader, out io.Writer) er
 	}
 	pr.line("")
 	for _, err := range failed {
-		pr.warn("not removed: " + err.Error())
+		pr.warn("not removed: " + printable(err.Error()))
 	}
 	if len(failed) > 0 {
 		return errors.New("the agent is stopped, but the files above are left; remove them yourself")
@@ -740,6 +841,17 @@ func (u *uninstaller) tellServer(dataDir string) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
+}
+
+// missing returns the entries of a that b lacks.
+func missing(a, b []string) []string {
+	var out []string
+	for _, x := range a {
+		if !slices.Contains(b, x) {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func isAre(n int) string {

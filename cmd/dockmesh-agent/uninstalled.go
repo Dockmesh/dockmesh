@@ -37,9 +37,17 @@ var (
 	// uninstalled keeps the agent from connecting again once the server
 	// took the frame; systemd stops it right after.
 	uninstalled atomic.Bool
+	// uninstallRequestedAt is when the last request came; one the agent
+	// could not send soon after is dropped, so a later connect doesn't
+	// report an uninstall that failed meanwhile.
+	uninstallRequestedAt atomic.Int64
 )
 
+// uninstallRequestTTL is how long a request waits for a session.
+const uninstallRequestTTL = 30 * time.Second
+
 func requestUninstallReport() {
+	uninstallRequestedAt.Store(time.Now().UnixNano())
 	select {
 	case uninstallRequests <- struct{}{}:
 	default:
@@ -57,10 +65,15 @@ func ackUninstall() {
 // uninstall` asks for it, and on the server's answer writes
 // uninstalledFile and ends the session.
 func reportUninstall(ctx context.Context, conn *websocket.Conn, dataDir string) {
-	select {
-	case <-ctx.Done():
-		return
-	case <-uninstallRequests:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-uninstallRequests:
+		}
+		if time.Since(time.Unix(0, uninstallRequestedAt.Load())) < uninstallRequestTTL {
+			break
+		}
 	}
 	select {
 	case <-uninstallAcks:

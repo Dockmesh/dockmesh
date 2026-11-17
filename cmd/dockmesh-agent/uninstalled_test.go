@@ -97,3 +97,18 @@ func TestRememberAgentName(t *testing.T) {
 		t.Fatalf("cleanAgentName kept control characters: %q", got)
 	}
 }
+
+func TestReportUninstallDropsStaleRequest(t *testing.T) {
+	resetUninstallState(t)
+	conn, frames := wsPair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requestUninstallReport()
+	uninstallRequestedAt.Store(time.Now().Add(-2 * uninstallRequestTTL).UnixNano())
+	go reportUninstall(ctx, conn, t.TempDir())
+	select {
+	case f := <-frames:
+		t.Fatalf("sent %q for a stale request", f.Type)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
