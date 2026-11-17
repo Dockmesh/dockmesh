@@ -1,0 +1,3 @@
+kind: Changed
+body: uninstall.sh --purge finds a data directory chosen in the setup wizard and removes only Dockmesh's own files from it; stack directories with other files, local backups and anything unknown stay and are listed with the reason
+time: 2026-11-17T19:00:12.77563964Z

@@ -125,8 +125,13 @@ done
 
 step "uninstall"
 api DELETE '/api/v1/stacks/smoke?host=local' >/dev/null || true
-bash "$HERE/uninstall.sh" --purge
-for p in /usr/local/bin/dockmesh /var/lib/dockmesh /etc/systemd/system/dockmesh.service; do
+bash "$HERE/uninstall.sh" --purge 2>&1 | tee "$WORK/uninstall.log"
+# The backup archive is the only thing the purge leaves.
+grep -q 'keep    /var/lib/dockmesh/data/backups: ' "$WORK/uninstall.log" || fail "the purge did not keep the local backups"
+LEFT="$(find /var/lib/dockmesh -mindepth 1 ! -path /var/lib/dockmesh/data ! -path '/var/lib/dockmesh/data/backups' ! -path '/var/lib/dockmesh/data/backups/*' 2>&1)"
+[ -z "$LEFT" ] || fail "the purge left files besides the backups: $LEFT"
+rm -rf /var/lib/dockmesh
+for p in /usr/local/bin/dockmesh /var/lib/dockmesh /etc/dockmesh /etc/systemd/system/dockmesh.service; do
   [ ! -e "$p" ] || fail "$p still exists after uninstall --purge"
 done
 if systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q dockmesh; then
