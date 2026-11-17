@@ -98,6 +98,10 @@ var quietDataCommands = []string{"serve", "version", "--version", "-v", "help", 
 // data dir because no config names one (see layout.CheckoutProbe).
 var checkoutDataDir string
 
+// checkoutDistrust is why the working directory's source run data was not
+// used; nil when it was or when there is none.
+var checkoutDistrust error
+
 // useCheckoutData points DOCKMESH_DATA_DIR at the working directory when
 // it holds the data of a source run and nothing else configures the
 // server, so the derived paths are the ./data and ./stacks of 0.5.x.
@@ -111,7 +115,8 @@ func useCheckoutData() error {
 	}
 	dir, distrust := layout.CheckoutProbe{WorkDir: wd, Getenv: os.Getenv, EnvFiles: []string{unitEnvFile()}}.Dir()
 	if distrust != nil {
-		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); a server started here keeps setup closed while its database exists; set DOCKMESH_DATA_DIR=%s to use it\n", wd, distrust, layout.ShellQuote(wd))
+		checkoutDistrust = distrust
+		fmt.Fprintf(os.Stderr, "dockmesh: not using the data in %s (%v); serve refuses to start here\n", wd, distrust)
 		return nil
 	}
 	if dir == "" {
@@ -379,13 +384,21 @@ func main() {
 
 	// Before config.Load and db.Open: they create the secrets file and the
 	// database a fresh install lacks.
+	workDir := setupWorkDir()
 	setupFacts := setup.Probe{
-		ConfigFiles: []string{loadedEnvFile, unitEnvFile()},
-		DBPathSet:   os.Getenv("DOCKMESH_DB_PATH") != "",
-		Force:       os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
-		Paths:       config.ResolvePaths(os.Getenv),
-		WorkDir:     setupWorkDir(),
+		ConfigFiles:        []string{loadedEnvFile, unitEnvFile()},
+		DBPathSet:          os.Getenv("DOCKMESH_DB_PATH") != "",
+		DataDirSet:         os.Getenv("DOCKMESH_DATA_DIR") != "" && checkoutDataDir == "",
+		CheckoutDistrusted: checkoutDistrust != nil,
+		Force:              os.Getenv("DOCKMESH_SETUP_FORCE") == "true",
+		Paths:              config.ResolvePaths(os.Getenv),
+		WorkDir:            workDir,
 	}.Scan()
+	if setup.RefusesStart(setupFacts) {
+		slog.Error("refusing to start over the data of a source run this server may not use; start dockmesh from another "+
+			"directory, or check who created the data and fix the ownership before using it", "dir", workDir, "reason", checkoutDistrust)
+		os.Exit(1)
+	}
 	// The database is created below; a start that dies after that must
 	// still find the state dir, or the next one would serve setup mode
 	// over plain HTTP.

@@ -55,8 +55,20 @@ type Facts struct {
 	// Data: files an install leaves next to its database (secrets, keys,
 	// the agent CA, stacks) exist.
 	Data bool
+	// CheckoutDB: the working directory holds the database of a source
+	// run that layout.TrustedCheckout refused as the data dir.
+	CheckoutDB bool
+	// DataDirSet is DOCKMESH_DATA_DIR set by the caller.
+	DataDirSet bool
 	// Users in the server's database; negative when unknown.
 	Users int
+}
+
+// RefusesStart reports a start in a source run checkout whose data the
+// server may not use, with nothing else configured: serving would create
+// an empty install at the default paths next to the real one.
+func RefusesStart(f Facts) bool {
+	return f.CheckoutDB && !f.DB && !f.Config && !f.DataDirSet
 }
 
 // Decide maps Facts to a Mode. Anything it cannot place is SetUp: wrongly
@@ -83,7 +95,12 @@ type Probe struct {
 	ConfigFiles []string
 	// DBPathSet is DOCKMESH_DB_PATH being set.
 	DBPathSet bool
-	Force     bool
+	// DataDirSet is DOCKMESH_DATA_DIR set by the caller, not by the
+	// checkout probe.
+	DataDirSet bool
+	// CheckoutDistrusted: layout.CheckoutProbe refused WorkDir.
+	CheckoutDistrusted bool
+	Force              bool
 	// Paths of the server; layout.KnownDBPaths are checked as well.
 	Paths config.Paths
 	// WorkDir is the server's working directory when it holds the
@@ -110,7 +127,7 @@ func (p Probe) Scan() Facts {
 	if readDir == nil {
 		readDir = os.ReadDir
 	}
-	f := Facts{Force: p.Force, Users: -1}
+	f := Facts{Force: p.Force, DataDirSet: p.DataDirSet, Users: -1}
 	configs := append([]string{layout.ConfigFile}, layout.LegacyEnvFiles...)
 	for _, c := range append(configs, p.ConfigFiles...) {
 		if c != "" && present(lstat, c) {
@@ -138,6 +155,9 @@ func (p Probe) Scan() Facts {
 		}
 		if err != nil || active == nil || !sameFile(stat, fi, active, known, db) {
 			f.ForeignDB = true
+			if p.CheckoutDistrusted && p.WorkDir != "" && known == layout.CheckoutDBPath(p.WorkDir) {
+				f.CheckoutDB = true
+			}
 		}
 	}
 
