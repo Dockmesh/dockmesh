@@ -147,10 +147,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := finishPendingRenewal(certPath, keyPath); err != nil {
-		slog.Error("finish cert renewal", "err", err)
-		os.Exit(1)
-	}
 	store, err := newCertStore(certPath, keyPath, caPath)
 	if err != nil {
 		slog.Error("tls config", "err", err)

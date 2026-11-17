@@ -314,7 +314,7 @@ fi
 if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$DATA_DIR/certs" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
   log "detected existing enrollment in $DATA_DIR — removing certs so the new token takes effect"
-  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt" "$DATA_DIR/enroll-ca.pem"
+  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.crt.next" "$DATA_DIR/agent.key.next" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt" "$DATA_DIR/enroll-ca.pem"
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
@@ -398,7 +398,7 @@ install_path_copy() {
 # there would be followed.
 write_enroll_token() {
   local token="$1" dest="$2" user="$3" group="$4"
-  local script='umask 077 && tmp="$(mktemp "$1.XXXXXX")" && cat >"$tmp" && mv -f "$tmp" "$1"'
+  local script='umask 077 && tmp="$(mktemp "$1.XXXXXX")" && cat >"$tmp" && { mv -fT "$tmp" "$1" || { rm -f "$tmp"; exit 1; }; }'
   if [[ "$user" == root ]]; then
     printf '%s\n' "$token" | sh -c "$script" sh "$dest"
   else
@@ -482,12 +482,6 @@ chown "$RUN_USER":"$RUN_GROUP" "$ENROLL_CA_FILE"
 chmod 0644 "$ENROLL_CA_FILE"
 
 # -----------------------------------------------------------------------------
-# Enrollment token (removed by the agent once the server answered it)
-# -----------------------------------------------------------------------------
-write_enroll_token "$TOKEN" "$DATA_DIR/enroll-token" "$RUN_USER" "$RUN_GROUP" ||
-  die "could not write the enrollment token to $DATA_DIR/enroll-token"
-
-# -----------------------------------------------------------------------------
 # Environment file
 # -----------------------------------------------------------------------------
 ENV_FILE="$ENV_DIR/agent.env"
@@ -501,6 +495,15 @@ DOCKMESH_ENROLL_CA_FILE=$ENROLL_CA_FILE
 EOF
 chown root:"$RUN_GROUP" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
+
+# -----------------------------------------------------------------------------
+# Enrollment token (removed by the agent once the server answered it)
+# -----------------------------------------------------------------------------
+# Written after agent.env and with the agent stopped: an agent restarted
+# in between would send the new token to the old enroll URL.
+systemctl stop dockmesh-agent 2>/dev/null || true
+write_enroll_token "$TOKEN" "$DATA_DIR/enroll-token" "$RUN_USER" "$RUN_GROUP" ||
+  die "could not write the enrollment token to $DATA_DIR/enroll-token"
 
 # -----------------------------------------------------------------------------
 # systemd unit

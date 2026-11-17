@@ -25,7 +25,10 @@ var enrollTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 // nothing the agent can retry.
 var errNotEnrolled = errors.New("this host is not enrolled")
 
-// notEnrolledHint is the journal line for errNotEnrolled.
+// errBadTokenFile is a token file that can never be used: not a regular
+// file, or not a token.
+var errBadTokenFile = errors.New("unusable enrollment token file")
+
 const notEnrolledHint = "This host is not enrolled. Copy the install command from Hosts > Add host in Dockmesh and run it on this host."
 
 type enrollPaths struct {
@@ -57,7 +60,7 @@ func readEnrollToken(path string) (string, error) {
 		return "", err
 	}
 	if !lfi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", path)
+		return "", fmt.Errorf("%w: %s is not a regular file", errBadTokenFile, path)
 	}
 	f, err := os.Open(path) // #nosec G304 -- fixed name in the agent's data dir
 	if err != nil {
@@ -75,7 +78,7 @@ func readEnrollToken(path string) (string, error) {
 	}
 	tok := strings.TrimSpace(string(b))
 	if !enrollTokenPattern.MatchString(tok) {
-		return "", fmt.Errorf("%s does not hold an enrollment token", path)
+		return "", fmt.Errorf("%w: %s does not hold an enrollment token", errBadTokenFile, path)
 	}
 	return tok, nil
 }
@@ -93,10 +96,18 @@ func removeEnrollToken(path string) {
 // refused it; after a network error it stays for the next start.
 // errNotEnrolled and errEnrollRejected mean a restart cannot help.
 func enrollOnStart(cfg agentConfig, p enrollPaths, enrollFn func(agentConfig, enrollPaths) error) error {
+	// A renewal or enrollment that stopped between writing the new pair
+	// and moving it into place is finished first: its token is spent.
+	if err := finishPendingRenewal(p.cert, p.key); err != nil {
+		slog.Error("finish cert renewal", "err", err)
+		return err
+	}
 	fileToken, err := readEnrollToken(p.token)
 	if err != nil {
 		slog.Error("enrollment token file ignored", "err", err)
-		removeEnrollToken(p.token)
+		if errors.Is(err, errBadTokenFile) {
+			removeEnrollToken(p.token)
+		}
 		fileToken = ""
 	}
 
@@ -111,20 +122,18 @@ func enrollOnStart(cfg agentConfig, p enrollPaths, enrollFn func(agentConfig, en
 		}
 		cfg.token = token
 		slog.Info("enrolling", "url", cfg.enrollURL)
-		err := enrollFn(cfg, p)
-		if err == nil || errors.Is(err, errEnrollRejected) {
+		err = enrollFn(cfg, p)
+		switch {
+		case err == nil:
 			removeEnrollToken(p.token)
+			slog.Info("enrolled successfully")
+		case errors.Is(err, errEnrollRejected):
+			removeEnrollToken(p.token)
+			slog.Error("enrollment failed", "err", err, "hint", reenrollHint)
+		default:
+			slog.Error("enrollment failed", "err", err)
 		}
-		if err != nil {
-			if errors.Is(err, errEnrollRejected) {
-				slog.Error("enrollment failed", "err", err, "hint", reenrollHint)
-			} else {
-				slog.Error("enrollment failed", "err", err)
-			}
-			return err
-		}
-		slog.Info("enrolled successfully")
-		return nil
+		return err
 	}
 
 	if fileToken == "" {

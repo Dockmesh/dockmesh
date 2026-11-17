@@ -356,7 +356,7 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		"DOCKMESH_EARLIER_STACKS_DIRS": earlier,
 	}
 	// The server forgets a token once it has enrolled the host, so an
-	// enrolled host's DOCKMESH_TOKEN is spent; a token is never written.
+	// enrolled host's DOCKMESH_TOKEN is spent.
 	if env["DOCKMESH_TOKEN"] != "" && fileExists(filepath.Join(dataDir, "agent.crt")) {
 		envSet["DOCKMESH_TOKEN"] = ""
 		res.tokenRemoved = true

@@ -12,15 +12,19 @@ const testToken = "tok_0123456789abcdef"
 
 func TestEnrollOnStart(t *testing.T) {
 	rejected := fmt.Errorf("%w: enroll http 401", errEnrollRejected)
+	dialErr := errors.New("dial")
 	tests := []struct {
 		name string
 		// enrolled puts an old pair in the data dir; tokenFile is the
 		// content of enroll-token, "" for none.
-		enrolled  bool
-		tokenFile string
-		envToken  string
-		enrollURL string
-		enrollErr error
+		enrolled bool
+		// pendingPair leaves a complete .next pair and ca.crt, as an
+		// enrollment that stopped before the rename does.
+		pendingPair bool
+		tokenFile   string
+		envToken    string
+		enrollURL   string
+		enrollErr   error
 		// wantToken is the token enroll is called with, "" for no call.
 		wantToken    string
 		wantErr      error
@@ -38,8 +42,8 @@ func TestEnrollOnStart(t *testing.T) {
 		{name: "no enroll url stops", tokenFile: testToken, wantErr: errNotEnrolled, wantFileKept: true},
 		{name: "rejected token is removed", tokenFile: testToken, enrollURL: "https://s/enroll", enrollErr: rejected,
 			wantToken: testToken, wantErr: errEnrollRejected, wantFileGone: true},
-		{name: "network error keeps the token", tokenFile: testToken, enrollURL: "https://s/enroll", enrollErr: errors.New("dial"),
-			wantToken: testToken, wantErr: errors.New("dial"), wantFileKept: true},
+		{name: "network error keeps the token", tokenFile: testToken, enrollURL: "https://s/enroll", enrollErr: dialErr,
+			wantToken: testToken, wantErr: dialErr, wantFileKept: true},
 		{name: "enrolled without a file does nothing", enrolled: true, envToken: "envtoken_0123456789", enrollURL: "https://s/enroll",
 			wantOldCert: true},
 		{name: "token file re-enrolls", enrolled: true, tokenFile: testToken, enrollURL: "https://s/enroll",
@@ -47,7 +51,9 @@ func TestEnrollOnStart(t *testing.T) {
 		{name: "rejected re-enroll keeps the old pair", enrolled: true, tokenFile: testToken, enrollURL: "https://s/enroll",
 			enrollErr: rejected, wantToken: testToken, wantFileGone: true, wantOldCert: true},
 		{name: "failed re-enroll keeps pair and token", enrolled: true, tokenFile: testToken, enrollURL: "https://s/enroll",
-			enrollErr: errors.New("dial"), wantToken: testToken, wantFileKept: true, wantOldCert: true},
+			enrollErr: dialErr, wantToken: testToken, wantFileKept: true, wantOldCert: true},
+		{name: "pending pair from an interrupted enrollment is used", pendingPair: true, tokenFile: testToken, enrollURL: "https://s/enroll", enrollErr: rejected,
+			wantToken: testToken, wantFileGone: true, wantNewCert: true},
 		{name: "symlinked token file is ignored", tokenFile: testToken, tokenSymlink: true, enrollURL: "https://s/enroll",
 			wantErr: errNotEnrolled, wantFileGone: true},
 		{name: "malformed token file is ignored", tokenFile: "short", enrollURL: "https://s/enroll",
@@ -61,6 +67,11 @@ func TestEnrollOnStart(t *testing.T) {
 				for _, f := range []string{p.cert, p.key, p.ca} {
 					writeFile(t, f, "old")
 				}
+			}
+			if tt.pendingPair {
+				writeFile(t, p.ca, "new")
+				writeFile(t, p.key+".next", "new")
+				writeFile(t, p.cert+".next", "new")
 			}
 			if tt.tokenFile != "" {
 				if tt.tokenSymlink {
@@ -90,7 +101,7 @@ func TestEnrollOnStart(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			case tt.wantErr != nil && err == nil:
 				t.Fatalf("err = nil, want %v", tt.wantErr)
-			case tt.wantErr != nil && !errors.Is(err, tt.wantErr) && err.Error() != tt.wantErr.Error():
+			case tt.wantErr != nil && !errors.Is(err, tt.wantErr):
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 			if called != tt.wantToken {

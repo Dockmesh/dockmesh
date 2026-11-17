@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,16 +19,13 @@ import (
 // the server to confirm reachability.
 func runStatusCmd() {
 	dataDir := dataDir()
-	certPath := filepath.Join(dataDir, "agent.crt")
-	keyPath := filepath.Join(dataDir, "agent.key")
-	caPath := filepath.Join(dataDir, "ca.crt")
-	urlPath := filepath.Join(dataDir, "agent.url")
+	paths := dataDirEnrollPaths(dataDir)
+	certPath, urlPath := paths.cert, paths.url
 
 	fmt.Printf("dockmesh-agent %s\n", version.Label())
 	fmt.Printf("data dir: %s\n\n", dataDir)
 
-	enrolled := fileExists(certPath) && fileExists(keyPath) && fileExists(caPath)
-	if !enrolled {
+	if !paths.enrolled() {
 		fmt.Println("status: NOT ENROLLED")
 		fmt.Println("  missing cert/key/ca — run the install command from Hosts > Add host in Dockmesh to enroll")
 		return
