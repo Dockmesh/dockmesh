@@ -133,3 +133,7 @@ func unescapeMount(s string) string {
 	r := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
 	return r.Replace(s)
 }
+
+// PseudoFS reports a filesystem type that holds no disk data, such as
+// tmpfs or proc.
+func PseudoFS(fsType string) bool { return pseudoFS[fsType] }

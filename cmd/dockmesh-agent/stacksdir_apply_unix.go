@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,8 +57,18 @@ func hostStacksDirRules(ctx context.Context, dataDir string, dirs stackDirs, uid
 		serverDataDirs: servers,
 		dockerRoots:    dockerRootDirs(ctx, dockerHost),
 		uid:            uid,
+		account:        accountName(uid),
 		mountinfo:      procMountinfo,
 	}
+}
+
+// accountName is the name of uid, the managed agent's account when it
+// cannot be looked up.
+func accountName(uid int) string {
+	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil && plainDir.MatchString(u.Username) {
+		return u.Username
+	}
+	return agentAccount
 }
 
 // dockerRootDirs asks the daemon at the default socket and the one
@@ -190,24 +202,24 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 		a.result(agents.StacksDirFailed, check, err)
 		return nil
 	}
-	var created []string
-	// Nothing written so far is deleted again; the result names it.
+	created := false
+	// A directory created so far is not deleted again; the result names it.
 	failed := func(err error) error {
 		rerr := errors.Join(a.units.RestoreUnit(prevUnits), restoreEnv(envFile, prevEnv, a.in.rootUID), a.in.systemctl("daemon-reload"))
 		if rerr != nil {
 			err = fmt.Errorf("%w; restoring the old config failed: %w", err, rerr)
 		}
-		if len(created) > 0 {
-			err = fmt.Errorf("%w; created and left in place: %s", err, strings.Join(created, ", "))
+		if created {
+			err = fmt.Errorf("%w; %s was created and left in place", err, path)
 		}
 		a.result(agents.StacksDirFailed, check, err)
 		return nil
 	}
 	if res.WillCreate && !layout.Within(a.dataDir, path) {
-		created, err = createStacksDir(path, res.existing, int(a.uid), a.gid, a.in.rootUID, a.in.rootGID)
-		if err != nil {
+		if err := createStacksDir(path, int(a.uid), a.gid); err != nil {
 			return failed(fmt.Errorf("create %s: %w", path, err))
 		}
+		created = true
 	}
 	if _, err := a.in.run(installOptions{StacksDir: path, earlier: earlier, setEarlier: true}); err != nil { //nolint:contextcheck // short local file writes
 		return failed(err)
@@ -264,49 +276,33 @@ func restoreEnv(envFile string, data []byte, rootUID int) error {
 	return err
 }
 
-// createStacksDir creates the components of p from the existing-th on,
-// each through the descriptor of the one before and without following a
-// symlink: rootUID:rootGID 0755 in between, the last owned by uid:gid
-// 0750. It returns the directories it created, also on failure.
-func createStacksDir(p string, existing, uid, gid, rootUID, rootGID int) (created []string, err error) {
+// createStacksDir creates p, whose parent exists, owned by uid:gid 0750.
+// Every component is opened through the descriptor of the one before
+// without following a symlink.
+func createStacksDir(p string, uid, gid int) error {
 	comps := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { unix.Close(fd) }()
 	for i, c := range comps {
-		last := i == len(comps)-1
-		if i >= existing {
-			mode := uint32(0o755)
-			if last {
-				mode = 0o750
+		if i == len(comps)-1 {
+			if err := unix.Mkdirat(fd, c, 0o750); err != nil {
+				return err
 			}
-			if err := unix.Mkdirat(fd, c, mode); err != nil {
-				return created, err
-			}
-			created = append(created, "/"+strings.Join(comps[:i+1], "/"))
 		}
 		nfd, err := unix.Openat(fd, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != nil {
-			return created, err
+			return err
 		}
 		unix.Close(fd)
 		fd = nfd
-		if i >= existing {
-			owner, group, mode := rootUID, rootGID, uint32(0o755)
-			if last {
-				owner, group, mode = uid, gid, 0o750
-			}
-			if err := unix.Fchown(fd, owner, group); err != nil {
-				return created, err
-			}
-			if err := unix.Fchmod(fd, mode); err != nil {
-				return created, err
-			}
-		}
 	}
-	return created, nil
+	if err := unix.Fchown(fd, uid, gid); err != nil {
+		return err
+	}
+	return unix.Fchmod(fd, 0o750)
 }
 
 // lockStacksDir takes the lock in root's state dir that a stacks-dir-apply

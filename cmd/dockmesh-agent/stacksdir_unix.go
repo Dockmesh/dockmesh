@@ -41,6 +41,7 @@ const (
 	sdSymlink      = "symlink"
 	sdNotDir       = "not_a_directory"
 	sdUnsafeParent = "unsafe_parent"
+	sdNewNotHere   = "new_dir_not_allowed"
 	sdNetworkShare = "network_share"
 	sdNoUnixPerms  = "no_unix_permissions"
 	sdNotEmpty     = "not_empty"
@@ -63,6 +64,14 @@ const (
 // that needs no Docker. The agent's default stacks dir is the exception.
 var denyRoots = []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/efi", "/proc", "/sys", "/dev", "/run", "/root", "/var", "/tmp", "/snap", "/nix"}
 
+// stacksParents are the directories below which root creates a new
+// stacks dir, one level deep. Below any other tree root only accepts a
+// directory an admin prepared: root services load code and config from
+// trees no list of refused directories can name (a venv's site-packages
+// under /opt, vendor plugin dirs), and a directory the agent may write in
+// one of them would be a way to root.
+var stacksParents = []string{"/srv", "/opt", "/data", "/mnt", "/media"}
+
 // defaultServerDataDir is refused whether or not a server runs here.
 const defaultServerDataDir = "/var/lib/dockmesh"
 
@@ -80,14 +89,50 @@ type stacksDirRules struct {
 	// dockerRoots are the data roots of the Docker daemons on this host;
 	// none when Docker could not be asked, which refuses every path.
 	dockerRoots []string
-	// uid must own a target that exists already.
-	uid int
+	// uid must own a target that exists already; account is its name,
+	// used in the command that prepares one.
+	uid     int
+	account string
 	// parentOK accepts a directory above the target; nil accepts only one
 	// root owns and nobody else may write.
 	parentOK  func(path string, uid, mode uint32) bool
 	mountinfo func() (io.ReadCloser, error)
-	// deny replaces denyRoots in tests, which work below /tmp.
-	deny []string
+	// deny and parents replace denyRoots and stacksParents in tests,
+	// which work below /tmp.
+	deny    []string
+	parents []string
+}
+
+func (r stacksDirRules) allowedParents() []string {
+	if r.parents != nil {
+		return r.parents
+	}
+	return stacksParents
+}
+
+// prepareCommand is what an admin runs to make p a directory the agent
+// may be switched to.
+func (r stacksDirRules) prepareCommand(p string) string {
+	a := r.account
+	if a == "" {
+		a = agentAccount
+	}
+	return fmt.Sprintf("sudo install -d -o %s -g %s -m 0750 %s", a, a, p)
+}
+
+// creatableParent reports whether root may create a stacks dir directly
+// in dir: one of the allowed parents, or the mount point m of a local
+// filesystem below one of them.
+func (r stacksDirRules) creatableParent(dir string, m setup.Mount) bool {
+	for _, a := range r.allowedParents() {
+		if dir == a {
+			return true
+		}
+		if layout.Within(a, dir) && m.Mountpoint == dir && !setup.PseudoFS(m.FSType) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r stacksDirRules) denied() []string {
@@ -97,11 +142,9 @@ func (r stacksDirRules) denied() []string {
 	return denyRoots
 }
 
-// stacksDirResult is a check and, for root, the walk it decided on.
+// stacksDirResult is a check of a stacks dir.
 type stacksDirResult struct {
 	agents.StacksDirCheck
-	// existing is the number of leading components of the path that exist.
-	existing int
 }
 
 func (r stacksDirRules) parentAllowed(path string, uid, mode uint32) bool {
@@ -114,7 +157,10 @@ func (r stacksDirRules) parentAllowed(path string, uid, mode uint32) bool {
 func (r stacksDirResult) ok() bool { return r.Status != sdFail }
 
 // checkStacksDir checks p as a new stacks dir with the rules of root's
-// stacks-dir-apply. It writes nothing. Every component is opened with
+// stacks-dir-apply. It writes nothing. Root creates p only as one new
+// directory in an allowed parent; anywhere else p must exist already,
+// be empty and belong to the agent. The refused trees below are a second
+// line behind that. Every component is opened with
 // O_NOFOLLOW from the one before, so a symlink anywhere is refused, and
 // compared by device and inode with the refused directories, which
 // catches another spelling of one. A path on a bind mount of a
@@ -171,7 +217,7 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 	if err := unix.Fstat(fd, &st); err != nil {
 		return fail(sdUnreadable, "Cannot read /: %v.", err)
 	}
-	cur := "/"
+	cur, existing := "/", 0
 walk:
 	for i, c := range comps {
 		next := filepath.Join(cur, c)
@@ -200,11 +246,11 @@ walk:
 		if why, bad := denied[fileID{uint64(st.Dev), uint64(st.Ino)}]; bad && why != next { //nolint:unconvert // the types differ per OS
 			return fail(sdSystemDir, "%s is the same directory as %s.", next, why)
 		}
-		res.existing = i + 1
+		existing = i + 1
 		last := i == len(comps)-1
-		// Root creates what is missing below the last existing directory;
-		// only root may be able to replace any of them. The default dir
-		// lies in the agent's own data dir, which the agent creates.
+		// Only root may be able to swap a directory above the target for
+		// a symlink once root has checked it. The default dir lies in the
+		// agent's own data dir, which the agent creates.
 		if !last && p != defaultDir && !r.parentAllowed(next, st.Uid, uint32(st.Mode)) { //nolint:unconvert // the types differ per OS
 			return fail(sdUnsafeParent, "%s and every directory above the stacks directory must belong to root and be writable only by root.", next)
 		}
@@ -227,18 +273,22 @@ walk:
 		return fail(sdBindMount, "%s is on a bind mount of %s. Enter a path on the mounted filesystem itself.", p, m.Root)
 	}
 
-	if res.existing == len(comps) {
+	switch {
+	case existing == len(comps):
 		if int(st.Uid) != r.uid {
-			return fail(sdForeignOwner, "%s exists and belongs to another account. Choose a new directory; it is created for the agent.", p)
+			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, r.prepareCommand(p))
 		}
 		empty, err := emptyDirAt(fd)
 		if err != nil {
 			return fail(sdUnreadable, "Cannot read %s: %v.", p, err)
 		}
 		if !empty {
-			return fail(sdNotEmpty, "%s is not empty. Choose an empty or new directory.", p)
+			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, r.prepareCommand(p))
 		}
-	} else {
+	case p != defaultDir && (existing != len(comps)-1 || !r.creatableParent(cur, m)):
+		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them. Prepare %s as an empty directory of the agent: %s",
+			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p))
+	default:
 		res.WillCreate = true
 	}
 

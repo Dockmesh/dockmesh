@@ -104,17 +104,27 @@ The host's details page shows the stacks directories the agent reports, with the
 
 ### Changing the stacks directory
 
-On a managed agent the root updater switches the stacks directory (`stacks-dir-apply`). The agent checks the path first with the same rules and only asks root when they pass; root then checks everything again on its own, because the request comes from the agent's account:
+On a managed agent the root updater switches the stacks directory (`stacks-dir-apply`). The agent checks the path first with the same rules and only asks root when they pass; root then checks everything again on its own, because the request comes from the agent's account.
 
-- an absolute, clean path of letters, digits and `. _ - /`; no component may be a symbolic link;
-- not `/` and not in `/etc`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/boot`, `/efi`, `/proc`, `/sys`, `/dev`, `/run`, `/root`, `/var` (except the agent's default `<data dir>/stacks`), `/tmp`, `/snap`, `/nix` or Docker's actual data directory, also not the same directory under another name; root services load drop-in directories from below `/var`, so none of it is offered;
-- not inside the current or an earlier stacks directory, and not on a bind mount of a subdirectory;
-- not in the agent's data directory (except its default `stacks/`) or a Dockmesh server's data directory;
-- every directory above it belongs to root and only root may write it;
-- on a local filesystem with Unix permissions, not on a network share or a FUSE filesystem; at least 200 MiB free (a warning below 2 GiB);
-- new, or an empty directory that belongs to `dockmesh-agent`.
+Root accepts a directory in one of two cases:
 
-Root creates the missing directories (root-owned, 0755, the last one `dockmesh-agent`, 0750), writes `DOCKMESH_STACKS_DIR` to `agent.env`, rewrites the unit, reloads systemd and restarts the agent. It never changes the owner or mode of anything that exists and never deletes anything. Earlier stacks directories stay writable while they hold stacks; a switch is refused while two earlier ones still do. One switch runs at a time, and every switch and refusal is logged in `journalctl -u dockmesh-agent-update`. `sudo dockmesh-agent system install --stacks-dir <dir>` applies the same checks.
+- **New directory:** it does not exist yet, and its parent is `/srv`, `/opt`, `/data`, `/mnt` or `/media`, or a disk mounted somewhere below them (for example `/mnt/disk1` or `/srv/data`). Root creates exactly this one directory, owned by `dockmesh-agent` with mode 0750. `/opt/stacks` and `/mnt/disk1/stacks` work; `/opt/a/stacks` (unless `/opt/a` is a mounted disk), `/home/x` or `/stacks` don't.
+- **Prepared directory:** anywhere else, an admin creates the directory first. It must be empty, belong to the agent's account and have no symbolic link in its path; root then creates, chowns or chmods nothing and only writes the config and the unit:
+
+  ```bash
+  sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 /srv/apps/stacks
+  ```
+
+A refusal names the case it failed and prints this command for the path. In both cases:
+
+- the path is absolute and clean, of letters, digits and `. _ - /`; no component may be a symbolic link, and every directory above it belongs to root and only root may write it;
+- it is not `/` and not in `/etc`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/boot`, `/efi`, `/proc`, `/sys`, `/dev`, `/run`, `/root`, `/var` (except the agent's default `<data dir>/stacks`), `/tmp`, `/snap`, `/nix` or Docker's actual data directory, also not the same directory under another name;
+- it is not inside the current or an earlier stacks directory, not on a bind mount of a subdirectory, not in the agent's data directory (except its default `stacks/`) and not in a Dockmesh server's data directory;
+- it is on a local filesystem with Unix permissions, not on a network share or a FUSE filesystem, with at least 200 MiB free (a warning below 2 GiB).
+
+The default `<data dir>/stacks` is always accepted. Root writes `DOCKMESH_STACKS_DIR` to `agent.env`, rewrites the unit, reloads systemd and restarts the agent. It never changes the owner or mode of anything that exists and never deletes anything. Earlier stacks directories stay writable while they hold stacks; a switch is refused while two earlier ones still do. One switch runs at a time, and every switch and refusal is logged in `journalctl -u dockmesh-agent-update`. `sudo dockmesh-agent system install --stacks-dir <dir>` applies the same checks.
+
+Root does not create directories deeper down or in other trees on purpose: services that run as root load code and config from many places below `/opt` and elsewhere (a Python environment's `site-packages`, plugin directories), and a directory the agent may write in one of them would hand the agent's account root.
 
 The agent refuses to enroll over plain `http://` unless you start it with `--insecure-enroll` (or `DOCKMESH_INSECURE_ENROLL=true`), because the token and the client key would cross the network unencrypted. Use it only in an isolated lab.
 

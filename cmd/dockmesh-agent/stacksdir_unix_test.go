@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,7 +24,8 @@ import (
 func testStacksRules(t *testing.T) (string, stacksDirRules) {
 	t.Helper()
 	root := t.TempDir()
-	for _, d := range []string{"data/stacks", "docker", "srv", "full/x", "empty", "loose", "nfs", "usb", "bind", "fuse", "cur/s"} {
+	for _, d := range []string{"data/stacks", "docker", "srv/vol", "srv/apps/stacks", "full/x", "empty", "loose/prep", "nfs", "usb", "bind", "fuse", "cur/s",
+		"opt/a", "opt/certbot/lib/python3.11/site-packages", "home", "mnt/disk1", "mnt/plain", "mnt/ram", "mnt/pool", "mnt/snap", "media"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -42,7 +44,12 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 		"41 22 8:17 / " + filepath.Join(root, "usb") + " rw - vfat /dev/sdb1 rw\n" +
 		"42 22 8:1 /etc/ssh " + filepath.Join(root, "bind") + " rw - ext4 /dev/sda1 rw\n" +
 		"43 22 0:60 / " + filepath.Join(root, "fuse") + " rw - fuse.mergerfs pool rw\n" +
-		"44 22 0:61 /@data " + filepath.Join(root, "srv") + " rw - btrfs /dev/sdc rw,subvol=/@data\n"
+		"44 22 0:61 /@data " + filepath.Join(root, "srv") + " rw - btrfs /dev/sdc rw,subvol=/@data\n" +
+		"45 22 8:33 / " + filepath.Join(root, "mnt", "disk1") + " rw - ext4 /dev/sdd1 rw\n" +
+		"46 44 8:49 / " + filepath.Join(root, "srv", "vol") + " rw - xfs /dev/sde1 rw\n" +
+		"47 22 0:70 / " + filepath.Join(root, "mnt", "ram") + " rw - tmpfs tmpfs rw\n" +
+		"48 22 0:71 /@pool " + filepath.Join(root, "mnt", "pool") + " rw - btrfs /dev/sdf rw,subvol=/@pool\n" +
+		"49 22 0:71 /@pool/sub " + filepath.Join(root, "mnt", "snap") + " rw - btrfs /dev/sdf rw,subvol=/@pool\n"
 	me := uint32(os.Getuid())
 	return root, stacksDirRules{
 		dataDir:        filepath.Join(root, "data"),
@@ -51,7 +58,9 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 		dockerRoots:    []string{filepath.Join(root, "docker")},
 		stackDirs:      []string{filepath.Join(root, "data", "stacks"), filepath.Join(root, "cur")},
 		deny:           []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/efi", "/proc", "/sys", "/dev", "/run", "/root", "/var", "/snap", "/nix"},
+		parents:        []string{filepath.Join(root, "srv"), filepath.Join(root, "opt"), filepath.Join(root, "mnt"), filepath.Join(root, "media")},
 		uid:            os.Getuid(),
+		account:        "dockmesh-agent",
 		mountinfo:      func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(mounts)), nil },
 		parentOK: func(p string, uid, mode uint32) bool {
 			if !strings.HasPrefix(p, root+"/") {
@@ -72,8 +81,27 @@ func TestCheckStacksDir(t *testing.T) {
 		ok     bool
 		create bool
 	}{
-		{name: "new dir", path: root + "/srv/dockmesh/stacks", ok: true, create: true},
-		{name: "empty dir", path: root + "/empty", ok: true},
+		{name: "new dir in an allowed parent", path: root + "/srv/stacks", ok: true, create: true},
+		{name: "new dir in opt", path: root + "/opt/stacks", ok: true, create: true},
+		{name: "new dir in media", path: root + "/media/stacks", ok: true, create: true},
+		{name: "two new levels", path: root + "/opt/x/stacks", issue: sdNewNotHere},
+		{name: "new dir below an existing plain dir", path: root + "/opt/a/stacks", issue: sdNewNotHere},
+		{name: "new dir in a venv", path: root + "/opt/certbot/lib/python3.11/site-packages/sitecustomize", issue: sdNewNotHere},
+		{name: "new dir at the top", path: root + "/stacks", issue: sdNewNotHere},
+		{name: "new dir in /", path: "/dockmesh-x17-stacks", issue: sdNewNotHere},
+		{name: "new dir in home", path: root + "/home/x", issue: sdNewNotHere},
+		{name: "new dir on a disk mounted below mnt", path: root + "/mnt/disk1/stacks", ok: true, create: true},
+		{name: "new dir on a disk mounted deeper", path: root + "/srv/vol/stacks", ok: true, create: true},
+		{name: "new dir on a btrfs subvolume root", path: root + "/mnt/pool/stacks", ok: true, create: true},
+		{name: "btrfs subvolume bound from a subdirectory", path: root + "/mnt/snap/stacks", issue: sdBindMount},
+		{name: "new dir in a plain dir below mnt", path: root + "/mnt/plain/stacks", issue: sdNewNotHere},
+		{name: "new dir on tmpfs below mnt", path: root + "/mnt/ram/stacks", issue: sdNewNotHere},
+		{name: "new dir in a mount point outside the parents", path: root + "/nfs/x", issue: sdNetworkShare},
+		{name: "prepared dir two levels down", path: root + "/srv/apps/stacks", ok: true},
+		{name: "prepared dir anywhere", path: root + "/empty", ok: true},
+		{name: "prepared dir of another account", path: root + "/srv/apps/stacks", edit: func(r *stacksDirRules) { r.uid = os.Getuid() + 1 }, issue: sdForeignOwner},
+		{name: "prepared dir through a symlink", path: root + "/link/apps/stacks", issue: sdSymlink},
+		{name: "prepared dir on a bind mount", path: root + "/bind", issue: sdBindMount},
 		{name: "default dir", path: root + "/data/stacks2", issue: sdAgentData},
 		{name: "unchanged", path: root + "/data/stacks", ok: true, issue: sdUnchanged},
 		{name: "back to the default", path: root + "/data/stacks", edit: func(r *stacksDirRules) { r.current = root + "/srv" }, ok: true},
@@ -109,8 +137,10 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "symlink as the target", path: root + "/link", issue: sdSymlink},
 		{name: "file in the path", path: root + "/file/stacks", issue: sdNotDir},
 		{name: "parent others may write", path: root + "/loose/stacks", issue: sdUnsafeParent},
+		{name: "prepared dir below a dir others may write", path: root + "/loose/prep", issue: sdUnsafeParent},
 		{name: "not empty", path: root + "/full", issue: sdNotEmpty},
 		{name: "other owner", path: root + "/empty", edit: func(r *stacksDirRules) { r.uid = os.Getuid() + 1 }, issue: sdForeignOwner},
+		{name: "not empty, two levels", path: root + "/srv/apps", issue: sdNotEmpty},
 		{name: "network share", path: root + "/nfs/stacks", issue: sdNetworkShare},
 		{name: "no unix permissions", path: root + "/usb/stacks", issue: sdNoUnixPerms},
 	}
@@ -151,6 +181,9 @@ func FuzzCheckStacksDir(f *testing.F) {
 		if filepath.Clean(p) != p || !filepath.IsAbs(p) || strings.ContainsAny(p, " \n\t\"'\\$%") || deniedByName(p, denyRoots) ||
 			layout.Within(rules.dataDir, p) && p != "/var/lib/dockmesh-agent/stacks" || layout.Within(defaultServerDataDir, p) {
 			t.Fatalf("accepted %q: %+v", p, got.StacksDirCheck)
+		}
+		if got.WillCreate && p != "/var/lib/dockmesh-agent/stacks" && !slices.Contains(stacksParents, filepath.Dir(p)) {
+			t.Fatalf("would create %q outside the allowed parents", p)
 		}
 	})
 }
@@ -195,25 +228,23 @@ func TestKeptStackDirs(t *testing.T) {
 
 func TestCreateStacksDir(t *testing.T) {
 	root := t.TempDir()
-	p := filepath.Join(root, "a", "b", "stacks")
-	existing := len(strings.Split(strings.TrimPrefix(root, "/"), "/"))
-	created, err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid())
-	if err != nil || len(created) != 3 {
-		t.Fatal(created, err)
+	p := filepath.Join(root, "stacks")
+	if err := createStacksDir(p, os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
 	}
-	for dir, mode := range map[string]os.FileMode{filepath.Join(root, "a"): 0o755, filepath.Join(root, "a", "b"): 0o755, p: 0o750} {
-		fi, err := os.Lstat(dir)
-		if err != nil || !fi.IsDir() || fi.Mode().Perm() != mode {
-			t.Errorf("%s: %v %v, want dir %v", dir, fi, err, mode)
-		}
+	if fi, err := os.Lstat(p); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o750 {
+		t.Errorf("%s: %v %v, want dir 0750", p, fi, err)
 	}
-	if _, err := createStacksDir(p, existing, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
-		t.Error("an existing last component was created again")
+	if err := createStacksDir(p, os.Getuid(), os.Getgid()); err == nil {
+		t.Error("an existing directory was created again")
+	}
+	if err := createStacksDir(filepath.Join(root, "a", "b"), os.Getuid(), os.Getgid()); err == nil {
+		t.Error("a missing parent was created")
 	}
 	if err := os.Symlink(root, filepath.Join(root, "l")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := createStacksDir(filepath.Join(root, "l", "x"), existing+1, os.Getuid(), os.Getgid(), os.Getuid(), os.Getgid()); err == nil {
+	if err := createStacksDir(filepath.Join(root, "l", "x"), os.Getuid(), os.Getgid()); err == nil {
 		t.Error("a symlink in the path was followed")
 	}
 }
@@ -229,6 +260,7 @@ func testApplier(t *testing.T) (*testInstaller, *stacksDirApplier, string, *int)
 	t.Helper()
 	ti := newTestInstaller(t)
 	_, rules := testStacksRules(t)
+	rules.parents = append(rules.parents, ti.path("srv"))
 	data := ti.path("var/agent")
 	if _, err := ti.run(installOptions{DataDir: data}); err != nil {
 		t.Fatal(err)
@@ -276,7 +308,7 @@ func TestStacksDirApply(t *testing.T) {
 	if err := os.Chmod(srv, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	first := filepath.Join(srv, "one", "stacks")
+	first := filepath.Join(srv, "one")
 	second := filepath.Join(srv, "two")
 
 	// A stack in the default dir keeps it writable after the switch.
@@ -288,6 +320,7 @@ func TestStacksDirApply(t *testing.T) {
 	}{
 		{"symlink refused", ti.path("srv") + "/../etc", agents.StacksDirRefused, nil, nil},
 		{"etc refused", "/etc/x", agents.StacksDirRefused, nil, nil},
+		{"two new levels refused", filepath.Join(srv, "a", "b"), agents.StacksDirRefused, nil, nil},
 		{"first switch", first, agents.StacksDirDone,
 			[]string{"DOCKMESH_STACKS_DIR=" + first, "DOCKMESH_EARLIER_STACKS_DIRS=" + filepath.Join(a.dataDir, "stacks")},
 			[]string{`ReadWritePaths="-` + first + `"`}},
@@ -351,5 +384,16 @@ func TestStacksDirApplyRefusedWhileUpdating(t *testing.T) {
 	}
 	if ti.read(t, "etc/dockmesh-agent/agent.env") != before || *restarts != 0 {
 		t.Error("a refused apply changed the agent")
+	}
+}
+
+func TestStacksDirRefusalNamesThePrepareCommand(t *testing.T) {
+	root, rules := testStacksRules(t)
+	for _, p := range []string{root + "/opt/x/stacks", root + "/full", root + "/home/x"} {
+		got := checkStacksDir(p, rules)
+		want := "sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 " + p
+		if got.ok() || !strings.Contains(got.Message, want) {
+			t.Errorf("%s: %q lacks %q", p, got.Message, want)
+		}
 	}
 }
