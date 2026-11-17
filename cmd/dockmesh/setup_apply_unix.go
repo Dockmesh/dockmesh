@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -236,7 +237,8 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 		if _, err := os.Lstat(filepath.Join(state, setup.RestoreKeyFile)); err == nil {
 			args = append(args, "--key", filepath.Join(state, setup.RestoreKeyFile))
 		}
-		_, err := runAsService(ctx, a.binary, 30*time.Minute, append(args, "--env-file", candidate)...)
+		out, err := runRestoreAsService(ctx, a.binary, 30*time.Minute, nil, nil, candidate, append(args, "--env-file", candidate)...)
+		a.warnLostOwners(out)
 		return "restore", err
 	case a.restoreFrom != nil:
 		args := []string{"restore", "--from", "-"}
@@ -248,7 +250,8 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 			extra = []*os.File{a.restoreKey}
 			args = append(args, "--key-fd", "3")
 		}
-		_, err := runAsServiceIO(ctx, a.binary, 30*time.Minute, a.restoreFrom, extra, append(args, "--env-file", candidate)...)
+		out, err := runRestoreAsService(ctx, a.binary, 30*time.Minute, a.restoreFrom, extra, candidate, append(args, "--env-file", candidate)...)
+		a.warnLostOwners(out)
 		return "restore", err
 	case a.fromFile:
 		data, err := json.Marshal(v)
@@ -262,6 +265,21 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 		_, err := runAsService(ctx, a.binary, 5*time.Minute, "setup", "materialize",
 			"--state-dir", setup.StateDir(a.dataDir), "--data-dir", v.DataDir)
 		return "materialize", err
+	}
+}
+
+// warnLostOwners passes on the restore's warning that stack data of other
+// users now belongs to the service account.
+func (a *setupApplier) warnLostOwners(out []byte) {
+	for _, line := range strings.Split(string(out), "\n") {
+		w, ok := strings.CutPrefix(strings.TrimSpace(line), lostOwnersWarning)
+		if !ok {
+			continue
+		}
+		n, _, _ := strings.Cut(w, " ")
+		if entries, err := strconv.Atoi(n); err == nil {
+			a.log.Warn("restore: Docker was unavailable, so stack data owned by other users now belongs to the dockmesh account", "entries", entries)
+		}
 	}
 }
 

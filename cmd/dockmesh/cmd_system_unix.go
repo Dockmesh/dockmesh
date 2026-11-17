@@ -87,6 +87,45 @@ func runAsService(ctx context.Context, binary string, timeout time.Duration, arg
 // runAsServiceIO is runAsService with stdin and extra open files (fd 3
 // onward), for files root may open but the service account may not.
 func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, args ...string) ([]byte, error) {
+	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, nil, args...)
+}
+
+// runRestoreAsService runs a restore as the dockmesh account with the
+// Docker groups the unit gives the service for the config in envFile:
+// stack data a container wrote as another user is written through a
+// helper container, which needs Docker.
+func runRestoreAsService(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, envFile string, args ...string) ([]byte, error) {
+	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, serviceDockerGIDs(envFile), args...)
+}
+
+// serviceDockerGIDs resolves the unit's Docker groups to gids, leaving out
+// root's group and the other privileged ones.
+func serviceDockerGIDs(envFile string) []uint32 {
+	env, err := layout.ReadEnvFile(envFile)
+	if err != nil {
+		env = map[string]string{}
+	}
+	var gids []uint32
+	for _, g := range supplementaryGroups(envFile, env) {
+		// A number is the socket's own group, already checked by SocketGroups.
+		gid, err := strconv.ParseUint(g, 10, 32)
+		if err != nil {
+			grp, lerr := user.LookupGroup(g)
+			if lerr != nil || layout.PrivilegedGroup(grp.Name) {
+				continue
+			}
+			if gid, err = strconv.ParseUint(grp.Gid, 10, 32); err != nil {
+				continue
+			}
+		}
+		if gid != 0 {
+			gids = append(gids, uint32(gid))
+		}
+	}
+	return gids
+}
+
+func runAsServiceGroups(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, groups []uint32, args ...string) ([]byte, error) {
 	uid, gid, err := serviceAccount()
 	if err != nil {
 		return nil, err
@@ -100,7 +139,7 @@ func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, s
 	cmd.ExtraFiles = extra
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:     true,
-		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}},
+		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: append([]uint32{}, groups...)},
 	}
 	// The child's account can hold its pipes open; the deadline must
 	// still end the call.
