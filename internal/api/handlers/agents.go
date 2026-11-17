@@ -291,29 +291,13 @@ type setStacksDirReq struct {
 //
 //	PUT /api/v1/hosts/{id}/stacks-dir
 func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
-	if h.Agents == nil {
-		writeError(w, http.StatusServiceUnavailable, "agents not configured")
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.hostScopeReq(id)
-	if !h.allowedOn(r, scopeReq) {
-		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
-		return
-	}
-	if !h.requireHostAccess(w, r, id) {
+	if !h.hostSetupAccess(w, r, id) {
 		return
 	}
 	var req setStacksDirReq
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	if _, err := h.Agents.Get(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	applied, err := h.Agents.SetStacksDir(r.Context(), id, req.Path)

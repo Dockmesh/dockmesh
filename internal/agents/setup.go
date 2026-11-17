@@ -228,6 +228,12 @@ func (s *Service) recordStacksDir(ctx context.Context, id, p, status, msg string
 	return err
 }
 
+// stacksDirCheckWait bounds a check, which needs no root round trip.
+const stacksDirCheckWait = 30 * time.Second
+
+// ErrStacksDirCheckRunning: another check of this host has not answered yet.
+var ErrStacksDirCheckRunning = errors.New("a stacks directory check of this host is still running")
+
 // maxStacksDirError cuts the reason an agent gives for a refusal.
 const maxStacksDirError = 512
 
@@ -343,6 +349,15 @@ func (s *Service) CheckStacksDir(ctx context.Context, id, p string) (StacksDirCh
 	if ag == nil {
 		return StacksDirCheck{}, ErrAgentNotConnected
 	}
+	if ag.Hello.HelloLayout() != LayoutManaged && currentStacksDir(ag.Hello) != p {
+		return StacksDirCheck{}, ErrLegacyLayout
+	}
+	if !ag.checking.CompareAndSwap(false, true) {
+		return StacksDirCheck{}, ErrStacksDirCheckRunning
+	}
+	defer ag.checking.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, stacksDirCheckWait)
+	defer cancel()
 	payload, _ := json.Marshal(StacksDirApplyReq{Path: p, CheckOnly: true})
 	env, err := ag.Request(ctx, Frame{Type: FrameReqStacksDirApply, Payload: payload})
 	if err != nil {

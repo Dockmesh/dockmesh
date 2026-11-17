@@ -400,7 +400,7 @@ func TestLocalIsNeverTakenFromTheHostname(t *testing.T) {
 func TestCheckStacksDirChangesNothing(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
-	id, fp := createdHost(t, svc, CreateOptions{Name: "edge-1"})
+	id, fp := createdHost(ctx, t, svc, CreateOptions{Name: "edge-1"})
 	ag := newConnectedAgent(id, "edge-1", func() {})
 	ag.certFP = fp
 	ag.Hello = defaultDirHello()
@@ -426,7 +426,7 @@ func TestCheckStacksDirChangesNothing(t *testing.T) {
 	if r.err != nil || r.c.Status != "fail" || len(r.c.Message) != maxStacksDirError {
 		t.Fatalf("check = %+v (%d bytes), %v", r.c, len(r.c.Message), r.err)
 	}
-	if a := mustGet(t, svc, id); !a.NeedsSetup || a.StacksDir != nil {
+	if a := mustGet(ctx, t, svc, id); !a.NeedsSetup || a.StacksDir != nil {
 		t.Fatalf("a check changed the host: needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
 	}
 	if _, err := svc.CheckStacksDir(ctx, id, "../x"); !errors.Is(err, ErrInvalidStacksDir) {

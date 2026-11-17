@@ -20,6 +20,7 @@
   let { agent, tags, onedittags, onchanged }: Props = $props();
 
   const DEFAULT_DATA = '/var/lib/dockmesh-agent';
+  const hostId = $derived(agent.id);
   const online = $derived(agent.status === 'online');
   const legacy = $derived(online && agent.layout !== 'managed');
   const canEdit = $derived(allowed('hosts.update'));
@@ -36,7 +37,7 @@
   let disksUnsupported = $state(false);
   let saving = $state(false);
   let error = $state('');
-  // Apply progress of a switch: 0 checking, 1 creating, 2 restarting, 3 done.
+  // Apply progress of a switch: -1 none, index into steps, 3 done.
   let step = $state(-1);
   let applying = $state('');
   let confirmed = $state('');
@@ -50,16 +51,17 @@
 
   $effect(() => {
     if (!online || !canEdit) return;
-    const id = agent.id;
-    api.hosts.stacksDirDisks(id)
-      .then((r) => { disks = r.disks; disksUnsupported = !!r.unsupported; })
-      .catch(() => { disks = []; });
+    let stale = false;
+    api.hosts.stacksDirDisks(hostId)
+      .then((r) => { if (!stale) { disks = r.disks; disksUnsupported = !!r.unsupported; } })
+      .catch(() => { if (!stale) disks = []; });
+    return () => { stale = true; };
   });
 
   // Live check, debounced; an older answer never replaces a newer one.
   $effect(() => {
     const p = path.trim();
-    const id = agent.id;
+    const id = hostId;
     if (!online || !canEdit || legacy || !p) { check = null; return; }
     const ctl = new AbortController();
     const t = setTimeout(async () => {
@@ -103,6 +105,13 @@
 
   const blocked = $derived(!online || legacy || !canEdit || saving || !!applying || checking || check?.status === 'fail' || !path.trim());
 
+  function edited() {
+    touched = true;
+    confirmed = '';
+    step = -1;
+    error = '';
+  }
+
   async function save() {
     const p = path.trim();
     error = '';
@@ -143,11 +152,11 @@
   <section class="sec">
     <h2>{m.hosts_setup_general()}</h2>
     <dl class="kv">
-      <dt>{m.hosts_setup_name()}</dt><dd>{agent.name}</dd>
+      <dt>{m.common_name()}</dt><dd>{agent.name}</dd>
       <dt>{m.hosts_col_tags()}</dt>
       <dd class="tags">
         {#each tags as t (t)}<TagPill label={t} />{:else}<span class="dm-dim">—</span>{/each}
-        {#if allowed('hosts.tag')}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onedittags}>{m.hosts_setup_tags_edit()}</button>{/if}
+        {#if allowed('hosts.tag')}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onedittags}>{m.hosts_edit_tags()}</button>{/if}
       </dd>
     </dl>
   </section>
@@ -187,7 +196,7 @@
         <label class="lbl" for="setup-stacks-dir">{m.hosts_setup_field()}</label>
         <input id="setup-stacks-dir" class="dm-input dm-mono" type="text" bind:value={path} disabled={legacy || !online || !canEdit || !!applying}
           aria-invalid={check?.status === 'fail' ? 'true' : undefined} aria-describedby="setup-stacks-dir-result"
-          oninput={() => { touched = true; confirmed = ''; step = -1; error = ''; }} />
+          oninput={edited} />
         <div id="setup-stacks-dir-result" class="result" data-testid="setup-check">
           {#if checking}
             <span class="dim"><Loader size={12} strokeWidth={1.8} class="spin" /> {m.hosts_setup_checking()}</span>
@@ -209,7 +218,7 @@
           {#if disksUnsupported}
             <span class="hint">{m.hosts_setup_disks_unsupported()}</span>
           {:else}
-            <DiskList {disks} selected={path.trim()} disabled={!!applying} onuse={(p) => { path = p; touched = true; confirmed = ''; step = -1; error = ''; }} />
+            <DiskList {disks} selected={path.trim()} disabled={!!applying} onuse={(p) => { path = p; edited(); }} />
             <span class="hint">{m.hosts_setup_disks_hint()}</span>
           {/if}
         </div>
@@ -217,7 +226,7 @@
 
       <div class="row">
         <button type="button" class="dm-btn dm-btn-primary" data-testid="setup-save" disabled={blocked} onclick={save}>
-          {agent.needs_setup ? m.hosts_setup_save_finish() : m.hosts_setup_save()}
+          {agent.needs_setup ? m.hosts_setup_save_finish() : m.common_save()}
         </button>
         {#if agent.needs_setup && online && !legacy}<span class="hint">{m.hosts_setup_save_hint()}</span>{/if}
       </div>
@@ -251,12 +260,12 @@
   </section>
 
   <section class="sec">
-    <h2>{m.hosts_setup_agent()}</h2>
+    <h2>{m.common_agent()}</h2>
     <dl class="kv">
-      <dt>{m.hosts_setup_data_dir()}</dt><dd><span class="dm-mono">{agent.data_dir || '—'}</span> · {m.hosts_setup_data_dir_note()}</dd>
+      <dt>{m.hosts_setup_data_dir()}</dt><dd><span class="dm-mono">{dataDir}</span> · {m.hosts_setup_data_dir_note()}</dd>
       <dt>{m.hosts_setup_version()}</dt><dd>{agent.version ? fmtVersion(agent.version) : '—'}</dd>
       <dt>{m.hosts_setup_layout()}</dt><dd>{online ? (agent.layout === 'managed' ? m.hosts_setup_layout_managed() : m.hosts_setup_layout_legacy()) : '—'}</dd>
-      <dt>{m.hosts_setup_user()}</dt><dd>{agent.run_user || '—'}</dd>
+      <dt>{m.common_user()}</dt><dd>{agent.run_user || '—'}</dd>
     </dl>
   </section>
 </div>
@@ -305,8 +314,8 @@
   .steps .dot { width: 12px; height: 12px; display: inline-block; border-radius: 999px; border: 1px solid var(--border-strong); }
   .earlier { display: flex; flex-direction: column; gap: 2px; }
   .soon { opacity: 0.5; cursor: not-allowed; }
-  :global(.spin) { animation: st-spin 1s linear infinite; }
+  .st :global(.spin) { animation: st-spin 1s linear infinite; }
   @keyframes st-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { :global(.spin) { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .st :global(.spin) { animation: none; } }
   @media (max-width: 560px) { .kv { grid-template-columns: 1fr; } }
 </style>

@@ -528,6 +528,9 @@ func (h HelloPayload) HelloLayout() string {
 // stacks dir, the default one in the data dir and two earlier ones.
 const maxStacksDirs = 4
 
+// maxRunUser cuts the account name an agent reports.
+const maxRunUser = 64
+
 // maxStacksDirPath cuts a reported stacks dir path.
 const maxStacksDirPath = 4096
 

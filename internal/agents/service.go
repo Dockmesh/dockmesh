@@ -188,6 +188,8 @@ type ConnectedAgent struct {
 	removed atomic.Bool
 	// applying: a stacks directory request to this session is open.
 	applying atomic.Bool
+	// checking: a stacks directory check of this session is open.
+	checking atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -623,7 +625,7 @@ func (s *Service) fillStatus(a *Agent) {
 		}
 		a.StacksDirs = ag.Hello.ReportedStacksDirs()
 		a.DataDir = clip(ag.Hello.DataDir, maxStacksDirPath)
-		a.RunUser = clip(ag.Hello.User, 64)
+		a.RunUser = clip(ag.Hello.User, maxRunUser)
 	} else if a.Status != "pending" && a.Status != StatusRemoved {
 		a.Status = "offline"
 	}
@@ -957,4 +959,3 @@ func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error
 	s.mu.Unlock()
 	return nil
 }
-

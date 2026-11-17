@@ -408,7 +408,7 @@
           <span>{m.hosts_setup_banner_text()}</span>
         </div>
         {#if tab !== 'setup'}
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" data-testid="setup-banner-btn" onclick={() => selectTab('setup')}>{m.hosts_setup_btn()}</button>
+          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" data-testid="setup-banner-btn" onclick={() => selectTab('setup')}>{m.hosts_add_setup_btn()}</button>
         {/if}
       </div>
     {/if}

@@ -1,8 +1,17 @@
 package handlers
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -49,5 +58,51 @@ func TestStacksDirDisks(t *testing.T) {
 	}
 	if got[0].FreeBytes != 21*gib {
 		t.Errorf("free bytes of / = %d", got[0].FreeBytes)
+	}
+}
+
+func TestHostStacksDirRoutesScope(t *testing.T) {
+	e := newAuthzEnv(t)
+	ctx := context.Background()
+	for _, id := range []string{"agent-prod", "agent-dev"} {
+		if _, err := e.db.ExecContext(ctx, `INSERT INTO agents (id, name, status) VALUES (?, ?, 'offline')`, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tags := hosttags.New(e.db)
+	if err := tags.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tags.Set(ctx, "agent-prod", []string{"prod"}); err != nil {
+		t.Fatal(err)
+	}
+	e.h.HostTags = tags
+	e.h.Agents = agents.NewService(e.db, nil, "http://dockmesh.test", "")
+	e.h.Hosts = host.NewRegistry(nil, e.h.Agents)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermHostsUpdate)).Post("/hosts/{id}/stacks-dir/check", e.h.CheckHostStacksDir)
+		r.With(middleware.RequirePerm(rbac.PermHostsUpdate)).Get("/hosts/{id}/stacks-dir/disks", e.h.ListHostStacksDirDisks)
+	})
+	e.user("boss", "admin")
+	prod := e.user("prodadmin", "admin")
+	e.scopeUser(prod.ID, "prod")
+
+	tests := []struct {
+		user, method, path string
+		want               int
+	}{
+		{"boss", http.MethodPost, "/hosts/agent-dev/stacks-dir/check", http.StatusConflict},
+		{"boss", http.MethodGet, "/hosts/agent-dev/stacks-dir/disks", http.StatusConflict},
+		{"boss", http.MethodGet, "/hosts/missing/stacks-dir/disks", http.StatusNotFound},
+		{"prodadmin", http.MethodPost, "/hosts/agent-prod/stacks-dir/check", http.StatusConflict},
+		{"prodadmin", http.MethodPost, "/hosts/agent-dev/stacks-dir/check", http.StatusForbidden},
+		{"prodadmin", http.MethodGet, "/hosts/agent-dev/stacks-dir/disks", http.StatusForbidden},
+	}
+	for _, tc := range tests {
+		rr := e.do(tc.method, tc.path, e.login(tc.user).AccessToken, map[string]string{"path": "/srv/stacks"})
+		if rr.Code != tc.want {
+			t.Errorf("%s %s %s: %d %s, want %d", tc.user, tc.method, tc.path, rr.Code, rr.Body, tc.want)
+		}
 	}
 }

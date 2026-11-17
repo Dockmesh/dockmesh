@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -20,12 +21,13 @@ import (
 // that do not report theirs.
 const agentDefaultDataDir = "/var/lib/dockmesh-agent"
 
-// stacksParents mirrors the agent's rule for where its root updater may
-// create a new stacks directory; the agent checks again on apply.
+// stacksParents are where the agent's root updater creates a new stacks
+// directory one level down; a disk mounted at one of them, or one level
+// below, gets <mount>/stacks. The agent checks again on apply.
 var stacksParents = []string{"/srv", "/opt", "/data", "/mnt", "/media"}
 
-// hostSetupAccess runs the checks every stacks-dir route of a remote host
-// shares and reports whether the request may go on.
+// hostSetupAccess runs the checks the stacks-dir routes of a remote host
+// share and reports whether the request may go on.
 func (h *Handlers) hostSetupAccess(w http.ResponseWriter, r *http.Request, id string) bool {
 	if h.Agents == nil {
 		writeError(w, http.StatusServiceUnavailable, "agents not configured")
@@ -66,9 +68,11 @@ func (h *Handlers) CheckHostStacksDir(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Agents.CheckStacksDir(r.Context(), id, req.Path)
 	switch {
 	case errors.Is(err, agents.ErrInvalidStacksDir):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, msgInvalidStacksDir)
 	case errors.Is(err, agents.ErrAgentNotConnected), errors.Is(err, agents.ErrAgentGone):
 		writeError(w, http.StatusConflict, "agent not connected")
+	case errors.Is(err, agents.ErrLegacyLayout), errors.Is(err, agents.ErrStacksDirCheckRunning):
+		writeError(w, http.StatusConflict, err.Error())
 	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 	default:
@@ -129,13 +133,10 @@ func stacksDirDisks(mounts []system.Mount, dataDir string) []setup.Disk {
 		if m.Total >= m.Used {
 			d.FreeBytes = int64(min(m.Total-m.Used, 1<<62))
 		}
-		switch {
-		case mp == "/":
+		d.Suggested = path.Join(mp, "stacks")
+		if mp == "/" {
 			d.Suggested = path.Join(dataDir, "stacks")
-		case underStacksParent(mp):
-			d.Suggested = path.Join(mp, "stacks")
-		default:
-			d.Suggested = path.Join(mp, "stacks")
+		} else if !underStacksParent(mp) {
 			d.Usable, d.Reason = false, "not allowed as a stacks dir"
 		}
 		switch {
@@ -150,12 +151,7 @@ func stacksDirDisks(mounts []system.Mount, dataDir string) []setup.Disk {
 }
 
 func underStacksParent(mp string) bool {
-	for _, p := range stacksParents {
-		if mp == p || strings.HasPrefix(mp, p+"/") {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(stacksParents, mp) || slices.Contains(stacksParents, path.Dir(mp))
 }
 
 // dockerOwned reports Docker's own directories, which are not offered.
