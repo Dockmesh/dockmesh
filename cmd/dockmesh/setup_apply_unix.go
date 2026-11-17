@@ -236,7 +236,7 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 		if _, err := os.Lstat(filepath.Join(state, setup.RestoreKeyFile)); err == nil {
 			args = append(args, "--key", filepath.Join(state, setup.RestoreKeyFile))
 		}
-		_, err := runAsService(ctx, a.binary, 30*time.Minute, append(args, "--env-file", candidate)...)
+		_, err := runRestoreAsService(ctx, a.binary, 30*time.Minute, nil, nil, append(args, "--env-file", candidate)...)
 		return "restore", err
 	case a.restoreFrom != nil:
 		args := []string{"restore", "--from", "-"}
@@ -245,7 +245,7 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 			extra = []*os.File{a.restoreKey}
 			args = append(args, "--key-fd", "3")
 		}
-		_, err := runAsServiceIO(ctx, a.binary, 30*time.Minute, a.restoreFrom, extra, append(args, "--env-file", candidate)...)
+		_, err := runRestoreAsService(ctx, a.binary, 30*time.Minute, a.restoreFrom, extra, append(args, "--env-file", candidate)...)
 		return "restore", err
 	case a.fromFile:
 		data, err := json.Marshal(v)

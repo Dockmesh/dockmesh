@@ -87,6 +87,22 @@ func runAsService(ctx context.Context, binary string, timeout time.Duration, arg
 // runAsServiceIO is runAsService with stdin and extra open files (fd 3
 // onward), for files root may open but the service account may not.
 func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, args ...string) ([]byte, error) {
+	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, nil, args...)
+}
+
+// runRestoreAsService runs a restore as the dockmesh account with the
+// docker group the service gets from its unit: stack data a container
+// wrote as another user is written through a helper container, which
+// needs Docker.
+func runRestoreAsService(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, args ...string) ([]byte, error) {
+	var groups []uint32
+	if gid, ok := lookupGID("docker"); ok {
+		groups = append(groups, uint32(gid)) //nolint:gosec // a gid from the group database
+	}
+	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, groups, args...)
+}
+
+func runAsServiceGroups(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, groups []uint32, args ...string) ([]byte, error) {
 	uid, gid, err := serviceAccount()
 	if err != nil {
 		return nil, err
@@ -100,7 +116,7 @@ func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, s
 	cmd.ExtraFiles = extra
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:     true,
-		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}},
+		Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: append([]uint32{}, groups...)},
 	}
 	// The child's account can hold its pipes open; the deadline must
 	// still end the call.
