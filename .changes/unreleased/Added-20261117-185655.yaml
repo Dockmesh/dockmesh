@@ -1,0 +1,3 @@
+kind: Added
+body: sudo dockmesh-agent uninstall removes an agent from its host (--purge also removes its data, stacks and user, keeping anything Dockmesh did not write); the host then shows "Removed from host"
+time: 2026-11-17T18:56:55.678960891Z

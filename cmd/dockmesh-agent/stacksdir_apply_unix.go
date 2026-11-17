@@ -220,6 +220,9 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 			return failed(fmt.Errorf("create %s: %w", path, err))
 		}
 		created = true
+		if err := recordCreatedDir(a.stateDir, path); err != nil {
+			a.log.Warn("stacks-dir-apply: record the new directory", "path", path, "err", err)
+		}
 	}
 	if _, err := a.in.run(installOptions{StacksDir: path, earlier: earlier, setEarlier: true}); err != nil { //nolint:contextcheck // short local file writes
 		return failed(err)
