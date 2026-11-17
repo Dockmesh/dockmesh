@@ -204,7 +204,7 @@
           {/if}
         </div>
       {:else}
-        <div class="ah-collapsed" data-testid="add-host-summary"><span class="dm-mono">{connected ? displayName : summaryName}</span>{#if tags.length} · {tags.join(', ')}{/if}</div>
+        <div class="ah-collapsed" data-testid="add-host-summary"><span class="dm-mono">{connected ? displayName : summaryName}</span>{#if tags.length}{` · ${tags.join(', ')}`}{/if}</div>
 
         {#if !connected}
           <div class="ah-field">
