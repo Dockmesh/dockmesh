@@ -344,9 +344,11 @@ func (a *Access) Perms() []Perm {
 
 // Restrict narrows a to the role perms on scope: each grant keeps only the
 // permissions perms also has and must additionally match scope. It never
-// widens a.
+// widens a. The base rights stay only when perms administer the whole
+// instance: a token restricted to a scrape role must not list or mint
+// its owner's tokens.
 func (a *Access) Restrict(perms map[Perm]bool, scope Scope) *Access {
-	out := &Access{Authenticated: a != nil && a.Authenticated}
+	out := &Access{Authenticated: a != nil && a.Authenticated && scope.IsGlobal() && IsAdminPermSet(perms)}
 	if a == nil {
 		return out
 	}
