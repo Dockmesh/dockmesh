@@ -202,7 +202,8 @@ Changes that break clients written against an earlier release. The release notes
 
 | Release | Change |
 |---|---|
-| 0.5.0 | `GET /api/v1/roles/permissions` was removed. Roles are built from areas with levels and extras now; `GET /api/v1/roles/catalog` lists them. |
+| 0.5.0 | `GET /api/v1/roles/permissions` was removed. Roles are built from areas with levels and extras; `GET /api/v1/roles/catalog` lists the areas, their levels and the extras. |
+| 0.5.0 | `POST /api/v1/roles` and `PUT /api/v1/roles/{name}` take `levels` and `extras` instead of `permissions` and `scopes`; roles in responses carry levels and extras instead of permissions. |
 | 0.5.0 | `GET /api/v1/roles/{name}` returns `{"role": …, "assignments": […]}` instead of the bare role. |
 | 0.5.0 | `GET /api/v1/containers/{id}/metrics` and `GET /api/v1/hosts/{id}/stats/containers` return an object with `host_id`, `history` and the samples instead of a bare array; `cpu_percent` is 0-100 of the host, `cpu_percent_core` keeps the per-core value. |
 
