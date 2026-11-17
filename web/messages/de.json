@@ -6281,5 +6281,9 @@
   "backups_unit_done": "Backup-Verzeichnisse sind beschreibbar",
   "backups_unit_failed": "Schreiben konnte nicht erlaubt werden",
   "backups_unit_still_read_only": "Dockmesh wurde neu gestartet, aber ein Verzeichnis ist weiter schreibgeschützt: sein Dateisystem ist vielleicht schreibgeschützt eingehängt",
-  "backups_unit_timeout": "Dockmesh hat sich nicht innerhalb von 5 Minuten zurückgemeldet"
+  "backups_unit_timeout": "Dockmesh hat sich nicht innerhalb von 5 Minuten zurückgemeldet",
+  "label_host_removed": "Vom Host entfernt",
+  "hosts_removed_title": "Der Agent wurde von {name} entfernt",
+  "hosts_removed_text": "Stacks auf diesem Host laufen weiter, werden aber nicht mehr verwaltet.",
+  "hosts_delete_host": "Host löschen"
 }

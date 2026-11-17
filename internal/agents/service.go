@@ -42,7 +42,7 @@ var rpcTracer = otel.Tracer("dockmesh.agent")
 type Agent struct {
 	ID              string     `json:"id"`
 	Name            string     `json:"name"`
-	Status          string     `json:"status"` // pending | online | offline | revoked
+	Status          string     `json:"status"` // pending | online | offline | removed | revoked
 	Version         string     `json:"version,omitempty"`
 	OS              string     `json:"os,omitempty"`
 	Arch            string     `json:"arch,omitempty"`
@@ -161,6 +161,9 @@ type ConnectedAgent struct {
 	// renewing allows one renewal in flight, renewed one per session.
 	renewing atomic.Bool
 	renewed  atomic.Bool
+	// removed is set once the agent reported its uninstall; the end of
+	// the session then keeps the host's "removed" status.
+	removed atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -604,7 +607,7 @@ func (s *Service) fillStatus(a *Agent) {
 		a.UpdateRecommended = ag.UpdateRecommended()
 		a.Layout = ag.Hello.HelloLayout()
 		a.StacksDirs = ag.Hello.ReportedStacksDirs()
-	} else if a.Status != "pending" {
+	} else if a.Status != "pending" && a.Status != StatusRemoved {
 		a.Status = "offline"
 	}
 }
@@ -771,6 +774,9 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 		// A newer session of the same agent is already online.
 		return
 	}
+	if ag.removed.Load() {
+		return
+	}
 	// Clear online_since on offline so the next online transition starts
 	// the uptime clock fresh. Compliance + UX both want this behaviour.
 	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', online_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
@@ -898,4 +904,34 @@ func sqliteTime(t time.Time) string {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// StatusRemoved is the status of a host whose agent ran `dockmesh-agent
+// uninstall`. The row stays until an admin deletes the host; an agent
+// that enrolls or connects again leaves the status.
+const StatusRemoved = "removed"
+
+// markUninstalled records that the agent of ag removed itself from its
+// host. Only the session's own certificate may do that.
+func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		   SET status = ?, online_since = NULL, last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?
+		   AND status NOT IN ('revoked', 'pending')
+		   AND (cert_fingerprint = ? OR pending_cert_fingerprint = ?)`,
+		StatusRemoved, ag.ID, ag.certFP, ag.certFP)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrCertReplaced
+	}
+	ag.removed.Store(true)
+	s.mu.Lock()
+	if s.connected[ag.ID] == ag {
+		delete(s.connected, ag.ID)
+	}
+	s.mu.Unlock()
+	return nil
 }

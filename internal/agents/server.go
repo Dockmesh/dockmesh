@@ -165,6 +165,15 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer ag.renewing.Store(false)
 				h.svc.handleCertRenew(ctx, ag, f)
 			}(f)
+		case FrameAgentUninstalled:
+			if err := h.svc.markUninstalled(ctx, ag); err != nil {
+				slog.Warn("agent uninstalled", "agent", agent.Name, "err", err)
+				return
+			}
+			slog.Info("agent removed from its host", "id", agent.ID, "name", agent.Name)
+			// The pump is the only writer; ack through the send queue and
+			// let the agent close the session.
+			_ = ag.enqueue(ctx, Frame{Type: FrameServerUninstalled})
 		case FrameAgentMetrics:
 			in := h.svc.intake(ag.ID)
 			if len(f.Payload) > maxMetricsBytes || !in.begin(time.Now()) {

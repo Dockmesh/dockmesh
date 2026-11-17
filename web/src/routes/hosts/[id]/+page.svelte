@@ -370,6 +370,20 @@
       {/if}
     </div>
 
+    {#if status === 'removed'}
+      <div class="removedbox" role="status">
+        <div>
+          <b>{m.hosts_removed_title({ name: hostName })}</b>
+          <span>{m.hosts_removed_text()}</span>
+        </div>
+        {#if allowed('hosts.delete')}
+          <button type="button" class="dm-btn dm-btn-danger dm-btn-sm" disabled={revokeBusy} onclick={revokeHost}>
+            <Trash2 size={13} strokeWidth={1.8} /> {m.hosts_delete_host()}
+          </button>
+        {/if}
+      </div>
+    {/if}
+
     <Tabs {tabs} active={tab} onchange={selectTab} label={m.hosts_sections()} />
 
     {#if tab === 'overview'}
@@ -695,6 +709,13 @@
     border-radius: var(--r); padding: 8px 12px; font-size: var(--fs-sm);
   }
   .warnbox span { color: var(--fg); }
+  .removedbox {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 4px 0 12px;
+    border: 1px solid var(--border); background: var(--field); border-radius: var(--r); padding: 10px 12px;
+    font-size: var(--fs-sm);
+  }
+  .removedbox div { display: flex; flex-direction: column; gap: 2px; }
+  .removedbox span { color: var(--muted); }
   .tok { display: flex; flex-direction: column; gap: 12px; }
   .tok p { margin: 0; }
   .cmd { margin: 0; padding: 10px 12px; background: var(--field); border-radius: var(--r-sm); font-size: 12px; white-space: pre-wrap; word-break: break-all; }

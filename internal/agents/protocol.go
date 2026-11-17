@@ -25,10 +25,16 @@ const (
 	FrameAgentHello     = "agent.hello"
 	FrameAgentHeartbeat = "agent.heartbeat"
 	FrameAgentPong      = "agent.pong"
+	// FrameAgentUninstalled tells the server that `dockmesh-agent
+	// uninstall` removes the agent from its host; the server answers with
+	// FrameServerUninstalled once the host is marked removed.
+	FrameAgentUninstalled = "agent.uninstalled"
 
 	// Lifecycle (server → agent)
 	FrameServerWelcome = "server.welcome"
 	FrameServerPing    = "server.ping"
+	// FrameServerUninstalled confirms FrameAgentUninstalled.
+	FrameServerUninstalled = "server.uninstalled"
 
 	// Container operations (server → agent: req.*, agent → server: res.*).
 	// Each request carries a unique ID; the response echoes that ID so the
