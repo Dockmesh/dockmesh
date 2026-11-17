@@ -107,18 +107,20 @@ func serviceDockerGIDs(envFile string) []uint32 {
 	}
 	var gids []uint32
 	for _, g := range supplementaryGroups(envFile, env) {
-		grp, err := user.LookupGroup(g)
+		// A number is the socket's own group, already checked by SocketGroups.
+		gid, err := strconv.ParseUint(g, 10, 32)
 		if err != nil {
-			grp, err = user.LookupGroupId(g)
+			grp, lerr := user.LookupGroup(g)
+			if lerr != nil || layout.PrivilegedGroup(grp.Name) {
+				continue
+			}
+			if gid, err = strconv.ParseUint(grp.Gid, 10, 32); err != nil {
+				continue
+			}
 		}
-		if err != nil || layout.PrivilegedGroup(grp.Name) {
-			continue
+		if gid != 0 {
+			gids = append(gids, uint32(gid))
 		}
-		gid, err := strconv.ParseUint(grp.Gid, 10, 32)
-		if err != nil || gid == 0 {
-			continue
-		}
-		gids = append(gids, uint32(gid))
 	}
 	return gids
 }

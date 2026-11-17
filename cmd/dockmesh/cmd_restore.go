@@ -105,13 +105,17 @@ func runRestore(args []string) error {
 	}
 	fmt.Printf("restore complete — %d files, %d bytes\n", counts.Files, counts.Bytes)
 	if counts.LostOwners > 0 {
-		fmt.Printf("  warning: Docker was unavailable, so %d entries of stack data owned by other users now belong to this account\n", counts.LostOwners)
+		fmt.Printf("  %s%d entries of stack data owned by other users now belong to this account\n", lostOwnersWarning, counts.LostOwners)
 	}
 	fmt.Printf("  db      → %s\n", cfg.DBPath)
 	fmt.Printf("  stacks  → %s\n", cfg.StacksRoot)
 	fmt.Println("\nstart the server with `systemctl start dockmesh` (or equivalent)")
 	return nil
 }
+
+// lostOwnersWarning starts the line setup apply looks for in the restore's
+// output.
+const lostOwnersWarning = "warning: Docker was unavailable, so "
 
 // cliRestoreFiles returns the helper that restores stack data of other
 // owners, nil when the Docker daemon does not answer.

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -268,8 +269,13 @@ func (a *setupApplier) populate(ctx context.Context, v setup.ApplyValues, candid
 // users now belongs to the service account.
 func (a *setupApplier) warnLostOwners(out []byte) {
 	for _, line := range strings.Split(string(out), "\n") {
-		if w, ok := strings.CutPrefix(strings.TrimSpace(line), "warning: "); ok {
-			a.log.Warn("restore: " + w)
+		w, ok := strings.CutPrefix(strings.TrimSpace(line), lostOwnersWarning)
+		if !ok {
+			continue
+		}
+		n, _, _ := strings.Cut(w, " ")
+		if entries, err := strconv.Atoi(n); err == nil {
+			a.log.Warn("restore: Docker was unavailable, so stack data owned by other users now belongs to the dockmesh account", "entries", entries)
 		}
 	}
 }
