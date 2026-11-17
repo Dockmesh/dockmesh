@@ -3,7 +3,6 @@ package migration
 import (
 	"context"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/host"
 	"log/slog"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 )
 
 // runPreflight executes all pre-flight checks and returns the result.

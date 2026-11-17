@@ -331,6 +331,9 @@ func TestSetStacksDir(t *testing.T) {
 		if _, err := svc.SetStacksDir(ctx, id, "/opt/stacks"); !errors.Is(err, ErrApplyRunning) {
 			t.Fatalf("second request while the first runs = %v", err)
 		}
+		if _, err := svc.SetStacksDir(ctx, id, "/var/lib/dockmesh-agent/stacks"); !errors.Is(err, ErrApplyRunning) {
+			t.Fatalf("confirming the current dir while a switch runs = %v", err)
+		}
 		payload, _ := json.Marshal(ResponseEnvelope{OK: false, Error: "unknown frame type"})
 		ag.deliverResponse(Frame{Type: FrameRes, ID: f.ID, Payload: payload})
 		deadline := time.Now().Add(5 * time.Second)

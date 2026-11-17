@@ -241,6 +241,12 @@ func (s *Service) applyStacksDir(ctx context.Context, ag *ConnectedAgent, p stri
 	if !ag.applying.CompareAndSwap(false, true) {
 		return
 	}
+	s.applyClaimed(ctx, ag, p)
+}
+
+// applyClaimed is applyStacksDir for a caller that holds ag.applying; it
+// releases it.
+func (s *Service) applyClaimed(ctx context.Context, ag *ConnectedAgent, p string) {
 	defer ag.applying.Store(false)
 	payload, _ := json.Marshal(StacksDirApplyReq{Path: p})
 	ctx, cancel := context.WithTimeout(ctx, stacksDirApplyWait)
@@ -297,7 +303,17 @@ func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool,
 	if ag == nil {
 		return false, ErrAgentNotConnected
 	}
-	if currentStacksDir(ag.Hello) == p {
+	current := currentStacksDir(ag.Hello) == p
+	if !current && ag.Hello.HelloLayout() != LayoutManaged {
+		return false, ErrLegacyLayout
+	}
+	// Claimed before any write, so the recorded request is always the one
+	// the agent works on.
+	if !ag.applying.CompareAndSwap(false, true) {
+		return false, ErrApplyRunning
+	}
+	if current {
+		defer ag.applying.Store(false)
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE agents
 			   SET stacks_dir_path = ?, stacks_dir_status = 'applied', stacks_dir_error = NULL,
@@ -305,19 +321,14 @@ func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool,
 			 WHERE id = ?`, p, id)
 		return err == nil, err
 	}
-	if ag.Hello.HelloLayout() != LayoutManaged {
-		return false, ErrLegacyLayout
-	}
-	if ag.applying.Load() {
-		return false, ErrApplyRunning
-	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET stacks_dir_path = ?, stacks_dir_status = 'pending', stacks_dir_error = NULL,
 		       updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`, p, id); err != nil {
+		ag.applying.Store(false)
 		return false, err
 	}
-	go s.applyStacksDir(context.Background(), ag, p)
+	go s.applyClaimed(context.Background(), ag, p)
 	return false, nil
 }
