@@ -91,15 +91,36 @@ func runAsServiceIO(ctx context.Context, binary string, timeout time.Duration, s
 }
 
 // runRestoreAsService runs a restore as the dockmesh account with the
-// docker group the service gets from its unit: stack data a container
-// wrote as another user is written through a helper container, which
-// needs Docker.
-func runRestoreAsService(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, args ...string) ([]byte, error) {
-	var groups []uint32
-	if gid, ok := lookupGID("docker"); ok {
-		groups = append(groups, uint32(gid)) //nolint:gosec // a gid from the group database
+// Docker groups the unit gives the service for the config in envFile:
+// stack data a container wrote as another user is written through a
+// helper container, which needs Docker.
+func runRestoreAsService(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, envFile string, args ...string) ([]byte, error) {
+	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, serviceDockerGIDs(envFile), args...)
+}
+
+// serviceDockerGIDs resolves the unit's Docker groups to gids, leaving out
+// root's group and the other privileged ones.
+func serviceDockerGIDs(envFile string) []uint32 {
+	env, err := layout.ReadEnvFile(envFile)
+	if err != nil {
+		env = map[string]string{}
 	}
-	return runAsServiceGroups(ctx, binary, timeout, stdin, extra, groups, args...)
+	var gids []uint32
+	for _, g := range supplementaryGroups(envFile, env) {
+		grp, err := user.LookupGroup(g)
+		if err != nil {
+			grp, err = user.LookupGroupId(g)
+		}
+		if err != nil || layout.PrivilegedGroup(grp.Name) {
+			continue
+		}
+		gid, err := strconv.ParseUint(grp.Gid, 10, 32)
+		if err != nil || gid == 0 {
+			continue
+		}
+		gids = append(gids, uint32(gid))
+	}
+	return gids
 }
 
 func runAsServiceGroups(ctx context.Context, binary string, timeout time.Duration, stdin io.Reader, extra []*os.File, groups []uint32, args ...string) ([]byte, error) {
