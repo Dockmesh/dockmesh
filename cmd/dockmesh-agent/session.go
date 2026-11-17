@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/rand/v2"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/labtime"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -45,6 +50,58 @@ func reconnectDelay(attempt int, r *rand.Rand) time.Duration {
 	}
 	jitter := 0.8 + 0.4*r.Float64()
 	return time.Duration(float64(d) * jitter)
+}
+
+// removedRetry is the reconnect interval once the server no longer knows
+// this host's certificate.
+var removedRetry = labtime.Tick(time.Hour)
+
+// errHostRemoved is the server's refusal of a certificate it has no host
+// for: the host was deleted in Dockmesh.
+var errHostRemoved = errors.New("this host was removed from Dockmesh")
+
+// dialError turns a refused websocket handshake into errHostRemoved when
+// the server answered that it has no host for this certificate.
+func dialError(resp *http.Response, err error) error {
+	if resp == nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode == http.StatusUnauthorized && strings.Contains(string(body), "agent not registered") {
+		return errHostRemoved
+	}
+	return fmt.Errorf("dial: %w (HTTP %d)", err, resp.StatusCode)
+}
+
+// reconnects decides the wait before the next connection attempt and
+// logs the reason once.
+type reconnects struct {
+	attempt int
+	// removed is set while the server refuses the host as deleted; the
+	// agent then logs once and retries every removedRetry.
+	removed bool
+}
+
+func (r *reconnects) next(err error, session time.Duration, rng *rand.Rand) time.Duration {
+	if errors.Is(err, errHostRemoved) {
+		if !r.removed {
+			slog.Error("This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall")
+			r.removed = true
+		}
+		r.attempt = 0
+		return removedRetry
+	}
+	r.removed = false
+	if session >= stableSession {
+		r.attempt = 0
+	}
+	delay := reconnectDelay(r.attempt, rng)
+	r.attempt++
+	if err != nil {
+		slog.Warn("disconnected, reconnecting", "err", err, "backoff", delay)
+	}
+	return delay
 }
 
 // inflight tracks running server requests so req.cancel can stop them.

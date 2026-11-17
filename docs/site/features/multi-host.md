@@ -203,11 +203,13 @@ See also [Upgrade](../operations/upgrade.md#upgrading-agents).
 
 ## Remove a host
 
-Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running; Dockmesh stops tracking them. Afterwards, on the host:
+Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **Maintenance** tab (needs `hosts.delete`), and type the host's name to confirm. This deletes the host from Dockmesh, closes its connection and stops accepting its certificate. Containers on that host keep running; Dockmesh stops tracking them. Afterwards, remove the agent on the host:
 
 ```bash
-sudo systemctl disable --now dockmesh-agent
+sudo dockmesh-agent uninstall
 ```
+
+Until you do, the agent logs `This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall` once and then tries to connect only once an hour, without logging each attempt.
 
 To bring the host back, add it again with **Add host** and run the new install command. It gets a new ID. To keep the ID, re-issue the token instead of revoking.
 

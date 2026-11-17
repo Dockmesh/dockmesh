@@ -191,21 +191,14 @@ func main() {
 	go removeOrphanHelpers(ctx, startedAt)
 
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
-	attempt := 0
+	var rc reconnects
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := runOnce(ctx, dialURL, tlsCfg, store)
+		err := runOnce(ctx, dialURL, tlsCfg, store, !rc.removed)
 		if ctx.Err() != nil {
 			break
 		}
-		if time.Since(started) >= stableSession {
-			attempt = 0
-		}
-		delay := reconnectDelay(attempt, rng)
-		attempt++
-		if err != nil {
-			slog.Warn("disconnected, reconnecting", "err", err, "backoff", delay)
-		}
+		delay := rc.next(err, time.Since(started), rng)
 		select {
 		case <-ctx.Done():
 			return
@@ -214,7 +207,7 @@ func main() {
 	}
 }
 
-func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *certStore) error {
+func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *certStore, logDial bool) error {
 	u, err := url.Parse(dialURL)
 	if err != nil {
 		return fmt.Errorf("parse url: %w", err)
@@ -223,10 +216,12 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		TLSClientConfig:  tlsCfg,
 		HandshakeTimeout: 15 * time.Second,
 	}
-	slog.Info("dialing", "url", u.String())
-	conn, _, err := dialer.DialContext(ctx, u.String(), nil)
+	if logDial {
+		slog.Info("dialing", "url", u.String())
+	}
+	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return dialError(resp, err)
 	}
 	defer conn.Close()
 	defer closeOnDone(ctx, conn)()

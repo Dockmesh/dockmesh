@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -49,6 +50,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fp := pki.FingerprintFromCert(peer)
 
 	agent, err := h.svc.LookupByFingerprint(r.Context(), fp)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		// Agents read "agent not registered" as a deleted host and back
+		// off for an hour; a lookup failure is not that.
+		slog.Error("agent connect: lookup", "fp", fp[:12], "err", err)
+		http.Error(w, "try again later", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		slog.Warn("agent connect: unknown fingerprint", "fp", fp[:12], "err", err)
 		http.Error(w, "agent not registered", http.StatusUnauthorized)
