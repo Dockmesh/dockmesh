@@ -262,7 +262,7 @@ func restoreLocal(ctx context.Context, r *setup.FileRestore, baseURL string) err
 	if _, _, err := restore.Stage(ctx, src, cfg, "setup-file:"+r.BackupFile, restore.StageOptions{Files: files}); err != nil {
 		return err
 	}
-	if _, err := restore.ApplyStaged(cfg); err != nil {
+	if _, err := restore.ApplyStaged(cfg); err != nil { //nolint:contextcheck // the swap runs to completion, also at server start
 		return err
 	}
 	if baseURL == "" {
