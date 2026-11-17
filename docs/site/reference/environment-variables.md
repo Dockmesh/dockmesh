@@ -136,7 +136,7 @@ The config a setup writes points `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_
 
 ## install-agent.sh
 
-The server fills in the URLs, the agent listener's key pin, the agent CA and the binary checksums when it serves the script. It takes the enrollment token as `--token <token>` and accepts two more flags, `--as-root` (run the agent as root instead of a `dockmesh-agent` user) and `--skip-docker`. The only variable it reads is `AGENT_WAIT_SECS` (default `60`): how long it waits for the agent to connect. Pass it through sudo, for example `| sudo AGENT_WAIT_SECS=120 bash`.
+The server fills in the URLs, the agent listener's key pin, the agent CA and the binary checksums when it serves the script. It takes the enrollment token as `--token <token>` and accepts `--data-dir`, `--stacks-dir`, `--skip-docker` and `--switch-to-service-user` (see [Running the installer again](../features/multi-host.md#running-the-installer-again)). The only variable it reads is `AGENT_WAIT_SECS` (default `60`): how long it waits for the agent to connect. Pass it through sudo, for example `| sudo AGENT_WAIT_SECS=120 bash`.
 
 ## uninstall.sh
 

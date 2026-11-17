@@ -61,13 +61,13 @@ The script served at `/install/agent.sh` on the agent port is `scripts/install-a
 - supports Linux with systemd only (it exits on macOS and other systems) on `x86_64` and `aarch64`; tested distributions are listed in [Supported systems](../getting-started/supported-systems.md),
 - installs Docker from `get.docker.com` if it's missing (with `--skip-docker` it stops instead),
 - downloads `dockmesh-agent-linux-amd64` or `dockmesh-agent-linux-arm64` from the agent port with the same key pin, refuses it if its SHA-256 doesn't match, and installs it root-owned to `/usr/local/bin/dockmesh-agent`,
-- creates a locked `dockmesh-agent` system user in the `docker` group, which is equivalent to root on the host; when the Docker socket belongs to another group, the service gets that group too,
+- creates a locked `dockmesh-agent` system user in the `docker` group; when the Docker socket belongs to another group, the service gets that group too (see [Agent user](#agent-user)),
 - runs `dockmesh-agent system install`, which writes `/etc/dockmesh-agent/agent.env`, the hardened `dockmesh-agent.service` unit and the `dockmesh-agent-update.path` and `.service` units of the root updater from templates in the binary,
 - writes the agent CA and the token to the data directory as the agent's account, starts the agent and waits up to 60 seconds for it to connect; when systemd cannot start the binary it says so, with the SELinux label and what to run.
 
 The output uses colours only on a terminal; with `NO_COLOR`, `TERM=dumb` or when the output is not a terminal it is plain text with an ASCII box.
 
-Flags: `--token <token>`, `--data-dir <path>` (first install only, default `/var/lib/dockmesh-agent`), `--stacks-dir <path>`, `--skip-docker` and `--as-root` (runs the agent as root instead of a dedicated user).
+Flags: `--token <token>`, `--data-dir <path>` (first install only, default `/var/lib/dockmesh-agent`), `--stacks-dir <path>`, `--skip-docker` and `--switch-to-service-user` (see below).
 
 ### Running the installer again
 
@@ -75,12 +75,18 @@ Run the same command without `--token` to repair an agent: it keeps the certific
 
 With `--token` the host enrolls again (for example with a token from the host's Maintenance › Re-issue). The previous certificate stays in place until the new one is written; when the server refuses the token the agent keeps its previous enrollment and the installer says why.
 
-A re-run never switches an agent that runs as root to the `dockmesh-agent` user, and it never deletes the certificates first. Installers of 0.5.x and earlier did both.
+Without `--switch-to-service-user` a re-run never switches an agent that runs as root to the `dockmesh-agent` user, and it never deletes the certificates first. Installers of 0.5.x and earlier did both.
 
-Pass flags like this:
+### Agent user
+
+New agents always run as the `dockmesh-agent` user. `--as-root` was removed in 0.6.0: on a new install the installer stops with a message, and `dockmesh-agent system install` refuses `--user root` for a host without an agent unit. The user is in the `docker` group, and access to the Docker socket is equivalent to root on the host, so the agent's account still controls the host through Docker; what the separate account adds is that the agent process itself can't write system files, its config or its binary.
+
+An agent installed with `--as-root` by an earlier release keeps running as root, also on a re-run, which prints a notice. To move it to the `dockmesh-agent` user, run the install command again with `--switch-to-service-user`. The installer creates the user and gives it the agent's files: the data directory with everything in it except `stacks/`, and in each stacks directory the directory itself, every stack directory and the files directly in it (`compose.yaml`, `.env`). What containers wrote below a stack directory, such as the data of relative bind mounts, keeps its owner. Links are never followed.
+
+To switch an agent, pass the flag like this:
 
 ```bash
-curl -fsSLk --pinnedpubkey '<pin>' <install-url> | sudo bash -s -- --token <token> --as-root
+curl -fsSLk --pinnedpubkey '<pin>' <install-url> | sudo bash -s -- --switch-to-service-user
 ```
 
 The installer and binary routes on the agent port need no sign-in. They and `/enroll` are limited per IP address with the limits of the sign-in endpoints: 100 requests in 15 minutes for the installer and binaries, and 100 failed enrollments in 15 minutes, after which the address waits 15 minutes. Behind TCP passthrough every agent host shares the proxy's address.

@@ -1,0 +1,3 @@
+kind: Changed
+body: 'New agents always run as the dockmesh-agent user: the installer refuses --as-root on a new install. An agent that runs as root moves to that user with --switch-to-service-user, which hands its files over'
+time: 2026-11-17T12:01:23.197345842Z
