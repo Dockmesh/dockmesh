@@ -279,6 +279,11 @@
     if (d < 86400) return m.hosts_up_h({ n: Math.round(d / 3600) });
     return m.hosts_up_d({ n: Math.round(d / 86400) });
   }
+  // A connected host whose stacks directory was never confirmed.
+  function waitingSetup(r: Row): boolean {
+    return r.kind === 'agent' && r.status === 'online' && !!r.needs_setup;
+  }
+
   function dotTone(s: string): string {
     if (s === 'online') return 'ok';
     if (s === 'offline') return 'bad';
@@ -417,7 +422,7 @@
               <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
                 onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={hostStatusLabel(r.status)}></span></span>
+            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'warn' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
               <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
               <small>
@@ -427,6 +432,9 @@
                   {m.hosts_waiting_for_agent()}
                 {:else if r.status === 'removed'}
                   {m.label_host_removed()}
+                {:else if waitingSetup(r)}
+                  <span class="dm-pill dm-pill-warning setup">{m.label_host_waiting_setup()}</span>
+                  {r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}
                 {:else}
                   {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
                 {/if}
@@ -511,6 +519,7 @@
 </Modal>
 
 <style>
+  .setup { margin-right: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .legacy { margin-left: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .tagf {
     display: inline-flex; align-items: center; gap: 4px;

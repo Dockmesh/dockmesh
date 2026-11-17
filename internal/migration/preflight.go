@@ -39,6 +39,12 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("target_online", true, target.Name())
+	if sc, ok := target.(interface{ SetupError(context.Context) error }); ok {
+		if err := sc.SetupError(ctx); err != nil {
+			add("target_setup", false, err.Error())
+			return result, nil
+		}
+	}
 
 	if vols, err := s.namedVolumes(ctx, m.StackName); err != nil {
 		add("named_volumes", false, err.Error())

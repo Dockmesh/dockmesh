@@ -1309,6 +1309,9 @@ func deployErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
 	}
+	if errors.Is(err, agents.ErrWaitingForSetup) {
+		return http.StatusConflict
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "port is already allocated"),

@@ -246,7 +246,9 @@ func (s *Service) RemoveAllForHost(ctx context.Context, hostID string) error {
 	return s.Load(ctx)
 }
 
-// canonicalize validates, deduplicates, and sorts a tag list.
+// Canonicalize validates, deduplicates, and sorts a tag list.
+func Canonicalize(in []string) ([]string, error) { return canonicalize(in) }
+
 func canonicalize(in []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(in))
 	for _, t := range in {

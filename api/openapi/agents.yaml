@@ -25,15 +25,33 @@ paths:
         enrollment token the admin pastes into the agent host's install
         command. The plaintext token is shown ONCE — lose it and you
         revoke + recreate.
+
+        The new host waits for setup (`needs_setup`) and refuses deploys,
+        migrations to it and backup runs on it until its stacks directory
+        is confirmed. `stacks_dir` skips that: the agent applies it when
+        it first connects, and the host is ready once it did. A stacks
+        directory passed to the installer (`--stacks-dir`) does the same.
+        Setting `tags` also needs `hosts.tag`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
-                name: {type: string, example: prod-01}
+                name:
+                  type: string
+                  example: prod-01
+                  description: Empty takes the hostname the agent reports at enrollment (`<hostname>-2` and so on when taken).
+                tags:
+                  type: array
+                  maxItems: 20
+                  items: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,31}$"}
+                stacks_dir:
+                  type: string
+                  maxLength: 4096
+                  example: /srv/dockmesh/stacks
+                  description: Absolute, clean path of letters, digits and `._-/`. The agent checks the rest (owner, empty, local disk, allowed parent) when it applies it.
       responses:
         "201":
           description: Agent registered; install hint returned.
@@ -334,6 +352,17 @@ components:
               path: {type: string}
               current: {type: boolean}
               stacks: {type: integer, description: Number of stacks in the directory.}
+        needs_setup:
+          type: boolean
+          description: The host is "Waiting for setup". It refuses deploys, migrations to it and backup runs on it until its stacks directory is confirmed. Never set for hosts enrolled before this field existed.
+        stacks_dir:
+          type: object
+          description: The stacks directory last asked for through `POST /agents` and how the host answered. `pending` until the agent applied it, then `applied`, or `refused` with the agent's reason in `error`.
+          required: [path, status]
+          properties:
+            path: {type: string}
+            status: {type: string, enum: [pending, applied, refused]}
+            error: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     AgentCreateResult:

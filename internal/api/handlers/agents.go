@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
@@ -55,7 +57,9 @@ func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentReq struct {
-	Name string `json:"name"`
+	Name      string   `json:"name"`
+	Tags      []string `json:"tags"`
+	StacksDir string   `json:"stacks_dir"`
 }
 
 func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
@@ -68,16 +72,51 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := h.Agents.Create(r.Context(), req.Name)
-	if errors.Is(err, agents.ErrNameTaken) {
+	tags, err := hosttags.Canonicalize(req.Tags)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, hosttags.ErrTooManyTags) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if len(tags) > 0 {
+		// Tags carry RBAC scope; setting them needs hosts.tag as
+		// PUT /hosts/{id}/tags does.
+		if !middleware.Allowed(r.Context(), rbac.PermHostsTag) {
+			middleware.Forbidden(w, r, rbac.PermHostsTag)
+			return
+		}
+		if h.HostTags == nil {
+			writeError(w, http.StatusServiceUnavailable, "host tags unavailable")
+			return
+		}
+	}
+	res, err := h.Agents.CreateWith(r.Context(), agents.CreateOptions{Name: req.Name, StacksDir: req.StacksDir})
+	switch {
+	case errors.Is(err, agents.ErrNameTaken):
 		writeError(w, http.StatusConflict, "name already in use")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, agents.ErrInvalidStacksDir):
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, nil)
+	if len(tags) > 0 {
+		if _, err := h.HostTags.Set(r.Context(), res.Agent.ID, tags); err != nil {
+			// The host exists without tags; remove it so a retry with
+			// the same name works.
+			if derr := h.Agents.Delete(r.Context(), res.Agent.ID); derr != nil {
+				slog.Warn("remove host after failed tags", "id", res.Agent.ID, "err", derr)
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, map[string]any{"tags": tags, "stacks_dir": req.StacksDir})
 	writeJSON(w, http.StatusCreated, res)
 }
 

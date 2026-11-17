@@ -36,3 +36,6 @@ components:
         tags:
           type: array
           items: {type: string}
+        needs_setup:
+          type: boolean
+          description: The host waits for setup and refuses deploys; host pickers list it disabled.
