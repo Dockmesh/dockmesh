@@ -61,6 +61,17 @@ func (s *Service) InstallCommand(token string) string {
 		s.installPin(), s.installURL(), InstallScriptPath, token)
 }
 
+// RerunCommand is the install one-liner without a token. Run on an
+// enrolled host it keeps the enrollment and moves a legacy agent to the
+// managed layout. Empty while no agent URL is configured.
+func (s *Service) RerunCommand() string {
+	installURL, pin := s.installURL(), s.installPin()
+	if installURL == "" || pin == "" {
+		return ""
+	}
+	return fmt.Sprintf("curl -fsSLk --pinnedpubkey '%s' '%s%s' | sudo bash", pin, installURL, InstallScriptPath)
+}
+
 // installScriptTemplate is where the server reads install-agent.sh from.
 func installScriptTemplate() string {
 	if p := os.Getenv("DOCKMESH_INSTALL_SCRIPT"); p != "" {

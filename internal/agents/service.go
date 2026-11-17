@@ -58,6 +58,9 @@ type Agent struct {
 	UpdateRecommended bool `json:"update_recommended,omitempty"`
 	// Layout is the install layout the connected agent reports.
 	Layout string `json:"layout,omitempty"`
+	// RerunCommand converts a legacy agent to the managed layout; only
+	// set for legacy agents and while an agent URL is configured.
+	RerunCommand string `json:"rerun_command,omitempty"`
 	// StacksDirs are the connected agent's stacks directories, the
 	// current one first.
 	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
@@ -603,6 +606,9 @@ func (s *Service) fillStatus(a *Agent) {
 		a.ProtocolVersion = ag.Hello.ProtocolVersion
 		a.UpdateRecommended = ag.UpdateRecommended()
 		a.Layout = ag.Hello.HelloLayout()
+		if a.Layout == LayoutLegacy {
+			a.RerunCommand = s.RerunCommand()
+		}
 		a.StacksDirs = ag.Hello.ReportedStacksDirs()
 	} else if a.Status != "pending" {
 		a.Status = "offline"
