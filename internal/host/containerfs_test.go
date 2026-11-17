@@ -737,3 +737,33 @@ func TestContainerMountBehindSymlink(t *testing.T) {
 		}
 	}
 }
+
+func TestVolumeImportOnOldAgentNamesVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		caps    []string
+		replace bool
+		want    string
+	}{
+		{"merge without flow control", nil, false, "a merge restore needs agent 0.5.0 or newer"},
+		{"replace without flow control", nil, true, "a replace restore needs agent 0.5.0 or newer"},
+		{"replace without staging", []string{agents.CapStreamCredit}, true, "a replace restore needs agent 0.5.0 or newer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := fakeAgentSession(t, newFakeFS(), tt.caps...)
+			err := h.VolumeImport(context.Background(), "data", strings.NewReader(""), tt.replace, 0)
+			if !errors.Is(err, ErrAgentTooOld) || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "update the agent") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestVolumeImportMergeNeedsNoStaging(t *testing.T) {
+	h := fakeAgentSession(t, newFakeFS(), agents.CapStreamCredit)
+	err := h.VolumeImport(context.Background(), "data", strings.NewReader(""), false, 0)
+	if errors.Is(err, ErrAgentTooOld) {
+		t.Fatalf("merge onto an agent with flow control was refused: %v", err)
+	}
+}

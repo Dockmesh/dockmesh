@@ -427,7 +427,7 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 | `volume <name> is used by running containers (...); stop them before replacing its contents` | **Replace** needs the volume unused. |
 | `this backup has no recorded checksum, so it can only be merged, not replace the volume's contents` | Older backups can only be restored with **Merge**. |
 | `not enough free space in the volume for a replace restore ...` | **Replace** keeps old and new contents side by side until the swap. |
-| `the agent on this host is too old to restore volumes; upgrade it from the Hosts page` | **Replace** onto an agent host needs an up-to-date agent. |
+| `a merge restore needs agent 0.5.0 or newer on this host …` / `a replace restore …` | Restores onto an agent host need agent 0.5.0 or newer. |
 | `another restore is in progress` | Only one restore may write a volume or stack at a time, and at most two run at once. |
 | `run has no restorable archive (failed, still running, or removed by retention)` | Pick another run. |
 | `archive does not match what the backup run wrote` / `backup archive failed verification, nothing was restored` | The archive on the target is damaged or was replaced. |

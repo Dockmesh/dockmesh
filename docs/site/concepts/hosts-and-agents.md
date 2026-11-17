@@ -58,7 +58,7 @@ When an agent runs a different build than the server, the Hosts page marks it an
 
 Most features work on every host: container lists and lifecycle, logs, exec, live stats and metrics history, the container file browser, image, volume and network lists and inspect, image pull, remove and prune, volume and network create, remove and prune, vulnerability scans (the image is sent to the server and scanned there), volume browsing, stack deploy, stop and scale, auto-scaling rules (on the host the stack is deployed on), alert rules, backups and restores of volumes and stacks, git-source auto-deploys (they run on the host the stack is deployed on), drains and stack migration. Private registry credentials are sent to agents for the images they deploy; see [Registries](../features/registries.md).
 
-Some features need an agent that supports them, for example the file browser, metrics history, restores in replace mode, image pulls, network actions, volume prune and scans. On an older agent they fail with a message to update the agent.
+Some features need an agent that supports them, for example the file browser, metrics history, volume restores (agent 0.5.0 or newer), image pulls, network actions, volume prune and scans. On an older agent they fail with a message to update the agent.
 
 These work on the local host only:
 
