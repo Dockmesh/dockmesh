@@ -301,7 +301,7 @@
     return items;
   }
 
-  const COLS = '22px 14px minmax(180px, 1.6fr) 64px 100px 100px 100px 110px minmax(90px, 150px) 40px';
+  const COLS = '22px 14px minmax(180px, 1.6fr) 64px 100px 100px 100px minmax(110px, 200px) minmax(90px, 150px) 40px';
 </script>
 
 <section class="dm-page">
@@ -444,6 +444,7 @@
             {/if}
             <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? m.hosts_server_is_on({ version: fmtVersion(upgradePolicy?.server_version) }) : r.update_recommended ? m.hosts_older_protocol() : ''].filter(Boolean).join(' · ')}>
               {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
+              {#if r.layout === 'legacy'}<span class="dm-pill dm-pill-info legacy" title={m.hosts_legacy_badge_title()}>{m.hosts_legacy_badge()}</span>{/if}
             </span>
             <span role="cell" class="tagcell">
               {#if tags.length}
@@ -508,6 +509,7 @@
 </Modal>
 
 <style>
+  .legacy { margin-left: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .tagf {
     display: inline-flex; align-items: center; gap: 4px;
     font-size: 12px; line-height: 20px; padding: 0 4px 0 8px; border-radius: 999px;

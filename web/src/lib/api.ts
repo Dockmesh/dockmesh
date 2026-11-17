@@ -1046,6 +1046,7 @@ export interface Agent {
   protocol_version?: number;
   update_recommended?: boolean;
   layout?: 'legacy' | 'managed';
+  rerun_command?: string;
   stacks_dirs?: AgentStacksDir[];
   created_at: string;
   updated_at: string;
