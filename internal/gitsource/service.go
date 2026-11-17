@@ -699,13 +699,15 @@ func (s *Service) PendingDeploys(ctx context.Context) (map[string]*PendingDeploy
 }
 
 // setPending stores sha as the stack's pending commit. A newer commit
-// replaces an older one; the time it has waited is kept.
+// replaces an older one; the time it has waited is kept. Nothing is
+// stored once auto-deploy is off: turning it off while a retry was in
+// flight must not bring the commit back.
 func (s *Service) setPending(ctx context.Context, stackName, sha, operation string) {
 	_, err := s.db.ExecContext(context.WithoutCancel(ctx), `
 		UPDATE stack_git_sources
 		   SET pending_sha = ?, pending_operation = ?,
 		       pending_since = COALESCE(pending_since, CURRENT_TIMESTAMP)
-		 WHERE stack_name = ?`, sha, operation, stackName)
+		 WHERE stack_name = ? AND auto_deploy = 1`, sha, operation, stackName)
 	if err != nil {
 		slog.Warn("gitsource: store pending deploy", "stack", stackName, "err", err)
 	}
