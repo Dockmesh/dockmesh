@@ -78,8 +78,8 @@ func dialError(resp *http.Response, err error) error {
 	return fmt.Errorf("dial: %w (HTTP %d)", err, resp.StatusCode)
 }
 
-// reconnects decides the wait before the next connection attempt and
-// logs the reason once.
+// reconnects decides the wait before the next connection attempt; a
+// deleted host is logged once.
 type reconnects struct {
 	attempt int
 	// removedSince is when the server first refused the host as deleted;

@@ -47,6 +47,9 @@ func TestDialErrorRecognisesDeletedHost(t *testing.T) {
 }
 
 func TestReconnectsAfterDeletedHost(t *testing.T) {
+	if removedRetry != time.Hour || removedGrace != 10*time.Minute {
+		t.Fatalf("removedRetry %s, removedGrace %s outside lab builds", removedRetry, removedGrace)
+	}
 	var logs bytes.Buffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -75,9 +78,6 @@ func TestReconnectsAfterDeletedHost(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "disconnected, reconnecting") {
 		t.Fatalf("logged each attempt:\n%s", logs.String())
-	}
-	if removedRetry != time.Hour || removedGrace != 10*time.Minute {
-		t.Fatalf("removedRetry %s, removedGrace %s outside lab builds", removedRetry, removedGrace)
 	}
 
 	// The host is back (re-enrolled): normal backoff, and a later removal
