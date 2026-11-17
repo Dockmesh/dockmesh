@@ -25,10 +25,13 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { hosts } from '$lib/stores/host.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { browserStorage, hideLegacyNotice, legacyNoticeHidden } from '$lib/legacyNotice';
+  import { DOCS_BASE } from '$lib/setupWizard';
   import MountTable from '$lib/components/MountTable.svelte';
   import HostMetrics from '$lib/components/HostMetrics.svelte';
   import TopConsumers from '$lib/components/TopConsumers.svelte';
-  import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-svelte';
+  import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle, Info, Copy } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
   const isLocal = $derived(id === 'local');
@@ -62,6 +65,16 @@
   let drainBusy = $state(false);
   let drainHooksConfirmed = $state(false);
   let drainHooks = $derived((drainPlan?.entries ?? []).filter((e) => e.feasible && e.hooks).map((e) => ({ stack: e.stack_name, hooks: e.hooks! })));
+
+  let legacyHiddenFor = $state<string | null>(null);
+  const showLegacy = $derived(
+    !isLocal && agent?.layout === 'legacy' && legacyHiddenFor !== id &&
+    !legacyNoticeHidden(browserStorage(), auth.user?.id ?? '', id)
+  );
+  function hideLegacy() {
+    hideLegacyNotice(browserStorage(), auth.user?.id ?? '', id);
+    legacyHiddenFor = id;
+  }
 
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
@@ -381,6 +394,28 @@
             <Trash2 size={13} strokeWidth={1.8} /> {m.hosts_delete_host()}
           </button>
         {/if}
+      </div>
+    {/if}
+
+    {#if showLegacy && agent}
+      <div class="infobox" role="status">
+        <Info size={14} strokeWidth={1.8} />
+        <div class="infobody">
+          <b>{m.hosts_legacy_title()}</b>
+          <span>{agent.rerun_command ? m.hosts_legacy_text() : m.hosts_legacy_text_no_cmd()}</span>
+          {#if agent.rerun_command}
+            <div class="infocmd">
+              <pre class="cmd dm-mono">{agent.rerun_command}</pre>
+              <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(agent!.rerun_command!, m.hosts_legacy_copied())}>
+                <Copy size={12} strokeWidth={1.8} /> {m.common_copy()}
+              </button>
+            </div>
+          {/if}
+          <a class="docs" href="{DOCS_BASE}features/multi-host#agent-upgrades" target="_blank" rel="noopener noreferrer">{m.hosts_legacy_docs()}</a>
+        </div>
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs infox" onclick={hideLegacy} aria-label={m.hosts_legacy_hide()} title={m.hosts_legacy_hide()}>
+          <X size={13} strokeWidth={1.8} />
+        </button>
       </div>
     {/if}
 
@@ -716,6 +751,16 @@
   }
   .removedbox div { display: flex; flex-direction: column; gap: 2px; }
   .removedbox span { color: var(--muted); }
+  .infobox {
+    display: flex; gap: 8px; align-items: flex-start;
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); color: var(--accent);
+    border-radius: var(--r); padding: 8px 12px; font-size: var(--fs-sm);
+  }
+  .infobody { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; color: var(--fg); }
+  .infocmd { display: flex; gap: 8px; align-items: flex-start; }
+  .infocmd .cmd { flex: 1; min-width: 0; }
+  .infobox .docs { color: var(--accent); align-self: flex-start; }
+  .infox { margin: -2px -6px 0 0; }
   .tok { display: flex; flex-direction: column; gap: 12px; }
   .tok p { margin: 0; }
   .cmd { margin: 0; padding: 10px 12px; background: var(--field); border-radius: var(--r-sm); font-size: 12px; white-space: pre-wrap; word-break: break-all; }

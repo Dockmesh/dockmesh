@@ -1,0 +1,3 @@
+kind: Added
+body: A host running an agent in the old install layout shows a notice with the command that switches it to signed updates, and the Hosts list marks it with a Legacy layout badge
+time: 2026-11-17T18:52:16.669575638Z
