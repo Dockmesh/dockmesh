@@ -92,9 +92,40 @@ func updateApply(args []string) error {
 	}
 	reqDir := updateDir(filepath.Clean(*data))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	// An interrupted update is finished first: a stacks-dir request must
+	// never keep a rollback from running.
+	req := requestOf(reqDir, uid)
+	if req.Type == rootupdate.RequestStacksDirApply && rootupdate.Unfinished(managedStateDir) {
+		// Removed first: the path unit would start the request again once
+		// the recovery below is over.
+		if err := rootupdate.RemoveServiceFile(reqDir, uid, rootupdate.RequestFile); err != nil {
+			return err
+		}
+		(&stacksDirApplier{reqDir: reqDir, uid: uid, log: logger}).result(agents.StacksDirRefused,
+			agents.StacksDirCheck{Path: req.Path}, errors.New("an interrupted update is finished first"))
+	}
+	if req.Type == rootupdate.RequestStacksDirApply && !rootupdate.Unfinished(managedStateDir) {
+		gid := 0
+		if uid != 0 {
+			if _, gid, err = lookupAccount(agentAccount); err != nil {
+				return err
+			}
+		}
+		in := hostInstaller(binary)
+		a := &stacksDirApplier{
+			dataDir: filepath.Clean(*data), reqDir: reqDir, uid: uid, gid: gid, stateDir: managedStateDir, log: logger,
+			rules: func(dirs stackDirs) stacksDirRules {
+				env, _, _ := in.readEnv()
+				return hostStacksDirRules(ctx, filepath.Clean(*data), dirs, int(uid), env["DOCKER_HOST"])
+			},
+			in: in, units: &agentService{reqDir: reqDir, uid: uid}, settle: 2 * time.Second,
+			restart: func(ctx context.Context) error { return agentSystemctl(ctx, "restart", agentUnitName) },
+		}
+		return a.run(ctx, req.Path)
+	}
+
 	res, err := rootupdate.Apply(ctx, rootupdate.Config{
 		Installed:  version.Version,
 		RequestDir: reqDir,
@@ -150,7 +181,8 @@ func agentServiceUID() (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("look up %s: %w", name, err)
 	}
-	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	// 31 bits: the uid is also used as an int.
+	uid, err := strconv.ParseUint(u.Uid, 10, 31)
 	if err != nil {
 		return 0, err
 	}

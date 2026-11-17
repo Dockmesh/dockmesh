@@ -45,6 +45,10 @@ type installOptions struct {
 	StacksDir string
 	User      string
 	SocketGID string
+	// earlier replaces DOCKMESH_EARLIER_STACKS_DIRS when setEarlier is
+	// set; only root's stacks-dir-apply does.
+	earlier    []string
+	setEarlier bool
 }
 
 func systemInstall(args []string) error {
@@ -71,6 +75,11 @@ func systemInstall(args []string) error {
 	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
 	}
+	unlock, err := lockStacksDir(managedStateDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	in := hostInstaller(self)
 	res, err := in.run(o)
 	if err != nil {
@@ -103,6 +112,9 @@ type agentInstaller struct {
 	socketGroups     func(socket string, dockerGID int) ([]string, string)
 	// rootOnly reports a directory only root can change, up to /.
 	rootOnly func(dir string) bool
+	// checkStacks applies the rules of stacks-dir-apply to a new stacks
+	// dir given with --stacks-dir.
+	checkStacks func(path, dataDir, current string, uid int, env map[string]string) stacksDirResult
 	// legacy reports what is left of the legacy layout's copy step.
 	legacy    func(dataDir string, unitExists bool) error
 	systemctl func(args ...string) error
@@ -128,7 +140,11 @@ func hostInstaller(self string) *agentInstaller {
 		},
 		socketGroups: layout.SocketGroups,
 		rootOnly:     layout.RootOnlyDir,
-		legacy:       hostLegacyLeftovers,
+		checkStacks: func(path, dataDir, current string, uid int, env map[string]string) stacksDirResult {
+			dirs := resolveStackDirs(current, env["DOCKMESH_EARLIER_STACKS_DIRS"], dataDir)
+			return checkStacksDir(path, hostStacksDirRules(context.Background(), dataDir, dirs, uid, env["DOCKER_HOST"]))
+		},
+		legacy: hostLegacyLeftovers,
 		systemctl: func(args ...string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -235,7 +251,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	}
 
 	stacksDir := env["DOCKMESH_STACKS_DIR"]
-	if o.StacksDir != "" {
+	if o.StacksDir != "" && o.StacksDir != stacksDir {
+		current := resolveStackDirs(stacksDir, "", dataDir).current
+		if r := in.checkStacks(o.StacksDir, dataDir, current, uid, env); !r.ok() {
+			return res, fmt.Errorf("stacks dir %s: %s", o.StacksDir, r.Message)
+		}
 		stacksDir = o.StacksDir
 	}
 	if stacksDir != "" {
@@ -278,7 +298,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		DataDir:             dataDir,
 		SupplementaryGroups: groups,
 	}
-	if unit.WritablePaths, err = writableStackDirs(dataDir, stacksDir, env["DOCKMESH_EARLIER_STACKS_DIRS"], in.rootOnly); err != nil {
+	earlier := env["DOCKMESH_EARLIER_STACKS_DIRS"]
+	if o.setEarlier {
+		earlier = strings.Join(o.earlier, ":")
+	}
+	if unit.WritablePaths, err = writableStackDirs(dataDir, stacksDir, earlier, in.rootOnly); err != nil {
 		return res, err
 	}
 	// Render before anything is written: a refused value changes nothing.
@@ -325,6 +349,7 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	}
 	envData := renderAgentEnv(envLines, map[string]string{
 		"DOCKMESH_DATA_DIR": dataDir, "DOCKMESH_STACKS_DIR": stacksDir, "DOCKMESH_SOCKET_GID": socketGID,
+		"DOCKMESH_EARLIER_STACKS_DIRS": earlier,
 	})
 	if changed, err = layout.WriteRootFile(in.envFile, envData, in.rootUID, gid, 0o640); err != nil {
 		return res, err
