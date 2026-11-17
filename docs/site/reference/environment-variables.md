@@ -145,7 +145,7 @@ The server fills in the URLs, the agent listener's key pin, the agent CA and the
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where to remove `dockmesh`, `dockmesh.bak` and `dmctl` from |
 | `NO_COLOR` | unset | Disables colours |
 
-It finds the data root and the asset directory by looking for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`. Flags: `--yes`, `--purge` (also deletes the data root), `--dry-run`. See [Uninstall](../operations/uninstall.md).
+It reads the data root from `DOCKMESH_DATA_DIR` in `/etc/dockmesh/dockmesh.env`, else it looks for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`. Flags: `--yes`, `--purge` (also removes Dockmesh's files from the data root), `--dry-run`. See [Uninstall](../operations/uninstall.md).
 
 ## Settings with an environment counterpart
 

@@ -23,14 +23,14 @@ It asks one question per component:
 | Remove service unit / plist? | yes | `/etc/systemd/system/dockmesh.service` (macOS: `/Library/LaunchDaemons/dev.dockmesh.service.plist`) |
 | Remove the dockmesh binary? | yes | `dockmesh`, `dockmesh.bak` and `dmctl` in `/usr/local/bin` (or `DOCKMESH_INSTALL_DIR`) |
 | Remove agent installer + bundled binaries? | yes | The asset directory, normally `/usr/local/share/dockmesh` |
-| Remove data directory (DB, stacks, age-keys)? | **no** | The whole data root, see below |
+| Remove data directory (DB, stacks, age-keys)? | **no** | Dockmesh's files in the data root, see below |
 | Remove the 'dockmesh' service user? | yes | `userdel dockmesh` (Linux only), after killing its processes |
 
 | Flag | Effect |
 |---|---|
 | `--yes` | Accept every default without asking. The data root is kept |
-| `--purge` | Like `--yes`, and also removes the data root. Cannot be undone |
-| `--dry-run` | Print the commands instead of running them |
+| `--purge` | Like `--yes`, and also removes Dockmesh's files from the data root. Cannot be undone |
+| `--dry-run` | Print the commands and what would be kept instead of running them |
 
 ```bash
 curl -fsSL https://get.dockmesh.dev/uninstall | sudo bash -s -- --yes
@@ -38,17 +38,36 @@ curl -fsSL https://get.dockmesh.dev/uninstall | sudo bash -s -- --yes
 
 ### How the data root is found
 
-The script looks for `dockmesh.env` (or the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves) in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one. `--purge` also removes `/etc/dockmesh`. It reads the asset paths from that file. Without an env file it assumes `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`). It does not read `DOCKMESH_DATA_DIR` from `/etc/dockmesh/dockmesh.env`, so a data root you chose elsewhere in the setup wizard is not found or removed; delete it by hand.
+The script reads `DOCKMESH_DATA_DIR` from `/etc/dockmesh/dockmesh.env`, so a data root you chose in the setup wizard is found. Older configs without it name the database with `DOCKMESH_DB_PATH`; the data root is then the directory above `data/dockmesh.db`. `DOCKMESH_DB_PATH`, `DOCKMESH_STACKS_ROOT` and the secrets, age key and audit genesis paths in that file are followed too. The file is read as plain text and never run, and it is only used when it is a regular file that root owns and nobody else can write.
 
-Before deleting, it checks that the directory contains `data/`, `stacks/` or `dockmesh.env`, and skips it with a warning otherwise. If the directory is a mount point, only its contents are removed.
+Without a data root in that file, the script looks for `dockmesh.env` (or the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves) in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one, else `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
 
-Removing the data root deletes the database and its pre-migration snapshots, all stack files (including data that containers wrote through relative bind mounts into their stack directory) and the age key. Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the key. A local backup target inside the data root, such as the default `data/backups`, is deleted as well.
+The script refuses a data root that is not a plain absolute path, has a symlink anywhere in it, or is `/` or a system directory such as `/etc`, `/usr`, `/var`, `/home`, `/root`, `/opt`, `/srv`, `/data` or `/mnt`. It prints why and leaves the directory alone; remove Dockmesh's files there by hand. It also skips a directory that holds none of `data/`, `stacks/`, `.setup/`, `update/` or `dockmesh.env`.
+
+### What `--purge` removes
+
+`--purge` removes only the files Dockmesh writes, from the data root and from `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`), where setup keeps its state before the wizard has chosen the data root:
+
+- the database with its WAL, SHM and pre-migration and pre-update snapshots
+- `secrets.env`, the age key `secrets.age-key`, `audit-genesis.sha256` and the agent and web certificates and keys
+- the scanner, Git and proxy socket caches in `data/`, the update, agent release, setup and restore staging directories, and `dockmesh.env`
+- every stack directory that holds only `compose.yaml`, `compose.<environment>.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` and empty directories
+
+Everything else stays, and the script prints one `keep` line with the reason for each path, for example:
+
+```text
+keep    /srv/dockmesh/stacks/app: contains files not written by Dockmesh (e.g. data/db.sqlite)
+```
+
+That covers a stack directory with data a container wrote through a relative bind mount, a directory a container mounts (even an empty one), a symlink, or any other file; all stacks when Docker can't be asked which directories containers mount; directories not owned by the `dockmesh` account; local backups and audit archives such as `data/backups`; what a restore or a failed setup set aside; and anything the script doesn't know. A data root that is used by an agent on the same host is kept as well. The data root itself is removed only once it is empty. If it is a mount point, the mount point stays. `--purge` stops the server first and also removes `/etc/dockmesh`. When something it keeps still belongs to the `dockmesh` account, the account stays too, so a new account can't inherit those files.
+
+Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the age key. Run `--purge --dry-run` first to see what would be removed and kept.
 
 ## What the script leaves behind
 
 These are not touched by `uninstall.sh`. Remove them by hand if you want a clean host.
 
-**Stacks.** Containers, networks and volumes of your stacks keep running. To remove a stack, run `docker compose down` in its directory before deleting the data root (add `-v` to delete its volumes as well). Dockmesh labels containers with the stack name as the Compose project name. If secrets encryption was on, the stack's variables are in `.env.age`, which Docker Compose cannot read. Decrypt the file with the age key when the compose file needs those variables:
+**Stacks.** Containers, networks and volumes of your stacks keep running. To remove a stack, run `docker compose down` in its directory before purging the data root (add `-v` to delete its volumes as well). Dockmesh labels containers with the stack name as the Compose project name. If secrets encryption was on, the stack's variables are in `.env.age`, which Docker Compose cannot read. Decrypt the file with the age key when the compose file needs those variables:
 
 ```bash
 sudo age -d -i /var/lib/dockmesh/data/secrets.age-key \n  -o /var/lib/dockmesh/stacks/<name>/.env /var/lib/dockmesh/stacks/<name>/.env.age
@@ -62,7 +81,7 @@ sudo docker rm -f dockmesh-proxy
 sudo docker volume rm dockmesh-caddy-data dockmesh-caddy-config
 ```
 
-**Backups outside the data root.** Local backup targets elsewhere, for example under `/srv/backups`, and archives on remote targets are not touched.
+**Backups.** Local backup targets, in the data root (`data/backups`) or elsewhere such as `/srv/backups`, and archives on remote targets are not touched.
 
 **Helper images.** Dockmesh pulls a `caddy` image for the proxy (by default `caddy:2.11.7` pinned by digest, or the Caddy version you switched to, or `DOCKMESH_PROXY_IMAGE`), `alpine:3.24` pinned by digest for volume backups, restores and the volume browser, and `busybox:1.38` pinned by digest for volume tar streams, for deleting stack data owned by another user and for moving bind-mount data of containers deployed by older versions. Agents pull the same pinned `busybox:1.38` on their hosts, and the pinned `alpine:3.24` to browse a volume they can't read directly. Remove the images with `docker image rm` if nothing else uses them.
 
@@ -94,7 +113,7 @@ Options:
 | `--yes` | Do not ask |
 | `--dry-run` | Only list what would be removed and kept |
 
-`--purge` removes only what Dockmesh wrote. A stacks directory that holds anything else, such as data a container wrote through a relative bind mount (`app/data/db.sqlite`), is kept as a whole, and so is the data directory around it and the user that owns them. A stacks directory you created yourself before you chose it in Dockmesh is emptied but not removed. Every kept item is listed with the reason. When the agent's data directory is also the data directory of a Dockmesh server on the same host (agents installed by old releases used `/var/lib/dockmesh`), only the agent's own files are removed.
+`--purge` removes only what Dockmesh wrote. A stacks directory that holds anything else, such as data a container wrote through a relative bind mount (`app/data/db.sqlite`), is kept as a whole, and so is the data directory around it and the user that owns them. A stacks directory you created yourself before you chose it in Dockmesh is emptied but not removed. Every kept item is listed with the reason. When the agent's data directory is also the data directory of a Dockmesh server on the same host (agents installed by old releases used `/var/lib/dockmesh`), only the agent's own files are removed. `uninstall.sh` on a server host leaves the agent alone and says so.
 
 If you revoke the host in Dockmesh first, the agent's certificate is no longer accepted. The agent then logs `This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall` once, and after ten minutes of refusals it retries only once an hour.
 

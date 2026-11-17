@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: uninstall.sh --purge now keeps local backups in data/backups, audit archives and files a restore set aside, and lists them; remove them by hand
+time: 2026-11-17T19:50:32.973593906Z
+custom:
+    Audience: admins
+    Id: purge-keeps-backups
