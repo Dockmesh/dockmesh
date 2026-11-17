@@ -219,7 +219,7 @@ func applySetupLocal(ctx context.Context, run *setupFileRun, dryRun bool) (appli
 		return appliedSetup{}, nil
 	}
 	if r := run.file.Restore; r != nil {
-		if err := restoreLocal(ctx, r); err != nil {
+		if err := restoreLocal(ctx, r, v.BaseURL); err != nil {
 			return appliedSetup{}, err
 		}
 		return appliedSetup{URL: localURL(v), Local: true}, nil
@@ -230,7 +230,7 @@ func applySetupLocal(ctx context.Context, run *setupFileRun, dryRun bool) (appli
 	return appliedSetup{URL: localURL(v), Admin: v.Admin.Username, Local: true}, nil
 }
 
-func restoreLocal(ctx context.Context, r *setup.FileRestore) error {
+func restoreLocal(ctx context.Context, r *setup.FileRestore, baseURL string) error {
 	cfg, err := cliLoadConfig()
 	if err != nil {
 		return err
@@ -254,8 +254,13 @@ func restoreLocal(ctx context.Context, r *setup.FileRestore) error {
 	if _, _, err := restore.Stage(ctx, src, cfg, "setup-file:"+r.BackupFile, restore.StageOptions{}); err != nil {
 		return err
 	}
-	_, err = restore.ApplyStaged(cfg)
-	return err
+	if _, err := restore.ApplyStaged(cfg); err != nil {
+		return err
+	}
+	if baseURL == "" {
+		return nil
+	}
+	return setRestoredBaseURL(ctx, cfg.DBPath, baseURL)
 }
 
 func (r appliedSetup) localText() string {

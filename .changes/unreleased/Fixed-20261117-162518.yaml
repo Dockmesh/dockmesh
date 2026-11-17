@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A setup file that restores a backup applies its address.base_url: the restored server uses the new address for agent install commands, SSO callbacks and invite links instead of the old server''s'
+time: 2026-11-17T16:25:18.723027775Z
