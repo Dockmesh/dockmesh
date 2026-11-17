@@ -208,7 +208,6 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 		!stacksOK || !validStamp(stackStamp) {
 		return false, fmt.Errorf("restore: staging marker names unexpected paths %q, %q", info.PrevDir, info.PrevStacks)
 	}
-	info.PrevDir = filepath.Join(dataDir, PreRestoreDir, filepath.Base(info.PrevDir))
 	if err := os.MkdirAll(info.PrevDir, 0o700); err != nil {
 		return false, err
 	}
