@@ -533,6 +533,7 @@ func main() {
 	// a background monitor flips the `connected` flag back on once the
 	// socket appears. No dockmesh restart needed when Docker comes up
 	// later — container endpoints just start returning 200 again.
+	startedAt := time.Now()
 	dockerCli, err := docker.New(ctx)
 	if err != nil {
 		slog.Error("docker client init failed (not a daemon problem — client config is broken)", "err", err)
@@ -557,6 +558,7 @@ func main() {
 			host.SetSelfContainerID(id)
 			slog.Info("running in a container", "container", id[:12])
 		}
+		docker.SweepOrphanHelpers(ctx, dockerCli.Raw(), startedAt)
 	}()
 
 	// Let the system-metrics sampler query Docker's configured limits

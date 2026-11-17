@@ -103,6 +103,7 @@ func main() {
 		}
 	}
 
+	startedAt := time.Now()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -187,6 +188,7 @@ func main() {
 	// reports a smoothed value.
 	system.StartSampler(ctx)
 	go runHistorySampler(ctx)
+	go removeOrphanHelpers(ctx, startedAt)
 
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
 	attempt := 0
@@ -1491,6 +1493,32 @@ func dockerDaemonInfo(ctx context.Context) *agents.DaemonInfo {
 		return nil
 	}
 	return agents.DaemonInfoFrom(res.Info)
+}
+
+// removeOrphanHelpers waits for the daemon, which may still be starting
+// when the agent boots, and then removes once the backup helpers an
+// earlier agent process left behind.
+func removeOrphanHelpers(ctx context.Context, startedAt time.Time) {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		slog.Warn("remove leftover backup helpers", "err", err)
+		return
+	}
+	defer cli.Close()
+	for {
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := cli.Ping(pingCtx, client.PingOptions{})
+		cancel()
+		if err == nil {
+			dockerwrap.SweepOrphanHelpers(ctx, cli, startedAt)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Second):
+		}
+	}
 }
 
 func dockerContainerCount(ctx context.Context) int32 {

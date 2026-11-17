@@ -44,7 +44,7 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 			AttachStderr: true,
 			Labels: map[string]string{
 				"dockmesh.managed":   "true",
-				"dockmesh.component": "backup-helper",
+				"dockmesh.component": docker.BackupHelperComponent,
 			},
 		},
 		HostConfig: &container.HostConfig{

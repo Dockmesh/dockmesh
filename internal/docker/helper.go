@@ -2,6 +2,9 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -44,4 +47,64 @@ func FinishHelper(ctx context.Context, cli HelperAPI, id string, aborted bool) (
 	case <-cctx.Done():
 		return -1, cctx.Err()
 	}
+}
+
+// BackupHelperComponent is the dockmesh.component label of the helpers
+// that tar volumes in and out for backups and restores.
+const BackupHelperComponent = "backup-helper"
+
+// HelperSweepAPI is the part of the Docker client RemoveOrphanHelpers needs.
+type HelperSweepAPI interface {
+	ContainerList(ctx context.Context, opts client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerRemove(ctx context.Context, id string, opts client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+}
+
+// RemoveOrphanHelpers removes the stopped backup helpers created before
+// startedAt, the start of this process: a helper outlives its job only
+// when the process that ran it died or lost the daemon before removing
+// it. Running helpers stay, because an agent on the same daemon may
+// still be streaming through one.
+func RemoveOrphanHelpers(ctx context.Context, cli HelperSweepAPI, startedAt time.Time) (int, error) {
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", "dockmesh.component="+BackupHelperComponent),
+	})
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	var errs []error
+	for _, c := range list.Items {
+		// Created has whole seconds, so a helper of this process can
+		// carry the second it started in; only earlier ones are orphans.
+		if c.Labels["dockmesh.component"] != BackupHelperComponent ||
+			c.Created >= startedAt.Unix() || !stoppedState(c.State) {
+			continue
+		}
+		if _, err := cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+			errs = append(errs, fmt.Errorf("remove helper %s: %w", c.ID, err))
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(errs...)
+}
+
+// SweepOrphanHelpers runs RemoveOrphanHelpers and logs the outcome.
+func SweepOrphanHelpers(ctx context.Context, cli HelperSweepAPI, startedAt time.Time) {
+	n, err := RemoveOrphanHelpers(ctx, cli, startedAt)
+	if n > 0 {
+		slog.Info("removed backup helpers left by an earlier run", "count", n)
+	}
+	if err != nil {
+		slog.Warn("remove leftover backup helpers", "err", err)
+	}
+}
+
+func stoppedState(s container.ContainerState) bool {
+	switch s {
+	case container.StateCreated, container.StateExited, container.StateDead:
+		return true
+	}
+	return false
 }

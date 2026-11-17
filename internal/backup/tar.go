@@ -51,7 +51,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 		AttachStderr: true,
 		Labels: map[string]string{
 			"dockmesh.managed":   "true",
-			"dockmesh.component": "backup-helper",
+			"dockmesh.component": docker.BackupHelperComponent,
 		},
 	}
 	hostCfg := &container.HostConfig{
@@ -136,7 +136,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		StdinOnce:    true,
 		Labels: map[string]string{
 			"dockmesh.managed":   "true",
-			"dockmesh.component": "backup-helper",
+			"dockmesh.component": docker.BackupHelperComponent,
 		},
 	}
 	hostCfg := &container.HostConfig{
@@ -214,7 +214,7 @@ func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
 		Config: &container.Config{
 			Image:  helperImage,
 			Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
-			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
+			Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": docker.BackupHelperComponent},
 		},
 		HostConfig: &container.HostConfig{
 			Binds:     []string{volumeName + ":/dest"},
