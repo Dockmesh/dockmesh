@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -131,6 +132,11 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 	v.DataDir = f.DataDirOrDefault()
 	v.HTTPAddr = f.Address.HTTPAddr
 	v.BaseURL = f.Address.BaseURL
+	if v.BaseURL != "" {
+		if err := agents.ValidateBaseURL(v.BaseURL); err != nil {
+			return v, fmt.Errorf("address.base_url: %w", err)
+		}
+	}
 	v.TLSMode = f.TLS.Mode
 	v.TLSCertFile = f.TLS.CertFile
 	v.TLSKeyFile = f.TLS.KeyFile
@@ -219,7 +225,7 @@ func applySetupLocal(ctx context.Context, run *setupFileRun, dryRun bool) (appli
 		return appliedSetup{}, nil
 	}
 	if r := run.file.Restore; r != nil {
-		if err := restoreLocal(ctx, r); err != nil {
+		if err := restoreLocal(ctx, r, v.BaseURL); err != nil {
 			return appliedSetup{}, err
 		}
 		return appliedSetup{URL: localURL(v), Local: true}, nil
@@ -230,7 +236,7 @@ func applySetupLocal(ctx context.Context, run *setupFileRun, dryRun bool) (appli
 	return appliedSetup{URL: localURL(v), Admin: v.Admin.Username, Local: true}, nil
 }
 
-func restoreLocal(ctx context.Context, r *setup.FileRestore) error {
+func restoreLocal(ctx context.Context, r *setup.FileRestore, baseURL string) error {
 	cfg, err := cliLoadConfig()
 	if err != nil {
 		return err
@@ -256,8 +262,16 @@ func restoreLocal(ctx context.Context, r *setup.FileRestore) error {
 	if _, _, err := restore.Stage(ctx, src, cfg, "setup-file:"+r.BackupFile, restore.StageOptions{Files: files}); err != nil {
 		return err
 	}
-	_, err = restore.ApplyStaged(cfg)
-	return err
+	if _, err := restore.ApplyStaged(cfg); err != nil { //nolint:contextcheck // the swap runs to completion, also at server start
+		return err
+	}
+	if baseURL == "" {
+		return nil
+	}
+	if err := setRestoredBaseURL(ctx, cfg, baseURL); err != nil {
+		return fmt.Errorf("restored, but the Base URL was not set: %w (set it under Settings)", err)
+	}
+	return nil
 }
 
 func (r appliedSetup) localText() string {

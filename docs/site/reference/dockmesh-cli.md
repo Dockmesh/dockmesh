@@ -94,7 +94,7 @@ sudo dockmesh init --yes --data-dir /var/lib/dockmesh --base-url https://dockmes
 
 ## setup apply
 
-`sudo dockmesh setup apply --file <setup file>` sets up a new server without the browser, from a YAML file with the wizard's answers: a new installation (`admin`) or a restore of a system backup (`restore`). `dockmesh setup example` prints an annotated template. It is the same commit as the wizard's: on Linux as root it checks the server was never set up, checks the values and the data directory, runs `serve --check-config` as `dockmesh`, creates the database and the admin account (or restores the backup) as `dockmesh`, writes `/etc/dockmesh/dockmesh.env` and the unit, starts and enables the service and waits for it to answer, and puts everything back if a step fails. It refuses on a server that is set up.
+`sudo dockmesh setup apply --file <setup file>` sets up a new server without the browser, from a YAML file with the wizard's answers: a new installation (`admin`) or a restore of a system backup (`restore`). `dockmesh setup example` prints an annotated template. It is the same commit as the wizard's: on Linux as root it checks the server was never set up, checks the values and the data directory (setup creates it; an existing one must be empty and belong to the `dockmesh` account), runs `serve --check-config` as `dockmesh`, creates the database and the admin account (or restores the backup, then sets `address.base_url` if the file has one) as `dockmesh`, writes `/etc/dockmesh/dockmesh.env` and the unit, starts and enables the service and waits for it to answer, and puts everything back if a step fails. It refuses on a server that is set up.
 
 ```yaml
 data_dir: /var/lib/dockmesh
@@ -151,6 +151,7 @@ Restores the database, stacks directory and data directory from a system backup 
 | `--key` | | Backup key file exported from the original server, for encrypted archives |
 | `--force` | `false` | Restore over a database that already has users |
 | `--dry-run` | `false` | Count files and bytes, write nothing |
+| `--base-url` | | Base URL of the restored server instead of the one in the backup; the agent URL follows unless the backup has one set by hand. `setup apply` passes `address.base_url` here |
 
 Without `--dry-run` the checks always run and their results are printed. System backups can also be restored from the UI and from the setup wizard of a fresh install. See [Disaster recovery](../operations/disaster-recovery.md).
 
