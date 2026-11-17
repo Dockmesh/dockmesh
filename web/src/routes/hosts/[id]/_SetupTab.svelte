@@ -138,7 +138,6 @@
   }
 
   function stateText(c: StacksDirCheck): string {
-    if (c.issue === 'unchanged') return m.hosts_setup_state_current();
     return c.will_create ? m.hosts_setup_state_new() : m.hosts_setup_state_empty();
   }
   const steps = $derived([m.hosts_setup_step_check(), m.hosts_setup_step_create({ path: applying || path }), m.hosts_setup_step_restart()]);
@@ -204,6 +203,8 @@
             <span class="err">{checkError}</span>
           {:else if check?.status === 'fail'}
             <span class="err">{check.message}</span>
+          {:else if check?.issue === 'unchanged'}
+            <span class="okline"><Check size={12} strokeWidth={2} /> {m.hosts_setup_current_ok()}</span>
           {:else if check}
             <span class="okline"><Check size={12} strokeWidth={2} />
               {m.hosts_setup_result({ free: fmtMem(check.free_bytes ?? 0), fs: check.fs_type || '—', state: stateText(check) })}</span>

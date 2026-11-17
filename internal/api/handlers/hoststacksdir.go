@@ -125,7 +125,7 @@ func stacksDirDisks(mounts []system.Mount, dataDir string) []setup.Disk {
 	seen := map[string]bool{}
 	for _, m := range mounts {
 		mp := m.MountPoint
-		if mp == "" || seen[mp] || setup.PseudoFS(m.FSType) || m.Error != "" || dockerOwned(m) {
+		if mp == "" || seen[mp] || setup.PseudoFS(m.FSType) || m.Error != "" || notOffered(m) {
 			continue
 		}
 		seen[mp] = true
@@ -154,7 +154,12 @@ func underStacksParent(mp string) bool {
 	return slices.Contains(stacksParents, mp) || slices.Contains(stacksParents, path.Dir(mp))
 }
 
-// dockerOwned reports Docker's own directories, which are not offered.
-func dockerOwned(m system.Mount) bool {
-	return m.MountPoint == "/var/lib/docker" || strings.HasPrefix(m.MountPoint, "/var/lib/docker/")
+// notOffered reports Docker's own directories and the boot partitions.
+func notOffered(m system.Mount) bool {
+	for _, d := range []string{"/var/lib/docker", "/boot"} {
+		if m.MountPoint == d || strings.HasPrefix(m.MountPoint, d+"/") {
+			return true
+		}
+	}
+	return false
 }

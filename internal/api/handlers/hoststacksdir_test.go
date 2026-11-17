@@ -25,6 +25,7 @@ func TestStacksDirDisks(t *testing.T) {
 		{MountPoint: "/mnt/media", FSType: "nfs4", Total: 10 * gib},
 		{MountPoint: "/mnt/usb", FSType: "exfat", Total: 10 * gib},
 		{MountPoint: "/var/lib/docker", FSType: "ext4", Total: 10 * gib},
+		{MountPoint: "/boot/efi", FSType: "vfat", Total: gib},
 		{MountPoint: "/run", FSType: "tmpfs", Total: gib},
 		{MountPoint: "/srv", FSType: "xfs"},
 		{MountPoint: "/broken", FSType: "ext4", Error: "permission denied"},

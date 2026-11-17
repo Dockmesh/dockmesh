@@ -6312,7 +6312,6 @@
   "hosts_setup_result": "Free space {free} · filesystem {fs} · {state}",
   "hosts_setup_state_empty": "empty",
   "hosts_setup_state_new": "new directory",
-  "hosts_setup_state_current": "in use",
   "hosts_setup_disks": "Disks on this host",
   "hosts_setup_disks_hint": "Network shares and filesystems without Unix permissions can't be used. Docker's own directories are not shown.",
   "hosts_setup_disks_unsupported": "This agent does not report its disks. Update it to see them here.",
@@ -6339,5 +6338,6 @@
   "hosts_setup_readonly": "You can view this host's setup but not change it.",
   "hosts_setup_failed": "Something went wrong: {message}. Try again.",
   "hosts_setup_waiting_picker": "Finish the setup of {name} first.",
-  "setup_disk_not_stacks_place": "not at or one level below /srv, /opt, /data, /mnt or /media"
+  "setup_disk_not_stacks_place": "not at or one level below /srv, /opt, /data, /mnt or /media",
+  "hosts_setup_current_ok": "This is the stacks directory in use."
 }

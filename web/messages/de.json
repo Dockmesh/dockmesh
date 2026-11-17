@@ -6312,7 +6312,6 @@
   "hosts_setup_result": "Freier Platz {free} · Dateisystem {fs} · {state}",
   "hosts_setup_state_empty": "leer",
   "hosts_setup_state_new": "neues Verzeichnis",
-  "hosts_setup_state_current": "in Verwendung",
   "hosts_setup_disks": "Datenträger auf diesem Host",
   "hosts_setup_disks_hint": "Netzwerkfreigaben und Dateisysteme ohne Unix-Rechte gehen nicht. Dockers eigene Verzeichnisse werden nicht angezeigt.",
   "hosts_setup_disks_unsupported": "Dieser Agent meldet seine Datenträger nicht. Aktualisiere ihn, um sie hier zu sehen.",
@@ -6339,5 +6338,6 @@
   "hosts_setup_readonly": "Du kannst die Einrichtung dieses Hosts ansehen, aber nicht ändern.",
   "hosts_setup_failed": "Etwas ist schiefgelaufen: {message}. Versuch es noch einmal.",
   "hosts_setup_waiting_picker": "Schließe zuerst die Einrichtung von {name} ab.",
-  "setup_disk_not_stacks_place": "nicht direkt in oder eine Ebene unter /srv, /opt, /data, /mnt oder /media"
+  "setup_disk_not_stacks_place": "nicht direkt in oder eine Ebene unter /srv, /opt, /data, /mnt oder /media",
+  "hosts_setup_current_ok": "Das ist das Stack-Verzeichnis in Verwendung."
 }
