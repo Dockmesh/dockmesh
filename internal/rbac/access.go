@@ -150,8 +150,8 @@ func (g Grant) Covers(res Resource) bool {
 	return true
 }
 
-// Access is everything a caller may do: the union of its grants plus the
-// base rights. The zero value grants only the base rights.
+// Access is everything a caller may do: the union of its grants plus, when
+// Authenticated, the base rights. The zero value grants nothing.
 type Access struct {
 	Grants []Grant
 	// Authenticated callers get the base rights.
@@ -344,9 +344,12 @@ func (a *Access) Perms() []Perm {
 
 // Restrict narrows a to the role perms on scope: each grant keeps only the
 // permissions perms also has and must additionally match scope. It never
-// widens a.
+// widens a. The base rights stay only when the narrowed access still
+// administers the whole instance: a token restricted to a scrape role
+// must not list or mint its owner's tokens, and neither may an admin
+// token whose owner was demoted.
 func (a *Access) Restrict(perms map[Perm]bool, scope Scope) *Access {
-	out := &Access{Authenticated: a != nil && a.Authenticated}
+	out := &Access{}
 	if a == nil {
 		return out
 	}
@@ -362,6 +365,15 @@ func (a *Access) Restrict(perms map[Perm]bool, scope Scope) *Access {
 		}
 		ng.Scopes = append(slices.Clone(g.Scopes), scope)
 		out.Grants = append(out.Grants, ng)
+	}
+	if a.Authenticated && scope.IsGlobal() {
+		out.Authenticated = true
+		for _, p := range adminPerms {
+			if !out.AllowsGlobally(p) {
+				out.Authenticated = false
+				break
+			}
+		}
 	}
 	return out
 }

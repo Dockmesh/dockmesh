@@ -16,6 +16,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -404,14 +405,15 @@ func newMatrixEnvWith(t *testing.T, extra func(*sql.DB, *handlers.Deps)) (*auth.
 			t.Error(err)
 		}
 	}, roles.ReplaceIdPAssignments)
-	prev := middleware.RBACStore
-	middleware.RBACStore = roles
-	t.Cleanup(func() { middleware.RBACStore = prev })
+	tokens := apitokens.New(database)
+	prev, prevTokens := middleware.RBACStore, middleware.APITokensStore
+	middleware.RBACStore, middleware.APITokensStore = roles, tokens
+	t.Cleanup(func() { middleware.RBACStore, middleware.APITokensStore = prev, prevTokens })
 	mgr, err := stacks.NewManager(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := handlers.Deps{Auth: authSvc, Roles: roles, Stacks: mgr, Deployments: stacks.NewDeploymentStore(database)}
+	deps := handlers.Deps{Auth: authSvc, Roles: roles, APITokens: tokens, Stacks: mgr, Deployments: stacks.NewDeploymentStore(database)}
 	if extra != nil {
 		extra(database, &deps)
 	}
@@ -477,13 +479,15 @@ func fillPath(p string) string {
 }
 
 type matrixCaller struct {
-	name  string
-	perms map[rbac.Perm]bool
-	scope rbac.Scope
-	token string
+	name   string
+	perms  map[rbac.Perm]bool
+	scope  rbac.Scope
+	token  string
+	noBase bool // a token that gets only what its role grants
 }
 
-func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
+// createUser creates name with role on scope and returns its id.
+func createUser(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
 	t.Helper()
 	ctx := context.Background()
 	u, err := authSvc.CreateUser(ctx, name, "", "correct horse battery", "")
@@ -493,7 +497,28 @@ func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role s
 	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: u.ID, Role: role, Scope: scope}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := authSvc.Login(ctx, name, "correct horse battery", "test", "127.0.0.1")
+	return u.ID
+}
+
+// apiToken creates a token of owner restricted to role on scope; no role
+// is no restriction.
+func apiToken(t *testing.T, owner, role string, scope rbac.Scope) string {
+	t.Helper()
+	in := apitokens.CreateInput{Name: role + "-" + scope.Type, Role: role, CreatedByUserID: owner}
+	if role != "" {
+		in.Scope = scope
+	}
+	plain, _, err := middleware.APITokensStore.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plain
+}
+
+func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
+	t.Helper()
+	createUser(t, authSvc, roles, name, role, scope)
+	res, err := authSvc.Login(context.Background(), name, "correct horse battery", "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +552,6 @@ var fleetWide = map[string]bool{
 // a stack deployed on the local host. Unauthenticated calls get 401.
 func TestRouteGateMatrix(t *testing.T) {
 	authSvc, roles, h := newMatrixEnv(t)
-	router := NewRouter(h, authSvc, nil, true, nil)
 	var callers []matrixCaller
 	for _, b := range rbac.BuiltinRoles {
 		for _, scope := range []rbac.Scope{rbac.Global, {Type: rbac.ScopeHost, Host: "local"}} {
@@ -536,7 +560,34 @@ func TestRouteGateMatrix(t *testing.T) {
 				token: signIn(t, authSvc, roles, name, b.Name, scope)})
 		}
 	}
+	runGateMatrix(t, NewRouter(h, authSvc, nil, true, nil), h, callers)
+}
 
+// An admin's API token restricted to a built-in role acts as that role
+// and keeps the base rights (own tokens, system information) only when
+// the role is admin on everything; an unrestricted token keeps them. One
+// admin owns every token, so the last-admin guard keeps it an admin
+// while the routes run.
+func TestRouteGateMatrixAPITokens(t *testing.T) {
+	authSvc, roles, h := newMatrixEnv(t)
+	owner := createUser(t, authSvc, roles, "token-owner", rbac.RoleAdmin, rbac.Global)
+	var callers []matrixCaller
+	for _, b := range rbac.BuiltinRoles {
+		for _, scope := range []rbac.Scope{rbac.Global, {Type: rbac.ScopeHost, Host: "local"}} {
+			perms := rbac.PermsFor(b.Levels, b.Extras)
+			callers = append(callers, matrixCaller{name: "token-" + b.Name + "-" + scope.Type, perms: perms, scope: scope,
+				token: apiToken(t, owner, b.Name, scope), noBase: !scope.IsGlobal() || !rbac.IsAdminPermSet(perms)})
+		}
+	}
+	viewer, _ := rbac.BuiltinRole(rbac.RoleViewer)
+	viewerID := createUser(t, authSvc, roles, "viewer-owner", rbac.RoleViewer, rbac.Global)
+	callers = append(callers, matrixCaller{name: "token-unrestricted-viewer", perms: rbac.PermsFor(viewer.Levels, viewer.Extras),
+		scope: rbac.Global, token: apiToken(t, viewerID, "", rbac.Global)})
+	runGateMatrix(t, NewRouter(h, authSvc, nil, true, nil), h, callers)
+}
+
+func runGateMatrix(t *testing.T, router http.Handler, h *handlers.Handlers, callers []matrixCaller) {
+	t.Helper()
 	call := func(method, path, token string) (int, string) {
 		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
@@ -574,7 +625,7 @@ func TestRouteGateMatrix(t *testing.T) {
 			if err := h.Deployments.Set(context.Background(), "web", "local", "running"); err != nil {
 				t.Fatal(err)
 			}
-			want := rbac.IsBase(g.gate) || (c.perms[g.gate] && (c.scope.IsGlobal() || !rbac.IsGlobalOnly(g.gate)))
+			want := (rbac.IsBase(g.gate) && !c.noBase) || (c.perms[g.gate] && (c.scope.IsGlobal() || !rbac.IsGlobalOnly(g.gate)))
 			if also, ok := alsoNeeds[g.method+" "+g.path]; ok {
 				want = want && c.perms[also]
 			}

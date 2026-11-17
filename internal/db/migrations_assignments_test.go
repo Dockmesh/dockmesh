@@ -282,7 +282,8 @@ func TestRBACAssignmentsMigration(t *testing.T) {
 	}
 	for _, want := range []string{
 		"- built-in role operator: now follows the new definition and no longer allows:",
-		"- role odd: became Proxy view; no longer allows: Backups (backups.restore); Users & roles (users.view)",
+		"- role odd: became Proxy view; no longer allows: Stacks (templates.view); Backups (backups.restore); Users & roles (users.view)",
+		"- role one-host: became Containers view, extra env; no longer allows: Stacks (templates.view)",
 		"- role ops-custom: became Stacks view, Containers manage, extra terminal, extra env; no longer allows: extra files (containers.files)",
 		"- user u-both: scoped-hosts on host edge1 or host tag dev, limited to hosts tagged prod became scoped-hosts on host edge1 (narrowed",
 		"- user u-stack: stack-role on stack draft or stack web became stack-role on stack draft, stack web on edge1",
