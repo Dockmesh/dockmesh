@@ -13,7 +13,7 @@ API tokens let scripts, CI jobs, Prometheus and `dmctl` call the Dockmesh API wi
 4. Pick when it **Expires**: 30 days, 90 days (default), 6 months, 1 year or never.
 5. Click **Generate token** and copy the token. It isn't shown again.
 
-The **API tokens** page in the web UI needs Users & roles: Manage on everything. Other users can create, list and revoke their own tokens through the API (`POST`, `GET` and `DELETE /api/v1/settings/api-tokens`), which every signed-in user may call. A token created with another token can't outlive that token. Legacy tokens can't create tokens.
+The **API tokens** page in the web UI needs Users & roles: Manage on everything. Other users can create, list and revoke their own tokens through the API (`POST`, `GET` and `DELETE /api/v1/settings/api-tokens`), which every signed-in user and every token without a restriction may call. A token created with another token can't outlive that token. Legacy tokens can't create tokens.
 
 The list shows each token's prefix, restriction, expiry, and when and from which IP it was last used. Revoke a token with **Revoke** in its row. It stops working immediately. Without Users & roles: Manage you can only revoke your own tokens, and a request made with a token can only revoke that token itself. Admins also find a user's tokens on the **API tokens** tab of the user's page under **Users & roles**.
 
@@ -21,7 +21,7 @@ The list shows each token's prefix, restriction, expiry, and when and from which
 
 A token belongs to the user who created it. On every request it gets the owner's **current** access, narrowed to the token's restriction (role and scope) when it has one. It never gets more than the owner has. If the owner later loses an assignment, their tokens lose it at the same time. If the owner account is deleted, the token is rejected.
 
-A token created with a restricted token stays inside that restriction. It also holds at most what the token it was created with holds at the time of use, and stops working when that token is revoked or expires.
+A token restricted to a role gets only what that role grants. It can't list or create tokens, read the server status (`/system/*`) or the event stream, unless the role is Admin on everything. A token created with a restricted token stays inside that restriction. It also holds at most what the token it was created with holds at the time of use, and stops working when that token is revoked or expires.
 
 Instance-wide permissions, for example the `/metrics` scrape, need an assignment on everything. A token restricted to a host, a host tag or a stack never has them, whatever the role says. See [Permissions](../concepts/permissions.md#scopes).
 
