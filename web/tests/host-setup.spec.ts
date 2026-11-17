@@ -1,7 +1,7 @@
 // Host › Setup: the stacks directory against a mocked agent (connected
 // state, check, disks and the apply answer); the host itself is real.
 import { test, expect, type Page } from '@playwright/test';
-import { ADMIN, signIn } from './env';
+import { ADMIN, signIn, trackCreatedHosts } from './env';
 
 const DEFAULT = '/var/lib/dockmesh-agent/stacks';
 
@@ -39,8 +39,15 @@ const managed = (extra: Record<string, unknown> = {}) => ({
   stacks_dirs: [{ path: DEFAULT, current: true, stacks: 0 }], ...extra
 });
 
+let cleanup: Awaited<ReturnType<typeof trackCreatedHosts>> | null = null;
+
 test.beforeEach(async ({ page }) => {
+  cleanup = trackCreatedHosts(page);
   await signIn(page, ADMIN);
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanup?.(request);
 });
 
 test('waiting host: banner, check, refusal, then save the default', async ({ page }) => {
