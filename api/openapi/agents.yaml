@@ -399,6 +399,9 @@ components:
             `curl -fsSLk --pinnedpubkey '<pin>' https://<agent host>:<port>/install/agent.sh | sudo bash -s -- --token <token>`.
             The pin is the agent listener's public key; the token is an
             installer argument, never part of a URL.
+        behind_proxy:
+          type: boolean
+          description: The web UI is served behind the admin's own reverse proxy (TLS mode `proxy`). Agent hosts then need the agent port on this server directly, or TLS passthrough.
     AgentUpgradePolicy:
       type: object
       description: Fleet-wide agent upgrade policy (P.11.16) + live snapshot.

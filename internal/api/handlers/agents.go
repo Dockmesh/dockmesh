@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/webtls"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -117,6 +118,7 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, map[string]any{"tags": tags, "stacks_dir": req.StacksDir})
+	res.BehindProxy = h.behindProxy()
 	writeJSON(w, http.StatusCreated, res)
 }
 
@@ -203,6 +205,7 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.audit(r, "agent.rotate_token", "agent:"+id, nil)
+	res.BehindProxy = h.behindProxy()
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -339,4 +342,10 @@ func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, a)
+}
+
+// behindProxy reports TLS option (d): the admin's reverse proxy serves
+// the web UI and agents must reach the agent port another way.
+func (h *Handlers) behindProxy() bool {
+	return h.RestoreConfig != nil && webtls.Mode(h.RestoreConfig.TLSMode) == webtls.Proxy
 }

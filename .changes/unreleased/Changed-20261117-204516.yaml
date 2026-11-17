@@ -1,0 +1,3 @@
+kind: Changed
+body: The Add host dialog takes an optional name and tags in one step, shows the install command with "New command" and an "Automation and flags" section instead of a separate token box, checks the agent port when the agent has not connected after two minutes, and ends with "Set up host" or "Open host"
+time: 2026-11-17T20:45:16.987754667Z

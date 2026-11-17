@@ -93,6 +93,9 @@ type CreateResult struct {
 	AgentURL       string    `json:"agent_url"`
 	CAFingerprint  string    `json:"ca_fingerprint"`
 	InstallHint    string    `json:"install_hint"`
+	// BehindProxy: the web UI is served behind the admin's own reverse
+	// proxy, so agents need the agent port directly or TLS passthrough.
+	BehindProxy bool `json:"behind_proxy,omitempty"`
 }
 
 var (
