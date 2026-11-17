@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -123,10 +124,13 @@ func (r stacksDirRules) prepareCommand(p string) string {
 // creatableName reports a name root may give a new stacks dir. The agent
 // does not pick any name in a shared parent: some (/opt/cni, /srv/salt)
 // are adopted by root tools installed later, which would then load code
-// from a directory the agent owns.
+// from a directory the agent owns. Names of Dockmesh's own server dirs
+// (/srv/dockmesh, /opt/dockmesh) are left out as well.
 func creatableName(name string) bool {
-	return name == "stacks" || strings.HasPrefix(name, "dockmesh")
+	return name == "stacks" || stacksDirName.MatchString(name)
 }
+
+var stacksDirName = regexp.MustCompile(`^dockmesh-stacks[A-Za-z0-9_-]*$`)
 
 // creatableParent reports whether root may create a stacks dir directly
 // in dir: one of the allowed parents, or the mount point m of a local
@@ -310,7 +314,7 @@ walk:
 		return existing >= len(comps)-1 && creatableName(name) && r.creatableParent(parent, pm, parentDev, denied)
 	}
 	newRefused := func() stacksDirResult {
-		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or dockmesh…. Prepare %s as an empty directory of the agent: %s",
+		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or dockmesh-stacks…. Prepare %s as an empty directory of the agent: %s",
 			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p))
 	}
 	switch {
@@ -324,7 +328,7 @@ walk:
 				return fail(sdUnreadable, "Cannot read the mount table: %v.", err)
 			}
 			if !creatable(pm) {
-				return fail(sdRootAgentDir, "Existing directory: an agent running as root takes only a directory root may create, directly in %s or in a disk mounted below one of them, named stacks or dockmesh….",
+				return fail(sdRootAgentDir, "Existing directory: an agent running as root takes only a directory root may create, directly in %s or in a disk mounted below one of them, named stacks or dockmesh-stacks….",
 					strings.Join(r.allowedParents(), ", "))
 			}
 		}

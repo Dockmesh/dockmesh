@@ -108,7 +108,7 @@ On a managed agent the root updater switches the stacks directory (`stacks-dir-a
 
 Root accepts a directory in one of two cases:
 
-- **New directory:** it does not exist yet, and its parent is `/srv`, `/opt`, `/data`, `/mnt` or `/media`, or a disk mounted somewhere below them (for example `/mnt/disk1` or `/srv/data`). Its name is `stacks` or starts with `dockmesh` (`/opt/stacks`, `/mnt/disk1/dockmesh-stacks`), and a mounted disk must not be another view of the root filesystem or of a protected one. Root creates exactly this one directory, owned by `dockmesh-agent` with mode 0750. `/opt/stacks` and `/mnt/disk1/stacks` work; `/opt/a/stacks` (unless `/opt/a` is a mounted disk), `/opt/apps`, `/home/x` or `/stacks` don't.
+- **New directory:** it does not exist yet, and its parent is `/srv`, `/opt`, `/data`, `/mnt` or `/media`, or a disk mounted somewhere below them (for example `/mnt/disk1` or `/srv/data`). Its name is `stacks` or starts with `dockmesh-stacks` (`/opt/stacks`, `/mnt/disk1/dockmesh-stacks-2`), and a mounted disk must not be another view of the root filesystem or of a protected one. Root creates exactly this one directory, owned by `dockmesh-agent` with mode 0750. `/opt/stacks` and `/mnt/disk1/stacks` work; `/opt/a/stacks` (unless `/opt/a` is a mounted disk), `/opt/apps`, `/home/x` or `/stacks` don't.
 - **Prepared directory:** anywhere else, an admin creates the directory first. It must be empty, belong to the agent's account and have no symbolic link in its path; root then creates, chowns or chmods nothing and only writes the config and the unit:
 
   ```bash

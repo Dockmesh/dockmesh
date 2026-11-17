@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
@@ -25,7 +27,7 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 	t.Helper()
 	root := t.TempDir()
 	for _, d := range []string{"data/stacks", "docker", "srv/vol", "srv/apps/stacks", "full/x", "empty", "loose/prep", "nfs", "usb", "bind", "fuse", "cur/s",
-		"opt/a", "opt/dockmesh", "opt/certbot/lib/python3.11/site-packages", "home", "mnt/disk1", "mnt/plain", "mnt/ram", "mnt/pool", "mnt/snap", "media"} {
+		"opt/a", "opt/dockmesh-stacks2", "opt/certbot/lib/python3.11/site-packages", "home", "mnt/disk1", "mnt/plain", "mnt/ram", "mnt/pool", "mnt/snap", "media"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -97,10 +99,12 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "new dir with a dockmesh name", path: root + "/opt/dockmesh-stacks", ok: true, create: true},
 		{name: "new dir with a name root tools adopt", path: root + "/opt/cni", issue: sdNewNotHere},
 		{name: "new salt dir", path: root + "/srv/salt", issue: sdNewNotHere},
+		{name: "new dir named like the server's data dir", path: root + "/opt/dockmesh", issue: sdNewNotHere},
+		{name: "new dir with a dot in a dockmesh name", path: root + "/opt/dockmesh-stacks.env", issue: sdNewNotHere},
 		{name: "new dir on a mount of a protected filesystem", path: root + "/mnt/disk1/stacks", edit: func(r *stacksDirRules) { r.devProtected = func(uint64) bool { return true } }, issue: sdNewNotHere},
 		{name: "root agent, prepared dir deep down", path: root + "/srv/apps/stacks", edit: func(r *stacksDirRules) { r.uid = 0 }, issue: sdRootAgentDir},
 		{name: "root agent, prepared dir with a foreign name", path: root + "/empty", edit: func(r *stacksDirRules) { r.uid = 0 }, issue: sdRootAgentDir},
-		{name: "root agent, dir root could create", path: root + "/opt/dockmesh", edit: func(r *stacksDirRules) { r.uid = 0 }, ok: os.Getuid() == 0, issue: rootOnly(sdForeignOwner)},
+		{name: "root agent, dir root could create", path: root + "/opt/dockmesh-stacks2", edit: func(r *stacksDirRules) { r.uid = 0 }, ok: os.Getuid() == 0, issue: rootOnly(sdForeignOwner)},
 		{name: "two new levels", path: root + "/opt/x/stacks", issue: sdNewNotHere},
 		{name: "new dir below an existing plain dir", path: root + "/opt/a/stacks", issue: sdNewNotHere},
 		{name: "new dir in a venv", path: root + "/opt/certbot/lib/python3.11/site-packages/sitecustomize", issue: sdNewNotHere},
@@ -325,8 +329,8 @@ func TestStacksDirApply(t *testing.T) {
 	if err := os.Chmod(srv, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	first := filepath.Join(srv, "dockmesh-one")
-	second := filepath.Join(srv, "dockmesh-two")
+	first := filepath.Join(srv, "dockmesh-stacks-one")
+	second := filepath.Join(srv, "dockmesh-stacks-two")
 
 	// A stack in the default dir keeps it writable after the switch.
 	mkStack(t, filepath.Join(a.dataDir, "stacks"), "old")
@@ -411,6 +415,36 @@ func TestStacksDirRefusalNamesThePrepareCommand(t *testing.T) {
 		want := "sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 " + p
 		if got.ok() || !strings.Contains(got.Message, want) {
 			t.Errorf("%s: %q lacks %q", p, got.Message, want)
+		}
+	}
+}
+
+func TestProtectedDev(t *testing.T) {
+	var root, tmp unix.Stat_t
+	if err := unix.Stat("/", &root); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(t.TempDir(), &tmp); err != nil {
+		t.Fatal(err)
+	}
+	other := uint64(root.Dev) + 1  //nolint:unconvert // the types differ per OS
+	for other == uint64(tmp.Dev) { //nolint:unconvert // the types differ per OS
+		other++
+	}
+	denied := map[fileID]string{{dev: uint64(tmp.Dev), ino: 1}: "/var"} //nolint:unconvert // the types differ per OS
+	var r stacksDirRules
+	tests := []struct {
+		name string
+		dev  uint64
+		want bool
+	}{
+		{"device of /", uint64(root.Dev), true},            //nolint:unconvert // the types differ per OS
+		{"device of a refused dir", uint64(tmp.Dev), true}, //nolint:unconvert // the types differ per OS
+		{"another disk", other, false},
+	}
+	for _, tt := range tests {
+		if got := r.protectedDev(tt.dev, denied); got != tt.want {
+			t.Errorf("%s: protectedDev = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
