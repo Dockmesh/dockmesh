@@ -52,23 +52,37 @@ func TestReconnectsAfterDeletedHost(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(old) })
 	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // test jitter
+	clock := time.Unix(1_700_000_000, 0)
+	rc := reconnects{now: func() time.Time { return clock }}
 
-	var rc reconnects
-	for i := 0; i < 5; i++ {
-		if d := rc.next(errHostRemoved, time.Millisecond, rng); d != removedRetry {
-			t.Fatalf("attempt %d: delay %s, want %s", i, d, removedRetry)
+	// Within the grace period the normal backoff runs, capped at a minute.
+	for i := 0; i < 8; i++ {
+		if d := rc.next(errHostRemoved, time.Millisecond, rng); d > maxBackoff*6/5 {
+			t.Fatalf("attempt %d inside the grace period waited %s", i, d)
 		}
+		clock = clock.Add(time.Minute)
+	}
+	clock = clock.Add(removedGrace)
+	for i := 0; i < 5; i++ {
+		d := rc.next(errHostRemoved, time.Millisecond, rng)
+		if d < removedRetry*4/5 || d > removedRetry*6/5 {
+			t.Fatalf("attempt %d after the grace period: delay %s, want about %s", i, d, removedRetry)
+		}
+		clock = clock.Add(d)
 	}
 	if n := strings.Count(logs.String(), "This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall"); n != 1 {
 		t.Fatalf("logged the removal %d times, want once:\n%s", n, logs.String())
 	}
-	if removedRetry != time.Hour {
-		t.Fatalf("removedRetry = %s, want 1h outside lab builds", removedRetry)
+	if strings.Contains(logs.String(), "disconnected, reconnecting") {
+		t.Fatalf("logged each attempt:\n%s", logs.String())
+	}
+	if removedRetry != time.Hour || removedGrace != 10*time.Minute {
+		t.Fatalf("removedRetry %s, removedGrace %s outside lab builds", removedRetry, removedGrace)
 	}
 
 	// The host is back (re-enrolled): normal backoff, and a later removal
 	// is logged again.
-	if d := rc.next(errors.New("dial: EOF"), time.Millisecond, rng); d != 0 {
+	if d := rc.next(errors.New("dial: EOF"), time.Hour, rng); d != 0 {
 		t.Fatalf("first retry after the host came back waited %s", d)
 	}
 	rc.next(errHostRemoved, time.Millisecond, rng)

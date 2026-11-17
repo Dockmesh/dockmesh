@@ -52,9 +52,13 @@ func reconnectDelay(attempt int, r *rand.Rand) time.Duration {
 	return time.Duration(float64(d) * jitter)
 }
 
-// removedRetry is the reconnect interval once the server no longer knows
-// this host's certificate.
-var removedRetry = labtime.Tick(time.Hour)
+// removedRetry is the reconnect interval once the server has refused the
+// host's certificate for removedGrace; until then the normal backoff runs,
+// so a server briefly started on the wrong database doesn't park the fleet.
+var (
+	removedRetry = labtime.Tick(time.Hour)
+	removedGrace = labtime.Tick(10 * time.Minute)
+)
 
 // errHostRemoved is the server's refusal of a certificate it has no host
 // for: the host was deleted in Dockmesh.
@@ -78,27 +82,35 @@ func dialError(resp *http.Response, err error) error {
 // logs the reason once.
 type reconnects struct {
 	attempt int
-	// removed is set while the server refuses the host as deleted; the
-	// agent then logs once and retries every removedRetry.
-	removed bool
+	// removedSince is when the server first refused the host as deleted;
+	// zero otherwise.
+	removedSince time.Time
+	now          func() time.Time
 }
 
+func (r *reconnects) quiet() bool { return !r.removedSince.IsZero() }
+
 func (r *reconnects) next(err error, session time.Duration, rng *rand.Rand) time.Duration {
-	if errors.Is(err, errHostRemoved) {
-		if !r.removed {
-			slog.Error("This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall")
-			r.removed = true
-		}
-		r.attempt = 0
-		return removedRetry
+	now := time.Now
+	if r.now != nil {
+		now = r.now
 	}
-	r.removed = false
+	if !errors.Is(err, errHostRemoved) {
+		r.removedSince = time.Time{}
+	} else if r.removedSince.IsZero() {
+		slog.Error("This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall " +
+			"(if you re-issued its token instead, run the install command again)")
+		r.removedSince = now()
+	}
 	if session >= stableSession {
 		r.attempt = 0
 	}
+	if r.quiet() && now().Sub(r.removedSince) >= removedGrace {
+		return time.Duration(float64(removedRetry) * (0.8 + 0.4*rng.Float64()))
+	}
 	delay := reconnectDelay(r.attempt, rng)
 	r.attempt++
-	if err != nil {
+	if err != nil && !r.quiet() {
 		slog.Warn("disconnected, reconnecting", "err", err, "backoff", delay)
 	}
 	return delay

@@ -194,7 +194,7 @@ func main() {
 	var rc reconnects
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := runOnce(ctx, dialURL, tlsCfg, store, !rc.removed)
+		err := runOnce(ctx, dialURL, tlsCfg, store, !rc.quiet())
 		if ctx.Err() != nil {
 			break
 		}

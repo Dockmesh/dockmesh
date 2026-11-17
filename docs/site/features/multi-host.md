@@ -209,7 +209,7 @@ Open the host's row menu and click **Revoke…**, or use **Revoke…** on the **
 sudo dockmesh-agent uninstall
 ```
 
-Until you do, the agent logs `This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall` once and then tries to connect only once an hour, without logging each attempt.
+Until you do, the agent logs `This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall` once. After ten minutes of refusals it tries to connect only once an hour, without logging each attempt.
 
 To bring the host back, add it again with **Add host** and run the new install command. It gets a new ID. To keep the ID, re-issue the token instead of revoking.
 
