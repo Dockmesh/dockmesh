@@ -2,7 +2,7 @@
 // the agent's side (connect, setup state, reachability) mocked on
 // GET /agents/{id}.
 import { test, expect, type Page } from '@playwright/test';
-import { ADMIN, signIn } from './env';
+import { ADMIN, signIn, trackCreatedHosts } from './env';
 
 type AgentState = Record<string, unknown> | null;
 
@@ -28,8 +28,15 @@ async function openDialog(page: Page) {
 
 const uniqueName = (p: string) => `${p}-${Date.now().toString(36)}`;
 
+let cleanup: Awaited<ReturnType<typeof trackCreatedHosts>> | null = null;
+
 test.beforeEach(async ({ page }) => {
+  cleanup = trackCreatedHosts(page);
   await signIn(page, ADMIN);
+});
+
+test.afterEach(async ({ request }) => {
+  await cleanup?.(request);
 });
 
 test('create, new command, automation, then connected and waiting for setup', async ({ page }) => {
