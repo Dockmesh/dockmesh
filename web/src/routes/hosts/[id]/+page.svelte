@@ -383,6 +383,20 @@
       {/if}
     </div>
 
+    {#if status === 'removed'}
+      <div class="removedbox" role="status">
+        <div>
+          <b>{m.hosts_removed_title({ name: hostName })}</b>
+          <span>{m.hosts_removed_text()}</span>
+        </div>
+        {#if allowed('hosts.delete')}
+          <button type="button" class="dm-btn dm-btn-danger dm-btn-sm" disabled={revokeBusy} onclick={revokeHost}>
+            <Trash2 size={13} strokeWidth={1.8} /> {m.hosts_delete_host()}
+          </button>
+        {/if}
+      </div>
+    {/if}
+
     {#if showLegacy && agent}
       <div class="infobox" role="status">
         <Info size={14} strokeWidth={1.8} />
@@ -730,6 +744,13 @@
     border-radius: var(--r); padding: 8px 12px; font-size: var(--fs-sm);
   }
   .warnbox span { color: var(--fg); }
+  .removedbox {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 4px 0 12px;
+    border: 1px solid var(--border); background: var(--field); border-radius: var(--r); padding: 10px 12px;
+    font-size: var(--fs-sm);
+  }
+  .removedbox div { display: flex; flex-direction: column; gap: 2px; }
+  .removedbox span { color: var(--muted); }
   .infobox {
     display: flex; gap: 8px; align-items: flex-start;
     border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); color: var(--accent);

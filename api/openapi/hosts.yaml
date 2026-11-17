@@ -32,7 +32,7 @@ components:
           enum: [local, agent]
         status:
           type: string
-          enum: [online, offline, pending, revoked]
+          enum: [online, offline, pending, removed, revoked]
         tags:
           type: array
           items: {type: string}

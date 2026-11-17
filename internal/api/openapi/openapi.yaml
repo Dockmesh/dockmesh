@@ -8912,7 +8912,7 @@ components:
         name: {type: string}
         status:
           type: string
-          enum: [pending, online, offline, revoked]
+          enum: [pending, online, offline, removed, revoked]
         version: {type: string}
         os: {type: string}
         arch: {type: string}
@@ -9919,7 +9919,7 @@ components:
           enum: [local, agent]
         status:
           type: string
-          enum: [online, offline, pending, revoked]
+          enum: [online, offline, pending, removed, revoked]
         tags:
           type: array
           items: {type: string}

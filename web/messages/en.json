@@ -6289,5 +6289,9 @@
   "backups_unit_done": "Backup directories are writable",
   "backups_unit_failed": "Could not allow writing",
   "backups_unit_still_read_only": "Dockmesh restarted, but a directory is still read-only: its file system may be mounted read-only",
-  "backups_unit_timeout": "Dockmesh did not report back within 5 minutes"
+  "backups_unit_timeout": "Dockmesh did not report back within 5 minutes",
+  "label_host_removed": "Removed from host",
+  "hosts_removed_title": "The agent was removed from {name}",
+  "hosts_removed_text": "Stacks on this host keep running but are no longer managed.",
+  "hosts_delete_host": "Delete host"
 }

@@ -144,7 +144,7 @@ export interface HostInfo {
   id: string;
   name: string;
   kind: 'local' | 'agent' | 'all';
-  status: 'online' | 'offline' | 'pending' | 'revoked';
+  status: 'online' | 'offline' | 'pending' | 'removed' | 'revoked';
   tags?: string[];
 }
 
@@ -1033,7 +1033,7 @@ export function isFanOut(r: unknown): r is FanOutResponse<any> {
 export interface Agent {
   id: string;
   name: string;
-  status: 'pending' | 'online' | 'offline' | 'revoked';
+  status: 'pending' | 'online' | 'offline' | 'removed' | 'revoked';
   version?: string;
   os?: string;
   arch?: string;

@@ -72,28 +72,29 @@ sudo docker volume rm dockmesh-caddy-data dockmesh-caddy-config
 
 ## Remove an agent
 
-Remove the host in Dockmesh first: **Hosts** → row menu → **Revoke…**, then type the host's name to confirm. Revoking invalidates the agent's certificate and closes its connection, but the agent service on the host keeps trying to reconnect, so stop it there as well.
-
-`install-agent.sh` has no uninstall option. Look up the agent's data directory first; current installs use `/var/lib/dockmesh-agent`:
+Run this on the agent host:
 
 ```bash
-sudo grep DOCKMESH_DATA_DIR /etc/dockmesh-agent/agent.env
+sudo dockmesh-agent uninstall
 ```
 
-Then, on the agent host:
+It lists what it removes and what it keeps, then asks before it changes anything:
 
-```bash
-sudo systemctl disable --now dockmesh-agent
-sudo rm /etc/systemd/system/dockmesh-agent.service
-sudo systemctl daemon-reload
-sudo rm -rf /etc/dockmesh-agent /var/lib/dockmesh-agent
-sudo rm -f /usr/local/bin/dockmesh-agent
-sudo userdel dockmesh-agent
-```
+- **Removed:** the `dockmesh-agent` service and its updater units, the binary (`/usr/local/bin/dockmesh-agent`, and `<data>/bin` of agents in the old layout), `/etc/dockmesh-agent` with `agent.env`, and the agent's certificate, key, staging and update files in its data directory.
+- **Kept:** the stacks directory and the `dockmesh-agent` user. Drop-in files you wrote for the service (`dockmesh-agent.service.d`) are kept as well.
+- **Never touched:** containers, volumes, images and Docker itself. Stacks keep running; manage them with `docker compose` in `<stacks dir>/<stack>`.
 
-> **Warning:** agents installed by older releases used `/var/lib/dockmesh`, which is also the default data root of the server. Never run `rm -rf /var/lib/dockmesh` on a host where the Dockmesh server is installed.
+When the agent is connected, it tells Dockmesh before it stops, and the host shows **Removed from host**. Dockmesh does not delete the host on its own: open the host and click **Delete host**. If the agent was not connected, revoke the host in Dockmesh yourself (**Hosts** › the host › **Maintenance** › **Revoke…**).
 
-`/etc/dockmesh-agent/agent.env` still contains the enrollment token, so delete it even if you keep the rest. Containers that Dockmesh deployed on the host keep running; their stack files are mirrored under `stacks/` in the agent's data directory and are gone after the cleanup above.
+Options:
+
+| Option | Effect |
+|---|---|
+| `--purge` | Also remove the data directory, the stacks directories and the `dockmesh-agent` user. Asks you to type the host name |
+| `--yes` | Do not ask |
+| `--dry-run` | Only list what would be removed and kept |
+
+`--purge` removes only what Dockmesh wrote. A stacks directory that holds anything else, such as data a container wrote through a relative bind mount (`app/data/db.sqlite`), is kept as a whole, and so is the data directory around it and the user that owns them. A stacks directory you created yourself before you chose it in Dockmesh is emptied but not removed. Every kept item is listed with the reason. When the agent's data directory is also the data directory of a Dockmesh server on the same host (agents installed by old releases used `/var/lib/dockmesh`), only the agent's own files are removed.
 
 ## Reinstall later
 

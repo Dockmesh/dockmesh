@@ -10,6 +10,7 @@ describe('labels', () => {
     { fn: alertSeverityLabel, in: 'fatal', want: 'fatal' },
     { fn: vulnSeverityLabel, in: 'negligible', want: 'negligible' },
     { fn: hostStatusLabel, in: 'pending', want: 'pending' },
+    { fn: hostStatusLabel, in: 'removed', want: 'Removed from host' },
     { fn: hostStatusLabel, in: '', want: '' }
   ];
   it.each(cases)('$in', ({ fn, in: v, want }) => expect(fn(v)).toBe(want));
