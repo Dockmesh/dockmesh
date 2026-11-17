@@ -1,7 +1,7 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
   import { dialogs } from '$lib/stores/dialogs.svelte';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { trapFocus } from '$lib/a11y';
   import { api, ApiError, type Agent, type AgentCreateResult } from '$lib/api';
@@ -12,7 +12,6 @@
   import { tagProblem } from './_host';
   import { X, Check, Copy, Info, AlertTriangle, ChevronRight, ChevronDown } from 'lucide-svelte';
 
-  // Add host, spec D1–D4: create (name, tags) → command → wait → connected.
   interface Props {
     onclose: () => void;
     onconnected: (agent: { id: string; name: string }) => void;
@@ -42,7 +41,7 @@
   const expired = $derived(!!created && Date.parse(created.token_expires_at) <= now);
   const connected = $derived(agent?.status === 'online');
   const displayName = $derived(agent?.name ?? created?.agent.name ?? '');
-  const summaryName = $derived(name.trim() || m.hostsadd_new_host());
+  const summaryName = $derived(name.trim() || m.hosts_add_new_host());
   const readyPath = $derived(agent && !agent.needs_setup ? agent.stacks_dirs?.find((d) => d.current)?.path ?? '' : '');
   const lateWait = $derived(!!created && !connected && waitStarted > 0 && now - waitStarted >= 120_000);
 
@@ -75,8 +74,8 @@
       now = Date.now();
       waitStarted = now;
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) nameError = m.hostsadd_name_taken({ name: name.trim() });
-      else error = m.hostsadd_error({ message: err instanceof Error ? err.message : String(err) });
+      if (err instanceof ApiError && err.status === 409) nameError = m.hosts_add_name_taken({ name: name.trim() });
+      else error = m.hosts_add_error({ message: err instanceof Error ? err.message : String(err) });
     } finally {
       creating = false;
     }
@@ -123,11 +122,10 @@
   // Polls until the agent connects, then while its setup state may still
   // settle (a stacks directory from the install ends the wait a moment
   // after the connect).
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
-    if (!created || (connected && !agent?.needs_setup)) return;
+    if (!created || (expired && !connected) || (connected && !agent?.needs_setup)) return;
     const id = created.agent.id;
-    pollTimer = setInterval(async () => {
+    const t = setInterval(async () => {
       now = Date.now();
       try {
         const a = await api.agents.get(id);
@@ -136,9 +134,8 @@
         if (first) onconnected({ id: a.id, name: a.name });
       } catch { /* keep polling */ }
     }, 2000);
-    return () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+    return () => clearInterval(t);
   });
-  onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 
   function openHost(tab?: string) {
     if (!agent) return;
@@ -163,7 +160,7 @@
 <div class="ed-modal-backdrop" role="presentation" onmousedown={(e) => { if (e.target === e.currentTarget) onclose(); }}>
   <div class="ed-modal ah" data-testid="add-host-dialog" data-step={!created ? 'create' : !connected ? 'command' : readyPath ? 'ready' : 'setup'} role="dialog" aria-modal="true" aria-labelledby="add-host-title" use:trapFocus>
     <header class="ah-head">
-      <h2 id="add-host-title">{m.hosts_add_title()}</h2>
+      <h2 id="add-host-title">{m.hosts_add()}</h2>
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label={m.common_close()}>
         <X size={13} strokeWidth={1.5} />
       </button>
@@ -171,31 +168,31 @@
 
     <div class="ah-body">
       {#if !created}
-        <p class="ah-muted">{agentPort ? m.hostsadd_intro({ port: agentPort }) : m.hostsadd_intro_noport()}</p>
+        <p class="ah-muted">{agentPort ? m.hosts_add_intro({ port: agentPort }) : m.hosts_add_intro_noport()}</p>
         {#if error}
           <div class="ah-callout bad" role="alert"><AlertTriangle size={14} strokeWidth={1.8} /><span>{error}</span></div>
         {/if}
         <div class="ah-field">
-          <label class="ah-lbl" for="add-host-name">{m.hostsadd_name()}</label>
-          <input id="add-host-name" class="dm-input" type="text" placeholder={m.hostsadd_name_ph()} bind:value={name}
+          <label class="ah-lbl" for="add-host-name">{m.hosts_add_name()}</label>
+          <input id="add-host-name" class="dm-input" type="text" placeholder={m.hosts_add_name_ph()} bind:value={name}
             aria-invalid={nameError ? 'true' : undefined} aria-describedby="add-host-name-hint"
             oninput={() => (nameError = '')}
             onkeydown={(e) => { if (e.key === 'Enter' && !creating) create(); }} />
           {#if nameError}
             <span class="ah-err" id="add-host-name-hint" data-testid="add-host-name-error">{nameError}</span>
           {:else}
-            <span class="ah-hint" id="add-host-name-hint">{m.hostsadd_name_hint()}</span>
+            <span class="ah-hint" id="add-host-name-hint">{m.hosts_add_name_hint()}</span>
           {/if}
         </div>
         <div class="ah-field">
-          <label class="ah-lbl" for="add-host-tag">{m.hostsadd_tags()}</label>
+          <label class="ah-lbl" for="add-host-tag">{m.hosts_add_tags()}</label>
           <div class="ah-chips">
             {#each tags as t (t)}
               <span class="ah-chip">{t}
                 <button type="button" onclick={() => removeTag(t)} aria-label={m.common_remove()}><X size={10} strokeWidth={1.5} /></button>
               </span>
             {/each}
-            <input id="add-host-tag" type="text" class="ah-chip-input" placeholder={m.hostsadd_tag_ph()} bind:value={tagInput}
+            <input id="add-host-tag" type="text" class="ah-chip-input" placeholder={m.hosts_add_tag_ph()} bind:value={tagInput}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(tagInput); } }} />
           </div>
           {#if suggestionPool.some((s) => !tags.includes(s))}
@@ -211,7 +208,7 @@
 
         {#if !connected}
           <div class="ah-field">
-            <span class="ah-title">{m.hostsadd_run_title()}</span>
+            <span class="ah-title">{m.hosts_add_run_title()}</span>
             <div class="ah-cmd" class:dead={expired}>
               <code class="dm-mono" data-testid="install-command">{created.install_hint}</code>
               <button type="button" class="dm-btn dm-btn-sm" disabled={expired} onclick={() => copy('cmd', created!.install_hint)}>
@@ -225,7 +222,7 @@
               </div>
             {:else}
               <div class="ah-hint">
-                {m.hostsadd_valid({ time: fmtTime(created.token_expires_at, { hour: '2-digit', minute: '2-digit' }) })}
+                {m.hosts_add_valid({ time: fmtTime(created.token_expires_at, { hour: '2-digit', minute: '2-digit' }) })} ·
                 <button type="button" class="ah-link" data-testid="add-host-new-command" disabled={rotating} onclick={newCommand}>{m.hosts_add_new_command()}</button>
               </div>
             {/if}
@@ -234,20 +231,20 @@
 
           {#if created.behind_proxy}
             <div class="ah-callout info"><Info size={14} strokeWidth={1.8} />
-              <span>{m.hostsadd_proxy_hint({ port: agentPort })}
-                <a class="ah-docs" href="{DOCS_BASE}features/multi-host#agent-port" target="_blank" rel="noopener noreferrer">{m.hostsadd_docs()}</a></span>
+              <span>{m.hosts_add_proxy_hint({ port: agentPort })}
+                <a class="ah-docs" href="{DOCS_BASE}features/multi-host#agent-port" target="_blank" rel="noopener noreferrer">{m.hosts_add_docs()}</a></span>
             </div>
           {/if}
 
           <div>
             <button type="button" class="ah-link" data-testid="add-host-automation" aria-expanded={showAuto} onclick={() => (showAuto = !showAuto)}>
               {#if showAuto}<ChevronDown size={12} strokeWidth={1.8} />{:else}<ChevronRight size={12} strokeWidth={1.8} />{/if}
-              {m.hostsadd_auto()}
+              {m.hosts_add_auto()}
             </button>
             {#if showAuto}
               <div class="ah-auto" data-testid="add-host-flags">
                 <div class="ah-field">
-                  <span class="ah-lbl">{m.hostsadd_token()}</span>
+                  <span class="ah-lbl">{m.hosts_add_token()}</span>
                   <div class="ah-cmd small">
                     <code class="dm-mono">{created.token}</code>
                     <button type="button" class="dm-btn dm-btn-sm" disabled={expired} onclick={() => copy('token', created!.token)}>
@@ -255,35 +252,35 @@
                     </button>
                   </div>
                 </div>
-                <div class="ah-flag"><code>--data-dir &lt;path&gt;</code><span>{m.hostsadd_flag_data()}</span></div>
-                <div class="ah-flag"><code>--stacks-dir &lt;path&gt;</code><span>{m.hostsadd_flag_stacks()}</span></div>
-                <div class="ah-flag"><code>--skip-docker</code><span>{m.hostsadd_flag_docker()}</span></div>
-                <div class="ah-flag"><code>API</code><span><code>POST /api/v1/agents</code> {m.hostsadd_api_with()} <code>name</code>, <code>tags</code>, <code>stacks_dir</code> ·
-                  <a class="ah-docs" href="{DOCS_BASE}features/multi-host#automation" target="_blank" rel="noopener noreferrer">{m.hostsadd_api_docs()}</a></span></div>
+                <div class="ah-flag"><code>--data-dir &lt;path&gt;</code><span>{m.hosts_add_flag_data()}</span></div>
+                <div class="ah-flag"><code>--stacks-dir &lt;path&gt;</code><span>{m.hosts_add_flag_stacks()}</span></div>
+                <div class="ah-flag"><code>--skip-docker</code><span>{m.hosts_add_flag_docker()}</span></div>
+                <div class="ah-flag"><code>API</code><span>{m.hosts_add_api({ endpoint: 'POST /api/v1/agents', fields: 'name, tags, stacks_dir' })} ·
+                  <a class="ah-docs" href="{DOCS_BASE}features/multi-host#automation" target="_blank" rel="noopener noreferrer">{m.hosts_add_api_docs()}</a></span></div>
               </div>
             {/if}
           </div>
 
           <div class="ah-callout" role="status" data-testid="add-host-waiting">
             <span class="ah-pulse" aria-hidden="true"></span>
-            <span><b>{m.hostsadd_waiting({ name: displayName })}</b><br /><span class="ah-hint">{m.hostsadd_waiting_meta()}</span></span>
+            <span><b>{m.hosts_add_waiting({ name: displayName })}</b><br /><span class="ah-hint">{m.hosts_add_waiting_meta()}</span></span>
           </div>
           {#if lateWait && reach}
             <div class="ah-callout {reach.ok ? 'ok' : 'bad'}" data-testid="reachability">
               {#if reach.ok}<Check size={14} strokeWidth={1.8} />{:else}<AlertTriangle size={14} strokeWidth={1.8} />{/if}
-              <span>{reach.ok ? m.hostsadd_reach_ok({ port: agentPort }) : m.hostsadd_reach_bad({ port: agentPort })}
-                {#if !reach.ok}<br />{m.hostsadd_reach_bad_detail({ url: reach.url })}{/if}</span>
+              <span>{reach.ok ? m.hosts_add_reach_ok({ port: agentPort }) : m.hosts_add_reach_bad({ port: agentPort })}
+                {#if !reach.ok}<br />{m.hosts_add_reach_bad_detail({ url: reach.url })}{/if}</span>
             </div>
           {/if}
         {:else}
           <div class="ah-done">
             <span class="ah-mark"><Check size={14} strokeWidth={1.8} /></span>
-            <b>{m.hostsadd_connected({ name: displayName })}</b>
+            <b>{m.hosts_add_connected({ name: displayName })}</b>
           </div>
           {#if readyPath}
-            <p class="ah-p" data-testid="add-host-ready">{m.hostsadd_ready({ name: displayName, path: readyPath })}</p>
+            <p class="ah-p" data-testid="add-host-ready">{m.hosts_add_ready({ name: displayName, path: readyPath })}</p>
           {:else}
-            <p class="ah-p">{m.hostsadd_needs_setup()}</p>
+            <p class="ah-p">{m.hosts_add_needs_setup()}</p>
           {/if}
         {/if}
       {/if}
@@ -291,21 +288,21 @@
 
     <footer class="ah-foot">
       {#if !connected}
-        <a class="ah-docs" href="{DOCS_BASE}features/multi-host#add-a-host" target="_blank" rel="noopener noreferrer">{m.hostsadd_docs()}</a>
+        <a class="ah-docs" href="{DOCS_BASE}features/multi-host#add-a-host" target="_blank" rel="noopener noreferrer">{m.hosts_add_docs()}</a>
       {/if}
       <span class="dm-sp"></span>
       {#if !created}
         <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_cancel()}</button>
         <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-create" disabled={creating} onclick={create}>
-          {creating ? m.hostsadd_creating() : m.hostsadd_create()}
+          {creating ? m.hosts_add_creating() : m.hosts_add_create()}
         </button>
       {:else if !connected}
         <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_close()}</button>
       {:else if readyPath}
-        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-open" onclick={() => openHost()}>{m.hostsadd_open_host()}</button>
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-open" onclick={() => openHost()}>{m.hosts_add_open_host()}</button>
       {:else}
         <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_close()}</button>
-        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-setup" onclick={() => openHost('setup')}>{m.hostsadd_setup_btn()}</button>
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-setup" onclick={() => openHost('setup')}>{m.hosts_add_setup_btn()}</button>
       {/if}
     </footer>
   </div>
@@ -373,7 +370,6 @@
   .ah-flag { display: grid; grid-template-columns: 170px 1fr; gap: 10px; align-items: baseline; }
   .ah-flag > code { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
   .ah-flag span { color: var(--muted); }
-  .ah-flag span code { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
 
   .ah-callout {
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;

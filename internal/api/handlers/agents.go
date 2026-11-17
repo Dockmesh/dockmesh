@@ -118,7 +118,7 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, map[string]any{"tags": tags, "stacks_dir": req.StacksDir})
-	res.BehindProxy = h.behindProxy()
+	res.BehindProxy = h.ownReverseProxy()
 	writeJSON(w, http.StatusCreated, res)
 }
 
@@ -205,7 +205,7 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.audit(r, "agent.rotate_token", "agent:"+id, nil)
-	res.BehindProxy = h.behindProxy()
+	res.BehindProxy = h.ownReverseProxy()
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -344,8 +344,8 @@ func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, a)
 }
 
-// behindProxy reports TLS option (d): the admin's reverse proxy serves
-// the web UI and agents must reach the agent port another way.
-func (h *Handlers) behindProxy() bool {
+// ownReverseProxy: the admin's proxy serves the web UI, which agents
+// can't use to reach the agent port.
+func (h *Handlers) ownReverseProxy() bool {
 	return h.RestoreConfig != nil && webtls.Mode(h.RestoreConfig.TLSMode) == webtls.Proxy
 }
