@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Agents installed with --as-root keep running as root, also when the install command is run again, and the installer prints a notice; run the command again with --switch-to-service-user to move such an agent to the dockmesh-agent user. Scripts that pass --as-root for new hosts must drop the flag
+time: 2026-11-17T12:01:23.615032887Z
+custom:
+    Audience: admins
+    Id: agent-as-root-removed

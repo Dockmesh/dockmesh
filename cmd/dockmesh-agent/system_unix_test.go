@@ -564,3 +564,110 @@ func TestServerDataDir(t *testing.T) {
 		})
 	}
 }
+
+func TestPickRunUser(t *testing.T) {
+	user := []byte("[Service]\nUser=dockmesh-agent\n")
+	root := []byte("[Service]\nExecStart=/x\n")
+	tests := []struct {
+		name     string
+		flag     string
+		unit     []byte
+		switchTo bool
+		want     string
+		wantErr  bool
+	}{
+		{"fresh", "", nil, false, agentAccount, false},
+		{"fresh as root", "root", nil, false, "root", false},
+		{"root kept", "", root, false, "root", false},
+		{"root not switched by --user", agentAccount, root, false, "", true},
+		{"root switched", "", root, true, agentAccount, false},
+		{"switch on a service-user agent", "", user, true, agentAccount, false},
+		{"switch to root refused", "root", root, true, "", true},
+		{"switch without an agent", "", nil, true, "", true},
+		{"service user not switched to root", "root", user, false, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := pickRunUser(tt.flag, tt.unit, tt.switchTo)
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("got %q, %v; want %q, err %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHandOverScope(t *testing.T) {
+	data := t.TempDir()
+	outside := t.TempDir()
+	for _, p := range []string{"agent.crt", "staging/x", "stacks/web/compose.yaml", "stacks/web/.env", "stacks/web/html/index.html", "stacks/db/pgdata/PG_VERSION"} {
+		full := filepath.Join(data, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(data, "stacks", "web", "link")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := handOver(data, []string{filepath.Join(data, "stacks"), filepath.Join(t.TempDir(), "missing")}, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// data dir, agent.crt, staging, staging/x; stacks, web, db, compose.yaml, .env
+	if n != 9 {
+		t.Errorf("handed over %d entries, want 9 (bind data and links below a stack dir stay)", n)
+	}
+}
+
+func TestCheckRootOwnedDirs(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkRootOwnedDirs([]string{dir, filepath.Join(dir, "missing")}, os.Getuid()); err != nil {
+		t.Errorf("own dir refused: %v", err)
+	}
+	if err := checkRootOwnedDirs([]string{dir}, os.Getuid()+1); err == nil {
+		t.Error("dir of another account accepted")
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRootOwnedDirs([]string{link}, os.Getuid()); err == nil {
+		t.Error("symlink accepted")
+	}
+}
+
+func TestSystemInstallSwitchesRootAgent(t *testing.T) {
+	ti := newTestInstaller(t)
+	data := ti.path("var/agent")
+	ti.write(t, "etc/dockmesh-agent/agent.env", "DOCKMESH_DATA_DIR="+data+"\n", 0o640)
+	ti.write(t, "units/dockmesh-agent.service", "[Service]\nExecStart="+ti.path("bin/dockmesh-agent")+"\n", 0o644)
+	ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+	ti.write(t, "var/agent/stacks/web/compose.yaml", "services: {}\n", 0o600)
+
+	res, err := ti.run(installOptions{SwitchToServiceUser: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.handedOver == 0 {
+		t.Error("nothing handed over")
+	}
+	if unit := ti.read(t, "units/dockmesh-agent.service"); !strings.Contains(unit, "User=dockmesh-agent\n") {
+		t.Errorf("unit still runs as root:\n%s", unit)
+	}
+	before := ti.snapshot(t)
+	res, err = ti.run(installOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.changed) != 0 || res.handedOver != 0 {
+		t.Errorf("second run changed %v, handed over %d", res.changed, res.handedOver)
+	}
+	after := ti.snapshot(t)
+	for p, v := range before {
+		if after[p] != v {
+			t.Errorf("%s changed on the second run", p)
+		}
+	}
+}

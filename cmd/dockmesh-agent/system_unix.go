@@ -30,7 +30,7 @@ import (
 // need root, run by the installer.
 func runSystemCmd(args []string) {
 	if len(args) == 0 || args[0] != "install" {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh-agent system install [--data-dir <dir>] [--stacks-dir <dir>] [--user dockmesh-agent|root] [--socket-gid <gid>] [--enroll-url <url>] [--agent-url <url>] [--ca-fingerprint <sha256>] [--enroll-ca-file <file>] [--convert-legacy]")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh-agent system install [--data-dir <dir>] [--stacks-dir <dir>] [--user dockmesh-agent|root] [--socket-gid <gid>] [--enroll-url <url>] [--agent-url <url>] [--ca-fingerprint <sha256>] [--enroll-ca-file <file>] [--convert-legacy] [--switch-to-service-user]")
 		os.Exit(2)
 	}
 	if err := systemInstall(args[1:]); err != nil {
@@ -54,6 +54,9 @@ type installOptions struct {
 	// ConvertLegacy moves a legacy agent to this layout: the units replace
 	// the legacy one, then its copy script and data dir binary are removed.
 	ConvertLegacy bool
+	// SwitchToServiceUser moves an agent that runs as root to the
+	// dockmesh-agent account and hands its files over.
+	SwitchToServiceUser bool
 	// earlier replaces DOCKMESH_EARLIER_STACKS_DIRS when setEarlier is
 	// set; only root's stacks-dir-apply does.
 	earlier    []string
@@ -72,6 +75,7 @@ func systemInstall(args []string) error {
 	fs.StringVar(&o.CAFingerprint, "ca-fingerprint", "", "SHA-256 of the agents CA")
 	fs.StringVar(&o.EnrollCAFile, "enroll-ca-file", "", "file with the agents CA certificate")
 	fs.BoolVar(&o.ConvertLegacy, "convert-legacy", false, "move an agent of the legacy layout to this one")
+	fs.BoolVar(&o.SwitchToServiceUser, "switch-to-service-user", false, "move an agent that runs as root to the "+agentAccount+" account")
 	_ = fs.Parse(args)
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
@@ -110,6 +114,9 @@ func systemInstall(args []string) error {
 	}
 	if res.tokenRemoved {
 		fmt.Println("removed the spent enrollment token from", in.envFile)
+	}
+	if res.handedOver > 0 {
+		fmt.Printf("handed %d files over to %s\n", res.handedOver, agentAccount)
 	}
 	if len(res.changed) == 0 {
 		fmt.Println("the agent's files are up to date")
@@ -222,6 +229,8 @@ type installResult struct {
 	warnings     []string
 	tokenRemoved bool
 	removed      []string
+	// handedOver counts the files a switch to the service account chowned.
+	handedOver int
 }
 
 // plainDir is the set of characters a directory may use in agent.env and
@@ -296,10 +305,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		return res, err
 	}
 
-	runUser, err := pickRunUser(o.User, oldUnit)
+	runUser, err := pickRunUser(o.User, oldUnit, o.SwitchToServiceUser)
 	if err != nil {
 		return res, err
 	}
+	switching := o.SwitchToServiceUser && runUser == agentAccount && unitUser(oldUnit) == ""
 	uid, gid := in.rootUID, in.rootGID
 	if runUser != "root" {
 		if uid, gid, err = in.lookupAccount(runUser); err != nil {
@@ -375,11 +385,26 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		mode os.FileMode
 	}{{dataDir, 0o700}, {stacksDir, 0o750}}
 	for _, d := range dirs {
-		if d.path != "" {
+		if d.path != "" && !switching {
 			if err := checkAgentDir(d.path, uid); err != nil {
 				return res, err
 			}
 		}
+	}
+	if switching {
+		owned := append([]string{dataDir}, unit.WritablePaths...)
+		if stacksDir != "" {
+			owned = append(owned, stacksDir)
+		}
+		if err := checkRootOwnedDirs(owned, in.rootUID); err != nil {
+			return res, err
+		}
+		dirs := resolveStackDirs(stacksDir, earlier, dataDir)
+		n, err := handOver(dataDir, append([]string{dirs.current}, dirs.earlier...), uid, gid)
+		if err != nil {
+			return res, fmt.Errorf("hand the agent's files to %s: %w", runUser, err)
+		}
+		res.handedOver = n
 	}
 
 	changed, err := in.installBinary()
@@ -579,12 +604,18 @@ func renderAgentEnv(lines []string, set map[string]string) []byte {
 }
 
 // pickRunUser keeps the account of an installed unit: an agent installed
-// as root stays root, and switching is not done here.
-func pickRunUser(flagUser string, oldUnit []byte) (string, error) {
+// as root stays root unless switchUser moves it to agentAccount.
+func pickRunUser(flagUser string, oldUnit []byte, switchUser bool) (string, error) {
 	if flagUser != "" && flagUser != agentAccount && flagUser != "root" {
 		return "", fmt.Errorf("--user must be %s or root", agentAccount)
 	}
+	if switchUser && flagUser == "root" {
+		return "", fmt.Errorf("--switch-to-service-user moves the agent to %s, not to root", agentAccount)
+	}
 	if oldUnit == nil {
+		if switchUser {
+			return "", errors.New("--switch-to-service-user needs an installed agent")
+		}
 		if flagUser == "" {
 			return agentAccount, nil
 		}
@@ -597,10 +628,113 @@ func pickRunUser(flagUser string, oldUnit []byte) (string, error) {
 	if have != agentAccount && have != "root" {
 		return "", fmt.Errorf("the agent unit runs as %q; system install only writes units for %s or root", have, agentAccount)
 	}
+	if switchUser {
+		return agentAccount, nil
+	}
 	if flagUser != "" && flagUser != have {
 		return "", fmt.Errorf("the agent runs as %s; system install does not switch it to %s", have, flagUser)
 	}
 	return have, nil
+}
+
+// checkRootOwnedDirs refuses to hand over a directory that is not a real
+// directory owned by root: a root agent created all of them.
+func checkRootOwnedDirs(dirs []string, rootUID int) error {
+	for _, d := range dirs {
+		fi, err := os.Lstat(d)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !fi.IsDir() || !ok || int(st.Uid) != rootUID {
+			return fmt.Errorf("%s is not a directory owned by root; the switch only hands over what the root agent wrote", d)
+		}
+	}
+	return nil
+}
+
+// handOver gives what a root agent wrote to uid:gid: the data dir with
+// everything in it except stacks/, and in each stacks dir the dir itself,
+// every stack dir and the files directly in it. What containers wrote in
+// bind mounts below a stack dir keeps its owner. Links are never followed:
+// entries are changed with Lchown below an os.Root. It returns the number
+// of entries changed.
+func handOver(dataDir string, stackDirs []string, uid, gid int) (int, error) {
+	n := 0
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return n, err
+	}
+	defer root.Close()
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == "stacks" && d.IsDir() {
+			return fs.SkipDir
+		}
+		if err := root.Lchown(p, uid, gid); err != nil {
+			return err
+		}
+		n++
+		return nil
+	})
+	if err != nil {
+		return n, err
+	}
+	for _, dir := range stackDirs {
+		c, err := handOverStacks(dir, uid, gid)
+		n += c
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func handOverStacks(dir string, uid, gid int) (int, error) {
+	root, err := os.OpenRoot(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer root.Close()
+	if err := root.Lchown(".", uid, gid); err != nil {
+		return 0, err
+	}
+	n := 1
+	stacks, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return n, err
+	}
+	for _, st := range stacks {
+		if err := root.Lchown(st.Name(), uid, gid); err != nil {
+			return n, err
+		}
+		n++
+		if !st.IsDir() {
+			continue
+		}
+		files, err := fs.ReadDir(root.FS(), st.Name())
+		if err != nil {
+			return n, err
+		}
+		for _, f := range files {
+			if !f.Type().IsRegular() {
+				continue
+			}
+			if err := root.Lchown(filepath.Join(st.Name(), f.Name()), uid, gid); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	return n, nil
 }
 
 // unitUser is the User= of a unit file, empty without one.

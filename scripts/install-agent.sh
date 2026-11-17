@@ -36,6 +36,7 @@ CAPEM
 # Flags
 # -----------------------------------------------------------------------------
 AS_ROOT=0
+SWITCH_USER=0
 SKIP_DOCKER=0
 DATA_DIR_FLAG=""
 STACKS_DIR=""
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --stacks-dir)   need_value $# "$1"; STACKS_DIR="$2"; shift 2 ;;
     --stacks-dir=*) STACKS_DIR="${1#--stacks-dir=}"; shift ;;
     --as-root)      AS_ROOT=1; shift ;;
+    --switch-to-service-user) SWITCH_USER=1; shift ;;
     --skip-docker)  SKIP_DOCKER=1; shift ;;
     -h|--help)
       cat <<USAGE
@@ -67,8 +69,9 @@ Flags:
   --data-dir <path>     Data directory of the agent, first install only
                         (default /var/lib/dockmesh-agent).
   --stacks-dir <path>   Stacks directory of the agent (default <data-dir>/stacks).
-  --as-root             Run the agent as root instead of a dedicated user
-                        (first install only).
+  --switch-to-service-user
+                        Move an agent that runs as root to the
+                        dockmesh-agent user (re-run only).
   --skip-docker         Don't install Docker when it is missing.
   -h, --help            Show this help.
 USAGE
@@ -304,11 +307,17 @@ if [[ -e "$LEGACY_SCRIPT" || -e "$DATA_DIR/bin/dockmesh-agent" || -L "$DATA_DIR/
 elif [[ $UNIT_EXISTS -eq 1 ]] && ! grep -qx "ExecStart=$PATH_BIN" "$UNIT_FILE"; then
   LEGACY=1
 fi
-RUN_USER=dockmesh-agent
+# OWNER is the account that owns the agent's files now, RUN_USER the one
+# it runs as after this run; they differ only with --switch-to-service-user.
+OWNER=dockmesh-agent
 if [[ $UNIT_EXISTS -eq 1 && -z "$(unit_user "$UNIT_FILE")" ]]; then
-  RUN_USER=root
-elif [[ $RERUN -eq 0 && $AS_ROOT -eq 1 ]]; then
-  RUN_USER=root
+  OWNER=root
+fi
+RUN_USER="$OWNER"
+SWITCHING=0
+if [[ $SWITCH_USER -eq 1 && $OWNER == root ]]; then
+  RUN_USER=dockmesh-agent
+  SWITCHING=1
 fi
 
 if [[ $RERUN -eq 0 ]]; then
@@ -334,8 +343,18 @@ fi
 if [[ $MODE == rerun && $ENROLLED -eq 0 ]]; then
   die "This host is not enrolled. Copy the install command from Hosts › Add host in Dockmesh."
 fi
-if [[ $RERUN -eq 1 && $AS_ROOT -eq 1 && $RUN_USER != root ]]; then
+if [[ $RERUN -eq 0 && $AS_ROOT -eq 1 ]]; then
+  die "--as-root was removed in 0.6.0. The agent runs as the dockmesh-agent user with access to Docker.
+See https://dockmesh.dev/docs/features/multi-host#agent-user"
+fi
+if [[ $RERUN -eq 1 && $AS_ROOT -eq 1 && $OWNER != root ]]; then
   die "The agent runs as dockmesh-agent; --as-root does not switch it back to root."
+fi
+if [[ $SWITCH_USER -eq 1 && $RERUN -eq 0 ]]; then
+  die "--switch-to-service-user moves an installed agent. A new agent runs as dockmesh-agent anyway."
+fi
+if [[ $SWITCH_USER -eq 1 && $AS_ROOT -eq 1 ]]; then
+  die "--switch-to-service-user and --as-root contradict each other."
 fi
 if [[ -n "$DATA_DIR_FLAG" ]]; then
   if [[ $RERUN -eq 1 && "${DATA_DIR_FLAG%/}" != "${DATA_DIR%/}" ]]; then
@@ -402,7 +421,7 @@ on_exit() {
   rm -f "$TMP_BIN"
   [[ $rc -eq 0 ]] && return
   if [[ -n "$OLD_DATA_DIR" ]]; then
-    as_agent "$RUN_USER" "$RUN_GROUP" migrate_agent_files "$DATA_DIR" "$OLD_DATA_DIR" || true
+    as_agent "$OWNER" "$OWNER_GROUP" migrate_agent_files "$DATA_DIR" "$OLD_DATA_DIR" || true
   fi
   [[ $RERUN -eq 1 ]] && { systemctl start dockmesh-agent.service >/dev/null 2>&1 || true; }
   exit "$rc"
@@ -433,11 +452,7 @@ if [[ "$SOCK_GID" != 0 && "$SOCK_GID" != "$DOCKER_GID" ]]; then
   GROUPS_LINE="${GROUPS_LINE:+$GROUPS_LINE, }${SOCK_GROUP:-$SOCK_GID} (Docker socket)"
 fi
 if [[ $RUN_USER == root ]]; then
-  if [[ $RERUN -eq 1 ]]; then
-    step "Checking user" "root (kept)"
-  else
-    step "Using account" "root (--as-root)"
-  fi
+  step "Checking user" "root (kept)"
 else
   label="Checking user"
   if ! getent passwd "$RUN_USER" >/dev/null; then
@@ -449,9 +464,14 @@ else
   if [[ -n "$DOCKER_GID" ]] && ! id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx docker; then
     usermod -aG docker "$RUN_USER"
   fi
-  step "$label" "$RUN_USER · groups: ${GROUPS_LINE:-none}"
+  if [[ $SWITCHING -eq 1 ]]; then
+    step "Switching to $RUN_USER" "groups: ${GROUPS_LINE:-none}"
+  else
+    step "$label" "$RUN_USER · groups: ${GROUPS_LINE:-none}"
+  fi
 fi
 RUN_GROUP="$(id -gn "$RUN_USER")"
+OWNER_GROUP="$(id -gn "$OWNER")"
 
 # -----------------------------------------------------------------------------
 # [5] Services
@@ -459,13 +479,13 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 if [[ $RERUN -eq 1 && "${DATA_DIR%/}" != "$DEFAULT_DATA_DIR" ]] && is_server_data_dir "$DATA_DIR"; then
   [[ -L "$DEFAULT_DATA_DIR" ]] && die "$DEFAULT_DATA_DIR is a symlink. Move it away and run again."
   if [[ ! -e "$DEFAULT_DATA_DIR" ]]; then
-    install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DEFAULT_DATA_DIR"
-  elif [[ "$(stat -c %U "$DEFAULT_DATA_DIR")" != "$RUN_USER" ]]; then
-    die "$DEFAULT_DATA_DIR exists and does not belong to $RUN_USER. Move it away and run again."
+    install -d -m 0700 -o "$OWNER" -g "$OWNER_GROUP" "$DEFAULT_DATA_DIR"
+  elif [[ "$(stat -c %U "$DEFAULT_DATA_DIR")" != "$OWNER" ]]; then
+    die "$DEFAULT_DATA_DIR exists and does not belong to $OWNER. Move it away and run again."
   fi
   OLD_DATA_DIR="${DATA_DIR%/}"
   DATA_DIR="$DEFAULT_DATA_DIR"
-  as_agent "$RUN_USER" "$RUN_GROUP" migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
+  as_agent "$OWNER" "$OWNER_GROUP" migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
   [[ $RUN_USER == root ]] || usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
   note moved "agent files out of the Dockmesh server's data directory $OLD_DATA_DIR → $DATA_DIR"
 fi
@@ -474,6 +494,7 @@ SYS_ARGS=(--data-dir "$DATA_DIR" --enroll-url "$ENROLL_URL" --agent-url "$AGENT_
   --ca-fingerprint "$CA_FINGERPRINT" --enroll-ca-file "$DATA_DIR/enroll-ca.pem")
 [[ -n "$STACKS_DIR" ]] && SYS_ARGS+=(--stacks-dir "$STACKS_DIR")
 [[ $RUN_USER == root ]] && SYS_ARGS+=(--user root)
+[[ $SWITCHING -eq 1 ]] && SYS_ARGS+=(--switch-to-service-user)
 [[ $LEGACY -eq 1 ]] && SYS_ARGS+=(--convert-legacy)
 if ! SYS_OUT="$("$PATH_BIN" system install "${SYS_ARGS[@]}" 2>&1)"; then
   printf '%s\n' "$SYS_OUT" >&2
@@ -493,6 +514,7 @@ while IFS= read -r line; do
   case "$line" in
     "removed the spent enrollment token from "*) note removed "spent enrollment token from ${line#removed the spent enrollment token from }" ;;
     "warning: "*) warn "${line#warning: }" ;;
+    "handed "*" files over to "*) n="${line#handed }"; note changed "owner of ${n%% *} files to $RUN_USER" ;;
   esac
 done <<<"$SYS_OUT"
 SERVICES="dockmesh-agent.service, dockmesh-agent-update.path"
@@ -575,10 +597,15 @@ fi
 
 if [[ $RUN_USER == root ]]; then
   printf '\n%snotice%s  This agent runs as root. It keeps running as root.\n' "$C_YELLOW" "$C_OFF"
+  printf '        To switch it to the dockmesh-agent user, run again with --switch-to-service-user.\n'
 fi
 if [[ $REENROLL_FAILED -eq 1 ]]; then
   reason="$(log_field "$AGENT_LOGS" err "re-enrollment failed")"
   printf '\n%sThe new token was not accepted (%s). The agent keeps its previous enrollment.%s\n' "$C_RED" "${reason:-no answer from the server}" "$C_OFF"
   exit 1
 fi
-printf '\n%sok%s  The agent on %s uses the managed layout and signed updates now.\n' "$C_GREEN" "$C_OFF" "$NAME"
+if [[ $SWITCHING -eq 1 ]]; then
+  printf '\n%sok%s  The agent on %s runs as %s now.\n' "$C_GREEN" "$C_OFF" "$NAME" "$RUN_USER"
+else
+  printf '\n%sok%s  The agent on %s uses the managed layout and signed updates now.\n' "$C_GREEN" "$C_OFF" "$NAME"
+fi
