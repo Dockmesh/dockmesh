@@ -42,6 +42,7 @@ const (
 	sdNotDir       = "not_a_directory"
 	sdUnsafeParent = "unsafe_parent"
 	sdNewNotHere   = "new_dir_not_allowed"
+	sdRootAgentDir = "root_agent_existing_dir"
 	sdNetworkShare = "network_share"
 	sdNoUnixPerms  = "no_unix_permissions"
 	sdNotEmpty     = "not_empty"
@@ -101,6 +102,9 @@ type stacksDirRules struct {
 	// which work below /tmp.
 	deny    []string
 	parents []string
+	// devProtected replaces the device check of a mount point in tests,
+	// whose temp dirs share a device with /.
+	devProtected func(dev uint64) bool
 }
 
 func (r stacksDirRules) allowedParents() []string {
@@ -116,15 +120,25 @@ func (r stacksDirRules) prepareCommand(p string) string {
 	return fmt.Sprintf("sudo install -d -o %s -g %s -m 0750 %s", r.account, r.account, p)
 }
 
+// creatableName reports a name root may give a new stacks dir. The agent
+// does not pick any name in a shared parent: some (/opt/cni, /srv/salt)
+// are adopted by root tools installed later, which would then load code
+// from a directory the agent owns.
+func creatableName(name string) bool {
+	return name == "stacks" || strings.HasPrefix(name, "dockmesh")
+}
+
 // creatableParent reports whether root may create a stacks dir directly
 // in dir: one of the allowed parents, or the mount point m of a local
-// filesystem below one of them.
-func (r stacksDirRules) creatableParent(dir string, m setup.Mount) bool {
+// filesystem below one of them. A mount point whose device is that of /
+// or of a refused directory is another view of a protected filesystem,
+// such as / bound whole below /mnt.
+func (r stacksDirRules) creatableParent(dir string, m setup.Mount, dev uint64, denied map[fileID]string) bool {
 	for _, a := range r.allowedParents() {
 		if dir == a {
 			return true
 		}
-		if layout.Within(a, dir) && m.Mountpoint == dir && !setup.PseudoFS(m.FSType) {
+		if layout.Within(a, dir) && m.Mountpoint == dir && !setup.PseudoFS(m.FSType) && !r.protectedDev(dev, denied) {
 			return true
 		}
 	}
@@ -136,6 +150,22 @@ func (r stacksDirRules) denied() []string {
 		return r.deny
 	}
 	return denyRoots
+}
+
+func (r stacksDirRules) protectedDev(dev uint64, denied map[fileID]string) bool {
+	if r.devProtected != nil {
+		return r.devProtected(dev)
+	}
+	var st unix.Stat_t
+	if unix.Stat("/", &st) != nil || uint64(st.Dev) == dev { //nolint:unconvert // the types differ per OS
+		return true
+	}
+	for id := range denied {
+		if id.dev == dev {
+			return true
+		}
+	}
+	return false
 }
 
 type stacksDirResult struct {
@@ -213,6 +243,7 @@ func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 		return fail(sdUnreadable, "Cannot read /: %v.", err)
 	}
 	cur, existing := "/", 0
+	var parentDev uint64
 walk:
 	for i, c := range comps {
 		next := filepath.Join(cur, c)
@@ -233,6 +264,9 @@ walk:
 		}
 		unix.Close(fd)
 		fd = nfd
+		if i == len(comps)-1 {
+			parentDev = uint64(st.Dev) //nolint:unconvert // the types differ per OS
+		}
 		if err := unix.Fstat(fd, &st); err != nil {
 			return fail(sdUnreadable, "Cannot read %s: %v.", next, err)
 		}
@@ -268,8 +302,32 @@ walk:
 		return fail(sdBindMount, "%s is on a bind mount of %s. Enter a path on the mounted filesystem itself.", p, m.Root)
 	}
 
+	if existing < len(comps) {
+		parentDev = uint64(st.Dev) //nolint:unconvert // the types differ per OS
+	}
+	parent, name := filepath.Dir(p), filepath.Base(p)
+	creatable := func(pm setup.Mount) bool {
+		return existing >= len(comps)-1 && creatableName(name) && r.creatableParent(parent, pm, parentDev, denied)
+	}
+	newRefused := func() stacksDirResult {
+		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or dockmesh…. Prepare %s as an empty directory of the agent: %s",
+			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p))
+	}
 	switch {
 	case existing == len(comps):
+		// Every directory a root agent finds belongs to it, so ownership
+		// says nothing about who prepared it; only what root could have
+		// created itself is taken.
+		if r.uid == 0 && p != defaultDir {
+			pm, err := mountOf(r.mountinfo, parent)
+			if err != nil {
+				return fail(sdUnreadable, "Cannot read the mount table: %v.", err)
+			}
+			if !creatable(pm) {
+				return fail(sdRootAgentDir, "Existing directory: an agent running as root takes only a directory root may create, directly in %s or in a disk mounted below one of them, named stacks or dockmesh….",
+					strings.Join(r.allowedParents(), ", "))
+			}
+		}
 		if int(st.Uid) != r.uid {
 			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, r.prepareCommand(p))
 		}
@@ -280,9 +338,8 @@ walk:
 		if !empty {
 			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, r.prepareCommand(p))
 		}
-	case p != defaultDir && (existing != len(comps)-1 || !r.creatableParent(cur, m)):
-		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them. Prepare %s as an empty directory of the agent: %s",
-			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p))
+	case p != defaultDir && !creatable(m):
+		return newRefused()
 	default:
 		res.WillCreate = true
 	}

@@ -25,7 +25,7 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 	t.Helper()
 	root := t.TempDir()
 	for _, d := range []string{"data/stacks", "docker", "srv/vol", "srv/apps/stacks", "full/x", "empty", "loose/prep", "nfs", "usb", "bind", "fuse", "cur/s",
-		"opt/a", "opt/certbot/lib/python3.11/site-packages", "home", "mnt/disk1", "mnt/plain", "mnt/ram", "mnt/pool", "mnt/snap", "media"} {
+		"opt/a", "opt/dockmesh", "opt/certbot/lib/python3.11/site-packages", "home", "mnt/disk1", "mnt/plain", "mnt/ram", "mnt/pool", "mnt/snap", "media"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -61,6 +61,7 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 		parents:        []string{filepath.Join(root, "srv"), filepath.Join(root, "opt"), filepath.Join(root, "mnt"), filepath.Join(root, "media")},
 		uid:            os.Getuid(),
 		account:        "dockmesh-agent",
+		devProtected:   func(uint64) bool { return false },
 		mountinfo:      func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(mounts)), nil },
 		parentOK: func(p string, uid, mode uint32) bool {
 			if !strings.HasPrefix(p, root+"/") {
@@ -69,6 +70,15 @@ func testStacksRules(t *testing.T) (string, stacksDirRules) {
 			return uid == me && mode&0o022 == 0
 		},
 	}
+}
+
+// rootOnly is the issue a check of a directory the test's account owns
+// gives a root agent: none when the test runs as root.
+func rootOnly(issue string) string {
+	if os.Getuid() == 0 {
+		return ""
+	}
+	return issue
 }
 
 func TestCheckStacksDir(t *testing.T) {
@@ -84,6 +94,13 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "new dir in an allowed parent", path: root + "/srv/stacks", ok: true, create: true},
 		{name: "new dir in opt", path: root + "/opt/stacks", ok: true, create: true},
 		{name: "new dir in media", path: root + "/media/stacks", ok: true, create: true},
+		{name: "new dir with a dockmesh name", path: root + "/opt/dockmesh-stacks", ok: true, create: true},
+		{name: "new dir with a name root tools adopt", path: root + "/opt/cni", issue: sdNewNotHere},
+		{name: "new salt dir", path: root + "/srv/salt", issue: sdNewNotHere},
+		{name: "new dir on a mount of a protected filesystem", path: root + "/mnt/disk1/stacks", edit: func(r *stacksDirRules) { r.devProtected = func(uint64) bool { return true } }, issue: sdNewNotHere},
+		{name: "root agent, prepared dir deep down", path: root + "/srv/apps/stacks", edit: func(r *stacksDirRules) { r.uid = 0 }, issue: sdRootAgentDir},
+		{name: "root agent, prepared dir with a foreign name", path: root + "/empty", edit: func(r *stacksDirRules) { r.uid = 0 }, issue: sdRootAgentDir},
+		{name: "root agent, dir root could create", path: root + "/opt/dockmesh", edit: func(r *stacksDirRules) { r.uid = 0 }, ok: os.Getuid() == 0, issue: rootOnly(sdForeignOwner)},
 		{name: "two new levels", path: root + "/opt/x/stacks", issue: sdNewNotHere},
 		{name: "new dir below an existing plain dir", path: root + "/opt/a/stacks", issue: sdNewNotHere},
 		{name: "new dir in a venv", path: root + "/opt/certbot/lib/python3.11/site-packages/sitecustomize", issue: sdNewNotHere},
@@ -182,7 +199,7 @@ func FuzzCheckStacksDir(f *testing.F) {
 			layout.Within(rules.dataDir, p) && p != "/var/lib/dockmesh-agent/stacks" || layout.Within(defaultServerDataDir, p) {
 			t.Fatalf("accepted %q: %+v", p, got.StacksDirCheck)
 		}
-		if got.WillCreate && p != "/var/lib/dockmesh-agent/stacks" && !slices.Contains(stacksParents, filepath.Dir(p)) {
+		if got.WillCreate && p != "/var/lib/dockmesh-agent/stacks" && (!slices.Contains(stacksParents, filepath.Dir(p)) || !creatableName(filepath.Base(p))) {
 			t.Fatalf("would create %q outside the allowed parents", p)
 		}
 	})
@@ -308,8 +325,8 @@ func TestStacksDirApply(t *testing.T) {
 	if err := os.Chmod(srv, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	first := filepath.Join(srv, "one")
-	second := filepath.Join(srv, "two")
+	first := filepath.Join(srv, "dockmesh-one")
+	second := filepath.Join(srv, "dockmesh-two")
 
 	// A stack in the default dir keeps it writable after the switch.
 	mkStack(t, filepath.Join(a.dataDir, "stacks"), "old")
