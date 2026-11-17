@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -29,7 +30,7 @@ import (
 // need root, run by the installer.
 func runSystemCmd(args []string) {
 	if len(args) == 0 || args[0] != "install" {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh-agent system install [--data-dir <dir>] [--stacks-dir <dir>] [--user dockmesh-agent|root] [--socket-gid <gid>]")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh-agent system install [--data-dir <dir>] [--stacks-dir <dir>] [--user dockmesh-agent|root] [--socket-gid <gid>] [--enroll-url <url>] [--agent-url <url>] [--ca-fingerprint <sha256>] [--enroll-ca-file <file>] [--convert-legacy]")
 		os.Exit(2)
 	}
 	if err := systemInstall(args[1:]); err != nil {
@@ -45,6 +46,14 @@ type installOptions struct {
 	StacksDir string
 	User      string
 	SocketGID string
+	// The server's addresses and CA pin, written to agent.env.
+	EnrollURL     string
+	AgentURL      string
+	CAFingerprint string
+	EnrollCAFile  string
+	// ConvertLegacy moves a legacy agent to this layout: the units replace
+	// the legacy one, then its copy script and data dir binary are removed.
+	ConvertLegacy bool
 	// earlier replaces DOCKMESH_EARLIER_STACKS_DIRS when setEarlier is
 	// set; only root's stacks-dir-apply does.
 	earlier    []string
@@ -58,6 +67,11 @@ func systemInstall(args []string) error {
 	fs.StringVar(&o.StacksDir, "stacks-dir", "", "stacks dir of the agent (default <data-dir>/stacks)")
 	fs.StringVar(&o.User, "user", "", "account the agent runs as: "+agentAccount+" (default) or root, which only agents installed as root keep")
 	fs.StringVar(&o.SocketGID, "socket-gid", "", "numeric group of the Docker socket, when it does not belong to docker")
+	fs.StringVar(&o.EnrollURL, "enroll-url", "", "https URL the agent enrolls with")
+	fs.StringVar(&o.AgentURL, "agent-url", "", "wss URL the agent connects to")
+	fs.StringVar(&o.CAFingerprint, "ca-fingerprint", "", "SHA-256 of the agents CA")
+	fs.StringVar(&o.EnrollCAFile, "enroll-ca-file", "", "file with the agents CA certificate")
+	fs.BoolVar(&o.ConvertLegacy, "convert-legacy", false, "move an agent of the legacy layout to this one")
 	_ = fs.Parse(args)
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
@@ -91,6 +105,9 @@ func systemInstall(args []string) error {
 	for _, f := range res.changed {
 		fmt.Println("wrote", f)
 	}
+	for _, f := range res.removed {
+		fmt.Println("removed", f)
+	}
 	if res.tokenRemoved {
 		fmt.Println("removed the spent enrollment token from", in.envFile)
 	}
@@ -119,8 +136,10 @@ type agentInstaller struct {
 	// dir given with --stacks-dir.
 	checkStacks func(path, dataDir, current string, uid int, env map[string]string) stacksDirResult
 	// legacy reports what is left of the legacy layout's copy step.
-	legacy    func(dataDir string, unitExists bool) error
-	systemctl func(args ...string) error
+	legacy func(dataDir string, unitExists bool) error
+	// legacyScript is the legacy layout's root copy script.
+	legacyScript string
+	systemctl    func(args ...string) error
 }
 
 func hostInstaller(self string) *agentInstaller {
@@ -147,7 +166,8 @@ func hostInstaller(self string) *agentInstaller {
 			dirs := resolveStackDirs(current, env["DOCKMESH_EARLIER_STACKS_DIRS"], dataDir)
 			return checkStacksDir(path, hostStacksDirRules(context.Background(), dataDir, dirs, uid, env["DOCKER_HOST"]))
 		},
-		legacy: hostLegacyLeftovers,
+		legacy:       hostLegacyLeftovers,
+		legacyScript: legacyRefreshScript,
 		systemctl: func(args ...string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -201,6 +221,7 @@ type installResult struct {
 	unitsChanged bool
 	warnings     []string
 	tokenRemoved bool
+	removed      []string
 }
 
 // plainDir is the set of characters a directory may use in agent.env and
@@ -228,7 +249,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 
 	dataDir := resolveDataDir(env["DOCKMESH_DATA_DIR"], fileExists)
 	if o.DataDir != "" {
-		if env["DOCKMESH_DATA_DIR"] != "" && filepath.Clean(o.DataDir) != filepath.Clean(env["DOCKMESH_DATA_DIR"]) {
+		// The installer moves an agent's files out of a server's data dir
+		// first; the identity then lives in the new dir only.
+		old := env["DOCKMESH_DATA_DIR"]
+		moved := !fileExists(filepath.Join(old, "agent.crt")) && fileExists(filepath.Join(o.DataDir, "agent.crt"))
+		if old != "" && filepath.Clean(o.DataDir) != filepath.Clean(old) && !moved {
 			return res, fmt.Errorf("the data dir is %s and holds the agent's identity; it is chosen at the first install only", env["DOCKMESH_DATA_DIR"])
 		}
 		dataDir = o.DataDir
@@ -239,8 +264,16 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if err := layout.CheckWritablePath(dataDir, ""); err != nil {
 		return res, err
 	}
+	convert := false
 	if err := in.legacy(dataDir, oldUnit != nil); err != nil {
-		return res, fmt.Errorf("this host runs the legacy agent layout (%w); system install does not convert it", err)
+		if !o.ConvertLegacy {
+			return res, fmt.Errorf("this host runs the legacy agent layout (%w); run system install with --convert-legacy to move it", err)
+		}
+		convert = true
+	}
+	conn, err := connectionSettings(o)
+	if err != nil {
+		return res, err
 	}
 
 	runUser, err := pickRunUser(o.User, oldUnit)
@@ -357,6 +390,9 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	}
 	// The server forgets a token once it has enrolled the host, so an
 	// enrolled host's DOCKMESH_TOKEN is spent.
+	for k, v := range conn {
+		envSet[k] = v
+	}
 	if env["DOCKMESH_TOKEN"] != "" && fileExists(filepath.Join(dataDir, "agent.crt")) {
 		envSet["DOCKMESH_TOKEN"] = ""
 		res.tokenRemoved = true
@@ -374,7 +410,83 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	}
 	res.unitsChanged = len(units) > 0
 	res.changed = append(res.changed, units...)
+	if convert {
+		removed, err := in.removeLegacy(dataDir)
+		res.removed = append(res.removed, removed...)
+		if err != nil {
+			return res, err
+		}
+	}
 	return res, nil
+}
+
+// connectionSettings checks the server's addresses and CA pin and returns
+// the agent.env keys of those given. Values go into agent.env unquoted, so
+// only the characters of URLs, hex and plain paths are taken.
+func connectionSettings(o installOptions) (map[string]string, error) {
+	out := map[string]string{}
+	urls := []struct {
+		key, flag, val string
+		schemes        []string
+	}{
+		{"DOCKMESH_ENROLL_URL", "--enroll-url", o.EnrollURL, []string{"https"}},
+		{"DOCKMESH_AGENT_URL", "--agent-url", o.AgentURL, []string{"wss"}},
+	}
+	for _, u := range urls {
+		if u.val == "" {
+			continue
+		}
+		pu, err := url.Parse(u.val)
+		if err != nil || !plainURL.MatchString(u.val) || !slices.Contains(u.schemes, pu.Scheme) || pu.Host == "" {
+			return nil, fmt.Errorf("%s %q must be a %s:// URL", u.flag, u.val, u.schemes[0])
+		}
+		out[u.key] = u.val
+	}
+	if o.CAFingerprint != "" {
+		fp := normalizeFingerprint(o.CAFingerprint)
+		if !sha256Hex.MatchString(fp) {
+			return nil, fmt.Errorf("--ca-fingerprint %q must be a SHA-256 in hex", o.CAFingerprint)
+		}
+		out["DOCKMESH_CA_FINGERPRINT"] = fp
+	}
+	if o.EnrollCAFile != "" {
+		p, err := checkPlainDir("--enroll-ca-file", o.EnrollCAFile)
+		if err != nil {
+			return nil, err
+		}
+		out["DOCKMESH_ENROLL_CA_FILE"] = p
+	}
+	return out, nil
+}
+
+var (
+	plainURL  = regexp.MustCompile(`^[A-Za-z0-9._~:/?#\[\]@%+=&,-]+$`)
+	sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// removeLegacy removes the legacy copy script and the binary in the data
+// dir, once the new units no longer run them. The data dir belongs to the
+// agent's account, so its part is removed below an os.Root.
+func (in *agentInstaller) removeLegacy(dataDir string) ([]string, error) {
+	var removed []string
+	if err := os.Remove(in.legacyScript); err == nil {
+		removed = append(removed, in.legacyScript)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return removed, err
+	}
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return removed, err
+	}
+	defer root.Close()
+	bin := filepath.Join("bin", "dockmesh-agent")
+	if err := root.Remove(bin); err == nil {
+		removed = append(removed, filepath.Join(dataDir, bin))
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return removed, err
+	}
+	_ = root.Remove("bin")
+	return removed, nil
 }
 
 // activate reloads systemd after a unit change, enables the agent and its

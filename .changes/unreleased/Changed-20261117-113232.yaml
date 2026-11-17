@@ -1,0 +1,3 @@
+kind: Changed
+body: 'The agent installer installs the agent in the managed layout: the binary in /usr/local/bin, config and units written by dockmesh-agent system install, updates through the signed root updater. It prints numbered steps and a summary box, plain without a terminal or with NO_COLOR, and accepts --data-dir and --stacks-dir'
+time: 2026-11-17T11:32:32.666101986Z
