@@ -224,3 +224,47 @@ func keys(m map[string]tar.Header) []string {
 	}
 	return out
 }
+
+// The service's own files never come back writable for others; data a
+// container wrote keeps its exact mode.
+func TestExtractNarrowsOwnWritableModes(t *testing.T) {
+	cfg, _ := restoreEnv(t)
+	files := &fakeFiles{}
+	_, err := Extract(context.Background(), ownedArchive(t,
+		ownedEntry{name: "dockmesh.db", uid: 1000, mode: 0o666},
+		ownedEntry{name: "stacks/app", uid: 1000, mode: 0o777, dir: true},
+		ownedEntry{name: "stacks/app/compose.yaml", uid: 1000, mode: 0o666},
+		ownedEntry{name: "stacks/app/shared", uid: 999, mode: 0o777, dir: true},
+	), cfg, Options{Force: true, Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]os.FileMode{"app": 0o755, "app/compose.yaml": 0o644} {
+		fi, err := os.Stat(filepath.Join(cfg.StacksRoot, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != want {
+			t.Errorf("%s: %#o, want %#o", rel, fi.Mode().Perm(), want)
+		}
+	}
+	if fi, err := os.Stat(cfg.DBPath); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Errorf("dockmesh.db: %v %v, want 0644", fi.Mode(), err)
+	}
+	if hdr := files.written["app/shared"]; hdr.Mode&0o777 != 0o777 {
+		t.Errorf("container dir: %#o, want 0777", hdr.Mode)
+	}
+}
+
+func TestExtractRefusesReturningToAStack(t *testing.T) {
+	cfg, _ := restoreEnv(t)
+	_, err := Extract(context.Background(), ownedArchive(t,
+		ownedEntry{name: "dockmesh.db", uid: 1000, mode: 0o644},
+		ownedEntry{name: "stacks/a/x", uid: 999, mode: 0o600},
+		ownedEntry{name: "stacks/b/y", uid: 999, mode: 0o600},
+		ownedEntry{name: "stacks/a/z", uid: 999, mode: 0o600},
+	), cfg, Options{Force: true, Files: &fakeFiles{}})
+	if err == nil {
+		t.Fatal("archive that returns to a stack was accepted")
+	}
+}

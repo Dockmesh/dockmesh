@@ -222,6 +222,9 @@ func tarStacks(ctx context.Context, files *stackhelper.Helper, root string, tw *
 		}
 		err = files.Walk(ctx, root, src, func(hdr *tar.Header, r io.Reader) error {
 			hdr.Name = archivePath + "/" + hdr.Name
+			if hdr.Typeflag == tar.TypeLink {
+				hdr.Linkname = archivePath + "/" + hdr.Linkname
+			}
 			if err := tw.WriteHeader(hdr); err != nil {
 				return err
 			}

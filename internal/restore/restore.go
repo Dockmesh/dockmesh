@@ -440,7 +440,7 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			if err := fsys.mkdirAll(name, 0o750); err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
-			dirModes = append(dirModes, dirMode{fsys, name, os.FileMode(hdr.Mode & 0o1777)}) //nolint:gosec // masked to permission bits
+			dirModes = append(dirModes, dirMode{fsys, name, restoredMode(hdr, otherOwner, 0o1777)})
 		case tar.TypeReg:
 			if err := fsys.mkdirAll(filepath.Dir(name), 0o750); err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
@@ -460,16 +460,17 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 				src = io.LimitReader(tr, opts.MaxBytes-c.Bytes+1)
 			}
 			n, err := io.Copy(out, src)
+			if err == nil {
+				// Set on the descriptor: the umask must not narrow the
+				// archive's mode, and no name can be swapped in between.
+				err = out.Chmod(restoredMode(hdr, otherOwner, 0o777))
+			}
 			out.Close()
 			if err != nil {
 				return nil, fmt.Errorf("write %q: %w", hdr.Name, err)
 			}
 			if opts.MaxBytes > 0 && c.Bytes+n > opts.MaxBytes {
 				return nil, ErrTooLarge
-			}
-			// The umask must not narrow the archive's mode.
-			if err := fsys.chmod(name, os.FileMode(hdr.Mode&0o777)); err != nil { //nolint:gosec // masked to permission bits
-				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 			_ = fsys.chtimes(name, hdr.ModTime, hdr.ModTime)
 			c.Files++
@@ -516,14 +517,23 @@ type dirMode struct {
 }
 
 func (d dirMode) apply() error {
-	fi, err := d.fsys.lstat(d.name)
+	f, err := d.fsys.openFile(d.name, os.O_RDONLY|openDirNoFollow, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("restore: set the mode of %s: %w", d.name, err)
 	}
-	if !fi.IsDir() {
-		return fmt.Errorf("restore: %s is no longer a directory", d.name)
+	defer f.Close()
+	return f.Chmod(d.mode)
+}
+
+// restoredMode is the mode an entry gets. Container data keeps the
+// archive's mode; the server's own files never become writable for other
+// accounts, whatever the archive says.
+func restoredMode(hdr *tar.Header, otherOwner bool, bits int64) os.FileMode {
+	mode := os.FileMode(hdr.Mode & bits) //nolint:gosec // masked to permission bits
+	if otherOwner {
+		return mode
 	}
-	return d.fsys.chmod(d.name, d.mode)
+	return mode &^ 0o022
 }
 
 // foreignStacks sends the entries of each stack that belong to another
@@ -536,6 +546,9 @@ type foreignStacks struct {
 	stack string
 	w     EntryWriter
 	dirs  []string
+	// left are the stacks already done: a system backup writes each
+	// stack in one piece, and going back would start another helper.
+	left map[string]bool
 }
 
 // take reports whether the stacks entry rel goes to the helper and opens
@@ -546,8 +559,17 @@ func (f *foreignStacks) take(ctx context.Context, rel string, otherOwner bool) (
 	}
 	stack, inner, _ := strings.Cut(rel, "/")
 	if stack != f.stack {
+		if f.left[stack] {
+			return false, fmt.Errorf("the archive returns to stack %q after another one", stack)
+		}
 		if err := f.close(); err != nil {
 			return false, err
+		}
+		if f.stack != "" {
+			if f.left == nil {
+				f.left = map[string]bool{}
+			}
+			f.left[f.stack] = true
 		}
 		f.stack, f.dirs = stack, nil
 	}
@@ -639,15 +661,13 @@ type entryFS struct {
 	remove   func(string) error
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	chtimes  func(string, time.Time, time.Time) error
-	lstat    func(string) (os.FileInfo, error)
-	chmod    func(string, os.FileMode) error
 	lchown   func(string, int, int) error
 }
 
 func rootFS(r *os.Root) entryFS {
-	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes, r.Lstat, r.Chmod, r.Lchown}
+	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes, r.Lchown}
 }
 
 func hostFS() entryFS {
-	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes, os.Lstat, os.Chmod, os.Lchown}
+	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes, os.Lchown}
 }

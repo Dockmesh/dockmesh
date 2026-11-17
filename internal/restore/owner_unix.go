@@ -19,3 +19,6 @@ func ownerOf(dir string) (fileOwner, bool) {
 	}
 	return fileOwner{int(st.Uid), int(st.Gid)}, true
 }
+
+// openDirNoFollow opens only a directory, never through a symlink.
+const openDirNoFollow = syscall.O_DIRECTORY | syscall.O_NOFOLLOW
