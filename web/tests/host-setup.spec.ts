@@ -63,7 +63,8 @@ test('waiting host: banner, check, refusal, then save the default', async ({ pag
   await expect(page).toHaveURL(/tab=setup/);
   const tab = page.getByTestId('setup-tab');
   await expect(tab.locator('#setup-stacks-dir')).toHaveValue(DEFAULT);
-  await expect(tab.getByTestId('setup-check')).toContainText('ext4');
+  await expect(tab.getByTestId('setup-check').locator('.okline')).toBeVisible();
+  await expect(tab.getByTestId('setup-check')).not.toContainText('ext4');
 
   await tab.locator('#setup-stacks-dir').fill('/srv/full');
   await expect(tab.getByTestId('setup-check')).toContainText('is not empty');
