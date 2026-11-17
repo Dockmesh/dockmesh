@@ -577,18 +577,10 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 	return &dockerMuxStripper{src: s}, nil
 }
 
-// ErrAgentTooOld matches the error VolumeImport returns when the agent
-// can't take a volume restore; both modes need flow control, which agents
-// have since 0.5.0.
-var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes")
-
-type agentTooOldError struct{ mode string }
-
-func (e agentTooOldError) Error() string {
-	return e.mode + " restore needs agent 0.5.0 or newer on this host; update the agent from the Hosts page"
-}
-
-func (agentTooOldError) Is(target error) bool { return target == ErrAgentTooOld }
+// ErrAgentTooOld is returned when the agent can't take a volume restore
+// (or not the requested mode); it needs the agent version that ships with
+// this server.
+var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes; upgrade it from the Hosts page")
 
 // VolumeImport streams a tar.gz archive into the named volume on the
 // agent's host. replace swaps the volume's contents for the archive's
@@ -606,10 +598,7 @@ func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reade
 	// tar reads it; an older agent's replace empties the volume before
 	// any data arrives.
 	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeStaged)) {
-		if replace {
-			return agentTooOldError{mode: "a replace"}
-		}
-		return agentTooOldError{mode: "a merge"}
+		return ErrAgentTooOld
 	}
 	if err := docker.CheckVolumeName(name); err != nil {
 		return err
