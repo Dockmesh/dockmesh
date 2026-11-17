@@ -96,6 +96,8 @@ Options:
 
 `--purge` removes only what Dockmesh wrote. A stacks directory that holds anything else, such as data a container wrote through a relative bind mount (`app/data/db.sqlite`), is kept as a whole, and so is the data directory around it and the user that owns them. A stacks directory you created yourself before you chose it in Dockmesh is emptied but not removed. Every kept item is listed with the reason. When the agent's data directory is also the data directory of a Dockmesh server on the same host (agents installed by old releases used `/var/lib/dockmesh`), only the agent's own files are removed.
 
+If you revoke the host in Dockmesh first, the agent's certificate is no longer accepted. The agent then logs `This host was removed from Dockmesh. Run: sudo dockmesh-agent uninstall` once, and after ten minutes of refusals it retries only once an hour.
+
 ## Reinstall later
 
 If you kept the data root, run the installer again:
