@@ -1,3 +1,0 @@
-kind: Fixed
-body: A backup scheduled in the hour the clock repeats when daylight saving ends runs once instead of twice, and one in the skipped hour when daylight saving starts runs at the end of that hour instead of not at all
-time: 2026-11-16T20:39:35.817155246Z

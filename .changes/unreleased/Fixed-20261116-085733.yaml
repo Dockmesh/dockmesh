@@ -1,3 +1,0 @@
-kind: Fixed
-body: Requests refused by a permission check inside a handler (system restore, system backups, settings that need extra permissions, agent upgrade policy, drains, role and user grants and similar) now write an auth.scope_denied audit entry like other refused requests
-time: 2026-11-16T08:57:33.160148622Z

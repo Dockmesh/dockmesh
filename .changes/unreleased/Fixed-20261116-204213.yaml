@@ -1,3 +1,0 @@
-kind: Fixed
-body: A source build started from its checkout without config keeps using the checkout's ./data and ./stacks of an earlier source run instead of opening a new setup
-time: 2026-11-16T20:42:13.694109424Z

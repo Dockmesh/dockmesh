@@ -1,3 +1,0 @@
-kind: Fixed
-body: The agent starts on RHEL, Rocky and other hosts with SELinux enforcing; before, systemd refused to run its binary (203/EXEC) and the host stayed pending
-time: 2026-11-16T13:10:52.385363514Z

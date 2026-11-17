@@ -1,3 +1,0 @@
-kind: Fixed
-body: An agent enrolled again after a certificate renewal was cut off no longer replaces its new certificate with the unfinished renewal on the next start, which made the server refuse it
-time: 2026-11-15T16:32:51.398565414Z

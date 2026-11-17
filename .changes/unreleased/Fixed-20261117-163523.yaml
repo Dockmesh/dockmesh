@@ -1,3 +1,0 @@
-kind: Fixed
-body: Turning auto-deploy off for a git stack while a held deploy was being retried could bring the pending commit back, so it deployed later anyway
-time: 2026-11-17T16:35:23.595055281Z
