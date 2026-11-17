@@ -313,6 +313,8 @@ func TestApplyStagedRefusesForeignMarkerPaths(t *testing.T) {
 		filepath.Join(pre, "x", "sudoers.d"),
 		filepath.Join(pre, "..", "..", ".."),
 		filepath.Join(pre, "not-a-stamp"),
+		pre + "/x/../20261117-120000",
+		dataDir + "/evil/../" + PreRestoreDir + "/20261117-120000",
 	} {
 		if err := os.MkdirAll(p.root, 0o700); err != nil {
 			t.Fatal(err)

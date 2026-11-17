@@ -204,10 +204,11 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 	// The marker is writable by the service account; only the exact paths
 	// this function names are accepted.
 	stackStamp, stacksOK := strings.CutPrefix(info.PrevStacks, filepath.Clean(cfg.StacksRoot)+PreRestoreDir+"-")
-	if filepath.Dir(info.PrevDir) != filepath.Join(dataDir, PreRestoreDir) || !validStamp(filepath.Base(info.PrevDir)) ||
+	if info.PrevDir != filepath.Clean(info.PrevDir) || filepath.Dir(info.PrevDir) != filepath.Join(dataDir, PreRestoreDir) || !validStamp(filepath.Base(info.PrevDir)) ||
 		!stacksOK || !validStamp(stackStamp) {
 		return false, fmt.Errorf("restore: staging marker names unexpected paths %q, %q", info.PrevDir, info.PrevStacks)
 	}
+	info.PrevDir = filepath.Join(dataDir, PreRestoreDir, filepath.Base(info.PrevDir))
 	if err := os.MkdirAll(info.PrevDir, 0o700); err != nil {
 		return false, err
 	}
