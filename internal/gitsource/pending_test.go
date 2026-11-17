@@ -84,3 +84,37 @@ func TestSyncPendingOnlyWhenHolderMissesCommit(t *testing.T) {
 		})
 	}
 }
+
+// A retry that stores its commit after auto-deploy was turned off stores
+// nothing; with auto-deploy on it does.
+func TestSetPendingOnlyWithAutoDeploy(t *testing.T) {
+	for _, auto := range []bool{true, false} {
+		ctx := context.Background()
+		database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mgr, err := stacks.NewManager(t.TempDir(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := New(database, nil, mgr, t.TempDir(), nil)
+		if _, err := svc.Configure(ctx, "web", Input{RepoURL: "https://example.com/r.git", AutoDeploy: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Configure(ctx, "web", Input{RepoURL: "https://example.com/r.git", AutoDeploy: auto}); err != nil {
+			t.Fatal(err)
+		}
+		svc.setPending(ctx, "web", "abc", stacklock.OpDeploy)
+		pending, err := svc.PendingDeploys(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pending["web"] != nil; got != auto {
+			t.Errorf("auto-deploy %v: pending stored = %v", auto, got)
+		}
+		svc.Stop()
+		mgr.Close()
+		database.Close()
+	}
+}
