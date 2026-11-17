@@ -113,11 +113,7 @@ func (r stacksDirRules) allowedParents() []string {
 // prepareCommand is what an admin runs to make p a directory the agent
 // may be switched to.
 func (r stacksDirRules) prepareCommand(p string) string {
-	a := r.account
-	if a == "" {
-		a = agentAccount
-	}
-	return fmt.Sprintf("sudo install -d -o %s -g %s -m 0750 %s", a, a, p)
+	return fmt.Sprintf("sudo install -d -o %s -g %s -m 0750 %s", r.account, r.account, p)
 }
 
 // creatableParent reports whether root may create a stacks dir directly
@@ -142,7 +138,6 @@ func (r stacksDirRules) denied() []string {
 	return denyRoots
 }
 
-// stacksDirResult is a check of a stacks dir.
 type stacksDirResult struct {
 	agents.StacksDirCheck
 }
@@ -158,13 +153,13 @@ func (r stacksDirResult) ok() bool { return r.Status != sdFail }
 
 // checkStacksDir checks p as a new stacks dir with the rules of root's
 // stacks-dir-apply. It writes nothing. Root creates p only as one new
-// directory in an allowed parent; anywhere else p must exist already,
-// be empty and belong to the agent. The refused trees below are a second
-// line behind that. Every component is opened with
-// O_NOFOLLOW from the one before, so a symlink anywhere is refused, and
-// compared by device and inode with the refused directories, which
-// catches another spelling of one. A path on a bind mount of a
-// subdirectory is refused, since its real place is not known.
+// directory in an allowed parent; anywhere else p must exist already, be
+// empty and belong to the agent. The refused trees below are a second
+// line behind that. Every component is opened with O_NOFOLLOW from the
+// one before, so a symlink anywhere is refused, and compared by device
+// and inode with the refused directories, which catches another spelling
+// of one. A path on a bind mount of a subdirectory is refused, since its
+// real place is not known.
 func checkStacksDir(p string, r stacksDirRules) stacksDirResult {
 	res := stacksDirResult{StacksDirCheck: agents.StacksDirCheck{Path: p}}
 	fail := func(issue, format string, a ...any) stacksDirResult {
