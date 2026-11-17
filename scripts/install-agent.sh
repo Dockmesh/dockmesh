@@ -361,7 +361,12 @@ if ! command -v docker >/dev/null 2>&1; then
   [[ $SKIP_DOCKER -eq 0 ]] || die "Docker is not installed. Install it, or run again without --skip-docker."
   STEPS=7
   step "Checking the system" "Linux $ARCH · systemd · Docker missing"
-  curl -fsSL https://get.docker.com | sh >/dev/null
+  DOCKER_LOG="$(mktemp /tmp/dockmesh-docker-install.XXXXXX)"
+  if ! curl -fsSL https://get.docker.com | sh >"$DOCKER_LOG" 2>&1; then
+    tail -n 20 "$DOCKER_LOG" >&2
+    die "Installing Docker from get.docker.com failed (full log: $DOCKER_LOG). Install Docker yourself and run again."
+  fi
+  rm -f "$DOCKER_LOG"
   systemctl enable --now docker >/dev/null 2>&1 || true
   step "Installing Docker" "get.docker.com"
 else
