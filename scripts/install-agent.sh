@@ -352,7 +352,7 @@ if [[ $RERUN -eq 0 && $AS_ROOT -eq 1 ]]; then
   die "--as-root was removed in 0.6.0. The agent runs as the dockmesh-agent user with access to Docker.
 See https://dockmesh.dev/docs/features/multi-host#agent-user"
 fi
-if [[ $RERUN -eq 1 && $AS_ROOT -eq 1 && $OWNER != root ]]; then
+if [[ $AS_ROOT -eq 1 && $OWNER != root ]]; then
   die "The agent runs as dockmesh-agent; --as-root does not switch it back to root."
 fi
 if [[ $SWITCH_USER -eq 1 && $RERUN -eq 0 ]]; then

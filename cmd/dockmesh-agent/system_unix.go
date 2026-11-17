@@ -229,7 +229,7 @@ type installResult struct {
 	warnings     []string
 	tokenRemoved bool
 	removed      []string
-	// handedOver counts the files a switch to the service account chowned.
+	// handedOver counts the entries a switch to the service account chowned.
 	handedOver int
 }
 
@@ -393,14 +393,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	}
 	if switching {
 		owned := append([]string{dataDir}, unit.WritablePaths...)
-		if stacksDir != "" {
-			owned = append(owned, stacksDir)
-		}
-		if err := checkRootOwnedDirs(owned, in.rootUID); err != nil {
+		if err := checkRootOwnedDirs(owned, in.rootUID, uid); err != nil {
 			return res, err
 		}
-		dirs := resolveStackDirs(stacksDir, earlier, dataDir)
-		n, err := handOver(dataDir, append([]string{dirs.current}, dirs.earlier...), uid, gid)
+		sd := resolveStackDirs(stacksDir, earlier, dataDir)
+		n, err := handOver(dataDir, append([]string{sd.current}, sd.earlier...), in.rootUID, uid, gid)
 		if err != nil {
 			return res, fmt.Errorf("hand the agent's files to %s: %w", runUser, err)
 		}
@@ -604,7 +601,8 @@ func renderAgentEnv(lines []string, set map[string]string) []byte {
 }
 
 // pickRunUser keeps the account of an installed unit: an agent installed
-// as root stays root unless switchUser moves it to agentAccount.
+// as root stays root unless switchUser moves it to agentAccount. A new
+// agent always runs as agentAccount.
 func pickRunUser(flagUser string, oldUnit []byte, switchUser bool) (string, error) {
 	if flagUser != "" && flagUser != agentAccount && flagUser != "root" {
 		return "", fmt.Errorf("--user must be %s or root", agentAccount)
@@ -616,10 +614,10 @@ func pickRunUser(flagUser string, oldUnit []byte, switchUser bool) (string, erro
 		if switchUser {
 			return "", errors.New("--switch-to-service-user needs an installed agent")
 		}
-		if flagUser == "" {
-			return agentAccount, nil
+		if flagUser == "root" {
+			return "", fmt.Errorf("a new agent runs as %s; only agents installed as root before 0.6.0 keep root", agentAccount)
 		}
-		return flagUser, nil
+		return agentAccount, nil
 	}
 	have := unitUser(oldUnit)
 	if have == "" {
@@ -638,8 +636,9 @@ func pickRunUser(flagUser string, oldUnit []byte, switchUser bool) (string, erro
 }
 
 // checkRootOwnedDirs refuses to hand over a directory that is not a real
-// directory owned by root: a root agent created all of them.
-func checkRootOwnedDirs(dirs []string, rootUID int) error {
+// directory owned by root or, after an interrupted switch, by uid: a root
+// agent created all of them.
+func checkRootOwnedDirs(dirs []string, rootUID, uid int) error {
 	for _, d := range dirs {
 		fi, err := os.Lstat(d)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -649,7 +648,7 @@ func checkRootOwnedDirs(dirs []string, rootUID int) error {
 			return err
 		}
 		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !fi.IsDir() || !ok || int(st.Uid) != rootUID {
+		if !fi.IsDir() || !ok || (int(st.Uid) != rootUID && int(st.Uid) != uid) {
 			return fmt.Errorf("%s is not a directory owned by root; the switch only hands over what the root agent wrote", d)
 		}
 	}
@@ -658,44 +657,59 @@ func checkRootOwnedDirs(dirs []string, rootUID int) error {
 
 // handOver gives what a root agent wrote to uid:gid: the data dir with
 // everything in it except stacks/, and in each stacks dir the dir itself,
-// every stack dir and the files directly in it. What containers wrote in
-// bind mounts below a stack dir keeps its owner. Links are never followed:
-// entries are changed with Lchown below an os.Root. It returns the number
+// every stack dir and the files directly in it. Only entries root owns
+// and files with a single link change hands, so what containers wrote
+// keeps its owner, and nothing is followed: each entry is opened below an
+// os.Root without following a link and changed through its descriptor.
+// Entries that vanish meanwhile are skipped. The data dir itself goes
+// last, so an interrupted switch can be run again. It returns the number
 // of entries changed.
-func handOver(dataDir string, stackDirs []string, uid, gid int) (int, error) {
+func handOver(dataDir string, stackDirs []string, rootUID, uid, gid int) (int, error) {
 	n := 0
+	for _, dir := range stackDirs {
+		c, err := handOverStacks(dir, rootUID, uid, gid)
+		n += c
+		if err != nil {
+			return n, err
+		}
+	}
 	root, err := os.OpenRoot(dataDir)
 	if err != nil {
 		return n, err
 	}
 	defer root.Close()
+	var names []string
 	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		if p == "stacks" && d.IsDir() {
 			return fs.SkipDir
 		}
-		if err := root.Lchown(p, uid, gid); err != nil {
-			return err
+		if p != "." {
+			names = append(names, p)
 		}
-		n++
 		return nil
 	})
 	if err != nil {
 		return n, err
 	}
-	for _, dir := range stackDirs {
-		c, err := handOverStacks(dir, uid, gid)
-		n += c
+	for _, p := range append(names, ".") {
+		changed, err := takeOver(root, p, rootUID, uid, gid)
 		if err != nil {
 			return n, err
+		}
+		if changed {
+			n++
 		}
 	}
 	return n, nil
 }
 
-func handOverStacks(dir string, uid, gid int) (int, error) {
+func handOverStacks(dir string, rootUID, uid, gid int) (int, error) {
 	root, err := os.OpenRoot(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
@@ -704,37 +718,69 @@ func handOverStacks(dir string, uid, gid int) (int, error) {
 		return 0, err
 	}
 	defer root.Close()
-	if err := root.Lchown(".", uid, gid); err != nil {
-		return 0, err
-	}
-	n := 1
+	names := []string{"."}
 	stacks, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
-		return n, err
+		return 0, err
 	}
 	for _, st := range stacks {
-		if err := root.Lchown(st.Name(), uid, gid); err != nil {
-			return n, err
-		}
-		n++
+		names = append(names, st.Name())
 		if !st.IsDir() {
 			continue
 		}
 		files, err := fs.ReadDir(root.FS(), st.Name())
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		for _, f := range files {
+			if f.Type().IsRegular() {
+				names = append(names, filepath.Join(st.Name(), f.Name()))
+			}
+		}
+	}
+	n := 0
+	for _, name := range names {
+		changed, err := takeOver(root, name, rootUID, uid, gid)
 		if err != nil {
 			return n, err
 		}
-		for _, f := range files {
-			if !f.Type().IsRegular() {
-				continue
-			}
-			if err := root.Lchown(filepath.Join(st.Name(), f.Name()), uid, gid); err != nil {
-				return n, err
-			}
+		if changed {
 			n++
 		}
 	}
 	return n, nil
+}
+
+// takeOver chowns name below root to uid:gid when it is a directory or a
+// single-link regular file owned by rootUID. Anything else, and an entry
+// that is gone, is left alone.
+func takeOver(root *os.Root, name string, rootUID, uid, gid int) (bool, error) {
+	if fi, err := root.Lstat(name); errors.Is(err, fs.ErrNotExist) || (err == nil && fi.Mode()&fs.ModeSymlink != 0) {
+		return false, nil
+	}
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != rootUID || int(st.Uid) == uid {
+		return false, nil
+	}
+	if !fi.IsDir() && (!fi.Mode().IsRegular() || st.Nlink != 1) {
+		return false, nil
+	}
+	return true, f.Chown(uid, gid)
 }
 
 // unitUser is the User= of a unit file, empty without one.

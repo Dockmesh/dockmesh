@@ -577,7 +577,7 @@ func TestPickRunUser(t *testing.T) {
 		wantErr  bool
 	}{
 		{"fresh", "", nil, false, agentAccount, false},
-		{"fresh as root", "root", nil, false, "root", false},
+		{"fresh as root refused", "root", nil, false, "", true},
 		{"root kept", "", root, false, "root", false},
 		{"root not switched by --user", agentAccount, root, false, "", true},
 		{"root switched", "", root, true, agentAccount, false},
@@ -611,29 +611,79 @@ func TestHandOverScope(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(data, "stacks", "web", "link")); err != nil {
 		t.Fatal(err)
 	}
-	n, err := handOver(data, []string{filepath.Join(data, "stacks"), filepath.Join(t.TempDir(), "missing")}, os.Getuid(), os.Getgid())
+	stacks := []string{filepath.Join(data, "stacks"), filepath.Join(t.TempDir(), "missing")}
+	uid, gid := os.Getuid(), os.Getgid()
+	if n, err := handOver(data, stacks, uid, uid, gid); err != nil || n != 0 {
+		t.Errorf("handed over %d entries (err %v) the account has already", n, err)
+	}
+	if n, err := handOver(data, stacks, uid+1, uid+2, gid); err != nil || n != 0 {
+		t.Errorf("handed over %d entries (err %v) that root does not own", n, err)
+	}
+}
+
+func TestTakeOver(t *testing.T) {
+	stacks := t.TempDir()
+	for _, p := range []string{"web/compose.yaml", "web/html/index.html"} {
+		full := filepath.Join(stacks, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(other, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(other, filepath.Join(stacks, "web", "hardlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(stacks, "web", "symlink")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(stacks)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// data dir, agent.crt, staging, staging/x; stacks, web, db, compose.yaml, .env
-	if n != 9 {
-		t.Errorf("handed over %d entries, want 9 (bind data and links below a stack dir stay)", n)
+	defer root.Close()
+	uid := os.Getuid()
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"web", true},
+		{"web/compose.yaml", true},
+		{"web/hardlink", false},
+		{"web/symlink", false},
+		{"web/gone", false},
+	}
+	for _, tt := range tests {
+		// Unprivileged the chown to another uid fails: an error means
+		// takeOver decided to change the entry.
+		changed, err := takeOver(root, tt.name, uid, uid+1, os.Getgid())
+		if got := changed || err != nil; got != tt.want {
+			t.Errorf("takeOver(%s) = %v, %v; want a change %v", tt.name, changed, err, tt.want)
+		}
 	}
 }
 
 func TestCheckRootOwnedDirs(t *testing.T) {
 	dir := t.TempDir()
-	if err := checkRootOwnedDirs([]string{dir, filepath.Join(dir, "missing")}, os.Getuid()); err != nil {
+	if err := checkRootOwnedDirs([]string{dir, filepath.Join(dir, "missing")}, os.Getuid(), -1); err != nil {
 		t.Errorf("own dir refused: %v", err)
 	}
-	if err := checkRootOwnedDirs([]string{dir}, os.Getuid()+1); err == nil {
+	if err := checkRootOwnedDirs([]string{dir}, os.Getuid()+1, os.Getuid()); err != nil {
+		t.Errorf("dir of the target account after an interrupted switch refused: %v", err)
+	}
+	if err := checkRootOwnedDirs([]string{dir}, os.Getuid()+1, os.Getuid()+2); err == nil {
 		t.Error("dir of another account accepted")
 	}
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(dir, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkRootOwnedDirs([]string{link}, os.Getuid()); err == nil {
+	if err := checkRootOwnedDirs([]string{link}, os.Getuid(), -1); err == nil {
 		t.Error("symlink accepted")
 	}
 }
@@ -649,9 +699,6 @@ func TestSystemInstallSwitchesRootAgent(t *testing.T) {
 	res, err := ti.run(installOptions{SwitchToServiceUser: true})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if res.handedOver == 0 {
-		t.Error("nothing handed over")
 	}
 	if unit := ti.read(t, "units/dockmesh-agent.service"); !strings.Contains(unit, "User=dockmesh-agent\n") {
 		t.Errorf("unit still runs as root:\n%s", unit)
