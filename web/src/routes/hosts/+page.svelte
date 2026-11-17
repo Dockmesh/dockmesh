@@ -425,6 +425,8 @@
                   <span class="off">{m.hosts_offline_last_seen({ ago: fmtAgoNever(r.last_seen_at) })}</span>
                 {:else if r.status === 'pending'}
                   {m.hosts_waiting_for_agent()}
+                {:else if r.status === 'removed'}
+                  {m.label_host_removed()}
                 {:else}
                   {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
                 {/if}

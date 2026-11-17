@@ -28,7 +28,8 @@ const VULN_SEVERITY: Record<string, () => string> = {
 const HOST_STATUS: Record<string, () => string> = {
   online: m.label_host_online,
   offline: m.label_host_offline,
-  pending: m.label_host_pending
+  pending: m.label_host_pending,
+  removed: m.label_host_removed
 };
 
 // Values without a translation are shown as the server sent them.

@@ -90,6 +90,9 @@ func main() {
 		case "system":
 			runSystemCmd(os.Args[2:])
 			return
+		case "uninstall":
+			runUninstallCmd(os.Args[2:])
+			return
 		}
 	}
 	insecureEnroll := os.Getenv("DOCKMESH_INSECURE_ENROLL") == "true"
@@ -180,6 +183,7 @@ func main() {
 		slog.Info("shutting down")
 		cancel()
 	}()
+	watchUninstallSignal(ctx)
 
 	// Host-metrics sampler: mirrors the central server so every host
 	// (local and every remote agent) emits CPU% averaged over a 5s
@@ -196,6 +200,10 @@ func main() {
 		started := time.Now()
 		err := runOnce(ctx, dialURL, tlsCfg, store)
 		if ctx.Err() != nil {
+			break
+		}
+		if uninstalled.Load() {
+			<-ctx.Done()
 			break
 		}
 		if time.Since(started) >= stableSession {
@@ -276,6 +284,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName,
 		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion, "layout", agentLayout)
 	clearUpdateResult(dataDir(), hello.UpdateResult)
+	rememberAgentName(dataDir(), welcome.AgentName)
 	if agentLayout == agents.LayoutManaged {
 		markRunning(dataDir())
 	}
@@ -287,6 +296,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	if agentLayout == agents.LayoutManaged {
 		go reconnectForResult(ctxConn, conn, dataDir())
 	}
+	go reportUninstall(ctxConn, conn, dataDir())
 	// A failed write closes the socket so the read loop doesn't wait on
 	// a dead connection.
 	go func() {
@@ -351,6 +361,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 			deliverResponse(f)
 		case agents.FrameReqCancel:
 			cancelRequest(f.ID)
+		case agents.FrameServerUninstalled:
+			ackUninstall()
 		case agents.FrameStreamOpen:
 			var open agents.StreamOpen
 			if err := json.Unmarshal(f.Payload, &open); err != nil {

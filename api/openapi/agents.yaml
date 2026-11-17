@@ -297,7 +297,7 @@ components:
         name: {type: string}
         status:
           type: string
-          enum: [pending, online, offline, revoked]
+          enum: [pending, online, offline, removed, revoked]
         version: {type: string}
         os: {type: string}
         arch: {type: string}
