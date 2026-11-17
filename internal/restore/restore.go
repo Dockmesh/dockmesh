@@ -435,12 +435,25 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 				continue
 			}
 		}
+		own := entryOwner{}
+		switch live, known := opts.liveOwners[ownerKey(root, dataDir)]; {
+		case otherOwner && !asRoot:
+			c.LostOwners++
+		case otherOwner:
+			own = entryOwner{hdr.Uid, hdr.Gid, true}
+		case asRoot && known:
+			own = entryOwner{live.uid, live.gid, true}
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := fsys.mkdirAll(name, 0o750); err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
-			dirModes = append(dirModes, dirMode{fsys, name, restoredMode(hdr, otherOwner, 0o1777)})
+			fi, err := fsys.lstat(name)
+			if err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+			}
+			dirModes = append(dirModes, dirMode{fsys, name, fi, restoredMode(hdr, otherOwner, 0o1777), own})
 		case tar.TypeReg:
 			if err := fsys.mkdirAll(filepath.Dir(name), 0o750); err != nil {
 				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
@@ -460,9 +473,13 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 				src = io.LimitReader(tr, opts.MaxBytes-c.Bytes+1)
 			}
 			n, err := io.Copy(out, src)
+			// Owner and mode are set on the descriptor, so no name swapped
+			// in meanwhile can redirect them; the umask must not narrow
+			// the archive's mode.
+			if err == nil && own.set {
+				err = out.Chown(own.uid, own.gid)
+			}
 			if err == nil {
-				// Set on the descriptor: the umask must not narrow the
-				// archive's mode, and no name can be swapped in between.
 				err = out.Chmod(restoredMode(hdr, otherOwner, 0o777))
 			}
 			out.Close()
@@ -475,18 +492,6 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			_ = fsys.chtimes(name, hdr.ModTime, hdr.ModTime)
 			c.Files++
 			c.Bytes += n
-		}
-		switch live, known := opts.liveOwners[ownerKey(root, dataDir)]; {
-		case otherOwner && !asRoot:
-			c.LostOwners++
-		case otherOwner:
-			if err := fsys.lchown(name, hdr.Uid, hdr.Gid); err != nil {
-				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
-			}
-		case asRoot && known:
-			if err := fsys.lchown(name, live.uid, live.gid); err != nil {
-				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
-			}
 		}
 	}
 	if err := foreign.close(); err != nil {
@@ -509,19 +514,41 @@ func ownerKey(root, dataDir string) string {
 	return root
 }
 
-// dirMode is the mode a restored directory gets once it is filled.
+// entryOwner is the owner a restored entry gets, if set.
+type entryOwner struct {
+	uid, gid int
+	set      bool
+}
+
+// dirMode is the mode and owner a restored directory gets once it is
+// filled. fi identifies the directory that was created, so a name swapped
+// for a symlink meanwhile is refused instead of followed.
 type dirMode struct {
-	fsys entryFS
-	name string
-	mode os.FileMode
+	fsys  entryFS
+	name  string
+	fi    os.FileInfo
+	mode  os.FileMode
+	owner entryOwner
 }
 
 func (d dirMode) apply() error {
-	f, err := d.fsys.openFile(d.name, os.O_RDONLY|openDirNoFollow, 0)
+	f, err := d.fsys.openFile(d.name, os.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("restore: set the mode of %s: %w", d.name, err)
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(fi, d.fi) {
+		return fmt.Errorf("restore: %s was replaced during the restore", d.name)
+	}
+	if d.owner.set {
+		if err := f.Chown(d.owner.uid, d.owner.gid); err != nil {
+			return err
+		}
+	}
 	return f.Chmod(d.mode)
 }
 
@@ -661,13 +688,13 @@ type entryFS struct {
 	remove   func(string) error
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	chtimes  func(string, time.Time, time.Time) error
-	lchown   func(string, int, int) error
+	lstat    func(string) (os.FileInfo, error)
 }
 
 func rootFS(r *os.Root) entryFS {
-	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes, r.Lchown}
+	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes, r.Lstat}
 }
 
 func hostFS() entryFS {
-	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes, os.Lchown}
+	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes, os.Lstat}
 }

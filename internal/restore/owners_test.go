@@ -268,3 +268,36 @@ func TestExtractRefusesReturningToAStack(t *testing.T) {
 		t.Fatal("archive that returns to a stack was accepted")
 	}
 }
+
+// A directory swapped for a symlink before its mode is set is refused,
+// not followed.
+func TestDirModeRefusesSwappedDirectory(t *testing.T) {
+	base := t.TempDir()
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	for _, d := range []string{"a", "other"} {
+		if err := os.Mkdir(filepath.Join(base, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fi, err := root.Lstat("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(base, "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other", filepath.Join(base, "a")); err != nil {
+		t.Fatal(err)
+	}
+	d := dirMode{fsys: rootFS(root), name: "a", fi: fi, mode: 0o777}
+	if err := d.apply(); err == nil {
+		t.Fatal("chmod followed the swapped-in symlink")
+	}
+	if st, err := os.Stat(filepath.Join(base, "other")); err != nil || st.Mode().Perm() != 0o750 {
+		t.Errorf("link target changed: %v %v", st.Mode(), err)
+	}
+}
