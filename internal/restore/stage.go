@@ -77,6 +77,9 @@ func pathsFor(cfg *config.Config) stagePaths {
 // restore is marked ready, e.g. to compare the archive's hash.
 type StageOptions struct {
 	Verify func() error
+	// Files writes and removes stack data of other owners; see
+	// Options.Files.
+	Files FileHelper
 }
 
 // Stage caps what an archive may unpack to, like verification does: the
@@ -91,35 +94,59 @@ const (
 // area again and returns the result with an error.
 func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, opts StageOptions) (*Counts, *SanityResult, error) {
 	p := pathsFor(cfg)
-	if err := clearStaging(p); err != nil {
+	clear := func() error { return clearStaging(ctx, p, opts.Files) }
+	if err := clear(); err != nil {
 		return nil, nil, err
 	}
 	if err := os.MkdirAll(p.data, 0o700); err != nil {
 		return nil, nil, err
 	}
-	counts, err := Extract(ctx, r, p.cfg, Options{Force: true, TmpBase: p.root, MaxBytes: stageMaxBytes, MaxEntries: stageMaxEntries})
+	live := map[string]fileOwner{}
+	if o, ok := ownerOf(filepath.Dir(cfg.DBPath)); ok {
+		live[filepath.Dir(p.cfg.DBPath)] = o
+	}
+	stacksOwner, stacksKnown := ownerOf(cfg.StacksRoot)
+	if stacksKnown {
+		live[p.stacks] = stacksOwner
+	}
+	counts, err := Extract(ctx, r, p.cfg, Options{Force: true, TmpBase: p.root, MaxBytes: stageMaxBytes, MaxEntries: stageMaxEntries, Files: opts.Files, liveOwners: live})
 	if err != nil {
-		_ = clearStaging(p)
+		_ = clear()
 		return nil, nil, err
+	}
+	// The stacks root itself is not in the archive; the restored one keeps
+	// the mode and owner of the one it replaces.
+	if fi, err := os.Stat(cfg.StacksRoot); err == nil && fi.IsDir() && exists(p.stacks) {
+		err := os.Chmod(p.stacks, fi.Mode().Perm())
+		if err == nil && stacksKnown && os.Geteuid() == 0 {
+			err = os.Lchown(p.stacks, stacksOwner.uid, stacksOwner.gid)
+		}
+		if err != nil {
+			_ = clear()
+			return nil, nil, err
+		}
+	}
+	if counts.LostOwners > 0 {
+		slog.Warn("restore: stack data of other owners restored as the service's own, since Docker is unavailable", "entries", counts.LostOwners)
 	}
 	if opts.Verify != nil {
 		if err := opts.Verify(); err != nil {
-			_ = clearStaging(p)
+			_ = clear()
 			return counts, nil, err
 		}
 	}
 	result, err := Sanity(p.cfg)
 	if err != nil {
-		_ = clearStaging(p)
+		_ = clear()
 		return counts, nil, err
 	}
 	if !result.Passed {
-		_ = clearStaging(p)
+		_ = clear()
 		return counts, result, fmt.Errorf("the backup failed the restore checks: %s", result.Summary)
 	}
 	info := StagedInfo{StagedAt: time.Now().UTC(), Source: source, Files: counts.Files, Bytes: counts.Bytes}
 	if err := writeMarker(p, &info); err != nil {
-		_ = clearStaging(p)
+		_ = clear()
 		return counts, result, err
 	}
 	return counts, result, nil
@@ -131,7 +158,9 @@ func Staged(cfg *config.Config) (*StagedInfo, error) {
 }
 
 // DiscardStaged drops a staged restore that has not been applied yet.
-func DiscardStaged(cfg *config.Config) error {
+// files removes stack data of other owners; nil removes only what the
+// service may.
+func DiscardStaged(ctx context.Context, cfg *config.Config, files FileHelper) error {
 	p := pathsFor(cfg)
 	info, err := readMarker(p)
 	if err != nil {
@@ -143,7 +172,7 @@ func DiscardStaged(cfg *config.Config) error {
 	if info.PrevDir != "" {
 		return errors.New("the staged restore is already being applied")
 	}
-	return clearStaging(p)
+	return clearStaging(ctx, p, files)
 }
 
 // ApplyStaged swaps a staged restore in. Call it before opening the
@@ -156,7 +185,7 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 	}
 	if info == nil {
 		// An extraction that never finished leaves no marker.
-		if err := clearStaging(p); err != nil {
+		if err := clearStaging(context.Background(), p, nil); err != nil {
 			slog.Warn("restore: remove unfinished staging area", "err", err)
 		}
 		return false, nil
@@ -248,11 +277,21 @@ func exists(p string) bool {
 	return err == nil
 }
 
-func clearStaging(p stagePaths) error {
+func clearStaging(ctx context.Context, p stagePaths, files FileHelper) error {
 	if err := os.RemoveAll(p.root); err != nil {
 		return err
 	}
-	return os.RemoveAll(p.stacks)
+	return removeTree(ctx, files, p.stacks)
+}
+
+// removeTree deletes dir, through files when it holds data the service
+// may not delete itself.
+func removeTree(ctx context.Context, files FileHelper, dir string) error {
+	err := os.RemoveAll(dir)
+	if err == nil || files == nil || !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+	return files.RemoveAll(ctx, filepath.Dir(dir), dir)
 }
 
 func writeMarker(p stagePaths, info *StagedInfo) error {

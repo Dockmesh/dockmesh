@@ -461,7 +461,7 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	case "system":
 		// System backup always lives on the central server, not on any
 		// agent. Host routing is irrelevant here.
-		return tarSystem(ctx, e.db, e.paths, w)
+		return tarSystem(ctx, e.db, e.paths, stackFiles(e.docker), w)
 	default:
 		return 0, fmt.Errorf("%w: %s", ErrUnknownSourceType, src.Type)
 	}
