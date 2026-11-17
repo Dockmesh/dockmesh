@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -71,10 +72,11 @@ func TestFinishHelper(t *testing.T) {
 }
 
 type fakeSweep struct {
-	items   []container.Summary
-	listed  client.Filters
-	failIDs map[string]bool
-	removed []string
+	items       []container.Summary
+	imageLabels map[string]map[string]string
+	listed      client.Filters
+	failIDs     map[string]bool
+	removed     []string
 }
 
 func (f *fakeSweep) ContainerList(_ context.Context, o client.ContainerListOptions) (client.ContainerListResult, error) {
@@ -90,29 +92,56 @@ func (f *fakeSweep) ContainerRemove(_ context.Context, id string, _ client.Conta
 	return client.ContainerRemoveResult{}, nil
 }
 
+func (f *fakeSweep) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	var r client.ImageInspectResult
+	r.Config = &dockerspec.DockerOCIImageConfig{}
+	r.Config.Labels = f.imageLabels[id]
+	return r, nil
+}
+
 func TestRemoveOrphanHelpers(t *testing.T) {
 	start := time.Unix(1_800_000_000, 500_000_000)
-	helper := map[string]string{"dockmesh.managed": "true", "dockmesh.component": BackupHelperComponent}
 	before := start.Unix() - 60
+	labels := func(extra ...string) map[string]string {
+		l := map[string]string{"dockmesh.managed": "true", "dockmesh.component": BackupHelperComponent}
+		for i := 0; i+1 < len(extra); i += 2 {
+			l[extra[i]] = extra[i+1]
+		}
+		return l
+	}
+	server := labels(HelperOwnerLabel, HelperOwnerServer)
+	agent := labels(HelperOwnerLabel, HelperOwnerAgent)
 	tests := []struct {
 		name    string
+		owner   string
 		c       container.Summary
 		removed bool
 	}{
-		{"exited before start", container.Summary{ID: "a", Labels: helper, State: container.StateExited, Created: before}, true},
-		{"created but never started", container.Summary{ID: "a", Labels: helper, State: container.StateCreated, Created: before}, true},
-		{"dead", container.Summary{ID: "a", Labels: helper, State: container.StateDead, Created: before}, true},
-		{"running, another process may use it", container.Summary{ID: "a", Labels: helper, State: container.StateRunning, Created: before}, false},
-		{"paused", container.Summary{ID: "a", Labels: helper, State: container.StatePaused, Created: before}, false},
-		{"created in the start second", container.Summary{ID: "a", Labels: helper, State: container.StateExited, Created: start.Unix()}, false},
-		{"created after start", container.Summary{ID: "a", Labels: helper, State: container.StateExited, Created: start.Unix() + 5}, false},
-		{"other component", container.Summary{ID: "a", Labels: map[string]string{"dockmesh.component": "stack-files-helper"}, State: container.StateExited, Created: before}, false},
-		{"no label", container.Summary{ID: "a", Image: "busybox", State: container.StateExited, Created: before}, false},
+		{"exited before start", HelperOwnerServer, container.Summary{Labels: server, State: container.StateExited, Created: before}, true},
+		{"created but never started", HelperOwnerServer, container.Summary{Labels: server, State: container.StateCreated, Created: before}, true},
+		{"dead", HelperOwnerServer, container.Summary{Labels: server, State: container.StateDead, Created: before}, true},
+		{"running", HelperOwnerServer, container.Summary{Labels: server, State: container.StateRunning, Created: before}, false},
+		{"paused", HelperOwnerServer, container.Summary{Labels: server, State: container.StatePaused, Created: before}, false},
+		{"created in the start second", HelperOwnerServer, container.Summary{Labels: server, State: container.StateExited, Created: start.Unix()}, false},
+		{"created after start", HelperOwnerServer, container.Summary{Labels: server, State: container.StateExited, Created: start.Unix() + 5}, false},
+		{"server keeps an agent's helper", HelperOwnerServer, container.Summary{Labels: agent, State: container.StateExited, Created: before}, false},
+		{"agent keeps the server's helper", HelperOwnerAgent, container.Summary{Labels: server, State: container.StateExited, Created: before}, false},
+		{"agent removes its own", HelperOwnerAgent, container.Summary{Labels: agent, State: container.StateExited, Created: before}, true},
+		{"server removes one without owner", HelperOwnerServer, container.Summary{Labels: labels(), State: container.StateExited, Created: before}, true},
+		{"agent keeps one without owner", HelperOwnerAgent, container.Summary{Labels: labels(), State: container.StateExited, Created: before}, false},
+		{"part of a compose project", HelperOwnerServer, container.Summary{Labels: labels(HelperOwnerLabel, HelperOwnerServer, "com.docker.compose.project", "app"), State: container.StateExited, Created: before}, false},
+		{"label from the image", HelperOwnerServer, container.Summary{ImageID: "sha256:forged", Labels: server, State: container.StateExited, Created: before}, false},
+		{"other component", HelperOwnerServer, container.Summary{Labels: map[string]string{"dockmesh.component": "stack-files-helper"}, State: container.StateExited, Created: before}, false},
+		{"no label", HelperOwnerServer, container.Summary{Image: "busybox", State: container.StateExited, Created: before}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeSweep{items: []container.Summary{tt.c}}
-			n, err := RemoveOrphanHelpers(context.Background(), f, start)
+			tt.c.ID = "a"
+			f := &fakeSweep{
+				items:       []container.Summary{tt.c},
+				imageLabels: map[string]map[string]string{"sha256:forged": {"dockmesh.component": BackupHelperComponent}},
+			}
+			n, err := RemoveOrphanHelpers(context.Background(), f, tt.owner, start)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,15 +157,15 @@ func TestRemoveOrphanHelpers(t *testing.T) {
 
 func TestRemoveOrphanHelpersContinuesAfterError(t *testing.T) {
 	start := time.Unix(1_800_000_000, 0)
-	helper := map[string]string{"dockmesh.component": BackupHelperComponent}
+	l := BackupHelperLabels(HelperOwnerServer)
 	f := &fakeSweep{
 		items: []container.Summary{
-			{ID: "a", Labels: helper, State: container.StateExited, Created: 1},
-			{ID: "b", Labels: helper, State: container.StateExited, Created: 1},
+			{ID: "a", Labels: l, State: container.StateExited, Created: 1},
+			{ID: "b", Labels: l, State: container.StateExited, Created: 1},
 		},
 		failIDs: map[string]bool{"a": true},
 	}
-	n, err := RemoveOrphanHelpers(context.Background(), f, start)
+	n, err := RemoveOrphanHelpers(context.Background(), f, HelperOwnerServer, start)
 	if err == nil || n != 1 || len(f.removed) != 1 || f.removed[0] != "b" {
 		t.Fatalf("n=%d removed=%v err=%v", n, f.removed, err)
 	}

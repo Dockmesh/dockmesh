@@ -813,6 +813,7 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        helperImage,
+			Labels:       dockerwrap.BackupHelperLabels(dockerwrap.HelperOwnerAgent),
 			Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 			AttachStdout: true,
 			AttachStderr: true,
@@ -872,6 +873,7 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:       helperImage,
+			Labels:      dockerwrap.BackupHelperLabels(dockerwrap.HelperOwnerAgent),
 			Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace, int64(need))},
 			AttachStdin: true,
 			OpenStdin:   true,
@@ -918,8 +920,9 @@ func recoverVolume(cli *client.Client, volumeName string) {
 	defer cancel()
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: helperImage,
-			Cmd:   []string{"sh", "-c", agents.VolumeRecoverScript()},
+			Image:  helperImage,
+			Labels: dockerwrap.BackupHelperLabels(dockerwrap.HelperOwnerAgent),
+			Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
 		},
 		HostConfig: &container.HostConfig{
 			Binds:     []string{volumeName + ":/dest"},
@@ -1496,8 +1499,8 @@ func dockerDaemonInfo(ctx context.Context) *agents.DaemonInfo {
 }
 
 // removeOrphanHelpers waits for the daemon, which may still be starting
-// when the agent boots, and then removes once the backup helpers an
-// earlier agent process left behind.
+// when the agent boots, then removes the backup helpers an earlier agent
+// process left behind.
 func removeOrphanHelpers(ctx context.Context, startedAt time.Time) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -1510,7 +1513,7 @@ func removeOrphanHelpers(ctx context.Context, startedAt time.Time) {
 		_, err := cli.Ping(pingCtx, client.PingOptions{})
 		cancel()
 		if err == nil {
-			dockerwrap.SweepOrphanHelpers(ctx, cli, startedAt)
+			dockerwrap.SweepOrphanHelpers(ctx, cli, dockerwrap.HelperOwnerAgent, startedAt)
 			return
 		}
 		select {
