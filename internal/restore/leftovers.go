@@ -72,6 +72,11 @@ func leftoverDirs(cfg *config.Config) ([]leftoverDir, error) {
 	return out, nil
 }
 
+func validStamp(s string) bool {
+	_, ok := parseStamp(s)
+	return ok
+}
+
 func parseStamp(s string) (time.Time, bool) {
 	if !stampPattern.MatchString(s) {
 		return time.Time{}, false

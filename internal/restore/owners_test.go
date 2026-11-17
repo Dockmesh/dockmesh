@@ -301,3 +301,28 @@ func TestDirModeRefusesSwappedDirectory(t *testing.T) {
 		t.Errorf("link target changed: %v %v", st.Mode(), err)
 	}
 }
+
+// A marker naming other paths than ApplyStaged writes is refused before
+// anything moves.
+func TestApplyStagedRefusesForeignMarkerPaths(t *testing.T) {
+	cfg, _ := restoreEnv(t)
+	p := pathsFor(cfg)
+	dataDir := filepath.Dir(cfg.DBPath)
+	pre := filepath.Join(dataDir, PreRestoreDir)
+	for _, prev := range []string{
+		filepath.Join(pre, "x", "sudoers.d"),
+		filepath.Join(pre, "..", "..", ".."),
+		filepath.Join(pre, "not-a-stamp"),
+	} {
+		if err := os.MkdirAll(p.root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		info := &StagedInfo{Source: "test", PrevDir: prev, PrevStacks: cfg.StacksRoot + PreRestoreDir + "-20261117-120000"}
+		if err := writeMarker(p, info); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ApplyStaged(cfg); err == nil {
+			t.Errorf("marker with %q accepted", prev)
+		}
+	}
+}

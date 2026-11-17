@@ -135,8 +135,8 @@ func TestApplyResumesAfterCrash(t *testing.T) {
 	// steps by hand with the marker the real apply writes.
 	p := pathsFor(cfg)
 	info, _ := readMarker(p)
-	info.PrevDir = filepath.Join(dataDir, PreRestoreDir, "crash")
-	info.PrevStacks = cfg.StacksRoot + PreRestoreDir + "-crash"
+	info.PrevDir = filepath.Join(dataDir, PreRestoreDir, "20261117-120000")
+	info.PrevStacks = cfg.StacksRoot + PreRestoreDir + "-20261117-120000"
 	if err := writeMarker(p, info); err != nil {
 		t.Fatal(err)
 	}

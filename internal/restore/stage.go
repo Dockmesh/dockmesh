@@ -201,8 +201,11 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 			return false, err
 		}
 	}
-	if !strings.HasPrefix(info.PrevDir, filepath.Join(dataDir, PreRestoreDir)+string(filepath.Separator)) ||
-		!strings.HasPrefix(info.PrevStacks, filepath.Clean(cfg.StacksRoot)+PreRestoreDir+"-") {
+	// The marker is writable by the service account; only the exact paths
+	// this function names are accepted.
+	stackStamp, stacksOK := strings.CutPrefix(info.PrevStacks, filepath.Clean(cfg.StacksRoot)+PreRestoreDir+"-")
+	if filepath.Dir(info.PrevDir) != filepath.Join(dataDir, PreRestoreDir) || !validStamp(filepath.Base(info.PrevDir)) ||
+		!stacksOK || !validStamp(stackStamp) {
 		return false, fmt.Errorf("restore: staging marker names unexpected paths %q, %q", info.PrevDir, info.PrevStacks)
 	}
 	if err := os.MkdirAll(info.PrevDir, 0o700); err != nil {
@@ -212,7 +215,7 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 	// directory's owner, or the server could not list or delete them.
 	if o, ok := ownerOf(dataDir); ok && os.Geteuid() == 0 {
 		for _, d := range []string{filepath.Dir(info.PrevDir), info.PrevDir} {
-			if err := os.Lchown(d, o.uid, o.gid); err != nil {
+			if err := chownDirNoFollow(d, o); err != nil {
 				return false, err
 			}
 		}
