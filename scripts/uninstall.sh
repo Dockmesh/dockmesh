@@ -162,10 +162,54 @@ PURGE_STACKS=""
 PURGE_FILES=()
 PURGE_KEPT=0
 AGENT_DIRS=()
+# IN_USE holds the host paths containers mount; IN_USE_KNOWN is 1 once
+# Docker answered. SERVICE_USERS own what Dockmesh writes.
+IN_USE=()
+IN_USE_KNOWN=0
+SERVICE_USERS="dockmesh root"
 
+# keep P WHY reports a kept path. Names can come from container data, so
+# control characters are dropped before they reach the terminal.
 keep() {
   PURGE_KEPT=1
-  warn "keep    $1: $2"
+  warn "keep    $(printf '%s' "$1" | tr -d '\000-\037\177'): $(printf '%s' "$2" | tr -d '\000-\037\177')"
+}
+
+# owner_ok P succeeds when one of SERVICE_USERS owns P.
+owner_ok() {
+  local o u
+  o="$(stat -c %U -- "$1" 2>/dev/null || stat -f %Su -- "$1" 2>/dev/null)" || return 1
+  for u in $SERVICE_USERS; do
+    [ "$o" = "$u" ] && return 0
+  done
+  return 1
+}
+
+# read_container_mounts fills IN_USE with the bind sources of every
+# container, running or not.
+read_container_mounts() {
+  local ids src
+  IN_USE=()
+  IN_USE_KNOWN=0
+  command -v docker >/dev/null 2>&1 || return 0
+  ids="$(docker ps -aq 2>/dev/null)" || return 0
+  IN_USE_KNOWN=1
+  [ -n "$ids" ] || return 0
+  while IFS= read -r src; do
+    [ -n "$src" ] && IN_USE+=("$src")
+  done < <(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' $ids 2>/dev/null)
+}
+
+# mounted_below DIR prints a container bind source in or below DIR.
+mounted_below() {
+  local m
+  for m in ${IN_USE[@]+"${IN_USE[@]}"}; do
+    if under "$m" "$1"; then
+      printf '%s' "$m"
+      return 0
+    fi
+  done
+  return 1
 }
 
 removed() {
@@ -282,10 +326,19 @@ resolve_purge_paths() {
 # the agent's config names. They are only ever kept, so the file is read
 # whoever owns it.
 read_agent_dirs() {
-  local v d IFS=:
+  local v d data IFS=:
   AGENT_DIRS=()
   [ -f "$1" ] || return 0
-  for v in "$(env_value "$1" DOCKMESH_DATA_DIR)" "$(env_value "$1" DOCKMESH_STACKS_DIR)" "$(env_value "$1" DOCKMESH_EARLIER_STACKS_DIRS)"; do
+  data="$(env_value "$1" DOCKMESH_DATA_DIR)"
+  # The agent's own default (cmd/dockmesh-agent resolveDataDir).
+  if [ -z "$data" ]; then
+    data=/var/lib/dockmesh-agent
+    if [ ! -e /var/lib/dockmesh-agent/agent.crt ] && [ -e /var/lib/dockmesh/agent.crt ]; then
+      data=/var/lib/dockmesh
+    fi
+  fi
+  AGENT_DIRS+=("$data/stacks")
+  for v in "$data" "$(env_value "$1" DOCKMESH_STACKS_DIR)" "$(env_value "$1" DOCKMESH_EARLIER_STACKS_DIRS)"; do
     for d in $v; do
       case "$d" in
         /*) AGENT_DIRS+=("$(clean_path "$d")") ;;
@@ -386,10 +439,14 @@ stack_file() {
 }
 
 # stack_foreign DIR prints why DIR holds something Dockmesh did not
-# write: any symlink, device, socket or file other than the stack files.
-# Empty directories, which Docker creates for bind mounts, don't count.
+# write: a bind source of a container, any symlink, device, socket or file
+# other than the stack files. Other empty directories don't count.
 stack_foreign() {
-  local dir="$1" p rel
+  local dir="$1" p rel m
+  if m="$(mounted_below "$dir")"; then
+    printf 'a container mounts %s from it' "${m#"$dir"/}"
+    return 0
+  fi
   while IFS= read -r -d '' p; do
     rel="${p#"$dir"/}"
     if [ -L "$p" ]; then
@@ -441,6 +498,14 @@ purge_stacks() {
   [ -d "$s" ] || return 0
   if agent_overlaps "$s"; then
     keep "$s" "used by the agent on this host"
+    return 1
+  fi
+  if [ "$IN_USE_KNOWN" != "1" ]; then
+    keep "$s" "Docker could not say which directories containers mount"
+    return 1
+  fi
+  if ! owner_ok "$s"; then
+    keep "$s" "not owned by the dockmesh account"
     return 1
   fi
   while IFS= read -r -d '' e; do
@@ -535,6 +600,9 @@ purge_dir() {
         elif agent_overlaps "$e"; then
           keep "$e" "used by the agent on this host"
           kept=1
+        elif ! owner_ok "$e"; then
+          keep "$e" "not owned by the dockmesh account"
+          kept=1
         else
           remove_tree "$e" || kept=1
         fi
@@ -590,16 +658,26 @@ purge_root() {
     keep "$root" "$why; not purged, remove Dockmesh's files there by hand"
     return 1
   fi
-  for p in "$PURGE_DB_DIR" "$PURGE_STACKS"; do
-    why="$(purge_refusal "$p")"
-    if [ -n "$why" ] && { [ -e "$p" ] || [ -L "$p" ]; }; then
-      keep "$p" "$why"
+  if [ -d "$root" ]; then
+    if agent_holds "$root"; then
+      keep "$root" "used by the agent on this host"
+      return 1
     fi
-  done
-  if [ -n "$(purge_refusal "$PURGE_DB_DIR")" ]; then
+    for f in agent.crt agent.key agent.crt.next ca.crt agent.url enroll-token; do
+      if [ -e "$root/$f" ]; then
+        keep "$root" "holds agent files; used by the agent on this host"
+        return 1
+      fi
+    done
+  fi
+  why="$(purge_refusal "$PURGE_DB_DIR")"
+  if [ -n "$why" ]; then
+    { [ -e "$PURGE_DB_DIR" ] || [ -L "$PURGE_DB_DIR" ]; } && keep "$PURGE_DB_DIR" "$why"
     PURGE_DB_DIR=""
   fi
-  if [ -n "$(purge_refusal "$PURGE_STACKS")" ]; then
+  why="$(purge_refusal "$PURGE_STACKS")"
+  if [ -n "$why" ]; then
+    { [ -e "$PURGE_STACKS" ] || [ -L "$PURGE_STACKS" ]; } && keep "$PURGE_STACKS" "$why"
     PURGE_STACKS=""
   fi
   for f in ${PURGE_FILES[@]+"${PURGE_FILES[@]}"}; do
@@ -618,6 +696,8 @@ purge_root() {
   if [ -n "$PURGE_DB_DIR" ] && [ "$(dirname -- "$PURGE_DB_DIR")" != "$root" ] && [ "$PURGE_DB_DIR" != "$root" ] && [ -d "$PURGE_DB_DIR" ]; then
     if agent_overlaps "$PURGE_DB_DIR"; then
       keep "$PURGE_DB_DIR" "used by the agent on this host"
+    elif [ ! -e "$PURGE_DB_DIR/$PURGE_DB_NAME" ] || ! owner_ok "$PURGE_DB_DIR"; then
+      keep "$PURGE_DB_DIR" "holds no Dockmesh database owned by the dockmesh account"
     else
       purge_dir "$PURGE_DB_DIR" || true
     fi
@@ -628,14 +708,6 @@ purge_root() {
   fi
   if [ ! -d "$root" ]; then
     return 0
-  fi
-  if agent_holds "$root"; then
-    keep "$root" "used by the agent on this host"
-    return 1
-  fi
-  if [ -e "$root/agent.crt" ] || [ -e "$root/agent.key" ]; then
-    keep "$root" "holds agent files; used by the agent on this host"
-    return 1
   fi
   if ! looks_like_data_root "$root"; then
     keep "$root" "does not look like a Dockmesh data directory"
@@ -771,6 +843,8 @@ if [ "$PURGE" = "1" ]; then
 else
   DO_DATA=$(ask "Remove data directory (DB, stacks, age-keys)? ${FG_WARN}DESTRUCTIVE — cannot be undone${RST}" "n")
 fi
+# A running server would write into the files being removed.
+[ "$DO_DATA" = "1" ] && DO_STOP=1
 
 DO_USER=0
 if [ "$OS" = "linux" ]; then
@@ -862,6 +936,16 @@ fi
 # Setup mode keeps its state in the default data dir, so after the wizard
 # chose another one both hold Dockmesh's files.
 if [ "$DO_DATA" = "1" ]; then
+  # Nothing running as the service account may swap a checked directory
+  # for a link while root removes files below it.
+  if [ "$OS" = "linux" ] && id dockmesh >/dev/null 2>&1; then
+    run pkill -KILL -u dockmesh 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      pgrep -u dockmesh >/dev/null 2>&1 || break
+      sleep 1
+    done
+  fi
+  read_container_mounts
   purge_root || true
   if [ "$DATA_DIR_DEFAULT" != "$DATA_DIR" ] && [ -d "$DATA_DIR_DEFAULT" ]; then
     resolve_purge_paths "" "$DATA_DIR_DEFAULT"

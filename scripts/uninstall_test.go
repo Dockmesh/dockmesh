@@ -26,19 +26,18 @@ func TestUninstallMutationsUseRun(t *testing.T) {
 	}
 }
 
-func uninstallHelpers(t *testing.T) string {
+func readUninstall(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile("uninstall.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(b)
-	start := strings.Index(s, "#  Env file helpers")
-	end := strings.Index(s, "#  Detect install layout")
-	if start < 0 || end < start {
-		t.Fatal("env file helpers block not found in uninstall.sh")
-	}
-	return s[start:end]
+	return string(b)
+}
+
+func uninstallHelpers(t *testing.T) string {
+	t.Helper()
+	return scriptBlock(t, readUninstall(t), "#  Env file helpers", "#  Detect install layout")
 }
 
 func runUninstallHelper(t *testing.T, dir, call string, args ...string) (string, error) {
@@ -142,11 +141,7 @@ func scriptBlock(t *testing.T, s, from, to string) string {
 // TEST_MOUNT names a directory is_mountpoint reports as a mount point.
 func purgeScript(t *testing.T, call string) string {
 	t.Helper()
-	b, err := os.ReadFile("uninstall.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
+	s := readUninstall(t)
 	return "set -euo pipefail\nexport LC_ALL=C\n" +
 		scriptBlock(t, s, "#  Color / TTY", "#  Args") +
 		"DRYRUN=\"${DRYRUN:-0}\"\n" +
@@ -220,16 +215,19 @@ func TestUninstallPurge(t *testing.T) {
 		return m
 	}
 	tests := []struct {
-		name    string
-		files   map[string]string
-		env     string
-		dryRun  bool
-		mount   string
-		agents  string
-		gone    []string
-		present []string
-		out     []string
-		notOut  []string
+		name   string
+		files  map[string]string
+		env    string
+		dryRun bool
+		mount  string
+		agents string
+		// inUse are colon-separated container bind sources.
+		inUse      string
+		dockerDown bool
+		gone       []string
+		present    []string
+		out        []string
+		notOut     []string
 	}{
 		{
 			name: "foreign file in a stack dir",
@@ -400,6 +398,42 @@ func TestUninstallPurge(t *testing.T) {
 			gone:  []string{"fallback"},
 			out:   []string{"removed {root}/fallback\n"},
 		},
+		{
+			name: "empty bind source of a container",
+			files: with(map[string]string{
+				"dm-root/stacks/app/compose.yaml": "services: {}",
+				"dm-root/stacks/app/uploads":      "/",
+			}),
+			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			inUse:   "{root}/dm-root/stacks/app/uploads",
+			present: []string{"dm-root/stacks/app/compose.yaml", "dm-root/stacks/app/uploads"},
+			out:     []string{"keep    {root}/dm-root/stacks/app: a container mounts uploads from it\n"},
+		},
+		{
+			name:       "docker not reachable",
+			files:      dockmeshFiles,
+			env:        "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			dockerDown: true,
+			gone:       []string{"dm-root/data/dockmesh.db"},
+			present:    []string{"dm-root/stacks/web/compose.yaml"},
+			out:        []string{"keep    {root}/dm-root/stacks: Docker could not say which directories containers mount\n"},
+		},
+		{
+			name: "control characters in a kept name",
+			files: with(map[string]string{
+				"dm-root/stacks/app/compose.yaml": "services: {}",
+				"dm-root/stacks/app/\x1b[2Jx":     "x",
+			}),
+			env:    "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			notOut: []string{"\x1b"},
+		},
+		{
+			name:    "agent files at the root are checked first",
+			files:   with(map[string]string{"dm-root/enroll-token": "t"}),
+			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			present: []string{"dm-root/data/dockmesh.db", "dm-root/stacks/web/compose.yaml"},
+			out:     []string{"keep    {root}/dm-root: holds agent files; used by the agent on this host\n"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -420,9 +454,15 @@ func TestUninstallPurge(t *testing.T) {
 			}
 			call := `resolve_purge_paths "$1" "$2"
 IFS=: read -ra AGENT_DIRS <<<"${TEST_AGENTS:-}"
+IFS=: read -ra IN_USE <<<"${TEST_IN_USE:-}"
+IN_USE_KNOWN="${TEST_IN_USE_KNOWN:-1}"
+SERVICE_USERS="$(id -un)"
 purge_root || true`
 			cmd := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", env, root+"/fallback")
-			cmd.Env = append(os.Environ(), "NO_COLOR=1", "TEST_AGENTS="+sub(tt.agents))
+			cmd.Env = append(os.Environ(), "NO_COLOR=1", "TEST_AGENTS="+sub(tt.agents), "TEST_IN_USE="+sub(tt.inUse))
+			if tt.dockerDown {
+				cmd.Env = append(cmd.Env, "TEST_IN_USE_KNOWN=0")
+			}
 			if tt.dryRun {
 				cmd.Env = append(cmd.Env, "DRYRUN=1")
 			}

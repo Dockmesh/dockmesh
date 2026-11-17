@@ -59,7 +59,7 @@ Everything else stays, and the script prints one `keep` line with the reason for
 keep    /srv/dockmesh/stacks/app: contains files not written by Dockmesh (e.g. data/db.sqlite)
 ```
 
-That covers a stack directory with data a container wrote through a relative bind mount, a symlink, or any other file; local backups and audit archives such as `data/backups`; what a restore or a failed setup set aside; and anything the script doesn't know. A data root that is used by an agent on the same host is kept as well. The data root itself is removed only once it is empty. If it is a mount point, the mount point stays. `--purge` also removes `/etc/dockmesh`.
+That covers a stack directory with data a container wrote through a relative bind mount, a directory a container mounts (even an empty one), a symlink, or any other file; all stacks when Docker can't be asked which directories containers mount; directories not owned by the `dockmesh` account; local backups and audit archives such as `data/backups`; what a restore or a failed setup set aside; and anything the script doesn't know. A data root that is used by an agent on the same host is kept as well. The data root itself is removed only once it is empty. If it is a mount point, the mount point stays. `--purge` stops the server first and also removes `/etc/dockmesh`.
 
 Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the age key. Run `--purge --dry-run` first to see what would be removed and kept.
 
