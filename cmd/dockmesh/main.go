@@ -526,6 +526,8 @@ func main() {
 			"command", setup.RecoveryCommand)
 	}
 
+	startedAt := time.Now()
+
 	// Docker may not be up yet when we boot (macOS launchd fires us
 	// before Docker Desktop has opened its socket; Linux systemd can
 	// hit the same race with Docker.service still starting). The client
@@ -557,6 +559,7 @@ func main() {
 			host.SetSelfContainerID(id)
 			slog.Info("running in a container", "container", id[:12])
 		}
+		docker.SweepOrphanHelpers(ctx, dockerCli.Raw(), docker.HelperOwnerServer, startedAt)
 	}()
 
 	// Let the system-metrics sampler query Docker's configured limits

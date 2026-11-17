@@ -42,10 +42,7 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 			Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 			AttachStdout: true,
 			AttachStderr: true,
-			Labels: map[string]string{
-				"dockmesh.managed":   "true",
-				"dockmesh.component": "backup-helper",
-			},
+			Labels:       docker.BackupHelperLabels(docker.HelperOwnerServer),
 		},
 		HostConfig: &container.HostConfig{
 			Binds:     []string{volumeName + ":/source:ro"},
