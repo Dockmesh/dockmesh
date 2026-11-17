@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -131,6 +132,11 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 	v.DataDir = f.DataDirOrDefault()
 	v.HTTPAddr = f.Address.HTTPAddr
 	v.BaseURL = f.Address.BaseURL
+	if v.BaseURL != "" {
+		if err := agents.ValidateBaseURL(v.BaseURL); err != nil {
+			return v, fmt.Errorf("address.base_url: %w", err)
+		}
+	}
 	v.TLSMode = f.TLS.Mode
 	v.TLSCertFile = f.TLS.CertFile
 	v.TLSKeyFile = f.TLS.KeyFile
@@ -260,7 +266,10 @@ func restoreLocal(ctx context.Context, r *setup.FileRestore, baseURL string) err
 	if baseURL == "" {
 		return nil
 	}
-	return setRestoredBaseURL(ctx, cfg.DBPath, baseURL)
+	if err := setRestoredBaseURL(ctx, cfg, baseURL); err != nil {
+		return fmt.Errorf("restored, but the Base URL was not set: %w (set it under Settings)", err)
+	}
+	return nil
 }
 
 func (r appliedSetup) localText() string {

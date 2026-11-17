@@ -10,11 +10,11 @@ import (
 
 	"filippo.io/age"
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/settings"
-	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
 // runRestoreCmd handles `dockmesh restore --from <path> [flags]`.
@@ -24,7 +24,7 @@ import (
 // checked, and the replaced files are kept.
 func runRestoreCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh restore --from <path> [--key <file>] [--force] [--dry-run]")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh restore --from <path> [--key <file>] [--force] [--dry-run] [--base-url <url>]")
 		os.Exit(2)
 	}
 	if err := runRestore(args); err != nil {
@@ -40,7 +40,7 @@ func runRestore(args []string) error {
 	keyFD := fs.Int("key-fd", 0, "read the backup key from this open file descriptor (set by setup apply)")
 	force := fs.Bool("force", false, "restore over a populated install (its files are kept next to the data and stacks directories)")
 	dryRun := fs.Bool("dry-run", false, "list what would be restored without writing anything")
-	baseURL := fs.String("base-url", "", "Base URL of the restored server, replacing the one in the backup (set by setup apply from address.base_url)")
+	baseURL := fs.String("base-url", "", "base URL of the restored server, replacing the one in the backup (set by setup apply from address.base_url)")
 	_ = fs.Parse(args)
 
 	if *from == "" {
@@ -109,7 +109,7 @@ func runRestore(args []string) error {
 		return fmt.Errorf("swap in the restored files: %w (run the command again or start the server to resume)", err)
 	}
 	if *baseURL != "" {
-		if err := setRestoredBaseURL(context.Background(), cfg.DBPath, *baseURL); err != nil {
+		if err := setRestoredBaseURL(context.Background(), cfg, *baseURL); err != nil {
 			return fmt.Errorf("restored, but the Base URL was not set: %w (set it under Settings)", err)
 		}
 		fmt.Printf("  base URL → %s\n", *baseURL)
@@ -124,8 +124,11 @@ func runRestore(args []string) error {
 // setRestoredBaseURL saves the Base URL a setup file states into a
 // restored database: the operator's answer wins over the old server's.
 // The agent URL follows it unless the old server had set one of its own.
-func setRestoredBaseURL(ctx context.Context, dbPath, baseURL string) error {
-	conn, err := db.Open(dbPath)
+func setRestoredBaseURL(ctx context.Context, cfg *config.Config, baseURL string) error {
+	if err := agents.ValidateBaseURL(baseURL); err != nil {
+		return err
+	}
+	conn, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return err
 	}
@@ -134,7 +137,7 @@ func setRestoredBaseURL(ctx context.Context, dbPath, baseURL string) error {
 	if err := st.Load(ctx); err != nil {
 		return err
 	}
-	return saveSetupURLs(ctx, st, baseURL, setup.AgentListen)
+	return saveSetupURLs(ctx, st, baseURL, cfg.AgentListen)
 }
 
 // maxBackupKey bounds a backup key file; a real one is a few hundred bytes.

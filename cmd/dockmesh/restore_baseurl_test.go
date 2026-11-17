@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -38,7 +39,7 @@ func TestSetRestoredBaseURL(t *testing.T) {
 			database.Close()
 
 			for range 2 {
-				if err := setRestoredBaseURL(ctx, path, "https://new.lan"); err != nil {
+				if err := setRestoredBaseURL(ctx, &config.Config{DBPath: path, AgentListen: ":8443"}, "https://new.lan"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -58,5 +59,12 @@ func TestSetRestoredBaseURL(t *testing.T) {
 				t.Errorf("agent URL %q, want %q", got, tt.wantAgent)
 			}
 		})
+	}
+}
+
+func TestSetRestoredBaseURLRefusesInvalid(t *testing.T) {
+	cfg := &config.Config{DBPath: filepath.Join(t.TempDir(), "dockmesh.db"), AgentListen: ":8443"}
+	if err := setRestoredBaseURL(context.Background(), cfg, "https://admin@new.lan"); err == nil {
+		t.Fatal("a base URL with user info was saved")
 	}
 }
