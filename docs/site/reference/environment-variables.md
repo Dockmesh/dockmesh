@@ -98,7 +98,7 @@ Written by `install-agent.sh` to `/etc/dockmesh-agent/agent.env`.
 |---|---|---|
 | `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent` (`/var/lib/dockmesh` when only that directory holds an enrollment) | Agent state: certificate, key, CA, saved URL, staging and stack mirror. The installer writes it to `/etc/dockmesh-agent/agent.env`, which the agent also reads when started by hand |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint on the agent port (`https://<host>:8443/enroll`), required on first start |
-| `DOCKMESH_TOKEN` | none | One-time enrollment token, required on first start. It stays in `agent.env` after enrollment |
+| `DOCKMESH_TOKEN` | none | One-time enrollment token for a first start without `<data dir>/enroll-token`. The installer writes the token to that file instead, and the agent deletes it after enrollment |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 fingerprint of the server's agent CA. Required for enrollment over `https://`; the CA the server returns must match it |
 | `DOCKMESH_ENROLL_CA_FILE` | none | PEM file with the agent CA, trusted for the enrollment request. Required for enrollment over `https://`; it must match `DOCKMESH_CA_FINGERPRINT` |
 | `DOCKMESH_AGENT_URL` | saved at enrollment | `wss://` URL of the server's agent listener. Overrides the saved one |

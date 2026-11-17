@@ -91,6 +91,9 @@ func systemInstall(args []string) error {
 	for _, f := range res.changed {
 		fmt.Println("wrote", f)
 	}
+	if res.tokenRemoved {
+		fmt.Println("removed the spent enrollment token from", in.envFile)
+	}
 	if len(res.changed) == 0 {
 		fmt.Println("the agent's files are up to date")
 	}
@@ -197,6 +200,7 @@ type installResult struct {
 	changed      []string
 	unitsChanged bool
 	warnings     []string
+	tokenRemoved bool
 }
 
 // plainDir is the set of characters a directory may use in agent.env and
@@ -347,10 +351,17 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	if err := layout.PrepareRootDir(filepath.Dir(in.envFile), in.rootUID, gid); err != nil {
 		return res, err
 	}
-	envData := renderAgentEnv(envLines, map[string]string{
+	envSet := map[string]string{
 		"DOCKMESH_DATA_DIR": dataDir, "DOCKMESH_STACKS_DIR": stacksDir, "DOCKMESH_SOCKET_GID": socketGID,
 		"DOCKMESH_EARLIER_STACKS_DIRS": earlier,
-	})
+	}
+	// The server forgets a token once it has enrolled the host, so an
+	// enrolled host's DOCKMESH_TOKEN is spent; a token is never written.
+	if env["DOCKMESH_TOKEN"] != "" && fileExists(filepath.Join(dataDir, "agent.crt")) {
+		envSet["DOCKMESH_TOKEN"] = ""
+		res.tokenRemoved = true
+	}
+	envData := renderAgentEnv(envLines, envSet)
 	if changed, err = layout.WriteRootFile(in.envFile, envData, in.rootUID, gid, 0o640); err != nil {
 		return res, err
 	}

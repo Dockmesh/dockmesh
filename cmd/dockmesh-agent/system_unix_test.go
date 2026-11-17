@@ -137,9 +137,9 @@ func TestSystemInstall(t *testing.T) {
 		// setup prepares the host; it gets the data dir it should use.
 		setup func(t *testing.T, ti *testInstaller, data string)
 		opts  func(ti *testInstaller) installOptions
-		// wantEnv are lines agent.env must hold, wantUnit lines the unit
-		// must hold and noUnit lines it must not.
-		wantEnv, wantUnit, noUnit []string
+		// wantEnv are lines agent.env must hold and noEnv lines it must
+		// not, wantUnit lines the unit must hold and noUnit lines it must not.
+		wantEnv, noEnv, wantUnit, noUnit []string
 	}{
 		{
 			name:  "fresh",
@@ -160,6 +160,18 @@ func TestSystemInstall(t *testing.T) {
 			wantEnv:  []string{"DOCKMESH_DATA_DIR=<root>/var/agent", "DOCKMESH_ENROLL_URL=https://srv:8443/enroll", "DOCKMESH_TOKEN=spent"},
 			wantUnit: []string{"User=dockmesh-agent", `ReadWritePaths="<root>/var/agent"`},
 			noUnit:   []string{"ExecStartPre", "DOCKMESH_STACKS_DIR"},
+		},
+		{
+			name: "enrolled legacy drops the spent token",
+			setup: func(t *testing.T, ti *testInstaller, data string) {
+				ti.write(t, "etc/dockmesh-agent/agent.env", "DOCKMESH_DATA_DIR="+data+"\nDOCKMESH_TOKEN=spent\nDOCKMESH_CA_FINGERPRINT=ab\n", 0o640)
+				ti.write(t, "units/dockmesh-agent.service", legacyUnit, 0o644)
+				ti.write(t, "var/agent/agent.crt", "cert", 0o600)
+			},
+			opts:     func(*testInstaller) installOptions { return installOptions{} },
+			wantEnv:  []string{"DOCKMESH_DATA_DIR=<root>/var/agent", "DOCKMESH_CA_FINGERPRINT=ab"},
+			noEnv:    []string{"DOCKMESH_TOKEN"},
+			wantUnit: []string{"User=dockmesh-agent"},
 		},
 		{
 			name: "root",
@@ -191,6 +203,11 @@ func TestSystemInstall(t *testing.T) {
 			for _, l := range tt.wantEnv {
 				if !strings.Contains(env, expand(l)+"\n") {
 					t.Errorf("agent.env lacks %q:\n%s", expand(l), env)
+				}
+			}
+			for _, l := range tt.noEnv {
+				if strings.Contains(env, l) {
+					t.Errorf("agent.env has %q:\n%s", l, env)
 				}
 			}
 			unit := ti.read(t, "units/dockmesh-agent.service")

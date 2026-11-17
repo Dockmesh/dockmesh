@@ -31,7 +31,7 @@ func runStatusCmd() {
 	enrolled := fileExists(certPath) && fileExists(keyPath) && fileExists(caPath)
 	if !enrolled {
 		fmt.Println("status: NOT ENROLLED")
-		fmt.Println("  missing cert/key/ca — run with DOCKMESH_ENROLL_URL + DOCKMESH_TOKEN set to enroll")
+		fmt.Println("  missing cert/key/ca — run the install command from Hosts > Add host in Dockmesh to enroll")
 		return
 	}
 

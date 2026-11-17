@@ -293,7 +293,7 @@ Any other argument is rejected with status 2. After a lost connection the agent 
 |---|---|---|
 | `DOCKMESH_DATA_DIR` | `/var/lib/dockmesh-agent`, or `/var/lib/dockmesh` when the agent is enrolled there and not in the default | Certificate, key, CA, saved server URL, stack copies |
 | `DOCKMESH_ENROLL_URL` | none | `https://<server>:8443/enroll` on the agent port; required for the first start |
-| `DOCKMESH_TOKEN` | none | One-time enrollment token; required for the first start |
+| `DOCKMESH_TOKEN` | none | One-time enrollment token for the first start when `<data dir>/enroll-token` is missing |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA; required to enroll over `https://` |
 | `DOCKMESH_ENROLL_CA_FILE` | none | Agent CA certificate to check against the fingerprint; required to enroll over `https://` |
 | `DOCKMESH_AGENT_URL` | value saved at enrollment | `wss://<server>:8443/connect`; overrides the saved URL |

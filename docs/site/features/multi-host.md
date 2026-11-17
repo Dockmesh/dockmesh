@@ -82,7 +82,7 @@ Re-running the installer keeps the data directory of an earlier install. Agents 
 
 The server serves agent binaries from `DOCKMESH_BINARY_DIR` (`install.sh` sets it). Without a binary for the host's architecture the installer stops.
 
-The enrollment token stays in `/etc/dockmesh-agent/agent.env` after enrollment. It can't be used again, but you can delete the `DOCKMESH_TOKEN` line once the host is online.
+The installer writes the enrollment token to `<data dir>/enroll-token` (mode 0600, owned by the agent's account), not to `agent.env`. The agent deletes the file once the server has accepted or refused the token. When the file is present on a host that is already enrolled, the agent enrolls again with it and keeps its previous certificate until the new one is written; a refused token leaves the previous enrollment in place. A host with neither a certificate nor a token, or whose token was refused, stops the service instead of retrying every 10 seconds. Installs from earlier releases kept a spent `DOCKMESH_TOKEN` line in `agent.env`; it can't be used again, and the next installer run or update of a managed agent removes it.
 
 ### Agent environment variables
 
@@ -94,7 +94,7 @@ The agent reads these from its environment (the installer puts them in `agent.en
 | `DOCKMESH_STACKS_DIR` | `<data dir>/stacks` | Where the mirror of new stacks goes. A stack that is already in an earlier directory stays there |
 | `DOCKMESH_EARLIER_STACKS_DIRS` | none | Colon-separated stacks directories used before; the agent keeps finding its stacks there. The unit keeps each writable while it holds stacks; at most two may still hold stacks. Written by root, not by hand |
 | `DOCKMESH_ENROLL_URL` | none | Enrollment endpoint, `https://<agent host>:8443/enroll`. Required on first start |
-| `DOCKMESH_TOKEN` | none | Enrollment token. Required on first start |
+| `DOCKMESH_TOKEN` | none | Enrollment token for a first start without `<data dir>/enroll-token` (container or manual starts). The installer never writes it |
 | `DOCKMESH_CA_FINGERPRINT` | none | SHA-256 of the agent CA. Required to enroll over `https://` |
 | `DOCKMESH_ENROLL_CA_FILE` | none | File with the agent CA certificate; must match the fingerprint |
 | `DOCKMESH_AGENT_URL` | URL saved at enrollment | `wss://` URL to dial; overrides the saved one |

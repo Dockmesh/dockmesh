@@ -393,6 +393,20 @@ install_path_copy() {
 }
 # end install_path_copy
 
+# write_enroll_token writes the token $1 to $2, 0600, as the account $3:$4
+# that owns the data dir: written as root, a link the account planted
+# there would be followed.
+write_enroll_token() {
+  local token="$1" dest="$2" user="$3" group="$4"
+  local script='umask 077 && tmp="$(mktemp "$1.XXXXXX")" && cat >"$tmp" && mv -f "$tmp" "$1"'
+  if [[ "$user" == root ]]; then
+    printf '%s\n' "$token" | sh -c "$script" sh "$dest"
+  else
+    printf '%s\n' "$token" | setpriv --reuid="$user" --regid="$group" --clear-groups sh -c "$script" sh "$dest"
+  fi
+}
+# end write_enroll_token
+
 # -----------------------------------------------------------------------------
 # Filesystem layout
 # -----------------------------------------------------------------------------
@@ -468,7 +482,13 @@ chown "$RUN_USER":"$RUN_GROUP" "$ENROLL_CA_FILE"
 chmod 0644 "$ENROLL_CA_FILE"
 
 # -----------------------------------------------------------------------------
-# Environment file (holds the secret token + URLs)
+# Enrollment token (removed by the agent once the server answered it)
+# -----------------------------------------------------------------------------
+write_enroll_token "$TOKEN" "$DATA_DIR/enroll-token" "$RUN_USER" "$RUN_GROUP" ||
+  die "could not write the enrollment token to $DATA_DIR/enroll-token"
+
+# -----------------------------------------------------------------------------
+# Environment file
 # -----------------------------------------------------------------------------
 ENV_FILE="$ENV_DIR/agent.env"
 log "writing $ENV_FILE"
@@ -476,7 +496,6 @@ cat > "$ENV_FILE" <<EOF
 DOCKMESH_DATA_DIR=$DATA_DIR
 DOCKMESH_ENROLL_URL=$ENROLL_URL
 DOCKMESH_AGENT_URL=$AGENT_URL
-DOCKMESH_TOKEN=$TOKEN
 DOCKMESH_CA_FINGERPRINT=$CA_FINGERPRINT
 DOCKMESH_ENROLL_CA_FILE=$ENROLL_CA_FILE
 EOF
