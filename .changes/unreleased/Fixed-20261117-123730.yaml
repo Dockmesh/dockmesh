@@ -1,0 +1,3 @@
+kind: Fixed
+body: A dismissed "Some agents are too old for container event alerts" notice stays dismissed across server restarts; it only comes back when the list of old agents changes
+time: 2026-11-17T12:37:30.567238752Z

@@ -275,6 +275,20 @@ func (s *Service) Resolve(ctx context.Context, key string) error {
 	return nil
 }
 
+// OpenWithBody reports whether the notice for key is open with body, so a
+// producer that lost its state in a restart can tell an unchanged
+// condition from a new one without resolving and reopening the notice,
+// which would clear its dismissals. Rows written before texts were stored
+// as keys match on their English body.
+func (s *Service) OpenWithBody(ctx context.Context, key string, body i18n.Text) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM notices
+		  WHERE key = ? AND resolved_at IS NULL AND (body_i18n = ? OR (body_i18n = '' AND body = ?))`,
+		key, body.Encode(), body.In(i18n.Default)).Scan(&n)
+	return n > 0, err
+}
+
 // Set raises or resolves key depending on whether the condition holds.
 func (s *Service) Set(ctx context.Context, active bool, in RaiseInput) error {
 	if active {

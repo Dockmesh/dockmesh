@@ -266,16 +266,30 @@ func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 	if joined == s.unsupported {
 		return
 	}
-	s.unsupported = joined
 	s.srcMu.Lock()
 	n := s.notices
 	s.srcMu.Unlock()
 	if n == nil {
+		s.unsupported = joined
 		return
+	}
+	body := i18n.Msg("notice.agents_no_events.body", joined)
+	if joined != "" {
+		same, err := n.OpenWithBody(ctx, unsupportedNoticeKey, body)
+		if err != nil {
+			slog.Warn("alerts: read notice", "err", err)
+			return
+		}
+		if same {
+			s.unsupported = joined
+			return
+		}
 	}
 	if err := n.Resolve(ctx, unsupportedNoticeKey); err != nil {
 		slog.Warn("alerts: resolve notice", "err", err)
+		return
 	}
+	s.unsupported = joined
 	if joined == "" {
 		return
 	}
@@ -284,9 +298,10 @@ func (s *Service) reportUnsupported(ctx context.Context, names []string) {
 		Audience: notices.Admins(),
 		Severity: notices.SevInfo,
 		Title:    i18n.Msg("notice.agents_no_events.title"),
-		Body:     i18n.Msg("notice.agents_no_events.body", joined),
+		Body:     body,
 		Link:     "/agents",
 	}); err != nil {
+		s.unsupported = ""
 		slog.Warn("alerts: raise notice", "err", err)
 	}
 }
