@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A system restore keeps the modes and owners from the archive: the stacks directory and git cache stay private, and stack data a container wrote as another user (a postgres data directory as uid 999) keeps its owner, so the restored stack starts; system backups now also include such data'
+time: 2026-11-17T16:09:04.157589036Z

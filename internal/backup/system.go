@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/scanner"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
 )
 
 // DefaultSystemJobName is the well-known name of the auto-created daily
@@ -34,7 +36,10 @@ const DefaultSystemJobName = "dockmesh-system"
 //
 // Restoring this archive + pointing DOCKMESH_DB_PATH / DOCKMESH_STACKS_ROOT
 // at the extracted contents is enough to bring a new server back up.
-func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) (int64, error) {
+//
+// Stack data a container wrote as another user is read through files, so
+// it is part of the archive with its owner and mode.
+func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, files *stackhelper.Helper, w io.Writer) (int64, error) {
 	if db == nil {
 		return 0, fmt.Errorf("system backup: db handle unavailable")
 	}
@@ -133,7 +138,7 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 	}
 
 	// 2. Stacks root → stacks/…
-	if err := walkInto(paths.StacksRoot, "stacks", nil, add); err != nil {
+	if err := tarStacks(ctx, files, paths.StacksRoot, tw, add, &total); err != nil {
 		_ = tw.Close()
 		_ = gz.Close()
 		return total, fmt.Errorf("system backup: tar stacks: %w", err)
@@ -183,6 +188,58 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 		return total, err
 	}
 	return total, nil
+}
+
+// tarStacks writes every stack directory below root as stacks/<stack>/….
+// Each directory is read through files, which reads it directly when the
+// service can and falls back to the helper for data of other users.
+func tarStacks(ctx context.Context, files *stackhelper.Helper, root string, tw *tar.Writer, add func(src, archivePath string, info fs.FileInfo) error, total *int64) error {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		src := filepath.Join(root, e.Name())
+		archivePath := "stacks/" + e.Name()
+		switch {
+		case info.Mode().IsRegular():
+			if err := add(src, archivePath, info); err != nil {
+				return err
+			}
+			continue
+		case !info.IsDir():
+			continue
+		}
+		if err := add(src, archivePath, info); err != nil {
+			return err
+		}
+		err = files.Walk(ctx, root, src, func(hdr *tar.Header, r io.Reader) error {
+			hdr.Name = archivePath + "/" + hdr.Name
+			if hdr.Typeflag == tar.TypeLink {
+				hdr.Linkname = archivePath + "/" + hdr.Linkname
+			}
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			if r == nil || hdr.Size == 0 {
+				return nil
+			}
+			n, err := io.CopyN(tw, r, hdr.Size)
+			*total += n
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("%s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }
 
 // walkInto walks root and emits each entry under prefix/<rel> via add,

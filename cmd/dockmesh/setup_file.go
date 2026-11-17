@@ -257,7 +257,9 @@ func restoreLocal(ctx context.Context, r *setup.FileRestore, baseURL string) err
 	if err := restore.CheckSafety(cfg, false); err != nil {
 		return err
 	}
-	if _, _, err := restore.Stage(ctx, src, cfg, "setup-file:"+r.BackupFile, restore.StageOptions{}); err != nil {
+	files, closeFiles := cliRestoreFiles(ctx)
+	defer closeFiles()
+	if _, _, err := restore.Stage(ctx, src, cfg, "setup-file:"+r.BackupFile, restore.StageOptions{Files: files}); err != nil {
 		return err
 	}
 	if _, err := restore.ApplyStaged(cfg); err != nil {

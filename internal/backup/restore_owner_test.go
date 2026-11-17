@@ -125,8 +125,8 @@ func TestManagerFile(t *testing.T) {
 		"compose.prod.yaml": true, "compose.override.yml": true,
 		"pgdata": false, "data/compose.yaml": false, "composer.json": false,
 	} {
-		if got := managerFile(rel); got != want {
-			t.Errorf("managerFile(%q) = %v, want %v", rel, got, want)
+		if got := stacks.ManagerFile(rel); got != want {
+			t.Errorf("stacks.ManagerFile(%q) = %v, want %v", rel, got, want)
 		}
 	}
 }

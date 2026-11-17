@@ -141,10 +141,9 @@ The command must run as root. It refuses on an install that is set up (`This ser
 sudo systemctl stop dockmesh
 sudo dockmesh restore --from ./dockmesh-system.tar.gz --dry-run
 sudo dockmesh restore --from ./dockmesh-system.tar.gz.age --key ./backup-key.txt --force
-sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
 ```
 
-Restores the database, stacks directory and data directory from a system backup archive. Stop the server first. The archive is unpacked next to the live files and checked (the database opens and migrates, at least one admin exists); only then are the files swapped in. A restore that stops halfway finishes on the next start of the server. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. Run as root, the restored files belong to root, hence the `chown` afterwards.
+Restores the database, stacks directory and data directory from a system backup archive. Stop the server first. The archive is unpacked next to the live files and checked (the database opens and migrates, at least one admin exists); only then are the files swapped in. A restore that stops halfway finishes on the next start of the server. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. Files and directories keep their mode from the archive. Run as root, the old server's files get the owner of the data and stacks directories they replace; stack data a container wrote as another user keeps its owner (without root, through a helper container, so Docker must be running).
 
 | Flag | Default | Meaning |
 |---|---|---|

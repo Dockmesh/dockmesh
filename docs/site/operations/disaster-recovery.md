@@ -92,13 +92,9 @@ The restore prints each check as `[ ok ]`, `[warn]` or `[FAIL]`. The database mu
 
 If the command stops halfway, run it again or start the server: the swap finishes on the next start.
 
-### 4. Fix configuration and ownership
+### 4. Fix configuration
 
-After a command-line restore, the restored files belong to root. Hand them to the service account (use `dockmesh:dockmesh` if your data root is owned that way, as on installs moved off root by an upgrade):
-
-```bash
-sudo chown -R dockmesh:docker /var/lib/dockmesh/data /var/lib/dockmesh/stacks
-```
+Restored files keep the mode they had in the archive. When you run the restore as root, files of the old server get the owner of the data or stacks directory they are restored into; stack data a container wrote as another user, such as a postgres data directory owned by uid 999, keeps that owner. A restore run as another user without Docker can't set such owners and prints how many entries now belong to that account.
 
 A fresh Linux install has no `dockmesh.env` until the setup wizard writes it, so the restored server runs on the default paths. Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on) into `/etc/dockmesh/dockmesh.env`, owned by root, group `dockmesh`, mode 0640. Settings changed in the UI are in the database and came back with it. Then check and start:
 

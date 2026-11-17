@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"filippo.io/age"
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -15,6 +16,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/settings"
+	"github.com/dockmesh/dockmesh/internal/stackhelper"
+	"github.com/moby/moby/client"
 )
 
 // runRestoreCmd handles `dockmesh restore --from <path> [flags]`.
@@ -85,7 +88,9 @@ func runRestore(args []string) error {
 		return err
 	}
 
-	counts, result, err := restore.Stage(context.Background(), src, cfg, "cli:"+*from, restore.StageOptions{})
+	files, closeFiles := cliRestoreFiles(context.Background())
+	defer closeFiles()
+	counts, result, err := restore.Stage(context.Background(), src, cfg, "cli:"+*from, restore.StageOptions{Files: files})
 	if result != nil {
 		for _, c := range result.Checks {
 			icon := "[ ok ]"
@@ -115,10 +120,29 @@ func runRestore(args []string) error {
 		fmt.Printf("  base URL → %s\n", *baseURL)
 	}
 	fmt.Printf("restore complete — %d files, %d bytes\n", counts.Files, counts.Bytes)
+	if counts.LostOwners > 0 {
+		fmt.Printf("  warning: Docker was unavailable, so %d entries of stack data owned by other users now belong to this account\n", counts.LostOwners)
+	}
 	fmt.Printf("  db      → %s\n", cfg.DBPath)
 	fmt.Printf("  stacks  → %s\n", cfg.StacksRoot)
 	fmt.Println("\nstart the server with `systemctl start dockmesh` (or equivalent)")
 	return nil
+}
+
+// cliRestoreFiles returns the helper that restores stack data of other
+// owners, nil when the Docker daemon does not answer.
+func cliRestoreFiles(ctx context.Context) (restore.FileHelper, func()) {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, func() {}
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := cli.Ping(pingCtx, client.PingOptions{}); err != nil {
+		_ = cli.Close()
+		return nil, func() {}
+	}
+	return restore.Helper(stackhelper.New(cli)), func() { _ = cli.Close() }
 }
 
 // setRestoredBaseURL saves the Base URL a setup file states into a

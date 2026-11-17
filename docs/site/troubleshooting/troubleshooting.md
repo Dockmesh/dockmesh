@@ -436,6 +436,19 @@ See [Backups](../operations/backups.md) for jobs, targets and restore modes.
 
 **Fix:** act on the message: stop the containers, choose **Merge**, free space, upgrade the agent, wait for the other restore, or pick a different run. Nothing was changed on the destination.
 
+### A stack doesn't start after a system restore with 0.5.x or older
+
+**Cause:** up to 0.5.x, a system restore created every directory with mode 0755 and gave every file the service account as owner. Data a container wrote as another user, for example a postgres data directory (uid 999, mode 0700), came back owned by `dockmesh`, so the container can't use it. The stacks directory and the git cache lost their restrictive modes. Since 0.6.0 a system restore keeps the modes and owners from the archive; archives written by 0.5.x restore correctly with 0.6.0.
+
+**Fix:** restore again with 0.6.0 or newer, or put the owners and modes back by hand. Look up the owner in the image or on the old server (`ls -ln`), then, for example:
+
+```bash
+sudo chown -R 999:999 /var/lib/dockmesh/stacks/<stack>/<data-dir>
+sudo chmod 700 /var/lib/dockmesh/stacks/<stack>/<data-dir>
+sudo chmod 750 /var/lib/dockmesh/stacks
+sudo chmod 700 /var/lib/dockmesh/data/git-cache
+```
+
 ## Upgrades
 
 See [Upgrade](../operations/upgrade.md) for the procedure.
