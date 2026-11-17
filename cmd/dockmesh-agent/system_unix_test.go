@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -642,6 +643,9 @@ func TestTakeOver(t *testing.T) {
 	if err := os.Symlink(other, filepath.Join(stacks, "web", "symlink")); err != nil {
 		t.Fatal(err)
 	}
+	if err := syscall.Mkfifo(filepath.Join(stacks, "web", "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	root, err := os.OpenRoot(stacks)
 	if err != nil {
 		t.Fatal(err)
@@ -656,6 +660,7 @@ func TestTakeOver(t *testing.T) {
 		{"web/compose.yaml", true},
 		{"web/hardlink", false},
 		{"web/symlink", false},
+		{"web/fifo", false},
 		{"web/gone", false},
 	}
 	for _, tt := range tests {

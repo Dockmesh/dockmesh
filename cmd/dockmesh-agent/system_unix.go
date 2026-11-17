@@ -387,6 +387,9 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	for _, d := range dirs {
 		if d.path != "" && !switching {
 			if err := checkAgentDir(d.path, uid); err != nil {
+				if runUser == "root" {
+					err = fmt.Errorf("%w; if a switch to %s stopped halfway, run the installer again with --switch-to-service-user", err, agentAccount)
+				}
 				return res, err
 			}
 		}
@@ -758,10 +761,10 @@ func handOverStacks(dir string, rootUID, uid, gid int) (int, error) {
 // single-link regular file owned by rootUID. Anything else, and an entry
 // that is gone, is left alone.
 func takeOver(root *os.Root, name string, rootUID, uid, gid int) (bool, error) {
-	if fi, err := root.Lstat(name); errors.Is(err, fs.ErrNotExist) || (err == nil && fi.Mode()&fs.ModeSymlink != 0) {
+	if fi, err := root.Lstat(name); errors.Is(err, fs.ErrNotExist) || (err == nil && !fi.IsDir() && !fi.Mode().IsRegular()) {
 		return false, nil
 	}
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := root.OpenFile(name, takeOverOpenFlags, 0)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
 		return false, nil
 	}
@@ -780,7 +783,7 @@ func takeOver(root *os.Root, name string, rootUID, uid, gid int) (bool, error) {
 	if !fi.IsDir() && (!fi.Mode().IsRegular() || st.Nlink != 1) {
 		return false, nil
 	}
-	return true, f.Chown(uid, gid)
+	return true, chownOpened(f, uid, gid)
 }
 
 // unitUser is the User= of a unit file, empty without one.
