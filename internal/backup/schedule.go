@@ -162,6 +162,10 @@ func (s *Service) unschedule(id int64) {
 
 func (s *Service) runScheduled(jobID int64, name string) {
 	if !s.claim(jobID) {
+		if s.exec.waitingForHost(jobID) {
+			slog.Info("backup: scheduled run skipped, the previous run waits for its agent", "job", name)
+			return
+		}
 		slog.Warn("backup: scheduled run skipped, the previous run is still in progress", "job", name)
 		s.notifySkipped(jobID, name)
 		return

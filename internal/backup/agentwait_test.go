@@ -136,3 +136,26 @@ func TestScheduledWaitEndsWhenRunIsCancelled(t *testing.T) {
 		t.Fatalf("status %s, want failed", run.Status)
 	}
 }
+
+// A job deleted while its run waits ends the run instead of backing up
+// with the settings it had.
+func TestScheduledRunEndsWhenJobDeletedWhileWaiting(t *testing.T) {
+	svc, job, _ := agentWaitTest(t, 2)
+	svc.exec.after = func(time.Duration) <-chan time.Time {
+		if !svc.exec.waitingForHost(job.ID) {
+			t.Error("job not marked as waiting")
+		}
+		_ = svc.store.deleteJob(context.Background(), job.ID)
+		c := make(chan time.Time, 1)
+		c <- time.Time{}
+		return c
+	}
+	svc.runScheduled(job.ID, job.Name)
+	run := lastRun(t, svc)
+	if run.Status != StatusFailed || !strings.Contains(run.Error, "deleted, disabled or moved") {
+		t.Fatalf("status %s (%s), want failed because the job changed", run.Status, run.Error)
+	}
+	if svc.exec.waitingForHost(job.ID) {
+		t.Error("job still marked as waiting")
+	}
+}
