@@ -100,7 +100,7 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "name already in use")
 		return
 	case errors.Is(err, agents.ErrInvalidStacksDir):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, msgInvalidStacksDir)
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -319,7 +319,7 @@ func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
 	applied, err := h.Agents.SetStacksDir(r.Context(), id, req.Path)
 	switch {
 	case errors.Is(err, agents.ErrInvalidStacksDir):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, msgInvalidStacksDir)
 		return
 	case errors.Is(err, agents.ErrAgentNotConnected):
 		writeError(w, http.StatusConflict, "agent not connected")
@@ -349,3 +349,7 @@ func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ownReverseProxy() bool {
 	return h.RestoreConfig != nil && webtls.Mode(h.RestoreConfig.TLSMode) == webtls.Proxy
 }
+
+// msgInvalidStacksDir is the setup page's text for a path the server
+// refuses before asking the agent.
+const msgInvalidStacksDir = "Enter an absolute path, for example /srv/dockmesh/stacks."

@@ -41,7 +41,7 @@ type CreateOptions struct {
 
 // ErrInvalidStacksDir is a stacks directory the server refuses before
 // asking the agent; the agent checks everything that needs the host.
-var ErrInvalidStacksDir = errors.New("Enter an absolute path, for example /srv/dockmesh/stacks.")
+var ErrInvalidStacksDir = errors.New("stacks directory must be an absolute, clean path of letters, digits and ._-/")
 
 // maxStacksDirLen matches what the installer and the agent accept.
 const maxStacksDirLen = 4096
@@ -329,7 +329,7 @@ func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool,
 		ag.applying.Store(false)
 		return false, err
 	}
-	go s.applyClaimed(context.Background(), ag, p)
+	go s.applyClaimed(context.WithoutCancel(ctx), ag, p)
 	return false, nil
 }
 
