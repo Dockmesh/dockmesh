@@ -484,7 +484,6 @@ type matrixCaller struct {
 	scope  rbac.Scope
 	token  string
 	noBase bool // a token that gets only what its role grants
-
 }
 
 // createUser creates name with role on scope and returns its id.
