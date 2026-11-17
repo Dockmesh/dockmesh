@@ -147,6 +147,7 @@ func TestSystemRestoreOfV054Archive(t *testing.T) {
 	cfg := restoreTarget(t)
 	stageAndApply(t, cfg, archive, nil)
 	want := maps.Clone(restoredModes)
+	// The fixture's source created git-cache/repo as 0700.
 	want["git-cache/repo"] = 0o700
 	wantModes(t, cfg, want)
 }

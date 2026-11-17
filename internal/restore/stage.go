@@ -94,8 +94,8 @@ const (
 // area again and returns the result with an error.
 func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, opts StageOptions) (*Counts, *SanityResult, error) {
 	p := pathsFor(cfg)
-	clear := func() error { return clearStaging(ctx, p, opts.Files) }
-	if err := clear(); err != nil {
+	drop := func() error { return clearStaging(ctx, p, opts.Files) }
+	if err := drop(); err != nil {
 		return nil, nil, err
 	}
 	if err := os.MkdirAll(p.data, 0o700); err != nil {
@@ -111,7 +111,7 @@ func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, 
 	}
 	counts, err := Extract(ctx, r, p.cfg, Options{Force: true, TmpBase: p.root, MaxBytes: stageMaxBytes, MaxEntries: stageMaxEntries, Files: opts.Files, liveOwners: live})
 	if err != nil {
-		_ = clear()
+		_ = drop()
 		return nil, nil, err
 	}
 	// The stacks root itself is not in the archive; the restored one keeps
@@ -122,7 +122,7 @@ func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, 
 			err = os.Lchown(p.stacks, stacksOwner.uid, stacksOwner.gid)
 		}
 		if err != nil {
-			_ = clear()
+			_ = drop()
 			return nil, nil, err
 		}
 	}
@@ -131,22 +131,22 @@ func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, 
 	}
 	if opts.Verify != nil {
 		if err := opts.Verify(); err != nil {
-			_ = clear()
+			_ = drop()
 			return counts, nil, err
 		}
 	}
 	result, err := Sanity(p.cfg)
 	if err != nil {
-		_ = clear()
+		_ = drop()
 		return counts, nil, err
 	}
 	if !result.Passed {
-		_ = clear()
+		_ = drop()
 		return counts, result, fmt.Errorf("the backup failed the restore checks: %s", result.Summary)
 	}
 	info := StagedInfo{StagedAt: time.Now().UTC(), Source: source, Files: counts.Files, Bytes: counts.Bytes}
 	if err := writeMarker(p, &info); err != nil {
-		_ = clear()
+		_ = drop()
 		return counts, result, err
 	}
 	return counts, result, nil

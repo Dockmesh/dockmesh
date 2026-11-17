@@ -187,6 +187,9 @@ func TestExtractBeforeSnapshotKeepsAllOwn(t *testing.T) {
 }
 
 func TestDiscardStagedRemovesOtherOwnersThroughHelper(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may delete anything")
+	}
 	cfg, _ := restoreEnv(t)
 	p := pathsFor(cfg)
 	if err := os.MkdirAll(filepath.Join(p.stacks, "pg", "data"), 0o700); err != nil {
@@ -207,9 +210,6 @@ func TestDiscardStagedRemovesOtherOwnersThroughHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
-	if os.Geteuid() == 0 {
-		t.Skip("root may delete anything")
-	}
 	files := &fakeFiles{}
 	err := DiscardStaged(context.Background(), cfg, files)
 	if len(files.removed) != 1 || files.removed[0] != p.stacks {
