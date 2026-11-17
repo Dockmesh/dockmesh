@@ -1,0 +1,3 @@
+kind: Fixed
+body: The migration preflight compares what the stack needs (declared reservations or limits, else its current usage) with the target's free memory, CPU and disk, instead of comparing against everything running on the source host
+time: 2026-11-14T14:04:24.501167672Z

@@ -1,0 +1,3 @@
+kind: Fixed
+body: A proxy health check path that Caddy can't load, such as one with an invalid percent escape, is refused when it is entered instead of making Caddy refuse the change; health check and forward-auth paths with . or .. segments are refused too, and paths saved earlier keep working until they are changed
+time: 2026-11-13T08:17:03.878524365Z

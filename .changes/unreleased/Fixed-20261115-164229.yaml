@@ -1,0 +1,3 @@
+kind: Fixed
+body: "At server start, a stack is only recorded as deployed on the local host when it was created for it: a stack created for a remote host or without a host is no longer taken over by local containers with its compose project name, which made deploys to its host fail and let users limited to the local host reach it"
+time: 2026-11-15T16:42:29.255123166Z

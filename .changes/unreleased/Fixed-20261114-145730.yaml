@@ -1,0 +1,3 @@
+kind: Fixed
+body: A stack deploy renews every replica of a scaled service with the new config and keeps the replica count; before, only the first replica was recreated
+time: 2026-11-14T14:57:30.263536124Z

@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a stack while a deploy, scale or update of it runs answers 409 like other stack actions instead of deleting it half-way through
+time: 2026-11-13T17:27:27.323996276Z

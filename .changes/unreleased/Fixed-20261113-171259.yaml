@@ -1,0 +1,3 @@
+kind: Fixed
+body: Archiving the audit log to a folder without a folder set writes to audit-archive in the data directory instead of a path relative to the working directory, and the settings page pre-fills that folder
+time: 2026-11-13T17:12:59.566316695Z

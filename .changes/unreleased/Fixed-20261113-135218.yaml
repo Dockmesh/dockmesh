@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a stack on the server no longer fails when the stack directory holds data owned by another user, such as a database directory created by the container; Dockmesh removes it through a short-lived helper container and reports anything that is left
+time: 2026-11-13T13:52:18.500149552Z

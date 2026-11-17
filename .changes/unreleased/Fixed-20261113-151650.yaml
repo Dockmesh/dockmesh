@@ -1,0 +1,3 @@
+kind: Fixed
+body: Staged agent upgrades wait the configured gap between waves instead of starting a wave every minute
+time: 2026-11-13T15:16:50.960900397Z
