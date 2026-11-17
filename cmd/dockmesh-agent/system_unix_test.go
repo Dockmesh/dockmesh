@@ -458,6 +458,9 @@ func TestSystemInstallConvertsLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if fi, err := os.Stat(data); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("data dir mode %v, want 0700 (err %v)", fi.Mode(), err)
+	}
 	if len(res.removed) != 2 {
 		t.Errorf("removed %v, want the copy script and the data dir binary", res.removed)
 	}

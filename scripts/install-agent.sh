@@ -57,7 +57,7 @@ Dockmesh agent installer.
 Usage:
   curl -fsSLk --pinnedpubkey '<pin>' ${INSTALL_URL}/install/agent.sh | sudo bash -s -- --token <token> [flags]
 
-Copy the full command from Hosts > Add host in Dockmesh. Run it again
+Copy the full command from Hosts › Add host in Dockmesh. Run it again
 without --token to repair an agent or move it to the current layout.
 
 Flags:
@@ -67,7 +67,8 @@ Flags:
   --data-dir <path>     Data directory of the agent, first install only
                         (default /var/lib/dockmesh-agent).
   --stacks-dir <path>   Stacks directory of the agent (default <data-dir>/stacks).
-  --as-root             Run the agent as root instead of a dedicated user.
+  --as-root             Run the agent as root instead of a dedicated user
+                        (first install only).
   --skip-docker         Don't install Docker when it is missing.
   -h, --help            Show this help.
 USAGE
@@ -161,19 +162,19 @@ is_server_data_dir() {
 }
 # end is_server_data_dir
 
-# migrate_agent_files moves the agent's own files from $1 to $2 and leaves
-# everything else in $1 alone.
+# migrate_agent_files moves the agent's own files from $1 to $2, removes
+# the legacy binary in $1/bin and leaves everything else in $1 alone. It
+# runs as the account that owns both directories (as_agent).
 migrate_agent_files() {
   local from="${1%/}" to="${2%/}" f
   for f in agent.crt agent.key agent.crt.next agent.key.next agent.url ca.crt enroll-ca.pem enroll-token certs staging; do
     if [[ -e "$from/$f" || -L "$from/$f" ]]; then
       rm -rf "${to:?}/$f"
-      mv "$from/$f" "$to/$f"
+      mv -T "$from/$f" "$to/$f"
     fi
   done
-  if [[ -e "$from/bin/dockmesh-agent" || -L "$from/bin/dockmesh-agent" ]]; then
-    mkdir -p "$to/bin"
-    mv -f "$from/bin/dockmesh-agent" "$to/bin/dockmesh-agent"
+  if [[ -d "$from/bin" && ! -L "$from/bin" ]]; then
+    rm -f "$from/bin/dockmesh-agent"
     rmdir "$from/bin" 2>/dev/null || true
   fi
 }
@@ -192,6 +193,20 @@ write_agent_file() {
   fi
 }
 # end write_agent_file
+
+# as_agent runs the shell function $3 with the arguments after it as the
+# account $1:$2, so whatever that account planted in its directories
+# cannot redirect a root operation.
+as_agent() {
+  local user="$1" group="$2" fn="$3"
+  shift 3
+  if [[ "$user" == root ]]; then
+    "$fn" "$@"
+  else
+    setpriv --reuid="$user" --regid="$group" --clear-groups bash -c "set -euo pipefail; $(declare -f "$fn"); $fn \"\$@\"" "$fn" "$@"
+  fi
+}
+# end as_agent
 
 # selinux_enabled succeeds while SELinux is on, enforcing or permissive.
 selinux_enabled() {
@@ -220,10 +235,15 @@ start_failure_hint() {
 }
 # end start_failure_hint
 
-# unit_user prints the User= of the unit file $1, empty for root.
+# unit_user prints the User= of the agent unit, drop-ins included, empty
+# for root; $1 is the unit file, read when systemd can't be asked.
 unit_user() {
   local u
-  u="$(sed -n 's/^[[:space:]]*User=[[:space:]]*//p' "$1" | tail -1)"
+  if [[ "$(systemctl show -p LoadState --value dockmesh-agent.service 2>/dev/null)" == loaded ]]; then
+    u="$(systemctl show -p User --value dockmesh-agent.service)"
+  else
+    u="$(sed -n 's/^[[:space:]]*User=[[:space:]]*//p' "$1" | tail -1)"
+  fi
   [[ "$u" == root ]] && u=""
   printf '%s' "$u"
 }
@@ -300,10 +320,10 @@ fi
 # [1] Checks
 # -----------------------------------------------------------------------------
 if [[ -n "$TOKEN" && ! "$TOKEN" =~ ^[A-Za-z0-9_-]{16,128}$ ]]; then
-  die "The enrollment token is malformed. Copy the install command from Hosts > Add host in Dockmesh."
+  die "The enrollment token is malformed. Copy the install command from Hosts › Add host in Dockmesh."
 fi
 if [[ $MODE == fresh && -z "$TOKEN" ]]; then
-  die "No enrollment token. Copy the install command from Hosts > Add host in Dockmesh."
+  die "No enrollment token. Copy the install command from Hosts › Add host in Dockmesh."
 fi
 if [[ $MODE == rerun && $ENROLLED -eq 0 ]]; then
   die "This host is not enrolled. Copy the install command from Hosts › Add host in Dockmesh."
@@ -318,6 +338,8 @@ if [[ -n "$DATA_DIR_FLAG" ]]; then
   [[ "$DATA_DIR_FLAG" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
     die "--data-dir must be an absolute path of letters, digits and ._-/"
   DATA_DIR="${DATA_DIR_FLAG%/}"
+  [[ $RERUN -eq 0 ]] && is_server_data_dir "$DATA_DIR" &&
+    die "$DATA_DIR holds a Dockmesh server's data. Choose another --data-dir."
 fi
 if [[ -n "$STACKS_DIR" && ! "$STACKS_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
   die "--stacks-dir must be an absolute path of letters, digits and ._-/"
@@ -361,13 +383,25 @@ step "Downloading agent ${AGENT_VERSION:-}" "verified (sha256, pinned server)"
 # -----------------------------------------------------------------------------
 # [3] Binary
 # -----------------------------------------------------------------------------
+# From here on a failed re-run starts the agent again, with whatever
+# units are in place, and puts moved files back.
+OLD_DATA_DIR=""
+on_exit() {
+  local rc=$?
+  [[ $rc -eq 0 ]] && return
+  if [[ -n "$OLD_DATA_DIR" ]]; then
+    as_agent "$RUN_USER" "$RUN_GROUP" migrate_agent_files "$DATA_DIR" "$OLD_DATA_DIR" || true
+  fi
+  [[ $RERUN -eq 1 ]] && { systemctl start dockmesh-agent.service >/dev/null 2>&1 || true; }
+  exit "$rc"
+}
 if [[ $RERUN -eq 1 ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
+  trap on_exit EXIT
 fi
 [[ $LEGACY -eq 1 && -e "$DATA_DIR/bin/dockmesh-agent" ]] &&
   note moved "$DATA_DIR/bin/dockmesh-agent → $PATH_BIN"
 mv -fT "$TMP_BIN" "$PATH_BIN"
-trap - EXIT
 if selinux_enabled && command -v restorecon >/dev/null 2>&1; then
   restorecon -- "$PATH_BIN" || true
 fi
@@ -411,10 +445,15 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 # [5] Services
 # -----------------------------------------------------------------------------
 if [[ $RERUN -eq 1 && "${DATA_DIR%/}" != "$DEFAULT_DATA_DIR" ]] && is_server_data_dir "$DATA_DIR"; then
+  [[ -L "$DEFAULT_DATA_DIR" ]] && die "$DEFAULT_DATA_DIR is a symlink. Move it away and run again."
+  if [[ ! -e "$DEFAULT_DATA_DIR" ]]; then
+    install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DEFAULT_DATA_DIR"
+  elif [[ "$(stat -c %U "$DEFAULT_DATA_DIR")" != "$RUN_USER" ]]; then
+    die "$DEFAULT_DATA_DIR exists and does not belong to $RUN_USER. Move it away and run again."
+  fi
   OLD_DATA_DIR="${DATA_DIR%/}"
   DATA_DIR="$DEFAULT_DATA_DIR"
-  install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
-  migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
+  as_agent "$RUN_USER" "$RUN_GROUP" migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
   [[ $RUN_USER == root ]] || usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
   note moved "agent files out of the Dockmesh server's data directory $OLD_DATA_DIR → $DATA_DIR"
 fi
@@ -426,12 +465,9 @@ SYS_ARGS=(--data-dir "$DATA_DIR" --enroll-url "$ENROLL_URL" --agent-url "$AGENT_
 [[ $LEGACY -eq 1 ]] && SYS_ARGS+=(--convert-legacy)
 if ! SYS_OUT="$("$PATH_BIN" system install "${SYS_ARGS[@]}" 2>&1)"; then
   printf '%s\n' "$SYS_OUT" >&2
-  [[ $RERUN -eq 1 ]] && systemctl start dockmesh-agent 2>/dev/null
-  die "The agent's services could not be installed; nothing was changed by them. Fix the cause above and run again."
+  die "The agent's services could not be installed. Fix the cause above and run again."
 fi
-# An agent that found the old /usr/local/bin symlink opened its data dir
-# to 0711.
-chmod 0700 "$DATA_DIR"
+OLD_DATA_DIR=""
 printf '%s\n' "$CA_CERT_PEM" | write_agent_file "$DATA_DIR/enroll-ca.pem" "$RUN_USER" "$RUN_GROUP" ||
   die "Could not write the agents CA to $DATA_DIR/enroll-ca.pem."
 if [[ -n "$TOKEN" ]]; then

@@ -112,9 +112,9 @@ func TestInstallAgentMigrateFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	agentFiles := []string{"agent.crt", "agent.key", "agent.url", "ca.crt", "enroll-ca.pem", "certs/x.pem", "staging/s", "bin/dockmesh-agent"}
+	agentFiles := []string{"agent.crt", "agent.key", "agent.url", "ca.crt", "enroll-ca.pem", "certs/x.pem", "staging/s"}
 	serverFiles := []string{"dockmesh.db", "dockmesh.env", "agents-ca.crt", "stacks/web/compose.yaml"}
-	for _, f := range append(agentFiles, serverFiles...) {
+	for _, f := range append(agentFiles, append(serverFiles, "bin/dockmesh-agent")...) {
 		write(f)
 	}
 
@@ -140,7 +140,10 @@ func TestInstallAgentMigrateFiles(t *testing.T) {
 		}
 	}
 	if _, err := os.Stat(filepath.Join(from, "bin")); !os.IsNotExist(err) {
-		t.Error("empty bin dir left behind")
+		t.Error("legacy bin dir left behind")
+	}
+	if _, err := os.Stat(filepath.Join(to, "bin")); !os.IsNotExist(err) {
+		t.Error("legacy binary moved to the new data dir")
 	}
 }
 

@@ -228,6 +228,16 @@ type installResult struct {
 // in the units: no quoting is needed in either.
 var plainDir = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
 
+// serverDataDir reports a directory a Dockmesh server keeps its data in.
+func serverDataDir(dir string) bool {
+	for _, f := range []string{"dockmesh.db", filepath.Join("data", "dockmesh.db"), "dockmesh.env"} {
+		if fileExists(filepath.Join(dir, f)) {
+			return true
+		}
+	}
+	return false
+}
+
 func checkPlainDir(what, p string) (string, error) {
 	if !plainDir.MatchString(p) || filepath.Clean(p) != p || p == "/" {
 		return "", fmt.Errorf("%s %q must be a clean absolute path of letters, digits and ._-/", what, p)
@@ -250,11 +260,13 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 	dataDir := resolveDataDir(env["DOCKMESH_DATA_DIR"], fileExists)
 	if o.DataDir != "" {
 		// The installer moves an agent's files out of a server's data dir
-		// first; the identity then lives in the new dir only.
+		// to the default first; the identity then lives there only.
 		old := env["DOCKMESH_DATA_DIR"]
-		moved := !fileExists(filepath.Join(old, "agent.crt")) && fileExists(filepath.Join(o.DataDir, "agent.crt"))
+		moved := filepath.Clean(o.DataDir) == defaultDataDir && serverDataDir(old) &&
+			!fileExists(filepath.Join(old, "agent.crt")) && !fileExists(filepath.Join(old, "agent.crt.next")) &&
+			fileExists(filepath.Join(o.DataDir, "agent.crt"))
 		if old != "" && filepath.Clean(o.DataDir) != filepath.Clean(old) && !moved {
-			return res, fmt.Errorf("the data dir is %s and holds the agent's identity; it is chosen at the first install only", env["DOCKMESH_DATA_DIR"])
+			return res, fmt.Errorf("the data dir is %s and holds the agent's identity; it is chosen at the first install only", old)
 		}
 		dataDir = o.DataDir
 	}
@@ -373,7 +385,7 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		if d.path == "" {
 			continue
 		}
-		created, err := ensureAgentDir(d.path, d.mode, uid, gid)
+		created, err := ensureAgentDir(d.path, d.mode, uid, gid, d.path == dataDir)
 		if err != nil {
 			return res, err
 		}
@@ -388,11 +400,11 @@ func (in *agentInstaller) run(o installOptions) (installResult, error) {
 		"DOCKMESH_DATA_DIR": dataDir, "DOCKMESH_STACKS_DIR": stacksDir, "DOCKMESH_SOCKET_GID": socketGID,
 		"DOCKMESH_EARLIER_STACKS_DIRS": earlier,
 	}
-	// The server forgets a token once it has enrolled the host, so an
-	// enrolled host's DOCKMESH_TOKEN is spent.
 	for k, v := range conn {
 		envSet[k] = v
 	}
+	// The server forgets a token once it has enrolled the host, so an
+	// enrolled host's DOCKMESH_TOKEN is spent.
 	if env["DOCKMESH_TOKEN"] != "" && fileExists(filepath.Join(dataDir, "agent.crt")) {
 		envSet["DOCKMESH_TOKEN"] = ""
 		res.tokenRemoved = true
@@ -694,10 +706,16 @@ func checkAgentDir(dir string, uid int) error {
 }
 
 // ensureAgentDir creates dir for the agent's account unless it exists;
-// checkAgentDir has accepted it.
-func ensureAgentDir(dir string, mode os.FileMode, uid, gid int) (created bool, err error) {
+// checkAgentDir has accepted it. With fixMode an existing dir gets mode.
+func ensureAgentDir(dir string, mode os.FileMode, uid, gid int, fixMode bool) (created bool, err error) {
 	if _, err := os.Lstat(dir); err == nil {
-		return false, checkAgentDir(dir, uid)
+		if err := checkAgentDir(dir, uid); err != nil {
+			return false, err
+		}
+		if !fixMode {
+			return false, nil
+		}
+		return false, fixDirMode(dir, mode)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
@@ -721,6 +739,30 @@ func ensureAgentDir(dir string, mode os.FileMode, uid, gid int) (created bool, e
 		return true, err
 	}
 	return true, f.Chmod(mode)
+}
+
+// fixDirMode sets mode on the existing dir through a descriptor opened
+// without following a link: a legacy agent may have opened its data dir
+// to 0711.
+func fixDirMode(dir string, mode os.FileMode) error {
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	f, err := parent.OpenFile(filepath.Base(dir), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm() == mode {
+		return nil
+	}
+	return f.Chmod(mode)
 }
 
 // installBinary puts this binary at in.binary, owned by root and 0755, when

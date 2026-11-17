@@ -71,7 +71,7 @@ Flags: `--token <token>`, `--data-dir <path>` (first install only, default `/var
 
 ### Running the installer again
 
-Run the same command without `--token` to repair an agent: it keeps the certificate and the host's identity, installs the current binary and rewrites the config and units. An agent installed by an earlier release moves to the layout above: its binary in `<data dir>/bin/` and the copy script `/etc/dockmesh-agent/refresh-path-copy` are removed, and from then on it gets its updates through the root updater, checked against the release signature. A host that was never enrolled stops with "This host is not enrolled".
+Run the same command without `--token` to repair an agent: it keeps the certificate and the host's identity, installs the current binary and rewrites the config and units. An agent installed by an earlier release moves to the layout above: its binary in `<data dir>/bin/` and the copy script `/etc/dockmesh-agent/refresh-path-copy` are removed, and from then on it gets its updates through the root updater, checked against the release signature. On a host with an agent unit but no enrollment it stops with "This host is not enrolled"; run the command with a token there.
 
 With `--token` the host enrolls again (for example with a token from the host's Maintenance › Re-issue). The previous certificate stays in place until the new one is written; when the server refuses the token the agent keeps its previous enrollment and the installer says why.
 
