@@ -306,4 +306,4 @@ sudo install -m 0755 -o dockmesh-agent -g dockmesh-agent "dockmesh-agent-linux-$
 sudo systemctl restart dockmesh-agent
 ```
 
-The binary lives in the agent's data directory, `DOCKMESH_DATA_DIR` in `/etc/dockmesh-agent/agent.env` (`/var/lib/dockmesh-agent` for current installs). If the agent was installed with `--as-root`, use `-o root -g root`. The service refreshes the copy in `/usr/local/bin/dockmesh-agent` when it starts. Keep agents on the same version as the server.
+The binary lives in the agent's data directory, `DOCKMESH_DATA_DIR` in `/etc/dockmesh-agent/agent.env` (`/var/lib/dockmesh-agent` for current installs). If the agent was installed with `--as-root` and not switched, use `-o root -g root`. The service refreshes the copy in `/usr/local/bin/dockmesh-agent` when it starts. Keep agents on the same version as the server.

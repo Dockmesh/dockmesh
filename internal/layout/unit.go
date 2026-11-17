@@ -91,7 +91,7 @@ type AgentUnit struct {
 	Binary  string
 	EnvFile string
 	// User is the service account; empty runs the agent as root, which
-	// only agents installed with --as-root keep.
+	// only agents installed with --as-root and not switched keep.
 	User          string
 	DataDir       string
 	WritablePaths []string

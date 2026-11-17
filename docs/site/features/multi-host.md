@@ -75,15 +75,15 @@ Run the same command without `--token` to repair an agent: it keeps the certific
 
 With `--token` the host enrolls again (for example with a token from the host's Maintenance › Re-issue). The previous certificate stays in place until the new one is written; when the server refuses the token the agent keeps its previous enrollment and the installer says why.
 
-A re-run never switches an agent that runs as root to the `dockmesh-agent` user, and it never deletes the certificates first. Installers of 0.5.x and earlier did both.
+Without `--switch-to-service-user` a re-run never switches an agent that runs as root to the `dockmesh-agent` user, and it never deletes the certificates first. Installers of 0.5.x and earlier did both.
 
 ### Agent user
 
-New agents always run as the `dockmesh-agent` user. `--as-root` was removed in 0.6.0: on a new install the installer stops with a message. The user is in the `docker` group, and access to the Docker socket is equivalent to root on the host, so the agent's account still controls the host through Docker; what the separate account adds is that the agent process itself can't write system files, its config or its binary.
+New agents always run as the `dockmesh-agent` user. `--as-root` was removed in 0.6.0: on a new install the installer stops with a message, and `dockmesh-agent system install` refuses `--user root` for a host without an agent unit. The user is in the `docker` group, and access to the Docker socket is equivalent to root on the host, so the agent's account still controls the host through Docker; what the separate account adds is that the agent process itself can't write system files, its config or its binary.
 
 An agent installed with `--as-root` by an earlier release keeps running as root, also on a re-run, which prints a notice. To move it to the `dockmesh-agent` user, run the install command again with `--switch-to-service-user`. The installer creates the user and gives it the agent's files: the data directory with everything in it except `stacks/`, and in each stacks directory the directory itself, every stack directory and the files directly in it (`compose.yaml`, `.env`). What containers wrote below a stack directory, such as the data of relative bind mounts, keeps its owner. Links are never followed.
 
-Pass flags like this:
+To switch an agent, pass the flag like this:
 
 ```bash
 curl -fsSLk --pinnedpubkey '<pin>' <install-url> | sudo bash -s -- --switch-to-service-user

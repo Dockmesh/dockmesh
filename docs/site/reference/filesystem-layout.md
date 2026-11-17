@@ -110,7 +110,7 @@ The server writes its log to stdout and stderr, so on Linux read it with `journa
 
 | Path | Purpose |
 |---|---|
-| `/var/lib/dockmesh-agent/` | Agent data directory (`DOCKMESH_DATA_DIR`, 0700, owned by `dockmesh-agent` or root with `--as-root`) |
+| `/var/lib/dockmesh-agent/` | Agent data directory (`DOCKMESH_DATA_DIR`, 0700, owned by `dockmesh-agent`, or by root for an agent installed with `--as-root` before 0.6.0 and not switched) |
 | `/var/lib/dockmesh-agent/agent.crt`, `agent.key` | Client certificate (365 days, renewed over the connection when less than 30 days are left) and key |
 | `/var/lib/dockmesh-agent/ca.crt` | Server CA received at enrollment |
 | `/var/lib/dockmesh-agent/enroll-ca.pem` | Server CA written by the installer, used to check the server during enrollment |

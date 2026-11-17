@@ -94,7 +94,12 @@ else
 fi
 STEP=0
 STEPS=6
-step() { STEP=$((STEP + 1)); printf '%s[%d/%d]%s %-24s %s\n' "$C_BOLD" "$STEP" "$STEPS" "$C_OFF" "$1" "$2"; }
+step() {
+  local width=24
+  [[ ${#1} -ge $width ]] && width=$((${#1} + 2))
+  STEP=$((STEP + 1))
+  printf '%s[%d/%d]%s %-*s %s\n' "$C_BOLD" "$STEP" "$STEPS" "$C_OFF" "$width" "$1" "$2"
+}
 note() { printf '%s%-7s%s  %s\n' "$C_DIM" "$1" "$C_OFF" "$2"; }
 warn() { printf '%swarning%s  %s\n' "$C_YELLOW" "$C_OFF" "$*" >&2; }
 die() { printf '%s%s%s\n' "$C_RED" "$*" "$C_OFF" >&2; exit 1; }
