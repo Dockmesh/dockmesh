@@ -9,9 +9,11 @@ API tokens let scripts, CI jobs, Prometheus and `dmctl` call the Dockmesh API wi
 
 1. Open the user menu at the bottom of the sidebar and choose **API tokens**, then click **New token**.
 2. Enter a **Label**, so you know later what the token is for. It shows in the token list.
-3. Under **Restriction**, keep **No restriction** or pick a role. With a role you also pick the scope it is **Restricted to**. Without a restriction the token acts with your full current access; choose the narrowest restriction that does the job.
+3. Under **Restriction**, pick a role or **No restriction (full access of your account)**. The token can't be generated until you choose one. With a role you also pick the scope it is **Restricted to**. Without a restriction the token acts with your full current access, including what you are granted later; choose the narrowest restriction that does the job.
 4. Pick when it **Expires**: 30 days, 90 days (default), 6 months, 1 year or never.
 5. Click **Generate token** and copy the token. It isn't shown again.
+
+Through the API, `POST /api/v1/settings/api-tokens` without `role` creates a token without a restriction; only the web form asks for an explicit choice.
 
 The **API tokens** page in the web UI needs Users & roles: Manage on everything. Other users can create, list and revoke their own tokens through the API (`POST`, `GET` and `DELETE /api/v1/settings/api-tokens`), which every signed-in user and every token without a restriction may call. A token created with another token can't outlive that token. Legacy tokens can't create tokens.
 
