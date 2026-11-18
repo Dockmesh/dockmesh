@@ -110,7 +110,22 @@ tls:
 
 Secrets are never written into the file: the admin password is `admin.password_file` (a file with the password alone, at least 12 characters) or `admin.password_hash` (argon2id); a restore names `restore.backup_file` and, for an encrypted backup, the exported key in `restore.key_file`. Unknown keys, such as a plain `password:`, are refused. When the setup file or one of the files it names is readable by group or others, the command warns, for example `warning  /root/dockmesh-setup.yaml is readable by other users (mode 0644). Run: chmod 600 /root/dockmesh-setup.yaml`, and continues. A file the setup file names is called by its key (`the file admin.password_file names is readable by other users. Run chmod 600 on it`).
 
-`--dry-run` checks the file and the host and changes nothing. `--porcelain` prints `key=value` lines (`warning`, `url`, `fingerprint`, `admin`; `check=ok` with `--dry-run`) for the installer. As root, the setup file and every file it names must be regular files owned by root and, like their directories, writable only by root; a symlink is refused. Applies are serialized with the wizard's, and a failed apply puts everything back and leaves `dockmesh.service` stopped. Without root or outside Linux (a container, a source build, `make dev SETUP_FILE=<file>`) it sets up the data directory of `DOCKMESH_DATA_DIR` in place and writes no config or unit; `address.http_addr` and `tls` then come from the environment.
+| Key | Default | What it sets |
+|---|---|---|
+| `data_dir` | `/var/lib/dockmesh` | The data directory. |
+| `stacks_dir` | `<data_dir>/stacks` | The stacks directory, checked like in the wizard: outside the data directory setup creates only a directory named `stacks` or `dockmesh-stacks…` directly in `/srv`, `/opt`, `/data`, `/mnt` or `/media` (or a disk mounted below one of them); anywhere else it must be an empty directory of the `dockmesh` account below root-owned directories. |
+| `admin.username`, `admin.email` | `admin`, none | The first admin account. |
+| `admin.password_file`, `admin.password_hash` | | The admin password, exactly one of them. |
+| `address.base_url` | `<first IP>:8080` | The address users and agents use. |
+| `address.http_addr` | `:8080` (`127.0.0.1:8080` with `tls.mode: proxy` or `caddy`) | The web listener. |
+| `address.agent_port` | `8443` | The agent listener's port; it must differ from the web port. |
+| `address.agent_url` | derived from `base_url` and the agent port | The `wss://` URL agents connect to, saved as the **Agent public URL** setting. |
+| `tls.mode` | `internal` | `internal`, `file`, `caddy` or `proxy`. |
+| `tls.cert_file`, `tls.key_file` | | Your own certificate and key, with `mode: file`. A pair that does not match or an expired certificate is refused. |
+| `tls.trusted_proxies` | the listen address | With `mode: proxy`: addresses or networks of your proxy, comma separated; a network covering every address is refused. |
+| `restore.backup_file`, `restore.key_file` | | A system backup to restore instead of `admin`. |
+
+`--dry-run` checks the file and the host and changes nothing. `--porcelain` prints `key=value` lines (`warning`, `url`, `fingerprint`, `admin`; `check=ok` with `--dry-run`) for the installer. As root, the setup file and every file it names must be regular files owned by root and, like their directories, writable only by root; a symlink is refused. Applies are serialized with the wizard's, and a failed apply puts everything back and leaves `dockmesh.service` stopped. Without root or outside Linux (a container, a source build, `make dev SETUP_FILE=<file>`) it sets up the data directory of `DOCKMESH_DATA_DIR` in place and writes no config or unit; `address.http_addr`, `address.agent_port` and `tls` then come from the environment, and a `stacks_dir` other than the server's own is refused.
 
 ## setup new-code
 

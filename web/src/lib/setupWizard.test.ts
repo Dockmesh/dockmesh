@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentURLError,
+  defaultTrustedProxies,
+  stacksOutside,
+  trustedProxiesError,
   agentURL,
   baseURLError,
   codeFormatOK,
@@ -93,5 +97,33 @@ describe('rail', () => {
     expect(railClickable('N1', 'N7', 'new')).toBe(false);
     expect(railClickable('R1', 'R2', 'restore')).toBe(true);
     expect(railClickable('R2', 'R3', 'restore')).toBe(false);
+  });
+});
+
+describe('network fields', () => {
+  it('checks agent URLs', () => {
+    expect(agentURLError('wss://dm.lan:8443/connect')).toBe(false);
+    expect(agentURLError('https://dm.lan/connect')).toBe(true);
+    expect(agentURLError('wss://')).toBe(true);
+    expect(agentURLError('nonsense')).toBe(true);
+  });
+  it('checks trusted proxies', () => {
+    expect(trustedProxiesError('127.0.0.1/32')).toBeNull();
+    expect(trustedProxiesError('127.0.0.1, 10.0.0.0/24;fd00::1')).toBeNull();
+    expect(trustedProxiesError('')).toEqual({ kind: 'invalid' });
+    expect(trustedProxiesError('proxy.lan')).toEqual({ kind: 'invalid' });
+    expect(trustedProxiesError('10.0.0.0/33')).toEqual({ kind: 'invalid' });
+    expect(trustedProxiesError('10.0.0.1,0.0.0.0/0')).toEqual({ kind: 'all', net: '0.0.0.0/0' });
+    expect(trustedProxiesError('::/0')).toEqual({ kind: 'all', net: '::/0' });
+  });
+  it('derives the default trusted proxy', () => {
+    expect(defaultTrustedProxies('127.0.0.1')).toBe('127.0.0.1/32');
+    expect(defaultTrustedProxies('::1')).toBe('::1/128');
+    expect(defaultTrustedProxies('0.0.0.0')).toBe('');
+  });
+  it('tells a stacks dir outside the data dir', () => {
+    expect(stacksOutside('/var/lib/dockmesh', '/var/lib/dockmesh/stacks')).toBe(false);
+    expect(stacksOutside('/var/lib/dockmesh/', '/srv/stacks')).toBe(true);
+    expect(stacksOutside('/var/lib/dockmesh', '/var/lib/dockmesh-stacks')).toBe(true);
   });
 });

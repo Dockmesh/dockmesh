@@ -14,6 +14,13 @@
 # account. Default: /var/lib/dockmesh
 data_dir: /var/lib/dockmesh
 
+# Where stacks are kept. Default: <data_dir>/stacks. Outside data_dir,
+# setup creates only a directory named stacks or dockmesh-stacks...
+# directly in /srv, /opt, /data, /mnt or /media (or a disk mounted below
+# one of them); anywhere else prepare an empty directory of the dockmesh
+# account: sudo install -d -o dockmesh -g dockmesh -m 0750 <path>
+# stacks_dir: /srv/stacks
+
 # New installation: the first admin account.
 admin:
   # 3 to 32 characters: a-z, 0-9, dot, dash, underscore. Default: admin
@@ -41,8 +48,11 @@ address:
   # unless set here
   base_url: https://dockmesh.example.com:8080
   # Web listener. Default: :8080 (127.0.0.1:8080 with tls mode proxy).
-  # The agent port stays 8443.
   http_addr: ":8080"
+  # Port agents connect to with mutual TLS. Default: 8443
+  # agent_port: 8443
+  # The URL agents connect to. Default: wss://<host of base_url>:<agent_port>/connect
+  # agent_url: wss://agents.example.com:8443/connect
 
 tls:
   # internal  certificate from Dockmesh's own CA (default); its SHA-256
@@ -54,3 +64,6 @@ tls:
   mode: internal
   # cert_file: /etc/ssl/dockmesh/fullchain.pem
   # key_file: /etc/ssl/dockmesh/privkey.pem
+  # With mode proxy: the addresses or networks of your proxy, comma
+  # separated. Default: the listen address only.
+  # trusted_proxies: 127.0.0.1, 10.0.0.5
