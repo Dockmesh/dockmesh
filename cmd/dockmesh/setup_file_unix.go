@@ -14,6 +14,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stacksdir"
+	"github.com/dockmesh/dockmesh/internal/webtls"
 )
 
 // applySetupAsRoot commits a setup file through root's setup-apply, the
@@ -83,8 +85,20 @@ func (a *setupApplier) check(v setup.ApplyValues) error {
 	if err := checkCertDirs(v); err != nil {
 		return err
 	}
-	_, err := a.checkTarget(v.DataDir)
-	return err
+	if _, err := a.checkTarget(v.DataDir); err != nil {
+		return err
+	}
+	if webtls.Mode(v.TLSMode) == webtls.File {
+		if c := setup.CheckCertPair(v.TLSCertFile, v.TLSKeyFile, "", time.Now()); c.Status == "fail" {
+			return fmt.Errorf("tls: %s", c.Message)
+		}
+	}
+	if v.StacksOutsideDataDir() {
+		if res := stacksdir.Check(v.StacksDir, stacksdir.ServerRules(v.DataDir, int(a.uid), layout.ServiceGroup, stacksdir.DockerRoots(context.Background(), ""))); !res.OK() {
+			return fmt.Errorf("stacks_dir: %s", res.Message)
+		}
+	}
+	return nil
 }
 
 // openOperatorFile opens a file the operator named in a setup file: a

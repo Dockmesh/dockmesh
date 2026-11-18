@@ -9,8 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/webtls"
 )
 
@@ -50,6 +54,17 @@ type ApplyValues struct {
 	TLSCertFile string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile  string `json:"tls_key_file,omitempty"`
 	BaseURL     string `json:"base_url"`
+	// StacksDir is empty for DataDir/stacks. Outside the data dir root
+	// creates it with the stacks dir rules of an agent.
+	StacksDir string `json:"stacks_dir,omitempty"`
+	// AgentListen is the agent listener, ":<port>"; empty is AgentListen.
+	AgentListen string `json:"agent_listen,omitempty"`
+	// AgentURL replaces the agent URL derived from BaseURL; it is saved
+	// as a setting, so it stays editable in the app.
+	AgentURL string `json:"agent_url,omitempty"`
+	// TrustedProxies replaces the default trusted proxy of a listener
+	// behind the operator's own proxy.
+	TrustedProxies string `json:"trusted_proxies,omitempty"`
 	// Restore restores the system backup the service left as
 	// RestoreArchiveFile (and RestoreKeyFile) in the state dir instead of
 	// creating an admin.
@@ -159,7 +174,105 @@ func (v *ApplyValues) ValidateServer() error {
 			return fmt.Errorf("base URL %q is not an http(s) URL", v.BaseURL)
 		}
 	}
+	if err := v.validateStacksDir(); err != nil {
+		return err
+	}
+	if err := v.validateAgent(port); err != nil {
+		return err
+	}
+	return v.validateTrustedProxies(mode)
+}
+
+// StacksRoot is the stacks dir v sets up.
+func (v *ApplyValues) StacksRoot() string {
+	if v.StacksDir == "" {
+		return filepath.Join(v.DataDir, "stacks")
+	}
+	return v.StacksDir
+}
+
+// StacksOutsideDataDir reports a stacks dir that root creates apart from
+// the data dir.
+func (v *ApplyValues) StacksOutsideDataDir() bool {
+	return v.StacksDir != ""
+}
+
+func (v *ApplyValues) validateStacksDir() error {
+	p := v.StacksDir
+	if p == "" || p == filepath.Join(v.DataDir, "stacks") {
+		v.StacksDir = ""
+		return nil
+	}
+	if !filepath.IsAbs(p) || filepath.Clean(p) != p || !plainValueRe.MatchString(p) || p == "/" {
+		return fmt.Errorf("stacks dir %q must be a clean absolute path of letters, digits and ._-/", p)
+	}
+	if within(v.DataDir, p) || within(p, v.DataDir) {
+		return fmt.Errorf("stacks dir %s overlaps the data dir %s; only %s may lie in it", p, v.DataDir, filepath.Join(v.DataDir, "stacks"))
+	}
+	if err := layout.CheckWritablePath(p, v.DataDir); err != nil {
+		return fmt.Errorf("stacks dir: %w", err)
+	}
 	return nil
+}
+
+func (v *ApplyValues) validateAgent(webPort string) error {
+	if v.AgentListen == "" {
+		v.AgentListen = AgentListen
+	}
+	host, port, err := net.SplitHostPort(v.AgentListen)
+	if err != nil || host != "" || !validPort(port) {
+		return fmt.Errorf("agent listener %q must be :<port> with a port from 1 to 65535", v.AgentListen)
+	}
+	if port == webPort {
+		return errors.New("web port and agent port must differ")
+	}
+	if v.AgentURL != "" {
+		if len(v.AgentURL) > 2048 || strings.ContainsAny(v.AgentURL, " \t\r\n") {
+			return fmt.Errorf("agent URL %q is not a URL", v.AgentURL)
+		}
+		if err := agents.ValidateAgentURL(v.AgentURL); err != nil {
+			return fmt.Errorf("agent URL %w", err)
+		}
+	}
+	return nil
+}
+
+// maxTrustedProxies bounds the trusted proxy list.
+const maxTrustedProxies = 32
+
+func (v *ApplyValues) validateTrustedProxies(mode webtls.Mode) error {
+	if v.TrustedProxies == "" {
+		return nil
+	}
+	if mode != webtls.Proxy {
+		return errors.New("trusted proxies are only set with the own reverse proxy option")
+	}
+	nets, err := clientip.ParseList(v.TrustedProxies)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+	if len(nets) == 0 || len(nets) > maxTrustedProxies {
+		return fmt.Errorf("trusted proxies: give 1 to %d addresses or networks", maxTrustedProxies)
+	}
+	out := make([]string, 0, len(nets))
+	for _, n := range nets {
+		if n.Bits() == 0 {
+			return fmt.Errorf("trusted proxies: %s would trust every address", n)
+		}
+		out = append(out, n.String())
+	}
+	v.TrustedProxies = strings.Join(out, ",")
+	return nil
+}
+
+func validPort(p string) bool {
+	n, err := strconv.Atoi(p)
+	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == p
+}
+
+// within reports whether p is dir or lies below it.
+func within(dir, p string) bool {
+	return p == dir || strings.HasPrefix(p, strings.TrimSuffix(dir, "/")+"/")
 }
 
 // ConfigEnv is the server config a setup-apply writes, for v (validated)
@@ -168,7 +281,7 @@ func (v *ApplyValues) ConfigEnv(assetDir string) ([]byte, error) {
 	env := map[string]string{
 		"DOCKMESH_DATA_DIR":       v.DataDir,
 		"DOCKMESH_HTTP_ADDR":      v.HTTPAddr,
-		"DOCKMESH_AGENT_LISTEN":   AgentListen,
+		"DOCKMESH_AGENT_LISTEN":   v.AgentListen,
 		"DOCKMESH_TLS_MODE":       v.TLSMode,
 		"DOCKMESH_INSTALL_SCRIPT": filepath.Join(assetDir, "install-agent.sh"),
 		"DOCKMESH_BINARY_DIR":     filepath.Join(assetDir, "bin"),
@@ -178,7 +291,14 @@ func (v *ApplyValues) ConfigEnv(assetDir string) ([]byte, error) {
 		env["DOCKMESH_TLS_CERT_FILE"] = v.TLSCertFile
 		env["DOCKMESH_TLS_KEY_FILE"] = v.TLSKeyFile
 	}
-	if tp := webtls.DefaultTrustedProxies(mode, v.HTTPAddr); tp != "" {
+	if v.StacksDir != "" {
+		env["DOCKMESH_STACKS_ROOT"] = v.StacksDir
+	}
+	tp := v.TrustedProxies
+	if tp == "" {
+		tp = webtls.DefaultTrustedProxies(mode, v.HTTPAddr)
+	}
+	if tp != "" {
 		env["DOCKMESH_TRUSTED_PROXIES"] = tp
 	}
 	keys := make([]string, 0, len(env))

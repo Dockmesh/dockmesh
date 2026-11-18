@@ -307,7 +307,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 // answers like SetupCommit, with a run to follow, and reports whether it
 // took over the install slot.
 func (h *Handlers) restoreNewInstall(w http.ResponseWriter, r *http.Request, rc io.Reader, name string) bool {
-	v := setup.ApplyValues{DataDir: r.FormValue("data_dir"), BaseURL: r.FormValue("base_url"), Restore: true}
+	v := setup.ApplyValues{DataDir: r.FormValue("data_dir"), StacksDir: r.FormValue("stacks_dir"), BaseURL: r.FormValue("base_url"), Restore: true}
 	if err := v.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return false

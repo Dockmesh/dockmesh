@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -140,6 +141,12 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 	v.TLSMode = f.TLS.Mode
 	v.TLSCertFile = f.TLS.CertFile
 	v.TLSKeyFile = f.TLS.KeyFile
+	v.TrustedProxies = f.TLS.TrustedProxies
+	v.StacksDir = f.StacksDir
+	v.AgentURL = f.Address.AgentURL
+	if f.Address.AgentPort != 0 {
+		v.AgentListen = ":" + strconv.Itoa(f.Address.AgentPort)
+	}
 	if f.Admin == nil {
 		return v, v.ValidateServer()
 	}
@@ -211,12 +218,19 @@ func applySetupLocal(ctx context.Context, run *setupFileRun, dryRun bool) (appli
 	if filepath.Clean(v.DataDir) != paths.DataDir {
 		return appliedSetup{}, fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR=%s to use that directory", paths.DataDir, v.DataDir)
 	}
+	if v.StacksOutsideDataDir() && filepath.Clean(v.StacksDir) != paths.StacksRoot {
+		return appliedSetup{}, fmt.Errorf("this server keeps its stacks in %s; set DOCKMESH_STACKS_ROOT=%s to use that directory", paths.StacksRoot, v.StacksDir)
+	}
 	facts := setup.Probe{ConfigFiles: []string{loadedEnvFile}, DBPathSet: os.Getenv("DOCKMESH_DB_PATH") != "", Paths: paths}.Scan()
 	facts.Users = countUsersReadOnly(paths.DBPath, facts.DB)
 	if mode := setup.Decide(facts); mode != setup.NeverSetUp {
 		return appliedSetup{}, notNeverSetUp(mode)
 	}
-	for _, k := range []struct{ name, val string }{{"address.http_addr", run.file.Address.HTTPAddr}, {"tls", run.file.TLS.Mode}} {
+	agentPort := ""
+	if run.file.Address.AgentPort != 0 {
+		agentPort = strconv.Itoa(run.file.Address.AgentPort)
+	}
+	for _, k := range []struct{ name, val string }{{"address.http_addr", run.file.Address.HTTPAddr}, {"address.agent_port", agentPort}, {"tls", run.file.TLS.Mode}} {
 		if k.val != "" {
 			fmt.Fprintf(os.Stderr, "warning  %s is not applied without root and systemd; the server takes it from its environment\n", k.name)
 		}

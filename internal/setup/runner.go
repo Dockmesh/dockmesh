@@ -19,7 +19,9 @@ import (
 // operator chose across the seven steps. Validated again on the server
 // before the install runs; the live-validate endpoints are advisory.
 type CommitInput struct {
-	DataDir     string `json:"data_dir"`
+	DataDir string `json:"data_dir"`
+	// StacksDir is empty for <data dir>/stacks.
+	StacksDir   string `json:"stacks_dir,omitempty"`
 	ServiceUser struct {
 		Mode      string `json:"mode"` // "existing" | "create"
 		Username  string `json:"username"`
@@ -38,7 +40,15 @@ type CommitInput struct {
 		HTTPAddr string `json:"http_addr,omitempty"`
 		CertFile string `json:"cert_file,omitempty"`
 		KeyFile  string `json:"key_file,omitempty"`
+		// TrustedProxies replaces the default with tls mode proxy.
+		TrustedProxies string `json:"trusted_proxies,omitempty"`
 	} `json:"tls,omitempty"`
+	// Agent is the agent listener ":<port>" and the agent URL, empty for
+	// :8443 and the URL derived from PublicURL.
+	Agent struct {
+		Listen string `json:"listen,omitempty"`
+		URL    string `json:"url,omitempty"`
+	} `json:"agent,omitempty"`
 }
 
 // Validate returns the first user-input issue or nil. Cheaper than the

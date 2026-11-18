@@ -4,9 +4,9 @@ import "testing"
 
 func TestSlugifyStackName(t *testing.T) {
 	cases := []struct {
-		in     string
-		want   string
-		errOK  bool // true = we expect an error, don't check want
+		in    string
+		want  string
+		errOK bool // true = we expect an error, don't check want
 	}{
 		// Obvious happy paths.
 		{in: "nginx", want: "nginx"},

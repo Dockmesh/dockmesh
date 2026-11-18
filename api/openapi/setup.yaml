@@ -146,6 +146,149 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /setup/validate-stacks-dir:
+    post:
+      operationId: setup.validate_stacks_dir
+      tags: [setup]
+      summary: Check a stacks directory for a new install
+      description: |
+        Checks the stacks directory as the service account, with the rules
+        root's setup-apply applies before it creates the directory: outside
+        the data directory, root creates only one new directory named
+        `stacks` or `dockmesh-stacks…` directly in /srv, /opt, /data, /mnt or
+        /media (or a disk mounted below one of them); anywhere else the
+        directory must exist, be empty and belong to the service account.
+        `<data_dir>/stacks` is always accepted.
+      security:
+        - setupSession: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data_dir, path]
+              properties:
+                data_dir: {type: string}
+                path: {type: string}
+      responses:
+        "403": {description: "Missing the `X-Dockmesh-Setup` header."}
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StacksDirCheck"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410":
+          description: Setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /setup/check-ports:
+    post:
+      operationId: setup.check_ports
+      tags: [setup]
+      summary: Check whether the web and agent ports are free
+      description: |
+        Reports a port another program listens on. The ports setup mode
+        listens on itself count as free, since the new config takes them
+        over at the restart; a port the service may not bind is not
+        reported.
+      security:
+        - setupSession: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [web_port, agent_port]
+              properties:
+                web_port: {type: integer}
+                agent_port: {type: integer}
+      responses:
+        "403": {description: "Missing the `X-Dockmesh-Setup` header."}
+        "200":
+          description: One result per port.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  web: {$ref: "#/components/schemas/SetupPortCheck"}
+                  agent: {$ref: "#/components/schemas/SetupPortCheck"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410":
+          description: Setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /setup/check-cert:
+    post:
+      operationId: setup.check_cert
+      tags: [setup]
+      summary: Check an own certificate and key
+      description: |
+        Reads both files as the service account and reports whether it
+        can read them, whether they are a matching pair and whether the
+        certificate has expired (`fail`), or does not cover `host` or ends
+        within 30 days (`warn`). Only facts of the certificate are
+        returned, never file contents.
+      security:
+        - setupSession: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cert_file, key_file]
+              properties:
+                cert_file: {type: string}
+                key_file: {type: string}
+                host: {type: string, description: Host name of the base URL.}
+      responses:
+        "403": {description: "Missing the `X-Dockmesh-Setup` header."}
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [ok, warn, fail]}
+                  issue: {type: string, enum: [unreadable, missing, invalid, mismatch, expired, hostname, expiring]}
+                  file: {type: string, description: The file an unreadable, missing or invalid issue is about.}
+                  not_after: {type: string, format: date-time}
+                  days: {type: integer, description: Days left, for `expiring`.}
+                  message: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410":
+          description: Setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /setup/validate-user:
     post:
       operationId: setup.validate_user
@@ -266,6 +409,7 @@ paths:
               required: [data_dir, service_user, admin, public_url]
               properties:
                 data_dir: {type: string}
+                stacks_dir: {type: string, description: "Stacks directory, checked like in `POST /setup/validate-stacks-dir`; empty for `<data_dir>/stacks`."}
                 service_user:
                   type: object
                   required: [mode, username]
@@ -289,6 +433,13 @@ paths:
                     http_addr: {type: string, description: "Listen address; defaults to :8080, or 127.0.0.1:8080 for caddy and proxy."}
                     cert_file: {type: string, description: Absolute PEM certificate path for mode file.}
                     key_file: {type: string, description: Absolute PEM key path for mode file.}
+                    trusted_proxies: {type: string, description: "Mode proxy only: comma-separated addresses or networks to trust instead of the listen address; never every address."}
+                agent:
+                  type: object
+                  description: The agent listener. Ignored for an install from 0.5.x that finishes its setup.
+                  properties:
+                    listen: {type: string, description: "`:<port>`; defaults to :8443."}
+                    url: {type: string, description: "wss:// URL agents connect to; defaults to the one derived from public_url and the port. Saved as a setting."}
       responses:
         "403": {description: "Missing the `X-Dockmesh-Setup` header."}
         "202":
@@ -361,6 +512,7 @@ paths:
                 file: {type: string, format: binary, description: "System backup (.tar.gz or .tar.gz.age), up to 1 GiB."}
                 key: {type: string, format: binary, description: Exported backup key file; needed for encrypted archives.}
                 data_dir: {type: string, description: "New install only: the data directory to restore into, checked like in `POST /setup/validate-data-dir`."}
+                stacks_dir: {type: string, description: "New install only: the stacks directory, checked like in `POST /setup/validate-stacks-dir`; empty for `<data_dir>/stacks`."}
                 base_url: {type: string, description: "New install only: the base URL to store; optional."}
       responses:
         "202":
@@ -527,6 +679,12 @@ paths:
               schema: {$ref: "#/components/schemas/SetupCodeError"}
 components:
   schemas:
+    SetupPortCheck:
+      type: object
+      properties:
+        port: {type: integer}
+        status: {type: string, enum: [ok, fail]}
+        issue: {type: string, enum: [invalid, busy]}
     SetupCodeError:
       type: object
       properties:
