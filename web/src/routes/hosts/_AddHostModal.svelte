@@ -1,20 +1,16 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
   import { dialogs } from '$lib/stores/dialogs.svelte';
-  // Add-Host Modal — 3-step inline flow per `Dockmesh Wizard (6)/
-  // add-host-modal.jsx`. Section 01 collects identity (hostname + tags),
-  // Section 02 unlocks once the token is generated and shows the install
-  // command, Section 03 polls for the agent to dial home and auto-closes
-  // on connection. Description + scope-radio + compose-alt link are
-  // intentionally absent — see project_hosts_open_punch_list.md memory.
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { trapFocus } from '$lib/a11y';
-  import { api, ApiError, type AgentCreateResult } from '$lib/api';
+  import { api, ApiError, type Agent, type AgentCreateResult } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { fmtDateTime } from '$lib/i18n';
+  import { fmtTime } from '$lib/i18n';
   import { copyToClipboard } from '$lib/clipboard';
-  import { Plus, X, Check, Copy, ArrowRight } from 'lucide-svelte';
-  import AgentReachability from '$lib/components/AgentReachability.svelte';
+  import { DOCS_BASE } from '$lib/setupWizard';
+  import { tagProblem } from './_host';
+  import { X, Check, Copy, Info, AlertTriangle, ChevronRight, ChevronDown } from 'lucide-svelte';
 
   interface Props {
     onclose: () => void;
@@ -23,70 +19,77 @@
   }
   let { onclose, onconnected, knownTags = [] }: Props = $props();
 
-  // Section 01 state
-  let hostname = $state('');
-  let tags = $state<string[]>([]);
-  let tagInput = $state('');
-  // Function / role / capability tags only — no geographic regions.
-  // Region tags become user-defined when actually needed.
   const SUGGESTIONS = ['edge', 'production', 'staging', 'gpu', 'storage', 'arm', 'backup'];
   const suggestionPool = $derived([...new Set([...SUGGESTIONS, ...knownTags])]);
+
+  let name = $state('');
+  let tags = $state<string[]>([]);
+  let tagInput = $state('');
+  let nameError = $state('');
+  let error = $state('');
+  let creating = $state(false);
+  let created = $state<AgentCreateResult | null>(null);
+  let agent = $state<Agent | null>(null);
+  let agentPort = $state('');
+  let showAuto = $state(false);
+  let copied = $state<'' | 'cmd' | 'token'>('');
+  let rotating = $state(false);
+  let now = $state(Date.now());
+  let waitStarted = $state(0);
+  let reach = $state<{ ok: boolean; url: string } | null>(null);
+
+  const expired = $derived(!!created && Date.parse(created.token_expires_at) <= now);
+  const connected = $derived(agent?.status === 'online');
+  const displayName = $derived(agent?.name ?? created?.agent.name ?? '');
+  const summaryName = $derived(name.trim() || m.hosts_add_new_host());
+  const readyPath = $derived(agent && !agent.needs_setup ? agent.stacks_dirs?.find((d) => d.current)?.path ?? '' : '');
+  const lateWait = $derived(!!created && !connected && waitStarted > 0 && now - waitStarted >= 120_000);
+
+  function portOf(url: string): string {
+    try {
+      const u = new URL(url);
+      return u.port || (u.protocol === 'wss:' || u.protocol === 'https:' ? '443' : '80');
+    } catch {
+      return '';
+    }
+  }
 
   function addTag(t: string) {
     const v = t.trim().toLowerCase().replace(/,$/, '');
     if (!v || tags.includes(v)) { tagInput = ''; return; }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) {
-      toast.error(m.hosts_tag_invalid(), m.hosts_add_tag_invalid_detail());
-      return;
-    }
-    if (tags.length >= 20) {
-      toast.error(m.hosts_tag_max({ n: 20 }));
-      return;
-    }
+    const problem = tagProblem(v, tags);
+    if (problem) { toast.error(problem.title, problem.detail); return; }
     tags = [...tags, v];
     tagInput = '';
   }
   function removeTag(t: string) { tags = tags.filter((x) => x !== t); }
 
-  // Section 02 state — generated install command
-  let createResult = $state<AgentCreateResult | null>(null);
-  let creating = $state(false);
-  let copied = $state(false);
-  let savingTags = $state(false);
-
-  async function generateToken() {
-    if (!hostname.trim()) {
-      toast.error(m.hosts_add_hostname_required());
-      return;
-    }
+  async function create() {
     creating = true;
+    error = '';
+    nameError = '';
     try {
-      createResult = await api.agents.create({ name: hostname.trim() });
-      // Save tags right after enrolling so the host shows up tagged
-      // even before it dials home.
-      if (tags.length > 0) {
-        savingTags = true;
-        try { await api.hosts.setTags(createResult.agent.id, tags); }
-        catch { /* non-fatal — admin can edit tags later */ }
-        savingTags = false;
-      }
+      created = await api.agents.create({ name: name.trim(), tags });
+      agentPort = portOf(created.agent_url) || agentPort;
+      now = Date.now();
+      waitStarted = now;
     } catch (err) {
-      toast.error(m.hosts_add_create_failed(), err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 409) nameError = m.hosts_add_name_taken({ name: name.trim() });
+      else error = m.hosts_add_error({ message: err instanceof Error ? err.message : String(err) });
     } finally {
       creating = false;
     }
   }
 
-  // "New command" rotates the token; the previous command stops working.
-  let rotating = $state(false);
-  let now = $state(Date.now());
-  const expired = $derived(!!createResult && Date.parse(createResult.token_expires_at) <= now);
+  // Rotates the token; the previous command stops working.
   async function newCommand() {
-    if (!createResult) return;
+    if (!created) return;
     rotating = true;
     try {
-      createResult = await api.agents.rotateToken(createResult.agent.id);
+      created = await api.agents.rotateToken(created.agent.id);
       now = Date.now();
+      waitStarted = now;
+      reach = null;
     } catch (err) {
       toast.error(m.hosts_add_new_command_failed(), err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -94,205 +97,213 @@
     }
   }
 
-  async function copyCmd() {
-    if (!createResult) return;
-    const ok = await copyToClipboard(createResult.install_hint);
-    if (ok) {
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
+  async function copy(what: 'cmd' | 'token', text: string) {
+    if (await copyToClipboard(text)) {
+      copied = what;
+      setTimeout(() => (copied = ''), 1500);
     } else {
       toast.error(m.hosts_add_copy_failed(), m.hosts_add_copy_failed_hint());
     }
   }
 
-  // Section 03 — poll for agent to come online.
-  let connected = $state(false);
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  async function checkReach() {
+    try {
+      const r = await api.agents.reachability();
+      reach = { ok: r.ok, url: r.agent_url };
+    } catch (err) {
+      reach = { ok: false, url: created?.agent_url ?? '' };
+      if (err instanceof ApiError && err.status !== 429) toast.error(err.message);
+    }
+  }
   $effect(() => {
-    if (!createResult || connected) return;
-    pollTimer = setInterval(async () => {
-      if (!createResult) return;
+    if (lateWait && !reach) checkReach();
+  });
+
+  // Polls until the agent connects, then while its setup state may still
+  // settle (a stacks directory from the install ends the wait a moment
+  // after the connect).
+  $effect(() => {
+    if (!created || (expired && !connected) || (connected && !agent?.needs_setup)) return;
+    const id = created.agent.id;
+    const t = setInterval(async () => {
       now = Date.now();
       try {
-        const a = await api.agents.get(createResult.agent.id);
-        if (a.status === 'online') {
-          connected = true;
-          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-          // Auto-close after ~1.1s so the user sees the success state.
-          setTimeout(() => onconnected({ id: a.id, name: a.name }), 1100);
-        }
+        const a = await api.agents.get(id);
+        const first = a.status === 'online' && agent?.status !== 'online';
+        agent = a;
+        if (first) onconnected({ id: a.id, name: a.name });
       } catch { /* keep polling */ }
     }, 2000);
-    return () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+    return () => clearInterval(t);
   });
-  onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 
-  // ESC to close
+  function openHost(tab?: string) {
+    if (!agent) return;
+    const target = `/hosts/${agent.id}${tab ? `?tab=${tab}` : ''}`;
+    onclose();
+    goto(target);
+  }
+
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !connected) onclose();
+    if (e.key === 'Escape') onclose();
   }
   onMount(() => dialogs.track());
   onMount(() => {
     window.addEventListener('keydown', onKey);
+    // The agent port is only known to the server; the reachability check
+    // reports the URL agents use.
+    api.agents.reachability().then((r) => { agentPort ||= portOf(r.agent_url); }).catch(() => {});
     return () => window.removeEventListener('keydown', onKey);
   });
 </script>
 
-<div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget && !connected) onclose(); }}>
-  <div class="ed-modal ed-add-host-modal" role="dialog" aria-modal="true" aria-labelledby="add-host-title" use:trapFocus>
-    <header class="ed-modal-head">
-      <div class="ed-add-host-head-text">
-        <h2 class="ed-add-host-title" id="add-host-title">{m.hosts_add_title()}</h2>
-        <p class="ed-add-host-blurb">{m.hosts_add_blurb()}</p>
-      </div>
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label={m.common_close()} disabled={connected}>
+<div class="ed-modal-backdrop" role="presentation" onmousedown={(e) => { if (e.target === e.currentTarget) onclose(); }}>
+  <div class="ed-modal ah" data-testid="add-host-dialog" data-step={!created ? 'create' : !connected ? 'command' : readyPath ? 'ready' : 'setup'} role="dialog" aria-modal="true" aria-labelledby="add-host-title" use:trapFocus>
+    <header class="ah-head">
+      <h2 id="add-host-title">{m.hosts_add()}</h2>
+      <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label={m.common_close()}>
         <X size={13} strokeWidth={1.5} />
       </button>
     </header>
 
-    <div class="ed-modal-body ed-add-host-body">
-      <!-- ─── 01 Identify ─── -->
-      <section class="ed-add-host-section" class:active={!createResult}>
-        <span class="ed-add-host-step" class:active={!createResult}>01</span>
-        <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">{m.hosts_add_identify()}</h3>
-          <div class="ed-add-host-fields">
-            <div class="ed-field">
-              <label class="ed-field-label" for="add-host-hostname">{m.hosts_hostname()}</label>
-              <input
-                id="add-host-hostname"
-                type="text"
-                class="ed-soft-input font-mono"
-                placeholder={m.hosts_add_hostname_ph()}
-                bind:value={hostname}
-                disabled={!!createResult}
-              />
-            </div>
-            <div class="ed-field">
-              <label class="ed-field-label">
-                {m.hosts_col_tags()}
-                <span class="ed-field-hint">{m.hosts_add_tags_hint()}</span>
-              </label>
-              <div class="ed-host-tags-edit">
-                {#each tags as t (t)}
-                  <span class="ed-hosts-tag-chip">
-                    {t}
-                    {#if !createResult}
-                      <button type="button" class="ed-host-tags-remove" onclick={() => removeTag(t)} aria-label={m.common_remove()}>
-                        <X size={10} strokeWidth={1.5} />
-                      </button>
-                    {/if}
-                  </span>
-                {/each}
-                {#if !createResult}
-                  <input
-                    type="text"
-                    class="ed-host-tags-input font-mono"
-                    placeholder={tags.length === 0 ? m.hosts_add_tags_ph() : m.hosts_add_tag_plus_ph()}
-                    bind:value={tagInput}
-                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(tagInput); } }}
-                  />
-                {/if}
-              </div>
-              {#if !createResult && suggestionPool.filter((s) => !tags.includes(s)).length > 0}
-                <div class="ed-host-tags-suggest">
-                  <span class="ed-host-tags-suggest-label">{m.hosts_add_suggestions()}</span>
-                  {#each suggestionPool.filter((s) => !tags.includes(s)).slice(0, 8) as s (s)}
-                    <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTag(s)}>+ {s}</button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
+    <div class="ah-body">
+      {#if !created}
+        <p class="ah-muted">{agentPort ? m.hosts_add_intro({ port: agentPort }) : m.hosts_add_intro_noport()}</p>
+        {#if error}
+          <div class="ah-callout bad" role="alert"><AlertTriangle size={14} strokeWidth={1.8} /><span>{error}</span></div>
+        {/if}
+        <div class="ah-field">
+          <label class="ah-lbl" for="add-host-name">{m.hosts_add_name()}</label>
+          <input id="add-host-name" class="dm-input" type="text" placeholder={m.hosts_add_name_ph()} bind:value={name}
+            aria-invalid={nameError ? 'true' : undefined} aria-describedby="add-host-name-hint"
+            oninput={() => (nameError = '')}
+            onkeydown={(e) => { if (e.key === 'Enter' && !creating) create(); }} />
+          {#if nameError}
+            <span class="ah-err" id="add-host-name-hint" data-testid="add-host-name-error">{nameError}</span>
+          {:else}
+            <span class="ah-hint" id="add-host-name-hint">{m.hosts_add_name_hint()}</span>
+          {/if}
+        </div>
+        <div class="ah-field">
+          <label class="ah-lbl" for="add-host-tag">{m.hosts_add_tags()}</label>
+          <div class="ah-chips">
+            {#each tags as t (t)}
+              <span class="ah-chip">{t}
+                <button type="button" onclick={() => removeTag(t)} aria-label={m.common_remove()}><X size={10} strokeWidth={1.5} /></button>
+              </span>
+            {/each}
+            <input id="add-host-tag" type="text" class="ah-chip-input" placeholder={m.hosts_add_tag_ph()} bind:value={tagInput}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(tagInput); } }} />
           </div>
-          {#if !createResult}
-            <div class="ed-add-host-reach"><AgentReachability /></div>
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={generateToken} disabled={creating || !hostname.trim()}>
-              {creating ? m.hosts_add_generating() : m.hosts_add_generate()}
-              <ArrowRight size={11} strokeWidth={1.5} />
+          {#if suggestionPool.some((s) => !tags.includes(s))}
+            <div class="ah-suggest">
+              {#each suggestionPool.filter((s) => !tags.includes(s)).slice(0, 8) as s (s)}
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTag(s)}>+ {s}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="ah-collapsed" data-testid="add-host-summary"><span class="dm-mono">{connected ? displayName : summaryName}</span>{#if tags.length}{` · ${tags.join(', ')}`}{/if}</div>
+
+        {#if !connected}
+          <div class="ah-field">
+            <span class="ah-title">{m.hosts_add_run_title()}</span>
+            <div class="ah-cmd" class:dead={expired}>
+              <code class="dm-mono" data-testid="install-command">{created.install_hint}</code>
+              <button type="button" class="dm-btn dm-btn-sm" disabled={expired} onclick={() => copy('cmd', created!.install_hint)}>
+                {#if copied === 'cmd'}<Check size={11} strokeWidth={1.5} /> {m.common_copied()}{:else}<Copy size={11} strokeWidth={1.5} /> {m.common_copy()}{/if}
+              </button>
+            </div>
+            {#if expired}
+              <div class="ah-row">
+                <span class="ah-err">{m.hosts_add_expired()}</span>
+                <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={rotating} onclick={newCommand}>{m.hosts_add_new_command()}</button>
+              </div>
+            {:else}
+              <div class="ah-hint">
+                {m.hosts_add_valid({ time: fmtTime(created.token_expires_at, { hour: '2-digit', minute: '2-digit' }) })} ·
+                <button type="button" class="ah-link" data-testid="add-host-new-command" disabled={rotating} onclick={newCommand}>{m.hosts_add_new_command()}</button>
+              </div>
+            {/if}
+            <span class="ah-hint">{m.hosts_add_pin_hint()}</span>
+          </div>
+
+          {#if created.behind_proxy}
+            <div class="ah-callout info"><Info size={14} strokeWidth={1.8} />
+              <span>{m.hosts_add_proxy_hint({ port: agentPort })}
+                <a class="ah-docs" href="{DOCS_BASE}features/multi-host#agent-port" target="_blank" rel="noopener noreferrer">{m.hosts_add_docs()}</a></span>
+            </div>
+          {/if}
+
+          <div>
+            <button type="button" class="ah-link" data-testid="add-host-automation" aria-expanded={showAuto} onclick={() => (showAuto = !showAuto)}>
+              {#if showAuto}<ChevronDown size={12} strokeWidth={1.8} />{:else}<ChevronRight size={12} strokeWidth={1.8} />{/if}
+              {m.hosts_add_auto()}
             </button>
-          {:else}
-            <p class="ed-add-host-confirm">
-              <Check size={11} strokeWidth={1.5} class="ed-add-host-check" />
-              {m.hosts_add_ready()} <b>{createResult.agent.name}</b>
-            </p>
-          {/if}
-        </div>
-      </section>
-
-      <!-- ─── 02 Run install ─── -->
-      <section class="ed-add-host-section" class:active={!!createResult && !connected} class:muted={!createResult}>
-        <span class="ed-add-host-step" class:active={!!createResult}>02</span>
-        <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">{m.hosts_add_run_title()}</h3>
-          {#if !createResult}
-            <p class="ed-add-host-blurb">{m.hosts_add_name_first()}</p>
-          {:else}
-            <p class="ed-add-host-blurb">
-              {m.hosts_add_paste_before()} <b>{createResult.agent.name}</b>{m.hosts_add_paste_after({ date: fmtDateTime(createResult.token_expires_at) })}
-            </p>
-            <div class="ed-add-host-cmd-wrap" class:expired>
-              <pre class="ed-add-host-cmd">{createResult.install_hint}</pre>
-              <button type="button" class="dm-btn dm-btn-secondary dm-btn-xs ed-add-host-copy" onclick={copyCmd} disabled={expired}>
-                {#if copied}<Check size={10} strokeWidth={1.5} /> {m.common_copied()}{:else}<Copy size={10} strokeWidth={1.5} /> {m.common_copy()}{/if}
-              </button>
-            </div>
-            <div class="ed-add-host-tokenbox">
-              <span class="ed-add-host-tokenbox-label">{m.hosts_add_token()}</span>
-              <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
-            </div>
-            <p class="ed-add-host-blurb">
-              {#if expired}{m.hosts_add_expired()}{/if}
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={newCommand} disabled={rotating || connected}>
-                {m.hosts_add_new_command()}
-              </button>
-            </p>
-            <p class="ed-add-host-blurb">{m.hosts_add_pin_hint()}</p>
-          {/if}
-        </div>
-      </section>
-
-      <!-- ─── 03 Wait ─── -->
-      <section class="ed-add-host-section" class:active={!!createResult} class:muted={!createResult}>
-        <span class="ed-add-host-step" class:active={!!createResult}>03</span>
-        <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">{m.hosts_add_wait_title()}</h3>
-          {#if !createResult}
-            <p class="ed-add-host-blurb">{m.hosts_add_wait_blurb()}</p>
-          {:else if !connected}
-            <div class="ed-add-host-waiting">
-              <span class="ed-add-host-pulse" aria-hidden="true"></span>
-              <div>
-                <div class="ed-add-host-waiting-text">
-                  {m.hosts_add_waiting_before()} <b>{createResult.agent.name}</b> {m.hosts_add_waiting_after()}
+            {#if showAuto}
+              <div class="ah-auto" data-testid="add-host-flags">
+                <div class="ah-field">
+                  <span class="ah-lbl">{m.hosts_add_token()}</span>
+                  <div class="ah-cmd small">
+                    <code class="dm-mono">{created.token}</code>
+                    <button type="button" class="dm-btn dm-btn-sm" disabled={expired} onclick={() => copy('token', created!.token)}>
+                      {#if copied === 'token'}<Check size={11} strokeWidth={1.5} /> {m.common_copied()}{:else}<Copy size={11} strokeWidth={1.5} /> {m.common_copy()}{/if}
+                    </button>
+                  </div>
                 </div>
-                <div class="ed-add-host-waiting-meta">{m.hosts_add_waiting_meta()}</div>
+                <div class="ah-flag"><code>--data-dir &lt;path&gt;</code><span>{m.hosts_add_flag_data()}</span></div>
+                <div class="ah-flag"><code>--stacks-dir &lt;path&gt;</code><span>{m.hosts_add_flag_stacks()}</span></div>
+                <div class="ah-flag"><code>--skip-docker</code><span>{m.hosts_add_flag_docker()}</span></div>
+                <div class="ah-flag"><code>API</code><span>{m.hosts_add_api({ endpoint: 'POST /api/v1/agents', fields: 'name, tags, stacks_dir' })} ·
+                  <a class="ah-docs" href="{DOCS_BASE}features/multi-host#automation" target="_blank" rel="noopener noreferrer">{m.hosts_add_api_docs()}</a></span></div>
               </div>
-            </div>
-            <p class="ed-add-host-troubleshoot">
-              {m.hosts_add_troubleshoot({ name: createResult.agent.name })} <code class="dm-mono">{createResult.agent_url}</code>.
-            </p>
-          {:else}
-            <div class="ed-add-host-success">
-              <span class="ed-add-host-success-mark"><Check size={13} strokeWidth={1.5} /></span>
-              <div>
-                <div class="ed-add-host-success-text">
-                  <b>{createResult.agent.name}</b> {m.hosts_add_is_online()}
-                </div>
-                <div class="ed-add-host-success-meta">{m.hosts_add_closing()}</div>
-              </div>
+            {/if}
+          </div>
+
+          <div class="ah-callout" role="status" data-testid="add-host-waiting">
+            <span class="ah-pulse" aria-hidden="true"></span>
+            <span><b>{m.hosts_add_waiting({ name: displayName })}</b><br /><span class="ah-hint">{m.hosts_add_waiting_meta()}</span></span>
+          </div>
+          {#if lateWait && reach}
+            <div class="ah-callout {reach.ok ? 'ok' : 'bad'}" data-testid="reachability">
+              {#if reach.ok}<Check size={14} strokeWidth={1.8} />{:else}<AlertTriangle size={14} strokeWidth={1.8} />{/if}
+              <span>{reach.ok ? m.hosts_add_reach_ok({ port: agentPort }) : m.hosts_add_reach_bad({ port: agentPort })}
+                {#if !reach.ok}<br />{m.hosts_add_reach_bad_detail({ url: reach.url })}{/if}</span>
             </div>
           {/if}
-        </div>
-      </section>
+        {:else}
+          <div class="ah-done">
+            <span class="ah-mark"><Check size={14} strokeWidth={1.8} /></span>
+            <b>{m.hosts_add_connected({ name: displayName })}</b>
+          </div>
+          {#if readyPath}
+            <p class="ah-p" data-testid="add-host-ready">{m.hosts_add_ready({ name: displayName, path: readyPath })}</p>
+          {:else}
+            <p class="ah-p">{m.hosts_add_needs_setup()}</p>
+          {/if}
+        {/if}
+      {/if}
     </div>
 
-    <footer class="ed-modal-foot">
+    <footer class="ah-foot">
+      {#if !connected}
+        <a class="ah-docs" href="{DOCS_BASE}features/multi-host#add-a-host" target="_blank" rel="noopener noreferrer">{m.hosts_add_docs()}</a>
+      {/if}
       <span class="dm-sp"></span>
-      <div class="ed-actions">
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={onclose}>
-          {connected ? m.common_done() : m.common_cancel()}
+      {#if !created}
+        <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_cancel()}</button>
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-create" disabled={creating} onclick={create}>
+          {creating ? m.hosts_add_creating() : m.hosts_add_create()}
         </button>
-      </div>
+      {:else if !connected}
+        <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_close()}</button>
+      {:else if readyPath}
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-open" onclick={() => openHost()}>{m.hosts_add_open_host()}</button>
+      {:else}
+        <button type="button" class="dm-btn dm-btn-ghost" onclick={onclose}>{m.common_close()}</button>
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host-setup" onclick={() => openHost('setup')}>{m.hosts_add_setup_btn()}</button>
+      {/if}
     </footer>
   </div>
 </div>
@@ -305,207 +316,86 @@
     z-index: 60;
     display: flex; align-items: center; justify-content: center;
   }
-  .ed-modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    max-height: 92vh;
-    display: flex; flex-direction: column;
-    overflow: hidden;
+  .ah {
+    width: min(620px, 96vw); max-height: 92vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 8px;
   }
-  .ed-add-host-modal { width: min(640px, 96vw); }
-  .ed-modal-head {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    gap: 16px; padding: 22px 26px 18px;
-    border-bottom: 1px solid var(--border);
+  .ah-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .ah-head h2 { margin: 0; font-size: var(--fs-lg, 17px); font-weight: 600; color: var(--fg); }
+  .ah-body { padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; font-size: var(--fs-sm); }
+  .ah-foot { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+  .ah-muted, .ah-p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .ah-p { color: var(--fg); }
+  .ah-field { display: flex; flex-direction: column; gap: 6px; }
+  .ah-lbl { font-size: var(--fs-xs, 12px); color: var(--muted); }
+  .ah-title { font-weight: 600; color: var(--fg); }
+  .ah-hint { font-size: var(--fs-xs, 12px); color: var(--muted); }
+  .ah-err { font-size: var(--fs-xs, 12px); color: var(--bad); }
+  .dm-input[aria-invalid='true'] { border-color: var(--bad); }
+  .ah-row { display: flex; align-items: center; gap: 10px; }
+  .ah-link {
+    background: none; border: 0; padding: 0; cursor: pointer; color: var(--accent);
+    font: inherit; display: inline-flex; align-items: center; gap: 4px;
   }
-  .ed-add-host-title { font-size: 22px; font-weight: 600; margin: 6px 0 0; color: var(--fg); letter-spacing: -0.01em; }
-  .ed-add-host-blurb { font-size: 13px; color: var(--fg-muted); margin: 6px 0 0; line-height: 1.55; }
-  .ed-modal-body { padding: 22px 26px; overflow-y: auto; flex: 1; }
-  .ed-add-host-body { display: flex; flex-direction: column; gap: 0; }
+  .ah-link:disabled { opacity: 0.5; cursor: default; }
+  .ah-docs { color: var(--accent); font-size: var(--fs-xs, 12px); text-decoration: none; }
+  .ah-docs:hover { text-decoration: underline; }
 
-  .ed-modal-foot {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 14px 26px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
+  .ah-chips {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r, 5px); background: var(--field, var(--surface));
   }
+  .ah-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+    border: 1px solid var(--border-strong); border-radius: 3px; font-size: var(--fs-xs, 12px); color: var(--fg);
+  }
+  .ah-chip button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); display: inline-flex; }
+  .ah-chip button:hover { color: var(--bad); }
+  .ah-chip-input { flex: 1 1 120px; min-width: 100px; border: 0; background: transparent; color: var(--fg); outline: none; font-size: var(--fs-sm); }
+  .ah-suggest { display: flex; flex-wrap: wrap; gap: 4px; }
 
-  /* ─── Step sections ─── */
-  .ed-add-host-section {
-    display: grid;
-    grid-template-columns: 44px 1fr;
-    gap: 16px;
-    padding-top: 22px;
-    margin-top: 22px;
-    border-top: 1px solid var(--border);
-    transition: opacity 0.18s;
-  }
-  .ed-add-host-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-  .ed-add-host-section.muted { opacity: 0.5; }
-  .ed-add-host-step {
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.16em;
-    padding-top: 4px;
-  }
-  .ed-add-host-step.active { color: var(--accent-fg); }
-  .ed-add-host-section-title {
-    font-family: var(--font-sans);
-    font-size: 15px; font-weight: 600;
-    color: var(--fg); letter-spacing: -0.01em;
-    margin: 0 0 10px;
-  }
-  .ed-add-host-fields { display: flex; flex-direction: column; gap: 16px; margin-bottom: 14px; }
+  .ah-collapsed { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r, 5px); color: var(--muted); }
+  .ah-collapsed .dm-mono { color: var(--fg); }
 
-  .ed-field { display: flex; flex-direction: column; gap: 6px; }
-  .ed-field-label {
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    display: flex; align-items: baseline; justify-content: space-between;
+  .ah-cmd {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--field, var(--surface));
   }
-  .ed-field-hint { font-size: 11.5px; color: var(--fg-subtle); text-transform: none; letter-spacing: 0.02em; }
-  .ed-soft-input {
-    width: 100%;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    padding: 8px 2px;
-    font-size: 13px;
-    color: var(--fg);
-    outline: none;
-    transition: border-color 0.1s;
-    border-radius: 0;
-  }
-  .ed-soft-input::placeholder { color: var(--fg-subtle); }
-  .ed-soft-input:focus { border-bottom-color: var(--accent); }
-  .ed-soft-input.font-mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
-  .ed-soft-input:disabled { opacity: 0.6; }
+  .ah-cmd code { flex: 1; min-width: 0; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--fg); }
+  .ah-cmd.dead { opacity: 0.45; }
+  .ah-cmd.small { padding: 6px 10px; }
 
-  .ed-host-tags-edit {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-  }
-  .ed-host-tags-input {
-    flex: 1 1 140px; border: 0; background: transparent;
-    color: var(--fg); font-size: 11.5px; outline: none; min-width: 100px;
-  }
-  .ed-host-tags-input::placeholder { color: var(--fg-subtle); }
-  .ed-hosts-tag-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 6px;
-    border: 1px solid var(--border-strong);
-    border-radius: 3px;
-    font-size: 11.5px;
-    color: var(--fg);
-    background: var(--surface);
-  }
-  .ed-host-tags-remove {
-    background: transparent; border: 0; cursor: pointer;
-    color: var(--fg-subtle); padding: 0;
-    display: inline-flex;
-  }
-  .ed-host-tags-remove:hover { color: var(--color-danger-400); }
-  .ed-host-tags-suggest {
-    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center;
-  }
-  .ed-host-tags-suggest-label {
-    font-size: 11.5px; color: var(--fg-subtle); margin-right: 4px;
-  }
+  .ah-auto { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; gap: 8px; }
+  .ah-flag { display: grid; grid-template-columns: 170px 1fr; gap: 10px; align-items: baseline; }
+  .ah-flag > code { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
+  .ah-flag span { color: var(--muted); }
 
-  .ed-add-host-reach { margin-bottom: 14px; }
-  .ed-add-host-confirm {
-    font-size: 11px; color: var(--color-success-400);
-    margin: 4px 0 0; display: inline-flex; align-items: center; gap: 6px;
+  .ah-callout {
+    display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: var(--r, 5px); line-height: 1.5;
   }
-  :global(.ed-add-host-check) { color: var(--color-success-400); }
-
-  /* ─── Section 02 ─── */
-  .ed-add-host-cmd-wrap { position: relative; margin-top: 10px; }
-  .ed-add-host-cmd-wrap.expired { opacity: 0.45; }
-  .ed-add-host-cmd {
-    margin: 0;
-    padding: 14px 16px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: 11.5px; line-height: 1.65;
-    color: var(--fg);
-    overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  .ed-add-host-copy { position: absolute; top: 8px; right: 8px; }
-  .ed-add-host-tokenbox {
-    margin-top: 12px;
-    padding: 10px 14px;
-    border: 1px solid color-mix(in srgb, var(--color-warning-500) 40%, var(--border));
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--color-warning-500) 6%, transparent);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .ed-add-host-tokenbox-label {
-    font-size: 11.5px; color: var(--color-warning-400);
-  }
-  .ed-add-host-tokenbox-value {
-    font-size: 11.5px; color: var(--fg); word-break: break-all;
-  }
-
-  /* ─── Section 03 ─── */
-  .ed-add-host-waiting {
-    display: flex; align-items: flex-start; gap: 12px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
-  }
-  .ed-add-host-pulse {
-    width: 9px; height: 9px;
-    border-radius: 999px;
-    background: var(--accent);
+  .ah-callout > :global(svg) { flex-shrink: 0; margin-top: 2px; }
+  .ah-callout.info { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); }
+  .ah-callout.info > :global(svg) { color: var(--accent); }
+  .ah-callout.ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-bg); }
+  .ah-callout.ok > :global(svg) { color: var(--ok); }
+  .ah-callout.bad { border-color: color-mix(in srgb, var(--bad) 40%, transparent); background: var(--bad-bg); }
+  .ah-callout.bad > :global(svg) { color: var(--bad); }
+  .ah-pulse {
+    width: 9px; height: 9px; margin-top: 5px; flex-shrink: 0; border-radius: 999px; background: var(--accent);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
-    animation: ed-add-host-blink 1.4s ease-in-out infinite;
-    flex-shrink: 0;
-    margin-top: 4px;
+    animation: ah-blink 1.4s ease-in-out infinite;
   }
-  @keyframes ed-add-host-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-  .ed-add-host-waiting-text { font-size: 13px; color: var(--fg); font-weight: 500; }
-  .ed-add-host-waiting-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 4px; letter-spacing: 0.02em; }
-  .ed-add-host-troubleshoot {
-    margin-top: 10px;
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    line-height: 1.6;
-  }
-  .ed-add-host-troubleshoot code { color: var(--accent-fg); }
+  @keyframes ah-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @media (prefers-reduced-motion: reduce) { .ah-pulse { animation: none; } }
 
-  .ed-add-host-success {
-    display: flex; align-items: center; gap: 10px;
-    padding: 14px 16px;
-    border: 1px solid color-mix(in srgb, var(--color-success-500) 40%, var(--border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--color-success-500) 6%, transparent);
+  .ah-done { display: flex; align-items: center; gap: 10px; font-size: var(--fs-md, 15px); }
+  .ah-mark {
+    width: 26px; height: 26px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--ok-bg); border: 1px solid var(--ok); color: var(--ok);
   }
-  .ed-add-host-success-mark {
-    width: 24px; height: 24px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--color-success-500) 18%, transparent);
-    border: 1px solid var(--color-success-500);
-    display: inline-flex; align-items: center; justify-content: center;
-    color: var(--color-success-400);
-    flex-shrink: 0;
+  @media (max-width: 560px) {
+    .ah-flag { grid-template-columns: 1fr; gap: 2px; }
   }
-  .ed-add-host-success-text { font-size: 13px; color: var(--fg); font-weight: 500; }
-  .ed-add-host-success-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 3px; }
 </style>
