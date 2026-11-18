@@ -6294,5 +6294,8 @@
   "label_host_removed": "Removed from host",
   "hosts_removed_title": "The agent was removed from {name}",
   "hosts_removed_text": "Stacks on this host keep running but are no longer managed.",
-  "hosts_delete_host": "Delete host"
+  "hosts_delete_host": "Delete host",
+  "label_host_waiting_setup": "Waiting for setup",
+  "hosts_setup_banner_title": "{name} is connected but not set up yet",
+  "hosts_setup_banner_text": "Choose where stacks go on this host. Until then you can't deploy to it."
 }

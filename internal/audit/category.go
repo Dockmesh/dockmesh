@@ -132,6 +132,7 @@ var categories = map[string]string{
 	"host.tag_add":                  CategoryChanges,
 	"host.tag_remove":               CategoryChanges,
 	"agent.rotate_token":            CategoryChanges,
+	"host.stacks_dir_set":           CategoryChanges,
 	"agent.upgrade_policy":          CategoryChanges,
 	"agent.upgrade_run":             CategoryChanges,
 	"alerts.rule_create":            CategoryChanges,

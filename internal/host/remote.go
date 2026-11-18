@@ -72,6 +72,29 @@ func (h *RemoteHost) live() (*agents.ConnectedAgent, error) {
 	return nil, ErrAgentOffline
 }
 
+// setupChecker is implemented by the agents service.
+type setupChecker interface {
+	SetupError(ctx context.Context, id string) error
+}
+
+// SetupChecker is a host that can refuse work while it waits for setup.
+type SetupChecker interface {
+	SetupError(ctx context.Context) error
+}
+
+// SetupError refuses work for a host that waits for setup; see
+// agents.WaitingForSetupError.
+func (h *RemoteHost) SetupError(ctx context.Context) error {
+	sc, ok := h.agents.(setupChecker)
+	if !ok {
+		return nil
+	}
+	if err := sc.SetupError(ctx, h.id); err != nil && !errors.Is(err, agents.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 func (h *RemoteHost) ID() string   { return h.id }
 func (h *RemoteHost) Name() string { return h.name }
 
@@ -230,6 +253,9 @@ func (s *remoteExecSession) Close() error {
 // -----------------------------------------------------------------------------
 
 func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
+	if err := h.SetupError(ctx); err != nil {
+		return nil, err
+	}
 	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
@@ -898,6 +924,9 @@ func (h *RemoteHost) ExportImage(ctx context.Context, ref string) (io.ReadCloser
 }
 
 func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
+	if err := h.SetupError(ctx); err != nil {
+		return nil, err
+	}
 	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
@@ -917,6 +946,9 @@ func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envCon
 }
 
 func (h *RemoteHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
+	if err := h.SetupError(ctx); err != nil {
+		return nil, err
+	}
 	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}

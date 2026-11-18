@@ -244,6 +244,13 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*AdoptResult, er
 	if err != nil {
 		return nil, fmt.Errorf("resolve host %q: %w", req.HostID, err)
 	}
+	// An adopted stack is a Dockmesh stack like a deployed one, so a host
+	// waiting for setup refuses both.
+	if sc, ok := target.(host.SetupChecker); ok {
+		if err := sc.SetupError(ctx); err != nil {
+			return nil, err
+		}
+	}
 	containers, err := target.ListContainers(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("list containers on host %s: %w", target.ID(), err)

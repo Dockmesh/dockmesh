@@ -146,6 +146,11 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	go h.pump(ag, conn)
 	h.svc.runConnectHooks(context.WithoutCancel(r.Context()), agent.ID)
+	if p, err := h.svc.setupFromHello(r.Context(), agent.ID, hello); err != nil {
+		slog.Warn("agent setup state", "agent", agent.Name, "err", err)
+	} else if p != "" {
+		go h.svc.applyStacksDir(ctx, ag, p)
+	}
 
 	// Inbound loop (agent → server). Any frame proves the agent is alive.
 	for {

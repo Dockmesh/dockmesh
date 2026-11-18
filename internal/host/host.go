@@ -185,4 +185,6 @@ type Info struct {
 	Kind   string   `json:"kind"`           // "local" | "agent"
 	Status string   `json:"status"`         // "online" | "offline"
 	Tags   []string `json:"tags,omitempty"` // populated by the handler from hosttags service
+	// NeedsSetup: the host waits for setup and refuses deploys.
+	NeedsSetup bool `json:"needs_setup,omitempty"`
 }
