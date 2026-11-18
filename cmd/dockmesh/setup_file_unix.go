@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -94,6 +96,9 @@ func (a *setupApplier) check(v setup.ApplyValues) error {
 		}
 	}
 	if v.StacksOutsideDataDir() {
+		if a.uid > math.MaxInt32 {
+			return errors.New("the dockmesh account has an out-of-range uid")
+		}
 		if res := stacksdir.Check(v.StacksDir, stacksdir.ServerRules(v.DataDir, int(a.uid), layout.ServiceGroup, stacksdir.DockerRoots(context.Background(), ""))); !res.OK() {
 			return fmt.Errorf("stacks_dir: %s", res.Message)
 		}

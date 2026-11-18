@@ -260,14 +260,18 @@ func (a *setupApplier) prepareStacksDir(ctx context.Context, v setup.ApplyValues
 	if !v.StacksOutsideDataDir() {
 		return false, nil
 	}
-	res := stacksdir.Check(v.StacksDir, stacksdir.ServerRules(v.DataDir, int(a.uid), layout.ServiceGroup, stacksdir.DockerRoots(ctx, "")))
+	if a.uid > math.MaxInt32 || a.gid > math.MaxInt32 {
+		return false, errors.New("the dockmesh account has an out-of-range uid or gid")
+	}
+	uid, gid := int(a.uid), int(a.gid)
+	res := stacksdir.Check(v.StacksDir, stacksdir.ServerRules(v.DataDir, uid, layout.ServiceGroup, stacksdir.DockerRoots(ctx, "")))
 	if !res.OK() {
 		return false, errors.New(res.Message)
 	}
 	if !res.WillCreate {
 		return false, nil
 	}
-	if err := stacksdir.Create(v.StacksDir, int(a.uid), int(a.gid)); err != nil {
+	if err := stacksdir.Create(v.StacksDir, uid, gid); err != nil {
 		return false, fmt.Errorf("create %s: %w", v.StacksDir, err)
 	}
 	return true, nil
