@@ -13,9 +13,8 @@ import (
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 )
 
-// A relative bind mount must end up in the persistent stack directory, not
-// in the staging copy compose was loaded from (which is deleted after the
-// deploy and left containers writing into a vanished directory).
+// Relative paths must end up in the persistent stack directory, not in the
+// staging copy compose was loaded from.
 func TestRebaseStagedPathsWithRealLoader(t *testing.T) {
 	staging, cleanup, err := NewStagingDir(t.TempDir(), "deploy-")
 	if err != nil {

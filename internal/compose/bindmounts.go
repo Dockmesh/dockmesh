@@ -62,11 +62,11 @@ func RebaseStagedPaths(proj *composetypes.Project, stagingDir, stackDir string) 
 	base := stagingBase(stagingDir)
 	var warnings []string
 	rebase := func(p, what string) string {
-		if p == "" || !filepath.IsAbs(p) {
+		if !filepath.IsAbs(p) {
 			return p
 		}
 		src := filepath.Clean(p)
-		if !within(base, src) || (src == base && base != stagingDir) {
+		if !within(base, src) {
 			return p
 		}
 		rel, err := filepath.Rel(stagingDir, src)

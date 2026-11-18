@@ -239,21 +239,21 @@ func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.C
 // writeStagingDir creates a staging directory holding compose.yaml and an
 // optional .env.
 func writeStagingDir(name, composeYAML, envContent string) (string, func(), error) {
-	base, cleanup, err := compose.NewStagingDir("", "dockmesh-deploy-"+name+"-")
+	dir, cleanup, err := compose.NewStagingDir("", "dockmesh-deploy-"+name+"-")
 	if err != nil {
 		return "", func() {}, err
 	}
-	if err := os.WriteFile(filepath.Join(base, "compose.yaml"), []byte(composeYAML), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(composeYAML), 0o600); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
 	if envContent != "" {
-		if err := os.WriteFile(filepath.Join(base, ".env"), []byte(envContent), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
 			cleanup()
 			return "", func() {}, err
 		}
 	}
-	return base, cleanup, nil
+	return dir, cleanup, nil
 }
 
 // WriteStagingDir is exported for the agent's scale and scale-check

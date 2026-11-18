@@ -109,7 +109,7 @@ The compose file is parsed inside a temporary staging directory that is deleted 
 - On the server's host, `./data:/data` mounts `<stacks root>/<stack>/data`.
 - On an agent host, it mounts the agent's copy of the stack directory, `/var/lib/dockmesh-agent/stacks/<stack>/data` with the agent's default data directory.
 
-The same applies to the `file:` of top-level `configs` and `secrets` and to `build.context`, which Dockmesh parses but does not use (see the list below). A path that climbs out of the stack directory, such as `../shared:/shared`, resolves next to it (`<stacks root>/shared`), on the server and on agents alike. The deploy goes ahead and lists each such path with the host path it points to.
+The same applies to the `file:` of top-level `configs` and `secrets` and to `build.context`, which Dockmesh parses but does not use (see the list above). A path that climbs out of the stack directory, such as `../shared:/shared`, resolves next to it (`<stacks root>/shared`), on the server and on agents alike. The deploy goes ahead and lists each such path with the host path it points to.
 
 Data in such a directory on the server's host is part of every stack and system backup, because both archive the stack directory. Data on an agent host is not backed up; use named volumes there.
 
