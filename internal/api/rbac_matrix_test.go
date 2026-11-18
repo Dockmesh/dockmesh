@@ -379,6 +379,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/setup/check-ports", gatePublic},
 	{"POST", "/api/v1/setup/check-cert", gatePublic},
 	{"POST", "/api/v1/setup/check-proxy", gatePublic},
+	{"POST", "/api/v1/setup/test-notification", gatePublic},
 	{"POST", "/api/v1/setup/validate-user", gatePublic},
 	{"POST", "/api/v1/setup/test-url", gatePublic},
 	{"POST", "/api/v1/setup/commit", gatePublic},

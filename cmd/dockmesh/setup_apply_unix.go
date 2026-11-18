@@ -107,6 +107,13 @@ func (a *setupApplier) run(ctx context.Context) error {
 	}
 	a.restoreFromState = v.Restore
 	a.commit(ctx, v)
+	// The values hold the secrets of notification channels; a retry from
+	// the wizard sends them again.
+	if _, err := os.Lstat(setup.StateDir(a.dataDir)); err == nil {
+		if err := rootupdate.RemoveServiceFile(setup.StateDir(a.dataDir), a.uid, setup.ApplyFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			a.log.Warn("setup values not removed", "err", err)
+		}
+	}
 	return nil
 }
 

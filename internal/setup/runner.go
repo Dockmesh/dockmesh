@@ -54,6 +54,8 @@ type CommitInput struct {
 		Enabled   bool   `json:"enabled,omitempty"`
 		ACMEEmail string `json:"acme_email,omitempty"`
 	} `json:"proxy,omitempty"`
+	// Notifications are channels to create, at most one from the wizard.
+	Notifications []NotificationValues `json:"notifications,omitempty"`
 }
 
 // Validate returns the first user-input issue or nil. Cheaper than the

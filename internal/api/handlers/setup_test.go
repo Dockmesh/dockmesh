@@ -125,6 +125,7 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
+		{"notification", h.SetupTestNotification, `{"type":"webhook","config":{"url":"http://192.0.2.1/"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,6 +246,7 @@ func TestSetupHandlersNeedSession(t *testing.T) {
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
+		{"notification", h.SetupTestNotification, `{"type":"webhook","config":{"url":"http://192.0.2.1/"}}`},
 		{"commit", h.SetupCommit, setupCommitBody},
 		{"restore", h.SetupRestore, ""},
 	}

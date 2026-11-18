@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -149,6 +150,13 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 	if f.Address.AgentPort != 0 {
 		v.AgentListen = ":" + strconv.Itoa(f.Address.AgentPort)
 	}
+	for i := range f.Notifications {
+		n, err := notificationValues(f, i)
+		if err != nil {
+			return v, err
+		}
+		v.Notifications = append(v.Notifications, n)
+	}
 	if f.Admin == nil {
 		return v, v.ValidateServer()
 	}
@@ -174,6 +182,27 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 		}
 	}
 	return v, v.Validate()
+}
+
+// notificationValues reads the secret files of notification i into its
+// channel config.
+func notificationValues(f setup.File, i int) (setup.NotificationValues, error) {
+	nf, err := f.NotificationFields(i)
+	if err != nil {
+		return setup.NotificationValues{}, err
+	}
+	for j, sf := range nf.Secrets {
+		secret, err := readPasswordFile(sf.Path)
+		if err != nil {
+			return setup.NotificationValues{}, fmt.Errorf("%s: %w", sf.Key, err)
+		}
+		nf.Config[nf.SecretField[j]] = secret
+	}
+	raw, err := json.Marshal(nf.Config)
+	if err != nil {
+		return setup.NotificationValues{}, fmt.Errorf("notifications[%d]: %w", i, err)
+	}
+	return setup.NotificationValues{Type: nf.Type, Name: nf.Name, Config: raw}, nil
 }
 
 // readPasswordFile returns the password in path, without the line end
