@@ -59,7 +59,8 @@ tls:
   #           fingerprint is printed when the setup is applied
   # file      your own certificate: cert_file and key_file, readable by
   #           the dockmesh user; reloaded when they change
-  # caddy     Caddy issues it (needs the reverse proxy)
+  # caddy     Caddy issues it: needs base_url with a public DNS name,
+  #           ports 80 and 443 and proxy.acme_email; turns the proxy on
   # proxy     plain HTTP on 127.0.0.1 behind your own reverse proxy
   mode: internal
   # cert_file: /etc/ssl/dockmesh/fullchain.pem
@@ -67,3 +68,10 @@ tls:
   # With mode proxy: the addresses or networks of your proxy, comma
   # separated. Default: the listen address only.
   # trusted_proxies: 127.0.0.1, 10.0.0.5
+
+# The managed reverse proxy (Caddy) for your stacks. Ports 80 and 443
+# must be free. Default: off, on with tls mode caddy.
+# proxy:
+#   enabled: true
+#   # Required with tls mode caddy.
+#   acme_email: you@example.com

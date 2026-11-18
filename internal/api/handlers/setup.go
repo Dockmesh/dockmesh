@@ -460,13 +460,15 @@ const proxyPullTimeout = 3 * time.Minute
 // SetupCheckProxy runs the reverse proxy step's checks: ports 80 and 443
 // free, the Caddy image pulled, and for TLS mode caddy whether the base
 // URL's name resolves to an address of this server. Body:
-// `{ "host": "dm.example.org" }`, host only with TLS mode caddy.
+// `{ "host": "dm.example.org", "pull": true }`, host only with TLS mode
+// caddy.
 func (h *Handlers) SetupCheckProxy(w http.ResponseWriter, r *http.Request) {
 	if !h.setupWritable(w, r) {
 		return
 	}
 	var req struct {
 		Host string `json:"host"`
+		Pull bool   `json:"pull"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -482,9 +484,11 @@ func (h *Handlers) SetupCheckProxy(w http.ResponseWriter, r *http.Request) {
 	if req.Host != "" {
 		res.DNS = setup.CheckDNS(r.Context(), req.Host)
 	}
-	if h.Docker == nil {
+	switch {
+	case !req.Pull:
+	case h.Docker == nil:
 		res.PullError = "Docker is not reachable"
-	} else {
+	default:
 		ctx, cancel := context.WithTimeout(r.Context(), proxyPullTimeout)
 		defer cancel()
 		if err := proxy.PullDefaultImage(ctx, h.Docker); err != nil {

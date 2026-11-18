@@ -289,6 +289,67 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /setup/check-proxy:
+    post:
+      operationId: setup.check_proxy
+      tags: [setup]
+      summary: Check the reverse proxy step
+      description: |
+        Lists which of ports 80 and 443 another program listens on, with
+        `pull` pulls the Caddy image a new install starts with (unless
+        Docker has it),
+        and with `host` (TLS mode caddy) resolves that name and says whether
+        it points at an address of this server. Behind NAT a public name
+        never does, so `local: false` is a hint, not an error.
+      security:
+        - setupSession: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host: {type: string}
+                pull: {type: boolean}
+      responses:
+        "403": {description: "Missing the `X-Dockmesh-Setup` header."}
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  busy_ports: {type: array, items: {type: integer}}
+                  image: {type: string}
+                  pulled: {type: boolean}
+                  pull_error: {type: string}
+                  dns:
+                    type: object
+                    properties:
+                      host: {type: string}
+                      resolves: {type: boolean}
+                      addresses: {type: array, items: {type: string}}
+                      local: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "500":
+          description: The listening ports could not be read.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410":
+          description: Setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /setup/validate-user:
     post:
       operationId: setup.validate_user
@@ -434,6 +495,12 @@ paths:
                     cert_file: {type: string, description: Absolute PEM certificate path for mode file.}
                     key_file: {type: string, description: Absolute PEM key path for mode file.}
                     trusted_proxies: {type: string, description: "Mode proxy only: comma-separated addresses or networks to trust instead of the listen address; never every address."}
+                proxy:
+                  type: object
+                  description: "The reverse proxy step. TLS mode caddy turns it on, needs `acme_email` and an https base URL with a DNS name, and stores a route for that name to this server."
+                  properties:
+                    enabled: {type: boolean}
+                    acme_email: {type: string}
                 agent:
                   type: object
                   description: The agent listener. Ignored for an install from 0.5.x that finishes its setup.

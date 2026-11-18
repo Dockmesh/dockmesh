@@ -499,7 +499,9 @@
     const u = legacy ? (baseURLError(baseURL.trim(), 'internal') === 'invalid' ? 'invalid' : null) : baseURLError(baseURL.trim(), tls);
     const absolute = (f: string) => f.startsWith('/') && !/\s/.test(f);
     return {
-      base: u === 'https_required' ? m.sw_addr_err_https() : u === 'proxy_url' ? m.sw_addr_err_proxy_url() : u ? m.sw_addr_err_url() : null,
+      base: u === 'https_required' ? m.sw_addr_err_https() : u === 'proxy_url' ? m.sw_addr_err_proxy_url() : u ? m.sw_addr_err_url()
+        : tls === 'caddy' && isIPHost(hostOf(baseURL.trim())) ? m.sw_addr_err_caddy_name()
+        : tls === 'caddy' && dnsCheck && dnsCheck.host === hostOf(baseURL.trim()) && !dnsCheck.resolves ? m.sw_n3_err_caddy_dns({ name: dnsCheck.host }) : null,
       port: legacy ? null : portError(webPort) ? m.sw_addr_err_port() : webPort === agentPort ? m.sw_addr_err_same_ports() : busyText(portBusy.web),
       agentPort: legacy ? null : portError(agentPort) ? m.sw_addr_err_port() : webPort === agentPort ? m.sw_addr_err_same_ports() : busyText(portBusy.agent),
       agentURL: !legacy && agentURLOpen && agentURLError(agentURLInput.trim()) ? m.sw_addr_err_agent_url() : null,
@@ -650,12 +652,85 @@
     }
   }
 
+  // TLS mode caddy: does the base URL's name resolve, and to this server?
+  type DNSCheck = { host: string; resolves: boolean; addresses?: string[]; local: boolean };
+  let dnsCheck = $state<DNSCheck | null>(null);
+  const dnsNote = $derived(
+    tls === 'caddy' && dnsCheck && dnsCheck.resolves && !dnsCheck.local && dnsCheck.host === hostOf(baseURL.trim())
+      ? m.sw_n3_warn_caddy_nat({ name: dnsCheck.host, addr: (dnsCheck.addresses ?? []).join(', ') })
+      : ''
+  );
+
+  function isIPHost(h: string): boolean {
+    return /^[0-9.]+$/.test(h) || h.includes(':');
+  }
+
+  async function checkDNS() {
+    const host = hostOf(baseURL.trim());
+    if (tls !== 'caddy' || !host || isIPHost(host)) return;
+    try {
+      const r = await fetch('/api/v1/setup/check-proxy', { method: 'POST', headers: SETUP_HEADER, body: JSON.stringify({ host }) });
+      if (r.status === 401) return sessionLost();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      dnsCheck = (await r.json()).dns ?? null;
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
   async function addressNext() {
     triedNext = { ...triedNext, N3: true };
     if (Object.values(addrErr).some(Boolean)) return;
+    await checkDNS();
     await checkPorts();
     if (!(await checkCert())) return;
     if (Object.values(addressErrors()).some(Boolean)) return;
+    next();
+  }
+
+  // ----- N4 reverse proxy -----------------------------------------------------
+  type ProxyCheck = { busy_ports: number[]; image: string; pulled: boolean; pull_error?: string };
+  let proxyOn = $state(false);
+  let acmeEmail = $state('');
+  let proxyCheck = $state<ProxyCheck | null>(null);
+  let proxyChecking = $state(false);
+  const proxyWanted = $derived(proxyOn || tls === 'caddy');
+  const proxyCheckOK = $derived(!!proxyCheck && proxyCheck.busy_ports.length === 0 && proxyCheck.pulled);
+  const proxyErr = $derived.by(() => {
+    const e = acmeEmail.trim();
+    if (!e) return tls === 'caddy' ? m.sw_n4_err_email_required() : null;
+    return emailError(e) ? m.sw_admin_err_email() : null;
+  });
+
+  $effect(() => {
+    if (step === 'N4' && proxyWanted && !proxyCheck && !proxyChecking) void checkProxy();
+  });
+
+  async function checkProxy() {
+    proxyChecking = true;
+    try {
+      const r = await fetch('/api/v1/setup/check-proxy', { method: 'POST', headers: SETUP_HEADER, body: JSON.stringify({ pull: true }) });
+      if (r.status === 401) return sessionLost();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      proxyCheck = await r.json();
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      proxyChecking = false;
+    }
+  }
+
+  async function proxyNext() {
+    triedNext = { ...triedNext, N4: true };
+    if (!proxyWanted) return next();
+    if (proxyErr) return;
+    // A refusal is asked again: the port may have been freed meanwhile.
+    if (!proxyCheckOK) await checkProxy();
+    if (proxyCheckOK) next();
+  }
+
+  function skipProxy() {
+    proxyOn = false;
     next();
   }
 
@@ -724,6 +799,7 @@
         body: JSON.stringify({
           data_dir: dataDir.trim(),
           stacks_dir: legacy || !stacksCustom ? undefined : stacksDir,
+          proxy: legacy || !proxyWanted ? undefined : { enabled: true, acme_email: acmeEmail.trim() || undefined },
           agent: legacy ? undefined : {
             listen: `:${agentPort}`,
             url: agentURLOpen ? agentURLInput.trim() : undefined
@@ -1072,7 +1148,7 @@
         <ol>
           {#each railSteps as s, k (s)}
             {@const done = k < idx}
-            {@const sub = s === 'N4' || s === 'N5' ? m.sw_optional() : ''}
+            {@const sub = s === 'N4' && tls === 'caddy' ? m.sw_step_proxy_required() : s === 'N4' || s === 'N5' ? m.sw_optional() : ''}
             <li class:done class:on={k === idx} aria-current={k === idx ? 'step' : undefined}>
               {#if railClickable(s, step, path) && gate === 'wizard'}
                 <button type="button" class="rb" onclick={() => go(s)} title={m.sw_rail_back_to({ name: stepName(s) })}>
@@ -1363,12 +1439,14 @@
                       {/if}
                     </div>
                   </label>
-                  <label class="rc off" aria-disabled="true">
-                    <input type="radio" name="tls" value="caddy" disabled />
+                  <label class="rc" class:on={tls === 'caddy'}>
+                    <input type="radio" name="tls" value="caddy" bind:group={tls} />
                     <div class="b">
                       <div class="t">{m.sw_tls_caddy()}</div>
-                      <div class="hint d">{m.sw_tls_caddy_text()}</div>
-                      <div class="hint d">{m.sw_tls_caddy_unavailable()}</div>
+                      <div class="hint d">{m.sw_tls_caddy_text()} {m.sw_tls_caddy_proxy()}</div>
+                      {#if tls === 'caddy' && dnsNote}
+                        <div class="sub"><span class="wrn">{dnsNote}</span></div>
+                      {/if}
                     </div>
                   </label>
                   <label class="rc" class:on={tls === 'proxy'}>
@@ -1425,16 +1503,44 @@
             </form>
           </div>
         {:else if step === 'N4'}
+          {@const caddy = tls === 'caddy'}
           <div class="col">
-            {@render head(m.sw_n4_title(), m.sw_n4_text())}
-            <section class="panel">
-              <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n4_later()}</span></div>
+            {@render head(m.sw_n4_title(), caddy ? m.sw_n4_text_caddy() : m.sw_n4_text())}
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); proxyNext(); }}>
+              {@render bannerBox()}
+              <label class="toggle">
+                <input type="checkbox" bind:checked={proxyOn} disabled={caddy} />
+                <span>{m.sw_n4_toggle()}</span>
+              </label>
+              {#if proxyOn || caddy}
+                <div class="field">
+                  <label class="lbl" for="acme-email">{caddy ? m.sw_n4_email() : m.sw_n4_email_optional()}</label>
+                  <input id="acme-email" class="inp" type="email" bind:value={acmeEmail} placeholder="you@example.com"
+                    aria-invalid={(touched.acme || triedNext.N4) && !!proxyErr} onblur={() => (touched = { ...touched, acme: true })} />
+                  {#if (touched.acme || triedNext.N4) && proxyErr}<span class="err">{proxyErr}</span>{/if}
+                </div>
+                <div class="grid2">
+                  <div class="field"><span class="lbl">{m.sw_n4_http()}</span><span class="dm-mono ro">80</span></div>
+                  <div class="field"><span class="lbl">{m.sw_n4_https()}</span><span class="dm-mono ro">443</span></div>
+                </div>
+                {#if proxyChecking}
+                  <div class="result"><span class="spin" aria-hidden="true"></span> {m.sw_n4_checking()}</div>
+                {:else if proxyCheck}
+                  {#each proxyCheck.busy_ports as p (p)}<span class="err">{m.sw_n4_err_port({ port: String(p) })}</span>{/each}
+                  {#if proxyCheck.pull_error}<span class="err">{m.sw_n4_err_pull({ image: proxyCheck.image, reason: proxyCheck.pull_error })}</span>{/if}
+                  {#if proxyCheckOK}
+                    <div class="result"><span class="ok">✓</span> {m.sw_n4_ports_free()} · <span class="ok">✓</span> {m.sw_n4_pulled()}</div>
+                  {/if}
+                {/if}
+              {/if}
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                {#if !caddy}<button type="button" class="link" onclick={skipProxy}>{m.sw_skip()}</button>{/if}
                 <span class="sp"></span>
-                <button type="button" class="btn primary" onclick={next}>{m.sw_next()}</button>
+                <button type="submit" class="btn primary" disabled={proxyChecking}>{m.sw_next()}</button>
               </div>
-            </section>
+              {#if !caddy}<p class="hint plain">{m.sw_n4_later_hint()}</p>{/if}
+            </form>
           </div>
         {:else if step === 'N5'}
           <div class="col">
@@ -1481,7 +1587,7 @@
                 {#if tls === 'proxy'}{@render row(m.sw_n3_listen(), listen.trim(), 'N3', true)}
                   {@render row(m.sw_n3_trusted(), trustedProxies || m.sw_n3_trusted_none(), 'N3', true)}{/if}
                 <div class="sect">{m.sw_step_proxy()}</div>
-                {@render row('Caddy', m.sw_n6_off(), 'N4')}
+                {@render row('Caddy', proxyWanted ? (acmeEmail.trim() ? m.sw_n6_proxy_on_email({ email: acmeEmail.trim() }) : m.sw_n6_proxy_on()) : m.sw_n6_off(), 'N4')}
                 <div class="sect">{m.sw_step_notifications()}</div>
                 {@render row(m.sw_n6_channel(), m.sw_n6_none(), 'N5')}
               </div>
@@ -2131,6 +2237,12 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
   }
   .result {
     display: flex;
