@@ -549,7 +549,6 @@
 </EditorialModal>
 
 <style>
-  .tok-warn { margin: -6px 0 0; color: var(--warn); font-size: var(--fs-xs); }
   .tok {
     display: flex;
     flex-direction: column;
@@ -795,6 +794,11 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
+  }
+  .tok-warn {
+    margin: -6px 0 0;
+    color: var(--warn);
+    font-size: var(--fs-xs);
   }
   .tok-scope-card {
     padding: 8px 10px;
