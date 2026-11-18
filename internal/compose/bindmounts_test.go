@@ -247,8 +247,8 @@ func TestWritableStackDirMountsResolves(t *testing.T) {
 		t.Errorf("subdir reported: %+v", got)
 	}
 	y = "services:\n  a:\n    volumes: [\"/var/lib/dockmesh-agent/stacks/web:/x\"]\n"
-	agent := append(server, StackDirOnHost{Path: "/var/lib/dockmesh-agent/stacks/web"})
 	agent := []StackDirOnHost{server[0], {Path: "/var/lib/dockmesh-agent/stacks/web"}}
+	if got := WritableStackDirMounts([]string{y}, agent); len(got) != 1 {
 		t.Fatalf("agent stack dir not found: %+v", got)
 	}
 	shared := "services: {}\nvolumes:\n  v:\n    driver_opts: {o: bind, device: " + filepath.ToSlash(dir) + "}\n"
