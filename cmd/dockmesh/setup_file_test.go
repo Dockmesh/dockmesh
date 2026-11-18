@@ -48,6 +48,11 @@ func TestSetupFileValues(t *testing.T) {
 		{"system data dir", setup.File{DataDir: "/etc/dm", Admin: &setup.FileAdmin{PasswordFile: good}}, "system directory"},
 		{"restore needs no admin", setup.File{Restore: &setup.FileRestore{BackupFile: "/root/b"}}, ""},
 		{"bad tls mode", setup.File{TLS: setup.FileTLS{Mode: "bogus"}, Restore: &setup.FileRestore{BackupFile: "/root/b"}}, "TLS_MODE"},
+		{"network keys", setup.File{StacksDir: "/srv/stacks", Address: setup.FileAddress{AgentPort: 9443, AgentURL: "wss://dm.lan:9443/connect"},
+			TLS: setup.FileTLS{Mode: "proxy", TrustedProxies: "10.0.0.2"}, Admin: &setup.FileAdmin{PasswordFile: good}}, ""},
+		{"agent port is the web port", setup.File{Address: setup.FileAddress{AgentPort: 8080}, Admin: &setup.FileAdmin{PasswordFile: good}}, "must differ"},
+		{"stacks dir in /etc", setup.File{StacksDir: "/etc/stacks", Admin: &setup.FileAdmin{PasswordFile: good}}, "stacks dir"},
+		{"trusted proxies without proxy mode", setup.File{TLS: setup.FileTLS{TrustedProxies: "10.0.0.2"}, Admin: &setup.FileAdmin{PasswordFile: good}}, "own reverse proxy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

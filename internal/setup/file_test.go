@@ -25,6 +25,8 @@ func TestParseFile(t *testing.T) {
 		{"relative password file", "admin:\n  password_file: pw\n", "absolute path"},
 		{"relative backup", "restore:\n  backup_file: b.tar.gz\n", "absolute path"},
 		{"relative key", "restore:\n  backup_file: /root/b\n  key_file: k\n", "absolute path"},
+		{"network keys", "stacks_dir: /srv/stacks\naddress:\n  agent_port: 9443\n  agent_url: wss://dm.lan:9443/connect\ntls:\n  mode: proxy\n  trusted_proxies: 10.0.0.2\nadmin:\n  password_file: /root/pw\n", ""},
+		{"agent port out of range", "address:\n  agent_port: 70000\nadmin:\n  password_file: /root/pw\n", "agent_port"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

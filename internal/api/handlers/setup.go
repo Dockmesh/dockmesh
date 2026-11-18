@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +18,9 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stacksdir"
 	"github.com/google/uuid"
 )
 
@@ -363,3 +368,87 @@ var setupVersionFromGlobal string
 // SetSetupVersionString lets main register the version string at boot.
 // Idempotent; called once before the HTTP server starts.
 func SetSetupVersionString(v string) { setupVersionFromGlobal = v }
+
+// SetupValidateStacksDir checks a stacks dir for the data dir step with
+// the rules root's setup-apply applies, as the service account. Body:
+// `{ "data_dir": "/var/lib/dockmesh", "path": "/srv/stacks" }`.
+func (h *Handlers) SetupValidateStacksDir(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	var req struct {
+		DataDir string `json:"data_dir"`
+		Path    string `json:"path"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := setup.CheckDataDirPath(req.DataDir); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	account := layout.ServiceGroup
+	if u, err := user.Current(); err == nil {
+		account = u.Username
+	}
+	rules := stacksdir.ServerRules(req.DataDir, os.Getuid(), account, stacksdir.DockerRoots(r.Context(), ""))
+	writeJSON(w, http.StatusOK, stacksdir.Check(req.Path, rules).StacksDirCheck)
+}
+
+// SetupCheckPorts reports whether another program listens on the web or
+// the agent port. Body: `{ "web_port": 8080, "agent_port": 8443 }`.
+func (h *Handlers) SetupCheckPorts(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	var req struct {
+		WebPort   int `json:"web_port"`
+		AgentPort int `json:"agent_port"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	own := []int{int(localPort(r)), ownAgentPort()}
+	writeJSON(w, http.StatusOK, map[string]setup.PortCheck{
+		"web":   setup.CheckPort(req.WebPort, own...),
+		"agent": setup.CheckPort(req.AgentPort, own...),
+	})
+}
+
+// ownAgentPort is the port this process's agent listener uses.
+func ownAgentPort() int {
+	listen := os.Getenv("DOCKMESH_AGENT_LISTEN")
+	if listen == "" {
+		listen = setup.AgentListen
+	}
+	_, p, err := net.SplitHostPort(listen)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(p)
+	return n
+}
+
+// SetupCheckCert checks an own certificate and key as the service
+// account. Body: `{ "cert_file": "…", "key_file": "…", "host": "…" }`.
+func (h *Handlers) SetupCheckCert(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	var req struct {
+		CertFile string `json:"cert_file"`
+		KeyFile  string `json:"key_file"`
+		Host     string `json:"host"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !filepath.IsAbs(req.CertFile) || !filepath.IsAbs(req.KeyFile) {
+		writeError(w, http.StatusBadRequest, "cert_file and key_file must be absolute paths")
+		return
+	}
+	writeJSON(w, http.StatusOK, setup.CheckCertPair(req.CertFile, req.KeyFile, req.Host, time.Now()))
+}

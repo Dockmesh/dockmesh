@@ -48,6 +48,10 @@ func applyValuesFor(in setup.CommitInput) (setup.ApplyValues, error) {
 	v.TLSCertFile = in.TLS.CertFile
 	v.TLSKeyFile = in.TLS.KeyFile
 	v.BaseURL = in.PublicURL
+	v.StacksDir = in.StacksDir
+	v.AgentListen = in.Agent.Listen
+	v.AgentURL = in.Agent.URL
+	v.TrustedProxies = in.TLS.TrustedProxies
 	v.Admin.Username = in.Admin.Username
 	v.Admin.Email = in.Admin.Email
 	v.Admin.PasswordHash = hash
@@ -128,8 +132,11 @@ func runSetupMaterialize(args []string) error {
 // is in pkiDir; without one the server creates its PKI at the first start.
 func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error {
 	paths := config.ResolvePaths(func(k string) string {
-		if k == "DOCKMESH_DATA_DIR" {
+		switch k {
+		case "DOCKMESH_DATA_DIR":
 			return v.DataDir
+		case "DOCKMESH_STACKS_ROOT":
+			return v.StacksDir
 		}
 		return ""
 	})
@@ -161,14 +168,20 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 	if _, err := auth.NewService(conn, make([]byte, 32)).CreateFirstUserHashed(ctx, v.Admin.Username, v.Admin.Email, v.Admin.PasswordHash, "admin"); err != nil {
 		return fmt.Errorf("create the admin: %w", err)
 	}
+	if v.BaseURL == "" && v.AgentURL == "" {
+		return nil
+	}
+	st := settings.NewStore(conn)
+	if err := st.Load(ctx); err != nil {
+		return err
+	}
 	if v.BaseURL != "" {
-		st := settings.NewStore(conn)
-		if err := st.Load(ctx); err != nil {
+		if err := saveSetupURLs(ctx, st, v.BaseURL, v.AgentListen); err != nil {
 			return err
 		}
-		if err := saveSetupURLs(ctx, st, v.BaseURL, setup.AgentListen); err != nil {
-			return err
-		}
+	}
+	if v.AgentURL != "" {
+		return st.Set(ctx, settings.KeyAgentPublicURL, v.AgentURL)
 	}
 	return nil
 }
@@ -415,6 +428,11 @@ func materializeInProcess(ctx context.Context, dataDir string, v setup.ApplyValu
 func sameDataDir(dataDir string, v setup.ApplyValues, emit func(step, msg, status string)) error {
 	if v.DataDir != filepath.Clean(dataDir) {
 		err := fmt.Errorf("this server keeps its data in %s; set DOCKMESH_DATA_DIR to use another directory", dataDir)
+		emit("data_dir", err.Error(), "fail")
+		return err
+	}
+	if v.StacksOutsideDataDir() {
+		err := fmt.Errorf("this server keeps its stacks in %s; set DOCKMESH_STACKS_ROOT to use another directory", filepath.Join(dataDir, "stacks"))
 		emit("data_dir", err.Error(), "fail")
 		return err
 	}

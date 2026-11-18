@@ -121,6 +121,9 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 		{"data dir", h.SetupValidateDataDir, `{"path":"/etc"}`},
 		{"user", h.SetupValidateUser, `{"mode":"existing","username":"root"}`},
 		{"test url", h.SetupTestURL, `{"url":"http://169.254.169.254"}`},
+		{"stacks dir", h.SetupValidateStacksDir, `{"data_dir":"/var/lib/dockmesh","path":"/srv/stacks"}`},
+		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
+		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -237,6 +240,9 @@ func TestSetupHandlersNeedSession(t *testing.T) {
 		{"data dir", h.SetupValidateDataDir, `{"path":"/etc"}`},
 		{"user", h.SetupValidateUser, `{"mode":"existing","username":"root"}`},
 		{"test url", h.SetupTestURL, `{"url":"http://192.0.2.1"}`},
+		{"stacks dir", h.SetupValidateStacksDir, `{"data_dir":"/var/lib/dockmesh","path":"/srv/stacks"}`},
+		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
+		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 		{"commit", h.SetupCommit, setupCommitBody},
 		{"restore", h.SetupRestore, ""},
 	}

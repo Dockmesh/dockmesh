@@ -18,11 +18,13 @@ const maxSetupFile = 64 << 10
 // answers for a new install (Admin) or a restore (Restore). Secrets are
 // only ever named by a file, or given as an argon2id hash.
 type File struct {
-	DataDir string       `yaml:"data_dir"`
-	Admin   *FileAdmin   `yaml:"admin"`
-	Address FileAddress  `yaml:"address"`
-	TLS     FileTLS      `yaml:"tls"`
-	Restore *FileRestore `yaml:"restore"`
+	DataDir string `yaml:"data_dir"`
+	// StacksDir is empty for <data_dir>/stacks.
+	StacksDir string       `yaml:"stacks_dir"`
+	Admin     *FileAdmin   `yaml:"admin"`
+	Address   FileAddress  `yaml:"address"`
+	TLS       FileTLS      `yaml:"tls"`
+	Restore   *FileRestore `yaml:"restore"`
 }
 
 // FileAdmin is the admin account of a new install.
@@ -37,6 +39,10 @@ type FileAdmin struct {
 type FileAddress struct {
 	BaseURL  string `yaml:"base_url"`
 	HTTPAddr string `yaml:"http_addr"`
+	// AgentPort is the agent listener's port; 0 is 8443.
+	AgentPort int `yaml:"agent_port"`
+	// AgentURL replaces the agent URL derived from BaseURL.
+	AgentURL string `yaml:"agent_url"`
 }
 
 // FileTLS picks the certificate option.
@@ -44,6 +50,9 @@ type FileTLS struct {
 	Mode     string `yaml:"mode"`
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
+	// TrustedProxies replaces the default with mode proxy: addresses or
+	// networks, comma separated.
+	TrustedProxies string `yaml:"trusted_proxies"`
 }
 
 // FileRestore names the system backup a restore brings back.
@@ -86,6 +95,9 @@ func (f File) check() error {
 		if a.PasswordFile != "" && !filepath.IsAbs(a.PasswordFile) {
 			return fmt.Errorf("setup file: admin.password_file %q must be an absolute path", a.PasswordFile)
 		}
+	}
+	if p := f.Address.AgentPort; p < 0 || p > 65535 {
+		return fmt.Errorf("setup file: address.agent_port %d is not a port from 1 to 65535", p)
 	}
 	if r := f.Restore; r != nil {
 		if !filepath.IsAbs(r.BackupFile) {

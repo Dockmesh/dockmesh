@@ -1,5 +1,18 @@
 components:
   schemas:
+    StacksDirCheck:
+      type: object
+      required: [path, status, message]
+      properties:
+        path: {type: string}
+        status: {type: string, enum: [ok, warn, fail]}
+        issue: {type: string, description: Machine-readable name of the first problem, or `unchanged`.}
+        message: {type: string}
+        command: {type: string, description: 'Shell command that prepares the directory by hand, set when the check refuses a path the agent cannot create or take itself.'}
+        will_create: {type: boolean, description: The root updater would create the directory.}
+        fs_type: {type: string}
+        total_bytes: {type: integer, format: int64}
+        free_bytes: {type: integer, format: int64}
     MigrationHookCommands:
       type: object
       description: |

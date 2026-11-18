@@ -18,12 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moby/moby/client"
-	"golang.org/x/sys/unix"
-
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
+	"github.com/dockmesh/dockmesh/internal/stacksdir"
 )
 
 // stacksDirResultMsg is root's report of a stacks-dir-apply.
@@ -56,10 +54,10 @@ func hostStacksDirRules(ctx context.Context, dataDir string, dirs stackDirs, uid
 		current:        dirs.current,
 		stackDirs:      dirs.all(),
 		serverDataDirs: servers,
-		dockerRoots:    dockerRootDirs(ctx, dockerHost),
+		dockerRoots:    stacksdir.DockerRoots(ctx, dockerHost),
 		uid:            uid,
 		account:        accountName(uid),
-		mountinfo:      procMountinfo,
+		mountinfo:      stacksdir.ProcMountinfo,
 	}
 }
 
@@ -72,43 +70,6 @@ func accountName(uid int) string {
 		return u.Username
 	}
 	return agentAccount
-}
-
-// dockerRootDirs asks the daemon at the default socket and the one
-// DOCKER_HOST names for their data roots. Both count: a daemon the agent
-// is pointed at may not be the one that owns the host's Docker data.
-func dockerRootDirs(ctx context.Context, host string) []string {
-	var out []string
-	for _, h := range []string{"", host} {
-		if h == "" && len(out) > 0 {
-			continue
-		}
-		if d := dockerRootDir(ctx, h); d != "" && !slices.Contains(out, d) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// dockerRootDir asks one daemon, the default one for an empty host, for
-// its data root; empty when it can't.
-func dockerRootDir(ctx context.Context, host string) string {
-	opts := []client.Opt{}
-	if host != "" {
-		opts = append(opts, client.WithHost(host))
-	}
-	cli, err := client.New(opts...)
-	if err != nil {
-		return ""
-	}
-	defer cli.Close()
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	res, err := cli.Info(ctx, client.InfoOptions{})
-	if err != nil || !filepath.IsAbs(res.Info.DockerRootDir) {
-		return ""
-	}
-	return filepath.Clean(res.Info.DockerRootDir)
 }
 
 // unitStore reads and puts back the agent's units.
@@ -219,7 +180,7 @@ func (a *stacksDirApplier) run(ctx context.Context, path string) error {
 		return nil
 	}
 	if res.WillCreate && !layout.Within(a.dataDir, path) {
-		if err := createStacksDir(path, int(a.uid), a.gid); err != nil {
+		if err := stacksdir.Create(path, int(a.uid), a.gid); err != nil {
 			return failed(fmt.Errorf("create %s: %w", path, err))
 		}
 		created = true
@@ -280,35 +241,6 @@ func restoreEnv(envFile string, data []byte, rootUID int) error {
 	}
 	_, err = layout.WriteRootFile(envFile, data, rootUID, int(st.Gid), 0o640)
 	return err
-}
-
-// createStacksDir creates p, whose parent exists, owned by uid:gid 0750.
-// Every component is opened through the descriptor of the one before
-// without following a symlink.
-func createStacksDir(p string, uid, gid int) error {
-	comps := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { unix.Close(fd) }()
-	for i, c := range comps {
-		if i == len(comps)-1 {
-			if err := unix.Mkdirat(fd, c, 0o750); err != nil {
-				return err
-			}
-		}
-		nfd, err := unix.Openat(fd, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return err
-		}
-		unix.Close(fd)
-		fd = nfd
-	}
-	if err := unix.Fchown(fd, uid, gid); err != nil {
-		return err
-	}
-	return unix.Fchmod(fd, 0o750)
 }
 
 // lockStacksDir takes the lock in root's state dir that a stacks-dir-apply

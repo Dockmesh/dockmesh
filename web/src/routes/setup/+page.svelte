@@ -12,9 +12,11 @@
     DOCS,
     DOCS_BASE,
     agentURL,
+    agentURLError,
     baseURLError,
     codeFormatOK,
     codeFromFragment,
+    defaultTrustedProxies,
     emailError,
     fingerprintLines,
     generatePassword,
@@ -29,6 +31,8 @@
     portError,
     railClickable,
     repeatError,
+    stacksOutside,
+    trustedProxiesError,
     usernameError,
     type SetupPath,
     type StepId,
@@ -37,7 +41,6 @@
 
   const SETUP_HEADER = { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' };
   const NEW_CODE_CMD = 'sudo dockmesh setup new-code';
-  const AGENT_PORT = '8443';
 
   // ----- Theme: follows the system, or the choice stored by the app ---------
   onMount(() => {
@@ -333,7 +336,7 @@
 
   async function checkDir(): Promise<boolean> {
     const p = dataDir.trim();
-    if (dirCheckFor === p && dirCheck) return dirCheck.status !== 'fail';
+    if (dirCheckFor === p && dirCheck && dirCheck.status !== 'fail') return true;
     dirChecking = true;
     try {
       const r = await fetch('/api/v1/setup/validate-data-dir', {
@@ -363,7 +366,8 @@
   }
 
   async function dataNext() {
-    if (legacy || (await checkDir())) next();
+    if (legacy) return next();
+    if ((await checkDir()) && (await checkStacks())) next();
   }
 
   function dirIssueText(c: DirCheck): string {
@@ -387,8 +391,77 @@
       default: return c.message;
     }
   }
-  const stacksDir = $derived(dataDir.trim().replace(/\/+$/, '') + '/stacks');
+  const defaultStacks = $derived(dataDir.trim().replace(/\/+$/, '') + '/stacks');
   const dirCurrent = $derived(dirCheck && dirCheckFor === dataDir.trim() ? dirCheck : null);
+
+  // The stacks dir: <data>/stacks unless changed. Outside the data dir it
+  // follows the rules root applies before it creates one.
+  type StacksCheck = { path: string; status: 'ok' | 'warn' | 'fail'; issue?: string; message: string; command?: string; will_create?: boolean; fs_type?: string; free_bytes?: number };
+  let stacksOpen = $state(false);
+  let stacksInput = $state('');
+  let stacksCheck = $state<StacksCheck | null>(null);
+  let stacksCheckFor = $state('');
+  let stacksChecking = $state(false);
+  const stacksDir = $derived(stacksOpen && stacksInput.trim() ? stacksInput.trim() : defaultStacks);
+  const stacksCustom = $derived(stacksDir !== defaultStacks);
+  const stacksCurrent = $derived(stacksCheck && stacksCheckFor === `${dataDir.trim()}\n${stacksDir}` ? stacksCheck : null);
+
+  function openStacks() {
+    stacksOpen = true;
+    if (!stacksInput.trim()) stacksInput = defaultStacks;
+  }
+
+  function closeStacks() {
+    stacksOpen = false;
+    stacksInput = '';
+  }
+
+  async function checkStacks(): Promise<boolean> {
+    if (!stacksCustom) return true;
+    const key = `${dataDir.trim()}\n${stacksDir}`;
+    // A refusal is asked again: the admin may have prepared the directory meanwhile.
+    if (stacksCheckFor === key && stacksCheck && stacksCheck.status !== 'fail') return true;
+    stacksChecking = true;
+    try {
+      const r = await fetch('/api/v1/setup/validate-stacks-dir', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ data_dir: dataDir.trim(), path: stacksDir })
+      });
+      if (r.status === 401) {
+        await sessionLost();
+        return false;
+      }
+      if (r.status === 400) {
+        // The data dir itself is wrong; its own check says why.
+        stacksCheck = null;
+        return false;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      stacksCheck = await r.json();
+      stacksCheckFor = key;
+      return stacksCheck!.status !== 'fail';
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+      return false;
+    } finally {
+      stacksChecking = false;
+    }
+  }
+
+  function stacksIssueText(c: StacksCheck): string {
+    switch (c.issue) {
+      case 'new_dir_not_allowed': return m.sw_n2_stacks_refused_new({ path: c.path });
+      case 'foreign_owner': return m.sw_n2_stacks_refused_owner({ path: c.path });
+      case 'not_empty': return m.sw_n2_stacks_refused_not_empty({ path: c.path });
+      case 'not_absolute': return m.sw_dir_err_absolute();
+      case 'bad_characters': return m.sw_dir_err_characters();
+      case 'symlink': return m.sw_dir_err_symlink({ path: c.path });
+      case 'too_small': return m.sw_dir_err_small({ n: Math.floor((c.free_bytes ?? 0) / 1048576), path: c.path });
+      case 'low_space': return m.sw_dir_warn_low({ n: ((c.free_bytes ?? 0) / 1073741824).toFixed(1) });
+      default: return c.message;
+    }
+  }
 
   $effect(() => {
     if ((step === 'N2' || step === 'R1') && !legacy) {
@@ -404,6 +477,11 @@
   let certFile = $state('');
   let keyFile = $state('');
   let listen = $state('127.0.0.1');
+  let agentPort = $state('8443');
+  let agentURLOpen = $state(false);
+  let agentURLInput = $state('');
+  // Null follows the listen address until the field is edited.
+  let trustedInput = $state<string | null>(null);
   let urlTest = $state<{ state: 'idle' | 'busy' | 'ok' | 'fail'; ms?: number; reason?: string }>({ state: 'idle' });
 
   $effect(() => {
@@ -411,25 +489,147 @@
     urlTest = { state: 'idle' };
   });
 
+  $effect(() => {
+    void webPort;
+    void agentPort;
+    portBusy = { web: null, agent: null };
+  });
+
   function addressErrors() {
     const u = legacy ? (baseURLError(baseURL.trim(), 'internal') === 'invalid' ? 'invalid' : null) : baseURLError(baseURL.trim(), tls);
     const absolute = (f: string) => f.startsWith('/') && !/\s/.test(f);
     return {
       base: u === 'https_required' ? m.sw_addr_err_https() : u === 'proxy_url' ? m.sw_addr_err_proxy_url() : u ? m.sw_addr_err_url() : null,
-      port: legacy ? null : portError(webPort) ? m.sw_addr_err_port() : webPort === AGENT_PORT ? m.sw_addr_err_same_ports() : null,
-      cert: tls === 'file' && !absolute(certFile.trim()) ? m.sw_addr_err_file() : null,
+      port: legacy ? null : portError(webPort) ? m.sw_addr_err_port() : webPort === agentPort ? m.sw_addr_err_same_ports() : busyText(portBusy.web),
+      agentPort: legacy ? null : portError(agentPort) ? m.sw_addr_err_port() : webPort === agentPort ? m.sw_addr_err_same_ports() : busyText(portBusy.agent),
+      agentURL: !legacy && agentURLOpen && agentURLError(agentURLInput.trim()) ? m.sw_addr_err_agent_url() : null,
+      cert: tls === 'file' && !absolute(certFile.trim()) ? m.sw_addr_err_file() : certError(),
       key: tls === 'file' && !absolute(keyFile.trim()) ? m.sw_addr_err_file() : null,
-      listen: tls === 'proxy' && listenAddressError(listen.trim()) ? m.sw_addr_err_listen() : null
+      listen: tls === 'proxy' && listenAddressError(listen.trim()) ? m.sw_addr_err_listen() : null,
+      trusted: tls === 'proxy' ? trustedText() : null
     };
+  }
+
+  function trustedText(): string | null {
+    if (trustedInput === null) return null;
+    const e = trustedProxiesError(trustedInput.trim());
+    if (!e) return null;
+    return e.kind === 'all' ? m.sw_addr_err_trusted_all({ net: e.net }) : m.sw_addr_err_trusted();
+  }
+
+  // Ports another program listens on, as the server saw them.
+  let portBusy = $state<{ web: string | null; agent: string | null }>({ web: null, agent: null });
+  let portsChecking = $state(false);
+
+  function busyText(port: string | null): string | null {
+    return port ? m.sw_addr_err_busy({ port }) : null;
+  }
+
+  async function checkPorts() {
+    if (legacy || portError(webPort) || portError(agentPort)) return;
+    const web = webPort, agent = agentPort;
+    portsChecking = true;
+    try {
+      const r = await fetch('/api/v1/setup/check-ports', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ web_port: Number(web), agent_port: Number(agent) })
+      });
+      if (r.status === 401) return sessionLost();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      portBusy = {
+        web: d.web?.issue === 'busy' ? web : null,
+        agent: d.agent?.issue === 'busy' ? agent : null
+      };
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      portsChecking = false;
+    }
+  }
+
+  // The own certificate, checked by the server as the dockmesh user.
+  type CertCheck = { status: 'ok' | 'warn' | 'fail'; issue?: string; file?: string; not_after?: string; days?: number; message: string };
+  let certCheck = $state<CertCheck | null>(null);
+  let certCheckFor = $state('');
+  let certChecking = $state(false);
+  const certKey = $derived(`${certFile.trim()}\n${keyFile.trim()}\n${hostOf(baseURL.trim())}`);
+  const certCurrent = $derived(tls === 'file' && certCheck && certCheckFor === certKey ? certCheck : null);
+
+  function hostOf(u: string): string {
+    try {
+      return new URL(u).hostname.replace(/^\[|\]$/g, '');
+    } catch {
+      return '';
+    }
+  }
+
+  async function checkCert(): Promise<boolean> {
+    const c = certFile.trim(), k = keyFile.trim();
+    if (tls !== 'file' || !c.startsWith('/') || !k.startsWith('/')) return true;
+    // A refusal is asked again: the admin may have fixed the files meanwhile.
+    if (certCheckFor === certKey && certCheck && certCheck.status !== 'fail') return true;
+    certChecking = true;
+    try {
+      const key = certKey;
+      const r = await fetch('/api/v1/setup/check-cert', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ cert_file: c, key_file: k, host: hostOf(baseURL.trim()) })
+      });
+      if (r.status === 401) {
+        await sessionLost();
+        return false;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      certCheck = await r.json();
+      certCheckFor = key;
+      return certCheck!.status !== 'fail';
+    } catch (e) {
+      banner = m.sw_error_banner({ message: e instanceof Error ? e.message : String(e) });
+      return false;
+    } finally {
+      certChecking = false;
+    }
+  }
+
+  function certDate(c: CertCheck): string {
+    return (c.not_after ?? '').slice(0, 10);
+  }
+
+  function certError(): string | null {
+    const c = certCurrent;
+    if (!c || c.status !== 'fail') return null;
+    const file = c.file ?? '';
+    switch (c.issue) {
+      case 'unreadable': return m.sw_cert_err_unreadable({ file });
+      case 'missing': return m.sw_cert_err_missing({ file });
+      case 'invalid': return m.sw_cert_err_invalid({ file });
+      case 'mismatch': return m.sw_cert_err_mismatch();
+      case 'expired': return m.sw_cert_err_expired({ date: certDate(c) });
+      default: return c.message;
+    }
+  }
+
+  function certNote(c: CertCheck): string {
+    switch (c.issue) {
+      case 'hostname': return m.sw_cert_warn_host({ host: hostOf(baseURL.trim()) });
+      case 'expiring': return m.sw_cert_warn_expiring({ date: certDate(c), n: c.days ?? 0 });
+      default: return m.sw_cert_ok({ date: certDate(c) });
+    }
   }
   const addrErr = $derived(addressErrors());
   const listenPublic = $derived(tls === 'proxy' && !addrErr.listen && !isLoopback(listen.trim()));
   // The server trusts the bind address alone, and nobody for a wildcard.
-  const trustedProxies = $derived.by(() => {
-    const a = listen.trim();
-    if (/^[0.:]+$/.test(a)) return m.sw_n3_trusted_none();
-    return a.includes(':') ? `${a}/128` : `${a}/32`;
-  });
+  const trustedDefault = $derived(defaultTrustedProxies(listen.trim()));
+  const trustedProxies = $derived(trustedInput === null ? trustedDefault : trustedInput.trim());
+  const agentURLValue = $derived(agentURLOpen ? agentURLInput.trim() : agentURL(baseURL.trim(), agentPort));
+
+  function openAgentURL() {
+    agentURLOpen = true;
+    if (!agentURLInput.trim()) agentURLInput = agentURL(baseURL.trim(), agentPort);
+  }
 
   async function testURL() {
     urlTest = { state: 'busy' };
@@ -450,9 +650,12 @@
     }
   }
 
-  function addressNext() {
+  async function addressNext() {
     triedNext = { ...triedNext, N3: true };
     if (Object.values(addrErr).some(Boolean)) return;
+    await checkPorts();
+    if (!(await checkCert())) return;
+    if (Object.values(addressErrors()).some(Boolean)) return;
     next();
   }
 
@@ -465,7 +668,7 @@
   // The six rows of the progress list; root reports only the step that
   // failed, so rows before it are done.
   const PROGRESS_FAIL_ROW: Record<string, number> = {
-    values: 0, decide: 0, lock: 0, data_dir: 0,
+    values: 0, decide: 0, lock: 0, data_dir: 0, stacks_dir: 0,
     materialize: 1, restore: 1,
     check_config: 2,
     config: 3, unit: 3,
@@ -520,6 +723,11 @@
         headers: SETUP_HEADER,
         body: JSON.stringify({
           data_dir: dataDir.trim(),
+          stacks_dir: legacy || !stacksCustom ? undefined : stacksDir,
+          agent: legacy ? undefined : {
+            listen: `:${agentPort}`,
+            url: agentURLOpen ? agentURLInput.trim() : undefined
+          },
           service_user: { mode: 'existing', username: 'dockmesh', add_to_docker_group: false },
           admin: { username, email: email.trim(), password },
           public_url: targetURL,
@@ -527,7 +735,8 @@
             mode: tls,
             http_addr: httpAddr(tls, listen.trim(), webPort),
             cert_file: tls === 'file' ? certFile.trim() : undefined,
-            key_file: tls === 'file' ? keyFile.trim() : undefined
+            key_file: tls === 'file' ? keyFile.trim() : undefined,
+            trusted_proxies: tls === 'proxy' && trustedInput !== null ? trustedInput.trim() : undefined
           }
         })
       });
@@ -725,6 +934,7 @@
     form.append('file', restoreFile);
     if (restoreKey) form.append('key', restoreKey);
     form.append('data_dir', dataDir.trim());
+    if (stacksCustom) form.append('stacks_dir', stacksDir);
     form.append('base_url', targetURL);
     await go('R3');
     try {
@@ -1030,12 +1240,37 @@
                 <DiskList {disks} selected={dataDir.trim()} onuse={useDisk} />
                 <span class="hint">{m.sw_n2_disks_hint()}</span>
               </div>
-              <p class="hint plain">{m.sw_n2_stacks()} <span class="dm-mono">{stacksDir}</span></p>
+              {#if !stacksOpen}
+                <p class="hint plain">{m.sw_n2_stacks()} <span class="dm-mono">{stacksDir}</span>
+                  <button type="button" class="link" onclick={openStacks}>{m.sw_n2_stacks_change()}</button></p>
+              {:else}
+                <div class="field">
+                  <label class="lbl" for="stacks-dir">{m.sw_n2_stacks_field()}</label>
+                  <div class="inp-wrap">
+                    <input id="stacks-dir" class="inp dm-mono" bind:value={stacksInput} spellcheck="false"
+                      aria-invalid={stacksCurrent?.status === 'fail'} class:warnb={stacksCurrent?.status === 'warn'}
+                      onblur={() => void checkStacks()} />
+                    {#if stacksChecking}<span class="spin in" aria-label={m.sw_checking()}></span>{/if}
+                  </div>
+                  {#if stacksCurrent?.status === 'fail'}
+                    <span class="err">{stacksIssueText(stacksCurrent)}</span>
+                    {#if stacksCurrent.command}{@render cmd(stacksCurrent.command, 'stacks-cmd')}{/if}
+                  {:else if stacksCurrent && stacksCustom}
+                    <div class="result">
+                      <span class="ok">✓</span>
+                      {m.sw_n2_result({ free: fmtMem(stacksCurrent.free_bytes ?? 0), fs: stacksCurrent.fs_type || '—', state: stacksCurrent.will_create ? m.sw_n2_new_dir() : m.sw_n2_empty() })}
+                    </div>
+                    {#if stacksCurrent.status === 'warn'}<span class="wrn">{stacksIssueText(stacksCurrent)}</span>{/if}
+                  {/if}
+                  {#if stacksCustom && stacksOutside(dataDir.trim(), stacksDir)}<span class="hint">{m.sw_n2_stacks_outside()}</span>{/if}
+                  <button type="button" class="link" onclick={closeStacks}>{m.sw_n2_stacks_default()}</button>
+                </div>
+              {/if}
               {/if}
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
                 <span class="sp"></span>
-                <button type="submit" class="btn primary" disabled={dirChecking}>{m.sw_next()}</button>
+                <button type="submit" class="btn primary" disabled={dirChecking || stacksChecking}>{m.sw_next()}</button>
               </div>
             </form>
           </div>
@@ -1064,13 +1299,18 @@
               <div class="grid2">
                 <div class="field">
                   <label class="lbl" for="web-port">{m.sw_n3_web_port()}</label>
-                  <input id="web-port" class="inp dm-mono" bind:value={webPort} inputmode="numeric"
-                    aria-invalid={(touched.port || se) && !!addrErr.port} onblur={() => (touched = { ...touched, port: true })} />
-                  {#if (touched.port || se) && addrErr.port}<span class="err">{addrErr.port}</span>{/if}
+                  <div class="inp-wrap">
+                    <input id="web-port" class="inp dm-mono" bind:value={webPort} inputmode="numeric"
+                      aria-invalid={(touched.port || se || !!portBusy.web) && !!addrErr.port} onblur={() => { touched = { ...touched, port: true }; void checkPorts(); }} />
+                    {#if portsChecking}<span class="spin in" aria-label={m.sw_checking()}></span>{/if}
+                  </div>
+                  {#if (touched.port || se || portBusy.web) && addrErr.port}<span class="err">{addrErr.port}</span>{/if}
                 </div>
                 <div class="field">
-                  <span class="lbl">{m.sw_n3_agent_port()}</span>
-                  <span class="dm-mono ro">{AGENT_PORT}</span>
+                  <label class="lbl" for="agent-port">{m.sw_n3_agent_port()}</label>
+                  <input id="agent-port" class="inp dm-mono" bind:value={agentPort} inputmode="numeric"
+                    aria-invalid={(touched.agentPort || se || !!portBusy.agent) && !!addrErr.agentPort} onblur={() => { touched = { ...touched, agentPort: true }; void checkPorts(); }} />
+                  {#if (touched.agentPort || se || portBusy.agent) && addrErr.agentPort}<span class="err">{addrErr.agentPort}</span>{/if}
                 </div>
               </div>
               <div class="field">
@@ -1102,15 +1342,22 @@
                           <div class="field">
                             <label class="lbl" for="cert-file">{m.sw_n3_cert_file()}</label>
                             <input id="cert-file" class="inp dm-mono" bind:value={certFile} spellcheck="false" placeholder="/etc/letsencrypt/live/example.org/fullchain.pem"
-                              aria-invalid={(touched.cert || se) && !!addrErr.cert} onblur={() => (touched = { ...touched, cert: true })} />
-                            {#if (touched.cert || se) && addrErr.cert}<span class="err">{addrErr.cert}</span>{/if}
+                              aria-invalid={(touched.cert || se || !!certCurrent) && !!addrErr.cert} onblur={() => { touched = { ...touched, cert: true }; void checkCert(); }} />
+                            {#if (touched.cert || se || certCurrent) && addrErr.cert}<span class="err">{addrErr.cert}</span>{/if}
                           </div>
                           <div class="field">
                             <label class="lbl" for="key-file">{m.sw_n3_key_file()}</label>
-                            <input id="key-file" class="inp dm-mono" bind:value={keyFile} spellcheck="false" placeholder="/etc/letsencrypt/live/example.org/privkey.pem"
-                              aria-invalid={(touched.key || se) && !!addrErr.key} onblur={() => (touched = { ...touched, key: true })} />
+                            <div class="inp-wrap">
+                              <input id="key-file" class="inp dm-mono" bind:value={keyFile} spellcheck="false" placeholder="/etc/letsencrypt/live/example.org/privkey.pem"
+                                aria-invalid={(touched.key || se) && !!addrErr.key} onblur={() => { touched = { ...touched, key: true }; void checkCert(); }} />
+                              {#if certChecking}<span class="spin in" aria-label={m.sw_checking()}></span>{/if}
+                            </div>
                             {#if (touched.key || se) && addrErr.key}<span class="err">{addrErr.key}</span>{/if}
                           </div>
+                          {#if certCurrent && certCurrent.status !== 'fail'}
+                            {#if certCurrent.status === 'warn'}<span class="wrn">{certNote(certCurrent)}</span>
+                            {:else}<span class="result"><span class="ok">✓</span> {certNote(certCurrent)}</span>{/if}
+                          {/if}
                           <span class="hint">{m.sw_n3_reload_hint()}</span>
                         </div>
                       {/if}
@@ -1140,12 +1387,16 @@
                               {:else if listenPublic}<span class="wrn">{m.sw_n3_listen_public({ addr: listen.trim() })}</span>{/if}
                             </div>
                             <div class="field">
-                              <span class="lbl">{m.sw_n3_trusted()}</span>
-                              <span class="dm-mono ro">{trustedProxies}</span>
-                              <span class="hint">{m.sw_n3_trusted_hint()}</span>
+                              <label class="lbl" for="trusted">{m.sw_n3_trusted()}</label>
+                              <input id="trusted" class="inp dm-mono" value={trustedProxies} spellcheck="false"
+                                placeholder={trustedDefault ? undefined : m.sw_n3_trusted_none()}
+                                oninput={(e) => (trustedInput = e.currentTarget.value)}
+                                aria-invalid={(touched.trusted || se) && !!addrErr.trusted} onblur={() => (touched = { ...touched, trusted: true })} />
+                              {#if (touched.trusted || se) && addrErr.trusted}<span class="err">{addrErr.trusted}</span>
+                              {:else}<span class="hint">{m.sw_n3_trusted_hint()}</span>{/if}
                             </div>
                           </div>
-                          <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n3_agent_note({ port: AGENT_PORT })}</span></div>
+                          <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n3_agent_note({ port: agentPort })}</span></div>
                         </div>
                       {/if}
                     </div>
@@ -1154,8 +1405,17 @@
               </div>
               {/if}
               <div class="field">
-                <span class="lbl">{m.sw_n3_agent_url()}</span>
-                <span class="dm-mono ro">{agentURL(baseURL.trim(), AGENT_PORT) || '—'}</span>
+                {#if agentURLOpen && !legacy}
+                  <label class="lbl" for="agent-url">{m.sw_n3_agent_url()}</label>
+                  <input id="agent-url" class="inp dm-mono" bind:value={agentURLInput} spellcheck="false"
+                    aria-invalid={(touched.agentURL || se) && !!addrErr.agentURL} onblur={() => (touched = { ...touched, agentURL: true })} />
+                  {#if (touched.agentURL || se) && addrErr.agentURL}<span class="err">{addrErr.agentURL}</span>{/if}
+                  <button type="button" class="link" onclick={() => { agentURLOpen = false; agentURLInput = ''; }}>{m.sw_n3_agent_url_default()}</button>
+                {:else}
+                  <span class="lbl">{m.sw_n3_agent_url()}</span>
+                  <span class="dm-mono ro">{agentURLValue || '—'}
+                    {#if !legacy}<button type="button" class="link" onclick={openAgentURL}>{m.sw_change()}</button>{/if}</span>
+                {/if}
               </div>
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
@@ -1213,11 +1473,13 @@
                 {#if legacy}
                   {@render row(m.sw_n3_cert(), m.sw_legacy_unchanged(), 'N3')}
                 {:else}
-                  {@render row(m.sw_n6_ports(), `${webPort} · ${AGENT_PORT}`, 'N3', true)}
+                  {@render row(m.sw_n6_ports(), `${webPort} · ${agentPort}`, 'N3', true)}
+                  {@render row(m.sw_n6_agent_url(), agentURLValue, 'N3', true)}
                   {@render row(m.sw_n3_cert(), tlsName, 'N3')}
                 {/if}
                 {#if tls === 'file'}{@render row(m.sw_n3_cert_file(), certFile.trim(), 'N3', true)}{/if}
-                {#if tls === 'proxy'}{@render row(m.sw_n3_listen(), listen.trim(), 'N3', true)}{/if}
+                {#if tls === 'proxy'}{@render row(m.sw_n3_listen(), listen.trim(), 'N3', true)}
+                  {@render row(m.sw_n3_trusted(), trustedProxies || m.sw_n3_trusted_none(), 'N3', true)}{/if}
                 <div class="sect">{m.sw_step_proxy()}</div>
                 {@render row('Caddy', m.sw_n6_off(), 'N4')}
                 <div class="sect">{m.sw_step_notifications()}</div>

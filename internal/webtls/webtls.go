@@ -80,11 +80,11 @@ const maxPEMFile = 1 << 20
 // LoadPair reads and parses a certificate and key file, and says what is
 // wrong in words an operator can act on.
 func LoadPair(certFile, keyFile string) (*tls.Certificate, error) {
-	certPEM, err := readPEM(certFile)
+	certPEM, err := ReadPEM(certFile)
 	if err != nil {
 		return nil, err
 	}
-	keyPEM, err := readPEM(keyFile)
+	keyPEM, err := ReadPEM(keyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,9 @@ func LoadPair(certFile, keyFile string) (*tls.Certificate, error) {
 	return &pair, nil
 }
 
-func readPEM(path string) ([]byte, error) {
+// ReadPEM reads a PEM file the way the listener does: a regular file, at
+// most 1 MiB, without blocking on a FIFO.
+func ReadPEM(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("DOCKMESH_TLS_CERT_FILE and DOCKMESH_TLS_KEY_FILE must both be set")
 	}
@@ -140,7 +142,7 @@ func readPEM(path string) ([]byte, error) {
 // ReadLeaf parses the first certificate of a PEM file, for a client that
 // pins what the listener serves.
 func ReadLeaf(certFile string) (*x509.Certificate, error) {
-	data, err := readPEM(certFile)
+	data, err := ReadPEM(certFile)
 	if err != nil {
 		return nil, err
 	}

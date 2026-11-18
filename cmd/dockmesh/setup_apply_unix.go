@@ -23,6 +23,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stacksdir"
+	"github.com/dockmesh/dockmesh/internal/webtls"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -132,6 +134,22 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 		a.result(applyRefused, "data_dir", err)
 		return
 	}
+	stacksCreated, err := a.prepareStacksDir(ctx, v)
+	if err != nil {
+		dropTarget(v.DataDir, created)
+		a.result(applyRefused, "stacks_dir", err)
+		return
+	}
+	applied := false
+	defer func() {
+		// A failed restore may have filled it: then it is set aside, so a
+		// retry finds the path free again.
+		if stacksCreated && !applied && os.Remove(v.StacksDir) != nil {
+			if err := os.Rename(v.StacksDir, v.StacksDir+a.failedSuffix()); err != nil {
+				a.log.Warn("set aside the failed stacks dir", "path", v.StacksDir, "err", err)
+			}
+		}
+	}()
 	envData, err := v.ConfigEnv(filepath.Join(filepath.Dir(filepath.Dir(a.binary)), "share", "dockmesh"))
 	if err != nil {
 		dropTarget(v.DataDir, created)
@@ -155,6 +173,14 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 		dropTarget(v.DataDir, created)
 		a.result(applyRefused, "check_config", fmt.Errorf("%w %s", err, strings.TrimSpace(string(out))))
 		return
+	}
+	// The service could read the pair itself, so root reads nothing new.
+	if webtls.Mode(v.TLSMode) == webtls.File {
+		if expired, end, err := setup.CertExpired(v.TLSCertFile, a.now()); err == nil && expired {
+			dropTarget(v.DataDir, created)
+			a.result(applyRefused, "check_config", fmt.Errorf("the certificate %s expired on %s", v.TLSCertFile, end.UTC().Format("2006-01-02")))
+			return
+		}
 	}
 	if step, err := a.populate(ctx, v, candidate); err != nil {
 		a.setAside(v.DataDir)
@@ -223,7 +249,32 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 			a.log.Warn("dockmesh.service not enabled", "err", err)
 		}
 	}
+	applied = true
 	a.result(applyApplied, "", nil)
+}
+
+// prepareStacksDir checks a stacks dir outside the data dir with root's
+// view of the host and creates it for the service account when it is
+// new. It reports whether it created one.
+func (a *setupApplier) prepareStacksDir(ctx context.Context, v setup.ApplyValues) (bool, error) {
+	if !v.StacksOutsideDataDir() {
+		return false, nil
+	}
+	if a.uid > math.MaxInt32 || a.gid > math.MaxInt32 {
+		return false, errors.New("the dockmesh account has an out-of-range uid or gid")
+	}
+	uid, gid := int(a.uid), int(a.gid)
+	res := stacksdir.Check(v.StacksDir, stacksdir.ServerRules(v.DataDir, uid, layout.ServiceGroup, stacksdir.DockerRoots(ctx, "")))
+	if !res.OK() {
+		return false, errors.New(res.Message)
+	}
+	if !res.WillCreate {
+		return false, nil
+	}
+	if err := stacksdir.Create(v.StacksDir, uid, gid); err != nil {
+		return false, fmt.Errorf("create %s: %w", v.StacksDir, err)
+	}
+	return true, nil
 }
 
 // populate fills the new data dir as the service account: a restored

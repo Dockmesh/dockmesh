@@ -177,3 +177,41 @@ export function fingerprintLines(fp: string): string[] {
   if (parts.length !== 32) return [fp];
   return [parts.slice(0, 16).join(':') + ':', parts.slice(16).join(':')];
 }
+
+/** Whether a wss:// agent URL is one the server accepts. */
+export function agentURLError(v: string): boolean {
+  try {
+    const u = new URL(v);
+    return u.protocol !== 'wss:' || !u.hostname || /\s/.test(v);
+  } catch {
+    return true;
+  }
+}
+
+export type TrustedError = { kind: 'invalid' } | { kind: 'all'; net: string } | null;
+
+/** Checks a list of addresses or networks like the server's parser. */
+export function trustedProxiesError(v: string): TrustedError {
+  const items = v.split(/[\s,;]+/).filter(Boolean);
+  if (items.length === 0 || items.length > 32) return { kind: 'invalid' };
+  for (const it of items) {
+    const [addr, bits, extra] = it.split('/');
+    if (extra !== undefined || listenAddressError(addr)) return { kind: 'invalid' };
+    if (bits === undefined) continue;
+    if (!/^\d{1,3}$/.test(bits) || Number(bits) > (addr.includes(':') ? 128 : 32)) return { kind: 'invalid' };
+    if (Number(bits) < (addr.includes(':') ? 32 : 8)) return { kind: 'all', net: it };
+  }
+  return null;
+}
+
+/** The trusted proxy the server uses for a listen address: the address itself, none for a wildcard. */
+export function defaultTrustedProxies(listen: string): string {
+  if (/^[0.:]+$/.test(listen)) return '';
+  return listen.includes(':') ? `${listen}/128` : `${listen}/32`;
+}
+
+/** Whether stacks lies outside dataDir, so root has to create it. */
+export function stacksOutside(dataDir: string, stacks: string): boolean {
+  const d = dataDir.replace(/\/+$/, '');
+  return stacks !== d && !stacks.startsWith(d + '/');
+}

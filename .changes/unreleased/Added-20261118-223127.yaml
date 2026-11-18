@@ -1,0 +1,3 @@
+kind: Added
+body: The setup wizard and the setup file set the stacks directory (outside the data directory with the same rules as an agent's), the agent port and URL, and the trusted proxies behind your own reverse proxy; the web and agent ports are checked for other programs and your own certificate is checked before Apply
+time: 2026-11-18T22:31:27.32114413Z
