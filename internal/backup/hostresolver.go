@@ -27,6 +27,11 @@ func (r *registryResolver) Pick(id string) (hostBackupTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	if sc, ok := h.(host.SetupChecker); ok {
+		if err := sc.SetupError(context.Background()); err != nil {
+			return nil, err
+		}
+	}
 	return &hostBackupAdapter{h: h}, nil
 }
 

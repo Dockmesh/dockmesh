@@ -96,10 +96,11 @@ func (r *Registry) List(ctx context.Context) ([]Info, error) {
 	}
 	for _, a := range list {
 		out = append(out, Info{
-			ID:     a.ID,
-			Name:   a.Name,
-			Kind:   "agent",
-			Status: a.Status,
+			ID:         a.ID,
+			Name:       a.Name,
+			Kind:       "agent",
+			Status:     a.Status,
+			NeedsSetup: a.NeedsSetup,
 		})
 	}
 	return out, nil

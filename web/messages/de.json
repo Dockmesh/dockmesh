@@ -6293,5 +6293,8 @@
   "label_host_removed": "Vom Host entfernt",
   "hosts_removed_title": "Der Agent wurde von {name} entfernt",
   "hosts_removed_text": "Stacks auf diesem Host laufen weiter, werden aber nicht mehr verwaltet.",
-  "hosts_delete_host": "Host löschen"
+  "hosts_delete_host": "Host löschen",
+  "label_host_waiting_setup": "Wartet auf Einrichtung",
+  "hosts_setup_banner_title": "{name} ist verbunden, aber noch nicht eingerichtet",
+  "hosts_setup_banner_text": "Lege fest, wohin Stacks auf diesem Host kommen. Bis dahin kannst du nicht auf ihn deployen."
 }

@@ -28,6 +28,10 @@ func agentStackDirs() stackDirs {
 	return resolveStackDirs(os.Getenv("DOCKMESH_STACKS_DIR"), os.Getenv("DOCKMESH_EARLIER_STACKS_DIRS"), dataDir())
 }
 
+// stacksDirChosen reports whether the stacks directory was set explicitly;
+// root writes DOCKMESH_STACKS_DIR only then.
+func stacksDirChosen() bool { return filepath.IsAbs(os.Getenv("DOCKMESH_STACKS_DIR")) }
+
 func resolveStackDirs(current, earlier, data string) stackDirs {
 	d := stackDirs{current: filepath.Join(data, "stacks")}
 	if filepath.IsAbs(current) {

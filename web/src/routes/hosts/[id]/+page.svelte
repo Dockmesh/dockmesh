@@ -193,7 +193,8 @@
   }
 
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));
-  const statusTone = $derived<Tone>(status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
+  const waitingSetup = $derived(!isLocal && status === 'online' && !!agent?.needs_setup);
+  const statusTone = $derived<Tone>(waitingSetup ? 'warn' : status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
   const hostname = $derived(isLocal ? 'localhost' : (agent?.hostname ?? ''));
   const hostKind = $derived(isLocal ? m.hosts_kind_local() : m.hosts_kind_agent());
   const hostName = $derived(isLocal ? localName : (agent?.name ?? id));
@@ -356,7 +357,7 @@
   {:else}
     <div class="dm-ph">
       <h1>{hostName}</h1>
-      <StatusChip tone={statusTone} label={hostStatusLabel(status)} />
+      <StatusChip tone={statusTone} label={waitingSetup ? m.label_host_waiting_setup() : hostStatusLabel(status)} />
       <span class="dm-sub dm-trunc">
         {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · ${m.hosts_up({ dur: fmtUptime(agent.online_since) })}` : ''}
       </span>
@@ -394,6 +395,16 @@
             <Trash2 size={13} strokeWidth={1.8} /> {m.hosts_delete_host()}
           </button>
         {/if}
+      </div>
+    {/if}
+
+    {#if waitingSetup}
+      <div class="setupbox" role="status">
+        <AlertTriangle size={14} strokeWidth={1.8} />
+        <div>
+          <b>{m.hosts_setup_banner_title({ name: hostName })}</b>
+          <span>{m.hosts_setup_banner_text()}</span>
+        </div>
       </div>
     {/if}
 
@@ -744,6 +755,13 @@
     border-radius: var(--r); padding: 8px 12px; font-size: var(--fs-sm);
   }
   .warnbox span { color: var(--fg); }
+  .setupbox {
+    display: flex; gap: 10px; align-items: center; margin: 4px 0 12px;
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-bg); color: var(--warn);
+    border-radius: var(--r); padding: 10px 12px; font-size: var(--fs-sm);
+  }
+  .setupbox > div { display: flex; flex-direction: column; gap: 2px; flex: 1; color: var(--fg); }
+  .setupbox span { color: var(--muted); }
   .removedbox {
     display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 4px 0 12px;
     border: 1px solid var(--border); background: var(--field); border-radius: var(--r); padding: 10px 12px;

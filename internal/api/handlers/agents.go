@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
@@ -55,7 +57,9 @@ func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentReq struct {
-	Name string `json:"name"`
+	Name      string   `json:"name"`
+	Tags      []string `json:"tags"`
+	StacksDir string   `json:"stacks_dir"`
 }
 
 func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
@@ -68,16 +72,51 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := h.Agents.Create(r.Context(), req.Name)
-	if errors.Is(err, agents.ErrNameTaken) {
+	tags, err := hosttags.Canonicalize(req.Tags)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, hosttags.ErrTooManyTags) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	if len(tags) > 0 {
+		// Tags carry RBAC scope; setting them needs hosts.tag as
+		// PUT /hosts/{id}/tags does.
+		if !middleware.Allowed(r.Context(), rbac.PermHostsTag) {
+			middleware.Forbidden(w, r, rbac.PermHostsTag)
+			return
+		}
+		if h.HostTags == nil {
+			writeError(w, http.StatusServiceUnavailable, "host tags unavailable")
+			return
+		}
+	}
+	res, err := h.Agents.CreateWith(r.Context(), agents.CreateOptions{Name: req.Name, StacksDir: req.StacksDir})
+	switch {
+	case errors.Is(err, agents.ErrNameTaken):
 		writeError(w, http.StatusConflict, "name already in use")
 		return
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, agents.ErrInvalidStacksDir):
+		writeError(w, http.StatusBadRequest, msgInvalidStacksDir)
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, nil)
+	if len(tags) > 0 {
+		if _, err := h.HostTags.Set(r.Context(), res.Agent.ID, tags); err != nil {
+			// The host exists without tags; remove it so a retry with
+			// the same name works.
+			if derr := h.Agents.Delete(r.Context(), res.Agent.ID); derr != nil {
+				slog.Warn("remove host after failed tags", "id", res.Agent.ID, "err", derr)
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, map[string]any{"tags": tags, "stacks_dir": req.StacksDir})
 	writeJSON(w, http.StatusCreated, res)
 }
 
@@ -237,3 +276,71 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		"version": req.Version,
 	})
 }
+
+type setStacksDirReq struct {
+	Path string `json:"path"`
+}
+
+// SetHostStacksDir sets where new stacks go on a connected host. The
+// directory the agent uses now is confirmed at once (200), which also
+// ends "Waiting for setup"; another path goes to the agent's root
+// updater (202) and its answer shows as stacks_dir in GET /agents/{id}.
+//
+//	PUT /api/v1/hosts/{id}/stacks-dir
+func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
+	if h.Agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	scopeReq := h.hostScopeReq(id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+		return
+	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
+	var req setStacksDirReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if _, err := h.Agents.Get(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	applied, err := h.Agents.SetStacksDir(r.Context(), id, req.Path)
+	switch {
+	case errors.Is(err, agents.ErrInvalidStacksDir):
+		writeError(w, http.StatusBadRequest, msgInvalidStacksDir)
+		return
+	case errors.Is(err, agents.ErrAgentNotConnected):
+		writeError(w, http.StatusConflict, "agent not connected")
+		return
+	case errors.Is(err, agents.ErrLegacyLayout), errors.Is(err, agents.ErrApplyRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "host.stacks_dir_set", "agent:"+id, map[string]any{"path": req.Path, "applied": applied})
+	a, err := h.Agents.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status := http.StatusAccepted
+	if applied {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, a)
+}
+
+// msgInvalidStacksDir is the setup page's text for a path the server
+// refuses before asking the agent.
+const msgInvalidStacksDir = "Enter an absolute path, for example /srv/dockmesh/stacks."

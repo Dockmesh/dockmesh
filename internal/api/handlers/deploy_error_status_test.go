@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 )
 
@@ -20,6 +21,7 @@ func TestDeployErrorStatus(t *testing.T) {
 		{fmt.Errorf("key \"LABEL_FILE\": write it as \"label_file\": %w", compose.ErrLabelsNeedAgent), http.StatusUnprocessableEntity},
 		{errors.New("port is already allocated"), http.StatusUnprocessableEntity},
 		{errors.New("docker daemon gone"), http.StatusInternalServerError},
+		{fmt.Errorf("deploy: %w", &agents.WaitingForSetupError{Name: "edge-1"}), http.StatusConflict},
 	}
 	for _, tc := range cases {
 		if got := deployErrorStatus(tc.err); got != tc.want {

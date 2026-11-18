@@ -63,3 +63,21 @@ func TestPreflightArchMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestPreflightRefusesTargetWaitingForSetup(t *testing.T) {
+	e := newMigrationEnv(t)
+	e.target.setupErr = &agents.WaitingForSetupError{Name: "agent1"}
+	res, err := e.svc.Preflight(context.Background(), "web", "agent1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Passed {
+		t.Fatal("preflight passed for a target that waits for setup")
+	}
+	for _, c := range res.Checks {
+		if c.Name == "target_setup" && c.Status == CheckFail && c.Detail == e.target.setupErr.Error() {
+			return
+		}
+	}
+	t.Fatalf("no failed target_setup check in %+v", res.Checks)
+}

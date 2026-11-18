@@ -30,6 +30,7 @@ type fakeHost struct {
 	stopErr    error
 	deployErr  error
 	daemon     *agents.DaemonInfo
+	setupErr   error
 	metrics    system.Metrics
 	images     []image.Summary
 	containers []container.Summary
@@ -41,8 +42,9 @@ type fakeHost struct {
 	execs    []string
 }
 
-func (f *fakeHost) ID() string   { return f.id }
-func (f *fakeHost) Name() string { return f.id }
+func (f *fakeHost) ID() string                       { return f.id }
+func (f *fakeHost) SetupError(context.Context) error { return f.setupErr }
+func (f *fakeHost) Name() string                     { return f.id }
 func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
 	return f.metrics, nil
 }

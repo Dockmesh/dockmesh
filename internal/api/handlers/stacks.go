@@ -1070,7 +1070,7 @@ func (h *Handlers) adoptService() *adopt.Service {
 // handles the common stack.Manager errors too).
 func writeAdoptError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, adopt.ErrAlreadyManaged):
+	case errors.Is(err, adopt.ErrAlreadyManaged), errors.Is(err, agents.ErrWaitingForSetup):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, adopt.ErrNoRunning),
 		errors.Is(err, adopt.ErrServicesMissing):
@@ -1308,6 +1308,9 @@ func (h *Handlers) verifiedStack(w http.ResponseWriter, r *http.Request, name st
 func deployErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
+	}
+	if errors.Is(err, agents.ErrWaitingForSetup) {
+		return http.StatusConflict
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

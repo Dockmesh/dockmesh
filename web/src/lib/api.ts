@@ -146,6 +146,7 @@ export interface HostInfo {
   kind: 'local' | 'agent' | 'all';
   status: 'online' | 'offline' | 'pending' | 'removed' | 'revoked';
   tags?: string[];
+  needs_setup?: boolean;
 }
 
 // SystemMetrics is the host-level CPU / memory / disk / uptime snapshot
@@ -1048,8 +1049,17 @@ export interface Agent {
   layout?: 'legacy' | 'managed';
   rerun_command?: string;
   stacks_dirs?: AgentStacksDir[];
+  // The host is "Waiting for setup" and refuses deploys.
+  needs_setup?: boolean;
+  stacks_dir?: AgentStacksDirRequest;
   created_at: string;
   updated_at: string;
+}
+
+export interface AgentStacksDirRequest {
+  path: string;
+  status: 'pending' | 'applied' | 'refused';
+  error?: string;
 }
 
 export interface AgentStacksDir {
@@ -2847,8 +2857,9 @@ export const api = {
   agents: {
     list: () => request<Agent[]>('/agents'),
     get: (id: string) => request<Agent>(`/agents/${id}`),
-    create: (name: string) =>
-      request<AgentCreateResult>('/agents', { method: 'POST', body: JSON.stringify({ name }) }),
+    // An empty name takes the host's own name at enrollment.
+    create: (body: { name?: string; tags?: string[]; stacks_dir?: string }) =>
+      request<AgentCreateResult>('/agents', { method: 'POST', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     upgrade: (id: string) =>
       request<{ status: string; version: string }>(`/agents/${id}/upgrade`, { method: 'POST' }),
