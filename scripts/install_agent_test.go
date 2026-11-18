@@ -306,3 +306,26 @@ func TestInstallAgentPlainBox(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallAgentBoxNext(t *testing.T) {
+	fn := agentScriptFunc(t, "box_next")
+	tests := []struct {
+		name, env, want string
+	}{
+		{"waits for setup", "BOX_V='│' NAME=nas-01 STACKS_DIR=", "Next        Choose the stacks directory in Dockmesh:\n            Hosts › nas-01 › Setup\n"},
+		{"plain mode", "BOX_V='|' NAME=nas-01 STACKS_DIR=", "Next        Choose the stacks directory in Dockmesh:\n            Hosts > nas-01 > Setup\n"},
+		{"stacks dir given", "BOX_V='│' NAME=nas-01 STACKS_DIR=/srv/stacks", "Stacks      /srv/stacks\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := tt.env + "\n" + fn + "\nbox_next\nprintf '%s\\n' \"${NEXT[@]}\""
+			out, err := exec.Command("bash", "-c", script).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != tt.want {
+				t.Errorf("NEXT = %q, want %q", out, tt.want)
+			}
+		})
+	}
+}

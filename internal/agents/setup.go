@@ -228,6 +228,12 @@ func (s *Service) recordStacksDir(ctx context.Context, id, p, status, msg string
 	return err
 }
 
+// stacksDirCheckWait bounds a check, which needs no root round trip.
+const stacksDirCheckWait = 30 * time.Second
+
+// ErrStacksDirCheckRunning: another check of this host has not answered yet.
+var ErrStacksDirCheckRunning = errors.New("a stacks directory check of this host is still running")
+
 // maxStacksDirError cuts the reason an agent gives for a refusal.
 const maxStacksDirError = 512
 
@@ -331,4 +337,50 @@ func (s *Service) SetStacksDir(ctx context.Context, id, p string) (applied bool,
 	}
 	go s.applyClaimed(context.WithoutCancel(ctx), ag, p)
 	return false, nil
+}
+
+// CheckStacksDir asks the connected host id to check p with the rules its
+// root updater applies, without changing anything.
+func (s *Service) CheckStacksDir(ctx context.Context, id, p string) (StacksDirCheck, error) {
+	if err := ValidateStacksDir(p); err != nil {
+		return StacksDirCheck{}, err
+	}
+	ag := s.GetConnected(id)
+	if ag == nil {
+		return StacksDirCheck{}, ErrAgentNotConnected
+	}
+	if ag.Hello.HelloLayout() != LayoutManaged && currentStacksDir(ag.Hello) != p {
+		return StacksDirCheck{}, ErrLegacyLayout
+	}
+	if !ag.checking.CompareAndSwap(false, true) {
+		return StacksDirCheck{}, ErrStacksDirCheckRunning
+	}
+	defer ag.checking.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, stacksDirCheckWait)
+	defer cancel()
+	payload, _ := json.Marshal(StacksDirApplyReq{Path: p, CheckOnly: true})
+	env, err := ag.Request(ctx, Frame{Type: FrameReqStacksDirApply, Payload: payload})
+	if err != nil {
+		return StacksDirCheck{}, err
+	}
+	var res StacksDirApplyRes
+	if err := json.Unmarshal(env.Data, &res); err != nil {
+		return StacksDirCheck{}, fmt.Errorf("decode stacks dir check: %w", err)
+	}
+	if len(res.Check.Message) > maxStacksDirError {
+		res.Check.Message = strings.ToValidUTF8(res.Check.Message[:maxStacksDirError], "")
+	}
+	res.Check.Path = p
+	// The UI offers the command for copying into a root shell, so only
+	// the one shape the agent builds is passed on.
+	if !prepareCommandFor(p).MatchString(res.Check.Command) {
+		res.Check.Command = ""
+	}
+	return res.Check, nil
+}
+
+// prepareCommandFor matches the agent's command that prepares p as an
+// empty directory of its account.
+func prepareCommandFor(p string) *regexp.Regexp {
+	return regexp.MustCompile(`^sudo install -d -o ([a-z_][a-z0-9_-]{0,31}) -g ([a-z_][a-z0-9_-]{0,31}) -m 0750 ` + regexp.QuoteMeta(p) + `$`)
 }

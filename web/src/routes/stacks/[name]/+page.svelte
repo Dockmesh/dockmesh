@@ -2527,7 +2527,7 @@
       >
         <option value="">{m.stacks_d_select_host()}</option>
         {#each hosts.available.filter(h => h.id !== stackHost && h.id !== 'all') as h}
-          <option value={h.id} disabled={h.status !== 'online'}>{h.name} {h.status !== 'online' ? `(${h.status === 'offline' ? m.common_offline() : h.status})` : ''}</option>
+          <option value={h.id} disabled={h.status !== 'online' || h.needs_setup} title={h.needs_setup ? m.hosts_setup_waiting_picker({ name: h.name }) : undefined}>{h.name} {h.needs_setup ? `(${m.label_host_waiting_setup()})` : h.status !== 'online' ? `(${h.status === 'offline' ? m.common_offline() : h.status})` : ''}</option>
         {/each}
       </select>
     </div>

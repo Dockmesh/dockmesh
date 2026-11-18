@@ -259,6 +259,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		UpdateResult:    lastUpdateResult(dataDir()),
 		StacksDirs:      stacksDirReport(stackDirs),
 		StacksDirSet:    stacksDirChosen(),
+		DataDir:         dataDir(),
+		User:            runUser(),
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {

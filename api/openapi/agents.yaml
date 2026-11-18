@@ -352,6 +352,12 @@ components:
               path: {type: string}
               current: {type: boolean}
               stacks: {type: integer, description: Number of stacks in the directory.}
+        data_dir:
+          type: string
+          description: Data directory of the live session's agent (chosen at install); only set while online and for agents that report it.
+        run_user:
+          type: string
+          description: Account the live session's agent runs as, e.g. `dockmesh-agent` or `root`; only set while online and for agents that report it.
         needs_setup:
           type: boolean
           description: The host is "Waiting for setup". It refuses deploys, migrations to it and backup runs on it until its stacks directory is confirmed. Never set for hosts enrolled before this field existed.

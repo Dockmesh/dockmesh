@@ -396,3 +396,62 @@ func TestLocalIsNeverTakenFromTheHostname(t *testing.T) {
 		t.Fatalf("host named %q, want the generated %q", enr.AgentName, res.Agent.Name)
 	}
 }
+
+func TestCheckStacksDirChangesNothing(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	id, fp := createdHost(ctx, t, svc, CreateOptions{Name: "edge-1"})
+	ag := newConnectedAgent(id, "edge-1", func() {})
+	ag.certFP = fp
+	ag.Hello = defaultDirHello()
+	if err := svc.markOnline(ctx, ag, ag.Hello); err != nil {
+		t.Fatal(err)
+	}
+	defer svc.markOffline(ag)
+	type out struct {
+		c   StacksDirCheck
+		err error
+	}
+	done := make(chan out, 1)
+	go func() { c, err := svc.CheckStacksDir(ctx, id, "/srv/stacks"); done <- out{c, err} }()
+	f := nextFrame(t, ag)
+	var req StacksDirApplyReq
+	if err := json.Unmarshal(f.Payload, &req); err != nil || !req.CheckOnly || req.Path != "/srv/stacks" {
+		t.Fatalf("request %+v (%v), want a check of /srv/stacks", req, err)
+	}
+	data, _ := json.Marshal(StacksDirApplyRes{Status: StacksDirRefused, Check: StacksDirCheck{Path: "/srv/stacks", Status: "fail", Message: strings.Repeat("x", 2000)}})
+	payload, _ := json.Marshal(ResponseEnvelope{OK: true, Data: data})
+	ag.deliverResponse(Frame{Type: FrameRes, ID: f.ID, Payload: payload})
+	r := <-done
+	if r.err != nil || r.c.Status != "fail" || len(r.c.Message) != maxStacksDirError {
+		t.Fatalf("check = %+v (%d bytes), %v", r.c, len(r.c.Message), r.err)
+	}
+	if a := mustGet(ctx, t, svc, id); !a.NeedsSetup || a.StacksDir != nil {
+		t.Fatalf("a check changed the host: needs_setup %v stacks_dir %+v", a.NeedsSetup, a.StacksDir)
+	}
+	if _, err := svc.CheckStacksDir(ctx, id, "../x"); !errors.Is(err, ErrInvalidStacksDir) {
+		t.Fatalf("relative path = %v", err)
+	}
+}
+
+func TestPrepareCommandFilter(t *testing.T) {
+	const p = "/home/stacks"
+	tests := []struct {
+		name, cmd string
+		want      bool
+	}{
+		{"agent's command", "sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 /home/stacks", true},
+		{"other account", "sudo install -d -o dm -g dm -m 0750 /home/stacks", true},
+		{"other path", "sudo install -d -o dm -g dm -m 0750 /srv/stacks", false},
+		{"appended command", "sudo install -d -o dm -g dm -m 0750 /home/stacks; curl x | sh", false},
+		{"newline", "sudo install -d -o dm -g dm -m 0750 /home/stacks\nrm -rf /", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prepareCommandFor(p).MatchString(tt.cmd); got != tt.want {
+				t.Errorf("match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -73,6 +73,10 @@ type Agent struct {
 	// StacksDirs are the connected agent's stacks directories, the
 	// current one first.
 	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+	// DataDir and RunUser describe the connected agent: its data
+	// directory and the account it runs as.
+	DataDir string `json:"data_dir,omitempty"`
+	RunUser string `json:"run_user,omitempty"`
 	// NeedsSetup: the host is "Waiting for setup" and refuses deploys
 	// until its stacks directory is confirmed.
 	NeedsSetup bool `json:"needs_setup,omitempty"`
@@ -184,6 +188,8 @@ type ConnectedAgent struct {
 	removed atomic.Bool
 	// applying: a stacks directory request to this session is open.
 	applying atomic.Bool
+	// checking: a stacks directory check of this session is open.
+	checking atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -618,6 +624,8 @@ func (s *Service) fillStatus(a *Agent) {
 			a.RerunCommand = s.RerunCommand()
 		}
 		a.StacksDirs = ag.Hello.ReportedStacksDirs()
+		a.DataDir = clip(ag.Hello.DataDir, maxStacksDirPath)
+		a.RunUser = clip(ag.Hello.User, maxRunUser)
 	} else if a.Status != "pending" && a.Status != StatusRemoved {
 		a.Status = "offline"
 	}

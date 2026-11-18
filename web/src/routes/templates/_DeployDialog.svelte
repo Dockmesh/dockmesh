@@ -139,8 +139,8 @@
             <option value="local">{m.common_local()}</option>
             {#each hostOptions as h (h.id)}
               {#if h.id !== 'local'}
-                <option value={h.id} disabled={h.status !== 'online'}>
-                  {h.name}{h.status !== 'online' ? ` (${hostStatusLabel(h.status)})` : ''}
+                <option value={h.id} disabled={h.status !== 'online' || h.needs_setup} title={h.needs_setup ? m.hosts_setup_waiting_picker({ name: h.name }) : undefined}>
+                  {h.name}{h.needs_setup ? ` (${m.label_host_waiting_setup()})` : h.status !== 'online' ? ` (${hostStatusLabel(h.status)})` : ''}
                 </option>
               {/if}
             {/each}

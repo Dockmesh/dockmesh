@@ -1052,8 +1052,32 @@ export interface Agent {
   // The host is "Waiting for setup" and refuses deploys.
   needs_setup?: boolean;
   stacks_dir?: AgentStacksDirRequest;
+  data_dir?: string;
+  run_user?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface StacksDirCheck {
+  path: string;
+  status: 'ok' | 'warn' | 'fail';
+  issue?: string;
+  message: string;
+  command?: string;
+  will_create?: boolean;
+  fs_type?: string;
+  total_bytes?: number;
+  free_bytes?: number;
+}
+
+export interface StacksDirDisk {
+  mountpoint: string;
+  fs_type: string;
+  total_bytes: number;
+  free_bytes: number;
+  suggested: string;
+  usable: boolean;
+  reason?: string;
 }
 
 export interface AgentStacksDirRequest {
@@ -2212,6 +2236,13 @@ export const api = {
 
   hosts: {
     list: () => request<HostInfo[]>('/hosts'),
+    // 200: the current directory was confirmed; 202: sent to the host.
+    setStacksDir: (hostId: string, path: string) =>
+      request<Agent>(`/hosts/${encodeURIComponent(hostId)}/stacks-dir`, { method: 'PUT', body: JSON.stringify({ path }) }),
+    checkStacksDir: (hostId: string, path: string, signal?: AbortSignal) =>
+      request<StacksDirCheck>(`/hosts/${encodeURIComponent(hostId)}/stacks-dir/check`, { method: 'POST', body: JSON.stringify({ path }), signal }),
+    stacksDirDisks: (hostId: string) =>
+      request<{ disks: StacksDirDisk[]; unsupported?: boolean }>(`/hosts/${encodeURIComponent(hostId)}/stacks-dir/disks`),
     // Host tag management (P.11.2). Reads work for any authenticated
     // user; mutations require user.manage.
     listTags: (hostId: string) =>

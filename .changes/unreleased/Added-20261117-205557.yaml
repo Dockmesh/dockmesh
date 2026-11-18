@@ -1,0 +1,3 @@
+kind: Added
+body: 'Host pages have a Setup tab: choose the stacks directory with a live check on the host and the disk list, see the switch through the agent restart, and read the agent''s data directory, layout and user; legacy agents show the command that moves them to the managed layout. Host pickers list hosts that wait for setup as disabled, and the agent installer points to the Setup tab when no --stacks-dir was given'
+time: 2026-11-17T20:55:57.557925669Z

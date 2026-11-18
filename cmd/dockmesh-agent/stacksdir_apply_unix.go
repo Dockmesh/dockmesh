@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,10 +63,12 @@ func hostStacksDirRules(ctx context.Context, dataDir string, dirs stackDirs, uid
 	}
 }
 
+var accountPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
 // accountName is the name of uid, the managed agent's account when it
 // cannot be looked up.
 func accountName(uid int) string {
-	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil && plainDir.MatchString(u.Username) {
+	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil && accountPattern.MatchString(u.Username) {
 		return u.Username
 	}
 	return agentAccount

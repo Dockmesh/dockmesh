@@ -29,6 +29,8 @@
         return m.setup_disk_network_share();
       case 'no Unix permissions':
         return m.setup_disk_no_unix();
+      case 'not allowed as a stacks dir':
+        return m.setup_disk_not_stacks_place();
       default:
         return m.setup_disk_not_allowed();
     }
@@ -53,8 +55,8 @@
         {#if selected === d.suggested}
           <span class="sel">{m.setup_disk_selected()}</span>
         {:else}
-          <button type="button" class="btn" {disabled} onclick={() => onuse(d.suggested)}>
-            {m.setup_disk_use({ path: d.suggested })}
+          <button type="button" class="btn" {disabled} title={m.setup_disk_use({ path: d.suggested })} onclick={() => onuse(d.suggested)}>
+            <span class="bl">{m.setup_disk_use({ path: d.suggested })}</span>
           </button>
         {/if}
       {:else}
@@ -75,7 +77,7 @@
   }
   .disk {
     display: grid;
-    grid-template-columns: 110px 54px minmax(0, 1fr) 210px;
+    grid-template-columns: 110px 54px minmax(120px, 1fr) minmax(0, 300px);
     gap: 10px;
     align-items: center;
     padding: 7px 10px;
@@ -141,6 +143,10 @@
     color: var(--fg);
     cursor: pointer;
     max-width: 100%;
+    min-width: 0;
+  }
+  /* Ellipsis needs a block child: it does not apply to the flex button itself. */
+  .bl {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

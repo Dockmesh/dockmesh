@@ -444,6 +444,10 @@ type HelloPayload struct {
 	// StacksDirSet: the stacks directory was chosen explicitly
 	// (DOCKMESH_STACKS_DIR is set), not left at the default.
 	StacksDirSet bool `json:"stacks_dir_set,omitempty"`
+	// DataDir and User are the agent's data directory and the account it
+	// runs as.
+	DataDir string `json:"data_dir,omitempty"`
+	User    string `json:"user,omitempty"`
 }
 
 // StacksDirApplyReq asks for Path as the agent's stacks directory.
@@ -454,12 +458,13 @@ type StacksDirApplyReq struct {
 
 // StacksDirCheck is the agent's check of a stacks directory, with the same
 // rules its root updater applies. Status is ok, warn or fail; Issue names
-// the first problem.
+// the first problem; Command, when set, prepares the directory by hand.
 type StacksDirCheck struct {
 	Path       string `json:"path"`
 	Status     string `json:"status"`
 	Issue      string `json:"issue,omitempty"`
 	Message    string `json:"message"`
+	Command    string `json:"command,omitempty"`
 	WillCreate bool   `json:"will_create,omitempty"`
 	FSType     string `json:"fs_type,omitempty"`
 	TotalBytes int64  `json:"total_bytes,omitempty"`
@@ -523,6 +528,9 @@ func (h HelloPayload) HelloLayout() string {
 // maxStacksDirs bounds what an agent's hello may list: the current
 // stacks dir, the default one in the data dir and two earlier ones.
 const maxStacksDirs = 4
+
+// maxRunUser cuts the account name an agent reports.
+const maxRunUser = 64
 
 // maxStacksDirPath cuts a reported stacks dir path.
 const maxStacksDirPath = 4096

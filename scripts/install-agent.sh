@@ -119,6 +119,19 @@ box() {
 }
 # end box
 
+# box_next sets NEXT to the closing box's stacks directory lines: without
+# --stacks-dir the host waits for setup in Dockmesh.
+box_next() {
+  if [[ -n "$STACKS_DIR" ]]; then
+    NEXT=("Stacks      $STACKS_DIR")
+    return
+  fi
+  local sep='›'
+  [[ "$BOX_V" == '|' ]] && sep='>'
+  NEXT=("Next        Choose the stacks directory in Dockmesh:" "            Hosts $sep $NAME $sep Setup")
+}
+# end box_next
+
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
@@ -590,10 +603,11 @@ case "$MODE" in
 esac
 
 if [[ $MODE == fresh ]]; then
+  box_next
   box "Agent installed" \
     "Host        $NAME" \
     "Data        $DATA_DIR" \
-    "Stacks      ${STACKS_DIR:-$DATA_DIR/stacks}" \
+    "${NEXT[@]}" \
     "" \
     "Status      systemctl status dockmesh-agent" \
     "Logs        journalctl -u dockmesh-agent -f" \

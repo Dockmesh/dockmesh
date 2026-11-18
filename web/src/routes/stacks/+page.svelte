@@ -672,7 +672,7 @@
         </label>
         <select id="new-host" class="dm-input text-sm w-full" bind:value={newHostId} disabled={creating}>
           {#each createHosts as h (h.id)}
-            <option value={h.id}>{h.name}{h.id === 'local' ? m.stacks_server_suffix() : ''}</option>
+            <option value={h.id} disabled={h.needs_setup} title={h.needs_setup ? m.hosts_setup_waiting_picker({ name: h.name }) : undefined}>{h.name}{h.id === 'local' ? m.stacks_server_suffix() : ''}{h.needs_setup ? ` (${m.label_host_waiting_setup()})` : ''}</option>
           {/each}
         </select>
         <p class="text-[10.5px] text-[var(--fg-subtle)] mt-1">

@@ -29,6 +29,7 @@
   import { browserStorage, hideLegacyNotice, legacyNoticeHidden } from '$lib/legacyNotice';
   import { DOCS_BASE } from '$lib/setupWizard';
   import MountTable from '$lib/components/MountTable.svelte';
+  import SetupTab from './_SetupTab.svelte';
   import HostMetrics from '$lib/components/HostMetrics.svelte';
   import TopConsumers from '$lib/components/TopConsumers.svelte';
   import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle, Info, Copy } from 'lucide-svelte';
@@ -36,8 +37,8 @@
   const id = $derived(page.params.id ?? '');
   const isLocal = $derived(id === 'local');
 
-  type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
-  const TAB_IDS: TabId[] = ['overview', 'containers', 'stacks', 'migrations', 'tags', 'maintenance'];
+  type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'setup' | 'maintenance';
+  const TAB_IDS: TabId[] = ['overview', 'containers', 'stacks', 'migrations', 'tags', 'setup', 'maintenance'];
   const openTab = urlTab(TAB_IDS, 'overview');
   const tab = $derived(openTab.current);
 
@@ -166,7 +167,9 @@
       const proj = c?.Labels?.['com.docker.compose.project'];
       if (proj) projects.add(proj);
     }
-    return stacks.filter((s) => projects.has(s.name));
+    // A same-named project left running by a removed agent on this machine
+    // is not this host's stack.
+    return stacks.filter((s) => projects.has(s.name) && (!s.deployment?.host_id || s.deployment.host_id === id));
   });
 
   function fmtDur(sec: number): string {
@@ -245,6 +248,7 @@
     { key: 'stacks', label: m.common_stacks(), count: stacksOnHost.length },
     { key: 'migrations', label: m.hosts_tab_migrations(), count: migrations.length },
     { key: 'tags', label: m.hosts_col_tags(), count: tags.length },
+    ...(isLocal ? [] : [{ key: 'setup', label: m.hosts_tab_setup(), dot: waitingSetup }]),
     { key: 'maintenance', label: m.hosts_tab_maintenance(), dot: needsUpgrade }
   ]);
 
@@ -405,6 +409,9 @@
           <b>{m.hosts_setup_banner_title({ name: hostName })}</b>
           <span>{m.hosts_setup_banner_text()}</span>
         </div>
+        {#if tab !== 'setup'}
+          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" data-testid="setup-banner-btn" onclick={() => selectTab('setup')}>{m.hosts_add_setup_btn()}</button>
+        {/if}
       </div>
     {/if}
 
@@ -625,6 +632,8 @@
         </div>
       </div>
 
+    {:else if tab === 'setup' && agent}
+      <SetupTab {agent} {tags} onedittags={() => selectTab('tags')} onchanged={loadAll} />
     {:else if tab === 'maintenance'}
       <div>
         <div class="dm-form-sec">

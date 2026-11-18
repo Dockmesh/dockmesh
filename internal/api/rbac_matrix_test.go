@@ -307,6 +307,8 @@ var routeGates = []struct {
 	{"POST", "/api/v1/agents/reachability", rbac.PermHostsCreate},
 	{"POST", "/api/v1/agents/{id}/upgrade", rbac.PermHostsUpdate},
 	{"PUT", "/api/v1/hosts/{id}/stacks-dir", rbac.PermHostsUpdate},
+	{"POST", "/api/v1/hosts/{id}/stacks-dir/check", rbac.PermHostsUpdate},
+	{"GET", "/api/v1/hosts/{id}/stacks-dir/disks", rbac.PermHostsUpdate},
 	{"PUT", "/api/v1/agents/upgrade-policy", rbac.PermHostsUpdate},
 	{"POST", "/api/v1/agents/upgrade-policy/run", rbac.PermHostsUpdate},
 	{"DELETE", "/api/v1/agents/{id}", rbac.PermHostsDelete},

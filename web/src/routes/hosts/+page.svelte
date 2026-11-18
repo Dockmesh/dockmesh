@@ -422,9 +422,18 @@
               <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
                 onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'warn' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
+            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'acc setupdot' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
-              <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
+              <span class="nmline">
+                <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
+                {#if waitingSetup(r)}
+                  {#if allowed('hosts.update')}
+                    <a class="dm-pill dm-pill-info setup" data-testid="row-setup" href="/hosts/{r.id}?tab=setup" title={m.hosts_setup_row_title()} onclick={(e) => e.stopPropagation()}>{m.label_host_waiting_setup()} →</a>
+                  {:else}
+                    <span class="dm-pill dm-pill-info setup">{m.label_host_waiting_setup()}</span>
+                  {/if}
+                {/if}
+              </span>
               <small>
                 {#if r.status === 'offline'}
                   <span class="off">{m.hosts_offline_last_seen({ ago: fmtAgoNever(r.last_seen_at) })}</span>
@@ -433,8 +442,7 @@
                 {:else if r.status === 'removed'}
                   {m.label_host_removed()}
                 {:else if waitingSetup(r)}
-                  <span class="dm-pill dm-pill-warning setup">{m.label_host_waiting_setup()}</span>
-                  {r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}
+                  <span title={r.hostname}>{r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}</span>
                 {:else}
                   {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
                 {/if}
@@ -519,7 +527,12 @@
 </Modal>
 
 <style>
-  .setup { margin-right: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
+  .nmline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .nmline > a:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .setup { flex: none; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; text-decoration: none; white-space: nowrap; }
+  a.setup:hover { text-decoration: underline; }
+  /* Connected but not usable yet: a ring instead of a filled dot, so it never reads like "pending". */
+  .setupdot { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
   .legacy { margin-left: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .tagf {
     display: inline-flex; align-items: center; gap: 4px;
