@@ -370,5 +370,17 @@ func (s *Service) CheckStacksDir(ctx context.Context, id, p string) (StacksDirCh
 	if len(res.Check.Message) > maxStacksDirError {
 		res.Check.Message = strings.ToValidUTF8(res.Check.Message[:maxStacksDirError], "")
 	}
+	res.Check.Path = p
+	// The UI offers the command for copying into a root shell, so only
+	// the one shape the agent builds is passed on.
+	if !prepareCommandFor(p).MatchString(res.Check.Command) {
+		res.Check.Command = ""
+	}
 	return res.Check, nil
+}
+
+// prepareCommandFor matches the agent's command that prepares p as an
+// empty directory of its account.
+func prepareCommandFor(p string) *regexp.Regexp {
+	return regexp.MustCompile(`^sudo install -d -o ([a-z_][a-z0-9_-]{0,31}) -g ([a-z_][a-z0-9_-]{0,31}) -m 0750 ` + regexp.QuoteMeta(p) + `$`)
 }

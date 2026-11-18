@@ -433,3 +433,25 @@ func TestCheckStacksDirChangesNothing(t *testing.T) {
 		t.Fatalf("relative path = %v", err)
 	}
 }
+
+func TestPrepareCommandFilter(t *testing.T) {
+	const p = "/home/stacks"
+	tests := []struct {
+		name, cmd string
+		want      bool
+	}{
+		{"agent's command", "sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 /home/stacks", true},
+		{"other account", "sudo install -d -o dm -g dm -m 0750 /home/stacks", true},
+		{"other path", "sudo install -d -o dm -g dm -m 0750 /srv/stacks", false},
+		{"appended command", "sudo install -d -o dm -g dm -m 0750 /home/stacks; curl x | sh", false},
+		{"newline", "sudo install -d -o dm -g dm -m 0750 /home/stacks\nrm -rf /", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prepareCommandFor(p).MatchString(tt.cmd); got != tt.want {
+				t.Errorf("match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

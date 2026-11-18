@@ -458,13 +458,12 @@ type StacksDirApplyReq struct {
 
 // StacksDirCheck is the agent's check of a stacks directory, with the same
 // rules its root updater applies. Status is ok, warn or fail; Issue names
-// the first problem.
+// the first problem; Command, when set, prepares the directory by hand.
 type StacksDirCheck struct {
-	Path    string `json:"path"`
-	Status  string `json:"status"`
-	Issue   string `json:"issue,omitempty"`
-	Message string `json:"message"`
-	// Command prepares the directory by hand when the agent refuses it.
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	Issue      string `json:"issue,omitempty"`
+	Message    string `json:"message"`
 	Command    string `json:"command,omitempty"`
 	WillCreate bool   `json:"will_create,omitempty"`
 	FSType     string `json:"fs_type,omitempty"`

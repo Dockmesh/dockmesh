@@ -528,8 +528,7 @@
 
 <style>
   .nmline { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .nmline > a:first-child { color: var(--fg); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .nmline > a:first-child:hover { text-decoration: underline; }
+  .nmline > a:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .setup { flex: none; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; text-decoration: none; white-space: nowrap; }
   a.setup:hover { text-decoration: underline; }
   /* Connected but not usable yet: a ring instead of a filled dot, so it never reads like "pending". */

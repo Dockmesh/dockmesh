@@ -318,9 +318,10 @@ walk:
 	creatable := func(pm setup.Mount) bool {
 		return existing >= len(comps)-1 && creatableName(name) && r.creatableParent(parent, pm, parentDev, denied)
 	}
+	prepare := r.prepareCommand(p)
 	newRefused := func() stacksDirResult {
 		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or starting with dockmesh-stacks. Prepare %s as an empty directory of the agent: %s",
-			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
+			strings.Join(r.allowedParents(), ", "), p, prepare).withCommand(prepare)
 	}
 	switch {
 	case existing == len(comps):
@@ -338,14 +339,14 @@ walk:
 			}
 		}
 		if int(st.Uid) != r.uid {
-			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
+			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, prepare).withCommand(prepare)
 		}
 		empty, err := emptyDirAt(fd)
 		if err != nil {
 			return fail(sdUnreadable, "Cannot read %s: %v.", p, err)
 		}
 		if !empty {
-			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
+			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, prepare).withCommand(prepare)
 		}
 	case p != defaultDir && !creatable(m):
 		return newRefused()

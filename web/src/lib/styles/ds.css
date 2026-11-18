@@ -101,12 +101,14 @@
 }
 .dm-nm { min-width: 0; line-height: 1.3; }
 .dm-nm > a,
+.dm-nm > .nmline > a:first-child,
 .dm-nm > .dm-t {
   color: var(--fg);
   font-weight: 600;
   text-decoration: none;
 }
-.dm-nm > a:hover { text-decoration: underline; }
+.dm-nm > a:hover,
+.dm-nm > .nmline > a:first-child:hover { text-decoration: underline; }
 .dm-nm > .dm-sub { display: block; font-size: var(--fs-xs); }
 .dm-nm small {
   display: block;

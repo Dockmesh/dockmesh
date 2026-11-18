@@ -457,3 +457,21 @@ func TestProtectedDev(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountPattern(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"dockmesh-agent", true},
+		{"dm_agent2", true},
+		{"/etc", false},
+		{"a b", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := accountPattern.MatchString(tt.name); got != tt.want {
+			t.Errorf("%q: %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
