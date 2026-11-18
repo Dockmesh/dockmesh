@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 )
 
 // Frame is the message envelope that flows in both directions.
@@ -161,7 +163,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 7
+const ProtocolVersion = 8
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -201,6 +203,9 @@ const (
 	// CapNoEnvMirror, agent: keeps no .env copy, so req.stack.sync goes
 	// without the plaintext env.
 	CapNoEnvMirror = "stacks.no_env_mirror"
+	// CapStackFiles, agent: takes StackDeployReq.Files and writes them into
+	// its stack directory.
+	CapStackFiles = "stacks.files"
 	// CapNetworkTopology, agent: answers req.networks.topology.
 	CapNetworkTopology = "networks.topology"
 )
@@ -322,12 +327,17 @@ type NetworkCreateReq struct {
 //
 // Auth maps image references to X-Registry-Auth blobs for the pulls of
 // this request; ForcePull pulls every image even when it is cached.
+//
+// Files, sent only to agents with CapStackFiles, are the files next to
+// compose.yaml on the server; nil (an older server) leaves the agent's
+// stack directory as it is.
 type StackDeployReq struct {
 	Name      string            `json:"name"`
 	Compose   string            `json:"compose"`
 	Env       string            `json:"env,omitempty"`
 	Auth      map[string]string `json:"auth,omitempty"`
 	ForcePull bool              `json:"force_pull,omitempty"`
+	Files     *stackfiles.Set   `json:"files,omitempty"`
 }
 
 type StackNameReq struct {

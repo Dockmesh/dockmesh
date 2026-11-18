@@ -113,6 +113,14 @@ The same applies to the `file:` of top-level `configs` and `secrets` and to `bui
 
 Data in such a directory on the server's host is part of every stack and system backup, because both archive the stack directory. Data on an agent host is not backed up; use named volumes there.
 
+### Files next to compose.yaml on agent hosts
+
+A deploy to an agent carries the other files of the stack directory on the server along, such as `./html/index.html` or `./nginx.conf` from the stack folder or from a [git source](../features/git-sources.md), and the agent writes them into its copy of the stack directory before the containers start. File modes are kept. `.env`, the compose files, override files, `.git` and Dockmesh's own files are not copied; neither are symlinks, special files and files the server can't read.
+
+- **Size:** at most 8 MiB and 2000 files and directories per stack. A larger stack directory is refused with a message that names its largest files. Keep data in a volume and large files in the image.
+- **What the agent changes:** it remembers what it wrote, outside the stack directory. A file is replaced only while it still holds what Dockmesh wrote last time, and a file deleted on the server is removed on the next deploy under the same condition, together with the directories Dockmesh created once they are empty. A file a container wrote or changed is never overwritten or removed. Files that are kept this way are listed after the deploy with the reason, for example a directory where a file should be: Docker creates one when a bind source like `./nginx.conf` is missing, so remove that directory on the host once and deploy again. Stacks deployed before their files reached the agent may also have a directory Docker created as root, such as `html/` for `./html:/usr/share/nginx/html`; the agent can't write there, and the deploy names the directory and the `chown` command that hands it to the agent.
+- **Older agents** still receive only `compose.yaml` and `.env`. The deploy works as before and says how many files the agent missed; update the agent from the **Hosts** page.
+
 Other relative paths still resolve against the staging directory, which only holds `compose.yaml` and `.env`: `env_file:` entries other than `.env`, and `extends` or `include` of other files, are not found.
 
 On hosts whose agent is older than the server, the server checks the compose file before sending it, without reading any other file: `env_file:` must be a relative path inside the stack folder, without `..`, `~` or variables, and `include`, `label_file`, `extends` from another file, top-level `jobs`, compose keys written in upper case and explicit YAML tags such as `!reset`, `!override` or `!!merge` are refused. Such a deploy or scale answers with a hint to upgrade the agent from the **Hosts** page.

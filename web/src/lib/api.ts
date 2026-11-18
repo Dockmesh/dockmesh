@@ -8,6 +8,20 @@ const BASE = '/api/v1';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'negligible' | 'unknown';
 
+export interface StackFileNote {
+  path: string;
+  reason: string;
+}
+
+// What an agent deploy did with the files next to compose.yaml.
+export interface StackFilesReport {
+  copied: number;
+  removed: number;
+  kept?: StackFileNote[];
+  skipped?: StackFileNote[];
+  not_sent?: number;
+}
+
 export interface StackDirMount {
   service: string;
   source: string;
@@ -2016,6 +2030,7 @@ export const api = {
         services: Array<{ name: string; container_id: string; image: string }>;
         dependencies_deployed?: string[];
         replicas_ignored?: string[];
+        stack_files?: StackFilesReport;
         warnings?: string[];
       }>(`/stacks/${encodeURIComponent(name)}/deploy${qs}`, { method: 'POST' });
     },

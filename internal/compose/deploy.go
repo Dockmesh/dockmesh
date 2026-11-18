@@ -13,6 +13,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -170,6 +171,9 @@ type DeployResult struct {
 	// ReplicasIgnored lists services whose deploy.replicas asks for a
 	// count other than 1; a host stack keeps the count it runs instead.
 	ReplicasIgnored []string `json:"replicas_ignored,omitempty"`
+	// StackFiles is what an agent deploy did with the files next to
+	// compose.yaml.
+	StackFiles *stackfiles.Report `json:"stack_files,omitempty"`
 	// Warnings are notes about the project the deploy went ahead with,
 	// such as relative paths that leave the stack directory.
 	Warnings []string `json:"warnings,omitempty"`

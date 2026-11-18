@@ -178,13 +178,14 @@ func runningContainers(dockerHost string) ([]runningContainer, error) {
 }
 
 // Files the agent and the installer write in the data dir. staging/ and
-// update/ hold only what the agent staged.
+// update/ hold only what the agent staged, stackfiles/ its record of the
+// files it wrote into stack dirs.
 var (
 	agentDataFiles = []string{
 		"agent.crt", "agent.key", "ca.crt", "agent.url", enrollTokenFile,
 		"agent.crt.next", "agent.key.next", "enroll-ca.pem", agentNameFile, uninstalledFile,
 	}
-	agentDataDirs = []string{"staging", "update"}
+	agentDataDirs = []string{"staging", "update", stackFilesDir}
 	// agentStackFiles are the files the agent writes into a stack dir;
 	// .env is the copy older agents kept.
 	agentStackFiles = []string{"compose.yaml", ".dockmesh.meta.json", ".env"}
@@ -624,7 +625,7 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		case e.Type().IsRegular() && slices.Contains(agentDataFiles, n):
 		case e.Type().IsRegular() && ownFile(n, agentDataFiles):
 			steps = append(steps, u.removeBelow(dataDir, n))
-		case e.IsDir() && slices.Contains(agentDataDirs, n) && shared:
+		case e.IsDir() && shared && (n == "staging" || n == "update"):
 			// The server keeps its own update and staging files there.
 		case e.IsDir() && slices.Contains(agentDataDirs, n):
 			steps = append(steps, u.removeAllBelow(dataDir, n))
@@ -638,7 +639,7 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		if shared {
 			p.remove("certificate and key in "+dataDir, steps...)
 		} else {
-			p.remove("certificate and key, staging/, update/ in "+dataDir, steps...)
+			p.remove("certificate and key, staging/, update/, stackfiles/ in "+dataDir, steps...)
 		}
 		p.kept = append(p.kept, dataDir)
 		return
