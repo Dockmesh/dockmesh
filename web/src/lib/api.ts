@@ -1076,6 +1076,7 @@ export interface AgentCreateResult {
   agent_url: string;
   ca_fingerprint: string;
   install_hint: string;
+  behind_proxy?: boolean;
 }
 
 export interface AgentReachabilityCheck {
