@@ -11,10 +11,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
@@ -52,43 +54,108 @@ func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) 
 	}
 }
 
-// MountsProjectDir reports whether a service bind-mounts the project
-// directory itself writable (".:/app"), which lets it rewrite compose.yaml
-// and .env.
-func MountsProjectDir(composeYAML string) bool {
+// WritableStackDirMounts lists the read-write bind mounts in composeYAML
+// that let a service rewrite the files Dockmesh deploys from: a bind of
+// the stack directory itself, of a directory above it, or of one of those
+// files. stackDirs are the stack's directory on each host in question
+// (relative sources resolve against each of them); resolve, when set,
+// turns an absolute path into its real path. Sources with variables are
+// not followed.
+func WritableStackDirMounts(composeYAML string, stackDirs []string, resolve func(string) string) []stacks.StackDirMount {
 	var doc struct {
 		Services map[string]struct {
 			Volumes []any `yaml:"volumes"`
 		} `yaml:"services"`
 	}
 	if yaml.Unmarshal([]byte(composeYAML), &doc) != nil {
-		return false
+		return nil
 	}
-	for _, svc := range doc.Services {
-		for _, v := range svc.Volumes {
-			var src string
-			switch x := v.(type) {
-			case string:
-				parts := strings.Split(x, ":")
-				if len(parts) < 2 || (len(parts) > 2 && strings.Contains(","+parts[2]+",", ",ro,")) {
-					continue
-				}
-				src = parts[0]
-			case map[string]any:
-				if t, _ := x["type"].(string); t != "bind" {
-					continue
-				}
-				if ro, _ := x["read_only"].(bool); ro {
-					continue
-				}
-				src, _ = x["source"].(string)
+	var out []stacks.StackDirMount
+	for _, name := range sortedKeys(doc.Services) {
+		for _, v := range doc.Services[name].Volumes {
+			src, target, ok := writableBind(v)
+			if !ok || strings.Contains(src, "$") || strings.HasPrefix(src, "~") {
+				continue
 			}
-			if src != "" && path.Clean(filepath.ToSlash(src)) == "." {
-				return true
+			for _, dir := range stackDirs {
+				if bindReachesStackFiles(src, dir, resolve) {
+					out = append(out, stacks.StackDirMount{Service: name, Source: src, Target: target})
+					break
+				}
 			}
 		}
 	}
+	return out
+}
+
+// writableBind returns source and target of a read-write bind entry in
+// short or long syntax.
+func writableBind(v any) (string, string, bool) {
+	switch x := v.(type) {
+	case string:
+		parts := strings.Split(x, ":")
+		if len(parts) < 2 || (len(parts) > 2 && strings.Contains(","+parts[2]+",", ",ro,")) {
+			return "", "", false
+		}
+		if !strings.HasPrefix(parts[0], ".") && !strings.HasPrefix(parts[0], "/") {
+			return "", "", false // a named volume
+		}
+		return parts[0], parts[1], true
+	case map[string]any:
+		if t, _ := x["type"].(string); t != "bind" {
+			return "", "", false
+		}
+		if ro, _ := x["read_only"].(bool); ro {
+			return "", "", false
+		}
+		src, _ := x["source"].(string)
+		target, _ := x["target"].(string)
+		return src, target, src != ""
+	}
+	return "", "", false
+}
+
+// bindReachesStackFiles reports whether a bind source, seen from the stack
+// directory dir, is dir, a directory above it, or a file Dockmesh deploys
+// from directly inside it.
+func bindReachesStackFiles(src, dir string, resolve func(string) string) bool {
+	dir = path.Clean(filepath.ToSlash(dir))
+	p := path.Clean(filepath.ToSlash(src))
+	if !path.IsAbs(p) {
+		p = path.Join(dir, p)
+	} else if resolve != nil {
+		p = path.Clean(filepath.ToSlash(resolve(filepath.FromSlash(p))))
+	}
+	if resolve != nil {
+		dir = path.Clean(filepath.ToSlash(resolve(filepath.FromSlash(dir))))
+	}
+	switch {
+	case p == dir, p == "/", strings.HasPrefix(dir, p+"/"):
+		return true
+	case path.Dir(p) == dir:
+		return isDeployedFile(path.Base(p))
+	}
 	return false
+}
+
+// isDeployedFile reports whether name, directly in a stack directory, is
+// a file a deploy reads: the compose files and overrides, .env and its
+// encrypted form, and Dockmesh's meta file.
+func isDeployedFile(name string) bool {
+	name = strings.ToLower(name)
+	return name == ".env" || name == ".env.age" || strings.HasPrefix(name, ".dockmesh") ||
+		deployedComposeFile.MatchString(name)
+}
+
+var deployedComposeFile = regexp.MustCompile(`^(docker-)?compose(\.[^/]+)?\.ya?ml$`)
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // stagingPathPattern matches the staging directories earlier versions

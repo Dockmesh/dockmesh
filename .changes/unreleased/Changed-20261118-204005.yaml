@@ -1,0 +1,3 @@
+kind: Changed
+body: The stack page names every service whose read-write mount reaches the stack directory, a directory above it or a file the deploy reads (also through an absolute path or a symlink), and Deploy asks before it goes ahead
+time: 2026-11-18T20:40:05.957757068Z

@@ -1351,7 +1351,23 @@ components:
         scaler_paused: {$ref: "#/components/schemas/ScalerPause"}
         mounts_stack_dir:
           type: boolean
-          description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
+          description: Set when `writable_stack_dir_mounts` is not empty.
+        writable_stack_dir_mounts:
+          type: array
+          description: |
+            Read-write bind mounts through which a service can rewrite the
+            files the stack deploys from: a bind of the stack directory, of
+            a directory above it (also as an absolute path or through a
+            symlink, on the server and in the deployed agent's stacks
+            directories) or of compose.yaml, an override, `.env` or the
+            meta file. Sources with variables are not followed.
+          items:
+            type: object
+            required: [service, source, target]
+            properties:
+              service: {type: string}
+              source: {type: string, description: As written in compose.yaml.}
+              target: {type: string}
     ScalerPause:
       type: object
       description: Set while the auto-scaler leaves the stack alone. A deploy confirms changed files or the default override; invalid rules need saving again.

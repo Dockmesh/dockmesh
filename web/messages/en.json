@@ -4747,10 +4747,10 @@
   "stacks_d_modified_outside": "Modified outside Dockmesh: {files}",
   "stacks_d_modified_outside_hint": "Review these files before deploying; the next deploy asks for confirmation.",
   "stacks_d_more_actions": "More stack actions",
-  "stacks_d_mounts_a": "Its containers can change compose.yaml and .env. Mount a subdirectory (",
+  "stacks_d_mounts_a": "These containers can change compose.yaml, .env and the meta file the next deploy reads. Mount a subdirectory (",
   "stacks_d_mounts_b": ") or add",
   "stacks_d_mounts_c": ".",
-  "stacks_d_mounts_title": "A service mounts the stack directory",
+  "stacks_d_mounts_title": "Services can write the stack directory",
   "stacks_d_n_deploys": [
     {
       "declarations": [
@@ -5902,6 +5902,10 @@
   "stacks_override_message": "\"{name}\" has the default environment override {env}: {file} is merged over compose.yaml for this deploy.",
   "stacks_override_body": "If you didn't expect an override, check {file} and the default environment on the Environment tab before deploying.",
   "stacks_override_confirm": "Deploy with {env}",
+  "stacks_writable_title": "Services can rewrite this stack's files",
+  "stacks_writable_message": "In \"{name}\", these read-write mounts reach the stack directory, a directory above it or a file the deploy reads: {mounts}.",
+  "stacks_writable_body": "Such a service can change compose.yaml, .env or the meta file that the next deploy uses. Mount a subdirectory such as ./data or add :ro if it doesn't need them.",
+  "stacks_writable_confirm": "Deploy anyway",
   "stacks_d_scaler_paused_title": "Auto-scaling is paused for this stack",
   "stacks_d_scaler_paused_files": "{files} changed outside Dockmesh. Review the files, then deploy the stack once to confirm them; auto-scaling resumes after that.",
   "stacks_d_scaler_paused_override": "The default environment override {env} was not confirmed by a manual deploy. Deploy the stack once; auto-scaling resumes after that.",

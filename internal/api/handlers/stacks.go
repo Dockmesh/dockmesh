@@ -324,11 +324,43 @@ func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// stackDirsOnHosts is the stack's directory on the server and, for a stack
+// deployed to an agent, in each of that agent's stacks directories.
+func (h *Handlers) stackDirsOnHosts(ctx context.Context, name string) []string {
+	var dirs []string
+	if dir, err := h.Stacks.Dir(name); err == nil {
+		dirs = append(dirs, dir)
+	}
+	if h.Deployments == nil || h.Agents == nil {
+		return dirs
+	}
+	d, err := h.Deployments.Get(ctx, name)
+	if err != nil || d == nil || d.HostID == "" || d.HostID == "local" {
+		return dirs
+	}
+	if ag := h.Agents.GetConnected(d.HostID); ag != nil {
+		for _, sd := range ag.Hello.ReportedStacksDirs() {
+			dirs = append(dirs, filepath.Join(sd.Path, name))
+		}
+	}
+	return dirs
+}
+
+// resolveRealPath is filepath.EvalSymlinks, or p itself when it doesn't
+// resolve on this host.
+func resolveRealPath(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
+}
+
 func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	d, err := h.Stacks.Get(name)
 	if err == nil {
-		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
+		d.WritableStackDirMounts = compose.WritableStackDirMounts(d.Compose, h.stackDirsOnHosts(r.Context(), name), resolveRealPath)
+		d.MountsStackDir = len(d.WritableStackDirMounts) > 0
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
 		}
