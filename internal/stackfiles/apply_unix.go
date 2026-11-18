@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -179,7 +180,7 @@ func (a *applier) dir(f File) {
 		a.keep(f.Path, "a file is in the way of this directory")
 	default:
 		if err := a.mkdirAll(f.Path, mode); err != nil {
-			a.keep(f.Path, writeReason(err))
+			a.keep(f.Path, a.createReason(f.Path, err))
 		}
 	}
 }
@@ -192,11 +193,11 @@ func (a *applier) file(f File, prev record) (string, bool) {
 	fi, err := a.root.Lstat(f.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := a.mkdirAll(path.Dir(f.Path), 0o755); err != nil {
-			a.keep(f.Path, writeReason(err))
+			a.keep(f.Path, a.createReason(f.Path, err))
 			return "", false
 		}
 		if err := a.create(f.Path, f.Data, mode); err != nil {
-			a.keep(f.Path, writeReason(err))
+			a.keep(f.Path, a.createReason(f.Path, err))
 			return "", false
 		}
 		a.rep.Copied++
@@ -382,6 +383,35 @@ func writeAll(f *os.File, data []byte, mode fs.FileMode, truncate bool) error {
 		return err
 	}
 	return f.Close()
+}
+
+// createReason is writeReason for a new entry at p. When the agent may not
+// write the directory that should hold it, it names that directory on the
+// host, its owner and the command that hands it to the agent: Docker
+// creates a bind source that is missing as root, so stacks deployed before
+// their files reached the agent have such directories.
+func (a *applier) createReason(p string, err error) string {
+	if !errors.Is(err, fs.ErrPermission) {
+		return writeReason(err)
+	}
+	dir := path.Dir(p)
+	for dir != "." {
+		if _, err := a.root.Lstat(dir); err == nil {
+			break
+		}
+		dir = path.Dir(dir)
+	}
+	fi, serr := a.root.Lstat(dir)
+	if serr != nil {
+		return writeReason(err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return writeReason(err)
+	}
+	host := filepath.Join(a.root.Name(), filepath.FromSlash(dir))
+	return fmt.Sprintf("the agent (uid %d) may not write in %s, owned by uid %d; Docker creates a bind source that is missing as root. Run `sudo chown %d %s` on the host and deploy again",
+		os.Getuid(), host, st.Uid, os.Getuid(), host)
 }
 
 // writeReason turns a write error into the short text the deploy result

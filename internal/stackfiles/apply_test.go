@@ -307,3 +307,32 @@ func TestApplyDoesNotReadOversizedFiles(t *testing.T) {
 		t.Errorf("reason = %q", r)
 	}
 }
+
+func TestApplyNamesTheDirectoryItMayNotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
+	}
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "stack", "html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(base, "stack", "html"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(base, "stack", "html"), 0o755) })
+	parent := openRoot(t, base)
+	root, err := parent.OpenRoot("stack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	set := &Set{Files: []File{{Path: "html/index.html", Mode: 0o644, Data: []byte("x")}}}
+	_, rep, err := Apply(root, set, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := keptReason(rep, "html/index.html")
+	if !strings.Contains(r, "sudo chown") || !strings.Contains(r, filepath.Join(base, "stack", "html")) {
+		t.Fatalf("reason = %q", r)
+	}
+}
