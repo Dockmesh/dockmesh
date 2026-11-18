@@ -36,7 +36,8 @@
   // Create form state
   let showCreate = $state(false);
   let newName = $state('');
-  let newRole = $state('');
+  // null until the user picks; '' is the explicit "no restriction" choice.
+  let newRole = $state<string | null>(null);
   let newScope = $state<Scope>({ type: 'global' });
   let catalog = $state<RoleCatalog | null>(null);
   let newExpiresKey = $state<'30d' | '90d' | '180d' | '365d' | 'never'>('90d');
@@ -144,7 +145,7 @@
   // ── Actions ──────────────────────────────────────────────────────────
   async function createApiToken(e: Event) {
     e.preventDefault();
-    if (!newName.trim()) return;
+    if (!newName.trim() || newRole === null) return;
     creating = true;
     const expiresMap = { '30d': 30, '90d': 90, '180d': 180, '365d': 365, 'never': 0 } as const;
     try {
@@ -158,7 +159,7 @@
       freshCopied = false;
       showCreate = false;
       newName = '';
-      newRole = '';
+      newRole = null;
       newScope = { type: 'global' };
       newExpiresKey = '90d';
       await loadApiTokens();
@@ -348,7 +349,7 @@
         <button
           type="button"
           class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={() => (showCreate = true)}
+          onclick={() => { newRole = null; showCreate = true; }}
         >
           <Plus size={12} strokeWidth={1.5} /> {m.tokens_new_token()}
         </button>
@@ -493,6 +494,8 @@
             type="button"
             class="tok-scope-card"
             class:tok-scope-active={newRole === r.name}
+            aria-pressed={newRole === r.name}
+            data-testid={r.name ? undefined : 'token-unrestricted'}
             onclick={() => (newRole = r.name)}
           >
             <span class="tok-scope-card-label">{r.display || r.name}</span>
@@ -501,6 +504,9 @@
         {/each}
       </div>
     </Field>
+    {#if newRole === ''}
+      <p class="tok-warn" data-testid="token-unrestricted-warning">{m.tokens_no_restriction_warning()}</p>
+    {/if}
     {#if newRole}
       <ScopePicker bind:value={newScope} label={m.tokens_restricted_to()} />
     {/if}
@@ -533,7 +539,8 @@
         type="submit"
         form="tok-create-form"
         class="dm-btn dm-btn-primary dm-btn-sm"
-        disabled={!newName.trim() || creating}
+        disabled={!newName.trim() || newRole === null || creating}
+        title={newRole === null ? m.tokens_pick_restriction() : undefined}
       >
         {creating ? m.tokens_generating() : m.tokens_generate()}
       </button>
@@ -542,6 +549,7 @@
 </EditorialModal>
 
 <style>
+  .tok-warn { margin: -6px 0 0; color: var(--warn); font-size: var(--fs-xs); }
   .tok {
     display: flex;
     flex-direction: column;
