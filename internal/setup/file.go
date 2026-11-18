@@ -141,10 +141,13 @@ type FileNotification map[string]any
 type NotificationFields struct {
 	Type, Name string
 	Config     map[string]any
-	// Secrets name the file of each secret field, SecretField the config
-	// field it fills, at the same index.
-	Secrets     []SecretFile
-	SecretField []string
+	Secrets    []NotificationSecret
+}
+
+// NotificationSecret is the file that holds the secret config Field.
+type NotificationSecret struct {
+	SecretFile
+	Field string
 }
 
 // channelFields checks entry i and splits it. Secret fields given inline
@@ -154,12 +157,12 @@ func (n FileNotification) channelFields(i int) (NotificationFields, error) {
 	prefix := fmt.Sprintf("setup file: notifications[%d]", i)
 	t, _ := n["type"].(string)
 	if t == "" {
-		return out, fmt.Errorf("%s: needs a type (email, ntfy, gotify, webhook, discord, slack, teams, pushover or pagerduty)", prefix)
+		return out, fmt.Errorf("%s: needs a type (%s)", prefix, notify.Types)
+	}
+	if !notify.ValidType(t) {
+		return out, fmt.Errorf("%s: unknown type %q (%s)", prefix, t, notify.Types)
 	}
 	fields := notify.ConfigFields(t)
-	if len(fields) == 1 {
-		return out, fmt.Errorf("%s: unknown type %q", prefix, t)
-	}
 	out.Type = t
 	if v, ok := n["name"]; ok {
 		name, ok := v.(string)
@@ -177,8 +180,7 @@ func (n FileNotification) channelFields(i int) (NotificationFields, error) {
 			if !ok || !filepath.IsAbs(p) {
 				return out, fmt.Errorf("%s.%s must be an absolute path", prefix, k)
 			}
-			out.Secrets = append(out.Secrets, SecretFile{fmt.Sprintf("notifications[%d].%s", i, k), p})
-			out.SecretField = append(out.SecretField, base)
+			out.Secrets = append(out.Secrets, NotificationSecret{SecretFile{fmt.Sprintf("notifications[%d].%s", i, k), p}, base})
 			continue
 		}
 		if !slices.Contains(fields, k) {
@@ -220,7 +222,9 @@ func (f File) SecretFiles() []SecretFile {
 	var out []SecretFile
 	for i, n := range f.Notifications {
 		fields, _ := FileNotification(n).channelFields(i)
-		out = append(out, fields.Secrets...)
+		for _, sf := range fields.Secrets {
+			out = append(out, sf.SecretFile)
+		}
 	}
 	if f.Admin != nil && f.Admin.PasswordFile != "" {
 		out = append(out, SecretFile{"admin.password_file", f.Admin.PasswordFile})

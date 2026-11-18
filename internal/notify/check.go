@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 
@@ -31,14 +32,23 @@ func CheckChannel(channelType string, config json.RawMessage) error {
 			return fmt.Errorf("%s is not a field of a %s channel", k, channelType)
 		}
 	}
-	_, err := buildChannel(&Channel{Type: channelType, Config: config}, http.DefaultClient)
-	return err
+	impl, err := buildChannel(&Channel{Type: channelType, Config: config}, http.DefaultClient)
+	if err != nil {
+		return err
+	}
+	if e, ok := impl.(*emailChannel); ok && len(e.cfg.To) > maxTestRecipients {
+		return fmt.Errorf("at most %d recipients", maxTestRecipients)
+	}
+	return nil
 }
 
+// maxTestRecipients bounds the recipients of a channel CheckChannel takes.
+const maxTestRecipients = 50
+
 // SendTest sends n once to a channel that is not stored, as setup's Send
-// test does before the database exists. hc carries the dial rules; the
-// error names no secret of the config.
-func SendTest(ctx context.Context, hc *http.Client, channelType string, config json.RawMessage, n Notification) error {
+// test does before the database exists. hc and dial (for email) carry the
+// dial rules; the error names no secret of the config.
+func SendTest(ctx context.Context, hc *http.Client, dial func(ctx context.Context, network, addr string) (net.Conn, error), channelType string, config json.RawMessage, n Notification) error {
 	if err := CheckChannel(channelType, config); err != nil {
 		return err
 	}
@@ -50,6 +60,7 @@ func SendTest(ctx context.Context, hc *http.Client, channelType string, config j
 	lang := channelLanguage(config)
 	if e, ok := impl.(*emailChannel); ok {
 		e.lang = lang
+		e.dial = dial
 	} else {
 		impl = localized{impl: impl, lang: lang}
 	}

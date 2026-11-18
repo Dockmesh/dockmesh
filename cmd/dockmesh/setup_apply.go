@@ -401,8 +401,7 @@ func applyFresh(ctx context.Context, dataDir string, v setup.ApplyValues, emit f
 		return err
 	}
 	defer func() {
-		// It holds the secrets of notification channels; a retry writes it
-		// again.
+		// The values file holds channel secrets; a retry writes it again.
 		if err != nil {
 			if rerr := os.Remove(filepath.Join(setup.StateDir(dataDir), setup.ApplyFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 				emit("cleanup", rerr.Error(), "warn")

@@ -531,13 +531,14 @@ func (h *Handlers) SetupTestNotification(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Checked here too, so a bad config is a 400, not a failed send.
 	if err := notify.CheckChannel(in.Type, in.Config); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := notify.SendTest(ctx, setupNotifyClient, in.Type, in.Config, setupTestNotification()); err != nil {
+	if err := notify.SendTest(ctx, setupNotifyClient, setupDialer.DialContext, in.Type, in.Config, setupTestNotification()); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
@@ -556,14 +557,14 @@ func setupTestNotification() notify.Notification {
 	}
 }
 
-// setupNotifyClient is the HTTP client of the wizard's Send test. Before
+// setupDialer and setupNotifyClient dial for the wizard's Send test. Before
 // an admin exists it refuses link-local targets such as cloud metadata
 // services; LAN and loopback stay allowed for a self-hosted ntfy or Gotify.
+var setupDialer = &net.Dialer{Timeout: 5 * time.Second, Control: refuseLinkLocal}
+
 var setupNotifyClient = &http.Client{
-	Timeout: 15 * time.Second,
-	Transport: &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 5 * time.Second, Control: refuseLinkLocal}).DialContext,
-	},
+	Timeout:   15 * time.Second,
+	Transport: &http.Transport{DialContext: setupDialer.DialContext},
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 3 {
 			return errors.New("too many redirects")
@@ -582,8 +583,18 @@ func refuseLinkLocal(_, address string, _ syscall.RawConn) error {
 		return err
 	}
 	ip = ip.Unmap()
-	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip == netip.MustParseAddr("fd00:ec2::254") {
+	if ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() || metadataAddrs[ip] || nat64.Contains(ip) {
 		return fmt.Errorf("%s is a link-local or metadata address", ip)
 	}
 	return nil
 }
+
+// metadataAddrs are cloud metadata services outside the link-local ranges.
+var metadataAddrs = map[netip.Addr]bool{
+	netip.MustParseAddr("fd00:ec2::254"):   true,
+	netip.MustParseAddr("100.100.100.200"): true,
+	netip.MustParseAddr("168.63.129.16"):   true,
+}
+
+// nat64 maps IPv4 addresses, link-local ones too, into IPv6.
+var nat64 = netip.MustParsePrefix("64:ff9b::/96")

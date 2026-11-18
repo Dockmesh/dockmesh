@@ -191,12 +191,12 @@ func notificationValues(f setup.File, i int) (setup.NotificationValues, error) {
 	if err != nil {
 		return setup.NotificationValues{}, err
 	}
-	for j, sf := range nf.Secrets {
+	for _, sf := range nf.Secrets {
 		secret, err := readPasswordFile(sf.Path)
 		if err != nil {
 			return setup.NotificationValues{}, fmt.Errorf("%s: %w", sf.Key, err)
 		}
-		nf.Config[nf.SecretField[j]] = secret
+		nf.Config[sf.Field] = secret
 	}
 	raw, err := json.Marshal(nf.Config)
 	if err != nil {
