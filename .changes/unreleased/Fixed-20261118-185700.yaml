@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Restore keeps the group of stack data from the archive: files a container wrote with another group, or with the server''s uid and another group, no longer come back with the service''s group'
+time: 2026-11-18T18:57:00.61052421Z

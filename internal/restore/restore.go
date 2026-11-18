@@ -341,7 +341,7 @@ func walkTarDryRun(tr *tar.Reader) (*Counts, error) {
 // extractAll writes the archive's entries. Directories and files get the
 // mode of their header; directory modes are set last, so a read-only
 // directory can still be filled. The server that wrote the archive owned
-// its database snapshot, so stack entries with another owner were written
+// its database snapshot, so stack entries with another uid or gid were written
 // by a container: they go through opts.Files to keep that owner, or get it
 // directly when the restore runs as root.
 func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string, opts Options) (*Counts, error) {
@@ -351,7 +351,7 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 	entries := 0
 	roots := rootSet{}
 	defer roots.close()
-	var owner *int
+	var owner *fileOwner
 	asRoot := os.Geteuid() == 0
 	var dirModes []dirMode
 	foreign := &foreignStacks{files: opts.Files, root: cfg.StacksRoot}
@@ -383,7 +383,7 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		switch {
 		case clean == "dockmesh.db":
 			if owner == nil {
-				owner = &hdr.Uid
+				owner = &fileOwner{hdr.Uid, hdr.Gid}
 			}
 		case strings.HasPrefix(clean, "stacks/"):
 			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
@@ -415,7 +415,12 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			}
 			fsys, name = rootFS(r), filepath.FromSlash(rel)
 		}
-		otherOwner := root == cfg.StacksRoot && owner != nil && hdr.Uid != *owner && containerData(rel)
+		otherOwner := root == cfg.StacksRoot && owner != nil && (hdr.Uid != owner.uid || hdr.Gid != owner.gid) && containerData(rel)
+		if otherOwner && hdr.Uid == owner.uid {
+			// The server's uid with another group: the group bits are the
+			// point, but nothing the service owns comes back world-writable.
+			hdr.Mode &^= 0o002
+		}
 		if root == cfg.StacksRoot {
 			viaHelper, err := foreign.take(ctx, rel, otherOwner)
 			if err != nil {
