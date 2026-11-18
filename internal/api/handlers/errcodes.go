@@ -31,6 +31,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"backups not configured", "backups_not_configured"},
 	{"backups unavailable", "backups_unavailable"},
 	{"caddyfile required", "caddyfile_required"},
+	{"cert_file and key_file must be absolute paths", "cert_paths_not_absolute"},
 	{"cannot delete yourself", "cannot_delete_yourself"},
 	{"changing base_url needs the users.create permission as well, because invite links and sign-in callbacks use it", "base_url_needs_users_create"},
 	{"changing agent_public_url needs the hosts.create permission as well, because install commands use it", "agent_url_needs_hosts_create"},
