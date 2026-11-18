@@ -350,7 +350,7 @@ func (a *applier) create(p string, data []byte, mode fs.FileMode) error {
 		_ = a.root.Remove(tmp)
 		return err
 	}
-	defer a.root.Remove(tmp)
+	defer func() { _ = a.root.Remove(tmp) }()
 	// A hard link never replaces what a container put at p meanwhile.
 	err = a.root.Link(tmp, p)
 	if errors.Is(err, fs.ErrExist) {

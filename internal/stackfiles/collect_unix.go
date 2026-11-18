@@ -107,7 +107,7 @@ func (c *collector) entriesOf(fd int, rel string, names []string) error {
 			c.skip(p, "not readable by the server")
 			continue
 		}
-		mode := uint32(st.Mode) & 0o777
+		mode := uint32(st.Mode & 0o777) //nolint:unconvert // Stat_t.Mode is uint16 on darwin and freebsd
 		switch st.Mode & unix.S_IFMT {
 		case unix.S_IFLNK:
 			// A link could name a file Skip keeps out (data/x -> ../.env),
