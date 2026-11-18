@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import HookCommandsConfirm from '$lib/components/HookCommandsConfirm.svelte';
-  import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackFileNote } from '$lib/api';
+  import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackFileNote, type StackDirMount } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
@@ -26,7 +26,7 @@
   import DiffView from '../_DiffView.svelte';
   import { diffLines } from '$lib/diffLines';
   import { isSecretKey } from '$lib/envSecrets';
-  import { confirmOverride } from '$lib/deployOverride';
+  import { confirmOverride, confirmWritableMounts, formatMounts } from '$lib/deployOverride';
   import { m } from '$lib/paraglide/messages.js';
   import { containerStateLabel } from '$lib/labels';
   import { fmtDateTime, fmtNumber, fmtTime } from '$lib/i18n';
@@ -138,7 +138,7 @@
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let modifiedOutside = $state<string[]>([]);
-  let mountsStackDir = $state(false);
+  let writableMounts = $state<StackDirMount[]>([]);
   let scalerPaused = $state<ScalerPause | null>(null);
 
   // An action built from stack files changed outside Dockmesh needs an explicit OK.
@@ -1275,7 +1275,7 @@
       setLoadedVersions(detail);
       envHidden = !!detail.env_hidden;
       modifiedOutside = detail.modified_outside ?? [];
-      mountsStackDir = !!detail.mounts_stack_dir;
+      writableMounts = detail.writable_stack_dir_mounts ?? [];
       scalerPaused = detail.scaler_paused ?? null;
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       if (stackStatus === 'needs_recovery') {
@@ -1375,6 +1375,7 @@
     if (anyBusy) return;
     busy = true;
     try {
+      if (!(await confirmWritableMounts(name, writableMounts))) return;
       const environment = await confirmOverride(name);
       if (environment === null) return;
       const res = await stackOps.run(stackHost, name, async () => {
@@ -1746,11 +1747,12 @@
     </div>
   {/if}
 
-  {#if mountsStackDir}
+  {#if writableMounts.length}
     <div class="stk-notice warn stk-notice-row">
       <AlertTriangle size={15} />
       <div class="stk-notice-t">
         <b>{m.stacks_d_mounts_title()}</b>
+        <span><code>{formatMounts(writableMounts)}</code></span>
         <span>{m.stacks_d_mounts_a()}<code>./data:/app/data</code>{m.stacks_d_mounts_b()} <code>:ro</code>{m.stacks_d_mounts_c()}</span>
       </div>
     </div>

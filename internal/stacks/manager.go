@@ -73,6 +73,14 @@ type Stack struct {
 	ComposePath string `json:"compose_path"`
 }
 
+// StackDirMount is a read-write bind mount through which a service can
+// write its own stack directory.
+type StackDirMount struct {
+	Service string `json:"service"`
+	Source  string `json:"source"`
+	Target  string `json:"target"`
+}
+
 type Detail struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
@@ -88,9 +96,11 @@ type Detail struct {
 	ModifiedOutside []string `json:"modified_outside,omitempty"`
 	// ScalerPaused is set while the auto-scaler leaves the stack alone.
 	ScalerPaused *ScalerPause `json:"scaler_paused,omitempty"`
-	// MountsStackDir is set when a service bind-mounts the stack
-	// directory itself and so can rewrite compose.yaml and .env.
+	// MountsStackDir is set when WritableStackDirMounts is not empty.
 	MountsStackDir bool `json:"mounts_stack_dir,omitempty"`
+	// WritableStackDirMounts are the read-write bind mounts through which
+	// a service can rewrite the files the stack deploys from.
+	WritableStackDirMounts []StackDirMount `json:"writable_stack_dir_mounts,omitempty"`
 	// Status is "ok" when compose.yaml exists and is non-empty.
 	// "needs_recovery" means the stack record exists (filesystem entry
 	// or deployment row) but the compose file is empty / missing — the

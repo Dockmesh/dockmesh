@@ -4752,10 +4752,10 @@
   "stacks_d_modified_outside": "Außerhalb von Dockmesh geändert: {files}",
   "stacks_d_modified_outside_hint": "Diese Dateien vor dem Deployen prüfen; das nächste Deployment fragt nach einer Bestätigung.",
   "stacks_d_more_actions": "Weitere Stack-Aktionen",
-  "stacks_d_mounts_a": "Seine Container können compose.yaml und .env ändern. Ein Unterverzeichnis mounten (",
+  "stacks_d_mounts_a": "Diese Container können compose.yaml, .env und die Meta-Datei ändern, die das nächste Deploy liest. Ein Unterverzeichnis mounten (",
   "stacks_d_mounts_b": ") oder",
   "stacks_d_mounts_c": " anhängen.",
-  "stacks_d_mounts_title": "Ein Service mountet das Stack-Verzeichnis",
+  "stacks_d_mounts_title": "Services können das Stack-Verzeichnis schreiben",
   "stacks_d_n_deploys": [
     {
       "declarations": [
@@ -5907,6 +5907,10 @@
   "stacks_override_message": "„{name}“ hat den Standard-Override {env}: {file} wird bei diesem Deployment über compose.yaml gelegt.",
   "stacks_override_body": "Falls kein Override erwartet war, vor dem Deployen {file} und die Standardumgebung im Tab Umgebung prüfen.",
   "stacks_override_confirm": "Mit {env} deployen",
+  "stacks_writable_title": "Services können die Dateien dieses Stacks ändern",
+  "stacks_writable_message": "In „{name}“ erreichen diese beschreibbaren Mounts das Stack-Verzeichnis, ein Verzeichnis darüber oder eine Datei, die das Deploy liest: {mounts}.",
+  "stacks_writable_body": "Ein solcher Service kann compose.yaml, .env oder die Meta-Datei ändern, die das nächste Deploy verwendet. Ein Unterverzeichnis wie ./data mounten oder :ro ergänzen, wenn er sie nicht braucht.",
+  "stacks_writable_confirm": "Trotzdem deployen",
   "stacks_d_scaler_paused_title": "Auto-Scaling ist für diesen Stack pausiert",
   "stacks_d_scaler_paused_files": "Außerhalb von Dockmesh geändert: {files}. Die Dateien prüfen und den Stack einmal deployen, um sie zu bestätigen; danach skaliert der Auto-Scaler wieder.",
   "stacks_d_scaler_paused_override": "Der Standard-Override {env} wurde noch nicht durch ein manuelles Deployment bestätigt. Den Stack einmal deployen; danach skaliert der Auto-Scaler wieder.",

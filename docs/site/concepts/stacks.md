@@ -39,7 +39,7 @@ You can edit stack files with any editor, `git pull` or `rsync`. Dockmesh notice
 
 Nothing is redeployed automatically. The next deploy picks up whatever is on disk.
 
-A service that bind-mounts the stack directory itself writable (`.:/app`) can rewrite its own `compose.yaml` and `.env`; the stack page warns about it. Mount a subdirectory, or add `:ro`.
+A service with a writable bind mount of the stack directory (`.:/app`), of a directory above it (`..`, `/srv`, `/`), of the same directory through an absolute path or a symlink, or of `compose.yaml`, an override, `.env` or the meta file, can rewrite the files its next deploy uses. The stack page names each such service and mount, and **Deploy** asks before it goes ahead; the deploy itself is not refused. Mount a subdirectory such as `./data`, or add `:ro`. Sources written with variables are not checked.
 
 A stack directory you create by hand while the server is running does not appear in the stack list until the server restarts. To bring in existing Compose projects, use `dockmesh import compose-dir` or adopt a running project from the UI (see [Stacks](../features/stacks.md)).
 

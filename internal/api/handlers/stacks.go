@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -325,11 +327,93 @@ func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// stackDirsOnHosts is the stack's directory on the server and, for a stack
+// deployed to an agent, in each of that agent's stacks directories. Only
+// the server's own paths are resolved: the agent's live on another host.
+func (h *Handlers) stackDirsOnHosts(ctx context.Context, name string) []compose.StackDirOnHost {
+	var dirs []compose.StackDirOnHost
+	if dir, err := h.Stacks.Dir(name); err == nil {
+		dirs = append(dirs, compose.StackDirOnHost{Path: dir, Resolve: resolveRealPath})
+	}
+	if h.Deployments == nil || h.Agents == nil {
+		return dirs
+	}
+	d, err := h.Deployments.Get(ctx, name)
+	if err != nil || d == nil || d.HostID == "" || d.HostID == "local" {
+		return dirs
+	}
+	if ag := h.Agents.GetConnected(d.HostID); ag != nil {
+		for _, sd := range ag.Hello.ReportedStacksDirs() {
+			dirs = append(dirs, compose.StackDirOnHost{Path: filepath.Join(sd.Path, name)})
+		}
+	}
+	return dirs
+}
+
+// composeFilesOf is compose.yaml and every environment override of the
+// stack, any of which a deploy may use.
+func (h *Handlers) composeFilesOf(name, base string) []string {
+	files := []string{base}
+	dir, err := h.Stacks.Dir(name)
+	if err != nil {
+		return files
+	}
+	envs, err := compose.DiscoverEnvironments(dir)
+	if err != nil {
+		return files
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return files
+	}
+	defer root.Close()
+	// A container that writes the stack dir could add any number of them.
+	const maxOverrides = 32
+	if len(envs) > maxOverrides {
+		envs = envs[:maxOverrides]
+	}
+	for _, env := range envs {
+		if b, err := readSmallFile(root, "compose."+env+".yaml"); err == nil {
+			files = append(files, string(b))
+		}
+	}
+	return files
+}
+
+// readSmallFile reads a regular file of at most 1 MiB below root. A
+// container that writes the stack directory may have put a FIFO or a
+// huge file there.
+func readSmallFile(root *os.Root, name string) ([]byte, error) {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > 1<<20 {
+		return nil, errors.New("not a small regular file")
+	}
+	return io.ReadAll(io.LimitReader(f, 1<<20))
+}
+
+// resolveRealPath is filepath.EvalSymlinks, or p itself when it doesn't
+// resolve on this host.
+func resolveRealPath(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
+}
+
 func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	d, err := h.Stacks.Get(name)
 	if err == nil {
-		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
+		d.WritableStackDirMounts = compose.WritableStackDirMounts(h.composeFilesOf(name, d.Compose), h.stackDirsOnHosts(r.Context(), name))
+		d.MountsStackDir = len(d.WritableStackDirMounts) > 0
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
 		}

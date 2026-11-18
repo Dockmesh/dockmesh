@@ -166,26 +166,97 @@ func TestRebaseStackRootBind(t *testing.T) {
 	}
 }
 
-func TestMountsProjectDir(t *testing.T) {
+func TestWritableStackDirMounts(t *testing.T) {
+	dir := "/srv/stacks/web"
 	tests := []struct {
 		name string
 		yaml string
-		want bool
+		want []string // service: source
 	}{
-		{"short", "services:\n  a:\n    volumes: [\".:/app\"]\n", true},
-		{"short slash", "services:\n  a:\n    volumes: [\"./:/app:rw\"]\n", true},
-		{"short read-only", "services:\n  a:\n    volumes: [\".:/app:ro\"]\n", false},
-		{"subdir", "services:\n  a:\n    volumes: [\"./data:/data\"]\n", false},
-		{"long", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app}\n", true},
-		{"long read-only", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app, read_only: true}\n", false},
-		{"named volume", "services:\n  a:\n    volumes: [\"data:/data\"]\n", false},
-		{"invalid", "services: [", false},
+		{"short", "services:\n  a:\n    volumes: [\".:/app\"]\n", []string{"a: ."}},
+		{"short slash", "services:\n  a:\n    volumes: [\"./:/app:rw\"]\n", []string{"a: ./"}},
+		{"short read-only", "services:\n  a:\n    volumes: [\".:/app:ro\"]\n", nil},
+		{"subdir", "services:\n  a:\n    volumes: [\"./data:/data\"]\n", nil},
+		{"parent", "services:\n  a:\n    volumes: [\"..:/stacks\"]\n", []string{"a: .."}},
+		{"via parent back in", "services:\n  a:\n    volumes: [\"../web:/x\"]\n", []string{"a: ../web"}},
+		{"other stack", "services:\n  a:\n    volumes: [\"../db:/x\"]\n", nil},
+		{"absolute dir", "services:\n  a:\n    volumes: [\"/srv/stacks/web:/x\"]\n", []string{"a: /srv/stacks/web"}},
+		{"absolute parent", "services:\n  a:\n    volumes: [\"/srv:/x\"]\n", []string{"a: /srv"}},
+		{"host root", "services:\n  a:\n    volumes: [\"/:/host\"]\n", []string{"a: /"}},
+		{"unrelated absolute", "services:\n  a:\n    volumes: [\"/var/log:/x\"]\n", nil},
+		{"compose file", "services:\n  a:\n    volumes: [\"./compose.yaml:/c.yaml\"]\n", []string{"a: ./compose.yaml"}},
+		{"env file", "services:\n  a:\n    volumes: [\"./.env:/e\"]\n", []string{"a: ./.env"}},
+		{"meta file", "services:\n  a:\n    volumes: [\"./.dockmesh.meta.json:/m\"]\n", []string{"a: ./.dockmesh.meta.json"}},
+		{"override", "services:\n  a:\n    volumes: [\"./compose.prod.yaml:/m\"]\n", []string{"a: ./compose.prod.yaml"}},
+		{"other file", "services:\n  a:\n    volumes: [\"./nginx.conf:/etc/nginx.conf\"]\n", nil},
+		{"long", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app}\n", []string{"a: ."}},
+		{"long read-only", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app, read_only: true}\n", nil},
+		{"named volume", "services:\n  a:\n    volumes: [\"data:/data\"]\n", nil},
+		{"variable", "services:\n  a:\n    volumes: [\"${DIR}:/data\"]\n", nil},
+		{"two services", "services:\n  b:\n    volumes: [\"..:/s\"]\n  a:\n    volumes: [\".:/app\"]\n", []string{"a: .", "b: .."}},
+		{"host bind volume", "services:\n  a:\n    volumes: [\"v:/x\"]\nvolumes:\n  v:\n    driver_opts: {type: none, o: bind, device: /srv/stacks/web}\n", []string{"a: /srv/stacks/web"}},
+		{"host bind volume long", "services:\n  a:\n    volumes:\n      - {type: volume, source: v, target: /x}\nvolumes:\n  v:\n    driver_opts: {o: bind, device: /srv/stacks}\n", []string{"a: /srv/stacks"}},
+		{"plain named volume", "services:\n  a:\n    volumes: [\"v:/x\"]\nvolumes:\n  v: {}\n", nil},
+		{"invalid", "services: [", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := MountsProjectDir(tc.yaml); got != tc.want {
-				t.Errorf("MountsProjectDir = %v, want %v", got, tc.want)
+			var got []string
+			for _, m := range WritableStackDirMounts([]string{tc.yaml}, []StackDirOnHost{{Path: dir}}) {
+				got = append(got, m.Service+": "+m.Source)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWritableStackDirMountsResolves(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "web", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The stacks root itself is reached through a symlink.
+	if err := os.Symlink(real, filepath.Join(base, "stacks")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "stacks", "web")
+	if err := os.Symlink(dir, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(real, "web", "data", "up")); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	server := []StackDirOnHost{{Path: dir, Resolve: resolve}}
+	for _, src := range []string{".", "./", "..", "./compose.yaml", filepath.ToSlash(filepath.Join(base, "link")), "./data/up"} {
+		y := "services:\n  a:\n    volumes: [\"" + src + ":/x\"]\n"
+		if got := WritableStackDirMounts([]string{y}, server); len(got) != 1 {
+			t.Errorf("%s not found under a symlinked root: %+v", src, got)
+		}
+	}
+	y := "services:\n  a:\n    volumes: [\"./data:/x\"]\n"
+	if got := WritableStackDirMounts([]string{y}, server); len(got) != 0 {
+		t.Errorf("subdir reported: %+v", got)
+	}
+	y = "services:\n  a:\n    volumes: [\"/var/lib/dockmesh-agent/stacks/web:/x\"]\n"
+	agent := []StackDirOnHost{server[0], {Path: "/var/lib/dockmesh-agent/stacks/web"}}
+	if got := WritableStackDirMounts([]string{y}, agent); len(got) != 1 {
+		t.Fatalf("agent stack dir not found: %+v", got)
+	}
+	shared := "services: {}\nvolumes:\n  v:\n    driver_opts: {o: bind, device: " + filepath.ToSlash(dir) + "}\n"
+	if got := WritableStackDirMounts([]string{shared, "services:\n  c:\n    volumes: [\"v:/x\"]\n"}, server); len(got) != 1 || got[0].Service != "c" {
+		t.Fatalf("volume defined in another file not followed: %+v", got)
+	}
+	override := "services:\n  b:\n    volumes: [\".:/app\"]\n"
+	if got := WritableStackDirMounts([]string{"services: {}\n", override}, server); len(got) != 1 || got[0].Service != "b" {
+		t.Fatalf("override not checked: %+v", got)
 	}
 }
