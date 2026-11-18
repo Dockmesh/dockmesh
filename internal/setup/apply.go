@@ -206,12 +206,12 @@ func (v *ApplyValues) validateProxy(mode webtls.Mode) error {
 	}
 	if mode == webtls.Caddy {
 		v.Proxy.Enabled = true
-		host := ""
-		if u, err := url.Parse(v.BaseURL); err == nil && u.Scheme == "https" {
-			host = u.Hostname()
-		}
-		if host == "" || net.ParseIP(host) != nil {
+		host := v.caddyHost()
+		if host == "" || net.ParseIP(host) != nil || proxy.CheckRouteHost(host) != nil {
 			return errors.New("with tls mode caddy the base URL must be https://<DNS name>: Caddy gets the certificate for that name")
+		}
+		if err := checkCaddyListen(v.HTTPAddr); err != nil {
+			return err
 		}
 		if v.Proxy.ACMEEmail == "" {
 			return errors.New("with tls mode caddy the ACME email is required")
@@ -234,10 +234,6 @@ func (v *ApplyValues) CaddyRoute() (host string, port int, ok bool) {
 	if webtls.Mode(v.TLSMode) != webtls.Caddy || v.Restore {
 		return "", 0, false
 	}
-	u, err := url.Parse(v.BaseURL)
-	if err != nil {
-		return "", 0, false
-	}
 	_, p, err := net.SplitHostPort(v.HTTPAddr)
 	if err != nil {
 		return "", 0, false
@@ -246,7 +242,33 @@ func (v *ApplyValues) CaddyRoute() (host string, port int, ok bool) {
 	if err != nil {
 		return "", 0, false
 	}
-	return u.Hostname(), n, true
+	return v.caddyHost(), n, true
+}
+
+// caddyHost is the host of an https BaseURL, empty for any other.
+func (v *ApplyValues) caddyHost() string {
+	u, err := url.Parse(v.BaseURL)
+	if err != nil || u.Scheme != "https" {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// checkCaddyListen keeps the plain HTTP listener of TLS mode caddy on
+// loopback, where only Caddy reaches it, and off the ports Caddy binds.
+func checkCaddyListen(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("with tls mode caddy Dockmesh listens on a loopback address, not %s", addr)
+	}
+	switch port {
+	case "80", "443", "2019":
+		return fmt.Errorf("with tls mode caddy port %s belongs to Caddy", port)
+	}
+	return nil
 }
 
 // StacksRoot is the stacks dir v sets up.

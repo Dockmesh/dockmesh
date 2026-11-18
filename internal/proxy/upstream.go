@@ -55,6 +55,10 @@ func checkUpstream(dial string) error {
 // checkRouteHost refuses hosts that would make a route match requests
 // addressed to the admin API (its Host allow-list is localhost and
 // 127.0.0.1) or catch every request.
+// CheckRouteHost refuses a route host that is no name or address Caddy
+// can serve a site for.
+func CheckRouteHost(host string) error { return checkRouteHost(host) }
+
 func checkRouteHost(host string) error {
 	h := strings.ToLower(strings.TrimSuffix(host, "."))
 	h = strings.TrimPrefix(h, "*.")

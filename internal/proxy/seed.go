@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
-	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
@@ -45,13 +45,16 @@ func BusyPorts() ([]int, error) {
 			out = append(out, p)
 		}
 	}
-	sort.Ints(out)
 	return out, nil
 }
+
+var pullMu sync.Mutex
 
 // PullDefaultImage pulls the Caddy image a new install starts with, unless
 // Docker has it already.
 func PullDefaultImage(ctx context.Context, dockerCli *docker.Client) error {
+	pullMu.Lock()
+	defer pullMu.Unlock()
 	s := &Service{docker: dockerCli}
 	return s.ensureImage(ctx, DefaultProxyImage)
 }

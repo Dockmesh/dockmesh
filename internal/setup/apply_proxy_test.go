@@ -24,6 +24,15 @@ func TestApplyValuesProxy(t *testing.T) {
 		{name: "caddy on another port", edit: func(v *ApplyValues) {
 			v.TLSMode, v.HTTPAddr, v.BaseURL, v.Proxy.ACMEEmail = "caddy", "127.0.0.1:9000", "https://dm.example.org", "ops@example.org"
 		}, ok: true, proxy: true, route: "dm.example.org:9000"},
+		{name: "caddy on every address", edit: func(v *ApplyValues) {
+			v.TLSMode, v.HTTPAddr, v.BaseURL, v.Proxy.ACMEEmail = "caddy", "0.0.0.0:8080", "https://dm.example.org", "ops@example.org"
+		}},
+		{name: "caddy on its own port", edit: func(v *ApplyValues) {
+			v.TLSMode, v.HTTPAddr, v.BaseURL, v.Proxy.ACMEEmail = "caddy", "127.0.0.1:443", "https://dm.example.org", "ops@example.org"
+		}},
+		{name: "caddy for localhost", edit: func(v *ApplyValues) {
+			v.TLSMode, v.BaseURL, v.Proxy.ACMEEmail = "caddy", "https://dm.localhost", "ops@example.org"
+		}},
 		{name: "caddy without email", edit: func(v *ApplyValues) { v.TLSMode, v.BaseURL = "caddy", "https://dm.example.org" }},
 		{name: "caddy with an IP", edit: func(v *ApplyValues) {
 			v.TLSMode, v.BaseURL, v.Proxy.ACMEEmail = "caddy", "https://192.0.2.10", "ops@example.org"

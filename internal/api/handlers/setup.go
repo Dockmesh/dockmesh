@@ -482,6 +482,10 @@ func (h *Handlers) SetupCheckProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	res.BusyPorts = busy
 	if req.Host != "" {
+		if len(req.Host) > 253 || proxy.CheckRouteHost(req.Host) != nil {
+			writeError(w, http.StatusBadRequest, "host is not a name Caddy can serve")
+			return
+		}
 		res.DNS = setup.CheckDNS(r.Context(), req.Host)
 	}
 	switch {
