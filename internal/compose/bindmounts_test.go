@@ -251,6 +251,10 @@ func TestWritableStackDirMountsResolves(t *testing.T) {
 	if got := WritableStackDirMounts([]string{y}, agent); len(got) != 1 {
 		t.Fatalf("agent stack dir not found: %+v", got)
 	}
+	shared := "services: {}\nvolumes:\n  v:\n    driver_opts: {o: bind, device: " + filepath.ToSlash(dir) + "}\n"
+	if got := WritableStackDirMounts([]string{shared, "services:\n  c:\n    volumes: [\"v:/x\"]\n"}, server); len(got) != 1 || got[0].Service != "c" {
+		t.Fatalf("volume defined in another file not followed: %+v", got)
+	}
 	override := "services:\n  b:\n    volumes: [\".:/app\"]\n"
 	if got := WritableStackDirMounts([]string{"services: {}\n", override}, server); len(got) != 1 || got[0].Service != "b" {
 		t.Fatalf("override not checked: %+v", got)

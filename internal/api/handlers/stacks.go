@@ -366,6 +366,11 @@ func (h *Handlers) composeFilesOf(name, base string) []string {
 		return files
 	}
 	defer root.Close()
+	// A container that writes the stack dir could add any number of them.
+	const maxOverrides = 32
+	if len(envs) > maxOverrides {
+		envs = envs[:maxOverrides]
+	}
 	for _, env := range envs {
 		if b, err := readSmallFile(root, "compose."+env+".yaml"); err == nil {
 			files = append(files, string(b))

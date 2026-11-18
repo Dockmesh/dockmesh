@@ -73,26 +73,35 @@ func WritableStackDirMounts(composeFiles []string, dirs []StackDirOnHost) []stac
 	for i, d := range dirs {
 		resolved[i] = StackDirOnHost{Path: realPath(d.Path, d.Resolve), Resolve: d.Resolve}
 	}
-	var out []stacks.StackDirMount
-	seen := map[stacks.StackDirMount]bool{}
+	type composeDoc struct {
+		Services map[string]struct {
+			Volumes []any `yaml:"volumes"`
+		} `yaml:"services"`
+		Volumes map[string]struct {
+			DriverOpts map[string]string `yaml:"driver_opts"`
+		} `yaml:"volumes"`
+	}
+	// Top-level volumes merge across the files, later ones winning, as
+	// compose merges them.
+	docs := make([]composeDoc, 0, len(composeFiles))
+	hostBinds := map[string]string{}
 	for _, file := range composeFiles {
-		var doc struct {
-			Services map[string]struct {
-				Volumes []any `yaml:"volumes"`
-			} `yaml:"services"`
-			Volumes map[string]struct {
-				DriverOpts map[string]string `yaml:"driver_opts"`
-			} `yaml:"volumes"`
-		}
+		var doc composeDoc
 		if yaml.Unmarshal([]byte(file), &doc) != nil {
 			continue
 		}
-		hostBinds := map[string]string{}
+		docs = append(docs, doc)
 		for name, v := range doc.Volumes {
 			if strings.Contains(","+v.DriverOpts["o"]+",", ",bind,") && v.DriverOpts["device"] != "" {
 				hostBinds[name] = v.DriverOpts["device"]
+			} else {
+				delete(hostBinds, name)
 			}
 		}
+	}
+	var out []stacks.StackDirMount
+	seen := map[stacks.StackDirMount]bool{}
+	for _, doc := range docs {
 		for _, name := range slices.Sorted(maps.Keys(doc.Services)) {
 			for _, v := range doc.Services[name].Volumes {
 				src, target, ok := writableBind(v, hostBinds)
