@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacksdir"
 	"github.com/google/uuid"
@@ -387,7 +388,7 @@ func (h *Handlers) SetupValidateStacksDir(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	account := "dockmesh"
+	account := layout.ServiceGroup
 	if u, err := user.Current(); err == nil {
 		account = u.Username
 	}

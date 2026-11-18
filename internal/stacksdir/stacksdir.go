@@ -27,6 +27,8 @@ const (
 	SystemDir    = "system_dir"
 	InsideDocker = "inside_docker"
 	DockerRoot   = "docker_root_unknown"
+	// The wire names of these two are from the agent's side, where they
+	// were introduced.
 	OwnDataDir   = "agent_data_dir"
 	OtherDataDir = "server_data_dir"
 	InStacks     = "inside_stacks_dir"
@@ -55,15 +57,16 @@ const (
 // name starts with "lib" is refused as well. All of /var is refused, not
 // only Docker's data: root services load drop-in directories from there
 // (polkit's localauthority, systemd-sysext, k3s manifests), and a
-// directory the agent may write in one of them would be a way to root
-// that needs no Docker. The agent's default stacks dir is the exception.
+// directory a service may write in one of them would be a way to root
+// that needs no Docker. The default stacks dir in the service's data dir
+// is the exception.
 var DenyRoots = []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/efi", "/proc", "/sys", "/dev", "/run", "/root", "/var", "/tmp", "/snap", "/nix"}
 
 // DefaultParents are the directories below which root creates a new
 // stacks dir, one level deep. Below any other tree root only accepts a
 // directory an admin prepared: root services load code and config from
 // trees no list of refused directories can name (a venv's site-packages
-// under /opt, vendor plugin dirs), and a directory the agent may write in
+// under /opt, vendor plugin dirs), and a directory a service may write in
 // one of them would be a way to root.
 var DefaultParents = []string{"/srv", "/opt", "/data", "/mnt", "/media"}
 
@@ -90,7 +93,8 @@ type Rules struct {
 	Account string
 	// ParentOK accepts a directory above the target; nil accepts only one
 	// root owns and nobody else may write.
-	ParentOK  func(path string, uid, mode uint32) bool
+	ParentOK func(path string, uid, mode uint32) bool
+	// Mountinfo opens the mount table.
 	Mountinfo func() (io.ReadCloser, error)
 	// Deny and Parents replace DenyRoots and DefaultParents in tests,
 	// which work below /tmp.
@@ -115,16 +119,23 @@ func (r Rules) allowedParents() []string {
 	return DefaultParents
 }
 
+func (r Rules) parentAllowed(path string, uid, mode uint32) bool {
+	if r.ParentOK != nil {
+		return r.ParentOK(path, uid, mode)
+	}
+	return uid == 0 && mode&0o022 == 0
+}
+
 // prepareCommand is what an admin runs to make p a directory the service
 // may be switched to.
 func (r Rules) prepareCommand(p string) string {
 	return fmt.Sprintf("sudo install -d -o %s -g %s -m 0750 %s", r.Account, r.Account, p)
 }
 
-// CreatableName reports a name root may give a new stacks dir. The agent
-// does not pick any name in a shared parent: some (/opt/cni, /srv/salt)
-// are adopted by root tools installed later, which would then load code
-// from a directory the agent owns. Names of Dockmesh's own server dirs
+// CreatableName reports a name root may give a new stacks dir. Root does
+// not create any name in a shared parent: some (/opt/cni, /srv/salt) are
+// adopted by root tools installed later, which would then load code from
+// a directory a service owns. Names of Dockmesh's own server dirs
 // (/srv/dockmesh, /opt/dockmesh) are left out as well.
 func CreatableName(name string) bool {
 	return name == "stacks" || stacksDirName.MatchString(name)
@@ -132,15 +143,9 @@ func CreatableName(name string) bool {
 
 var stacksDirName = regexp.MustCompile(`^dockmesh-stacks[A-Za-z0-9_-]*$`)
 
+// Result is a Check outcome.
 type Result struct {
 	agents.StacksDirCheck
-}
-
-func (r Rules) parentAllowed(path string, uid, mode uint32) bool {
-	if r.ParentOK != nil {
-		return r.ParentOK(path, uid, mode)
-	}
-	return uid == 0 && mode&0o022 == 0
 }
 
 func (r Result) OK() bool { return r.Status != StatusFail }

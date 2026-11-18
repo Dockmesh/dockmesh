@@ -8,7 +8,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacksdir"
 )
 
-// Stacks dir check results, from the shared rules.
 const (
 	sdUnchanged    = stacksdir.Unchanged
 	sdNotAbsolute  = stacksdir.NotAbsolute
@@ -30,9 +29,7 @@ const (
 	sdNoUnixPerms  = stacksdir.NoUnixPerms
 	sdNotEmpty     = stacksdir.NotEmpty
 	sdForeignOwner = stacksdir.ForeignOwner
-	sdTooSmall     = stacksdir.TooSmall
 	sdLowSpace     = stacksdir.LowSpace
-	sdUnreadable   = stacksdir.Unreadable
 )
 
 // defaultServerDataDir is refused whether or not a server runs here.

@@ -62,7 +62,7 @@ func (r Rules) protectedDev(dev uint64, denied map[fileID]string) bool {
 // Check checks p as a new stacks dir with the rules of root's
 // stacks-dir-apply. It writes nothing. Root creates p only as one new
 // directory in an allowed parent; anywhere else p must exist already, be
-// empty and belong to the agent. The refused trees below are a second
+// empty and belong to Rules.UID. The refused trees below are a second
 // line behind that. Every component is opened with O_NOFOLLOW from the
 // one before, so a symlink anywhere is refused, and compared by device
 // and inode with the refused directories, which catches another spelling
@@ -157,7 +157,7 @@ walk:
 		last := i == len(comps)-1
 		// Only root may be able to swap a directory above the target for
 		// a symlink once root has checked it. The default dir lies in the
-		// agent's own data dir, which the agent creates.
+		// service's own data dir, which the service creates.
 		if !last && p != defaultDir && !r.parentAllowed(next, st.Uid, uint32(st.Mode)) { //nolint:unconvert // the types differ per OS
 			return fail(UnsafeParent, "%s and every directory above the stacks directory must belong to root and be writable only by root.", next)
 		}
@@ -261,8 +261,8 @@ type fileID struct {
 }
 
 // deniedIdentities maps the device and inode of every refused directory
-// that exists to its name. The agent's data dir is left out for its
-// default stacks dir, which lies in it.
+// that exists to its name. r.DataDir is left out for its default
+// stacks dir, which lies in it.
 func deniedIdentities(r Rules, inDataDir bool) map[fileID]string {
 	dirs := append(slices.Clone(r.DockerRoots), r.denied()...)
 	dirs = append(dirs, r.OtherDataDirs...)
@@ -296,6 +296,7 @@ func mountOf(mountinfo func() (io.ReadCloser, error), path string) (setup.Mount,
 	return setup.MountAt(f, path)
 }
 
+// ProcMountinfo opens this process's mount table.
 func ProcMountinfo() (io.ReadCloser, error) { return os.Open("/proc/self/mountinfo") }
 
 // emptyDirAt reports whether the directory behind a descriptor has no

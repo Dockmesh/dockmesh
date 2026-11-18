@@ -55,9 +55,9 @@ type ApplyValues struct {
 	TLSKeyFile  string `json:"tls_key_file,omitempty"`
 	BaseURL     string `json:"base_url"`
 	// StacksDir is empty for DataDir/stacks. Outside the data dir root
-	// creates it with the stacks dir rules of an agent.
+	// checks it with the stacksdir rules and creates it when new.
 	StacksDir string `json:"stacks_dir,omitempty"`
-	// AgentListen is the agent listener, ":<port>"; empty is AgentListen.
+	// AgentListen is the agent listener, ":<port>"; empty is :8443.
 	AgentListen string `json:"agent_listen,omitempty"`
 	// AgentURL replaces the agent URL derived from BaseURL; it is saved
 	// as a setting, so it stays editable in the app.
@@ -206,7 +206,7 @@ func (v *ApplyValues) validateStacksDir() error {
 	if !filepath.IsAbs(p) || filepath.Clean(p) != p || !plainValueRe.MatchString(p) || p == "/" {
 		return fmt.Errorf("stacks dir %q must be a clean absolute path of letters, digits and ._-/", p)
 	}
-	if within(v.DataDir, p) || within(p, v.DataDir) {
+	if layout.Within(v.DataDir, p) || layout.Within(p, v.DataDir) {
 		return fmt.Errorf("stacks dir %s overlaps the data dir %s; only %s may lie in it", p, v.DataDir, filepath.Join(v.DataDir, "stacks"))
 	}
 	if err := layout.CheckWritablePath(p, v.DataDir); err != nil {
@@ -270,10 +270,6 @@ func validPort(p string) bool {
 	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == p
 }
 
-// within reports whether p is dir or lies below it.
-func within(dir, p string) bool {
-	return p == dir || strings.HasPrefix(p, strings.TrimSuffix(dir, "/")+"/")
-}
 
 // ConfigEnv is the server config a setup-apply writes, for v (validated)
 // and the asset dir install.sh uses for the agent binaries.

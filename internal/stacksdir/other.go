@@ -23,5 +23,5 @@ func DockerRoots(context.Context, string) []string { return nil }
 // Create is not supported here.
 func Create(string, int, int) error { return errUnsupported }
 
-// ProcMountinfo is not there.
+// ProcMountinfo is not supported here.
 func ProcMountinfo() (io.ReadCloser, error) { return nil, errUnsupported }
