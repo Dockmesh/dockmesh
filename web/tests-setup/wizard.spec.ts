@@ -136,7 +136,7 @@ test('new installation: every step, then install and sign in', async ({ page }) 
   // under the browser's port, so either answer is fine here.
   await expect(page.getByText(/Reached this server in \d+ ms|Could not reach/)).toBeVisible();
   await expect(page.getByText('Certificate fingerprint (SHA-256)')).toBeVisible();
-  await expect(page.getByRole('radio', { name: /Let Caddy get a certificate/ })).toBeDisabled();
+  await expect(page.getByRole('radio', { name: /Let Caddy get a certificate/ })).toBeEnabled();
   await page.getByRole('button', { name: 'Next' }).click();
 
   // N4, N5
