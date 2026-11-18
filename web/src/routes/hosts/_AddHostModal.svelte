@@ -61,7 +61,7 @@
     }
     creating = true;
     try {
-      createResult = await api.agents.create(hostname.trim());
+      createResult = await api.agents.create({ name: hostname.trim() });
       // Save tags right after enrolling so the host shows up tagged
       // even before it dials home.
       if (tags.length > 0) {

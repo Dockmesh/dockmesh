@@ -73,8 +73,13 @@ type Agent struct {
 	// StacksDirs are the connected agent's stacks directories, the
 	// current one first.
 	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	// NeedsSetup: the host is "Waiting for setup" and refuses deploys
+	// until its stacks directory is confirmed.
+	NeedsSetup bool `json:"needs_setup,omitempty"`
+	// StacksDir is the last stacks directory asked for through the API.
+	StacksDir *StacksDirState `json:"stacks_dir,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // CreateResult is what the admin sees right after creating an agent — the
@@ -176,6 +181,8 @@ type ConnectedAgent struct {
 	// removed is set once the agent reported its uninstall; the end of
 	// the session then keeps the host's "removed" status.
 	removed atomic.Bool
+	// applying: a stacks directory request to this session is open.
+	applying atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -268,6 +275,8 @@ func requestTimeout(frameType string) time.Duration {
 		return 15 * time.Minute
 	case FrameReqAgentUpgrade:
 		return 11 * time.Minute
+	case FrameReqStacksDirApply:
+		return stacksDirApplyWait
 	case FrameReqContainerStop, FrameReqContainerRestart, FrameReqContainerRemove,
 		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqVolumePrune, FrameReqNetworkPrune,
 		FrameReqStackCheckScale,
@@ -419,28 +428,12 @@ func (s *Service) CACertPEM() []byte { return s.pki.CACertPEM() }
 // CRUD
 // -----------------------------------------------------------------------------
 
+// Create creates a host named name; see CreateWith.
 func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error) {
 	if name == "" {
 		return nil, errors.New("name required")
 	}
-	id := uuid.NewString()
-	token, err := newToken()
-	if err != nil {
-		return nil, err
-	}
-	expires := s.now().Add(s.enrollTTL)
-
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agents (id, name, enrollment_token_hash, enrollment_token_expires_at, status)
-		VALUES (?, ?, ?, ?, 'pending')`, id, name, hashToken(token), sqliteTime(expires))
-	if err != nil {
-		return nil, ErrNameTaken
-	}
-	a, err := s.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.createResult(a, token, expires), nil
+	return s.CreateWith(ctx, CreateOptions{Name: name})
 }
 
 // RotateEnrollToken generates a fresh enrollment token for an existing
@@ -551,7 +544,8 @@ func (s *Service) createResult(a *Agent, token string, expires time.Time) *Creat
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at,
+		       needs_setup, stacks_dir_path, stacks_dir_status, stacks_dir_error
 		  FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -572,7 +566,8 @@ func (s *Service) List(ctx context.Context) ([]Agent, error) {
 func (s *Service) Get(ctx context.Context, id string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at,
+		       needs_setup, stacks_dir_path, stacks_dir_status, stacks_dir_error
 		  FROM agents WHERE id = ?`, id)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -639,12 +634,13 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 	now := sqliteTime(s.now())
 
 	var id, name string
+	var fromHost bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name FROM agents
+		SELECT id, name, name_from_host FROM agents
 		 WHERE enrollment_token_hash = ?
 		   AND enrollment_token_expires_at > ?
 		   AND status != 'revoked'`,
-		tokenHash, now).Scan(&id, &name)
+		tokenHash, now).Scan(&id, &name, &fromHost)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidToken
 	}
@@ -689,6 +685,9 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 	// A re-enrolled host replaces its credential; a session still open
 	// with the old cert must not outlive it or block the new agent.
 	s.disconnect(id)
+	if fromHost {
+		name = s.nameFromHostname(ctx, id, name, req.Hostname)
+	}
 
 	return &EnrollResponse{
 		AgentID:    id,
@@ -705,7 +704,8 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 func (s *Service) LookupByFingerprint(ctx context.Context, fingerprint string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at,
+		       needs_setup, stacks_dir_path, stacks_dir_status, stacks_dir_error
 		  FROM agents WHERE cert_fingerprint = ? OR pending_cert_fingerprint = ?`, fingerprint, fingerprint)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -865,9 +865,14 @@ func scanAgent(r rowScanner) (*Agent, error) {
 	var a Agent
 	var version, osName, arch, hostname, dockerVersion, fingerprint sql.NullString
 	var lastSeen, onlineSince, certExpires sql.NullTime
+	var sdPath, sdStatus, sdError sql.NullString
 	if err := r.Scan(&a.ID, &a.Name, &a.Status, &version, &osName, &arch, &hostname,
-		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &certExpires, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &certExpires, &a.CreatedAt, &a.UpdatedAt,
+		&a.NeedsSetup, &sdPath, &sdStatus, &sdError); err != nil {
 		return nil, err
+	}
+	if sdPath.Valid {
+		a.StacksDir = &StacksDirState{Path: sdPath.String, Status: sdStatus.String, Error: sdError.String}
 	}
 	if version.Valid {
 		a.Version = version.String

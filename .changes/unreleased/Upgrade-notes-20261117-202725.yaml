@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Hosts created through POST /api/v1/agents now wait for setup and refuse deploys until their stacks directory is confirmed; scripts that deploy right after enrolling pass stacks_dir in the request or --stacks-dir to the installer. Hosts enrolled before the upgrade are not affected
+time: 2026-11-17T20:27:25.325578786Z
+custom:
+    Audience: admins
+    Id: new-host-setup
