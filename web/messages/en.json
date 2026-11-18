@@ -594,6 +594,7 @@
   "apierr_no_host_available_to_inspect_containers": "no host available to inspect containers",
   "apierr_not_found": "not found",
   "apierr_not_your_notification": "not your notification",
+  "apierr_notice_dismiss_needs_session": "notices are dismissed per signed-in user in the web UI; API tokens cannot dismiss them",
   "apierr_notifications_not_configured": "notifications not configured",
   "apierr_notify_not_configured": "notify not configured",
   "apierr_oauth2_not_configured": "oauth2 not configured",
