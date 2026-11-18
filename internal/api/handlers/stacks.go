@@ -1349,6 +1349,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if res.StackFiles != nil {
 		out["stack_files"] = res.StackFiles
 	}
+	if len(res.Warnings) > 0 {
+		out["warnings"] = res.Warnings
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

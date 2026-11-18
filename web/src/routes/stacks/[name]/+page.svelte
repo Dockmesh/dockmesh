@@ -1398,6 +1398,7 @@
       }
       if (files?.kept?.length) toast.warning(m.stacks_d_files_kept({ count: files.kept.length }), fileNotes(files.kept));
       if (files?.skipped?.length) toast.warning(m.stacks_d_files_skipped({ count: files.skipped.length }), fileNotes(files.skipped));
+      if (res.warnings?.length) toast.warning(m.stacks_d_deploy_warnings(), res.warnings.join('; '));
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.

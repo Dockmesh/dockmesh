@@ -2031,6 +2031,7 @@ export const api = {
         dependencies_deployed?: string[];
         replicas_ignored?: string[];
         stack_files?: StackFilesReport;
+        warnings?: string[];
       }>(`/stacks/${encodeURIComponent(name)}/deploy${qs}`, { method: 'POST' });
     },
     stop: (name: string, host = 'local') => {

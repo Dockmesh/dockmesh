@@ -174,6 +174,9 @@ type DeployResult struct {
 	// StackFiles is what an agent deploy did with the files next to
 	// compose.yaml.
 	StackFiles *stackfiles.Report `json:"stack_files,omitempty"`
+	// Warnings are notes about the project the deploy went ahead with,
+	// such as relative paths that leave the stack directory.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type ServiceResult struct {

@@ -4665,6 +4665,7 @@
   "stacks_d_files_kept": "{count} Stack-Dateien auf dem Host unverändert gelassen",
   "stacks_d_files_skipped": "{count} Dateien auf dem Server wurden nicht kopiert",
   "stacks_d_files_more": "und {count} weitere.",
+  "stacks_d_deploy_warnings": "Mit Hinweisen deployt",
   "stacks_d_deployed_on": "{count} Service(s) auf {host}",
   "stacks_d_deploying": "wird deployt…",
   "stacks_d_deps_desc": "Die Stacks, die dieser benötigt, und die Stacks, die ihn benötigen.",
