@@ -460,10 +460,12 @@ type StacksDirApplyReq struct {
 // rules its root updater applies. Status is ok, warn or fail; Issue names
 // the first problem.
 type StacksDirCheck struct {
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	Issue      string `json:"issue,omitempty"`
-	Message    string `json:"message"`
+	Path    string `json:"path"`
+	Status  string `json:"status"`
+	Issue   string `json:"issue,omitempty"`
+	Message string `json:"message"`
+	// Command prepares the directory by hand when the agent refuses it.
+	Command    string `json:"command,omitempty"`
 	WillCreate bool   `json:"will_create,omitempty"`
 	FSType     string `json:"fs_type,omitempty"`
 	TotalBytes int64  `json:"total_bytes,omitempty"`

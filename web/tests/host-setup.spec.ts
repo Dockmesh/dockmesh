@@ -29,6 +29,7 @@ async function mockAgent(page: Page, agent: () => Record<string, unknown>) {
   ] } }));
   await page.route(/\/stacks-dir\/check$/, async (r) => {
     const { path } = r.request().postDataJSON();
+    if (path === '/home/stacks') return r.fulfill({ json: { path, status: 'fail', issue: 'new_dir_not_allowed', message: 'New directory: root creates a stacks directory only directly in /srv, /opt. Prepare /home/stacks as an empty directory of the agent: sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 /home/stacks', command: 'sudo install -d -o dockmesh-agent -g dockmesh-agent -m 0750 /home/stacks' } });
     if (path === '/srv/full') return r.fulfill({ json: { path, status: 'fail', issue: 'not_empty', message: '/srv/full is not empty. Choose an empty or new directory.' } });
     return r.fulfill({ json: { path, status: 'ok', issue: path === DEFAULT ? 'unchanged' : '', message: '', will_create: path !== DEFAULT, fs_type: 'ext4', free_bytes: 21e9 } });
   });
@@ -68,6 +69,12 @@ test('waiting host: banner, check, refusal, then save the default', async ({ pag
 
   await tab.locator('#setup-stacks-dir').fill('/srv/full');
   await expect(tab.getByTestId('setup-check')).toContainText('is not empty');
+  await expect(tab.getByTestId('setup-save')).toBeDisabled();
+
+  await tab.locator('#setup-stacks-dir').fill('/home/stacks');
+  await expect(tab.getByTestId('setup-check')).toContainText('does not create a new directory at /home/stacks');
+  await expect(tab.getByTestId('setup-check')).not.toContainText('root creates');
+  await expect(tab.getByTestId('setup-prepare')).toContainText('sudo install -d -o dockmesh-agent');
   await expect(tab.getByTestId('setup-save')).toBeDisabled();
 
   await tab.getByRole('button', { name: DEFAULT }).click();

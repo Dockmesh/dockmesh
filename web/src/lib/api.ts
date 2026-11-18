@@ -1063,6 +1063,7 @@ export interface StacksDirCheck {
   status: 'ok' | 'warn' | 'fail';
   issue?: string;
   message: string;
+  command?: string;
   will_create?: boolean;
   fs_type?: string;
   total_bytes?: number;

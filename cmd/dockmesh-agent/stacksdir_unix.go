@@ -185,6 +185,11 @@ func (r stacksDirRules) parentAllowed(path string, uid, mode uint32) bool {
 
 func (r stacksDirResult) ok() bool { return r.Status != sdFail }
 
+func (r stacksDirResult) withCommand(cmd string) stacksDirResult {
+	r.Command = cmd
+	return r
+}
+
 // checkStacksDir checks p as a new stacks dir with the rules of root's
 // stacks-dir-apply. It writes nothing. Root creates p only as one new
 // directory in an allowed parent; anywhere else p must exist already, be
@@ -314,8 +319,8 @@ walk:
 		return existing >= len(comps)-1 && creatableName(name) && r.creatableParent(parent, pm, parentDev, denied)
 	}
 	newRefused := func() stacksDirResult {
-		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or dockmesh-stacks…. Prepare %s as an empty directory of the agent: %s",
-			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p))
+		return fail(sdNewNotHere, "New directory: root creates a stacks directory only directly in %s or in a disk mounted below one of them, named stacks or starting with dockmesh-stacks. Prepare %s as an empty directory of the agent: %s",
+			strings.Join(r.allowedParents(), ", "), p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
 	}
 	switch {
 	case existing == len(comps):
@@ -328,19 +333,19 @@ walk:
 				return fail(sdUnreadable, "Cannot read the mount table: %v.", err)
 			}
 			if !creatable(pm) {
-				return fail(sdRootAgentDir, "Existing directory: an agent running as root takes only a directory root may create, directly in %s or in a disk mounted below one of them, named stacks or dockmesh-stacks….",
+				return fail(sdRootAgentDir, "Existing directory: an agent running as root takes only a directory root may create, directly in %s or in a disk mounted below one of them, named stacks or starting with dockmesh-stacks.",
 					strings.Join(r.allowedParents(), ", "))
 			}
 		}
 		if int(st.Uid) != r.uid {
-			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, r.prepareCommand(p))
+			return fail(sdForeignOwner, "Existing directory: %s belongs to another account. Make it an empty directory of the agent: %s", p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
 		}
 		empty, err := emptyDirAt(fd)
 		if err != nil {
 			return fail(sdUnreadable, "Cannot read %s: %v.", p, err)
 		}
 		if !empty {
-			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, r.prepareCommand(p))
+			return fail(sdNotEmpty, "Existing directory: %s is not empty. Choose an empty directory, or prepare a new one: %s", p, r.prepareCommand(p)).withCommand(r.prepareCommand(p))
 		}
 	case p != defaultDir && !creatable(m):
 		return newRefused()

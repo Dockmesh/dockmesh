@@ -416,6 +416,15 @@ func TestStacksDirRefusalNamesThePrepareCommand(t *testing.T) {
 		if got.ok() || !strings.Contains(got.Message, want) {
 			t.Errorf("%s: %q lacks %q", p, got.Message, want)
 		}
+		if got.Command != want {
+			t.Errorf("%s: command %q, want %q", p, got.Command, want)
+		}
+		if strings.Contains(got.Message, "….") {
+			t.Errorf("%s: double period in %q", p, got.Message)
+		}
+	}
+	if got := checkStacksDir("relative", rules); got.Command != "" {
+		t.Errorf("a refusal without a prepare step got command %q", got.Command)
 	}
 }
 

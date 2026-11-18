@@ -137,6 +137,21 @@
     }
   }
 
+  // The agent's own message also lists its rules; with a prepare command
+  // at hand one sentence is enough.
+  function refusedText(c: StacksDirCheck): string {
+    switch (c.issue) {
+      case 'new_dir_not_allowed':
+        return m.hosts_setup_refused_new({ path: c.path });
+      case 'foreign_owner':
+        return m.hosts_setup_refused_owner({ path: c.path });
+      case 'not_empty':
+        return m.hosts_setup_refused_not_empty({ path: c.path });
+      default:
+        return c.message;
+    }
+  }
+
   function stateText(c: StacksDirCheck): string {
     return c.will_create ? m.hosts_setup_state_new() : m.hosts_setup_state_empty();
   }
@@ -201,6 +216,14 @@
             <span class="dim"><Loader size={12} strokeWidth={1.8} class="spin" /> {m.hosts_setup_checking()}</span>
           {:else if checkError}
             <span class="err">{checkError}</span>
+          {:else if check?.status === 'fail' && check.command}
+            <span class="err">{refusedText(check)}</span>
+            <div class="cmd prep" data-testid="setup-prepare">
+              <code class="dm-mono">{check.command}</code>
+              <button type="button" class="dm-btn dm-btn-sm" onclick={() => copyWithToast(check!.command!, m.hosts_setup_prepare_copied())}>
+                <Copy size={12} strokeWidth={1.8} /> {m.common_copy()}
+              </button>
+            </div>
           {:else if check?.status === 'fail'}
             <span class="err">{check.message}</span>
           {:else if check?.issue === 'unchanged'}
@@ -307,6 +330,7 @@
   .cbody { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
   .cmd { display: flex; gap: 8px; align-items: flex-start; }
   .cmd code { flex: 1; min-width: 0; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .cmd.prep { margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r); background: var(--field); align-items: center; }
   .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
   .steps li { display: flex; align-items: center; gap: 8px; color: var(--muted); }
   .steps li.d { color: var(--fg); }
