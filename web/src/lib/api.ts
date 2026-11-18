@@ -8,12 +8,12 @@ const BASE = '/api/v1';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'negligible' | 'unknown';
 
-// What an agent deploy did with the files next to compose.yaml.
 export interface StackFileNote {
   path: string;
   reason: string;
 }
 
+// What an agent deploy did with the files next to compose.yaml.
 export interface StackFilesReport {
   copied: number;
   removed: number;

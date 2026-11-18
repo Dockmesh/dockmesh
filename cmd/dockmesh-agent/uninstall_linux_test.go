@@ -130,7 +130,7 @@ func TestUninstallDefaultKeepsStacksAndUser(t *testing.T) {
 		"  remove  dockmesh-agent.service, dockmesh-agent-update.path/.service\n",
 		"  remove  /usr/local/bin/dockmesh-agent\n",
 		"  remove  /etc/dockmesh-agent\n",
-		"  remove  certificate and key, staging/, update/ in /var/lib/dockmesh-agent\n",
+		"  remove  certificate and key, staging/, update/, stackfiles/ in /var/lib/dockmesh-agent\n",
 		"  keep    /var/lib/dockmesh-agent/stacks (2 stacks): kept by default, use --purge to remove\n",
 		"  keep    user dockmesh-agent: kept by default, use --purge to remove\n",
 		"! 2 containers of Dockmesh stacks are running. They keep running.\n",

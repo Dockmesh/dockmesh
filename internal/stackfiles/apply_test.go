@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -242,5 +243,65 @@ func TestApplyRefusesBadSet(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Errorf("refused set wrote %d entries", len(entries))
+	}
+}
+
+func TestApplyLeavesReplacedEntries(t *testing.T) {
+	dir := t.TempDir()
+	set := &Set{Files: []File{
+		{Path: "conf/a.conf", Mode: 0o644, Data: []byte("a")},
+		{Path: "pipe", Mode: 0o644, Data: []byte("p")},
+	}}
+	m, _, err := Apply(openRoot(t, dir), set, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A container replaces Dockmesh's directory with its own file and a
+	// recorded file with a FIFO.
+	if err := os.RemoveAll(filepath.Join(dir, "conf")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "conf"), "container file", 0o644)
+	if err := os.Remove(filepath.Join(dir, "pipe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	next := &Set{Files: []File{{Path: "pipe", Mode: 0o644, Data: []byte("p2")}}}
+	_, rep, err := Apply(openRoot(t, dir), next, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dir, "conf")); got != "container file" {
+		t.Errorf("file at a recorded directory removed")
+	}
+	if r := keptReason(rep, "pipe"); !strings.Contains(r, "special file") {
+		t.Errorf("pipe reason = %q", r)
+	}
+}
+
+func TestApplyDoesNotReadOversizedFiles(t *testing.T) {
+	dir := t.TempDir()
+	set := &Set{Files: []File{{Path: "a.conf", Mode: 0o644, Data: []byte("v1")}}}
+	m, _, err := Apply(openRoot(t, dir), set, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sparse and larger than anything a set carries: never read.
+	f, err := os.OpenFile(filepath.Join(dir, "a.conf"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(1 << 40); err != nil {
+		t.Skip("no sparse files here:", err)
+	}
+	f.Close()
+	_, rep, err := Apply(openRoot(t, dir), &Set{Files: []File{{Path: "a.conf", Mode: 0o644, Data: []byte("v2")}}}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := keptReason(rep, "a.conf"); !strings.Contains(r, "changed on the host") {
+		t.Errorf("reason = %q", r)
 	}
 }

@@ -8,8 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
-
-	"github.com/dockmesh/dockmesh/internal/safepath"
+	"syscall"
 )
 
 // TooLargeError refuses a stack directory over the limits of one set.
@@ -26,7 +25,7 @@ func (e *TooLargeError) Error() string {
 	} else {
 		fmt.Fprintf(&b, "the files next to compose.yaml add up to %s", mib(e.Bytes))
 	}
-	fmt.Fprintf(&b, ", more than a deploy carries to an agent (%d entries, %s)", MaxEntries, mib(MaxTotalBytes))
+	fmt.Fprintf(&b, ", more than a deploy carries to an agent (%d entries, %s of data, %s with the names)", MaxEntries, mib(MaxTotalBytes), mib(MaxEncodedBytes))
 	if len(e.Largest) > 0 {
 		parts := make([]string, len(e.Largest))
 		for i, n := range e.Largest {
@@ -39,9 +38,8 @@ func (e *TooLargeError) Error() string {
 }
 
 // Collect reads the stack directory dir into a set. Entries the server
-// cannot read (data another user's container wrote), symlinks that leave
-// dir or point at a directory, and special files are left out and
-// listed. A directory over the limits returns a *TooLargeError.
+// cannot read (data another user's container wrote), symlinks, special
+// files and names an agent would refuse are left out and listed. A directory over the limits returns a *TooLargeError.
 func Collect(dir string) (*Set, []Note, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -53,9 +51,8 @@ func Collect(dir string) (*Set, []Note, error) {
 	set := &Set{}
 	var skipped []Note
 	dirIndex := map[string]int{}
-	var total int64
-	var sizes []Note
-	var sizeOf = map[string]int64{}
+	sizeOf := map[string]int64{}
+	var total, encoded int64
 	entries := 0
 	over := false
 
@@ -84,34 +81,24 @@ func Collect(dir string) (*Set, []Note, error) {
 			}
 			return nil
 		}
-		if len(p) > MaxPathBytes || strings.ContainsAny(p, "\\\x00") {
-			skipped = append(skipped, Note{Path: p, Reason: "path too long or with a backslash"})
+		if err := checkName(p); err != nil {
+			skipped = append(skipped, Note{Path: p, Reason: err.Error()})
 			if d.IsDir() {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		// A symlink could name a file Skip keeps out (data/x -> ../.env),
+		// and the files it points to inside the directory are sent anyway.
+		if d.Type()&fs.ModeSymlink != 0 {
+			skipped = append(skipped, Note{Path: p, Reason: "symlink, not copied"})
 			return nil
 		}
 		entries++
 		if entries > MaxEntries {
 			return &TooLargeError{Entries: entries}
 		}
-		typ := d.Type()
-		if typ&fs.ModeSymlink != 0 {
-			info, err := fs.Stat(fsys, p)
-			switch {
-			case safepath.IsRootEscape(err):
-				skipped = append(skipped, Note{Path: p, Reason: "symlink leaves the stack directory"})
-				return nil
-			case err != nil:
-				skipped = append(skipped, Note{Path: p, Reason: "broken symlink"})
-				return nil
-			case !info.Mode().IsRegular():
-				skipped = append(skipped, Note{Path: p, Reason: "symlink to a directory or special file"})
-				return nil
-			}
-			typ = 0
-		}
-		info, err := fs.Stat(fsys, p)
+		info, err := d.Info()
 		if err != nil {
 			skipped = append(skipped, Note{Path: p, Reason: "not readable by the server"})
 			if d.IsDir() {
@@ -124,24 +111,34 @@ func Collect(dir string) (*Set, []Note, error) {
 		case d.IsDir():
 			dirIndex[p] = len(set.Files)
 			set.Files = append(set.Files, File{Path: p, Mode: mode, Dir: true})
+			encoded += encodedSize(p, 0)
 			return nil
-		case typ != 0 || !info.Mode().IsRegular():
+		case !info.Mode().IsRegular():
 			skipped = append(skipped, Note{Path: p, Reason: "not a regular file"})
 			return nil
 		}
 		total += info.Size()
+		encoded += encodedSize(p, info.Size())
 		sizeOf[p] = info.Size()
-		if total > MaxTotalBytes {
+		if total > MaxTotalBytes || encoded > MaxEncodedBytes {
 			over = true
 		}
 		if over {
 			return nil
 		}
-		data, err := readCapped(fsys, p, MaxTotalBytes-(total-info.Size()))
+		data, err := readCapped(root, p, MaxTotalBytes-(total-info.Size()))
 		if errors.Is(err, fs.ErrPermission) {
 			total -= info.Size()
+			encoded -= encodedSize(p, info.Size())
 			delete(sizeOf, p)
 			skipped = append(skipped, Note{Path: p, Reason: "not readable by the server"})
+			return nil
+		}
+		if errors.Is(err, errNotRegular) {
+			total -= info.Size()
+			encoded -= encodedSize(p, info.Size())
+			delete(sizeOf, p)
+			skipped = append(skipped, Note{Path: p, Reason: "not a regular file"})
 			return nil
 		}
 		if errors.Is(err, errGrew) {
@@ -154,14 +151,11 @@ func Collect(dir string) (*Set, []Note, error) {
 		set.Files = append(set.Files, File{Path: p, Mode: mode, Data: data})
 		return nil
 	})
-	var tl *TooLargeError
-	if errors.As(err, &tl) {
-		return nil, nil, tl
-	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if over {
+		sizes := make([]Note, 0, len(sizeOf))
 		for p, n := range sizeOf {
 			sizes = append(sizes, Note{Path: p, Reason: mib(n)})
 		}
@@ -188,12 +182,21 @@ func Collect(dir string) (*Set, []Note, error) {
 
 var errGrew = errors.New("file grew while it was read")
 
-func readCapped(fsys fs.FS, p string, limit int64) ([]byte, error) {
-	f, err := fsys.Open(p)
+var errNotRegular = errors.New("not a regular file")
+
+// readCapped reads p unless it grew past limit. O_NONBLOCK keeps a FIFO a
+// container swapped in after the walk from blocking the open.
+func readCapped(root *os.Root, p string, limit int64) ([]byte, error) {
+	f, err := root.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, errNotRegular
+	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err

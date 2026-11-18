@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -77,6 +78,8 @@ func TestValidate(t *testing.T) {
 		{"backslash", `a\b`, false},
 		{"nul", "a\x00b", false},
 		{"long", strings.Repeat("a", MaxPathBytes+1), false},
+		{"control", "a\nb", false},
+		{"invalid utf8", "a\xffb", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -85,6 +88,13 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("Validate(%q) = %v, ok want %v", c.path, err, c.ok)
 			}
 		})
+	}
+	names := &Set{Files: make([]File, 0, MaxEntries)}
+	for i := 0; i < MaxEntries; i++ {
+		names.Files = append(names.Files, File{Path: strconv.Itoa(i) + strings.Repeat("<", MaxPathBytes-8), Data: make([]byte, 2000)})
+	}
+	if err := names.Validate(); err == nil {
+		t.Fatal("set over the encoded limit accepted")
 	}
 	dup := &Set{Files: []File{{Path: "a"}, {Path: "a"}}}
 	if dup.Validate() == nil {
@@ -119,13 +129,19 @@ func TestCollect(t *testing.T) {
 	if err := os.Symlink("html", filepath.Join(dir, "dirlink")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("../.env", filepath.Join(dir, "html", "leak")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	set, skipped, err := Collect(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := paths(set)
-	for _, p := range []string{"compose.yaml", ".env", ".dockmesh.meta.json", "compose.prod.yaml", ".git", ".git/HEAD", "escape", "dirlink"} {
+	for _, p := range []string{"compose.yaml", ".env", ".dockmesh.meta.json", "compose.prod.yaml", ".git", ".git/HEAD", "escape", "dirlink", "inside", "html/leak", "fifo"} {
 		if _, ok := got[p]; ok {
 			t.Errorf("%s collected", p)
 		}
@@ -139,18 +155,17 @@ func TestCollect(t *testing.T) {
 	if f := got["empty"]; !f.Dir || f.Mode != 0o750 {
 		t.Errorf("empty dir = %+v", f)
 	}
-	if f := got["inside"]; string(f.Data) != "<h1>hi</h1>" {
-		t.Errorf("symlink inside the dir not copied as file: %+v", f)
-	}
 	reasons := map[string]string{}
 	for _, n := range skipped {
 		reasons[n.Path] = n.Reason
 	}
-	if !strings.Contains(reasons["escape"], "leaves") {
-		t.Errorf("escape not reported: %v", skipped)
+	for _, p := range []string{"escape", "dirlink", "inside", "html/leak"} {
+		if !strings.Contains(reasons[p], "symlink") {
+			t.Errorf("%s not reported as symlink: %v", p, skipped)
+		}
 	}
-	if !strings.Contains(reasons["dirlink"], "directory") {
-		t.Errorf("dirlink not reported: %v", skipped)
+	if !strings.Contains(reasons["fifo"], "regular") {
+		t.Errorf("fifo not reported: %v", skipped)
 	}
 }
 

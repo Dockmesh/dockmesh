@@ -625,7 +625,7 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		case e.Type().IsRegular() && slices.Contains(agentDataFiles, n):
 		case e.Type().IsRegular() && ownFile(n, agentDataFiles):
 			steps = append(steps, u.removeBelow(dataDir, n))
-		case e.IsDir() && slices.Contains(agentDataDirs, n) && shared && n != stackFilesDir:
+		case e.IsDir() && shared && (n == "staging" || n == "update"):
 			// The server keeps its own update and staging files there.
 		case e.IsDir() && slices.Contains(agentDataDirs, n):
 			steps = append(steps, u.removeAllBelow(dataDir, n))
@@ -639,7 +639,7 @@ func (u *uninstaller) planData(p *uninstallPlan, dataDir string, shared bool) {
 		if shared {
 			p.remove("certificate and key in "+dataDir, steps...)
 		} else {
-			p.remove("certificate and key, staging/, update/ in "+dataDir, steps...)
+			p.remove("certificate and key, staging/, update/, stackfiles/ in "+dataDir, steps...)
 		}
 		p.kept = append(p.kept, dataDir)
 		return

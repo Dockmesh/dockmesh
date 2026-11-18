@@ -11302,7 +11302,7 @@ components:
         skipped:
           type: array
           items: {$ref: '#/components/schemas/StackFileNote'}
-          description: Entries the server left out (unreadable, symlinks leaving the stack directory, special files).
+          description: Entries the server left out (unreadable files, symlinks, special files, names an agent would refuse).
         not_sent:
           type: integer
           description: Files not copied because the agent predates stack files; update the agent.

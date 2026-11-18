@@ -4663,6 +4663,7 @@
   "stacks_d_files_not_sent": "Files next to compose.yaml were not copied",
   "stacks_d_files_not_sent_detail": "{count} files stayed on the server: this agent receives only compose.yaml and .env. Update the agent to copy them.",
   "stacks_d_files_kept": "{count} stack files left as they are on the host",
+  "stacks_d_files_skipped": "{count} files on the server were not copied",
   "stacks_d_files_more": "and {count} more.",
   "stacks_d_deployed_on": "{count} service(s) on {host}",
   "stacks_d_deploying": "deploying…",

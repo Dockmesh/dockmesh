@@ -9,19 +9,32 @@
 package stackfiles
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Limits of one file set. A set travels inside a single agent frame
-// (agents.MaxFrameBytes, base64-encoded), so the total stays well below it.
+// (agents.MaxFrameBytes); MaxEncodedBytes bounds its JSON size, base64
+// data and escaped paths included, so compose and .env still fit.
 const (
-	MaxTotalBytes = 8 << 20
-	MaxEntries    = 2000
-	MaxPathBytes  = 1024
+	MaxTotalBytes   = 8 << 20
+	MaxEncodedBytes = 12 << 20
+	MaxEntries      = 2000
+	MaxPathBytes    = 1024
 )
+
+// encodedSize is an upper bound of one entry's share of the JSON frame:
+// base64 data, the path with every byte escaped as \u00XX, and the keys.
+func encodedSize(p string, dataLen int64) int64 {
+	return int64(base64.StdEncoding.EncodedLen(int(dataLen))) + 6*int64(len(p)) + 64
+}
 
 // File is one entry of a set. Path is slash-separated and relative to the
 // stack directory; Mode holds permission bits only.
@@ -102,33 +115,32 @@ func Skip(rel string) bool {
 	return rel == ".env" || rel == ".env.age" || managedTop.MatchString(rel)
 }
 
-// checkPath refuses a set entry the agent must not write.
-func checkPath(p string) error {
+// checkName refuses a name the JSON frame would not carry unchanged or
+// that is too long.
+func checkName(p string) error {
 	switch {
 	case p == "" || len(p) > MaxPathBytes:
-		return fmt.Errorf("stack file path %q: empty or longer than %d bytes", p, MaxPathBytes)
-	case strings.ContainsAny(p, "\\\x00"):
-		return fmt.Errorf("stack file path %q: contains a backslash or NUL", p)
-	case p == "." || !isLocal(p):
+		return fmt.Errorf("path empty or longer than %d bytes", MaxPathBytes)
+	case !utf8.ValidString(p):
+		return errors.New("path is not valid UTF-8")
+	case strings.ContainsFunc(p, func(r rune) bool { return r == '\\' || unicode.IsControl(r) }):
+		return errors.New("path contains a backslash or control character")
+	}
+	return nil
+}
+
+// checkPath refuses a set entry the agent must not write.
+func checkPath(p string) error {
+	if err := checkName(p); err != nil {
+		return fmt.Errorf("stack file path %q: %w", p, err)
+	}
+	switch {
+	case p == "." || !fs.ValidPath(p):
 		return fmt.Errorf("stack file path %q: not inside the stack directory", p)
 	case Skip(p):
 		return fmt.Errorf("stack file path %q: managed by the deploy itself", p)
 	}
 	return nil
-}
-
-// isLocal is fs.ValidPath: no leading slash, no empty, "." or ".."
-// elements.
-func isLocal(p string) bool {
-	if strings.HasPrefix(p, "/") {
-		return false
-	}
-	for _, e := range strings.Split(p, "/") {
-		if e == "" || e == "." || e == ".." {
-			return false
-		}
-	}
-	return true
 }
 
 // Validate checks a set received from the server against the same limits
@@ -139,6 +151,13 @@ func (s *Set) Validate() error {
 	}
 	if s.Size() > MaxTotalBytes {
 		return fmt.Errorf("stack files: %d bytes, more than %d", s.Size(), MaxTotalBytes)
+	}
+	var encoded int64
+	for _, f := range s.Files {
+		encoded += encodedSize(f.Path, int64(len(f.Data)))
+	}
+	if encoded > MaxEncodedBytes {
+		return fmt.Errorf("stack files: about %d bytes encoded, more than %d", encoded, MaxEncodedBytes)
 	}
 	seen := make(map[string]bool, len(s.Files))
 	for _, f := range s.Files {

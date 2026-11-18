@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import HookCommandsConfirm from '$lib/components/HookCommandsConfirm.svelte';
-  import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
+  import { api, ApiError, runRestorable, type ScalerPause, type StackDetail, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackFileNote } from '$lib/api';
   import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
   import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
@@ -1364,6 +1364,13 @@
     if (deployAfter && canDeploy) await deploy();
   }
 
+  const maxFileNotes = 5;
+
+  function fileNotes(notes: StackFileNote[]): string {
+    const shown = notes.slice(0, maxFileNotes).map((n) => `${n.path}: ${n.reason}`).join('; ');
+    return notes.length > maxFileNotes ? shown + ' ' + m.stacks_d_files_more({ count: notes.length - maxFileNotes }) : shown;
+  }
+
   async function deploy() {
     if (anyBusy) return;
     busy = true;
@@ -1388,12 +1395,8 @@
       if (files?.not_sent) {
         toast.warning(m.stacks_d_files_not_sent(), m.stacks_d_files_not_sent_detail({ count: files.not_sent }));
       }
-      const notes = [...(files?.kept ?? []), ...(files?.skipped ?? [])];
-      if (notes.length) {
-        const shown = notes.slice(0, 5).map((n) => `${n.path}: ${n.reason}`).join('; ');
-        const more = notes.length > 5 ? ' ' + m.stacks_d_files_more({ count: notes.length - 5 }) : '';
-        toast.warning(m.stacks_d_files_kept({ count: notes.length }), shown + more);
-      }
+      if (files?.kept?.length) toast.warning(m.stacks_d_files_kept({ count: files.kept.length }), fileNotes(files.kept));
+      if (files?.skipped?.length) toast.warning(m.stacks_d_files_skipped({ count: files.skipped.length }), fileNotes(files.skipped));
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.

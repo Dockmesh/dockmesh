@@ -16,10 +16,11 @@ import (
 )
 
 // Manifest records what Apply wrote into one stack directory: the sha256
-// of each file's content and the directories it created. It lives outside
+// and size of each file's content and the directories it created. It lives outside
 // the stack directory, where the stack's containers cannot change it.
 type Manifest struct {
 	Files map[string]string `json:"files"`
+	Sizes map[string]int64  `json:"sizes,omitempty"`
 	Dirs  []string          `json:"dirs,omitempty"`
 }
 
@@ -38,7 +39,7 @@ func Apply(root *os.Root, set *Set, prev *Manifest) (*Manifest, Report, error) {
 	if prev == nil {
 		prev = &Manifest{}
 	}
-	next := &Manifest{Files: map[string]string{}}
+	next := &Manifest{Files: map[string]string{}, Sizes: map[string]int64{}}
 	created := map[string]bool{}
 	for _, d := range prev.Dirs {
 		created[d] = true
@@ -54,8 +55,9 @@ func Apply(root *os.Root, set *Set, prev *Manifest) (*Manifest, Report, error) {
 			a.dir(f)
 			continue
 		}
-		if sum, ok := a.file(f, prev.Files[f.Path]); ok {
+		if sum, ok := a.file(f, prev.record(f.Path)); ok {
 			next.Files[f.Path] = sum
+			next.Sizes[f.Path] = int64(len(f.Data))
 		}
 	}
 
@@ -63,7 +65,7 @@ func Apply(root *os.Root, set *Set, prev *Manifest) (*Manifest, Report, error) {
 		if inSet[p] {
 			continue
 		}
-		a.remove(p, prev.Files[p])
+		a.remove(p, prev.record(p))
 	}
 
 	// Directories Dockmesh created and the set no longer has go once
@@ -75,7 +77,10 @@ func Apply(root *os.Root, set *Set, prev *Manifest) (*Manifest, Report, error) {
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i] > dirs[j] })
 	for _, d := range dirs {
 		if !inSet[d] && !hasPrefixDir(next.Files, d) {
-			_ = root.Remove(d)
+			// Remove would unlink a file that replaced the directory.
+			if fi, err := root.Lstat(d); err == nil && fi.IsDir() {
+				_ = root.Remove(d)
+			}
 		}
 		if fi, err := root.Lstat(d); err == nil && fi.IsDir() {
 			next.Dirs = append(next.Dirs, d)
@@ -83,6 +88,31 @@ func Apply(root *os.Root, set *Set, prev *Manifest) (*Manifest, Report, error) {
 	}
 	sort.Strings(next.Dirs)
 	return next, rep, nil
+}
+
+// record is what Dockmesh wrote at p last time; size is -1 when unknown.
+type record struct {
+	sum  string
+	size int64
+}
+
+func (m *Manifest) record(p string) record {
+	r := record{sum: m.Files[p], size: -1}
+	if n, ok := m.Sizes[p]; ok {
+		r.size = n
+	}
+	return r
+}
+
+// sameSize reports whether a file of size n may still be the one recorded.
+func (r record) sameSize(n int64) bool {
+	if r.sum == "" {
+		return false
+	}
+	if r.size < 0 {
+		return n <= MaxTotalBytes
+	}
+	return n == r.size
 }
 
 type applier struct {
@@ -103,7 +133,7 @@ func (a *applier) mkdirAll(p string, mode fs.FileMode) error {
 	fi, err := a.root.Lstat(p)
 	if err == nil {
 		if !fi.IsDir() {
-			return fmt.Errorf("%s is not a directory", p)
+			return fmt.Errorf("%s: %w", p, syscall.ENOTDIR)
 		}
 		return nil
 	}
@@ -117,8 +147,33 @@ func (a *applier) mkdirAll(p string, mode fs.FileMode) error {
 		return err
 	}
 	a.created[p] = true
+	fi, err = a.root.Lstat(p)
+	if err != nil {
+		return err
+	}
 	// Mkdir is subject to the umask; the server's mode is what counts.
-	return a.root.Chmod(p, mode)
+	return a.chmodDir(p, fi, mode)
+}
+
+// chmodDir changes the mode of the directory Lstat saw at p, never of
+// what a symlink swapped in meanwhile points to.
+func (a *applier) chmodDir(p string, fi fs.FileInfo, mode fs.FileMode) error {
+	if !fi.IsDir() {
+		return errChanged
+	}
+	f, err := a.root.OpenFile(p, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	got, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(fi, got) {
+		return errChanged
+	}
+	return f.Chmod(mode)
 }
 
 func (a *applier) dir(f File) {
@@ -127,7 +182,7 @@ func (a *applier) dir(f File) {
 	switch {
 	case err == nil && fi.IsDir():
 		if a.created[f.Path] && fi.Mode().Perm() != mode {
-			_ = a.root.Chmod(f.Path, mode)
+			_ = a.chmodDir(f.Path, fi, mode)
 		}
 	case err == nil:
 		a.keep(f.Path, "a file is in the way of this directory")
@@ -140,7 +195,7 @@ func (a *applier) dir(f File) {
 
 // file writes one regular file and returns the sum to record, or false
 // when the file is not Dockmesh's (any more).
-func (a *applier) file(f File, prevSum string) (string, bool) {
+func (a *applier) file(f File, prev record) (string, bool) {
 	mode := fs.FileMode(f.Mode) & fs.ModePerm
 	want := sum(f.Data)
 	fi, err := a.root.Lstat(f.Path)
@@ -168,10 +223,14 @@ func (a *applier) file(f File, prevSum string) (string, bool) {
 		a.keep(f.Path, "a symlink or special file is in the way")
 		return "", false
 	}
-	cur, err := a.hash(f.Path, fi)
-	if err != nil {
-		a.keep(f.Path, writeReason(err))
-		return "", false
+	// Only a file of the right size is read, so files planted at the set's
+	// paths can't make every deploy read gigabytes.
+	cur := ""
+	if fi.Size() == int64(len(f.Data)) || prev.sameSize(fi.Size()) {
+		if cur, err = a.hash(f.Path, fi); err != nil {
+			a.keep(f.Path, writeReason(err))
+			return "", false
+		}
 	}
 	switch {
 	case cur == want:
@@ -181,12 +240,12 @@ func (a *applier) file(f File, prevSum string) (string, bool) {
 				return "", false
 			}
 		}
-	case cur == prevSum:
+	case cur != "" && cur == prev.sum:
 		if err := a.overwrite(f.Path, fi, f.Data, mode); err != nil {
 			a.keep(f.Path, writeReason(err))
 			return "", false
 		}
-	case prevSum != "":
+	case prev.sum != "":
 		a.keep(f.Path, "changed on the host since the last deploy")
 		return "", false
 	default:
@@ -197,19 +256,21 @@ func (a *applier) file(f File, prevSum string) (string, bool) {
 	return want, true
 }
 
-func (a *applier) remove(p, prevSum string) {
+// remove deletes p while it holds what Dockmesh wrote. A container that
+// replaces the file between the check and the unlink loses that file;
+// the window is a few syscalls and confined to the stack directory.
+func (a *applier) remove(p string, prev record) {
 	fi, err := a.root.Lstat(p)
-	if errors.Is(err, fs.ErrNotExist) {
-		return
-	}
 	if err != nil || !fi.Mode().IsRegular() {
 		return
 	}
-	cur, err := a.hash(p, fi)
-	if err != nil {
-		return
+	cur := ""
+	if prev.sameSize(fi.Size()) {
+		if cur, err = a.hash(p, fi); err != nil {
+			return
+		}
 	}
-	if cur != prevSum {
+	if cur == "" || cur != prev.sum {
 		a.keep(p, "removed on the server but changed on the host since the last deploy")
 		return
 	}
@@ -224,7 +285,8 @@ func (a *applier) remove(p, prevSum string) {
 // follows a symlink swapped in meanwhile (inside the root only), and the
 // write must not land in the file it points to.
 func (a *applier) open(p string, fi fs.FileInfo, flag int) (*os.File, error) {
-	f, err := a.root.OpenFile(p, flag, 0)
+	// O_NONBLOCK: opening a FIFO swapped in meanwhile must not block.
+	f, err := a.root.OpenFile(p, flag|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -278,10 +340,7 @@ func (a *applier) overwrite(p string, fi fs.FileInfo, data []byte, mode fs.FileM
 	if err != nil {
 		return err
 	}
-	if err := writeAll(f, data, mode, true); err != nil {
-		return err
-	}
-	return nil
+	return writeAll(f, data, mode, true)
 }
 
 // create writes a new file under a temporary name and renames it into
@@ -300,16 +359,20 @@ func (a *applier) create(p string, data []byte, mode fs.FileMode) error {
 		_ = a.root.Remove(tmp)
 		return err
 	}
-	// Refuses to replace anything that appeared under p meanwhile.
-	if _, err := a.root.Lstat(p); err == nil {
-		_ = a.root.Remove(tmp)
+	defer a.root.Remove(tmp)
+	// A hard link never replaces what a container put at p meanwhile.
+	err = a.root.Link(tmp, p)
+	if errors.Is(err, fs.ErrExist) {
 		return errChanged
 	}
-	if err := a.root.Rename(tmp, p); err != nil {
-		_ = a.root.Remove(tmp)
-		return err
+	if err == nil {
+		return nil
 	}
-	return nil
+	// File systems without hard links: a rename after a last check.
+	if _, err := a.root.Lstat(p); err == nil {
+		return errChanged
+	}
+	return a.root.Rename(tmp, p)
 }
 
 func writeAll(f *os.File, data []byte, mode fs.FileMode, truncate bool) error {
@@ -340,7 +403,7 @@ func writeReason(err error) string {
 		return "changed on the host while it was written"
 	case errors.Is(err, syscall.ENOSPC):
 		return "no space left on the host"
-	case errors.Is(err, syscall.ENOTDIR), strings.Contains(err.Error(), "is not a directory"):
+	case errors.Is(err, syscall.ENOTDIR):
 		return "a file is in the way of its directory"
 	}
 	var pe *fs.PathError
