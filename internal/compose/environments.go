@@ -120,11 +120,11 @@ func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envConten
 	if overlay == nil {
 		return "", fmt.Errorf("%w: compose.%s.yaml", ErrEnvironmentNotFound, overrideName)
 	}
-	staged, err := os.MkdirTemp("", "dockmesh-merge-"+stackName+"-")
+	staged, cleanup, err := NewStagingDir("", "dockmesh-merge-"+stackName+"-")
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(staged)
+	defer cleanup()
 	if err := os.WriteFile(filepath.Join(staged, "compose.yaml"), base, 0o600); err != nil {
 		return "", err
 	}
@@ -135,7 +135,7 @@ func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envConten
 	if err != nil {
 		return "", err
 	}
-	RebaseBindSources(proj, staged, stackDir)
+	RebaseStagedPaths(proj, staged, stackDir)
 	out, err := proj.MarshalYAML()
 	if err != nil {
 		return "", fmt.Errorf("marshal merged yaml: %w", err)

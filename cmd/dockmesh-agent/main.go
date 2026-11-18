@@ -1295,11 +1295,11 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 	if err := os.MkdirAll(stagingBase, 0o700); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp(stagingBase, req.Name+"-")
+	dir, cleanup, err := compose.NewStagingDir(stagingBase, req.Name+"-")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer cleanup()
 
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(req.Compose), 0o600); err != nil {
 		return nil, err
@@ -1310,7 +1310,7 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 		}
 	}
 
-	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
+	proj, warnings, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -1319,6 +1319,9 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 		ctx = compose.WithForcePull(ctx)
 	}
 	res, err := cs.DeployProject(ctx, proj)
+	if res != nil {
+		res.Warnings = append(res.Warnings, warnings...)
+	}
 	if err != nil {
 		return res, err
 	}
@@ -1360,28 +1363,28 @@ func projectBinds(ctx context.Context, cli *client.Client, proj *composetypes.Pr
 	return out, nil
 }
 
-// agentLoadStaged parses the staged compose file and points relative bind
-// mounts at the agent's persistent copy of the stack directory.
-func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.Project, error) {
+// agentLoadStaged parses the staged compose file and points relative
+// paths at the agent's persistent copy of the stack directory; the
+// warnings name those that leave it.
+func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.Project, []string, error) {
 	if err := stacks.ValidateName(name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	proj, err := compose.LoadProject(ctx, dir, name, env)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Created through an os.Root on the stacks directory, so the name can
 	// only ever create a directory inside it.
 	root, err := openStacksRoot(agentStackDirs(), name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer root.Close()
 	if err := root.MkdirAll(name, 0o750); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	compose.RebaseBindSources(proj, dir, filepath.Join(root.Name(), name))
-	return proj, nil
+	return proj, compose.RebaseStagedPaths(proj, dir, filepath.Join(root.Name(), name)), nil
 }
 
 func agentScaleService(ctx context.Context, cs *compose.Service, req agents.StackScaleReq) (*compose.ScaleResult, error) {
@@ -1393,7 +1396,7 @@ func agentScaleService(ctx context.Context, cs *compose.Service, req agents.Stac
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
+	proj, _, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -1409,7 +1412,7 @@ func agentCheckScale(ctx context.Context, cs *compose.Service, req agents.StackC
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
+	proj, _, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}

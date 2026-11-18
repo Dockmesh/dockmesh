@@ -1385,6 +1385,7 @@
       if (res.replicas_ignored?.length) {
         toast.warning(m.stacks_d_replicas_ignored(), m.stacks_d_replicas_ignored_services({ services: res.replicas_ignored.join(', ') }));
       }
+      if (res.warnings?.length) toast.warning(m.stacks_d_deploy_warnings(), res.warnings.join('; '));
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.

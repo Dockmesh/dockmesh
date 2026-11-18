@@ -11282,6 +11282,10 @@ components:
         warnings:
           type: array
           items: {type: string}
+          description: |
+            Notes about the deployed project, such as a relative path
+            (`../shared`) that leaves the stack directory, with the host
+            path it now points to.
         replicas_ignored:
           type: array
           items: {type: string}

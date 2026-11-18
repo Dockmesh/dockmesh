@@ -1,0 +1,3 @@
+kind: Fixed
+body: A relative bind that climbs out of the stack directory (`../shared`) resolves next to the stack directory on the server and on agents, and the deploy names the host path. Config and secret files and build contexts resolve against the stack directory instead of the deleted staging copy
+time: 2026-11-18T21:02:13.427794353Z

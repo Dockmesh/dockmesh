@@ -508,7 +508,7 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 
 // loadChecked parses the checked compose file from a staging copy, as a
 // deploy does, so nothing else in the stack directory is read, and points
-// relative bind mounts at the stack directory.
+// relative paths at the stack directory.
 func loadChecked(ctx context.Context, stackDir, stack string, d *stacks.Detail) (*composetypes.Project, error) {
 	staged, cleanup, err := host.WriteStagingDir(stack, d.Compose, d.Env)
 	if err != nil {
@@ -519,7 +519,7 @@ func loadChecked(ctx context.Context, stackDir, stack string, d *stacks.Detail) 
 	if err != nil {
 		return nil, err
 	}
-	compose.RebaseBindSources(proj, staged, stackDir)
+	compose.RebaseStagedPaths(proj, staged, stackDir)
 	return proj, nil
 }
 

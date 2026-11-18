@@ -170,6 +170,9 @@ type DeployResult struct {
 	// ReplicasIgnored lists services whose deploy.replicas asks for a
 	// count other than 1; a host stack keeps the count it runs instead.
 	ReplicasIgnored []string `json:"replicas_ignored,omitempty"`
+	// Warnings are notes about the project the deploy went ahead with,
+	// such as relative paths that leave the stack directory.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type ServiceResult struct {
