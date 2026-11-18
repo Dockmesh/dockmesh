@@ -51,4 +51,11 @@ func TestBusyPorts(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0] != 80 {
 		t.Fatalf("BusyPorts = %v %v", got, err)
 	}
+	if err := os.WriteFile(table, []byte("  sl  local_address rem_address   st\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The wizard reads the list's length; JSON null would break it.
+	if got, err := BusyPorts(); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("free ports: BusyPorts = %#v %v", got, err)
+	}
 }

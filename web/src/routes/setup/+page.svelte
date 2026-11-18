@@ -695,7 +695,7 @@
   let proxyCheck = $state<ProxyCheck | null>(null);
   let proxyChecking = $state(false);
   const proxyWanted = $derived(proxyOn || tls === 'caddy');
-  const proxyCheckOK = $derived(!!proxyCheck && proxyCheck.busy_ports.length === 0 && proxyCheck.pulled);
+  const proxyCheckOK = $derived(!!proxyCheck && (proxyCheck.busy_ports ?? []).length === 0 && proxyCheck.pulled);
   const proxyErr = $derived.by(() => {
     const e = acmeEmail.trim();
     if (!e) return tls === 'caddy' ? m.sw_n4_err_email_required() : null;
@@ -1526,7 +1526,7 @@
                 {#if proxyChecking}
                   <div class="result"><span class="spin" aria-hidden="true"></span> {m.sw_n4_checking()}</div>
                 {:else if proxyCheck}
-                  {#each proxyCheck.busy_ports as p (p)}<span class="err">{m.sw_n4_err_port({ port: String(p) })}</span>{/each}
+                  {#each proxyCheck.busy_ports ?? [] as p (p)}<span class="err">{m.sw_n4_err_port({ port: String(p) })}</span>{/each}
                   {#if proxyCheck.pull_error}<span class="err">{m.sw_n4_err_pull({ image: proxyCheck.image, reason: proxyCheck.pull_error })}</span>{/if}
                   {#if proxyCheckOK}
                     <div class="result"><span class="ok">✓</span> {m.sw_n4_ports_free()} · <span class="ok">✓</span> {m.sw_n4_pulled()}</div>

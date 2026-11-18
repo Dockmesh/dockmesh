@@ -39,7 +39,7 @@ func BusyPorts() ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []int
+	out := []int{}
 	for _, p := range proxyPorts {
 		if counts[p] > 0 {
 			out = append(out, p)
