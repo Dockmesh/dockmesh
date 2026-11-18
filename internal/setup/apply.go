@@ -280,7 +280,6 @@ func validPort(p string) bool {
 	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == p
 }
 
-
 // ConfigEnv is the server config a setup-apply writes, for v (validated)
 // and the asset dir install.sh uses for the agent binaries.
 func (v *ApplyValues) ConfigEnv(assetDir string) ([]byte, error) {
