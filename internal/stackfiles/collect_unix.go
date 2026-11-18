@@ -65,24 +65,38 @@ func (c *collector) skip(p, reason string) {
 // path in the stack directory.
 func (c *collector) walk(fd int, rel string) error {
 	f := os.NewFile(uintptr(fd), rel)
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		f.Close()
-		return err
-	}
 	defer f.Close()
-	sort.Strings(names)
+	for {
+		// In batches, so a directory with millions of names hits
+		// MaxEntries before it is all in memory.
+		names, err := f.Readdirnames(512)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		sort.Strings(names)
+		if err := c.entriesOf(fd, rel, names); err != nil {
+			return err
+		}
+	}
+}
+
+// entriesOf handles one batch of names listed in the directory fd.
+func (c *collector) entriesOf(fd int, rel string, names []string) error {
 	for _, name := range names {
 		p := name
 		if rel != "" {
 			p = path.Join(rel, name)
 		}
-		if Skip(p) {
-			continue
-		}
+		// Names Skip leaves out count too: they cost the walk all the same.
 		c.entries++
 		if c.entries > MaxEntries {
 			return &TooLargeError{Entries: c.entries}
+		}
+		if Skip(p) {
+			continue
 		}
 		if err := checkName(p); err != nil {
 			c.skip(p, err.Error())
