@@ -1,3 +1,5 @@
+//go:build unix
+
 package stackfiles
 
 import (
@@ -14,17 +16,6 @@ import (
 	"strings"
 	"syscall"
 )
-
-// Manifest records what Apply wrote into one stack directory: the sha256
-// and size of each file's content and the directories it created. It lives outside
-// the stack directory, where the stack's containers cannot change it.
-type Manifest struct {
-	Files map[string]string `json:"files"`
-	Sizes map[string]int64  `json:"sizes,omitempty"`
-	Dirs  []string          `json:"dirs,omitempty"`
-}
-
-const tempPrefix = ".dockmesh-tmp-"
 
 // Apply writes set into the stack directory opened as root and removes the
 // files of prev that are no longer in set. A file is replaced or removed

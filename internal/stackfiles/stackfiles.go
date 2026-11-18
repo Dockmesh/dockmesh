@@ -176,3 +176,40 @@ func (s *Set) Validate() error {
 }
 
 func mib(n int64) string { return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20)) }
+
+// Manifest records what Apply wrote into one stack directory: the sha256
+// and size of each file's content and the directories it created. It lives outside
+// the stack directory, where the stack's containers cannot change it.
+type Manifest struct {
+	Files map[string]string `json:"files"`
+	Sizes map[string]int64  `json:"sizes,omitempty"`
+	Dirs  []string          `json:"dirs,omitempty"`
+}
+
+const tempPrefix = ".dockmesh-tmp-"
+
+// TooLargeError refuses a stack directory over the limits of one set.
+type TooLargeError struct {
+	Entries int
+	Bytes   int64
+	Largest []Note
+}
+
+func (e *TooLargeError) Error() string {
+	var b strings.Builder
+	if e.Entries > MaxEntries {
+		fmt.Fprintf(&b, "the stack directory holds more than %d files and directories", MaxEntries)
+	} else {
+		fmt.Fprintf(&b, "the files next to compose.yaml add up to %s", mib(e.Bytes))
+	}
+	fmt.Fprintf(&b, ", more than a deploy carries to an agent (%d entries, %s of data, %s with the names)", MaxEntries, mib(MaxTotalBytes), mib(MaxEncodedBytes))
+	if len(e.Largest) > 0 {
+		parts := make([]string, len(e.Largest))
+		for i, n := range e.Largest {
+			parts[i] = n.Path + " (" + n.Reason + ")"
+		}
+		b.WriteString("; largest: " + strings.Join(parts, ", "))
+	}
+	b.WriteString(". Keep data in a volume and large files in the image")
+	return b.String()
+}

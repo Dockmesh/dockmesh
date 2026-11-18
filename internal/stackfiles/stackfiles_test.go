@@ -1,3 +1,5 @@
+//go:build unix
+
 package stackfiles
 
 import (
@@ -219,5 +221,21 @@ func TestCollectTooLarge(t *testing.T) {
 	}
 	if _, _, err := Collect(many); !errors.As(err, &tl) || !strings.Contains(err.Error(), "more than 2000") {
 		t.Fatalf("too many entries: %v", err)
+	}
+}
+
+func TestCollectCapsSkippedNotes(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < maxNotes+50; i++ {
+		if err := os.Symlink("x", filepath.Join(dir, "l"+strconv.Itoa(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, skipped, err := Collect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != maxNotes+1 || !strings.Contains(skipped[maxNotes].Reason, "50 more") {
+		t.Fatalf("skipped = %d notes, last %+v", len(skipped), skipped[len(skipped)-1])
 	}
 }
