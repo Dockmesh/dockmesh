@@ -167,7 +167,9 @@
       const proj = c?.Labels?.['com.docker.compose.project'];
       if (proj) projects.add(proj);
     }
-    return stacks.filter((s) => projects.has(s.name));
+    // A same-named project left running by a removed agent on this machine
+    // is not this host's stack.
+    return stacks.filter((s) => projects.has(s.name) && (!s.deployment?.host_id || s.deployment.host_id === id));
   });
 
   function fmtDur(sec: number): string {
