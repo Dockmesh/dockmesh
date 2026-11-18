@@ -24,6 +24,7 @@ type File struct {
 	Admin     *FileAdmin   `yaml:"admin"`
 	Address   FileAddress  `yaml:"address"`
 	TLS       FileTLS      `yaml:"tls"`
+	Proxy     FileProxy    `yaml:"proxy"`
 	Restore   *FileRestore `yaml:"restore"`
 }
 
@@ -53,6 +54,13 @@ type FileTLS struct {
 	// TrustedProxies replaces the default with mode proxy: addresses or
 	// networks, comma separated.
 	TrustedProxies string `yaml:"trusted_proxies"`
+}
+
+// FileProxy is the reverse proxy step: the managed Caddy proxy. TLS mode
+// caddy turns it on.
+type FileProxy struct {
+	Enabled   bool   `yaml:"enabled"`
+	ACMEEmail string `yaml:"acme_email"`
 }
 
 // FileRestore names the system backup a restore brings back.

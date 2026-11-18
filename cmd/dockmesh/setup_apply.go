@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,6 +22,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
@@ -52,6 +54,8 @@ func applyValuesFor(in setup.CommitInput) (setup.ApplyValues, error) {
 	v.AgentListen = in.Agent.Listen
 	v.AgentURL = in.Agent.URL
 	v.TrustedProxies = in.TLS.TrustedProxies
+	v.Proxy.Enabled = in.Proxy.Enabled
+	v.Proxy.ACMEEmail = in.Proxy.ACMEEmail
 	v.Admin.Username = in.Admin.Username
 	v.Admin.Email = in.Admin.Email
 	v.Admin.PasswordHash = hash
@@ -168,9 +172,6 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 	if _, err := auth.NewService(conn, make([]byte, 32)).CreateFirstUserHashed(ctx, v.Admin.Username, v.Admin.Email, v.Admin.PasswordHash, "admin"); err != nil {
 		return fmt.Errorf("create the admin: %w", err)
 	}
-	if v.BaseURL == "" && v.AgentURL == "" {
-		return nil
-	}
 	st := settings.NewStore(conn)
 	if err := st.Load(ctx); err != nil {
 		return err
@@ -181,7 +182,31 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 		}
 	}
 	if v.AgentURL != "" {
-		return st.Set(ctx, settings.KeyAgentPublicURL, v.AgentURL)
+		if err := st.Set(ctx, settings.KeyAgentPublicURL, v.AgentURL); err != nil {
+			return err
+		}
+	}
+	return materializeProxy(ctx, conn, st, v)
+}
+
+// materializeProxy turns the proxy on and, for TLS mode caddy, stores the
+// route to this server; the proxy starts and loads it at the first start.
+func materializeProxy(ctx context.Context, conn *sql.DB, st *settings.Store, v setup.ApplyValues) error {
+	if !v.Proxy.Enabled {
+		return nil
+	}
+	if err := st.Set(ctx, proxy.KeyEnabled, "true"); err != nil {
+		return err
+	}
+	if v.Proxy.ACMEEmail != "" {
+		if err := st.Set(ctx, proxy.KeyACMEEmail, v.Proxy.ACMEEmail); err != nil {
+			return err
+		}
+	}
+	if host, port, ok := v.CaddyRoute(); ok {
+		if err := proxy.SeedRoute(ctx, conn, host, port); err != nil {
+			return fmt.Errorf("create the proxy route: %w", err)
+		}
 	}
 	return nil
 }

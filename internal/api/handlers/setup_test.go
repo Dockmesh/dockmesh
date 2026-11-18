@@ -124,6 +124,7 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 		{"stacks dir", h.SetupValidateStacksDir, `{"data_dir":"/var/lib/dockmesh","path":"/srv/stacks"}`},
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
+		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,6 +244,7 @@ func TestSetupHandlersNeedSession(t *testing.T) {
 		{"stacks dir", h.SetupValidateStacksDir, `{"data_dir":"/var/lib/dockmesh","path":"/srv/stacks"}`},
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
+		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
 		{"commit", h.SetupCommit, setupCommitBody},
 		{"restore", h.SetupRestore, ""},
 	}

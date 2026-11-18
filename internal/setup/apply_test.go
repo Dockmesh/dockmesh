@@ -27,7 +27,7 @@ func TestApplyValuesValidate(t *testing.T) {
 		{name: "proxy on loopback", edit: func(v *ApplyValues) { v.TLSMode = "proxy" }, ok: true, addr: "127.0.0.1:8080", mode: "proxy", trusts: "127.0.0.1"},
 		{name: "proxy on LAN address", edit: func(v *ApplyValues) { v.TLSMode = "proxy"; v.HTTPAddr = "10.0.0.5:8080" }, ok: true, addr: "10.0.0.5:8080", mode: "proxy", trusts: "10.0.0.5"},
 		{name: "proxy on every address", edit: func(v *ApplyValues) { v.TLSMode = "proxy"; v.HTTPAddr = ":8080" }, ok: true, addr: ":8080", mode: "proxy"},
-		{name: "caddy", edit: func(v *ApplyValues) { v.TLSMode = "caddy" }, ok: true, addr: "127.0.0.1:8080", mode: "caddy", trusts: "127.0.0.1"},
+		{name: "caddy", edit: func(v *ApplyValues) { v.TLSMode, v.Proxy.ACMEEmail = "caddy", "ops@dm.lan" }, ok: true, addr: "127.0.0.1:8080", mode: "caddy", trusts: "127.0.0.1"},
 		{name: "own certificate", edit: func(v *ApplyValues) {
 			v.TLSMode, v.TLSCertFile, v.TLSKeyFile = "file", "/etc/ssl/dm.pem", "/etc/ssl/dm.key"
 		}, ok: true, addr: ":8080", mode: "file"},

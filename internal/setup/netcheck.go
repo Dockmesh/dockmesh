@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -141,4 +142,42 @@ func CertExpired(certFile string, now time.Time) (bool, time.Time, error) {
 		return false, time.Time{}, err
 	}
 	return now.After(leaf.NotAfter), leaf.NotAfter, nil
+}
+
+// DNSCheck is whether a name resolves, and whether to an address of this
+// host. Behind NAT a public name never resolves to a local address, so
+// that part is only a hint.
+type DNSCheck struct {
+	Host      string   `json:"host"`
+	Resolves  bool     `json:"resolves"`
+	Addresses []string `json:"addresses,omitempty"`
+	Local     bool     `json:"local"`
+}
+
+// CheckDNS resolves host and compares the answers with this host's
+// interface addresses.
+func CheckDNS(ctx context.Context, host string) *DNSCheck {
+	c := &DNSCheck{Host: host}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return c
+	}
+	c.Resolves = true
+	c.Addresses = addrs
+	local := map[string]bool{}
+	if ifaces, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range ifaces {
+			if ipn, ok := a.(*net.IPNet); ok {
+				local[ipn.IP.String()] = true
+			}
+		}
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && local[ip.String()] {
+			c.Local = true
+		}
+	}
+	return c
 }

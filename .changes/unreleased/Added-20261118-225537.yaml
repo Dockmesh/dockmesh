@@ -1,0 +1,3 @@
+kind: Added
+body: 'The setup wizard and the setup file can let Caddy get the certificate: Dockmesh listens on localhost, setup turns the reverse proxy on and creates its route for the base URL; the reverse proxy step turns the proxy on with an ACME email after checking ports 80 and 443 and pulling the Caddy image'
+time: 2026-11-18T22:55:37.474660687Z
