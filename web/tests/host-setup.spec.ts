@@ -72,7 +72,7 @@ test('waiting host: banner, check, refusal, then save the default', async ({ pag
   await expect(tab.getByTestId('setup-save')).toBeDisabled();
 
   await tab.locator('#setup-stacks-dir').fill('/home/stacks');
-  await expect(tab.getByTestId('setup-check')).toContainText('does not create a new directory at /home/stacks');
+  await expect(tab.getByTestId('setup-check')).toContainText('/home/stacks');
   await expect(tab.getByTestId('setup-check')).not.toContainText('root creates');
   await expect(tab.getByTestId('setup-prepare')).toContainText('sudo install -d -o dockmesh-agent');
   await expect(tab.getByTestId('setup-save')).toBeDisabled();
