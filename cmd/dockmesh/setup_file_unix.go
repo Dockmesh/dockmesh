@@ -95,6 +95,9 @@ func (a *setupApplier) check(v setup.ApplyValues) error {
 			return fmt.Errorf("tls: %s", c.Message)
 		}
 	}
+	if err := checkProxyPorts(v); err != nil {
+		return fmt.Errorf("proxy: %w", err)
+	}
 	if v.StacksOutsideDataDir() {
 		if a.uid > math.MaxInt32 {
 			return errors.New("the dockmesh account has an out-of-range uid")

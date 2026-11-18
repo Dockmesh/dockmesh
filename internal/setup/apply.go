@@ -16,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/webtls"
 )
 
@@ -66,6 +67,12 @@ type ApplyValues struct {
 	// TrustedProxies replaces the default trusted proxy of a listener
 	// behind the operator's own proxy.
 	TrustedProxies string `json:"trusted_proxies,omitempty"`
+	// Proxy turns the managed Caddy proxy on. TLS mode caddy needs it and
+	// turns it on; Caddy then gets the certificate for BaseURL's host.
+	Proxy struct {
+		Enabled   bool   `json:"enabled,omitempty"`
+		ACMEEmail string `json:"acme_email,omitempty"`
+	} `json:"proxy,omitempty"`
 	// Restore restores the system backup the service left as
 	// RestoreArchiveFile (and RestoreKeyFile) in the state dir instead of
 	// creating an admin.
@@ -181,7 +188,65 @@ func (v *ApplyValues) ValidateServer() error {
 	if err := v.validateAgent(port); err != nil {
 		return err
 	}
+	if err := v.validateProxy(mode); err != nil {
+		return err
+	}
 	return v.validateTrustedProxies(mode)
+}
+
+// validateProxy turns the proxy on for TLS mode caddy, which also needs a
+// DNS name in BaseURL and an ACME email. A restore brings its proxy
+// settings from the backup.
+func (v *ApplyValues) validateProxy(mode webtls.Mode) error {
+	if v.Restore {
+		if v.Proxy.Enabled || v.Proxy.ACMEEmail != "" {
+			return errors.New("a restore brings its proxy settings from the backup")
+		}
+		return nil
+	}
+	if mode == webtls.Caddy {
+		v.Proxy.Enabled = true
+		host := ""
+		if u, err := url.Parse(v.BaseURL); err == nil && u.Scheme == "https" {
+			host = u.Hostname()
+		}
+		if host == "" || net.ParseIP(host) != nil {
+			return errors.New("with tls mode caddy the base URL must be https://<DNS name>: Caddy gets the certificate for that name")
+		}
+		if v.Proxy.ACMEEmail == "" {
+			return errors.New("with tls mode caddy the ACME email is required")
+		}
+	}
+	if v.Proxy.ACMEEmail != "" {
+		if !v.Proxy.Enabled {
+			return errors.New("the ACME email is only used with the reverse proxy on")
+		}
+		if err := proxy.ValidACMEEmail(v.Proxy.ACMEEmail); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CaddyRoute returns the host and local port of the route Caddy serves
+// for TLS mode caddy; ok is false in every other mode.
+func (v *ApplyValues) CaddyRoute() (host string, port int, ok bool) {
+	if webtls.Mode(v.TLSMode) != webtls.Caddy || v.Restore {
+		return "", 0, false
+	}
+	u, err := url.Parse(v.BaseURL)
+	if err != nil {
+		return "", 0, false
+	}
+	_, p, err := net.SplitHostPort(v.HTTPAddr)
+	if err != nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return "", 0, false
+	}
+	return u.Hostname(), n, true
 }
 
 // StacksRoot is the stacks dir v sets up.

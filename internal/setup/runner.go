@@ -49,6 +49,11 @@ type CommitInput struct {
 		Listen string `json:"listen,omitempty"`
 		URL    string `json:"url,omitempty"`
 	} `json:"agent,omitempty"`
+	// Proxy is the reverse proxy step.
+	Proxy struct {
+		Enabled   bool   `json:"enabled,omitempty"`
+		ACMEEmail string `json:"acme_email,omitempty"`
+	} `json:"proxy,omitempty"`
 }
 
 // Validate returns the first user-input issue or nil. Cheaper than the

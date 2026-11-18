@@ -140,6 +140,14 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 		a.result(applyRefused, "stacks_dir", err)
 		return
 	}
+	if err := checkProxyPorts(v); err != nil {
+		dropTarget(v.DataDir, created)
+		if stacksCreated {
+			_ = os.Remove(v.StacksDir)
+		}
+		a.result(applyRefused, "proxy", err)
+		return
+	}
 	applied := false
 	defer func() {
 		// A failed restore may have filled it: then it is set aside, so a
@@ -251,6 +259,21 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 	}
 	applied = true
 	a.result(applyApplied, "", nil)
+}
+
+// checkProxyPorts refuses the reverse proxy while another program listens
+// on 80 or 443, which Caddy binds on the host. Root can bind them, so the
+// check is exact.
+func checkProxyPorts(v setup.ApplyValues) error {
+	if !v.Proxy.Enabled {
+		return nil
+	}
+	for _, p := range []int{80, 443} {
+		if c := setup.CheckPort(p); c.Issue == setup.IssuePortBusy {
+			return fmt.Errorf("port %d is in use by another program; free it or turn the reverse proxy off", p)
+		}
+	}
+	return nil
 }
 
 // prepareStacksDir checks a stacks dir outside the data dir with root's

@@ -19,6 +19,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacksdir"
 	"github.com/google/uuid"
@@ -451,4 +452,54 @@ func (h *Handlers) SetupCheckCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, setup.CheckCertPair(req.CertFile, req.KeyFile, req.Host, time.Now()))
+}
+
+// proxyPullTimeout bounds the Caddy image pull of the proxy check.
+const proxyPullTimeout = 3 * time.Minute
+
+// SetupCheckProxy runs the reverse proxy step's checks: ports 80 and 443
+// free, the Caddy image pulled, and for TLS mode caddy whether the base
+// URL's name resolves to an address of this server. Body:
+// `{ "host": "dm.example.org" }`, host only with TLS mode caddy.
+func (h *Handlers) SetupCheckProxy(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	var req struct {
+		Host string `json:"host"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res := setupProxyCheck{Image: proxy.DefaultProxyImage}
+	busy, err := proxy.BusyPorts()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res.BusyPorts = busy
+	if req.Host != "" {
+		res.DNS = setup.CheckDNS(r.Context(), req.Host)
+	}
+	if h.Docker == nil {
+		res.PullError = "Docker is not reachable"
+	} else {
+		ctx, cancel := context.WithTimeout(r.Context(), proxyPullTimeout)
+		defer cancel()
+		if err := proxy.PullDefaultImage(ctx, h.Docker); err != nil {
+			res.PullError = err.Error()
+		} else {
+			res.Pulled = true
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+type setupProxyCheck struct {
+	BusyPorts []int           `json:"busy_ports"`
+	Image     string          `json:"image"`
+	Pulled    bool            `json:"pulled"`
+	PullError string          `json:"pull_error,omitempty"`
+	DNS       *setup.DNSCheck `json:"dns,omitempty"`
 }

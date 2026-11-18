@@ -142,6 +142,8 @@ func setupFileValues(f setup.File) (setup.ApplyValues, error) {
 	v.TLSCertFile = f.TLS.CertFile
 	v.TLSKeyFile = f.TLS.KeyFile
 	v.TrustedProxies = f.TLS.TrustedProxies
+	v.Proxy.Enabled = f.Proxy.Enabled
+	v.Proxy.ACMEEmail = f.Proxy.ACMEEmail
 	v.StacksDir = f.StacksDir
 	v.AgentURL = f.Address.AgentURL
 	if f.Address.AgentPort != 0 {
