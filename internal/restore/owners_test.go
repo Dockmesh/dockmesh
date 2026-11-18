@@ -148,9 +148,8 @@ func TestExtractSendsOtherOwnersThroughHelper(t *testing.T) {
 	}
 }
 
-// The group comes from the archive as well: postgres-alpine data is 70:70,
-// and a container running as the server's uid 1000 may still write files
-// with group 1000 or another one, which keep that group.
+// postgres-alpine data is 70:70; a file with the server's uid 999 but
+// group 1000 keeps that group too.
 func TestExtractKeepsArchiveGroups(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root restores owners itself")

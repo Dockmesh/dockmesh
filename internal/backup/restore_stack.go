@@ -390,7 +390,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 
 	var composeContent, envContent string
 	var restored []string
-	var owner *stackManifest
+	var manifest *stackManifest
 	owned := newOwnedRestore(ctx, stackFiles(s.docker), stackDir)
 	defer owned.abort()
 	entries := 0
@@ -410,7 +410,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 		switch {
 		case name == stackManifestName && hdr.Typeflag == tar.TypeReg:
 			if m, err := readStackManifest(tr); err == nil {
-				owner = m
+				manifest = m
 			}
 		case strings.HasPrefix(name, "stack/"):
 			rel := strings.TrimPrefix(name, "stack/")
@@ -421,7 +421,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
 			}
-			if owned.wants(owner, hdr, rel) {
+			if owned.wants(manifest, hdr, rel) {
 				if err := owned.write(hdr, rel, tr); err != nil {
 					return fmt.Errorf("restore %s: %w", rel, err)
 				}
@@ -430,7 +430,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				}
 				continue
 			}
-			if owned.unavailable(owner, hdr, rel) {
+			if owned.unavailable(manifest, hdr, rel) {
 				owned.lostOwners++
 			}
 			buf, err := restoreStackEntry(root, tr, hdr, rel, report)
@@ -522,11 +522,11 @@ func foreign(m *stackManifest, hdr *tar.Header) bool {
 	return hdr.Uid != *m.OwnerUID || (m.OwnerGID != nil && hdr.Gid != *m.OwnerGID)
 }
 
-func (o *ownedRestore) wants(owner *stackManifest, hdr *tar.Header, rel string) bool {
+func (o *ownedRestore) wants(manifest *stackManifest, hdr *tar.Header, rel string) bool {
 	if o.files == nil || (hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg) || stacks.ManagerFile(rel) {
 		return false
 	}
-	if foreign(owner, hdr) {
+	if foreign(manifest, hdr) {
 		return true
 	}
 	for _, d := range o.dirs {
@@ -537,8 +537,8 @@ func (o *ownedRestore) wants(owner *stackManifest, hdr *tar.Header, rel string) 
 	return false
 }
 
-func (o *ownedRestore) unavailable(owner *stackManifest, hdr *tar.Header, rel string) bool {
-	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && !stacks.ManagerFile(rel) && foreign(owner, hdr)
+func (o *ownedRestore) unavailable(manifest *stackManifest, hdr *tar.Header, rel string) bool {
+	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && !stacks.ManagerFile(rel) && foreign(manifest, hdr)
 }
 
 func (o *ownedRestore) write(hdr *tar.Header, rel string, r io.Reader) error {

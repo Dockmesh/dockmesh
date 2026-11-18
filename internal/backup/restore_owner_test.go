@@ -134,7 +134,7 @@ func TestManagerFile(t *testing.T) {
 	}
 }
 
-func TestForeignComparesUidAndGid(t *testing.T) {
+func TestForeignComparesUIDAndGID(t *testing.T) {
 	uid, gid := 999, 999
 	withGID := &stackManifest{OwnerUID: &uid, OwnerGID: &gid}
 	uidOnly := &stackManifest{OwnerUID: &uid}
