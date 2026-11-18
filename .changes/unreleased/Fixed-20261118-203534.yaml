@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deploys to an agent copy the files next to compose.yaml (for example `./html/index.html` or a config file) into the agent's stack directory; a file removed on the server goes on the next deploy, files a container wrote or changed stay
+time: 2026-11-18T20:35:34.223485136Z

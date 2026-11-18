@@ -1384,6 +1384,16 @@
       if (res.replicas_ignored?.length) {
         toast.warning(m.stacks_d_replicas_ignored(), m.stacks_d_replicas_ignored_services({ services: res.replicas_ignored.join(', ') }));
       }
+      const files = res.stack_files;
+      if (files?.not_sent) {
+        toast.warning(m.stacks_d_files_not_sent(), m.stacks_d_files_not_sent_detail({ count: files.not_sent }));
+      }
+      const notes = [...(files?.kept ?? []), ...(files?.skipped ?? [])];
+      if (notes.length) {
+        const shown = notes.slice(0, 5).map((n) => `${n.path}: ${n.reason}`).join('; ');
+        const more = notes.length > 5 ? ' ' + m.stacks_d_files_more({ count: notes.length - 5 }) : '';
+        toast.warning(m.stacks_d_files_kept({ count: notes.length }), shown + more);
+      }
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
       // this deploy's new row appears without a manual reload.

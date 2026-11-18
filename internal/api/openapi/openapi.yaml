@@ -7292,6 +7292,14 @@ paths:
         multi-file overlay rules and deploys the merged result. Without
         the query param, falls back to `active_environment` in
         `.dockmesh.meta.json`; without that, deploys the base compose.
+
+        On an agent, the files next to `compose.yaml` (not `.env`, the
+        compose files or Dockmesh's own files) go along and are written
+        into the agent's stack directory; `stack_files` in the result says
+        what happened to them. A stack directory over 8 MiB or 2000 entries
+        is refused with 422. Agents that predate this get only compose.yaml
+        and `.env`, as before, and `stack_files.not_sent` counts the files
+        they missed.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/StackHostQuery"
@@ -11271,6 +11279,39 @@ components:
             Services whose `deploy.replicas` asks for a count other than 1.
             Host stacks don't apply it; each service keeps the number of
             containers it runs.
+        stack_files:
+          $ref: '#/components/schemas/StackFilesReport'
+    StackFilesReport:
+      type: object
+      description: |
+        Agent deploys only: what happened to the files next to
+        `compose.yaml`. The agent replaces or removes a file only while it
+        still holds what Dockmesh wrote; anything else stays and is listed
+        in `kept`.
+      properties:
+        copied:
+          type: integer
+          description: Files that now hold the server's content.
+        removed:
+          type: integer
+          description: Files gone from the server since the last deploy and removed on the agent.
+        kept:
+          type: array
+          items: {$ref: '#/components/schemas/StackFileNote'}
+          description: Files on the agent left as they are, with the reason.
+        skipped:
+          type: array
+          items: {$ref: '#/components/schemas/StackFileNote'}
+          description: Entries the server left out (unreadable, symlinks leaving the stack directory, special files).
+        not_sent:
+          type: integer
+          description: Files not copied because the agent predates stack files; update the agent.
+    StackFileNote:
+      type: object
+      required: [path, reason]
+      properties:
+        path: {type: string, description: Relative to the stack directory.}
+        reason: {type: string}
     StackCleanupPlan:
       type: object
       description: |

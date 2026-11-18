@@ -66,6 +66,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -959,6 +960,13 @@ func main() {
 	hostRegistry.Local().SetAuthResolver(localAuth)
 	hostRegistry.SetRegistryAuth(registriesSvc)
 	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
+	hostRegistry.SetStackFiles(func(name string) (*stackfiles.Set, []stackfiles.Note, error) {
+		dir, err := stacksMgr.Dir(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		return stackfiles.Collect(dir)
+	})
 
 	// Deploy progress tracker — same propagation pattern as the auth
 	// resolver. Frontend polls /stacks/{name}/deploy/progress for the

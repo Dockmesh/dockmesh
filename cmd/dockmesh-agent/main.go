@@ -52,6 +52,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
@@ -1278,6 +1279,9 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
 		err := deleteStack(ctx, stackhelper.New(cli), agentStackDirs(), req.Name)
+		if err == nil {
+			err = removeStackFilesManifest(filepath.Join(dataDir(), stackFilesDir), req.Name)
+		}
 		respond(conn, f.ID, struct{}{}, err)
 
 	default:
@@ -1310,6 +1314,14 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 		}
 	}
 
+	var files *stackfiles.Report
+	if req.Files != nil {
+		rep, err := applyStackFiles(agentStackDirs(), filepath.Join(dataDir(), stackFilesDir), req.Name, req.Files)
+		if err != nil {
+			return nil, err
+		}
+		files = &rep
+	}
 	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
@@ -1319,6 +1331,9 @@ func agentDeployStack(ctx context.Context, cli *client.Client, cs *compose.Servi
 		ctx = compose.WithForcePull(ctx)
 	}
 	res, err := cs.DeployProject(ctx, proj)
+	if res != nil {
+		res.StackFiles = files
+	}
 	if err != nil {
 		return res, err
 	}

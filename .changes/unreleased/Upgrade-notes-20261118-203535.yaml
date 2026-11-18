@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Agent deploys now carry the files next to compose.yaml, up to 8 MiB and 2000 entries; a larger stack directory on the server is refused with a message naming its largest files. Files already on the agent that Dockmesh did not write, or that changed there, are left alone and listed after the deploy. Agents older than the server still get only compose.yaml and .env, and the deploy says how many files they missed until they are updated
+time: 2026-11-18T20:35:35.908214688Z
+custom:
+    Audience: admins
+    Id: agent-stack-files

@@ -16,6 +16,7 @@ type Registry struct {
 
 	afterDeploy DeployHook
 	auth        RegistryAuth
+	stackFiles  StackFilesFunc
 
 	fixed []Host
 }
@@ -29,6 +30,9 @@ type RegistryAuth interface {
 // SetRegistryAuth makes agent deploys, scales and scale checks carry the
 // credentials for their images.
 func (r *Registry) SetRegistryAuth(a RegistryAuth) { r.auth = a }
+
+// SetStackFiles makes agent deploys carry the files next to compose.yaml.
+func (r *Registry) SetStackFiles(f StackFilesFunc) { r.stackFiles = f }
 
 func NewRegistry(dockerCli *docker.Client, agentSvc *agents.Service) *Registry {
 	return &Registry{
@@ -78,6 +82,7 @@ func (r *Registry) Pick(id string) (Host, error) {
 	rh := NewRemote(live.ID, live.Name, r.agents)
 	rh.afterDeploy = r.afterDeploy
 	rh.auth = r.auth
+	rh.stackFiles = r.stackFiles
 	return rh, nil
 }
 

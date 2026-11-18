@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
@@ -1261,6 +1262,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if len(res.ReplicasIgnored) > 0 {
 		out["replicas_ignored"] = res.ReplicasIgnored
 	}
+	if res.StackFiles != nil {
+		out["stack_files"] = res.StackFiles
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -1311,6 +1315,10 @@ func deployErrorStatus(err error) int {
 	}
 	if errors.Is(err, agents.ErrWaitingForSetup) {
 		return http.StatusConflict
+	}
+	var tooLarge *stackfiles.TooLargeError
+	if errors.As(err, &tooLarge) {
+		return http.StatusUnprocessableEntity
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

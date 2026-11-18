@@ -14,6 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
@@ -38,6 +39,41 @@ type RemoteHost struct {
 
 	afterDeploy DeployHook
 	auth        RegistryAuth
+	stackFiles  StackFilesFunc
+}
+
+// StackFilesFunc reads the files next to a stack's compose.yaml on the
+// server, with the entries it left out.
+type StackFilesFunc func(name string) (*stackfiles.Set, []stackfiles.Note, error)
+
+// fileSet is the set to send with a deploy of name. An agent that predates
+// stack files gets none; the report then counts what it misses.
+func (h *RemoteHost) fileSet(name string) (*stackfiles.Set, *stackfiles.Report, error) {
+	if h.stackFiles == nil {
+		return nil, nil, nil
+	}
+	ag, err := h.live()
+	if err != nil {
+		return nil, nil, err
+	}
+	set, skipped, err := h.stackFiles(name)
+	if !ag.Hello.Has(agents.CapStackFiles) {
+		var tl *stackfiles.TooLargeError
+		switch {
+		case errors.As(err, &tl):
+			return nil, &stackfiles.Report{NotSent: tl.Entries}, nil
+		case err != nil:
+			slog.Warn("read stack files", "stack", name, "err", err)
+			return nil, nil, nil
+		case set.Count() == 0:
+			return nil, nil, nil
+		}
+		return nil, &stackfiles.Report{NotSent: set.Count()}, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("stack files: %w", err)
+	}
+	return set, &stackfiles.Report{Skipped: skipped}, nil
 }
 
 // registryAuth is the credentials for the images of a compose payload,
@@ -259,12 +295,17 @@ func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envCont
 	if err := h.checkReservedLabels(composeYAML); err != nil {
 		return nil, err
 	}
+	files, fileReport, err := h.fileSet(name)
+	if err != nil {
+		return nil, err
+	}
 	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
 		Name:      name,
 		Compose:   composeYAML,
 		Env:       envContent,
 		Auth:      h.registryAuth(ctx, name, composeYAML, envContent),
 		ForcePull: compose.ForcePullRequested(ctx),
+		Files:     files,
 	})
 	if err != nil {
 		return nil, err
@@ -273,10 +314,26 @@ func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envCont
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode deploy result: %w", err)
 	}
+	out.StackFiles = mergeFileReports(out.StackFiles, fileReport)
 	if h.afterDeploy != nil {
 		h.afterDeploy(ctx, h.id, name, &out)
 	}
 	return &out, nil
+}
+
+// mergeFileReports adds what the server left out to the agent's report.
+func mergeFileReports(agent, server *stackfiles.Report) *stackfiles.Report {
+	if server == nil {
+		return agent
+	}
+	if agent == nil {
+		if server.NotSent == 0 && len(server.Skipped) == 0 {
+			return nil
+		}
+		return server
+	}
+	agent.Skipped = append(agent.Skipped, server.Skipped...)
+	return agent
 }
 
 func (h *RemoteHost) StopStack(ctx context.Context, name string) error {

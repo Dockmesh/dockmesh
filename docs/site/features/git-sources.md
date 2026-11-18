@@ -109,7 +109,7 @@ Deleting a stack also deletes its git source and the local clone, so a later com
 ## Limits
 
 - One git source per stack, one branch per source.
-- The repository's other files reach the stack directory on the server only. Deploys on an agent host send only `compose.yaml` and `.env`, so relative bind mounts like `./config:/etc/app` resolve to the stack directory on the agent, where those files don't exist.
+- The repository's other files reach an agent host with each deploy, up to 8 MiB per stack; agents older than the server receive only `compose.yaml` and `.env`. See [Files next to compose.yaml on agent hosts](../concepts/stacks.md#files-next-to-composeyaml-on-agent-hosts).
 
 ## Permissions
 

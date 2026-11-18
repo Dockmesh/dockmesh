@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -205,4 +207,96 @@ func deleteStack(ctx context.Context, files *stackhelper.Helper, dirs stackDirs,
 		errs = append(errs, files.RemoveAll(ctx, root.Name(), dir))
 	}
 	return errors.Join(errs...)
+}
+
+// stackFilesDir, below the agent's data dir, holds one manifest per stack
+// of the files the agent wrote into its stack directory. It stays out of
+// the stack directory, which the stack's containers may write.
+const stackFilesDir = "stackfiles"
+
+// applyStackFiles writes the files the server sent with a deploy into the
+// stack directory of name and records them in manifestDir.
+func applyStackFiles(dirs stackDirs, manifestDir, name string, set *stackfiles.Set) (stackfiles.Report, error) {
+	if err := stacks.ValidateName(name); err != nil {
+		return stackfiles.Report{}, err
+	}
+	if err := set.Validate(); err != nil {
+		return stackfiles.Report{}, err
+	}
+	root, err := openStacksRoot(dirs, name)
+	if err != nil {
+		return stackfiles.Report{}, err
+	}
+	defer root.Close()
+	if err := root.MkdirAll(name, 0o750); err != nil {
+		return stackfiles.Report{}, err
+	}
+	stackRoot, err := root.OpenRoot(name)
+	if err != nil {
+		return stackfiles.Report{}, err
+	}
+	defer stackRoot.Close()
+
+	prev, err := readStackFilesManifest(manifestDir, name)
+	if err != nil {
+		return stackfiles.Report{}, err
+	}
+	next, rep, err := stackfiles.Apply(stackRoot, set, prev)
+	if err != nil {
+		return rep, err
+	}
+	if err := writeStackFilesManifest(manifestDir, name, next); err != nil {
+		return rep, fmt.Errorf("record stack files: %w", err)
+	}
+	return rep, nil
+}
+
+func readStackFilesManifest(dir, name string) (*stackfiles.Manifest, error) {
+	b, err := os.ReadFile(filepath.Join(dir, name+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m stackfiles.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		slog.Warn("stack files manifest unreadable; treating every file as not written by Dockmesh", "stack", name, "err", err)
+		return nil, nil
+	}
+	return &m, nil
+}
+
+func writeStackFilesManifest(dir, name string, m *stackfiles.Manifest) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, name+".json.tmp-")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(dir, name+".json"))
+}
+
+func removeStackFilesManifest(dir, name string) error {
+	if err := stacks.ValidateName(name); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(dir, name+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

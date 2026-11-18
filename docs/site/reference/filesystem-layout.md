@@ -116,8 +116,9 @@ The server writes its log to stdout and stderr, so on Linux read it with `journa
 | `/var/lib/dockmesh-agent/enroll-ca.pem` | Server CA written by the installer, used to check the server during enrollment |
 | `/var/lib/dockmesh-agent/agent.url` | Saved `wss://` server URL |
 | `/var/lib/dockmesh-agent/bin/dockmesh-agent` | Agent binary; self-upgrades replace it in place |
-| `/var/lib/dockmesh-agent/stacks/<stack>/` | Mirror of stacks deployed to this host: `compose.yaml` and `.dockmesh.meta.json`, plus relative bind-mount data. `DOCKMESH_STACKS_DIR` in `agent.env` puts new stacks elsewhere |
+| `/var/lib/dockmesh-agent/stacks/<stack>/` | Mirror of stacks deployed to this host: `compose.yaml`, `.dockmesh.meta.json` and the other files of the stack directory on the server, plus relative bind-mount data. `DOCKMESH_STACKS_DIR` in `agent.env` puts new stacks elsewhere |
 | `/var/lib/dockmesh-agent/staging/` | Temporary deploy directories |
+| `/var/lib/dockmesh-agent/stackfiles/` | One record per stack of the files the agent wrote into its stack directory, so a later deploy replaces or removes only those |
 | `/usr/local/bin/dockmesh-agent` | Root-owned copy of the binary, refreshed at every service start; on a managed agent the binary itself, replaced only by its root updater (old one kept as `dockmesh-agent.prev`) |
 | `/var/lib/dockmesh-agent/update/` | Managed agents: release staged for the root updater, its `request`, `pending` and `result.json`, and `running` (the version that connected last) |
 | `/var/lib/dockmesh-agent-update/` | Managed agents: the root updater's own working directory (root only) |
