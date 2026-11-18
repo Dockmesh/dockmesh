@@ -26,8 +26,6 @@ func TestRestrictKeepsBaseRightsOnlyForAdmins(t *testing.T) {
 		{"admin token on one host", owner(adminPerms, Global), adminPerms, host, false},
 		{"admin token of a demoted owner", owner(viewerPerms, Global), adminPerms, Global, false},
 		{"admin token of a host admin", owner(adminPerms, host), adminPerms, Global, false},
-		// Users & roles: Manage carries tokens.manage_others, but without the
-		// base rights the token routes stay closed to it.
 		{"users-manage token of an admin", owner(adminPerms, Global), usersPerms, Global, false},
 	}
 	for _, tt := range tests {
