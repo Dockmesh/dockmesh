@@ -113,7 +113,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: A stack with this name is already managed.
+          description: A stack with this name is already managed, or the host is waiting for setup.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

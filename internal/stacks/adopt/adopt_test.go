@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
@@ -31,14 +32,25 @@ func (f *fakeHost) ListContainers(_ context.Context, _ bool) ([]container.Summar
 	return f.containers, f.listErr
 }
 
+// waitingHost is an agent host whose stacks directory was never confirmed.
+type waitingHost struct{ *fakeHost }
+
+func (w waitingHost) SetupError(context.Context) error {
+	return &agents.WaitingForSetupError{Name: w.name}
+}
+
 type fakeHostSource struct {
-	byID map[string]*fakeHost
+	byID    map[string]*fakeHost
+	waiting map[string]bool
 }
 
 func (f *fakeHostSource) Pick(id string) (ContainerLister, error) {
 	h, ok := f.byID[id]
 	if !ok {
 		return nil, errors.New("no such host")
+	}
+	if f.waiting[id] {
+		return waitingHost{h}, nil
 	}
 	return h, nil
 }
@@ -218,6 +230,23 @@ func TestAdoptRejectsDuplicateStackName(t *testing.T) {
 	})
 	if !errors.Is(err, ErrAlreadyManaged) {
 		t.Errorf("want ErrAlreadyManaged, got %v", err)
+	}
+}
+
+func TestAdoptRefusesHostWaitingForSetup(t *testing.T) {
+	svc, st, root := newAdoptHarness(t)
+	svc.Hosts.(*fakeHostSource).waiting = map[string]bool{"local": true}
+	_, err := svc.Adopt(context.Background(), AdoptRequest{
+		Name: "myapp", HostID: "local", Compose: minimalCompose,
+	})
+	if !errors.Is(err, agents.ErrWaitingForSetup) {
+		t.Fatalf("want ErrWaitingForSetup, got %v", err)
+	}
+	if len(st.created) != 0 {
+		t.Error("a stack was created for a host waiting for setup")
+	}
+	if _, err := os.Stat(filepath.Join(root, "myapp")); !os.IsNotExist(err) {
+		t.Errorf("stack dir exists: %v", err)
 	}
 }
 

@@ -1070,7 +1070,7 @@ func (h *Handlers) adoptService() *adopt.Service {
 // handles the common stack.Manager errors too).
 func writeAdoptError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, adopt.ErrAlreadyManaged):
+	case errors.Is(err, adopt.ErrAlreadyManaged), errors.Is(err, agents.ErrWaitingForSetup):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, adopt.ErrNoRunning),
 		errors.Is(err, adopt.ErrServicesMissing):
