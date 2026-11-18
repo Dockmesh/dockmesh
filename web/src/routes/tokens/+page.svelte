@@ -349,7 +349,7 @@
         <button
           type="button"
           class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={() => { newRole = null; showCreate = true; }}
+          onclick={() => { newRole = null; newScope = { type: 'global' }; showCreate = true; }}
         >
           <Plus size={12} strokeWidth={1.5} /> {m.tokens_new_token()}
         </button>
