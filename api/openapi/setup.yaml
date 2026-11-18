@@ -350,6 +350,49 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /setup/test-notification:
+    post:
+      operationId: setup.test_notification
+      tags: [setup]
+      summary: Send a test message to a channel that is not saved yet
+      description: |
+        Builds the channel from `type` and `config` (the fields of
+        `POST /notifications/channels`) and sends one test message. Nothing
+        is stored. Link-local and metadata addresses are refused; the error
+        text never repeats a secret of the config.
+      security:
+        - setupSession: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, config]
+              properties:
+                type: {type: string, enum: [webhook, ntfy, discord, slack, teams, gotify, email, pagerduty, pushover]}
+                config: {type: object, additionalProperties: true}
+      responses:
+        "403": {description: "Missing the `X-Dockmesh-Setup` header."}
+        "204": {description: Test message sent.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "502":
+          description: The channel refused or could not be reached.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: No setup session that may write (`setup code required`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "410":
+          description: Setup mode is no longer active.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /setup/validate-user:
     post:
       operationId: setup.validate_user
@@ -495,6 +538,17 @@ paths:
                     cert_file: {type: string, description: Absolute PEM certificate path for mode file.}
                     key_file: {type: string, description: Absolute PEM key path for mode file.}
                     trusted_proxies: {type: string, description: "Mode proxy only: comma-separated addresses or networks to trust instead of the listen address; never every address."}
+                notifications:
+                  type: array
+                  maxItems: 10
+                  description: Notification channels to create, checked like `POST /setup/test-notification`. The secrets stay in the setup state only until the apply ends.
+                  items:
+                    type: object
+                    required: [type, config]
+                    properties:
+                      type: {type: string}
+                      name: {type: string}
+                      config: {type: object, additionalProperties: true}
                 proxy:
                   type: object
                   description: "The reverse proxy step. TLS mode caddy turns it on, needs `acme_email` and an https base URL with a DNS name, and stores a route for that name to this server."

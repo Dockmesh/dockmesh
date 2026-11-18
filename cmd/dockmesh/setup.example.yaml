@@ -75,3 +75,19 @@ tls:
 #   enabled: true
 #   # Required with tls mode caddy.
 #   acme_email: you@example.com
+
+# Notification channels to create. Fields as in Alerts > Channels; a
+# secret field (webhook URLs, tokens, keys, the SMTP password) only as
+# <field>_file, a file holding the value alone (chmod 600).
+# notifications:
+#   - type: ntfy
+#     name: ops
+#     url_file: /root/ntfy-url
+#     priority: 4
+#   - type: email
+#     host: smtp.example.com
+#     port: 587
+#     username: dockmesh
+#     password_file: /root/smtp-password
+#     from: dockmesh@example.com
+#     to: [ops@example.com]

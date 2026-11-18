@@ -1,0 +1,3 @@
+kind: Added
+body: The setup wizard adds a notification channel with Send test, and the setup file takes notification channels whose secrets are named as files (url_file, token_file, password_file)
+time: 2026-11-18T23:03:15.824362378Z

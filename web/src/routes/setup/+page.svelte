@@ -8,6 +8,8 @@
   import { fmtVersion } from '$lib/version';
   import { fmtMem } from '$lib/format';
   import { m } from '$lib/paraglide/messages.js';
+  import { channelConfig, channelTypes } from '$lib/notifyChannels';
+  import { getLocale } from '$lib/paraglide/runtime.js';
   import {
     DOCS,
     DOCS_BASE,
@@ -734,6 +736,52 @@
     next();
   }
 
+  // ----- N5 notifications -----------------------------------------------------
+  // The channel lives in this page only; it reaches the server with Install.
+  const CHANNEL_TYPES = channelTypes();
+  let chType = $state('');
+  let chFields = $state<Record<string, string>>({});
+  let chTest = $state<{ state: 'idle' | 'busy' | 'ok' | 'fail'; reason?: string }>({ state: 'idle' });
+  const chActive = $derived(CHANNEL_TYPES.find((t) => t.id === chType) ?? null);
+  const chWanted = $derived(!!chActive && Object.values(chFields).some((v) => v.trim() !== ''));
+
+  $effect(() => {
+    void chType;
+    void chFields;
+    chTest = { state: 'idle' };
+  });
+
+  function chConfig(): Record<string, unknown> {
+    return channelConfig(chActive!, chFields, getLocale());
+  }
+
+  async function sendTest() {
+    if (!chActive) return;
+    chTest = { state: 'busy' };
+    try {
+      const r = await fetch('/api/v1/setup/test-notification', {
+        method: 'POST',
+        headers: SETUP_HEADER,
+        body: JSON.stringify({ type: chActive.id, config: chConfig() })
+      });
+      if (r.status === 401) return sessionLost();
+      if (r.ok) {
+        chTest = { state: 'ok' };
+        return;
+      }
+      const b = await r.json().catch(() => ({}));
+      chTest = { state: 'fail', reason: b.error ?? `HTTP ${r.status}` };
+    } catch (e) {
+      chTest = { state: 'fail', reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  function skipNotifications() {
+    chType = '';
+    chFields = {};
+    next();
+  }
+
   // ----- N6 review ------------------------------------------------------------
   const tlsName = $derived(
     { internal: m.sw_tls_internal(), file: m.sw_tls_file(), caddy: m.sw_tls_caddy(), proxy: m.sw_tls_proxy() }[tls]
@@ -799,6 +847,7 @@
         body: JSON.stringify({
           data_dir: dataDir.trim(),
           stacks_dir: legacy || !stacksCustom ? undefined : stacksDir,
+          notifications: legacy || !chWanted || !chActive ? undefined : [{ type: chActive.id, name: chActive.label, config: chConfig() }],
           proxy: legacy || !proxyWanted ? undefined : { enabled: true, acme_email: acmeEmail.trim() || undefined },
           agent: legacy ? undefined : {
             listen: `:${agentPort}`,
@@ -1545,14 +1594,38 @@
         {:else if step === 'N5'}
           <div class="col">
             {@render head(m.sw_n5_title(), m.sw_n5_text())}
-            <section class="panel">
-              <div class="callout" role="note"><span class="ic info">i</span><span>{m.sw_n5_later()}</span></div>
+            <form class="panel" novalidate onsubmit={(e) => { e.preventDefault(); next(); }}>
+              {@render bannerBox()}
+              <div class="field">
+                <label class="lbl" for="ch-type">{m.sw_n5_type()}</label>
+                <select id="ch-type" class="inp" bind:value={chType} onchange={() => (chFields = {})}>
+                  <option value="">{m.sw_n5_none()}</option>
+                  {#each CHANNEL_TYPES as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
+                </select>
+              </div>
+              {#if chActive}
+                {#each chActive.fields as f (f.key)}
+                  <div class="field">
+                    <label class="lbl" for={`ch-${f.key}`}>{f.label}</label>
+                    <input id={`ch-${f.key}`} class="inp" class:dm-mono={f.key !== 'to'} type={f.secret ? 'password' : 'text'}
+                      autocomplete="off" spellcheck="false" placeholder={f.placeholder} bind:value={chFields[f.key]} />
+                  </div>
+                {/each}
+                <div class="row">
+                  <button type="button" class="btn" onclick={sendTest} disabled={!chWanted || chTest.state === 'busy'}>
+                    {#if chTest.state === 'busy'}<span class="spin" aria-hidden="true"></span>{/if}{m.sw_n5_test()}
+                  </button>
+                  {#if chTest.state === 'ok'}<span class="result"><span class="ok">✓</span> {m.sw_n5_test_ok()}</span>
+                  {:else if chTest.state === 'fail'}<span class="err">{m.sw_n5_test_fail({ reason: chTest.reason ?? '' })}</span>{/if}
+                </div>
+              {/if}
               <div class="foot">
                 <button type="button" class="btn ghost" onclick={back}>{m.sw_back()}</button>
+                <button type="button" class="link" onclick={skipNotifications}>{m.sw_skip()}</button>
                 <span class="sp"></span>
-                <button type="button" class="btn primary" onclick={next}>{m.sw_next()}</button>
+                <button type="submit" class="btn primary">{m.sw_next()}</button>
               </div>
-            </section>
+            </form>
           </div>
         {:else if step === 'N6'}
           {#snippet row(k: string, v: string, to: StepId, mono = false)}
@@ -1589,7 +1662,7 @@
                 <div class="sect">{m.sw_step_proxy()}</div>
                 {@render row('Caddy', proxyWanted ? (acmeEmail.trim() ? m.sw_n6_proxy_on_email({ email: acmeEmail.trim() }) : m.sw_n6_proxy_on()) : m.sw_n6_off(), 'N4')}
                 <div class="sect">{m.sw_step_notifications()}</div>
-                {@render row(m.sw_n6_channel(), m.sw_n6_none(), 'N5')}
+                {@render row(m.sw_n6_channel(), chWanted && chActive ? chActive.label : m.sw_n6_none(), 'N5')}
               </div>
               <p class="hint plain final">{legacy ? m.sw_n6_final_legacy() : m.sw_n6_final({ data: dataDir.trim() })}</p>
               <div class="foot">
