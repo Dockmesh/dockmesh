@@ -449,7 +449,6 @@ export interface StackDetail {
   status?: 'ok' | 'needs_recovery';
   modified_outside?: string[];
   scaler_paused?: ScalerPause;
-  mounts_stack_dir?: boolean;
   writable_stack_dir_mounts?: StackDirMount[];
 }
 

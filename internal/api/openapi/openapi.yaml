@@ -11093,7 +11093,9 @@ components:
             a directory above it (also as an absolute path or through a
             symlink, on the server and in the deployed agent's stacks
             directories) or of compose.yaml, an override, `.env` or the
-            meta file. Sources with variables are not followed.
+            meta file, in compose.yaml or an environment override, also
+            through a named volume that is a host bind. Sources with
+            variables are not followed.
           items:
             type: object
             required: [service, source, target]

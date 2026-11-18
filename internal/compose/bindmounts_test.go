@@ -194,12 +194,15 @@ func TestWritableStackDirMounts(t *testing.T) {
 		{"named volume", "services:\n  a:\n    volumes: [\"data:/data\"]\n", nil},
 		{"variable", "services:\n  a:\n    volumes: [\"${DIR}:/data\"]\n", nil},
 		{"two services", "services:\n  b:\n    volumes: [\"..:/s\"]\n  a:\n    volumes: [\".:/app\"]\n", []string{"a: .", "b: .."}},
+		{"host bind volume", "services:\n  a:\n    volumes: [\"v:/x\"]\nvolumes:\n  v:\n    driver_opts: {type: none, o: bind, device: /srv/stacks/web}\n", []string{"a: /srv/stacks/web"}},
+		{"host bind volume long", "services:\n  a:\n    volumes:\n      - {type: volume, source: v, target: /x}\nvolumes:\n  v:\n    driver_opts: {o: bind, device: /srv/stacks}\n", []string{"a: /srv/stacks"}},
+		{"plain named volume", "services:\n  a:\n    volumes: [\"v:/x\"]\nvolumes:\n  v: {}\n", nil},
 		{"invalid", "services: [", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
-			for _, m := range WritableStackDirMounts(tc.yaml, []string{dir}, nil) {
+			for _, m := range WritableStackDirMounts([]string{tc.yaml}, []StackDirOnHost{{Path: dir}}) {
 				got = append(got, m.Service+": "+m.Source)
 			}
 			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
@@ -211,12 +214,19 @@ func TestWritableStackDirMounts(t *testing.T) {
 
 func TestWritableStackDirMountsResolves(t *testing.T) {
 	base := t.TempDir()
-	dir := filepath.Join(base, "stacks", "web")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "web", "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(base, "link")
-	if err := os.Symlink(dir, link); err != nil {
+	// The stacks root itself is reached through a symlink.
+	if err := os.Symlink(real, filepath.Join(base, "stacks")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "stacks", "web")
+	if err := os.Symlink(dir, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(real, "web", "data", "up")); err != nil {
 		t.Fatal(err)
 	}
 	resolve := func(p string) string {
@@ -225,14 +235,24 @@ func TestWritableStackDirMountsResolves(t *testing.T) {
 		}
 		return p
 	}
-	y := "services:\n  a:\n    volumes: [\"" + filepath.ToSlash(link) + ":/x\"]\n"
-	got := WritableStackDirMounts(y, []string{dir}, resolve)
-	if len(got) != 1 || got[0].Target != "/x" {
-		t.Fatalf("symlink to the stack dir not found: %+v", got)
+	server := []StackDirOnHost{{Path: dir, Resolve: resolve}}
+	for _, src := range []string{".", "./", "..", "./compose.yaml", filepath.ToSlash(filepath.Join(base, "link")), "./data/up"} {
+		y := "services:\n  a:\n    volumes: [\"" + src + ":/x\"]\n"
+		if got := WritableStackDirMounts([]string{y}, server); len(got) != 1 {
+			t.Errorf("%s not found under a symlinked root: %+v", src, got)
+		}
 	}
-	// The second directory (an agent's copy) is checked too.
+	y := "services:\n  a:\n    volumes: [\"./data:/x\"]\n"
+	if got := WritableStackDirMounts([]string{y}, server); len(got) != 0 {
+		t.Errorf("subdir reported: %+v", got)
+	}
 	y = "services:\n  a:\n    volumes: [\"/var/lib/dockmesh-agent/stacks/web:/x\"]\n"
-	if got := WritableStackDirMounts(y, []string{dir, "/var/lib/dockmesh-agent/stacks/web"}, resolve); len(got) != 1 {
+	agent := append(server, StackDirOnHost{Path: "/var/lib/dockmesh-agent/stacks/web"})
+	if got := WritableStackDirMounts([]string{y}, agent); len(got) != 1 {
 		t.Fatalf("agent stack dir not found: %+v", got)
+	}
+	override := "services:\n  b:\n    volumes: [\".:/app\"]\n"
+	if got := WritableStackDirMounts([]string{"services: {}\n", override}, server); len(got) != 1 || got[0].Service != "b" {
+		t.Fatalf("override not checked: %+v", got)
 	}
 }
