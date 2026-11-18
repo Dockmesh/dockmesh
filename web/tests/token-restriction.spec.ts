@@ -6,11 +6,11 @@ import { ADMIN, signIn } from './env';
 test('new token needs an explicit restriction', async ({ page }) => {
   await signIn(page, ADMIN);
   await page.goto('/tokens');
-  await page.getByRole('button', { name: /New token/ }).click();
+  await page.getByTestId('token-new').click();
   const form = page.locator('#tok-create-form');
   await form.getByPlaceholder('github actions · acme-api').fill(`e2e-restriction-${Date.now().toString(36)}`);
 
-  const generate = page.getByRole('button', { name: /Generate/ });
+  const generate = page.getByTestId('token-generate');
   await expect(generate).toBeDisabled();
   await expect(form.locator('.tok-scope-active')).toHaveCount(0);
 

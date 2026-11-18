@@ -349,6 +349,7 @@
         <button
           type="button"
           class="dm-btn dm-btn-primary dm-btn-sm"
+          data-testid="token-new"
           onclick={() => { newRole = null; newScope = { type: 'global' }; showCreate = true; }}
         >
           <Plus size={12} strokeWidth={1.5} /> {m.tokens_new_token()}
@@ -539,6 +540,7 @@
         type="submit"
         form="tok-create-form"
         class="dm-btn dm-btn-primary dm-btn-sm"
+        data-testid="token-generate"
         disabled={!newName.trim() || newRole === null || creating}
         title={newRole === null ? m.tokens_pick_restriction() : undefined}
       >
