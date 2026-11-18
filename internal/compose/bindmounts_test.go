@@ -16,8 +16,12 @@ import (
 // A relative bind mount must end up in the persistent stack directory, not
 // in the staging copy compose was loaded from (which is deleted after the
 // deploy and left containers writing into a vanished directory).
-func TestRebaseBindSourcesWithRealLoader(t *testing.T) {
-	staging := t.TempDir()
+func TestRebaseStagedPathsWithRealLoader(t *testing.T) {
+	staging, cleanup, err := NewStagingDir(t.TempDir(), "deploy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
 	stackDir := t.TempDir()
 	composeYAML := `services:
   site:
@@ -27,6 +31,15 @@ func TestRebaseBindSourcesWithRealLoader(t *testing.T) {
       - ./conf/nginx.conf:/etc/nginx/nginx.conf:ro
       - /srv/shared:/shared
       - data:/data
+      - ../shared:/up
+    build:
+      context: ./app
+configs:
+  site:
+    file: ./conf/site.conf
+secrets:
+  key:
+    file: ../keys/key.pem
 volumes:
   data: {}
 `
@@ -37,7 +50,7 @@ volumes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	RebaseBindSources(proj, staging, stackDir)
+	warnings := RebaseStagedPaths(proj, staging, stackDir)
 
 	got := map[string]string{}
 	for _, v := range proj.Services["site"].Volumes {
@@ -48,11 +61,24 @@ volumes:
 		"/etc/nginx/nginx.conf": filepath.Join(stackDir, "conf", "nginx.conf"),
 		"/shared":               "/srv/shared",
 		"/data":                 "data",
+		"/up":                   filepath.Join(filepath.Dir(stackDir), "shared"),
 	}
 	for target, src := range want {
 		if got[target] != src {
 			t.Errorf("%s: source %q, want %q", target, got[target], src)
 		}
+	}
+	if c := proj.Services["site"].Build.Context; c != filepath.Join(stackDir, "app") {
+		t.Errorf("build context = %q", c)
+	}
+	if f := proj.Configs["site"].File; f != filepath.Join(stackDir, "conf", "site.conf") {
+		t.Errorf("config file = %q", f)
+	}
+	if f := proj.Secrets["key"].File; f != filepath.Join(filepath.Dir(stackDir), "keys", "key.pem") {
+		t.Errorf("secret file = %q", f)
+	}
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "../shared") || !strings.Contains(warnings[1], "secret key") {
+		t.Errorf("warnings = %q", warnings)
 	}
 }
 
@@ -62,7 +88,7 @@ func TestRebaseLeavesSiblingDirsAlone(t *testing.T) {
 			{Type: composetypes.VolumeTypeBind, Source: filepath.FromSlash("/tmp/stage-x-other/data"), Target: "/d"},
 		}},
 	}}
-	RebaseBindSources(proj, filepath.FromSlash("/tmp/stage-x"), filepath.FromSlash("/stacks/x"))
+	RebaseStagedPaths(proj, filepath.FromSlash("/tmp/stage-x"), filepath.FromSlash("/stacks/x"))
 	if got := proj.Services["a"].Volumes[0].Source; got != filepath.FromSlash("/tmp/stage-x-other/data") {
 		t.Errorf("prefix-sharing sibling rewritten to %q", got)
 	}
@@ -160,7 +186,7 @@ func TestRebaseStackRootBind(t *testing.T) {
 		}},
 	}}
 	stackDir := filepath.FromSlash("/stacks/x")
-	RebaseBindSources(proj, staging, stackDir)
+	RebaseStagedPaths(proj, staging, stackDir)
 	if got := proj.Services["a"].Volumes[0].Source; got != stackDir {
 		t.Errorf("stack root bind = %q, want %q", got, stackDir)
 	}
@@ -187,5 +213,21 @@ func TestMountsProjectDir(t *testing.T) {
 				t.Errorf("MountsProjectDir = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRebaseOnlyClimbsInsideTheStagingBase(t *testing.T) {
+	// An absolute path next to a staging dir NewStagingDir didn't create is
+	// never taken for a climb out of it.
+	proj := &composetypes.Project{Services: composetypes.Services{
+		"a": {Name: "a", Volumes: []composetypes.ServiceVolumeConfig{
+			{Type: composetypes.VolumeTypeBind, Source: filepath.FromSlash("/tmp/shared"), Target: "/s"},
+		}},
+	}}
+	if w := RebaseStagedPaths(proj, filepath.FromSlash("/tmp/stage-x"), filepath.FromSlash("/stacks/x")); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	if got := proj.Services["a"].Volumes[0].Source; got != filepath.FromSlash("/tmp/shared") {
+		t.Errorf("absolute path rewritten to %q", got)
 	}
 }

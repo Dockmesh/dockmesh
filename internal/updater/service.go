@@ -519,7 +519,7 @@ func loadChecked(ctx context.Context, stackDir, stack string, d *stacks.Detail) 
 	if err != nil {
 		return nil, err
 	}
-	compose.RebaseBindSources(proj, staged, stackDir)
+	compose.RebaseStagedPaths(proj, staged, stackDir)
 	return proj, nil
 }
 

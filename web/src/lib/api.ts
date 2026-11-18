@@ -2010,6 +2010,7 @@ export const api = {
         services: Array<{ name: string; container_id: string; image: string }>;
         dependencies_deployed?: string[];
         replicas_ignored?: string[];
+        warnings?: string[];
       }>(`/stacks/${encodeURIComponent(name)}/deploy${qs}`, { method: 'POST' });
     },
     stop: (name: string, host = 'local') => {

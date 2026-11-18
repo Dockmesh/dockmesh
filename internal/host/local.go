@@ -56,21 +56,23 @@ func (h *LocalHost) SetAuthResolver(r authResolver) { h.auth = r }
 // is, so relative bind mounts resolve there and not in the staging copy.
 func (h *LocalHost) SetStackDirResolver(f func(name string) (string, error)) { h.stackDir = f }
 
-// loadStaged parses a compose file staged in dir and points relative bind
-// mounts at the persistent stack directory.
-func (h *LocalHost) loadStaged(ctx context.Context, dir, name, envContent string) (*composetypes.Project, error) {
+// loadStaged parses a compose file staged in dir and points relative
+// paths at the persistent stack directory; the warnings name those that
+// leave it.
+func (h *LocalHost) loadStaged(ctx context.Context, dir, name, envContent string) (*composetypes.Project, []string, error) {
 	proj, err := compose.LoadProject(ctx, dir, name, envContent)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var warnings []string
 	if h.stackDir != nil {
 		stackDir, err := h.stackDir(name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		compose.RebaseBindSources(proj, dir, stackDir)
+		warnings = compose.RebaseStagedPaths(proj, dir, stackDir)
 	}
-	return proj, nil
+	return proj, warnings, nil
 }
 
 // SetProgressTracker propagates deploy-progress reporting into every
@@ -192,11 +194,14 @@ func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envConte
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := h.loadStaged(ctx, dir, name, envContent)
+	proj, warnings, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
 	res, err := h.newComposeSvc().DeployProject(ctx, proj)
+	if res != nil {
+		res.Warnings = append(res.Warnings, warnings...)
+	}
 	if err == nil && h.afterDeploy != nil {
 		h.afterDeploy(ctx, h.ID(), name, res)
 	}
@@ -231,14 +236,13 @@ func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.C
 	return h.newComposeSvc().CleanupPreview(ctx, name)
 }
 
-// writeStagingDir creates a temp directory holding compose.yaml and an
+// writeStagingDir creates a staging directory holding compose.yaml and an
 // optional .env.
 func writeStagingDir(name, composeYAML, envContent string) (string, func(), error) {
-	base, err := os.MkdirTemp("", "dockmesh-deploy-"+name+"-")
+	base, cleanup, err := compose.NewStagingDir("", "dockmesh-deploy-"+name+"-")
 	if err != nil {
 		return "", func() {}, err
 	}
-	cleanup := func() { _ = os.RemoveAll(base) }
 	if err := os.WriteFile(filepath.Join(base, "compose.yaml"), []byte(composeYAML), 0o600); err != nil {
 		cleanup()
 		return "", func() {}, err
@@ -525,7 +529,7 @@ func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envCont
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := h.loadStaged(ctx, dir, name, envContent)
+	proj, _, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +545,7 @@ func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envConten
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := h.loadStaged(ctx, dir, name, envContent)
+	proj, _, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +565,7 @@ func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envCo
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := h.loadStaged(ctx, dir, name, envContent)
+	proj, _, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}

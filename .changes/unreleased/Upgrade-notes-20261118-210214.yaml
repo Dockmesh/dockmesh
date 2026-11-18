@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Stacks with a relative bind that climbs out of the stack directory (`../shared`) get a new host path at their next deploy: `<stacks root>/shared` instead of a directory in the system temp dir (server) or the agent''s staging dir. Move data a container wrote there before redeploying'
+time: 2026-11-18T21:02:14.839743794Z
+custom:
+    Audience: admins
+    Id: climbing-binds

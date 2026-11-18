@@ -1261,6 +1261,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if len(res.ReplicasIgnored) > 0 {
 		out["replicas_ignored"] = res.ReplicasIgnored
 	}
+	if len(res.Warnings) > 0 {
+		out["warnings"] = res.Warnings
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

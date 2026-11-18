@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
@@ -20,36 +22,111 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// RebaseBindSources points bind mounts that compose resolved into the
-// temporary staging directory at the persistent stack directory instead.
-// Compose resolves "./data" against the directory it was loaded from; the
-// staging copy is deleted after the deploy, so without this the container
-// would write into a directory that no longer exists.
-// A bind of the staging directory itself (".:/app") becomes a bind of the
-// stack directory, as docker compose would mount it.
-func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) {
-	stagingDir = filepath.Clean(stagingDir)
-	for name, svc := range proj.Services {
-		changed := false
-		for i, v := range svc.Volumes {
-			if v.Type != composetypes.VolumeTypeBind {
-				continue
-			}
-			src := filepath.Clean(v.Source)
-			if src != stagingDir && !strings.HasPrefix(src, stagingDir+string(filepath.Separator)) {
-				continue
-			}
-			rel, err := filepath.Rel(stagingDir, src)
-			if err != nil {
-				continue
-			}
-			svc.Volumes[i].Source = filepath.Join(stackDir, rel)
-			changed = true
-		}
-		if changed {
-			proj.Services[name] = svc
-		}
+// stagingDepth is how far below its temporary base a staging directory
+// sits. A relative path that climbs out of the stack directory ("../x")
+// then still resolves inside the base, where it can be told apart from an
+// absolute path.
+const stagingDepth = 8
+
+// NewStagingDir creates an empty directory to stage a compose project in,
+// stagingDepth levels below a new temporary directory in parent ("" for
+// the system's). cleanup removes all of it.
+func NewStagingDir(parent, pattern string) (string, func(), error) {
+	base, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", func() {}, err
 	}
+	cleanup := func() { _ = os.RemoveAll(base) }
+	parts := []string{base}
+	for i := 1; i < stagingDepth; i++ {
+		parts = append(parts, "s")
+	}
+	dir := filepath.Join(append(parts, "stack")...)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return dir, cleanup, nil
+}
+
+// RebaseStagedPaths points the paths compose resolved against the staging
+// directory at the persistent stack directory instead: bind sources,
+// config and secret files and build contexts. Compose resolves "./data"
+// against the directory it was loaded from, and the staging copy is
+// deleted after the deploy. A bind of the staging directory itself
+// (".:/app") becomes a bind of the stack directory, and "../x" lands next
+// to it, as docker compose would mount them. Paths that leave the stack
+// directory are returned as warnings naming where they now point.
+func RebaseStagedPaths(proj *composetypes.Project, stagingDir, stackDir string) []string {
+	stagingDir = filepath.Clean(stagingDir)
+	base := stagingBase(stagingDir)
+	var warnings []string
+	rebase := func(p, what string) string {
+		if p == "" || !filepath.IsAbs(p) {
+			return p
+		}
+		src := filepath.Clean(p)
+		if !within(base, src) || (src == base && base != stagingDir) {
+			return p
+		}
+		rel, err := filepath.Rel(stagingDir, src)
+		if err != nil {
+			return p
+		}
+		out := filepath.Join(stackDir, rel)
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			warnings = append(warnings, fmt.Sprintf("%s %s points outside the stack directory, to %s", what, filepath.ToSlash(rel), out))
+		}
+		return out
+	}
+	for _, name := range slices.Sorted(maps.Keys(proj.Services)) {
+		svc := proj.Services[name]
+		for i, v := range svc.Volumes {
+			if v.Type == composetypes.VolumeTypeBind {
+				svc.Volumes[i].Source = rebase(v.Source, "service "+name+": bind")
+			}
+		}
+		if svc.Build != nil {
+			svc.Build.Context = rebase(svc.Build.Context, "service "+name+": build context")
+			svc.Build.Dockerfile = rebase(svc.Build.Dockerfile, "service "+name+": dockerfile")
+			for k, c := range svc.Build.AdditionalContexts {
+				svc.Build.AdditionalContexts[k] = rebase(c, "service "+name+": build context "+k)
+			}
+		}
+		proj.Services[name] = svc
+	}
+	for _, name := range slices.Sorted(maps.Keys(proj.Configs)) {
+		c := proj.Configs[name]
+		c.File = rebase(c.File, "config "+name+": file")
+		proj.Configs[name] = c
+	}
+	for _, name := range slices.Sorted(maps.Keys(proj.Secrets)) {
+		c := proj.Secrets[name]
+		c.File = rebase(c.File, "secret "+name+": file")
+		proj.Secrets[name] = c
+	}
+	return warnings
+}
+
+// stagingBase is the temporary base NewStagingDir put dir in, or dir
+// itself for a directory it didn't create: then only paths inside dir
+// are rebased, never an absolute path that merely shares a parent.
+func stagingBase(dir string) string {
+	if filepath.Base(dir) != "stack" {
+		return dir
+	}
+	base := filepath.Dir(dir)
+	for i := 1; i < stagingDepth; i++ {
+		if filepath.Base(base) != "s" {
+			return dir
+		}
+		base = filepath.Dir(base)
+	}
+	return base
+}
+
+func within(dir, p string) bool {
+	return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
 }
 
 // MountsProjectDir reports whether a service bind-mounts the project
