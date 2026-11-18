@@ -80,6 +80,6 @@ Notices are raised for conditions that need someone to act. Dockmesh raises one 
 
 Examples are legacy API tokens without an owner (see [API tokens](./api-tokens.md#legacy-tokens)), proxy sites that aren't served because of their upstream (see [Reverse proxy](./reverse-proxy.md#sites)) and agents too old to stream container events for alert rules (see [Alerts](./alerts.md#scope)).
 
-Notices are checked at startup and whenever the condition changes. The API is `GET /api/v1/notices` and `POST /api/v1/notices/{id}/dismiss`.
+Notices are checked at startup and whenever the condition changes. The API is `GET /api/v1/notices` and `POST /api/v1/notices/{id}/dismiss`. Dismissing is per signed-in user, so an API token can list notices but gets 403 when it tries to dismiss one.
 
 See also [Alerts](./alerts.md) and [Monitoring](./monitoring.md).

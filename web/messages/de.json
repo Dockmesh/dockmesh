@@ -594,6 +594,7 @@
   "apierr_no_host_available_to_inspect_containers": "Kein Host zum Inspizieren der Container verfügbar",
   "apierr_not_found": "Nicht gefunden",
   "apierr_not_your_notification": "Diese Benachrichtigung gehört einem anderen Benutzer",
+  "apierr_notice_dismiss_needs_session": "Hinweise werden pro angemeldetem Benutzer in der Web-Oberfläche ausgeblendet; API-Tokens können sie nicht ausblenden",
   "apierr_notifications_not_configured": "Benachrichtigungen nicht konfiguriert",
   "apierr_notify_not_configured": "Benachrichtigungsdienst nicht konfiguriert",
   "apierr_oauth2_not_configured": "OAuth2 nicht konfiguriert",

@@ -9,6 +9,7 @@ func TestRestrictKeepsBaseRightsOnlyForAdmins(t *testing.T) {
 	viewer, _ := BuiltinRole(RoleViewer)
 	adminPerms := PermsFor(admin.Levels, admin.Extras)
 	viewerPerms := PermsFor(viewer.Levels, viewer.Extras)
+	usersPerms := PermsFor(Levels{"users": "manage"}, nil)
 	host := Scope{Type: ScopeHost, Host: "edge1"}
 	owner := func(perms map[Perm]bool, s Scope) *Access {
 		return &Access{Authenticated: true, Grants: []Grant{{Perms: perms, Scopes: []Scope{s}}}}
@@ -25,6 +26,7 @@ func TestRestrictKeepsBaseRightsOnlyForAdmins(t *testing.T) {
 		{"admin token on one host", owner(adminPerms, Global), adminPerms, host, false},
 		{"admin token of a demoted owner", owner(viewerPerms, Global), adminPerms, Global, false},
 		{"admin token of a host admin", owner(adminPerms, host), adminPerms, Global, false},
+		{"users-manage token of an admin", owner(adminPerms, Global), usersPerms, Global, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
