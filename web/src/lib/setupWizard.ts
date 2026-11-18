@@ -199,7 +199,7 @@ export function trustedProxiesError(v: string): TrustedError {
     if (extra !== undefined || listenAddressError(addr)) return { kind: 'invalid' };
     if (bits === undefined) continue;
     if (!/^\d{1,3}$/.test(bits) || Number(bits) > (addr.includes(':') ? 128 : 32)) return { kind: 'invalid' };
-    if (Number(bits) === 0) return { kind: 'all', net: it };
+    if (Number(bits) < (addr.includes(':') ? 32 : 8)) return { kind: 'all', net: it };
   }
   return null;
 }

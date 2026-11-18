@@ -115,6 +115,8 @@ describe('network fields', () => {
     expect(trustedProxiesError('10.0.0.0/33')).toEqual({ kind: 'invalid' });
     expect(trustedProxiesError('10.0.0.1,0.0.0.0/0')).toEqual({ kind: 'all', net: '0.0.0.0/0' });
     expect(trustedProxiesError('::/0')).toEqual({ kind: 'all', net: '::/0' });
+    expect(trustedProxiesError('128.0.0.0/1')).toEqual({ kind: 'all', net: '128.0.0.0/1' });
+    expect(trustedProxiesError('10.0.0.0/8')).toBeNull();
   });
   it('derives the default trusted proxy', () => {
     expect(defaultTrustedProxies('127.0.0.1')).toBe('127.0.0.1/32');

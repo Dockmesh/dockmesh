@@ -122,7 +122,7 @@ Secrets are never written into the file: the admin password is `admin.password_f
 | `address.agent_url` | derived from `base_url` and the agent port | The `wss://` URL agents connect to, saved as the **Agent public URL** setting. |
 | `tls.mode` | `internal` | `internal`, `file`, `caddy` or `proxy`. |
 | `tls.cert_file`, `tls.key_file` | | Your own certificate and key, with `mode: file`. A pair that does not match or an expired certificate is refused. |
-| `tls.trusted_proxies` | the listen address | With `mode: proxy`: addresses or networks of your proxy, comma separated; a network covering every address is refused. |
+| `tls.trusted_proxies` | the listen address | With `mode: proxy`: addresses or networks of your proxy, comma separated; a network wider than /8 (IPv6 /32) is refused. |
 | `restore.backup_file`, `restore.key_file` | | A system backup to restore instead of `admin`. |
 
 `--dry-run` checks the file and the host and changes nothing. `--porcelain` prints `key=value` lines (`warning`, `url`, `fingerprint`, `admin`; `check=ok` with `--dry-run`) for the installer. As root, the setup file and every file it names must be regular files owned by root and, like their directories, writable only by root; a symlink is refused. Applies are serialized with the wizard's, and a failed apply puts everything back and leaves `dockmesh.service` stopped. Without root or outside Linux (a container, a source build, `make dev SETUP_FILE=<file>`) it sets up the data directory of `DOCKMESH_DATA_DIR` in place and writes no config or unit; `address.http_addr`, `address.agent_port` and `tls` then come from the environment, and a `stacks_dir` other than the server's own is refused.

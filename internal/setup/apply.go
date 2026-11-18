@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -256,13 +257,22 @@ func (v *ApplyValues) validateTrustedProxies(mode webtls.Mode) error {
 	}
 	out := make([]string, 0, len(nets))
 	for _, n := range nets {
-		if n.Bits() == 0 {
-			return fmt.Errorf("trusted proxies: %s would trust every address", n)
+		if n.Bits() < minTrustedBits(n) {
+			return fmt.Errorf("trusted proxies: %s is too wide; name your proxy's address or a network of at most /%d", n, minTrustedBits(n))
 		}
 		out = append(out, n.String())
 	}
 	v.TrustedProxies = strings.Join(out, ",")
 	return nil
+}
+
+// minTrustedBits is the widest trusted network: a few such entries
+// could otherwise cover every address.
+func minTrustedBits(n netip.Prefix) int {
+	if n.Addr().Is4() {
+		return 8
+	}
+	return 32
 }
 
 func validPort(p string) bool {

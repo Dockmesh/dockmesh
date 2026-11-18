@@ -6254,7 +6254,7 @@
   "sw_addr_err_agent_url": "Gib eine URL wie wss://dockmesh.example.org:8443/connect ein.",
   "sw_addr_err_busy": "Port {port} wird bereits von einem anderen Programm verwendet.",
   "sw_addr_err_trusted": "Gib IP-Adressen oder Netze wie 127.0.0.1 oder 10.0.0.0/24 ein, durch Kommas getrennt.",
-  "sw_addr_err_trusted_all": "{net} würde jeder Adresse vertrauen. Gib die Adresse deines Proxys ein.",
+  "sw_addr_err_trusted_all": "{net} ist zu weit: Es würde den meisten Adressen vertrauen. Gib die Adresse deines Proxys oder ein Netz von höchstens /8 (IPv6 /32) ein.",
   "sw_cert_err_unreadable": "Der Benutzer dockmesh kann {file} nicht lesen. Gib ihm Lesezugriff, zum Beispiel: chgrp dockmesh {file} && chmod 640 {file}",
   "sw_cert_err_missing": "{file} existiert nicht.",
   "sw_cert_err_invalid": "{file} ist keine PEM-Datei, die Dockmesh lesen kann.",

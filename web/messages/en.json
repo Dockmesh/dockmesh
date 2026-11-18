@@ -6254,7 +6254,7 @@
   "sw_addr_err_agent_url": "Enter a URL such as wss://dockmesh.example.org:8443/connect.",
   "sw_addr_err_busy": "Port {port} is already in use by another program.",
   "sw_addr_err_trusted": "Enter IP addresses or networks such as 127.0.0.1 or 10.0.0.0/24, separated by commas.",
-  "sw_addr_err_trusted_all": "{net} would trust every address. Enter your proxy's address.",
+  "sw_addr_err_trusted_all": "{net} is too wide: it would trust most addresses. Enter your proxy's address or a network of at most /8 (IPv6 /32).",
   "sw_cert_err_unreadable": "The dockmesh user cannot read {file}. Give it read access, for example: chgrp dockmesh {file} && chmod 640 {file}",
   "sw_cert_err_missing": "{file} does not exist.",
   "sw_cert_err_invalid": "{file} is not a PEM file Dockmesh can read.",

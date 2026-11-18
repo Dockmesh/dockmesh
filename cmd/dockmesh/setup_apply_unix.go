@@ -142,9 +142,12 @@ func (a *setupApplier) commit(ctx context.Context, v setup.ApplyValues) {
 	}
 	applied := false
 	defer func() {
-		// Only while still empty: a failed restore may have filled it.
-		if stacksCreated && !applied {
-			_ = os.Remove(v.StacksDir)
+		// A failed restore may have filled it: then it is set aside, so a
+		// retry finds the path free again.
+		if stacksCreated && !applied && os.Remove(v.StacksDir) != nil {
+			if err := os.Rename(v.StacksDir, v.StacksDir+a.failedSuffix()); err != nil {
+				a.log.Warn("set aside the failed stacks dir", "path", v.StacksDir, "err", err)
+			}
 		}
 	}()
 	envData, err := v.ConfigEnv(filepath.Join(filepath.Dir(filepath.Dir(a.binary)), "share", "dockmesh"))
