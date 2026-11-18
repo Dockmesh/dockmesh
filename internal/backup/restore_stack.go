@@ -421,6 +421,10 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
 			}
+			if foreign(manifest, hdr) && hdr.Uid == *manifest.OwnerUID {
+				// Same as the system restore: the group bits stay, world-write does not.
+				hdr.Mode &^= 0o002
+			}
 			if owned.wants(manifest, hdr, rel) {
 				if err := owned.write(hdr, rel, tr); err != nil {
 					return fmt.Errorf("restore %s: %w", rel, err)
