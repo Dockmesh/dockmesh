@@ -416,6 +416,11 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			fsys, name = rootFS(r), filepath.FromSlash(rel)
 		}
 		otherOwner := root == cfg.StacksRoot && owner != nil && (hdr.Uid != owner.uid || hdr.Gid != owner.gid) && containerData(rel)
+		if otherOwner && hdr.Uid == owner.uid {
+			// The server's uid with another group: the group bits are the
+			// point, but nothing the service owns comes back world-writable.
+			hdr.Mode &^= 0o002
+		}
 		if root == cfg.StacksRoot {
 			viaHelper, err := foreign.take(ctx, rel, otherOwner)
 			if err != nil {

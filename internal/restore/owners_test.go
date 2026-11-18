@@ -163,7 +163,7 @@ func TestExtractKeepsArchiveGroups(t *testing.T) {
 		ownedEntry{name: "stacks/pg/pgdata/PG_VERSION", uid: 70, gid: 70, mode: 0o600},
 		ownedEntry{name: "stacks/app", uid: 999, gid: 999, mode: 0o750, dir: true},
 		ownedEntry{name: "stacks/app/shared", uid: 999, gid: 1000, mode: 0o2770, dir: true},
-		ownedEntry{name: "stacks/app/shared/state", uid: 999, gid: 1000, mode: 0o660},
+		ownedEntry{name: "stacks/app/shared/state", uid: 999, gid: 1000, mode: 0o666},
 		ownedEntry{name: "stacks/app/own", uid: 999, gid: 999, mode: 0o644},
 	), cfg, Options{Force: true, Files: files})
 	if err != nil {
@@ -185,6 +185,9 @@ func TestExtractKeepsArchiveGroups(t *testing.T) {
 		if hdr.Uid != own[0] || hdr.Gid != own[1] {
 			t.Errorf("%s: owner %d:%d, want %d:%d", rel, hdr.Uid, hdr.Gid, own[0], own[1])
 		}
+	}
+	if hdr := files.written["app/shared/state"]; hdr.Mode&0o777 != 0o664 {
+		t.Errorf("app/shared/state: mode %#o, want 0664", hdr.Mode&0o777)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.StacksRoot, "app", "own")); err != nil {
 		t.Errorf("the server's own file was not written by the service: %v", err)
