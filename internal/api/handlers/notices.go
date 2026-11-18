@@ -47,6 +47,10 @@ func (h *Handlers) DismissNotice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	if middleware.APITokenID(r.Context()) != 0 {
+		writeError(w, http.StatusForbidden, "notices are dismissed per signed-in user in the web UI; API tokens cannot dismiss them")
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

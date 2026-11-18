@@ -6226,8 +6226,8 @@ paths:
         back while it is open; other notices stay dismissed until resolved.
         The notice stays listed either way, and is shown again if the
         condition is resolved and comes back. Critical notices that are not
-        blocking cannot be dismissed (409). Requires a user session; API
-        tokens get 404.
+        blocking cannot be dismissed (409). Requires a user session:
+        notices belong to a signed-in user's UI, so API tokens get 403.
       parameters:
         - in: path
           name: id
@@ -6236,6 +6236,7 @@ paths:
       responses:
         "204": {description: Dismissed (idempotent).}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
   /setup/preflight:
