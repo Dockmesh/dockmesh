@@ -336,7 +336,7 @@
 
   async function checkDir(): Promise<boolean> {
     const p = dataDir.trim();
-    if (dirCheckFor === p && dirCheck) return dirCheck.status !== 'fail';
+    if (dirCheckFor === p && dirCheck && dirCheck.status !== 'fail') return true;
     dirChecking = true;
     try {
       const r = await fetch('/api/v1/setup/validate-data-dir', {
@@ -419,7 +419,8 @@
   async function checkStacks(): Promise<boolean> {
     if (!stacksCustom) return true;
     const key = `${dataDir.trim()}\n${stacksDir}`;
-    if (stacksCheckFor === key && stacksCheck) return stacksCheck.status !== 'fail';
+    // A refusal is asked again: the admin may have prepared the directory meanwhile.
+    if (stacksCheckFor === key && stacksCheck && stacksCheck.status !== 'fail') return true;
     stacksChecking = true;
     try {
       const r = await fetch('/api/v1/setup/validate-stacks-dir', {
@@ -567,7 +568,8 @@
   async function checkCert(): Promise<boolean> {
     const c = certFile.trim(), k = keyFile.trim();
     if (tls !== 'file' || !c.startsWith('/') || !k.startsWith('/')) return true;
-    if (certCheckFor === certKey && certCheck) return certCheck.status !== 'fail';
+    // A refusal is asked again: the admin may have fixed the files meanwhile.
+    if (certCheckFor === certKey && certCheck && certCheck.status !== 'fail') return true;
     certChecking = true;
     try {
       const key = certKey;
