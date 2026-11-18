@@ -13,11 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/layout"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
+	"github.com/dockmesh/dockmesh/internal/stacksdir"
 )
 
 // testStacksRules checks paths below a temp root: directories above it
@@ -145,7 +144,7 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "second docker root", path: root + "/srv/d/x", edit: func(r *stacksDirRules) { r.dockerRoots = append(r.dockerRoots, root+"/srv/d") }, issue: sdInsideDocker},
 		{name: "var lib", path: "/var/lib/polkit-1/localauthority/60-dm.d", issue: sdSystemDir},
 		{name: "var lib extensions", path: "/var/lib/extensions/dm", issue: sdSystemDir},
-		{name: "tmp", path: "/tmp/stacks", edit: func(r *stacksDirRules) { r.deny = denyRoots }, issue: sdSystemDir},
+		{name: "tmp", path: "/tmp/stacks", edit: func(r *stacksDirRules) { r.deny = stacksdir.DenyRoots }, issue: sdSystemDir},
 		{name: "default dir in var", path: "/var/lib/dockmesh-agent/stacks", edit: func(r *stacksDirRules) { r.dataDir = "/var/lib/dockmesh-agent"; r.current = "/srv/s" }, ok: true, create: true},
 		{name: "inside a stacks dir", path: root + "/cur/s/x", issue: sdInStacks},
 		{name: "bind mount of a subdirectory", path: root + "/bind/x", issue: sdBindMount},
@@ -199,11 +198,11 @@ func FuzzCheckStacksDir(f *testing.F) {
 		if !got.ok() || got.Issue == sdUnchanged {
 			return
 		}
-		if filepath.Clean(p) != p || !filepath.IsAbs(p) || strings.ContainsAny(p, " \n\t\"'\\$%") || deniedByName(p, denyRoots) ||
+		if filepath.Clean(p) != p || !filepath.IsAbs(p) || strings.ContainsAny(p, " \n\t\"'\\$%") || stacksdir.DeniedByName(p, stacksdir.DenyRoots) ||
 			layout.Within(rules.dataDir, p) && p != "/var/lib/dockmesh-agent/stacks" || layout.Within(defaultServerDataDir, p) {
 			t.Fatalf("accepted %q: %+v", p, got.StacksDirCheck)
 		}
-		if got.WillCreate && p != "/var/lib/dockmesh-agent/stacks" && (!slices.Contains(stacksParents, filepath.Dir(p)) || !creatableName(filepath.Base(p))) {
+		if got.WillCreate && p != "/var/lib/dockmesh-agent/stacks" && (!slices.Contains(stacksdir.DefaultParents, filepath.Dir(p)) || !stacksdir.CreatableName(filepath.Base(p))) {
 			t.Fatalf("would create %q outside the allowed parents", p)
 		}
 	})
@@ -250,22 +249,22 @@ func TestKeptStackDirs(t *testing.T) {
 func TestCreateStacksDir(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "stacks")
-	if err := createStacksDir(p, os.Getuid(), os.Getgid()); err != nil {
+	if err := stacksdir.Create(p, os.Getuid(), os.Getgid()); err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Lstat(p); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o750 {
 		t.Errorf("%s: %v %v, want dir 0750", p, fi, err)
 	}
-	if err := createStacksDir(p, os.Getuid(), os.Getgid()); err == nil {
+	if err := stacksdir.Create(p, os.Getuid(), os.Getgid()); err == nil {
 		t.Error("an existing directory was created again")
 	}
-	if err := createStacksDir(filepath.Join(root, "a", "b"), os.Getuid(), os.Getgid()); err == nil {
+	if err := stacksdir.Create(filepath.Join(root, "a", "b"), os.Getuid(), os.Getgid()); err == nil {
 		t.Error("a missing parent was created")
 	}
 	if err := os.Symlink(root, filepath.Join(root, "l")); err != nil {
 		t.Fatal(err)
 	}
-	if err := createStacksDir(filepath.Join(root, "l", "x"), os.Getuid(), os.Getgid()); err == nil {
+	if err := stacksdir.Create(filepath.Join(root, "l", "x"), os.Getuid(), os.Getgid()); err == nil {
 		t.Error("a symlink in the path was followed")
 	}
 }
@@ -425,36 +424,6 @@ func TestStacksDirRefusalNamesThePrepareCommand(t *testing.T) {
 	}
 	if got := checkStacksDir("relative", rules); got.Command != "" {
 		t.Errorf("a refusal without a prepare step got command %q", got.Command)
-	}
-}
-
-func TestProtectedDev(t *testing.T) {
-	var root, tmp unix.Stat_t
-	if err := unix.Stat("/", &root); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Stat(t.TempDir(), &tmp); err != nil {
-		t.Fatal(err)
-	}
-	other := uint64(root.Dev) + 1  //nolint:unconvert // the types differ per OS
-	for other == uint64(tmp.Dev) { //nolint:unconvert // the types differ per OS
-		other++
-	}
-	denied := map[fileID]string{{dev: uint64(tmp.Dev), ino: 1}: "/var"} //nolint:unconvert // the types differ per OS
-	var r stacksDirRules
-	tests := []struct {
-		name string
-		dev  uint64
-		want bool
-	}{
-		{"device of /", uint64(root.Dev), true},            //nolint:unconvert // the types differ per OS
-		{"device of a refused dir", uint64(tmp.Dev), true}, //nolint:unconvert // the types differ per OS
-		{"another disk", other, false},
-	}
-	for _, tt := range tests {
-		if got := r.protectedDev(tt.dev, denied); got != tt.want {
-			t.Errorf("%s: protectedDev = %v, want %v", tt.name, got, tt.want)
-		}
 	}
 }
 
