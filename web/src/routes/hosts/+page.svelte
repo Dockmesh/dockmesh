@@ -322,7 +322,7 @@
       <span class="dm-sp"></span>
       <LiveIndicator updatedAt={lastLoaded} onrefresh={loadAll} busy={refreshing} />
       {#if allowed('hosts.create')}
-        <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}>
+        <button type="button" class="dm-btn dm-btn-primary" data-testid="add-host" onclick={() => (showAdd = true)}>
           <Plus size={14} strokeWidth={2} /> {m.hosts_add()}
         </button>
       {/if}
@@ -481,7 +481,7 @@
   {#await import('./_AddHostModal.svelte') then mod}
     <mod.default
       onclose={() => (showAdd = false)}
-      onconnected={async () => { showAdd = false; await loadAll(); }}
+      onconnected={() => loadAll()}
       knownTags={[...new Set([...tagSuggestions, ...Object.values(hostTags).flat()])]}
     />
   {/await}

@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/webtls"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -117,6 +118,7 @@ func (h *Handlers) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.audit(r, audit.ActionAgentCreate, "agent:"+res.Agent.Name, map[string]any{"tags": tags, "stacks_dir": req.StacksDir})
+	res.BehindProxy = h.ownReverseProxy()
 	writeJSON(w, http.StatusCreated, res)
 }
 
@@ -203,6 +205,7 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.audit(r, "agent.rotate_token", "agent:"+id, nil)
+	res.BehindProxy = h.ownReverseProxy()
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -339,6 +342,12 @@ func (h *Handlers) SetHostStacksDir(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, a)
+}
+
+// ownReverseProxy: the admin's proxy serves the web UI, which agents
+// can't use to reach the agent port.
+func (h *Handlers) ownReverseProxy() bool {
+	return h.RestoreConfig != nil && webtls.Mode(h.RestoreConfig.TLSMode) == webtls.Proxy
 }
 
 // msgInvalidStacksDir is the setup page's text for a path the server
