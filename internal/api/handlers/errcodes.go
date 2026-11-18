@@ -121,6 +121,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"no host available to inspect containers", "no_host_available_to_inspect_containers"},
 	{"not found", "not_found"},
 	{"not your notification", "not_your_notification"},
+	{"notices are dismissed per signed-in user in the web UI; API tokens cannot dismiss them", "notice_dismiss_needs_session"},
 	{"notifications not configured", "notifications_not_configured"},
 	{"notify not configured", "notify_not_configured"},
 	{"oauth2 not configured", "oauth2_not_configured"},
