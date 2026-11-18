@@ -113,6 +113,9 @@ func TestStackArchiveRecordsOwner(t *testing.T) {
 	if m.OwnerUID == nil || *m.OwnerUID != os.Getuid() {
 		t.Fatalf("owner_uid = %v, want %d", m.OwnerUID, os.Getuid())
 	}
+	if m.OwnerGID == nil || *m.OwnerGID != os.Getgid() {
+		t.Fatalf("owner_gid = %v, want %d", m.OwnerGID, os.Getgid())
+	}
 	hdr, err := tr.Next()
 	if err != nil || hdr.Name != "stack/compose.yaml" || hdr.Uid != os.Getuid() {
 		t.Fatalf("first stack entry = %+v, %v", hdr, err)
@@ -128,5 +131,31 @@ func TestManagerFile(t *testing.T) {
 		if got := stacks.ManagerFile(rel); got != want {
 			t.Errorf("stacks.ManagerFile(%q) = %v, want %v", rel, got, want)
 		}
+	}
+}
+
+func TestForeignComparesUidAndGid(t *testing.T) {
+	uid, gid := 999, 999
+	withGID := &stackManifest{OwnerUID: &uid, OwnerGID: &gid}
+	uidOnly := &stackManifest{OwnerUID: &uid}
+	tests := []struct {
+		name     string
+		m        *stackManifest
+		uid, gid int
+		want     bool
+	}{
+		{"server's own", withGID, 999, 999, false},
+		{"postgres-alpine data", withGID, 70, 70, true},
+		{"server's uid, other group", withGID, 999, 1000, true},
+		{"old archive without gid", uidOnly, 999, 1000, false},
+		{"old archive, other uid", uidOnly, 70, 70, true},
+		{"no manifest", nil, 70, 70, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := foreign(tt.m, &tar.Header{Uid: tt.uid, Gid: tt.gid}); got != tt.want {
+				t.Errorf("foreign = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

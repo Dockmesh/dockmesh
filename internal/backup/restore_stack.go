@@ -390,7 +390,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 
 	var composeContent, envContent string
 	var restored []string
-	var owner *int
+	var owner *stackManifest
 	owned := newOwnedRestore(ctx, stackFiles(s.docker), stackDir)
 	defer owned.abort()
 	entries := 0
@@ -410,7 +410,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 		switch {
 		case name == stackManifestName && hdr.Typeflag == tar.TypeReg:
 			if m, err := readStackManifest(tr); err == nil {
-				owner = m.OwnerUID
+				owner = m
 			}
 		case strings.HasPrefix(name, "stack/"):
 			rel := strings.TrimPrefix(name, "stack/")
@@ -513,12 +513,16 @@ func newOwnedRestore(ctx context.Context, files *stackhelper.Helper, stackDir st
 }
 
 // foreign reports whether hdr belongs to another owner than the server
-// that wrote the archive. Archives without an owner have none.
-func foreign(owner *int, hdr *tar.Header) bool {
-	return owner != nil && hdr.Uid != *owner
+// that wrote the archive: another uid, or another gid where the archive
+// records one. Archives without an owner have none.
+func foreign(m *stackManifest, hdr *tar.Header) bool {
+	if m == nil || m.OwnerUID == nil {
+		return false
+	}
+	return hdr.Uid != *m.OwnerUID || (m.OwnerGID != nil && hdr.Gid != *m.OwnerGID)
 }
 
-func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
+func (o *ownedRestore) wants(owner *stackManifest, hdr *tar.Header, rel string) bool {
 	if o.files == nil || (hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg) || stacks.ManagerFile(rel) {
 		return false
 	}
@@ -533,7 +537,7 @@ func (o *ownedRestore) wants(owner *int, hdr *tar.Header, rel string) bool {
 	return false
 }
 
-func (o *ownedRestore) unavailable(owner *int, hdr *tar.Header, rel string) bool {
+func (o *ownedRestore) unavailable(owner *stackManifest, hdr *tar.Header, rel string) bool {
 	return o.files == nil && (hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeReg) && !stacks.ManagerFile(rel) && foreign(owner, hdr)
 }
 

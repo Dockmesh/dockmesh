@@ -64,8 +64,8 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, files *stackh
 
 	var total int64
 
-	uid := os.Getuid()
-	manifest, err := json.Marshal(stackManifest{Format: 1, Stack: stackName, Volumes: volumeNames, OwnerUID: &uid})
+	uid, gid := os.Getuid(), os.Getgid()
+	manifest, err := json.Marshal(stackManifest{Format: 1, Stack: stackName, Volumes: volumeNames, OwnerUID: &uid, OwnerGID: &gid})
 	if err != nil {
 		return 0, err
 	}
@@ -182,6 +182,9 @@ type stackManifest struct {
 	// other owners through the helper so they keep their owner; archives
 	// without it restore every file as the server's own.
 	OwnerUID *int `json:"owner_uid,omitempty"`
+	// OwnerGID is the server's gid; an entry with the server's uid but
+	// another group keeps that group too. Older archives lack it.
+	OwnerGID *int `json:"owner_gid,omitempty"`
 }
 
 func readStackManifest(r io.Reader) (*stackManifest, error) {

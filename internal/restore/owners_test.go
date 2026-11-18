@@ -148,6 +148,50 @@ func TestExtractSendsOtherOwnersThroughHelper(t *testing.T) {
 	}
 }
 
+// The group comes from the archive as well: postgres-alpine data is 70:70,
+// and a container running as the server's uid 1000 may still write files
+// with group 1000 or another one, which keep that group.
+func TestExtractKeepsArchiveGroups(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root restores owners itself")
+	}
+	cfg, _ := restoreEnv(t)
+	files := &fakeFiles{}
+	_, err := Extract(context.Background(), ownedArchive(t,
+		ownedEntry{name: "dockmesh.db", uid: 999, gid: 999, mode: 0o644},
+		ownedEntry{name: "stacks/pg", uid: 999, gid: 999, mode: 0o750, dir: true},
+		ownedEntry{name: "stacks/pg/pgdata", uid: 70, gid: 70, mode: 0o700, dir: true},
+		ownedEntry{name: "stacks/pg/pgdata/PG_VERSION", uid: 70, gid: 70, mode: 0o600},
+		ownedEntry{name: "stacks/app", uid: 999, gid: 999, mode: 0o750, dir: true},
+		ownedEntry{name: "stacks/app/shared", uid: 999, gid: 1000, mode: 0o2770, dir: true},
+		ownedEntry{name: "stacks/app/shared/state", uid: 999, gid: 1000, mode: 0o660},
+		ownedEntry{name: "stacks/app/own", uid: 999, gid: 999, mode: 0o644},
+	), cfg, Options{Force: true, Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]int{
+		"pg/pgdata": {70, 70}, "pg/pgdata/PG_VERSION": {70, 70},
+		"app/shared": {999, 1000}, "app/shared/state": {999, 1000},
+	}
+	if len(files.written) != len(want) {
+		t.Errorf("helper wrote %v, want %v", keys(files.written), want)
+	}
+	for rel, own := range want {
+		hdr, ok := files.written[rel]
+		if !ok {
+			t.Errorf("%s did not go through the helper", rel)
+			continue
+		}
+		if hdr.Uid != own[0] || hdr.Gid != own[1] {
+			t.Errorf("%s: owner %d:%d, want %d:%d", rel, hdr.Uid, hdr.Gid, own[0], own[1])
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StacksRoot, "app", "own")); err != nil {
+		t.Errorf("the server's own file was not written by the service: %v", err)
+	}
+}
+
 func TestExtractWithoutHelperCountsLostOwners(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root restores owners itself")
