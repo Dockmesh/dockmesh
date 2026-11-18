@@ -131,15 +131,33 @@ paths:
         enrollment token the admin pastes into the agent host's install
         command. The plaintext token is shown ONCE — lose it and you
         revoke + recreate.
+
+        The new host waits for setup (`needs_setup`) and refuses deploys,
+        migrations to it and backup runs on it until its stacks directory
+        is confirmed. `stacks_dir` skips that: the agent applies it when
+        it first connects, and the host is ready once it did. A stacks
+        directory passed to the installer (`--stacks-dir`) does the same.
+        Setting `tags` also needs `hosts.tag`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
-                name: {type: string, example: prod-01}
+                name:
+                  type: string
+                  example: prod-01
+                  description: Empty takes the hostname the agent reports at enrollment (`<hostname>-2` and so on when taken).
+                tags:
+                  type: array
+                  maxItems: 20
+                  items: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,31}$"}
+                stacks_dir:
+                  type: string
+                  maxLength: 4096
+                  example: /srv/dockmesh/stacks
+                  description: Absolute, clean path of letters, digits and `._-/`. The agent checks the rest (owner, empty, local disk, allowed parent) when it applies it.
       responses:
         "201":
           description: Agent registered; install hint returned.
@@ -3582,6 +3600,53 @@ paths:
                 type: array
                 items: {$ref: "#/components/schemas/HostInfo"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+  /hosts/{id}/stacks-dir:
+    put:
+      operationId: hosts.setStacksDir
+      tags: [hosts]
+      summary: Set where new stacks go on a connected host
+      description: |
+        Needs `hosts.update` on the host. The directory the agent uses now
+        is confirmed at once (200); for a host that is "Waiting for setup"
+        this finishes the setup. Another path is checked by the agent and
+        switched by its root updater (managed layout only; 202). Progress
+        and the outcome show as `stacks_dir` in `GET /agents/{id}`: the
+        agent restarts after a switch and the host reconnects. Existing
+        stacks stay where they are.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: {type: string, maxLength: 4096, example: /srv/dockmesh/stacks}
+      responses:
+        "200":
+          description: The current directory was confirmed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Agent"}
+        "202":
+          description: Sent to the host; `stacks_dir.status` is `pending` until it answers.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Agent"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent is not connected, uses the legacy layout, or is still applying an earlier request.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /images:
     get:
       operationId: images.list
@@ -6876,7 +6941,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: A stack with this name is already managed.
+          description: A stack with this name is already managed, or the host is waiting for setup.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8949,6 +9014,17 @@ components:
               path: {type: string}
               current: {type: boolean}
               stacks: {type: integer, description: Number of stacks in the directory.}
+        needs_setup:
+          type: boolean
+          description: The host is "Waiting for setup". It refuses deploys, migrations to it and backup runs on it until its stacks directory is confirmed. Never set for hosts enrolled before this field existed.
+        stacks_dir:
+          type: object
+          description: The stacks directory last asked for through `POST /agents` and how the host answered. `pending` until the agent applied it, then `applied`, or `refused` with the agent's reason in `error`.
+          required: [path, status]
+          properties:
+            path: {type: string}
+            status: {type: string, enum: [pending, applied, refused]}
+            error: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     AgentCreateResult:
@@ -9923,6 +9999,9 @@ components:
         tags:
           type: array
           items: {type: string}
+        needs_setup:
+          type: boolean
+          description: The host waits for setup and refuses deploys; host pickers list it disabled.
     ImageHistoryEntry:
       type: object
       required: [created, created_by, size]

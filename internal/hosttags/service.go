@@ -169,7 +169,7 @@ func (s *Service) AllTags() []string {
 // slice to remove all tags for the host. Returns the canonicalized
 // (deduped, sorted) tag list actually written.
 func (s *Service) Set(ctx context.Context, hostID string, tags []string) ([]string, error) {
-	canon, err := canonicalize(tags)
+	canon, err := Canonicalize(tags)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +246,8 @@ func (s *Service) RemoveAllForHost(ctx context.Context, hostID string) error {
 	return s.Load(ctx)
 }
 
-// canonicalize validates, deduplicates, and sorts a tag list.
-func canonicalize(in []string) ([]string, error) {
+// Canonicalize validates, deduplicates, and sorts a tag list.
+func Canonicalize(in []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(in))
 	for _, t := range in {
 		if !tagPattern.MatchString(t) {

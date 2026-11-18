@@ -441,6 +441,9 @@ type HelloPayload struct {
 	// StacksDirs lists the agent's stacks directories, the current one
 	// first; agents that predate it send none.
 	StacksDirs []StacksDirInfo `json:"stacks_dirs,omitempty"`
+	// StacksDirSet: the stacks directory was chosen explicitly
+	// (DOCKMESH_STACKS_DIR is set), not left at the default.
+	StacksDirSet bool `json:"stacks_dir_set,omitempty"`
 }
 
 // StacksDirApplyReq asks for Path as the agent's stacks directory.

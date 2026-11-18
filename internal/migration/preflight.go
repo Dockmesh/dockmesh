@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 )
 
 // runPreflight executes all pre-flight checks and returns the result.
@@ -39,6 +40,12 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("target_online", true, target.Name())
+	if sc, ok := target.(host.SetupChecker); ok {
+		if err := sc.SetupError(ctx); err != nil {
+			add("target_setup", false, err.Error())
+			return result, nil
+		}
+	}
 
 	if vols, err := s.namedVolumes(ctx, m.StackName); err != nil {
 		add("named_volumes", false, err.Error())

@@ -17,6 +17,53 @@ paths:
                 type: array
                 items: {$ref: "#/components/schemas/HostInfo"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+  /hosts/{id}/stacks-dir:
+    put:
+      operationId: hosts.setStacksDir
+      tags: [hosts]
+      summary: Set where new stacks go on a connected host
+      description: |
+        Needs `hosts.update` on the host. The directory the agent uses now
+        is confirmed at once (200); for a host that is "Waiting for setup"
+        this finishes the setup. Another path is checked by the agent and
+        switched by its root updater (managed layout only; 202). Progress
+        and the outcome show as `stacks_dir` in `GET /agents/{id}`: the
+        agent restarts after a switch and the host reconnects. Existing
+        stacks stay where they are.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: {type: string, maxLength: 4096, example: /srv/dockmesh/stacks}
+      responses:
+        "200":
+          description: The current directory was confirmed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Agent"}
+        "202":
+          description: Sent to the host; `stacks_dir.status` is `pending` until it answers.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Agent"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent is not connected, uses the legacy layout, or is still applying an earlier request.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
 components:
   schemas:
     HostInfo:
@@ -36,3 +83,6 @@ components:
         tags:
           type: array
           items: {type: string}
+        needs_setup:
+          type: boolean
+          description: The host waits for setup and refuses deploys; host pickers list it disabled.
