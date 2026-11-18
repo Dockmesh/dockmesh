@@ -10,10 +10,6 @@ import (
 
 // Stacks dir check results, from the shared rules.
 const (
-	sdOK   = stacksdir.StatusOK
-	sdWarn = stacksdir.StatusWarn
-	sdFail = stacksdir.StatusFail
-
 	sdUnchanged    = stacksdir.Unchanged
 	sdNotAbsolute  = stacksdir.NotAbsolute
 	sdBadChars     = stacksdir.BadChars

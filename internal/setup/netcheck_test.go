@@ -50,9 +50,11 @@ func TestCheckPort(t *testing.T) {
 	}
 }
 
-// writeTestPair writes a self-signed pair for host valid until notAfter.
-func writeTestPair(t *testing.T, dir, name, host string, notAfter time.Time) (string, string) {
+// writeTestPair writes a self-signed pair for dm.example.org valid until
+// notAfter.
+func writeTestPair(t *testing.T, dir, name string, notAfter time.Time) (string, string) {
 	t.Helper()
+	const host = "dm.example.org"
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -85,10 +87,10 @@ func writeTestPair(t *testing.T, dir, name, host string, notAfter time.Time) (st
 func TestCheckCertPair(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	good, goodKey := writeTestPair(t, dir, "good", "dm.example.org", now.Add(90*24*time.Hour))
-	_, otherKey := writeTestPair(t, dir, "other", "dm.example.org", now.Add(90*24*time.Hour))
-	old, oldKey := writeTestPair(t, dir, "old", "dm.example.org", now.Add(-24*time.Hour))
-	soon, soonKey := writeTestPair(t, dir, "soon", "dm.example.org", now.Add(10*24*time.Hour+time.Hour))
+	good, goodKey := writeTestPair(t, dir, "good", now.Add(90*24*time.Hour))
+	_, otherKey := writeTestPair(t, dir, "other", now.Add(90*24*time.Hour))
+	old, oldKey := writeTestPair(t, dir, "old", now.Add(-24*time.Hour))
+	soon, soonKey := writeTestPair(t, dir, "soon", now.Add(10*24*time.Hour+time.Hour))
 	junk := filepath.Join(dir, "junk.pem")
 	if err := os.WriteFile(junk, []byte("not pem"), 0o600); err != nil {
 		t.Fatal(err)
