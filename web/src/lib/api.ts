@@ -8,6 +8,12 @@ const BASE = '/api/v1';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'negligible' | 'unknown';
 
+export interface StackDirMount {
+  service: string;
+  source: string;
+  target: string;
+}
+
 export interface ScanVuln {
   id: string;
   severity: Severity;
@@ -443,7 +449,7 @@ export interface StackDetail {
   status?: 'ok' | 'needs_recovery';
   modified_outside?: string[];
   scaler_paused?: ScalerPause;
-  mounts_stack_dir?: boolean;
+  writable_stack_dir_mounts?: StackDirMount[];
 }
 
 // Why the auto-scaler leaves a stack alone.

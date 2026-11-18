@@ -17,6 +17,7 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
@@ -129,44 +130,143 @@ func within(dir, p string) bool {
 	return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
 }
 
-// MountsProjectDir reports whether a service bind-mounts the project
-// directory itself writable (".:/app"), which lets it rewrite compose.yaml
-// and .env.
-func MountsProjectDir(composeYAML string) bool {
-	var doc struct {
+// StackDirOnHost is a stack's directory on one host. Resolve, when set,
+// turns a path on that host into its real path; it is only set for the
+// server's own host, where the paths can be looked at.
+type StackDirOnHost struct {
+	Path    string
+	Resolve func(string) string
+}
+
+// WritableStackDirMounts lists the read-write bind mounts in the compose
+// files that let a service rewrite the files Dockmesh deploys from: a bind
+// of the stack directory itself, of a directory above it, or of one of
+// those files, also through a named volume that is a host bind. Sources
+// with variables are not followed.
+func WritableStackDirMounts(composeFiles []string, dirs []StackDirOnHost) []stacks.StackDirMount {
+	resolved := make([]StackDirOnHost, len(dirs))
+	for i, d := range dirs {
+		resolved[i] = StackDirOnHost{Path: realPath(d.Path, d.Resolve), Resolve: d.Resolve}
+	}
+	type composeDoc struct {
 		Services map[string]struct {
 			Volumes []any `yaml:"volumes"`
 		} `yaml:"services"`
+		Volumes map[string]struct {
+			DriverOpts map[string]string `yaml:"driver_opts"`
+		} `yaml:"volumes"`
 	}
-	if yaml.Unmarshal([]byte(composeYAML), &doc) != nil {
-		return false
-	}
-	for _, svc := range doc.Services {
-		for _, v := range svc.Volumes {
-			var src string
-			switch x := v.(type) {
-			case string:
-				parts := strings.Split(x, ":")
-				if len(parts) < 2 || (len(parts) > 2 && strings.Contains(","+parts[2]+",", ",ro,")) {
-					continue
-				}
-				src = parts[0]
-			case map[string]any:
-				if t, _ := x["type"].(string); t != "bind" {
-					continue
-				}
-				if ro, _ := x["read_only"].(bool); ro {
-					continue
-				}
-				src, _ = x["source"].(string)
-			}
-			if src != "" && path.Clean(filepath.ToSlash(src)) == "." {
-				return true
+	// Top-level volumes merge across the files, later ones winning, as
+	// compose merges them.
+	docs := make([]composeDoc, 0, len(composeFiles))
+	hostBinds := map[string]string{}
+	for _, file := range composeFiles {
+		var doc composeDoc
+		if yaml.Unmarshal([]byte(file), &doc) != nil {
+			continue
+		}
+		docs = append(docs, doc)
+		for name, v := range doc.Volumes {
+			if strings.Contains(","+v.DriverOpts["o"]+",", ",bind,") && v.DriverOpts["device"] != "" {
+				hostBinds[name] = v.DriverOpts["device"]
+			} else {
+				delete(hostBinds, name)
 			}
 		}
 	}
+	var out []stacks.StackDirMount
+	seen := map[stacks.StackDirMount]bool{}
+	for _, doc := range docs {
+		for _, name := range slices.Sorted(maps.Keys(doc.Services)) {
+			for _, v := range doc.Services[name].Volumes {
+				src, target, ok := writableBind(v, hostBinds)
+				if !ok || strings.Contains(src, "$") || strings.HasPrefix(src, "~") {
+					continue
+				}
+				for _, dir := range resolved {
+					m := stacks.StackDirMount{Service: name, Source: src, Target: target}
+					if bindReachesStackFiles(src, dir) && !seen[m] {
+						seen[m] = true
+						out = append(out, m)
+						break
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// writableBind returns source and target of a read-write bind entry in
+// short or long syntax; hostBinds maps named volumes that are host binds
+// to their device path.
+func writableBind(v any, hostBinds map[string]string) (string, string, bool) {
+	switch x := v.(type) {
+	case string:
+		parts := strings.Split(x, ":")
+		if len(parts) < 2 || (len(parts) > 2 && strings.Contains(","+parts[2]+",", ",ro,")) {
+			return "", "", false
+		}
+		if dev, ok := hostBinds[parts[0]]; ok {
+			return dev, parts[1], true
+		}
+		if !strings.HasPrefix(parts[0], ".") && !strings.HasPrefix(parts[0], "/") {
+			return "", "", false // a named volume
+		}
+		return parts[0], parts[1], true
+	case map[string]any:
+		if ro, _ := x["read_only"].(bool); ro {
+			return "", "", false
+		}
+		src, _ := x["source"].(string)
+		target, _ := x["target"].(string)
+		switch t, _ := x["type"].(string); t {
+		case "bind":
+			return src, target, src != ""
+		case "volume":
+			dev, ok := hostBinds[src]
+			return dev, target, ok
+		}
+	}
+	return "", "", false
+}
+
+func realPath(p string, resolve func(string) string) string {
+	if resolve != nil {
+		p = resolve(p)
+	}
+	return path.Clean(filepath.ToSlash(p))
+}
+
+// bindReachesStackFiles reports whether a bind source is the stack
+// directory dir (already resolved), a directory above it, or a file a
+// deploy reads directly inside it. The source is resolved on dir's host,
+// so a symlink in or to the stack directory is followed there.
+func bindReachesStackFiles(src string, dir StackDirOnHost) bool {
+	p := filepath.FromSlash(src)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(filepath.FromSlash(dir.Path), p)
+	}
+	rp := realPath(p, dir.Resolve)
+	switch {
+	case rp == dir.Path, rp == "/", strings.HasPrefix(dir.Path, rp+"/"):
+		return true
+	case path.Dir(rp) == dir.Path:
+		return isDeployedFile(path.Base(rp))
+	}
 	return false
 }
+
+// isDeployedFile reports whether name, directly in a stack directory, is
+// a file a deploy reads: the compose files and overrides, .env and its
+// encrypted form, and Dockmesh's .dockmesh* files.
+func isDeployedFile(name string) bool {
+	name = strings.ToLower(name)
+	return name == ".env" || name == ".env.age" || strings.HasPrefix(name, ".dockmesh") ||
+		deployedComposeFile.MatchString(name)
+}
+
+var deployedComposeFile = regexp.MustCompile(`^(docker-)?compose(\.[^/]+)?\.ya?ml$`)
 
 // stagingPathPattern matches the staging directories earlier versions
 // deployed from: <tmp>/dockmesh-deploy-<stack>-<n> on the server and
