@@ -41,10 +41,10 @@ const labelStackNamespace = "com.docker.stack.namespace"
 
 const labelComposeProject = "com.docker.compose.project"
 
-// errSwarmUnclear refuses a stack on a Swarm node that has no compose
+// ErrSwarmUnclear refuses a stack on a Swarm node that has no compose
 // container there: its tasks may all run on other nodes, which only a
 // manager could list.
-var errSwarmUnclear = errors.New("the host is a Swarm node and the stack has no containers on it, so it may be a Swarm stack; start it on the host first")
+var ErrSwarmUnclear = errors.New("the host is a Swarm node and the stack has no containers on it, so it may be a Swarm stack; start it on the host first")
 
 // errSwarmCheck hides the agent's own error, which is logged.
 var errSwarmCheck = errors.New("cannot list the host's containers to rule out a Swarm stack")
@@ -65,23 +65,31 @@ func (s *Service) scanForSwarm(ctx context.Context, h host.Host) swarmScan {
 	}
 	scan := swarmScan{containers: list}
 	if info, err := s.hosts.DaemonInfo(ctx, h.ID()); err == nil && info != nil && info.Swarm != nil {
-		scan.swarmNode = info.Swarm.NodeState == "active"
+		scan.swarmNode = info.Swarm.NodeState != "" && info.Swarm.NodeState != "inactive"
+	} else {
+		slog.Warn("migration swarm check: the host doesn't report its Swarm state", "host", h.ID(), "err", err)
 	}
 	return scan
 }
 
 // check returns ErrSwarmStack when stack runs as Swarm tasks here,
-// errSwarmUnclear when that can't be ruled out, and nil for a host stack.
+// ErrSwarmUnclear when that can't be ruled out, and nil for a host stack.
 func (sc swarmScan) check(stack string) error {
 	if sc.err != nil {
 		return sc.err
 	}
 	composeHere := false
 	for _, c := range sc.containers {
-		// Real tasks never carry a compose project, so a compose service
-		// can't pass itself off as another stack's task.
-		if c.Labels[labelComposeProject] != "" {
-			if c.Labels[labelComposeProject] == stack {
+		// Dockmesh sets the compose project of what it deploys, so a
+		// compose service can't pass itself off as another stack's task.
+		if p := c.Labels[labelComposeProject]; p != "" {
+			if p != stack {
+				continue
+			}
+			if updater.SwarmService(c.Labels) != "" {
+				return ErrSwarmStack
+			}
+			if c.State == container.StateRunning {
 				composeHere = true
 			}
 			continue
@@ -91,7 +99,7 @@ func (sc swarmScan) check(stack string) error {
 		}
 	}
 	if sc.swarmNode && !composeHere {
-		return errSwarmUnclear
+		return ErrSwarmUnclear
 	}
 	return nil
 }

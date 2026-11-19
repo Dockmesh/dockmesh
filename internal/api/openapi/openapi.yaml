@@ -8156,7 +8156,9 @@ paths:
             after reviewing them), or its hook commands were not confirmed
             or changed (`code: hooks_unconfirmed`, with the current `hooks`),
             or its containers on the source are Swarm tasks (Swarm places
-            them itself; the same as the failing `swarm` preflight check).
+            them itself), or the source is a Swarm node without a running
+            compose container of the stack (it may be a Swarm stack); both
+            match the failing `swarm` preflight check.
           content:
             application/json:
               schema:
