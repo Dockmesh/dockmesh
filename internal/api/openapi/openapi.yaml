@@ -1946,7 +1946,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -1999,7 +1999,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2037,7 +2037,11 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
-        "409": {$ref: "#/components/responses/Conflict"}
+        "409":
+          description: Run not restorable (failed, pruned), or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "422":
           description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
           content:
@@ -2110,7 +2114,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run not restorable, or another restore is being staged.
+          description: Run not restorable, another restore is being staged, or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2564,7 +2568,10 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: Run not in success state.
+          description: Run not in success state, or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "404":
           description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
           content:
