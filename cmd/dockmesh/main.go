@@ -940,6 +940,7 @@ func main() {
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 	noticesSvc.Register(layout.ConfigNoticeKey, layout.ConfigNoticeCheck(setupEnvFile))
+	noticesSvc.Register(layout.UnitFallbackNoticeKey, layout.UnitFallbackNoticeCheck(layout.UnitFile))
 	noticesSvc.Register(layout.CheckoutNoticeKey, layout.CheckoutNoticeCheck(checkoutDataDir, executablePath(), checkoutDataDir != "" && layout.TrustedCheckout(checkoutDataDir, 0) == nil))
 	noticesSvc.Register(setup.NoAdminNoticeKey, setup.NoAdminNoticeCheck(database))
 
