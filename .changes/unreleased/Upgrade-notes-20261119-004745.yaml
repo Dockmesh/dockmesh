@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: Scripts that fetch the agent installer from the web port (install/agent.sh?token=) keep working in 0.6 but log a deprecation and raise a daily notice; switch them to the install command from Hosts > Add host before 0.7.0, which removes the route
+body: Scripts that fetch the agent installer from the web port (install/agent.sh?token=) keep working in 0.6 but log a deprecation and raise a notice at most once a day; switch them to the install command from Hosts > Add host before 0.7.0, which removes the route
 time: 2026-11-19T00:47:45.023982317Z
 custom:
     Audience: admins
