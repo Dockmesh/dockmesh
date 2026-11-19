@@ -79,10 +79,8 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("source_online", true, source.Name())
-	if swarm, err := isSwarmStack(ctx, source, m.StackName); err != nil {
-		add("swarm", false, fmt.Sprintf("cannot list the source's containers: %v", err))
-	} else if swarm {
-		add("swarm", false, ErrSwarmStack.Error())
+	if err := s.checkSwarm(ctx, source, m.StackName); err != nil {
+		add("swarm", false, err.Error())
 	} else {
 		add("swarm", true, "host stack")
 	}

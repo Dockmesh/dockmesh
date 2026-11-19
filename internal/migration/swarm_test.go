@@ -8,20 +8,31 @@ import (
 	"github.com/moby/moby/api/types/container"
 )
 
-func TestSwarmTasksOf(t *testing.T) {
+func TestSwarmScanCheck(t *testing.T) {
+	task := map[string]string{labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app", "com.docker.swarm.service.id": "s1"}
+	composeWeb := map[string]string{labelComposeProject: "web"}
 	tests := []struct {
-		name   string
-		labels map[string]string
-		want   bool
+		name      string
+		labels    []map[string]string
+		swarmNode bool
+		want      error
 	}{
-		{"compose container", map[string]string{"com.docker.compose.project": "web"}, false},
-		{"task of the stack", map[string]string{labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app"}, true},
-		{"task of another stack", map[string]string{labelStackNamespace: "other"}, false},
-		{"task carrying the compose project", map[string]string{"com.docker.compose.project": "web", "com.docker.swarm.service.id": "abc"}, true},
+		{"compose container", []map[string]string{composeWeb}, false, nil},
+		{"task of the stack", []map[string]string{task}, false, ErrSwarmStack},
+		{"task of another stack", []map[string]string{{labelStackNamespace: "other", "com.docker.swarm.service.name": "other_app", "com.docker.swarm.service.id": "s2"}}, false, nil},
+		{"compose service with forged task labels", []map[string]string{{labelComposeProject: "evil", labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app", "com.docker.swarm.service.id": "s1"}}, false, nil},
+		{"namespace label without a service", []map[string]string{{labelStackNamespace: "web"}}, false, nil},
+		{"swarm node, compose container here", []map[string]string{composeWeb}, true, nil},
+		{"swarm node, nothing here", nil, true, errSwarmUnclear},
+		{"plain host, nothing here", nil, false, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := swarmTasksOf([]container.Summary{{Labels: tt.labels}}, "web"); got != tt.want {
+			var list []container.Summary
+			for _, l := range tt.labels {
+				list = append(list, container.Summary{Labels: l})
+			}
+			if got := (swarmScan{containers: list, swarmNode: tt.swarmNode}).check("web"); !errors.Is(got, tt.want) || (tt.want == nil) != (got == nil) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
@@ -55,7 +66,7 @@ func TestCheckTargetKind(t *testing.T) {
 // A Swarm stack never gets a migration record, so nothing is stopped.
 func TestInitiateRefusesSwarmStack(t *testing.T) {
 	e := newMigrationEnv(t)
-	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web"}}}
+	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app", "com.docker.swarm.service.id": "s1"}}}
 	_, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", "", nil)
 	if !errors.Is(err, ErrSwarmStack) {
 		t.Fatalf("err %v, want ErrSwarmStack", err)
@@ -71,7 +82,7 @@ func TestInitiateRefusesSwarmStack(t *testing.T) {
 
 func TestPreflightFailsSwarmStack(t *testing.T) {
 	e := newMigrationEnv(t)
-	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web"}}}
+	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app", "com.docker.swarm.service.id": "s1"}}}
 	res, err := e.svc.Preflight(context.Background(), "web", "agent1")
 	if err != nil {
 		t.Fatal(err)

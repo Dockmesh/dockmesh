@@ -165,7 +165,7 @@ func TestDrainPlanBlocksNamedVolumes(t *testing.T) {
 func TestDrainPlanBlocksSwarmStacks(t *testing.T) {
 	e := newMigrationEnv(t)
 	e.target.metrics = system.Metrics{DiskTotal: 100 << 30}
-	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web"}}}
+	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web", "com.docker.swarm.service.name": "web_app", "com.docker.swarm.service.id": "s1"}}}
 	plan, err := NewDrainService(e.svc, e.db).Plan(context.Background(), "agent0")
 	if err != nil {
 		t.Fatal(err)

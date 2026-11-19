@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/moby/moby/api/types/container"
 
@@ -38,23 +39,64 @@ func CheckTargetKind(kind string) error {
 // container and volume of a Swarm stack.
 const labelStackNamespace = "com.docker.stack.namespace"
 
-// isSwarmStack reports whether stack runs on h as Swarm tasks.
-func isSwarmStack(ctx context.Context, h host.Host, stack string) (bool, error) {
-	list, err := h.ListContainers(ctx, true)
-	if err != nil {
-		return false, err
-	}
-	return swarmTasksOf(list, stack), nil
+const labelComposeProject = "com.docker.compose.project"
+
+// errSwarmUnclear refuses a stack on a Swarm node that has no compose
+// container there: its tasks may all run on other nodes, which only a
+// manager could list.
+var errSwarmUnclear = errors.New("the host is a Swarm node and the stack has no containers on it, so it may be a Swarm stack; start it on the host first")
+
+// errSwarmCheck hides the agent's own error, which is logged.
+var errSwarmCheck = errors.New("cannot list the host's containers to rule out a Swarm stack")
+
+// swarmScan holds what the Swarm check needs from one host.
+type swarmScan struct {
+	containers []container.Summary
+	swarmNode  bool
+	err        error
 }
 
-func swarmTasksOf(list []container.Summary, stack string) bool {
-	for _, c := range list {
-		if c.Labels[labelStackNamespace] == stack {
-			return true
+// scanForSwarm reads h's containers and Swarm membership once.
+func (s *Service) scanForSwarm(ctx context.Context, h host.Host) swarmScan {
+	list, err := h.ListContainers(ctx, true)
+	if err != nil {
+		slog.Warn("migration swarm check: list containers", "host", h.ID(), "err", err)
+		return swarmScan{err: errSwarmCheck}
+	}
+	scan := swarmScan{containers: list}
+	if info, err := s.hosts.DaemonInfo(ctx, h.ID()); err == nil && info != nil && info.Swarm != nil {
+		scan.swarmNode = info.Swarm.NodeState == "active"
+	}
+	return scan
+}
+
+// check returns ErrSwarmStack when stack runs as Swarm tasks here,
+// errSwarmUnclear when that can't be ruled out, and nil for a host stack.
+func (sc swarmScan) check(stack string) error {
+	if sc.err != nil {
+		return sc.err
+	}
+	composeHere := false
+	for _, c := range sc.containers {
+		// Real tasks never carry a compose project, so a compose service
+		// can't pass itself off as another stack's task.
+		if c.Labels[labelComposeProject] != "" {
+			if c.Labels[labelComposeProject] == stack {
+				composeHere = true
+			}
+			continue
 		}
-		if c.Labels["com.docker.compose.project"] == stack && updater.SwarmService(c.Labels) != "" {
-			return true
+		if c.Labels[labelStackNamespace] == stack && updater.SwarmService(c.Labels) != "" {
+			return ErrSwarmStack
 		}
 	}
-	return false
+	if sc.swarmNode && !composeHere {
+		return errSwarmUnclear
+	}
+	return nil
+}
+
+// checkSwarm is scanForSwarm(h).check(stack).
+func (s *Service) checkSwarm(ctx context.Context, h host.Host, stack string) error {
+	return s.scanForSwarm(ctx, h).check(stack)
 }

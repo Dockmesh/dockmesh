@@ -173,8 +173,8 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID,
 	}
 	// An unreachable source fails the preflight, which checks this again.
 	if source, err := s.hosts.Pick(sourceHostID); err == nil {
-		if swarm, err := isSwarmStack(ctx, source, stackName); err == nil && swarm {
-			return nil, ErrSwarmStack
+		if err := s.checkSwarm(ctx, source, stackName); errors.Is(err, ErrSwarmStack) || errors.Is(err, errSwarmUnclear) {
+			return nil, err
 		}
 	}
 
