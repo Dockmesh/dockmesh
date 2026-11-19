@@ -157,7 +157,7 @@
           <span class="dm-num dm-dim">{fmtDuration(mg.started_at, mg.completed_at)}</span>
           {#if mg.progress?.failed_phase || mg.progress?.undo?.length}
             <span class="why">
-              {#if mg.progress.failed_phase}{m.ops_mig_failed_in({ phase: statusLabel(mg.progress.failed_phase) })}{/if}{#if mg.progress.failed_phase && mg.progress.undo?.length} · {/if}{#if mg.progress.undo?.length}{m.ops_mig_undone({ steps: undoText(mg.progress.undo) })}{/if}
+              {#if mg.progress.failed_phase}{m.ops_mig_failed_in({ phase: statusLabel(mg.progress.failed_phase) })}{/if}{#if mg.progress.failed_phase && mg.progress.undo?.length}{' · '}{/if}{#if mg.progress.undo?.length}{m.ops_mig_undone({ steps: undoText(mg.progress.undo) })}{/if}
             </span>
           {/if}
         </button>
@@ -179,5 +179,5 @@
   .meta { font-size: var(--fs-xs); color: var(--subtle); }
   .rrow { all: unset; box-sizing: border-box; display: grid; gap: 2px 12px; align-items: center; width: 100%; padding: 0 6px; min-height: var(--row-h); border-bottom: 1px solid var(--border); cursor: pointer; }
   .rrow:hover { background: var(--band); }
-  .why { grid-column: 1 / -1; padding-bottom: 6px; font-size: var(--fs-xs); color: var(--subtle); }
+  .why { grid-column: 1 / -1; padding-bottom: 6px; white-space: normal; font-size: var(--fs-xs); color: var(--subtle); }
 </style>
