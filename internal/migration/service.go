@@ -40,6 +40,11 @@ type Service struct {
 	// hooks are the commands confirmed for each active migration; the
 	// hook phases run these, not what the meta file says by then.
 	hooks map[string]*HookCommands
+
+	// finishMu serialises a manual rollback against finalising the same
+	// migration; purging holds the ones being finalised.
+	finishMu sync.Mutex
+	purging  map[string]bool
 }
 
 // Hosts is the part of host.Registry migrations use.
@@ -66,6 +71,7 @@ func NewService(db *sql.DB, hr Hosts, sm *stacks.Manager, ds *stacks.DeploymentS
 		db:          db,
 		active:      make(map[string]context.CancelFunc),
 		hooks:       make(map[string]*HookCommands),
+		purging:     make(map[string]bool),
 	}
 }
 
@@ -84,6 +90,16 @@ func (s *Service) Start(ctx context.Context) error {
 	var errs []error
 	for _, m := range active {
 		if m.Status == StatusRollingBack {
+			continue
+		}
+		if s.committed(ctx, m) {
+			// Only the final status write was lost; the stack runs on the
+			// target with the data it wrote there since.
+			slog.Warn("migration committed before a server restart; recording it as completed",
+				"id", m.ID, "stack", m.StackName)
+			if err := s.store.updateStatusRetry(ctx, m.ID, StatusCompleted, "done", ""); err != nil {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		if !stopsSource(m.Phase) {
@@ -121,6 +137,19 @@ func (s *Service) Recover(ctx context.Context) {
 			go s.rollback(ctx, m, true, "server restarted during the migration")
 		}
 	}
+}
+
+// committed reports whether migration m moved the stack's deployment to
+// its target: completed, or in committing with the record already moved.
+func (s *Service) committed(ctx context.Context, m *Migration) bool {
+	if m.Phase == "done" {
+		return true
+	}
+	if m.Phase != StatusCommitting || s.deployments == nil {
+		return false
+	}
+	dep, err := s.deployments.Get(ctx, m.StackName)
+	return err == nil && dep != nil && dep.HostID == m.TargetHostID
 }
 
 // stopsSource reports whether a migration in phase may have stopped the
@@ -276,7 +305,9 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 		}
 	}
 
-	_ = s.store.UpdateStatus(ctx, m.ID, StatusCompleted, "done", "")
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusCompleted, "done", ""); err != nil {
+		slog.Error("migration completed, but the result could not be recorded", "id", m.ID, "err", err)
+	}
 	slog.Info("migration completed", "id", m.ID, "stack", m.StackName)
 	if s.notifs != nil {
 		_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
@@ -636,7 +667,7 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	// The source's volumes stay on disk until purge-source, so a restart
 	// re-attaches the pre-migration data.
 	p := m.progress()
-	committed := m.Phase == "done"
+	committed := s.committed(ctx, m)
 	if stopTarget || len(p.CreatedVolumes) > 0 {
 		wait := targetWaitMax
 		if !targetMayRun(m.Phase) && !committed && len(p.CreatedVolumes) == 0 {
@@ -665,11 +696,15 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			s.saveProgress(ctx, m)
 		} else {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
+			var todo []string
 			if targetMayRun(m.Phase) || committed {
-				reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
+				todo = append(todo, "stop the stack there")
 			}
 			if len(p.CreatedVolumes) > 0 && !committed {
-				reason = note("target " + m.TargetHostID + " was offline, remove volumes " + strings.Join(p.CreatedVolumes, ", ") + " there once it is back")
+				todo = append(todo, "remove volumes "+strings.Join(p.CreatedVolumes, ", "))
+			}
+			if len(todo) > 0 {
+				reason = note("target " + m.TargetHostID + " was offline; once it is back, " + strings.Join(todo, " and "))
 			}
 		}
 	}
@@ -743,14 +778,23 @@ func (s *Service) Preflight(ctx context.Context, stackName, targetHostID string)
 	return res, nil
 }
 
+// ErrPurged refuses rolling back a migration whose source copy was
+// removed: the source would start on empty volumes.
+var ErrPurged = errors.New("the migration was finalised and its volumes on the source removed; it can't be rolled back")
+
 // Rollback triggers a manual rollback for a completed migration.
 func (s *Service) Rollback(ctx context.Context, migrationID string) error {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	m, err := s.store.Get(ctx, migrationID)
 	if err != nil {
 		return err
 	}
 	if m.Status != StatusCompleted {
 		return fmt.Errorf("can only rollback completed migrations (current: %s)", m.Status)
+	}
+	if s.purging[m.ID] || (m.Progress != nil && m.Progress.Purged) {
+		return ErrPurged
 	}
 	claimed, err := s.store.claimRollback(ctx, m.ID)
 	if err != nil {

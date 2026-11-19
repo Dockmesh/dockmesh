@@ -1240,7 +1240,7 @@ paths:
     delete:
       operationId: stacks.migrate_finalize
       tags: [stacks, migrations]
-      summary: Finalise a successful migration (remove source files + volumes)
+      summary: Finalise a successful migration (stop the source, remove copied volumes)
       description: |
         Called by the operator once they've verified the target is healthy.
         Stops what is left of the stack on the source host and removes the

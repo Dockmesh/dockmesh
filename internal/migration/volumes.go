@@ -25,6 +25,7 @@ func (s *Service) SetVolumeIO(f func(hostID string) (VolumeIO, error)) { s.volum
 // stackVolume is a named volume a stack's services mount.
 type stackVolume struct {
 	name       string
+	project    string
 	external   bool
 	driver     string
 	driverOpts map[string]string
@@ -42,7 +43,7 @@ func (s *Service) stackVolumes(ctx context.Context, stackName string) ([]stackVo
 			if v.Type != "volume" || v.Source == "" {
 				continue
 			}
-			sv := stackVolume{name: v.Source}
+			sv := stackVolume{name: v.Source, project: proj.Name}
 			if vol, ok := proj.Volumes[v.Source]; ok {
 				sv.name = vol.Name
 				if sv.name == "" {
@@ -78,9 +79,6 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 	if err != nil {
 		return nil, err
 	}
-	if len(vols) == 0 {
-		return nil, nil
-	}
 	var out []volumeToCopy
 	for _, v := range vols {
 		if v.external {
@@ -93,7 +91,7 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 			continue
 		}
 		if (v.driver != "" && v.driver != "local") || len(v.driverOpts) > 0 {
-			return nil, fmt.Errorf("volume %s uses a volume driver or driver options, whose data may not live on the host; move it yourself", v.name)
+			return nil, volumeDriverError(v.name)
 		}
 		src, err := source.InspectVolume(ctx, v.name)
 		if host.VolumeMissing(err) {
@@ -108,7 +106,12 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 			return nil, fmt.Errorf("volume %s belongs to a Swarm stack and is not copied", v.name)
 		}
 		if (src.Driver != "" && src.Driver != "local") || len(src.Options) > 0 {
-			return nil, fmt.Errorf("volume %s uses a volume driver or driver options, whose data may not live on the host; move it yourself", v.name)
+			return nil, volumeDriverError(v.name)
+		}
+		// A volume another stack created under that name holds that
+		// stack's data, which a finalised migration would remove here.
+		if p := src.Labels["com.docker.compose.project"]; p != "" && p != v.project {
+			return nil, fmt.Errorf("volume %s belongs to stack %s and is not copied with this one", v.name, p)
 		}
 		if _, err := target.InspectVolume(ctx, v.name); err == nil {
 			return nil, fmt.Errorf("volume %s already exists on the target; remove it there first, it would not be overwritten", v.name)
@@ -132,6 +135,14 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 	return out, nil
 }
 
+func volumeDriverError(name string) error {
+	return fmt.Errorf("volume %s uses a volume driver or driver options, whose data may not live on the host; move it yourself", name)
+}
+
+// labelMigration marks a volume a migration created on the target, so it
+// only ever imports into and removes volumes it made itself.
+const labelMigration = "dockmesh.migration"
+
 // progressEvery is how often a running copy stores its progress.
 var progressEvery = 2 * time.Second
 
@@ -153,8 +164,20 @@ func (s *Service) copyVolumes(ctx context.Context, m *Migration, target host.Hos
 		p.VolumeIndex = i + 1
 		p.CurrentVolume = v.name
 		s.saveProgress(ctx, m)
-		if _, err := target.CreateVolume(ctx, v.name, "local", v.labels); err != nil {
+		labels := map[string]string{labelMigration: m.ID}
+		for k, val := range v.labels {
+			if k != labelMigration {
+				labels[k] = val
+			}
+		}
+		// Docker hands back an existing volume of that name instead of
+		// failing, so the marker tells whether this create made it.
+		created, err := target.CreateVolume(ctx, v.name, "local", labels)
+		if err != nil {
 			return fmt.Errorf("create volume %s on the target: %w", v.name, err)
+		}
+		if created.Labels[labelMigration] != m.ID {
+			return fmt.Errorf("volume %s appeared on the target during the migration; it is left as it is", v.name)
 		}
 		p.CreatedVolumes = append(p.CreatedVolumes, v.name)
 		s.saveProgress(ctx, m)
@@ -235,19 +258,55 @@ func readBack(ctx context.Context, src VolumeIO, name string) (*manifest, error)
 	return readManifest(rc, nil)
 }
 
-// removeCreatedVolumes removes the volumes m created on target. It
-// returns the ones it could not remove.
+// removeCreatedVolumes removes the volumes m created on target, retrying
+// for up to targetWaitMax while the target's Docker doesn't answer. A
+// volume without m's marker is left alone. It returns the ones it could
+// not remove.
 func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target host.Host) []string {
 	p := m.progress()
 	var left []string
 	for _, name := range p.CreatedVolumes {
-		if err := target.RemoveVolume(ctx, name, false); err != nil && !host.VolumeMissing(err) {
+		if err := s.removeCreatedVolume(ctx, m, target, name); err != nil {
 			slog.Warn("migration rollback: remove volume on the target", "id", m.ID, "volume", name, "err", err)
 			left = append(left, name)
 		}
 	}
 	p.CreatedVolumes = left
 	return left
+}
+
+func (s *Service) removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, name string) error {
+	deadline := time.Now().Add(targetWaitMax)
+	for {
+		err := removeIfOurs(ctx, m, target, name)
+		if err == nil || errors.Is(err, errNotOurs) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(hostWait):
+		}
+	}
+}
+
+var errNotOurs = errors.New("the volume lacks this migration's marker; left as it is")
+
+func removeIfOurs(ctx context.Context, m *Migration, target host.Host, name string) error {
+	vol, err := target.InspectVolume(ctx, name)
+	if host.VolumeMissing(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if vol.Labels[labelMigration] != m.ID {
+		return errNotOurs
+	}
+	if err := target.RemoveVolume(ctx, name, false); err != nil && !host.VolumeMissing(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) saveProgress(ctx context.Context, m *Migration) {

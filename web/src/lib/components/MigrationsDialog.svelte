@@ -6,7 +6,7 @@
   import { fmtBytes, fmtAgo } from '$lib/format';
   import { Modal, StatusChip } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
-  import { api, type Migration } from '$lib/api';
+  import { api, type Migration, type MigrationUndoStep } from '$lib/api';
   import { goto } from '$app/navigation';
   import { ArrowRightLeft } from 'lucide-svelte';
 
@@ -97,13 +97,13 @@
     return MIG_STATUS[s]?.() ?? s;
   }
 
-  const UNDO: Record<string, () => string> = {
+  const UNDO: Record<MigrationUndoStep, () => string> = {
     stop_target: m.ops_mig_undo_stop_target,
     remove_target_volumes: m.ops_mig_undo_remove_target_volumes,
     keep_target_volumes: m.ops_mig_undo_keep_target_volumes,
     restart_source: m.ops_mig_undo_restart_source
   };
-  function undoText(steps: string[]): string {
+  function undoText(steps: MigrationUndoStep[]): string {
     return steps.map((s) => UNDO[s]?.() ?? s).join(', ');
   }
 

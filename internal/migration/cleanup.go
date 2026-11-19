@@ -66,13 +66,30 @@ var ErrStackOnSource = errors.New("the stack runs on the source host again; fina
 // migration copied, giving up the rollback. Called via
 // DELETE /stacks/{name}/migrate/{id}/source.
 func (s *Service) PurgeSource(ctx context.Context, migrationID string) error {
+	s.finishMu.Lock()
 	m, err := s.store.Get(ctx, migrationID)
+	switch {
+	case err != nil:
+	case m.Status != StatusCompleted:
+		err = ErrNotCompleted
+	case s.purging[m.ID]:
+		err = fmt.Errorf("migration %s is already being finalised", m.ID)
+	default:
+		s.purging[m.ID] = true
+	}
+	s.finishMu.Unlock()
 	if err != nil {
 		return err
 	}
-	if m.Status != StatusCompleted {
-		return ErrNotCompleted
-	}
+	defer func() {
+		s.finishMu.Lock()
+		delete(s.purging, m.ID)
+		s.finishMu.Unlock()
+	}()
+	return s.purgeSource(ctx, m)
+}
+
+func (s *Service) purgeSource(ctx context.Context, m *Migration) error {
 	if s.deployments != nil {
 		dep, err := s.deployments.Get(ctx, m.StackName)
 		if err != nil {
@@ -92,11 +109,18 @@ func (s *Service) PurgeSource(ctx context.Context, migrationID string) error {
 	if err := source.StopStack(ctx, m.StackName); err != nil {
 		return fmt.Errorf("stop the stack on the source: %w", err)
 	}
-	if m.Progress != nil {
-		for _, v := range m.Progress.VolumesCopied {
-			if err := source.RemoveVolume(ctx, v.Name, false); err != nil && !host.VolumeMissing(err) {
-				return fmt.Errorf("remove volume %s on the source: %w", v.Name, err)
-			}
+	p := m.progress()
+	if len(p.VolumesCopied) > 0 {
+		// Recorded first: once a volume is gone, a rollback would start the
+		// source without it.
+		p.Purged = true
+		if err := s.store.UpdateProgress(ctx, m.ID, p); err != nil {
+			return err
+		}
+	}
+	for _, v := range p.VolumesCopied {
+		if err := source.RemoveVolume(ctx, v.Name, false); err != nil && !host.VolumeMissing(err) {
+			return fmt.Errorf("remove volume %s on the source: %w", v.Name, err)
 		}
 	}
 	slog.Info("migration source purged",

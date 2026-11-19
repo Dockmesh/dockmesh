@@ -64,6 +64,8 @@ type Progress struct {
 	VolumesCopied []CopiedVolume `json:"volumes_copied,omitempty"`
 	// FailedPhase is the phase a failed migration stopped in.
 	FailedPhase string `json:"failed_phase,omitempty"`
+	// Purged is set once the migration was finalised on the source.
+	Purged bool `json:"purged,omitempty"`
 	// Undo lists what the rollback did, in order: UndoStopTarget,
 	// UndoRemoveVolumes, UndoKeepVolumes, UndoRestartSource.
 	Undo []string `json:"undo,omitempty"`

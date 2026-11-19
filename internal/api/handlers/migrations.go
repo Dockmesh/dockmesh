@@ -228,7 +228,13 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
-	if _, ok := h.stackMigration(w, r); !ok {
+	m, ok := h.stackMigration(w, r)
+	if !ok {
+		return
+	}
+	// It removes the stack's volumes on the source host.
+	if src := h.stackScopeReq(m.SourceHostID, name); !h.allowedOn(r, src, rbac.PermVolumesDelete) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, src, "volumes of stack "+name+" on the source host")
 		return
 	}
 	id := chi.URLParam(r, "id")

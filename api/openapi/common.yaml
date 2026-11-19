@@ -262,6 +262,7 @@ components:
                   bytes: {type: integer, format: int64}
                   entries: {type: integer}
             failed_phase: {type: string, description: The phase a failed migration stopped in.}
+            purged: {type: boolean, description: The migration was finalised and its copied volumes removed from the source; it can no longer be rolled back.}
             undo:
               type: array
               description: What the rollback did, in order.

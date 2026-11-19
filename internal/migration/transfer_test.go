@@ -53,11 +53,16 @@ func (f *fakeHost) InspectVolume(_ context.Context, name string) (volume.Volume,
 	return volume.Volume{}, fmt.Errorf("Error response from daemon: get %s: no such volume", name)
 }
 
+// CreateVolume returns an existing volume of that name unchanged, as
+// Docker does.
 func (f *fakeHost) CreateVolume(_ context.Context, name, _ string, labels map[string]string) (volume.Volume, error) {
 	f.vols.mu.Lock()
 	defer f.vols.mu.Unlock()
+	if v, ok := f.vols.vols[name]; ok {
+		return volume.Volume{Name: name, Labels: v.labels}, nil
+	}
 	f.vols.vols[name] = &fakeVolume{labels: labels}
-	return volume.Volume{Name: name}, nil
+	return volume.Volume{Name: name, Labels: labels}, nil
 }
 
 func (f *fakeHost) RemoveVolume(_ context.Context, name string, _ bool) error {
@@ -158,6 +163,7 @@ func TestManifestDiff(t *testing.T) {
 		f(c)
 		return c
 	}
+	changed := "of 4 entries, 0 missing, 1 with other contents, owner or mode, 0 extra"
 	tests := []struct {
 		name    string
 		copy    []archiveEntry
@@ -165,11 +171,12 @@ func TestManifestDiff(t *testing.T) {
 	}{
 		{"same", base, ""},
 		{"hard link the other way round", []archiveEntry{base[0], {name: "b", typ: tar.TypeReg, mode: 0o600, uid: 70, gid: 70, body: "one"}, {name: "a", typ: tar.TypeLink, link: "b"}, base[3]}, ""},
-		{"root owner lost", with(func(c []archiveEntry) { c[0].uid, c[0].gid = 0, 0 }), ". is owned by 0:0 instead of 70:70"},
-		{"root mode lost", with(func(c []archiveEntry) { c[0].mode = 0o755 }), ". has mode 0755 instead of 0700"},
-		{"content", with(func(c []archiveEntry) { c[1].body = "two" }), "a has different contents"},
-		{"missing file", base[:3], "l is missing in the copy"},
-		{"symlink target", with(func(c []archiveEntry) { c[3].link = "x" }), "l points to x instead of a"},
+		{"root owner lost", with(func(c []archiveEntry) { c[0].uid, c[0].gid = 0, 0 }), changed},
+		{"root mode lost", with(func(c []archiveEntry) { c[0].mode = 0o755 }), changed},
+		{"content", with(func(c []archiveEntry) { c[1].body = "two" }), "of 4 entries, 0 missing, 2 with other contents, owner or mode, 0 extra"},
+		{"missing file", base[:3], "of 4 entries, 1 missing, 0 with other contents, owner or mode, 0 extra"},
+		{"extra file", append(append([]archiveEntry(nil), base...), archiveEntry{name: "./x", typ: tar.TypeReg, mode: 0o600, body: "x"}), "of 4 entries, 0 missing, 0 with other contents, owner or mode, 1 extra"},
+		{"symlink target", with(func(c []archiveEntry) { c[3].link = "x" }), changed},
 	}
 	src, err := readManifest(bytes.NewReader(archive(t, base...)), nil)
 	if err != nil {
@@ -186,6 +193,47 @@ func TestManifestDiff(t *testing.T) {
 				t.Fatalf("diff = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Extended attributes (ACLs, file capabilities) are part of the check.
+func TestManifestComparesXattrs(t *testing.T) {
+	plain := archive(t, archiveEntry{name: "./f", typ: tar.TypeReg, mode: 0o640, body: "x"})
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	if err := tw.WriteHeader(&tar.Header{Name: "./f", Typeflag: tar.TypeReg, Mode: 0o640, Size: 1, Format: tar.FormatPAX,
+		PAXRecords: map[string]string{"SCHILY.xattr.system.posix_acl_access": "acl"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := readManifest(bytes.NewReader(buf.Bytes()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := readManifest(bytes.NewReader(plain), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.diff(b) == nil {
+		t.Fatal("an ACL lost in the copy went unnoticed")
+	}
+}
+
+func TestManifestRefusesTooManyEntries(t *testing.T) {
+	old := maxManifestEntries
+	maxManifestEntries = 2
+	t.Cleanup(func() { maxManifestEntries = old })
+	if _, err := readManifest(bytes.NewReader(pgData(t)), nil); !errors.Is(err, errTooManyEntries) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -276,12 +324,12 @@ func TestMigrationVolumeFailureRollsBack(t *testing.T) {
 					archiveEntry{name: "./base/1", typ: tar.TypeReg, mode: 0o600, uid: 70, gid: 70, body: strings.Repeat("x", 4096)},
 				)
 			}
-		}, "is owned by 0:0 instead of 70:70"},
+		}, "1 with other contents, owner or mode"},
 		{"file missing on the target", func(e *migrationEnv) {
 			e.target.vols.rewrite = func([]byte) []byte {
 				return archive(t, archiveEntry{name: "./", typ: tar.TypeDir, mode: 0o700, uid: 70, gid: 70})
 			}
-		}, "missing in the copy"},
+		}, "3 missing"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -364,7 +412,7 @@ func TestRollbackOfCompletedMigrationKeepsTargetVolumes(t *testing.T) {
 func TestRestartDuringCopyCleansTarget(t *testing.T) {
 	e := volumeEnv(t)
 	ctx := context.Background()
-	e.target.vols.vols["db_pgdata"] = &fakeVolume{data: []byte("partial")}
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}, data: []byte("partial")}
 	m := &Migration{ID: "m1", StackName: "db", SourceHostID: "agent0", TargetHostID: "agent1", Status: StatusSyncing, Phase: StatusSyncing,
 		Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}
 	if err := e.svc.store.Create(ctx, m); err != nil {
@@ -417,4 +465,86 @@ func TestPurgeSourceRemovesCopiedVolumes(t *testing.T) {
 	if e.source.vols.hasPG() || !e.target.vols.hasPG() {
 		t.Fatal("purge did not remove only the source's copy")
 	}
+}
+
+// A volume that shows up on the target while earlier ones copy is
+// neither written to nor removed.
+func TestMigrationLeavesVolumeCreatedMeanwhile(t *testing.T) {
+	e := volumeEnv(t)
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{"owner": "someone"}, data: []byte("theirs")}
+	m := &Migration{ID: "m1", StackName: "db", SourceHostID: "agent0", TargetHostID: "agent1"}
+	err := e.svc.copyVolumes(context.Background(), m, e.target, []volumeToCopy{{name: "db_pgdata"}})
+	if err == nil || !strings.Contains(err.Error(), "appeared on the target") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(m.Progress.CreatedVolumes) != 0 {
+		t.Fatalf("recorded %v as created", m.Progress.CreatedVolumes)
+	}
+	if left := e.svc.removeCreatedVolumes(context.Background(), &Migration{ID: "m1", Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}, e.target); len(left) != 1 {
+		t.Fatalf("left %v", left)
+	}
+	if string(e.target.vols.vols["db_pgdata"].data) != "theirs" {
+		t.Fatal("their volume was touched")
+	}
+}
+
+// A commit whose status write was lost is completed on the next start,
+// never rolled back over the target's data; twice changes nothing more.
+func TestStartCompletesCommittedMigration(t *testing.T) {
+	e := volumeEnv(t)
+	ctx := context.Background()
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}, data: []byte("written since")}
+	m := &Migration{ID: "m1", StackName: "db", SourceHostID: "agent0", TargetHostID: "agent1", Status: StatusCommitting, Phase: StatusCommitting,
+		Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}
+	if err := e.svc.store.Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.deployments.Set(ctx, "db", "agent1", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		svc := NewService(e.db, fakeHosts{"agent0": e.source, "agent1": e.target}, e.mgr, stacks.NewDeploymentStore(e.db))
+		if err := svc.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		svc.Recover(ctx)
+		e.svc = svc
+		if got := e.wait(t, "m1"); got.Status != StatusCompleted {
+			t.Fatalf("start %d: status %s: %s", i+1, got.Status, got.ErrorMessage)
+		}
+	}
+	if !e.target.vols.hasPG() || e.source.stops != 0 {
+		t.Fatal("target volume removed or source touched")
+	}
+}
+
+// Once finalised, a migration can't be rolled back onto the emptied source.
+func TestRollbackRefusedAfterPurge(t *testing.T) {
+	e := volumeEnv(t)
+	m := e.migrateDB(t)
+	if m.Status != StatusCompleted {
+		t.Fatalf("status %s: %s", m.Status, m.ErrorMessage)
+	}
+	if err := e.svc.PurgeSource(context.Background(), m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Rollback(context.Background(), m.ID); !errors.Is(err, ErrPurged) {
+		t.Fatalf("rollback after purge: %v", err)
+	}
+}
+
+// A volume another stack created under the name is not this stack's data.
+func TestPreflightRefusesOtherStacksVolume(t *testing.T) {
+	e := volumeEnv(t)
+	e.source.vols.vols["db_pgdata"].labels["com.docker.compose.project"] = "other"
+	res, err := e.svc.Preflight(context.Background(), "db", "agent1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range res.Checks {
+		if c.Name == "named_volumes" && c.Status == CheckFail && strings.Contains(c.Detail, "belongs to stack other") {
+			return
+		}
+	}
+	t.Fatalf("checks %+v", res.Checks)
 }
