@@ -213,7 +213,7 @@ func TestUnitFallbackNotice(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := openNotices(t, ns, UnitFallbackNoticeKey); len(got) > 1 || (len(got) == 1) != tt.want {
+			if got := openNotices(ctx, t, ns, UnitFallbackNoticeKey); len(got) > 1 || (len(got) == 1) != tt.want {
 				t.Fatalf("%d notices open, want open = %v", len(got), tt.want)
 			}
 		})
@@ -232,7 +232,7 @@ func TestUnitFallbackNoticeResolvesOnTemplateUnit(t *testing.T) {
 		if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err != nil {
 			t.Fatal(err)
 		}
-		return openNotices(t, ns, UnitFallbackNoticeKey)
+		return openNotices(ctx, t, ns, UnitFallbackNoticeKey)
 	}
 	restored := RestoredUnitMarker + "\n[Service]\nExecStart=/usr/local/bin/dockmesh serve\n"
 	first := start(restored)
@@ -270,7 +270,7 @@ func TestUnitFallbackNoticeUnreadableUnitKeepsState(t *testing.T) {
 	if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err == nil {
 		t.Fatal("want an error for an unreadable unit")
 	}
-	if got := openNotices(t, ns, UnitFallbackNoticeKey); len(got) != 1 {
+	if got := openNotices(ctx, t, ns, UnitFallbackNoticeKey); len(got) != 1 {
 		t.Fatalf("%d notices open, want the notice kept", len(got))
 	}
 }
@@ -287,9 +287,9 @@ func openNoticeDB(t *testing.T) *sql.DB {
 	return conn
 }
 
-func openNotices(t *testing.T, ns *notices.Service, key string) []notices.Notice {
+func openNotices(ctx context.Context, t *testing.T, ns *notices.Service, key string) []notices.Notice {
 	t.Helper()
-	open, err := ns.Open(context.Background())
+	open, err := ns.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
