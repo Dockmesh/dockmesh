@@ -480,7 +480,7 @@ func TestMigrationLeavesVolumeCreatedMeanwhile(t *testing.T) {
 	if len(m.Progress.CreatedVolumes) != 0 {
 		t.Fatalf("recorded %v as created", m.Progress.CreatedVolumes)
 	}
-	if left := e.svc.removeCreatedVolumes(context.Background(), &Migration{ID: "m1", Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}, e.target); len(left) != 1 {
+	if left := e.svc.removeCreatedVolumes(context.Background(), &Migration{ID: "m1", Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}, e.target); len(left) != 0 {
 		t.Fatalf("left %v", left)
 	}
 	if string(e.target.vols.vols["db_pgdata"].data) != "theirs" {

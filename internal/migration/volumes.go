@@ -268,7 +268,13 @@ func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target
 	deadline := time.Now().Add(targetWaitMax)
 	var left []string
 	for _, name := range p.CreatedVolumes {
-		if err := removeCreatedVolume(ctx, m, target, name, deadline); err != nil {
+		err := removeCreatedVolume(ctx, m, target, name, deadline)
+		if errors.Is(err, errNotOurs) {
+			// Someone else's volume took the name since; not ours to remove.
+			slog.Warn("migration rollback: volume on the target was replaced since the migration", "id", m.ID, "volume", name)
+			continue
+		}
+		if err != nil {
 			slog.Warn("migration rollback: remove volume on the target", "id", m.ID, "volume", name, "err", err)
 			left = append(left, name)
 		}

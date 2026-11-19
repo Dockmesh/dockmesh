@@ -718,6 +718,15 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			}
 		}
 	}
+	// Again: waiting for the target gave a deploy time to move the stack.
+	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
+		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "source not restarted: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
+	}
 	if _, err := source.DeployStack(ctx, m.StackName, spec.Compose, spec.Env); err != nil {
 		slog.Error("rollback: restart source failed", "err", err)
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note("source restart failed: "+err.Error()))
