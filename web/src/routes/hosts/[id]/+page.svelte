@@ -711,7 +711,7 @@
           <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr)">
             <span class="dm-mono">{e.stack_name}</span>
             <span class="dm-dim">→</span>
-            <span class="dm-mono" class:bad={!e.feasible}>{e.feasible ? e.target_name : m.hosts_no_candidate()}</span>
+            <span class="dm-mono" class:bad={!e.feasible} title={e.feasible ? undefined : e.detail}>{e.feasible ? e.target_name : (e.detail || m.hosts_no_candidate())}</span>
           </div>
         {/each}
       </div>

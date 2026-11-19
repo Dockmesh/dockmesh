@@ -90,6 +90,7 @@
     committing: m.ops_mig_st_committing,
     completed: m.ops_mig_st_completed,
     failed: m.ops_mig_st_failed,
+    rolling_back: m.ops_mig_st_rolling_back,
     rolled_back: m.ops_mig_st_rolled_back
   };
   function statusLabel(s: string): string {
@@ -99,7 +100,7 @@
   function statusTone(s: string): Tone {
     if (s === 'completed') return 'ok';
     if (s === 'failed') return 'bad';
-    if (s === 'rolled_back') return 'warn';
+    if (s === 'rolled_back' || s === 'rolling_back') return 'warn';
     return 'acc';
   }
 </script>

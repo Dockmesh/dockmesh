@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -304,6 +305,16 @@ func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPla
 	}
 	for i := range plan.Entries {
 		e := &plan.Entries[i]
+		vols, err := s.migSvc.namedVolumes(ctx, e.StackName)
+		if err == nil && len(vols) > 0 {
+			err = fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
+		}
+		if err != nil {
+			e.TargetHostID, e.TargetName = "", ""
+			e.Feasible, e.Detail = false, err.Error()
+			plan.Feasible = false
+			continue
+		}
 		hooks, err := s.migSvc.HookCommands(e.StackName)
 		if err != nil {
 			e.Feasible, e.Detail = false, err.Error()
@@ -313,6 +324,22 @@ func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPla
 		e.Hooks = hooks
 	}
 	return plan, nil
+}
+
+// DrainBlockedError refuses a drain with stacks that can't move, listed in
+// the plan with the reason.
+type DrainBlockedError struct {
+	Plan *DrainPlan
+}
+
+func (e *DrainBlockedError) Error() string {
+	var names []string
+	for _, en := range e.Plan.Entries {
+		if !en.Feasible {
+			names = append(names, en.StackName)
+		}
+	}
+	return "these stacks can't move to another host: " + strings.Join(names, ", ")
 }
 
 // DrainHooksUnconfirmedError refuses a drain whose plan runs hook
@@ -334,6 +361,9 @@ func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string,
 	plan, err := s.Plan(ctx, sourceHostID)
 	if err != nil {
 		return nil, err
+	}
+	if !plan.Feasible {
+		return nil, &DrainBlockedError{Plan: plan}
 	}
 	var unconfirmed []PlanEntry
 	for _, e := range plan.Entries {

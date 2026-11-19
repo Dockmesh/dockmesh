@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,8 @@ type fakeHost struct {
 	metrics    system.Metrics
 	images     []image.Summary
 	containers []container.Summary
+
+	offline atomic.Bool
 
 	mu       sync.Mutex
 	stops    int
@@ -91,6 +94,9 @@ type fakeHosts map[string]*fakeHost
 
 func (h fakeHosts) Pick(id string) (host.Host, error) {
 	if f, ok := h[id]; ok {
+		if f.offline.Load() {
+			return nil, host.ErrAgentOffline
+		}
 		return f, nil
 	}
 	return nil, host.ErrUnknownHost

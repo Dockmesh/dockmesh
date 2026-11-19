@@ -2678,7 +2678,7 @@
       }
     }
   ],
-  "hosts_drain_stuck_hint": "No other online host has enough free disk. Free up space on another host or add one.",
+  "hosts_drain_stuck_hint": "Begin drain stays disabled until every stack can move; the reason is listed next to each one.",
   "hosts_drain_title": "Drain {name}",
   "hosts_dur_dh": "{d} d {h} h",
   "hosts_edit_tags": "Edit tags",
@@ -3315,6 +3315,7 @@
   "ops_mig_st_preflight": "preflight",
   "ops_mig_st_preparing": "preparing",
   "ops_mig_st_rolled_back": "rolled back",
+  "ops_mig_st_rolling_back": "rolling back",
   "ops_mig_st_starting": "starting",
   "ops_mig_st_stopping": "stopping",
   "ops_mig_st_syncing": "syncing",

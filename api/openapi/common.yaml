@@ -222,19 +222,38 @@ components:
           description: True when the first 8 KiB contain a NUL byte.
     MigrationStatus:
       type: object
-      required: [id, stack, status]
+      description: |
+        One stack migration. `rolling_back` means the stack is being
+        restored on the source host after a failure or a server restart
+        during the migration; it ends as `rolled_back`, or `failed` with
+        what to do in `error_message`.
+      required: [id, stack_name, source_host_id, target_host_id, status]
       properties:
-        id: {type: integer, format: int64}
-        stack: {type: string}
+        id: {type: string, format: uuid}
+        stack_name: {type: string}
         source_host_id: {type: string}
         target_host_id: {type: string}
         status:
           type: string
-          enum: [pending, copying, deploying, verifying, succeeded, failed, rolled_back]
+          enum: [pending, preflight, preparing, pre_dump, stopping, syncing, starting, post_restore,
+                 health_check, committing, completed, failed, rolling_back, rolled_back]
+        phase: {type: string, description: The phase the migration is in or ended in.}
+        progress:
+          type: object
+          properties:
+            current_volume: {type: string}
+            volume_index: {type: integer}
+            volumes_total: {type: integer}
+            bytes_total: {type: integer, format: int64}
+            bytes_done: {type: integer, format: int64}
+            images_pulled: {type: integer}
+            images_total: {type: integer}
         started_at: {type: string, format: date-time}
-        finished_at: {type: string, format: date-time}
-        progress_percent: {type: number}
-        message: {type: string}
+        completed_at: {type: string, format: date-time}
+        error_message: {type: string}
+        initiated_by: {type: string}
+        drain_id: {type: string}
+        created_at: {type: string, format: date-time}
     FanOutResponse:
       type: object
       description: |

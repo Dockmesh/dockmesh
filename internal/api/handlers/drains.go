@@ -89,6 +89,15 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := middleware.UserID(r.Context())
 	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks)
+	var blocked *migration.DrainBlockedError
+	if errors.As(err, &blocked) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   err.Error(),
+			"code":    "drain_blocked",
+			"entries": blocked.Plan.Entries,
+		})
+		return
+	}
 	var unconfirmed *migration.DrainHooksUnconfirmedError
 	if errors.As(err, &unconfirmed) {
 		if !h.checkDrainHooksReadable(w, r, hostID, unconfirmed.Entries) {
