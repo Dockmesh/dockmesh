@@ -39,7 +39,8 @@ paths:
       description: |
         Given a set of candidate target hosts, produces a plan that maps
         each stack on the source host to a target host. Safe to call —
-        does not start any migration.
+        does not start any migration. The server's own host (`local`) is
+        refused with 400: Dockmesh runs there.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
@@ -77,7 +78,8 @@ paths:
         Every stack in the plan with hook commands needs their digest in
         `confirm_hooks` (from `entries[].hooks.digest` of the plan);
         otherwise the drain is refused (409 `hooks_unconfirmed`, listing
-        those entries) and nothing runs.
+        those entries) and nothing runs. The server's own host (`local`)
+        is refused with 400.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
@@ -100,6 +102,7 @@ paths:
                 type: object
                 properties:
                   drain_id: {type: integer, format: int64}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
