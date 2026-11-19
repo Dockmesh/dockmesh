@@ -83,6 +83,11 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		}
 		add("named_volumes", true, "copied to the target while the stack is stopped: "+strings.Join(names, ", "))
 	}
+	if err := s.checkSwarm(ctx, source, m.StackName); err != nil {
+		add("swarm", false, err.Error())
+	} else {
+		add("swarm", true, "host stack")
+	}
 
 	srcMetrics, err := source.SystemMetrics(ctx)
 	if err != nil {

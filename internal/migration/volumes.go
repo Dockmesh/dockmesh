@@ -107,7 +107,7 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 		if err != nil {
 			return nil, fmt.Errorf("volume %s on the source: %w", v.name, err)
 		}
-		if src.Labels["com.docker.stack.namespace"] != "" {
+		if src.Labels[labelStackNamespace] != "" {
 			return nil, fmt.Errorf("volume %s belongs to a Swarm stack and is not copied", v.name)
 		}
 		if (src.Driver != "" && src.Driver != "local") || len(src.Options) > 0 {
@@ -115,7 +115,7 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 		}
 		// A volume another stack created under that name holds that
 		// stack's data, which a finalised migration would remove here.
-		if p := src.Labels["com.docker.compose.project"]; p != "" && p != v.project {
+		if p := src.Labels[labelComposeProject]; p != "" && p != v.project {
 			return nil, fmt.Errorf("volume %s belongs to another stack and is not copied with this one", v.name)
 		}
 		if _, err := target.InspectVolume(ctx, v.name); err == nil {

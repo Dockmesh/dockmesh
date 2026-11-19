@@ -923,6 +923,11 @@ paths:
               required: [target_host_id]
               properties:
                 target_host_id: {type: string, format: uuid}
+                target_kind:
+                  type: string
+                  enum: [host, cluster]
+                  default: host
+                  description: Only `host`; `cluster` (moving a host stack into a Swarm cluster) is refused with 400.
                 confirm_hooks:
                   type: string
                   description: Digest of the stack's hook commands (`hooks.digest` of the preflight). Required when the stack has any.
@@ -941,7 +946,11 @@ paths:
             The stack's compose.yaml or .env changed outside Dockmesh
             (`code: modified_outside`; repeat with `confirm_external=1`
             after reviewing them), or its hook commands were not confirmed
-            or changed (`code: hooks_unconfirmed`, with the current `hooks`).
+            or changed (`code: hooks_unconfirmed`, with the current `hooks`),
+            or its containers on the source are Swarm tasks (Swarm places
+            them itself), or the source is a Swarm node without a running
+            compose container of the stack (it may be a Swarm stack); both
+            match the failing `swarm` preflight check.
           content:
             application/json:
               schema:
@@ -979,6 +988,11 @@ paths:
               required: [target_host_id]
               properties:
                 target_host_id: {type: string, format: uuid}
+                target_kind:
+                  type: string
+                  enum: [host, cluster]
+                  default: host
+                  description: Only `host`; `cluster` (moving a host stack into a Swarm cluster) is refused with 400.
       responses:
         "200":
           description: Preflight result.
@@ -999,7 +1013,7 @@ paths:
                       properties:
                         name:
                           type: string
-                          description: Check id, e.g. `target_online`, `named_volumes`, `target_capacity`, `arch_match`, `images`.
+                          description: Check id, e.g. `target_online`, `named_volumes`, `swarm`, `target_capacity`, `arch_match`, `images`.
                         passed:
                           type: boolean
                           description: False only for status `fail`.

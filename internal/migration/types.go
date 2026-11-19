@@ -99,6 +99,9 @@ func (m *Migration) progress() *Progress {
 // MigrateRequest is the API payload to initiate a migration.
 type MigrateRequest struct {
 	TargetHostID string `json:"target_host_id"`
+	// TargetKind is TargetKindHost (also when empty) or TargetKindCluster,
+	// which is refused.
+	TargetKind string `json:"target_kind,omitempty"`
 	// ConfirmHooks is the digest of the hook commands the caller was
 	// shown; needed when the stack has any.
 	ConfirmHooks string `json:"confirm_hooks,omitempty"`
