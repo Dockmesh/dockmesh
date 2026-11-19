@@ -68,12 +68,16 @@ func WriteServerUnit(u ServerUnit, opts UnitWriteOptions) (changed bool, err err
 	return true, nil
 }
 
-// RestoreServerUnit puts the unit WriteServerUnit replaced back.
+// RestoreServerUnit puts the unit WriteServerUnit replaced back, headed
+// by RestoredUnitMarker.
 func RestoreServerUnit(opts UnitWriteOptions) error {
 	unitPath, prevPath := opts.paths()
 	old, err := readUnit(prevPath)
 	if err != nil {
 		return fmt.Errorf("no earlier unit to restore: %w", err)
+	}
+	if !restoredUnit(old) {
+		old = append([]byte(RestoredUnitMarker+"\n"), old...)
 	}
 	return writeRootFileAtomic(unitPath, old, 0o644)
 }

@@ -142,8 +142,19 @@ func TestRestoreServerUnit(t *testing.T) {
 	if err := RestoreServerUnit(opts); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(opts.UnitFile); string(got) != "old" {
-		t.Errorf("unit after restore = %q", got)
+	want := RestoredUnitMarker + "\nold"
+	if got, _ := os.ReadFile(opts.UnitFile); string(got) != want {
+		t.Errorf("unit after restore = %q, want %q", got, want)
+	}
+	// The restored unit is replaced and put back once more: still one marker.
+	if _, err := WriteServerUnit(testUnit(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreServerUnit(opts); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(opts.UnitFile); string(got) != want {
+		t.Errorf("unit after the second restore = %q, want %q", got, want)
 	}
 }
 

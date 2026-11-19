@@ -24,6 +24,10 @@ const (
 	// RestoreServerUnit. It lives in the root-owned config dir because
 	// the service must not be able to plant the unit it is restored to.
 	PrevUnitFile = ConfigDir + "/dockmesh.service.prev"
+	// RestoredUnitMarker is the first line of a unit RestoreServerUnit put
+	// back. The template never writes it, so the server can tell that it
+	// runs with the earlier unit because the current one did not start.
+	RestoredUnitMarker = "# Put back by `dockmesh system write-unit --restore`: the service did not start with the unit from the template."
 
 	// AgentExitEnrollRejected is the agent's exit status when the server
 	// refused its enrollment token. The agent unit lists it in
