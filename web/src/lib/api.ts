@@ -526,7 +526,14 @@ export interface MigrationProgress {
   bytes_done: number;
   images_pulled: number;
   images_total: number;
+  created_volumes?: string[];
+  volumes_copied?: { name: string; bytes: number; entries: number }[];
+  failed_phase?: string;
+  undo?: MigrationUndoStep[];
+  purged?: boolean;
 }
+
+export type MigrationUndoStep = 'stop_target' | 'remove_target_volumes' | 'keep_target_volumes' | 'restart_source';
 
 // Hook commands a migration would run; digest confirms exactly these.
 export interface HookCommands {

@@ -3271,7 +3271,9 @@
     }
   ],
   "ops_mig_bytes": "{done} von {total}",
+  "ops_mig_copied": "{done} kopiert",
   "ops_mig_empty": "Noch keine Migrationen. Stacks lassen sich auf ihrer Detailseite verschieben.",
+  "ops_mig_failed_in": "Fehlgeschlagen bei: {phase}",
   "ops_mig_image": "Image {i} von {n}",
   "ops_mig_n_failed": [
     {
@@ -3322,6 +3324,11 @@
   "ops_mig_st_syncing": "wird synchronisiert",
   "ops_mig_started": "Gestartet {ago} von {who}",
   "ops_mig_title": "Stack-Migrationen",
+  "ops_mig_undo_keep_target_volumes": "Volumes mit den dort geschriebenen Daten auf dem Ziel behalten",
+  "ops_mig_undo_remove_target_volumes": "Volumes vom Ziel entfernt",
+  "ops_mig_undo_restart_source": "auf der Quelle wieder gestartet",
+  "ops_mig_undo_stop_target": "auf dem Ziel gestoppt",
+  "ops_mig_undone": "Rückgängig gemacht: {steps}",
   "ops_mig_volume": "Volume {i} von {n}",
   "ops_n_running": "{count} laufen",
   "ops_no_log": "Keine Log-Zeilen.",

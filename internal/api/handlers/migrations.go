@@ -278,6 +278,10 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 	if !h.allowedOnMigration(w, r, m) {
 		return
 	}
+	if src := h.stackScopeReq(m.SourceHostID, name); !h.allowedOn(r, src, rbac.PermVolumesDelete) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, src, "volumes of stack "+name+" on the source host")
+		return
+	}
 	if err := h.Migrations.PurgeSource(r.Context(), m.ID); err != nil {
 		if err == migration.ErrNotFound {
 			writeError(w, http.StatusNotFound, "migration not found")

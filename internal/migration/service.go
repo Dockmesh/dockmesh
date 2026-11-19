@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,12 +34,18 @@ type Service struct {
 	notifs      *notifications.Service
 	globals     deploy.GlobalVars
 	usage       ContainerUsage
+	volumeIO    func(hostID string) (VolumeIO, error)
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel
 	// hooks are the commands confirmed for each active migration; the
 	// hook phases run these, not what the meta file says by then.
 	hooks map[string]*HookCommands
+
+	// finishMu serialises a manual rollback against finalising the same
+	// migration; purging holds the ones being finalised.
+	finishMu sync.Mutex
+	purging  map[string]bool
 }
 
 // Hosts is the part of host.Registry migrations use.
@@ -65,6 +72,7 @@ func NewService(db *sql.DB, hr Hosts, sm *stacks.Manager, ds *stacks.DeploymentS
 		db:          db,
 		active:      make(map[string]context.CancelFunc),
 		hooks:       make(map[string]*HookCommands),
+		purging:     make(map[string]bool),
 	}
 }
 
@@ -83,6 +91,16 @@ func (s *Service) Start(ctx context.Context) error {
 	var errs []error
 	for _, m := range active {
 		if m.Status == StatusRollingBack {
+			continue
+		}
+		if s.committed(ctx, m) {
+			// Only the final status write was lost; the stack runs on the
+			// target with the data it wrote there since.
+			slog.Warn("migration committed before a server restart; recording it as completed",
+				"id", m.ID, "stack", m.StackName)
+			if err := s.store.updateStatusRetry(ctx, m.ID, StatusCompleted, "done", ""); err != nil {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		if !stopsSource(m.Phase) {
@@ -120,6 +138,19 @@ func (s *Service) Recover(ctx context.Context) {
 			go s.rollback(ctx, m, true, "server restarted during the migration")
 		}
 	}
+}
+
+// committed reports whether migration m moved the stack's deployment to
+// its target: completed, or in committing with the record already moved.
+func (s *Service) committed(ctx context.Context, m *Migration) bool {
+	if m.Phase == "done" {
+		return true
+	}
+	if m.Phase != StatusCommitting || s.deployments == nil {
+		return false
+	}
+	dep, err := s.deployments.Get(ctx, m.StackName)
+	return err == nil && dep != nil && dep.HostID == m.TargetHostID
 }
 
 // stopsSource reports whether a migration in phase may have stopped the
@@ -172,13 +203,6 @@ func (s *Service) initiate(ctx context.Context, stackName, from, targetHostID, u
 	}
 	if sourceHostID == targetHostID {
 		return nil, fmt.Errorf("source and target are the same host")
-	}
-	vols, err := s.namedVolumes(ctx, stackName)
-	if err != nil {
-		return nil, err
-	}
-	if len(vols) > 0 {
-		return nil, fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
 	}
 	// An unreachable source fails the preflight, which checks this again.
 	if source, err := s.hosts.Pick(sourceHostID); err == nil {
@@ -275,6 +299,8 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 				"id", m.ID, "stack", m.StackName,
 				"phase", p.status, "err", err)
 			reason := "phase " + p.status + ": " + err.Error()
+			m.progress().FailedPhase = p.status
+			s.saveProgress(ctx, m)
 			if stopsSource(p.status) {
 				s.rollback(context.WithoutCancel(ctx), m, targetMayRun(p.status), reason)
 			} else {
@@ -296,7 +322,9 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 		}
 	}
 
-	_ = s.store.UpdateStatus(ctx, m.ID, StatusCompleted, "done", "")
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusCompleted, "done", ""); err != nil {
+		slog.Error("migration completed, but the result could not be recorded", "id", m.ID, "err", err)
+	}
 	slog.Info("migration completed", "id", m.ID, "stack", m.StackName)
 	if s.notifs != nil {
 		_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
@@ -412,7 +440,8 @@ func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	}
 
 	if len(toPull) > 0 {
-		p := &Progress{ImagesTotal: len(toPull)}
+		p := m.progress()
+		p.ImagesTotal = len(toPull)
 		_ = s.store.UpdateProgress(ctx, m.ID, p)
 		slog.Info("migration prepare: pulling images on target",
 			"id", m.ID, "count", len(toPull))
@@ -453,17 +482,22 @@ func (s *Service) phaseStopping(ctx context.Context, m *Migration) error {
 	return source.StopStack(ctx, m.StackName)
 }
 
+// phaseSyncing copies the stack's volumes to the target while the stack
+// is stopped on the source. The source's volumes are left as they are.
 func (s *Service) phaseSyncing(ctx context.Context, m *Migration) error {
-	// Initiate refuses stacks with named volumes; checked again in case the
-	// compose file changed while the migration was queued.
-	volumes, err := s.namedVolumes(ctx, m.StackName)
+	source, err := s.hosts.Pick(m.SourceHostID)
 	if err != nil {
+		return fmt.Errorf("source host: %w", err)
+	}
+	target, err := s.hosts.Pick(m.TargetHostID)
+	if err != nil {
+		return fmt.Errorf("target host: %w", err)
+	}
+	vols, err := s.volumePlan(ctx, m, source, target)
+	if err != nil || len(vols) == 0 {
 		return err
 	}
-	if len(volumes) > 0 {
-		return fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(volumes, ", "))
-	}
-	return nil
+	return s.copyVolumes(ctx, m, target, vols)
 }
 
 // namedVolumes returns the Docker volume names the stack's services use.
@@ -649,24 +683,65 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	}
 	// The source's volumes stay on disk until purge-source, so a restart
 	// re-attaches the pre-migration data.
-	if stopTarget {
+	p := m.progress()
+	committed := s.committed(ctx, m)
+	// Checked before either host is touched: a deploy since then owns the
+	// stack, and on the target it runs on the volumes copied there.
+	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
+		msg := "nothing undone: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "nothing undone: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
+	}
+	if stopTarget || len(p.CreatedVolumes) > 0 {
 		wait := targetWaitMax
-		if !targetMayRun(m.Phase) && m.Phase != "done" {
+		if !targetMayRun(m.Phase) && !committed && len(p.CreatedVolumes) == 0 {
 			wait = hostWait
 		}
 		if target, terr := s.pickOnline(ctx, m.TargetHostID, wait); terr == nil {
-			if err := target.StopStack(ctx, m.StackName); err != nil {
-				slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
+			if stopTarget {
+				if err := target.StopStack(ctx, m.StackName); err != nil {
+					slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
+				} else {
+					p.Undo = append(p.Undo, UndoStopTarget)
+				}
 			}
+			switch {
+			case len(p.CreatedVolumes) == 0:
+			case committed:
+				p.Undo = append(p.Undo, UndoKeepVolumes)
+				reason = note("volumes " + strings.Join(p.CreatedVolumes, ", ") + " stay on " + m.TargetHostID + " with the data written there since the migration")
+			default:
+				if left := s.removeCreatedVolumes(ctx, m, target); len(left) > 0 {
+					reason = note("remove volumes " + strings.Join(left, ", ") + " on " + m.TargetHostID + " by hand")
+				} else {
+					p.Undo = append(p.Undo, UndoRemoveVolumes)
+				}
+			}
+			s.saveProgress(ctx, m)
 		} else {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
-			if targetMayRun(m.Phase) || m.Phase == "done" {
-				reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
+			var todo []string
+			if targetMayRun(m.Phase) || committed {
+				todo = append(todo, "stop the stack there")
+			}
+			if len(p.CreatedVolumes) > 0 && !committed {
+				todo = append(todo, "remove volumes "+strings.Join(p.CreatedVolumes, ", "))
+			}
+			if len(todo) > 0 {
+				reason = note("target " + m.TargetHostID + " was offline; once it is back, " + strings.Join(todo, " and "))
 			}
 		}
 	}
-	if moved, err := s.deployedElsewhere(ctx, m); err != nil || moved != "" {
+	cleanLater := len(p.CreatedVolumes) > 0 && !committed
+	// Again: waiting for the target gave a deploy time to move the stack.
+	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
 		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
+		if moved == m.TargetHostID && slices.Contains(p.Undo, UndoRemoveVolumes) {
+			msg += " with the volumes this rollback removed there; its data is on " + m.SourceHostID
+		}
 		if err != nil {
 			msg = "source not restarted: " + err.Error()
 		}
@@ -678,20 +753,56 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note("source restart failed: "+err.Error()))
 		return
 	}
+	p.Undo = append(p.Undo, UndoRestartSource)
+	s.saveProgress(ctx, m)
 	// Reassert deployment ownership on source, clearing any lingering
 	// target-side record from the completed migration.
 	if s.deployments != nil {
 		_ = s.deployments.Set(ctx, m.StackName, m.SourceHostID, "deployed")
 	}
-	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", note("stack restored on the source")); err != nil {
+	final := note("stack restored on the source")
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", final); err != nil {
 		slog.Error("rollback: stack restored on source, but the result could not be recorded", "migration", m.ID, "err", err)
+	}
+	if cleanLater {
+		go s.cleanTargetLater(ctx, m, final)
 	}
 }
 
-// deployedElsewhere returns the host the stack is deployed on when that is
-// neither end of migration m: a deploy since then moved it, and restoring
-// the source would run it twice.
-func (s *Service) deployedElsewhere(ctx context.Context, m *Migration) (string, error) {
+// lateCleanupMax bounds how long a rolled-back migration waits for its
+// target to come back and take the volumes the rollback couldn't remove.
+var lateCleanupMax = time.Hour
+
+// cleanTargetLater removes the volumes a rollback left on the target once
+// the target answers again, unless the stack was deployed anywhere but the
+// source meanwhile.
+func (s *Service) cleanTargetLater(ctx context.Context, m *Migration, msg string) {
+	target, err := s.pickOnline(ctx, m.TargetHostID, lateCleanupMax)
+	if err != nil {
+		slog.Warn("migration: target still unavailable, its volumes stay", "id", m.ID, "volumes", m.progress().CreatedVolumes, "err", err)
+		return
+	}
+	if moved, err := s.deployedElsewhere(ctx, m, false); err != nil || moved != "" {
+		slog.Warn("migration: the stack was deployed since the rollback, target volumes stay", "id", m.ID, "volumes", m.progress().CreatedVolumes, "deployed_on", moved, "err", err)
+		return
+	}
+	if left := s.removeCreatedVolumes(ctx, m, target); len(left) > 0 {
+		s.saveProgress(ctx, m)
+		return
+	}
+	p := m.progress()
+	p.Undo = append(p.Undo, UndoRemoveVolumes)
+	s.saveProgress(ctx, m)
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", msg+"; the volumes on "+m.TargetHostID+" were removed once it was back"); err != nil {
+		slog.Warn("migration: target volumes removed, but the result could not be recorded", "id", m.ID, "err", err)
+	}
+}
+
+// deployedElsewhere returns the host the stack is deployed on when a deploy
+// since migration m moved it there: any host but the source, or but either
+// end once m committed. Undoing m then would stop that deploy or run the
+// stack twice.
+func (s *Service) deployedElsewhere(ctx context.Context, m *Migration, committed bool) (string, error) {
 	if s.deployments == nil {
 		return "", nil
 	}
@@ -699,10 +810,10 @@ func (s *Service) deployedElsewhere(ctx context.Context, m *Migration) (string, 
 	if err != nil || dep == nil {
 		return "", err
 	}
-	if dep.HostID != m.SourceHostID && dep.HostID != m.TargetHostID {
-		return dep.HostID, nil
+	if dep.HostID == m.SourceHostID || (committed && dep.HostID == m.TargetHostID) {
+		return "", nil
 	}
-	return "", nil
+	return dep.HostID, nil
 }
 
 // Preflight runs the pre-flight checks without starting a migration.
@@ -733,14 +844,23 @@ func (s *Service) Preflight(ctx context.Context, stackName, targetHostID string)
 	return res, nil
 }
 
+// ErrPurged refuses rolling back a migration whose source copy was
+// removed: the source would start on empty volumes.
+var ErrPurged = errors.New("the migration was finalised and its volumes on the source removed; it can't be rolled back")
+
 // Rollback triggers a manual rollback for a completed migration.
 func (s *Service) Rollback(ctx context.Context, migrationID string) error {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	m, err := s.store.Get(ctx, migrationID)
 	if err != nil {
 		return err
 	}
 	if m.Status != StatusCompleted {
 		return fmt.Errorf("can only rollback completed migrations (current: %s)", m.Status)
+	}
+	if s.purging[m.ID] || (m.Progress != nil && m.Progress.Purged) {
+		return ErrPurged
 	}
 	claimed, err := s.store.claimRollback(ctx, m.ID)
 	if err != nil {

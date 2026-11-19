@@ -54,8 +54,9 @@ func TestMigrationRoutesCheckTheMigrationsHosts(t *testing.T) {
 	agent1 := rbac.Scope{Type: rbac.ScopeHost, Host: "agent-1"}
 	e.role("target-only", full, local)
 	e.role("both", full, local, agent1)
+	e.role("both-vol", append(full, rbac.PermVolumesDelete), local, agent1)
 	tok := map[string]string{}
-	for _, u := range []string{"target-only", "both"} {
+	for _, u := range []string{"target-only", "both", "both-vol"} {
 		e.user(u, u)
 		tok[u] = e.login(u).AccessToken
 	}
@@ -71,7 +72,8 @@ func TestMigrationRoutesCheckTheMigrationsHosts(t *testing.T) {
 		{"rollback of a migration to another target", "both", http.MethodPost, "/api/v1/stacks/web/migrate/elsewhere/rollback", http.StatusForbidden},
 		{"rollback of a migration between other hosts", "target-only", http.MethodPost, "/api/v1/stacks/web/migrate/elsewhere/rollback", http.StatusNotFound},
 		{"purge without rights on the source", "target-only", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusForbidden},
-		{"purge with rights on both", "both", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusBadRequest},
+		{"purge without volume delete on the source", "both", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusForbidden},
+		{"purge with rights on both", "both-vol", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

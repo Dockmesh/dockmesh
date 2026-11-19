@@ -103,6 +103,18 @@ func (s *Service) SetHostResolver(hr hostResolver) {
 	s.exec.hosts = hr
 }
 
+// VolumeIO archives and imports the volumes of one host.
+type VolumeIO interface {
+	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
+	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error
+}
+
+// VolumeIO returns host hostID's volume archive and import, the same
+// helpers backups and restores use there.
+func (s *Service) VolumeIO(hostID string) (VolumeIO, error) {
+	return s.exec.resolveHost(hostID)
+}
+
 // -----------------------------------------------------------------------------
 // public API used by handlers
 // -----------------------------------------------------------------------------

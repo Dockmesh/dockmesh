@@ -1,0 +1,3 @@
+kind: Changed
+body: A failed migration shows in the migrations dialog which phase failed and what was undone (stack stopped on the target, volumes removed there, stack started again on the source)
+time: 2026-11-19T21:54:04.786656377Z

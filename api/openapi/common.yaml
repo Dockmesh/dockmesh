@@ -248,6 +248,27 @@ components:
             bytes_done: {type: integer, format: int64}
             images_pulled: {type: integer}
             images_total: {type: integer}
+            created_volumes:
+              type: array
+              items: {type: string}
+              description: Volumes the migration created on the target; a rollback before the commit removes them.
+            volumes_copied:
+              type: array
+              description: Volumes copied to the target and read back identical (contents, owners, modes).
+              items:
+                type: object
+                properties:
+                  name: {type: string}
+                  bytes: {type: integer, format: int64}
+                  entries: {type: integer}
+            failed_phase: {type: string, description: The phase a failed migration stopped in.}
+            purged: {type: boolean, description: The migration was finalised and its copied volumes removed from the source; it can no longer be rolled back.}
+            undo:
+              type: array
+              description: What the rollback did, in order.
+              items:
+                type: string
+                enum: [stop_target, remove_target_volumes, keep_target_volumes, restart_source]
         started_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
         error_message: {type: string}

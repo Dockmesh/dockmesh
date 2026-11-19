@@ -35,6 +35,7 @@ type fakeHost struct {
 	metrics    system.Metrics
 	images     []image.Summary
 	containers []container.Summary
+	vols       *fakeVolumes
 
 	offline atomic.Bool
 	// gone is a deleted agent: offline to Pick and missing from List.
@@ -45,6 +46,12 @@ type fakeHost struct {
 	deploys  []string // compose + "\n---\n" + env per deploy
 	deployed bool
 	execs    []string
+}
+
+func (f *fakeHost) isDeployed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deployed
 }
 
 func (f *fakeHost) ID() string                       { return f.id }
@@ -189,6 +196,14 @@ func (e *migrationEnv) migrateConfirmed(t *testing.T, hooks string) *Migration {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return e.wait(t, m.ID)
+}
+
+// wait returns migration id's record once it is terminal and its run has
+// ended.
+func (e *migrationEnv) wait(t *testing.T, id string) *Migration {
+	t.Helper()
+	m := &Migration{ID: id}
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		// Check isActive before reading the record: the run stores its final

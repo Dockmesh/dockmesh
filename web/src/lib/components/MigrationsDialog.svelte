@@ -6,7 +6,7 @@
   import { fmtBytes, fmtAgo } from '$lib/format';
   import { Modal, StatusChip } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
-  import { api, type Migration } from '$lib/api';
+  import { api, type Migration, type MigrationUndoStep } from '$lib/api';
   import { goto } from '$app/navigation';
   import { ArrowRightLeft } from 'lucide-svelte';
 
@@ -97,6 +97,16 @@
     return MIG_STATUS[s]?.() ?? s;
   }
 
+  const UNDO: Record<MigrationUndoStep, () => string> = {
+    stop_target: m.ops_mig_undo_stop_target,
+    remove_target_volumes: m.ops_mig_undo_remove_target_volumes,
+    keep_target_volumes: m.ops_mig_undo_keep_target_volumes,
+    restart_source: m.ops_mig_undo_restart_source
+  };
+  function undoText(steps: MigrationUndoStep[]): string {
+    return steps.map((s) => UNDO[s]?.() ?? s).join(', ');
+  }
+
   function statusTone(s: string): Tone {
     if (s === 'completed') return 'ok';
     if (s === 'failed') return 'bad';
@@ -127,7 +137,7 @@
           {#if mg.progress && (mg.progress.bytes_total > 0 || mg.progress.volumes_total > 0)}
             <span class="bar"><i style="width: {pct}%"></i></span>
             <span class="meta dm-num">
-              {#if mg.progress.bytes_total > 0}{m.ops_mig_bytes({ done: fmtBytes(mg.progress.bytes_done), total: fmtBytes(mg.progress.bytes_total) })} · {/if}{m.ops_mig_volume({ i: mg.progress.volume_index, n: mg.progress.volumes_total })}{#if mg.progress.images_total > 0} · {m.ops_mig_image({ i: mg.progress.images_pulled, n: mg.progress.images_total })}{/if} · {pct} %
+              {#if mg.progress.current_volume}{mg.progress.current_volume} · {/if}{#if mg.progress.bytes_total > 0}{m.ops_mig_bytes({ done: fmtBytes(mg.progress.bytes_done), total: fmtBytes(mg.progress.bytes_total) })} · {:else if mg.progress.bytes_done > 0}{m.ops_mig_copied({ done: fmtBytes(mg.progress.bytes_done) })} · {/if}{m.ops_mig_volume({ i: mg.progress.volume_index, n: mg.progress.volumes_total })}{#if mg.progress.images_total > 0} · {m.ops_mig_image({ i: mg.progress.images_pulled, n: mg.progress.images_total })}{/if} · {pct} %
             </span>
           {/if}
           <span class="meta">{m.ops_mig_started({ ago: fmtAgo(mg.started_at), who: mg.initiated_by })}</span>
@@ -145,6 +155,11 @@
           <span class="dm-dim dm-trunc">{hostLabel(mg.source_host_id)} → {hostLabel(mg.target_host_id)}</span>
           <span><StatusChip tone={statusTone(mg.status)} label={statusLabel(mg.status)} /></span>
           <span class="dm-num dm-dim">{fmtDuration(mg.started_at, mg.completed_at)}</span>
+          {#if mg.progress?.failed_phase || mg.progress?.undo?.length}
+            <span class="why">
+              {#if mg.progress.failed_phase}{m.ops_mig_failed_in({ phase: statusLabel(mg.progress.failed_phase) })}{/if}{#if mg.progress.failed_phase && mg.progress.undo?.length}{' · '}{/if}{#if mg.progress.undo?.length}{m.ops_mig_undone({ steps: undoText(mg.progress.undo) })}{/if}
+            </span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -162,6 +177,7 @@
   .bar { height: 5px; border-radius: 3px; background: var(--field); overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); }
   .meta { font-size: var(--fs-xs); color: var(--subtle); }
-  .rrow { all: unset; box-sizing: border-box; display: grid; gap: 12px; align-items: center; width: 100%; padding: 0 6px; height: var(--row-h); border-bottom: 1px solid var(--border); cursor: pointer; }
+  .rrow { all: unset; box-sizing: border-box; display: grid; gap: 2px 12px; align-items: center; width: 100%; padding: 0 6px; min-height: var(--row-h); border-bottom: 1px solid var(--border); cursor: pointer; }
   .rrow:hover { background: var(--band); }
+  .why { grid-column: 1 / -1; padding-bottom: 6px; white-space: normal; font-size: var(--fs-xs); color: var(--subtle); }
 </style>

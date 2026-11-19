@@ -1101,6 +1101,7 @@ func main() {
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	migrationSvc.SetGlobalEnv(globalEnvStore.List)
 	migrationSvc.SetUsage(metricsCol)
+	migrationSvc.SetVolumeIO(func(id string) (migration.VolumeIO, error) { return backupSvc.VolumeIO(id) })
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
 	}

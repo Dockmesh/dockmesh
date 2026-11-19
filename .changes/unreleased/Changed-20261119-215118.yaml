@@ -1,0 +1,3 @@
+kind: Changed
+body: Finalising a migration through the API removes the copied volumes from the source host, and is refused while the stack runs there again
+time: 2026-11-19T21:51:18.760857351Z
