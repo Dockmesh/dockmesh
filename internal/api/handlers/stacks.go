@@ -1207,12 +1207,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// Policy: all prerequisites land on the current target host. We
 	// don't try to honour each dep's own preferred host. Operators with
 	// specific placements can deploy deps manually first.
-	type prerequisite struct {
-		name   string
-		detail *stacks.Detail
-		snap   *stacks.Snapshot
-	}
-	var prereqs []prerequisite
+	var prereqs []*stacks.Snapshot
 	if h.Dependencies != nil {
 		order, terr := h.Dependencies.TopoOrder(r.Context(), name)
 		if terr != nil {
@@ -1247,28 +1242,23 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 				h.writeScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
 				return
 			}
-			depSnap, ok := h.checkStack(w, r, depName)
-			if !ok {
-				return
-			}
-			depDetail, dErr := h.Stacks.Get(depName)
-			if dErr != nil {
+			if !h.Stacks.Has(depName) {
 				// Operator declared a dep on a stack that isn't on disk yet.
 				// Don't block the main deploy for a mis-declared edge;
 				// surface it clearly instead.
 				writeError(w, http.StatusFailedDependency,
-					"dependency "+depName+" is declared but missing on disk: "+dErr.Error())
+					"dependency "+depName+" is declared but missing on disk")
 				return
 			}
-			prereqs = append(prereqs, prerequisite{name: depName, detail: depDetail, snap: depSnap})
+			depSnap, ok := h.checkStack(w, r, depName)
+			if !ok {
+				return
+			}
+			prereqs = append(prereqs, depSnap)
 		}
 	}
 
-	detail, err := h.Stacks.Get(name)
-	if err != nil {
-		writeStackError(w, err)
-		return
-	}
+	detail := snap.Detail
 	// Resolve environment override. Query param wins; falls
 	// back to .dockmesh.meta.json's active_environment; falls back to
 	// no override. The empty-string fallback makes this a no-op for
@@ -1288,23 +1278,21 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		composeYAML = mergedYAML
 	}
 
-	if !h.confirmStack(w, r, snap) {
-		return
-	}
 	var depsDeployed []string
-	for _, p := range prereqs {
-		if !h.confirmStack(w, r, p.snap) {
-			return
-		}
-		if err := h.deployStackOnce(r, target, p.name, p.detail); err != nil {
+	for _, dep := range prereqs {
+		if err := h.deployStackOnce(r, target, dep); err != nil {
 			if writeStackBusy(w, err) {
 				return
 			}
 			writeError(w, http.StatusFailedDependency,
-				"deploy dependency "+p.name+": "+err.Error())
+				"deploy dependency "+dep.Name+": "+err.Error())
 			return
 		}
-		depsDeployed = append(depsDeployed, p.name)
+		depsDeployed = append(depsDeployed, dep.Name)
+	}
+
+	if !h.confirmStack(w, r, snap) {
+		return
 	}
 
 	h.clearGitPending(r.Context(), name)
@@ -1372,11 +1360,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkStack refuses stack files changed outside Dockmesh unless the
-// request confirms them with ?confirm_external=1. The confirmation is
-// recorded only by confirmStack, which the caller runs after its last
-// refusal, right before its first write. A caller that builds containers
-// from the files must use the returned ones, not a later read of the
-// directory.
+// request confirms them with ?confirm_external=1; confirmStack records the
+// confirmation. A caller that builds containers from the files must use
+// the returned ones, not a later read of the directory.
 func (h *Handlers) checkStack(w http.ResponseWriter, r *http.Request, name string) (*stacks.Snapshot, bool) {
 	snap, err := h.Stacks.Snapshot(name)
 	if err != nil {
@@ -1408,6 +1394,16 @@ func (h *Handlers) confirmation(r *http.Request, snap *stacks.Snapshot) *stacks.
 		h.audit(r.WithContext(ctx), "stack.accept_external_changes", snap.Name, map[string]any{"files": snap.Changed})
 		return nil
 	}}
+}
+
+// withConfirmation is the request context carrying the confirmation of
+// snap's outside changes, for hosts that record it right before they
+// write.
+func (h *Handlers) withConfirmation(r *http.Request, snap *stacks.Snapshot) context.Context {
+	if c := h.confirmation(r, snap); c != nil {
+		return stacks.WithConfirmation(r.Context(), c)
+	}
+	return r.Context()
 }
 
 // confirmStack records the outside changes of snap the request confirmed
@@ -1509,7 +1505,8 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // still run via a direct DeployStack call later if the operator
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep.
-func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
+func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, snap *stacks.Snapshot) error {
+	name, detail := snap.Name, snap.Detail
 	release, err := h.StackLocks.TryLock(stacklock.HostKey(target.ID(), name), stacklock.OpDependency)
 	if err != nil {
 		return err
@@ -1518,6 +1515,11 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name strin
 	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
 	if err != nil {
 		return err
+	}
+	if c := h.confirmation(r, snap); c != nil {
+		if err := c.Accept(r.Context()); err != nil {
+			return err
+		}
 	}
 	h.clearGitPending(r.Context(), name)
 	res, err := target.DeployStack(r.Context(), name, detail.Compose, mergedEnv)

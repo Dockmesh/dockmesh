@@ -94,10 +94,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.confirmStack(w, r, snap) {
-		return
-	}
-	res, err := scaling.NewHostTarget(target, name, service).Scale(r.Context(), detail.Compose, detail.Env, req.Replicas)
+	res, err := scaling.NewHostTarget(target, name, service).Scale(h.withConfirmation(r, snap), detail.Compose, detail.Env, req.Replicas)
 	if err != nil {
 		writeError(w, deployErrorStatus(err), err.Error())
 		return
@@ -217,10 +214,7 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	// Zero fields bubble into the engine, which fills them from the
 	// service's compose `deploy.update_config` and then applies defaults.
 
-	if !h.confirmStack(w, r, snap) {
-		return
-	}
-	res, err := target.RollingReplace(r.Context(), name, detail.Compose, detail.Env, service, opts)
+	res, err := target.RollingReplace(h.withConfirmation(r, snap), name, detail.Compose, detail.Env, service, opts)
 	if err != nil {
 		// User-correctable precondition failures are 422, not 500.
 		status := http.StatusInternalServerError

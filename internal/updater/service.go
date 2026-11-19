@@ -473,9 +473,7 @@ type stackTarget struct {
 	composeYAML string
 	proj        *composetypes.Project
 	svc         *composetypes.ServiceConfig
-	// confirmed are the outside changes the caller confirmed, accepted
-	// once the stack is locked.
-	confirmed *stacks.Confirmation
+	confirmed   *stacks.Confirmation
 }
 
 // accept records the confirmed outside changes of the stack as reviewed.

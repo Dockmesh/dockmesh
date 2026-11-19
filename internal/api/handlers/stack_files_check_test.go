@@ -16,15 +16,15 @@ import (
 )
 
 func TestScaleAndRollingUpdateRefuseOutsideChanges(t *testing.T) {
-	// Without Docker the scale pre-flight check fails, so its confirmation
-	// is not recorded; the rolling update gets as far as the write.
+	// Without Docker neither gets as far as a write, so the confirmation
+	// is not recorded.
 	routes := []struct {
 		name, path string
 		body       map[string]any
 		accepted   bool
 	}{
 		{"scale", "/stacks/app/services/web/scale", map[string]any{"replicas": 2}, false},
-		{"rolling update", "/stacks/app/services/web/rolling-update", map[string]any{"parallelism": 1}, true},
+		{"rolling update", "/stacks/app/services/web/rolling-update", map[string]any{"parallelism": 1}, false},
 	}
 	changes := []struct {
 		file, content string
