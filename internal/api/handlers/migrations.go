@@ -36,6 +36,10 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "target_host_id required")
 		return
 	}
+	if err := migration.CheckTargetKind(req.TargetKind); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// The stack will run on the target, so moving it there needs deploy
 	// rights on it there.
 	if target := h.stackScopeReq(req.TargetHostID, name); !h.allowedOn(r, target, rbac.PermStacksDeploy) {
@@ -61,7 +65,7 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if errors.Is(err, migration.ErrNamedVolumes) {
+	if errors.Is(err, migration.ErrNamedVolumes) || errors.Is(err, migration.ErrSwarmStack) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -198,6 +202,10 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetHostID == "" {
 		writeError(w, http.StatusBadRequest, "target_host_id required")
+		return
+	}
+	if err := migration.CheckTargetKind(req.TargetKind); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// The result describes the target host, so it needs the same right

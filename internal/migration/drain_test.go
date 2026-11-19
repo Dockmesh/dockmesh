@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -156,5 +158,19 @@ func TestDrainPlanBlocksNamedVolumes(t *testing.T) {
 	}
 	if e.source.stops != 0 {
 		t.Fatal("a blocked drain stopped a stack")
+	}
+}
+
+// The drain planner only moves host stacks; a Swarm stack is a blocker.
+func TestDrainPlanBlocksSwarmStacks(t *testing.T) {
+	e := newMigrationEnv(t)
+	e.target.metrics = system.Metrics{DiskTotal: 100 << 30}
+	e.source.containers = []container.Summary{{Labels: map[string]string{labelStackNamespace: "web"}}}
+	plan, err := NewDrainService(e.svc, e.db).Plan(context.Background(), "agent0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Feasible || len(plan.Entries) != 1 || plan.Entries[0].Detail != ErrSwarmStack.Error() {
+		t.Fatalf("plan = %+v", plan)
 	}
 }

@@ -310,11 +310,20 @@ func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPla
 	if err != nil {
 		return nil, err
 	}
+	// Offline, its stacks are refused when each migration's preflight runs.
+	source, _ := s.migSvc.hosts.Pick(sourceHostID)
 	for i := range plan.Entries {
 		e := &plan.Entries[i]
 		vols, err := s.migSvc.namedVolumes(ctx, e.StackName)
 		if err == nil && len(vols) > 0 {
 			err = fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
+		}
+		if err == nil && source != nil {
+			if swarm, serr := isSwarmStack(ctx, source, e.StackName); serr != nil {
+				err = fmt.Errorf("cannot list the host's containers: %w", serr)
+			} else if swarm {
+				err = ErrSwarmStack
+			}
 		}
 		if err != nil {
 			e.TargetHostID, e.TargetName = "", ""
