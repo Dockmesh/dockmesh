@@ -69,6 +69,7 @@ func TestMigrationRoutesCheckTheMigrationsHosts(t *testing.T) {
 		{"rollback without rights on the source", "target-only", http.MethodPost, "/api/v1/stacks/web/migrate/moved-here/rollback", http.StatusForbidden},
 		{"rollback with rights on both", "both", http.MethodPost, "/api/v1/stacks/web/migrate/moved-here/rollback", http.StatusBadRequest},
 		{"rollback of a migration to another target", "both", http.MethodPost, "/api/v1/stacks/web/migrate/elsewhere/rollback", http.StatusForbidden},
+		{"rollback of a migration between other hosts", "target-only", http.MethodPost, "/api/v1/stacks/web/migrate/elsewhere/rollback", http.StatusNotFound},
 		{"purge without rights on the source", "target-only", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusForbidden},
 		{"purge with rights on both", "both", http.MethodDelete, "/api/v1/stacks/web/migrate/moved-here/source", http.StatusBadRequest},
 	}
@@ -136,9 +137,15 @@ func TestDrainMovesNeedStackRights(t *testing.T) {
 	e.role("hosts-only", []rbac.Perm{rbac.PermHostsUpdate, rbac.PermStacksView}, rbac.Global)
 	e.role("mover", []rbac.Perm{rbac.PermHostsUpdate, rbac.PermStacksMigrate, rbac.PermStacksDeploy}, rbac.Global)
 	e.role("source-only", []rbac.Perm{rbac.PermHostsUpdate, rbac.PermStacksMigrate, rbac.PermStacksDeploy}, rbac.Scope{Type: rbac.ScopeHost, Host: "agent-1"})
+	e.role("deploy-at-2", []rbac.Perm{rbac.PermStacksDeploy}, rbac.Scope{Type: rbac.ScopeHost, Host: "agent-2"})
 	ids := map[string]string{}
 	for _, u := range []string{"hosts-only", "mover", "source-only"} {
 		ids[u] = e.user(u, u).ID
+	}
+	// Deploy but not Migrate on the target.
+	ids["deploys-there"] = e.user("deploys-there", "source-only").ID
+	if _, err := e.h.Roles.AddAssignment(context.Background(), rbac.Assignment{UserID: ids["deploys-there"], Role: "deploy-at-2", Scope: rbac.Scope{Type: rbac.ScopeHost, Host: "agent-2"}}); err != nil {
+		t.Fatal(err)
 	}
 	entries := []migration.PlanEntry{{StackName: "web", TargetHostID: "agent-2", Feasible: true}}
 
@@ -149,18 +156,15 @@ func TestDrainMovesNeedStackRights(t *testing.T) {
 		{"hosts-only", false},
 		{"mover", true},
 		{"source-only", false},
+		{"deploys-there", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.user, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/hosts/agent-1/drain/execute", nil)
 			id := ids[tt.user]
 			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: id, Access: e.h.Roles.AccessFor(id)}))
-			rr := httptest.NewRecorder()
-			if got := e.h.checkDrainMoves(rr, req, "agent-1", entries); got != tt.want {
-				t.Fatalf("got %v (%d %s), want %v", got, rr.Code, rr.Body, tt.want)
-			}
-			if !tt.want && rr.Code != http.StatusForbidden {
-				t.Fatalf("status %d, want 403", rr.Code)
+			if d := e.h.drainMovesDenial(req, "agent-1", entries); (d == nil) != tt.want {
+				t.Fatalf("denial %v, want allowed=%v", d, tt.want)
 			}
 		})
 	}

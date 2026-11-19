@@ -1042,9 +1042,8 @@ paths:
       summary: Roll back a completed migration (stop target, restart source)
       description: |
         Stops the stack on the target and deploys it on the source again,
-        in the background. Needs Stacks: Manage on the stack on both hosts
-        of the migration and Deploy on the source, wherever the stack runs
-        now.
+        in the background. Needs Stacks: Manage on the stack where it runs
+        now and on both hosts of the migration, and Deploy on the source.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id

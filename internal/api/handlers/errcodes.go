@@ -106,6 +106,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"mfa failed", "mfa_failed"},
 	{"mfa_token and code required", "mfa_token_and_code_required"},
 	{"migration not found", "migration_not_found"},
+	{"drain not found", "drain_not_found"},
 	{"migration service unavailable", "migration_service_unavailable"},
 	{"missing 'avatar' form field", "missing_avatar_form_field"},
 	{"missing 'file' part in form", "missing_file_part_in_form"},

@@ -17,7 +17,7 @@ func TestDrainRefusesServerHost(t *testing.T) {
 		if _, err := drains.Plan(context.Background(), id); !errors.Is(err, ErrDrainServerHost) {
 			t.Errorf("plan %q: err = %v, want ErrDrainServerHost", id, err)
 		}
-		if _, err := drains.Execute(context.Background(), id, "u1", nil); !errors.Is(err, ErrDrainServerHost) {
+		if _, err := drains.Execute(context.Background(), id, "u1", nil, nil); !errors.Is(err, ErrDrainServerHost) {
 			t.Errorf("execute %q: err = %v, want ErrDrainServerHost", id, err)
 		}
 	}
@@ -149,12 +149,50 @@ func TestDrainPlanBlocksNamedVolumes(t *testing.T) {
 	if web := got["web"]; !web.Feasible || web.TargetHostID != "agent1" {
 		t.Fatalf("web entry = %+v", web)
 	}
-	_, err = drains.Execute(context.Background(), "agent0", "u1", nil)
+	_, err = drains.Execute(context.Background(), "agent0", "u1", nil, nil)
 	var blocked *DrainBlockedError
 	if !errors.As(err, &blocked) {
 		t.Fatalf("execute: err = %v, want DrainBlockedError", err)
 	}
 	if e.source.stops != 0 {
 		t.Fatal("a blocked drain stopped a stack")
+	}
+}
+
+// The rights check runs on the plan Execute stores and runs; refused,
+// nothing is recorded or stopped.
+func TestDrainExecuteAuthorizesTheRunPlan(t *testing.T) {
+	e := newMigrationEnv(t)
+	e.target.metrics = system.Metrics{DiskTotal: 100 << 30}
+	drains := NewDrainService(e.svc, e.db)
+	denied := errors.New("denied")
+	var seen []PlanEntry
+	_, err := drains.Execute(context.Background(), "agent0", "u1", nil, func(entries []PlanEntry) error {
+		seen = entries
+		return denied
+	})
+	if !errors.Is(err, denied) {
+		t.Fatalf("err = %v, want the authorizer's", err)
+	}
+	if len(seen) != 1 || seen[0].StackName != "web" || seen[0].TargetHostID != "agent1" {
+		t.Fatalf("authorized %+v", seen)
+	}
+	list, err := drains.Store().ListByHost(context.Background(), "agent0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 || e.source.stops != 0 {
+		t.Fatalf("%d drains, %d stops after a refusal", len(list), e.source.stops)
+	}
+}
+
+// A drain step only moves the stack off the drained host.
+func TestDrainStepRefusesStackMovedMeanwhile(t *testing.T) {
+	e := newMigrationEnv(t)
+	if _, err := e.svc.initiate(context.Background(), "web", "agent5", "agent1", "u1", "", nil); err == nil {
+		t.Fatal("initiate from another host succeeded")
+	}
+	if e.source.stops != 0 {
+		t.Fatal("source stopped")
 	}
 }
