@@ -49,7 +49,7 @@ func TestInitiateNeedsHookConfirmation(t *testing.T) {
 	}
 
 	for _, confirm := range []string{"", "0000"} {
-		_, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", confirm)
+		_, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", confirm, nil)
 		var unconfirmed *HooksUnconfirmedError
 		if !errors.As(err, &unconfirmed) || !errors.Is(err, ErrHooksUnconfirmed) || unconfirmed.Hooks.Digest != pre.Hooks.Digest {
 			t.Fatalf("confirm %q: err = %v", confirm, err)
@@ -60,7 +60,7 @@ func TestInitiateNeedsHookConfirmation(t *testing.T) {
 	}
 
 	e.setHooks(t, "pg_dump -f /other.sql", "psql -f /dump.sql")
-	if _, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", pre.Hooks.Digest); !errors.Is(err, ErrHooksUnconfirmed) {
+	if _, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", pre.Hooks.Digest, nil); !errors.Is(err, ErrHooksUnconfirmed) {
 		t.Fatalf("hooks changed after the preflight: err = %v", err)
 	}
 	e.setHooks(t, "pg_dump -f /dump.sql", "psql -f /dump.sql")

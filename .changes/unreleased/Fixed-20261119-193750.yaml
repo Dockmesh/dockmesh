@@ -1,0 +1,3 @@
+kind: Fixed
+body: A deploy, migration, rollback, scale or image update that is refused no longer marks the files changed outside Dockmesh as reviewed or resumes held git auto-deploys
+time: 2026-11-19T19:37:50.125381834Z

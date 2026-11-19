@@ -354,7 +354,8 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 			skipped = append(skipped, newSwarmSkip(id, svc))
 			continue
 		}
-		if !h.allowStackRebuild(w, r, id) {
+		var ok bool
+		if r, ok = h.allowStackRebuild(w, r, id); !ok {
 			return
 		}
 		kept = append(kept, id)

@@ -233,6 +233,9 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		return nil, err
 	}
 	defer release()
+	if err := st.accept(ctx); err != nil {
+		return nil, err
+	}
 
 	op := operations.FromContext(ctx)
 	authBlob := s.resolveImageAuth(ctx, ref)
@@ -394,6 +397,9 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 		return nil, err
 	}
 	defer release()
+	if err := st.accept(ctx); err != nil {
+		return nil, err
+	}
 
 	var newID string
 	if st != nil {
@@ -467,6 +473,17 @@ type stackTarget struct {
 	composeYAML string
 	proj        *composetypes.Project
 	svc         *composetypes.ServiceConfig
+	// confirmed are the outside changes the caller confirmed, accepted
+	// once the stack is locked.
+	confirmed *stacks.Confirmation
+}
+
+// accept records the confirmed outside changes of the stack as reviewed.
+func (t *stackTarget) accept(ctx context.Context) error {
+	if t == nil || t.confirmed == nil {
+		return nil
+	}
+	return t.confirmed.Accept(ctx)
 }
 
 // stackTarget returns nil for containers outside any managed stack
@@ -484,8 +501,9 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 	if err != nil {
 		return nil, fmt.Errorf("load stack %s: %w", stack, err)
 	}
-	if len(snap.Changed) > 0 {
-		return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(snap.Changed, ", "))
+	confirmed, err := stacks.RequireConfirmed(ctx, snap)
+	if err != nil {
+		return nil, err
 	}
 	dir, err := s.stacks.Dir(stack)
 	if err != nil {
@@ -503,7 +521,7 @@ func (s *Service) stackTarget(ctx context.Context, info *container.InspectRespon
 	if svc.Image == "" {
 		return nil, fmt.Errorf("service %s in stack %s has no image", service, stack)
 	}
-	return &stackTarget{stack: stack, composeYAML: detail.Compose, proj: proj, svc: &svc}, nil
+	return &stackTarget{stack: stack, composeYAML: detail.Compose, proj: proj, svc: &svc, confirmed: confirmed}, nil
 }
 
 // loadChecked parses the checked compose file from a staging copy, as a

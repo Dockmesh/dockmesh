@@ -62,10 +62,11 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	detail, ok := h.verifiedStack(w, r, name)
+	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
 	}
+	detail := snap.Detail
 
 	// Pre-flight check.
 	check, err := target.CheckScale(r.Context(), name, detail.Compose, detail.Env, service)
@@ -93,6 +94,9 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.confirmStack(w, r, snap) {
+		return
+	}
 	res, err := scaling.NewHostTarget(target, name, service).Scale(r.Context(), detail.Compose, detail.Env, req.Replicas)
 	if err != nil {
 		writeError(w, deployErrorStatus(err), err.Error())
@@ -196,10 +200,11 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer release()
-	detail, ok := h.verifiedStack(w, r, name)
+	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
 	}
+	detail := snap.Detail
 
 	opts := compose.RollingOptions{
 		Parallelism:   req.Parallelism,
@@ -212,6 +217,9 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	// Zero fields bubble into the engine, which fills them from the
 	// service's compose `deploy.update_config` and then applies defaults.
 
+	if !h.confirmStack(w, r, snap) {
+		return
+	}
 	res, err := target.RollingReplace(r.Context(), name, detail.Compose, detail.Env, service, opts)
 	if err != nil {
 		// User-correctable precondition failures are 422, not 500.
