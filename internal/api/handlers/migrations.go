@@ -91,7 +91,34 @@ func (h *Handlers) GetMigration(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The stack may run elsewhere by now; the record is about the two
+	// hosts it moved between.
+	if !h.allowedOn(r, h.stackScopeReq(m.SourceHostID, m.StackName)) && !h.allowedOn(r, h.stackScopeReq(m.TargetHostID, m.StackName)) {
+		writeError(w, http.StatusNotFound, "migration not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// allowedOnMigration refuses, with a 403 already written, a caller who
+// lacks the route's permissions on the stack on either host of m, or
+// lacks extra on the source, where the stack is started again.
+func (h *Handlers) allowedOnMigration(w http.ResponseWriter, r *http.Request, m *migration.Migration, extra ...rbac.Perm) bool {
+	source := h.stackScopeReq(m.SourceHostID, m.StackName)
+	if !h.allowedOn(r, source, extra...) {
+		perm := rbac.PermStacksMigrate
+		if len(extra) > 0 && h.allowedOn(r, source) {
+			perm = extra[0]
+		}
+		h.writeScopeDenied(w, r, perm, source, "stack "+m.StackName+" on the source host")
+		return false
+	}
+	target := h.stackScopeReq(m.TargetHostID, m.StackName)
+	if !h.allowedOn(r, target) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, target, "stack "+m.StackName+" on the target host")
+		return false
+	}
+	return true
 }
 
 // stackMigration loads migration {id} and requires it to belong to
@@ -139,10 +166,16 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
-	if _, ok := h.stackMigration(w, r); !ok {
+	m, ok := h.stackMigration(w, r)
+	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
+	// A rollback stops the stack on the target and deploys it on the
+	// source again.
+	if !h.allowedOnMigration(w, r, m, rbac.PermStacksDeploy) {
+		return
+	}
+	id := m.ID
 	if err := h.Migrations.Rollback(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -228,10 +261,14 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
-	if _, ok := h.stackMigration(w, r); !ok {
+	m, ok := h.stackMigration(w, r)
+	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
+	if !h.allowedOnMigration(w, r, m) {
+		return
+	}
+	id := m.ID
 	if err := h.Migrations.PurgeSource(r.Context(), id); err != nil {
 		if err == migration.ErrNotFound {
 			writeError(w, http.StatusNotFound, "migration not found")

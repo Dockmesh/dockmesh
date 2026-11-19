@@ -52,6 +52,28 @@ func (h *Handlers) checkDrainHooksReadable(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// checkDrainMoves refuses a drain that moves a stack the caller could not
+// migrate by hand: Migrate on the stack here and Deploy on it at its
+// target.
+func (h *Handlers) checkDrainMoves(w http.ResponseWriter, r *http.Request, hostID string, entries []migration.PlanEntry) bool {
+	for _, e := range entries {
+		src := h.stackScopeReq(hostID, e.StackName)
+		if !middleware.AllowedOn(r.Context(), rbac.PermStacksMigrate, src) {
+			h.writeScopeDenied(w, r, rbac.PermStacksMigrate, src, "stack "+e.StackName)
+			return false
+		}
+		if e.TargetHostID == "" {
+			continue
+		}
+		dst := h.stackScopeReq(e.TargetHostID, e.StackName)
+		if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, dst) {
+			h.writeScopeDenied(w, r, rbac.PermStacksDeploy, dst, "stack "+e.StackName+" on host "+e.TargetHostID)
+			return false
+		}
+	}
+	return true
+}
+
 // ExecuteDrain runs a drain plan.
 //
 //	POST /api/v1/hosts/{id}/drain/execute
@@ -75,6 +97,9 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.checkDrainHooksReadable(w, r, hostID, plan.Entries) {
+		return
+	}
+	if !h.checkDrainMoves(w, r, hostID, plan.Entries) {
 		return
 	}
 	var req struct {
@@ -141,13 +166,21 @@ func (h *Handlers) GetDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
-	d, err := h.Drains.Get(r.Context(), drainID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	d, ok := h.hostDrain(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
+}
+
+// hostDrain loads drain {drain_id} and requires it to drain host {id}.
+func (h *Handlers) hostDrain(w http.ResponseWriter, r *http.Request) (*migration.Drain, bool) {
+	d, err := h.Drains.Get(r.Context(), chi.URLParam(r, "drain_id"))
+	if err != nil || d.SourceHostID != chi.URLParam(r, "id") {
+		writeError(w, http.StatusNotFound, "drain not found")
+		return nil, false
+	}
+	return d, true
 }
 
 // PauseDrain pauses a running drain between stacks.
@@ -161,7 +194,11 @@ func (h *Handlers) PauseDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	drainID := d.ID
 	if err := h.Drains.PauseDrain(drainID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -180,7 +217,11 @@ func (h *Handlers) ResumeDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	drainID := d.ID
 	if err := h.Drains.ResumeDrain(drainID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -199,7 +240,11 @@ func (h *Handlers) AbortDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	drainID := d.ID
 	if err := h.Drains.AbortDrain(drainID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
