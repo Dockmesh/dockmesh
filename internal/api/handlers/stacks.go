@@ -1396,14 +1396,13 @@ func (h *Handlers) confirmation(r *http.Request, snap *stacks.Snapshot) *stacks.
 	}}
 }
 
-// withConfirmation is the request context carrying the confirmation of
-// snap's outside changes, for hosts that record it right before they
-// write.
-func (h *Handlers) withConfirmation(r *http.Request, snap *stacks.Snapshot) context.Context {
+// withConfirmation is ctx carrying the confirmation of snap's outside
+// changes, for hosts that record it right before they write.
+func (h *Handlers) withConfirmation(ctx context.Context, r *http.Request, snap *stacks.Snapshot) context.Context {
 	if c := h.confirmation(r, snap); c != nil {
-		return stacks.WithConfirmation(r.Context(), c)
+		return stacks.WithConfirmation(ctx, c)
 	}
-	return r.Context()
+	return ctx
 }
 
 // confirmStack records the outside changes of snap the request confirmed
