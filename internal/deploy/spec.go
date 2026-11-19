@@ -58,7 +58,7 @@ func ActiveOverride(dir string) string {
 // Resolve builds the spec for deploys that run without a request, such as
 // git auto-deploys and migrations: globals plus the stack's default
 // override, the same as a manual deploy without ?environment.
-// keepRelative is compose.MergeEnvironment's, for the host deployed to.
+// keepRelative: see compose.MergeEnvironment.
 func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, stackEnv string, keepRelative bool) (Spec, error) {
 	spec := Spec{Compose: baseCompose, Env: stackEnv}
 	if globals != nil {

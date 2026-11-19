@@ -513,11 +513,11 @@ func strictStrings(file, field string, v any) ([]string, error) {
 // checkProjectFileRefs checks the env and label files compose-go resolved
 // for every service and pre_start hook, mirroring when compose-go would
 // read them (a missing optional env file is skipped), and the services'
-// develop.watch paths. With relative set, the project was loaded without
+// develop.watch paths. With unresolved set, the project was loaded without
 // resolving paths, and relative ones start from the stack folder.
-func checkProjectFileRefs(files *stackFiles, proj *types.Project, relative bool) error {
+func checkProjectFileRefs(files *stackFiles, proj *types.Project, unresolved bool) error {
 	abs := func(p string) string {
-		if relative && !filepath.IsAbs(p) {
+		if unresolved && !filepath.IsAbs(p) {
 			return filepath.Join(files.dir, p)
 		}
 		return p

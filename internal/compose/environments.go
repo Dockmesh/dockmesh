@@ -136,8 +136,11 @@ func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envConten
 		return "", err
 	}
 	proj, merged, err := MergeEnvironment(ctx, staged, stackName, envContent, overrideName, keepRelative)
-	if err != nil || keepRelative {
-		return merged, err
+	if err != nil {
+		return "", err
+	}
+	if keepRelative {
+		return merged, nil
 	}
 	RebaseStagedPaths(proj, staged, stackDir)
 	out, err := proj.MarshalYAML()

@@ -21,7 +21,6 @@ import (
 //
 // Errors surface cleanly to the handler: invalid name / missing overlay
 // file / compose merge errors all become 422.
-// P.12.8.
 func (h *Handlers) resolveEnvOverride(r *http.Request, target host.Host, name, composeYAML, envContent string) (string, string, error) {
 	requested := r.URL.Query().Get("environment")
 	if requested == "" {
@@ -56,8 +55,6 @@ func (h *Handlers) resolveEnvOverride(r *http.Request, target host.Host, name, c
 // meta file.
 //
 //	GET /api/v1/stacks/{name}/environments
-//
-// P.12.8.
 func (h *Handlers) ListEnvironments(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	dir, err := h.Stacks.Dir(name)
@@ -97,8 +94,6 @@ type setActiveEnvironmentRequest struct {
 //
 //	PUT /api/v1/stacks/{name}/environments/active
 //	Body: { "active": "prod" }
-//
-// P.12.8.
 func (h *Handlers) SetActiveEnvironment(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	dir, err := h.Stacks.Dir(name)
