@@ -144,10 +144,16 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 		operations.FromContext(ctx).AddSecrets(targetSecretValues(st.Type, st.Config)...)
 		built, err := ts.BuildChecked(ctx, st, s.notices)
 		if err == nil {
-			var rc io.ReadCloser
-			rc, err = wrapRunTarget(built).Read(ctx, run.TargetPath)
-			if err == nil {
-				return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil
+			tgt := wrapRunTarget(built)
+			var match bool
+			if match, err = holdsArchive(ctx, tgt, run); err == nil && match {
+				var rc io.ReadCloser
+				if rc, err = tgt.Read(ctx, run.TargetPath); err == nil {
+					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil
+				}
+			} else if err == nil {
+				tried = append(tried, desc+" (file does not match)")
+				continue
 			}
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -164,9 +170,27 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 		run.ID, where, run.TargetPath)
 }
 
+// holdsArchive reports whether the file at the run's path on t has the
+// run's hash and size. The whole file is read: another job of the same
+// name may have written the same path to another target.
+func holdsArchive(ctx context.Context, t targets.Target, run *Run) (bool, error) {
+	rc, err := t.Read(ctx, run.TargetPath)
+	if err != nil {
+		return false, err
+	}
+	defer rc.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, ctxReader{ctx: ctx, r: rc})
+	if err != nil {
+		return false, err
+	}
+	sizeOK := run.SizeBytes <= 0 || n == run.SizeBytes
+	return sizeOK && strings.EqualFold(hex.EncodeToString(h.Sum(nil)), run.SHA256), nil
+}
+
 // hashCheckedReader fails the read that reaches the end of an archive
-// whose bytes don't hash to want: a file found by its path alone may be
-// another archive.
+// whose bytes don't hash to want, in case the file changed after
+// holdsArchive read it.
 type hashCheckedReader struct {
 	rc    io.ReadCloser
 	h     hash.Hash

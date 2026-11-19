@@ -400,8 +400,12 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	// Headers are flushed once copying starts; a failure can't become
-	// a JSON error anymore.
-	_, _ = io.Copy(w, src)
+	// a JSON error anymore, so the connection is cut instead: the client
+	// must not take a truncated or mismatching file for a complete one.
+	if _, err := io.Copy(w, src); err != nil {
+		slog.Warn("backup download aborted", "run", id, "err", err)
+		panic(http.ErrAbortHandler)
+	}
 }
 
 type restoreRequest struct {

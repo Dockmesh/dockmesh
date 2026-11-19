@@ -46,12 +46,15 @@ func TestRunWithoutJobRow(t *testing.T) {
 		{
 			name: "file at the path is another archive",
 			breakIt: func(t *testing.T, svc *Service, root, other string, run *Run) {
-				p := filepath.Join(root, filepath.FromSlash(run.TargetPath))
-				if err := os.WriteFile(p, []byte("not this run's archive"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				writeFile(t, filepath.Join(root, filepath.FromSlash(run.TargetPath)), "not this run's archive")
 			},
-			wantErr: ErrArchiveMismatch,
+			wantErr: ErrRunJobGone,
+		},
+		{
+			name: "first target tried holds another archive at the path",
+			breakIt: func(t *testing.T, svc *Service, root, other string, run *Run) {
+				writeFile(t, filepath.Join(other, filepath.FromSlash(run.TargetPath)), "not this run's archive")
+			},
 		},
 	}
 	for _, tc := range cases {
@@ -62,12 +65,15 @@ func TestRunWithoutJobRow(t *testing.T) {
 			targets.SetLocalRoots(func() []string { return []string{root, other} })
 			svc.SetHostResolver(newImportHost(fake))
 			var tid int64
-			for _, dir := range []string{other, root} {
-				tgt, err := svc.Targets().Create(ctx, targets.TargetInput{Name: filepath.Base(dir), Type: "local", Config: map[string]any{"path": dir}})
+			// Targets are tried by name: "a-other" comes first.
+			for name, dir := range map[string]string{"a-other": other, "b-job": root} {
+				tgt, err := svc.Targets().Create(ctx, targets.TargetInput{Name: name, Type: "local", Config: map[string]any{"path": dir}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				tid = tgt.ID
+				if dir == root {
+					tid = tgt.ID
+				}
 			}
 			in := volumeJob("db", "")
 			in.TargetID, in.TargetType, in.TargetConfig = tid, "", nil
@@ -133,6 +139,16 @@ func readAll(svc *Service, runID int64) error {
 func mustExec(t *testing.T, svc *Service, q string, args ...any) {
 	t.Helper()
 	if _, err := svc.store.db.Exec(q, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFile(t *testing.T, p, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
