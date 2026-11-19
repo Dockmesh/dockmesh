@@ -174,6 +174,39 @@ log_field() {
 }
 # end log_field
 
+# apt_lock_held succeeds while a process holds a lock on one of the files
+# given. apt and dpkg take fcntl locks, which flock(1) does not see, and
+# fuser is missing on many images, so the files are looked up in
+# /proc/locks by device and inode.
+apt_lock_held() {
+  local f dev ids=""
+  for f in "$@"; do
+    [[ -e "$f" ]] || continue
+    dev="$(stat -c %d "$f")"
+    ids+="$(printf '%02x:%02x:%s' $(((dev >> 8) & 0xfff)) $(((dev & 0xff) | ((dev >> 12) & 0xfff00))) "$(stat -c %i "$f")") "
+  done
+  [[ -n "$ids" && -r /proc/locks ]] || return 1
+  awk -v ids=" $ids" '{ for (i = 1; i <= NF; i++) if (index(ids, " " $i " ")) held = 1 } END { exit !held }' /proc/locks
+}
+# end apt_lock_held
+
+# wait_for_apt_lock waits up to $1 seconds until none of the lock files
+# after it is held. On a freshly booted cloud VM unattended-upgrades holds
+# them for minutes, and apt-get fails at once on a held lock.
+wait_for_apt_lock() {
+  local timeout="$1" waited=0
+  shift
+  apt_lock_held "$@" || return 0
+  note wait "Waiting for another package manager to finish (unattended-upgrades?)"
+  while apt_lock_held "$@"; do
+    ((waited < timeout)) || return 1
+    sleep 1
+    waited=$((waited + 1))
+    ((waited % 30 != 0)) || note wait "still waiting after ${waited}s"
+  done
+}
+# end wait_for_apt_lock
+
 # is_server_data_dir succeeds if a Dockmesh server keeps its data in $1.
 # Agents installed by older releases defaulted to the server's directory.
 is_server_data_dir() {
@@ -398,12 +431,20 @@ if ! command -v docker >/dev/null 2>&1; then
   [[ $SKIP_DOCKER -eq 0 ]] || die "Docker is not installed. Install it, or run again without --skip-docker."
   STEPS=7
   step "Checking the system" "Linux $ARCH · systemd · Docker missing"
+  if ! wait_for_apt_lock 300 /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock; then
+    die "Installing Docker from get.docker.com failed: another package manager still holds the dpkg lock after 5 minutes. Install Docker yourself and run again."
+  fi
   DOCKER_LOG="$(mktemp /tmp/dockmesh-docker-install.XXXXXX)"
-  if ! curl -fsSL https://get.docker.com | sh >"$DOCKER_LOG" 2>&1; then
+  # apt-get of get.docker.com waits too if the lock is taken again
+  # between the check above and its first install.
+  APT_LOCK_CONF="$(mktemp /tmp/dockmesh-apt-lock.XXXXXX)"
+  echo 'DPkg::Lock::Timeout "300";' >"$APT_LOCK_CONF"
+  if ! curl -fsSL https://get.docker.com | APT_CONFIG="${APT_CONFIG:-$APT_LOCK_CONF}" sh >"$DOCKER_LOG" 2>&1; then
+    rm -f "$APT_LOCK_CONF"
     tail -n 20 "$DOCKER_LOG" >&2
     die "Installing Docker from get.docker.com failed (full log: $DOCKER_LOG). Install Docker yourself and run again."
   fi
-  rm -f "$DOCKER_LOG"
+  rm -f "$DOCKER_LOG" "$APT_LOCK_CONF"
   systemctl enable --now docker >/dev/null 2>&1 || true
   step "Installing Docker" "get.docker.com"
 else
