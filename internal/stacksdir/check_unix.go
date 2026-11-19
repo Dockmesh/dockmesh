@@ -180,7 +180,7 @@ walk:
 	// sandbox binds its data dir onto itself, so from the service the
 	// default looks like a bind mount the user never made.
 	case m.Root != "/" && !m.Subvolume && layout.Within(r.DataDir, p):
-		return fail(OwnDataDir, "The stacks directory can't be moved into the data directory of %s (%s). Choose a directory of its own, for example /srv/dockmesh/stacks.", r.service(), r.DataDir)
+		return fail(OwnDataDir, "%s lies in the data directory of %s (%s). Choose a directory of its own, for example /srv/dockmesh/stacks.", p, r.service(), r.DataDir)
 	case m.Root != "/" && !m.Subvolume:
 		return fail(BindMount, "%s is on a bind mount of %s. Enter a path on the mounted filesystem itself.", p, m.Root)
 	}

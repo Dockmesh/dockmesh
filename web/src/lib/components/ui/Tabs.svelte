@@ -44,7 +44,7 @@
         data-sveltekit-noscroll
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
             class="dot dm-dot {t.dot === 'ring' ? 'ring' : 'warn'}"
-            title={m.ui_tabs_needs_attention()}
+            title={t.dot === 'ring' ? m.label_host_waiting_setup() : m.ui_tabs_needs_attention()}
           ></span>{/if}</a
       >
     {:else}
@@ -57,7 +57,7 @@
         onclick={() => onchange?.(t.key)}
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
             class="dot dm-dot {t.dot === 'ring' ? 'ring' : 'warn'}"
-            title={m.ui_tabs_needs_attention()}
+            title={t.dot === 'ring' ? m.label_host_waiting_setup() : m.ui_tabs_needs_attention()}
           ></span>{/if}</button
       >
     {/if}

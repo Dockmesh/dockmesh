@@ -12,7 +12,6 @@
 </script>
 
 <script lang="ts">
-  // ring: the accent ring of a host that waits for setup instead of a filled dot.
   let { tone = 'off', label, title, ring = false }: { tone?: Tone; label: string; title?: string; ring?: boolean } = $props();
 </script>
 

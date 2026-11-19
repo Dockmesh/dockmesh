@@ -134,7 +134,7 @@ func TestCheckStacksDir(t *testing.T) {
 					"60 22 8:1 " + root + "/data " + root + "/data rw - ext4 /dev/sda1 rw\n"
 				r.mountinfo = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(mounts)), nil }
 			},
-			issue: sdAgentData, msg: "can't be moved into the data directory of the agent (" + root + "/data). Choose a directory of its own, for example /srv/dockmesh/stacks.",
+			issue: sdAgentData, msg: root + "/data/stacks lies in the data directory of the agent (" + root + "/data). Choose a directory of its own, for example /srv/dockmesh/stacks.",
 		},
 		{name: "relative", path: "srv/stacks", issue: sdNotAbsolute},
 		{name: "dot dot", path: root + "/srv/../etc", issue: sdBadChars},
