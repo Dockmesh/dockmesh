@@ -169,15 +169,41 @@ AGENT_DIRS=()
 IN_USE=()
 IN_USE_KNOWN=0
 SERVICE_USERS="dockmesh"
+KEPT_PATHS=()
+# SHARED_ROOTS are system directories a data root may be. Dockmesh's own
+# entries in them are purged; the directory itself and everything else
+# in it stay.
+SHARED_ROOTS="/data /mnt /opt /srv"
+PURGE_SHARED=0
+# PURGED_MARKER mirrors setup.PurgedMarker.
+PURGED_MARKER=".dockmesh-purged"
 
 # keep P WHY reports a kept path. Names can come from container data, so
 # control characters are dropped before they reach the terminal.
 keep() {
+  local p
   PURGE_KEPT=1
   if [ "$(stat -c %U -- "$1" 2>/dev/null)" = "dockmesh" ]; then
     KEPT_OWNED=1
   fi
-  warn "keep    $(printf '%s' "$1" | tr -d '\000-\037\177'): $(printf '%s' "$2" | tr -d '\000-\037\177')"
+  p="$(printf '%s' "$1" | tr -d '\000-\037\177')"
+  KEPT_PATHS+=("$p")
+  warn "keep    $p: $(printf '%s' "$2" | tr -d '\000-\037\177')"
+}
+
+# owns_kept_install ACCOUNT DATA_DIR CONFIG_DIR succeeds when ACCOUNT owns
+# DATA_DIR or its group owns CONFIG_DIR.
+owns_kept_install() {
+  [ "$(stat -c %U -- "$2" 2>/dev/null)" = "$1" ] || [ "$(stat -c %G -- "$3" 2>/dev/null)" = "$1" ]
+}
+
+# shared_root P succeeds when P is one of SHARED_ROOTS.
+shared_root() {
+  local r
+  for r in $SHARED_ROOTS; do
+    [ "$1" = "$r" ] && return 0
+  done
+  return 1
 }
 
 # owner_ok P succeeds when one of SERVICE_USERS owns P.
@@ -339,6 +365,8 @@ resolve_purge_paths() {
       v="$(env_value "$env" "$key")"
       [ -n "$v" ] && PURGE_FILES+=("$(clean_path "$v")")
     done
+    v="$(env_value "$env" DOCKMESH_SECRETS_KEY_PATH)"
+    [ -n "$v" ] && PURGE_FILES+=("$(clean_path "$v").history" "$(clean_path "$v").old")
   fi
   [ -n "$dir" ] || { [ -n "$db" ] && dir="$(infer_data_dir "$db")"; }
   if [ -n "$dir" ]; then
@@ -575,7 +603,7 @@ purge_class() {
   esac
   if [ "$2" = "1" ]; then
     case "$n" in
-      dockmesh.env|.check-config-*) printf file; return ;;
+      dockmesh.env|.check-config-*|"$PURGED_MARKER") printf file; return ;;
       update|agent-release|.setup) printf tree; return ;;
       audit-archive) printf archive; return ;;
     esac
@@ -584,6 +612,7 @@ purge_class() {
     case "$n" in
       "$db"|"$db"-*|"$db".*) printf file; return ;;
       secrets.env|secrets.env.tmp-*|secrets.age-key|secrets.age-key.tmp-*|audit-genesis.sha256) printf file; return ;;
+      secrets.age-key.history|secrets.age-key.history.tmp-*|secrets.age-key.old) printf file; return ;;
       agents-ca.crt|agents-ca.key|agents-server.crt|agents-server.key|ui-server.crt|ui-server.key) printf file; return ;;
       .agents-*.tmp-*|.ui-server.*.tmp-*) printf file; return ;;
       scan-tmp|grype-db|git-cache|caddy-admin) printf tree; return ;;
@@ -608,6 +637,9 @@ purge_dir() {
       if agent_overlaps "$e"; then
         keep "$e" "used by the agent on this host"
         kept=1
+      elif [ "$PURGE_SHARED" = "1" ] && ! owner_ok "$e"; then
+        keep "$e" "not owned by the dockmesh account"
+        kept=1
       else
         purge_dir "$e" || kept=1
       fi
@@ -616,7 +648,7 @@ purge_dir() {
     class="$(purge_class "$name" "$is_root" "$is_db")"
     is_purge_file "$e" && class="file"
     if [ -L "$e" ]; then
-      if [ "$is_root" = "1" ] && [ "$name" = "dockmesh.env" ]; then
+      if [ "$is_root" = "1" ] && { [ "$name" = "dockmesh.env" ] || [ "$name" = "$PURGED_MARKER" ]; }; then
         remove_file "$e" || kept=1
       else
         keep "$e" "symbolic link"
@@ -665,7 +697,54 @@ purge_dir() {
         ;;
     esac
   done < <(find -P "$dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+  if [ "$is_root" = "1" ] && [ "$PURGE_SHARED" = "1" ]; then
+    keep "$dir" "is a system directory; only Dockmesh's files in it were removed"
+    return 1
+  fi
   finish_dir "$dir" "$kept"
+}
+
+# write_new_file F creates the empty file F, refusing anything already
+# there, a dangling symlink included.
+write_new_file() {
+  ( set -C; : >"$1" ) 2>/dev/null
+}
+
+# mark_purged DIR leaves PURGED_MARKER in a data root that still holds
+# kept paths, so a new install's setup decision does not take them for
+# the data of an install.
+mark_purged() {
+  local m="$1/$PURGED_MARKER"
+  { [ -d "$1" ] && [ ! -L "$1" ]; } || return 0
+  [ -n "$(find -P "$1" -mindepth 1 -maxdepth 1 ! -name "$PURGED_MARKER" -print -quit 2>/dev/null)" ] || return 0
+  if [ -e "$m" ] || [ -L "$m" ]; then
+    run rm -f -- "$m" 2>/dev/null || return 0
+  fi
+  if run write_new_file "$m" && [ "$DRYRUN" != "1" ]; then
+    info "wrote $m: a new install does not count the paths kept here as its data"
+  fi
+}
+
+# purge_summary prints what a purge removed and lists every kept path.
+purge_summary() {
+  local p
+  if [ "$PURGE_KEPT" != "1" ]; then
+    say "   $FG_WARN${BOLD}Dockmesh's data is removed.${RST} The database, stacks, deployment history,"
+    say "   audit log and age-encryption keys are gone. If you had encrypted backups"
+    say "   stored elsewhere, you can no longer decrypt them — the age key was inside"
+    say "   the data dir."
+    return
+  fi
+  say "   $FG_WARN${BOLD}The paths listed as removed above are gone.${RST} These were kept:"
+  say ""
+  for p in "${KEPT_PATHS[@]}"; do
+    say "     $p"
+  done
+  say ""
+  say "   They hold backups or archives, files Dockmesh did not write, or files"
+  say "   it could not remove; the reason is on each keep line above. Check them"
+  say "   and remove them by hand. Encrypted backups stored elsewhere can no"
+  say "   longer be decrypted once the age key is gone."
 }
 
 # looks_like_data_root DIR succeeds for a directory holding something a
@@ -689,10 +768,12 @@ agent_holds() {
 # database and stacks dirs when the config puts them elsewhere.
 purge_root() {
   local root="$PURGE_ROOT" why="" f p
-  if [ "$PURGE_ROOT_CHECKED" = "1" ]; then
-    why="$(purge_refusal "$root")"
-  else
-    why="$(path_problem "$root")"
+  PURGE_SHARED=0
+  why="$(path_problem "$root")"
+  if [ -z "$why" ] && shared_root "$root"; then
+    PURGE_SHARED=1
+  elif [ -z "$why" ] && [ "$PURGE_ROOT_CHECKED" = "1" ]; then
+    why="$(system_dir_problem "$root")"
   fi
   if [ -n "$why" ]; then
     keep "$root" "$why; not purged, remove Dockmesh's files there by hand"
@@ -749,15 +830,20 @@ purge_root() {
   if [ ! -d "$root" ]; then
     return 0
   fi
-  if [ -z "$(find -P "$root" -mindepth 1 -print -quit 2>/dev/null)" ] && owner_ok "$root"; then
-    finish_dir "$root" 0
-    return
+  if [ -z "$(find -P "$root" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+    [ "$PURGE_SHARED" = "1" ] && return 0
+    if owner_ok "$root"; then
+      finish_dir "$root" 0
+      return
+    fi
   fi
   if ! looks_like_data_root "$root"; then
     keep "$root" "does not look like a Dockmesh data directory"
     return 1
   fi
-  purge_dir "$root"
+  purge_dir "$root" && return 0
+  mark_purged "$root"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -987,7 +1073,7 @@ if [ "$DO_DATA" = "1" ]; then
     PURGE_OK=0
     keep "$DATA_DIR" "processes of the dockmesh account are still running; stop them and run again"
   fi
-  if [ "$OS" = "darwin" ] || { [ -d "$DATA_DIR" ] && [ "$(stat -c %U -- "$DATA_DIR" 2>/dev/null)" = "root" ]; }; then
+  if [ "$OS" = "darwin" ] || { [ -d "$DATA_DIR" ] && ! shared_root "$DATA_DIR" && [ "$(stat -c %U -- "$DATA_DIR" 2>/dev/null)" = "root" ]; }; then
     SERVICE_USERS="dockmesh root"
   fi
   read_container_mounts
@@ -1002,6 +1088,12 @@ if [ "$DO_DATA" = "1" ]; then
   fi
 fi
 
+# A kept data dir or config the account owns is the install a reinstall
+# picks up again; without the account a new one could get its uid or gid.
+if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ] && [ "$DO_DATA" != "1" ] && owns_kept_install dockmesh "$DATA_DIR" /etc/dockmesh; then
+  keep "user dockmesh" "owns the kept data directory or config; a reinstall uses it again"
+  DO_USER=0
+fi
 # userdel refuses while a process still runs as the account.
 if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ] && [ "$KEPT_OWNED" = "1" ]; then
   keep "user dockmesh" "owns files that were kept; a new account could get its uid"
@@ -1023,15 +1115,7 @@ fi
 # ---------------------------------------------------------------------------
 step "Done"
 if [ "$DO_DATA" = "1" ]; then
-  say "   $FG_WARN${BOLD}Dockmesh's data is removed.${RST} The database, stacks, deployment history,"
-  say "   audit log and age-encryption keys are gone. If you had encrypted backups"
-  say "   stored elsewhere, you can no longer decrypt them — the age key was inside"
-  say "   the data dir."
-  if [ "$PURGE_KEPT" = "1" ]; then
-    say ""
-    say "   The paths listed as ${BOLD}keep${RST} above hold files Dockmesh did not write, or"
-    say "   archives, and were left in place. Check them and remove them by hand."
-  fi
+  purge_summary
 else
   say "   Data directory preserved at ${BOLD}$DATA_DIR${RST}."
   say "   Reinstall later with:"

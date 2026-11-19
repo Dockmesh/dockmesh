@@ -548,3 +548,65 @@ func TestRefusesStart(t *testing.T) {
 		})
 	}
 }
+
+// What a purge keeps on purpose doesn't count as data next to its marker;
+// a database, its keys and accounts still keep setup closed.
+func TestPurgedMarker(t *testing.T) {
+	const dataRoot = "/srv/dm"
+	paths := config.ResolvePaths(func(k string) string {
+		if k == "DOCKMESH_DATA_DIR" {
+			return dataRoot
+		}
+		return ""
+	})
+	marker := dataRoot + "/" + PurgedMarker
+	tests := []struct {
+		name   string
+		files  []string
+		link   bool
+		users  bool
+		marker bool
+		want   Mode
+	}{
+		{name: "kept stack", files: []string{paths.StacksRoot + "/app/compose.yaml"}, marker: true, want: NeverSetUp},
+		{name: "kept stack without marker", files: []string{paths.StacksRoot + "/app/compose.yaml"}, want: SetUp},
+		{name: "kept restore set-asides", files: []string{
+			paths.DataDir + "/data/.pre-restore/x",
+			paths.DataDir + "/data/.restore-staged/x",
+			paths.StacksRoot + ".restore-staged/x",
+			paths.StacksRoot + ".pre-restore-20261113/x",
+		}, marker: true, want: NeverSetUp},
+		{name: "kept age key", files: []string{paths.SecretsKeyPath}, marker: true, want: SetUp},
+		{name: "kept key history", files: []string{paths.SecretsKeyPath + ".history"}, marker: true, want: SetUp},
+		{name: "kept secrets", files: []string{paths.SecretsPath}, marker: true, want: SetUp},
+		{name: "kept agent CA", files: []string{paths.DataDir + "/data/agents-ca.key"}, marker: true, want: SetUp},
+		{name: "kept database with accounts", files: []string{paths.StacksRoot + "/app/compose.yaml"}, users: true, marker: true, want: SetUp},
+		{name: "marker is a symlink", files: []string{paths.StacksRoot + "/app/compose.yaml"}, marker: true, link: true, want: SetUp},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, f := range tt.files {
+				touch(t, root, f)
+			}
+			if tt.marker {
+				if tt.link {
+					touch(t, root, "/elsewhere/marker")
+					if err := os.Symlink(filepath.Join(root, "/elsewhere/marker"), filepath.Join(root, marker)); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					touch(t, root, marker)
+				}
+			}
+			if tt.users {
+				seedAccounts(t, root, paths.DBPath, true, true)
+			}
+			p := probe(root, paths.DBPath)
+			p.Paths = paths
+			if got := boot(t, root, p); got != tt.want {
+				t.Fatalf("mode = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

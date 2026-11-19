@@ -28,7 +28,7 @@ func TestCheckDataDir(t *testing.T) {
 		return dir
 	}
 	empty := mk("empty")
-	leftovers := mk("leftovers", ".setup/pki/ca.pem", "update/request", "data/dockmesh.db.failed-20261112T143200Z")
+	leftovers := mk("leftovers", ".setup/pki/ca.pem", "update/request", "data/dockmesh.db.failed-20261112T143200Z", PurgedMarker)
 	mk("leftovers/stacks")
 	full := mk("full", "notes.txt")
 	install := mk("install", "data/dockmesh.db")
