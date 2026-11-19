@@ -42,7 +42,7 @@ The script reads `DOCKMESH_DATA_DIR` from `/etc/dockmesh/dockmesh.env`, so a dat
 
 Without a data root in that file, the script looks for `dockmesh.env` (or the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves) in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one, else `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
 
-The script refuses a data root that is not a plain absolute path, has a symlink anywhere in it, or is `/` or a system directory such as `/etc`, `/usr`, `/var`, `/home` or `/root`. It prints why and leaves the directory alone; remove Dockmesh's files there by hand. A data root of `/data`, `/opt`, `/srv` or `/mnt` itself is purged like any other, except that the directory itself always stays and Dockmesh's `data/`, `stacks/` and other directories in it are removed only when the `dockmesh` account owns them. It also skips a directory that holds none of `data/`, `stacks/`, `.setup/`, `update/` or `dockmesh.env`.
+The script refuses a data root that is not a plain absolute path, has a symlink anywhere in it, or is `/` or a system directory such as `/etc`, `/usr`, `/var`, `/home` or `/root`. It prints why and leaves the directory alone; remove Dockmesh's files there by hand. A data root of `/data`, `/opt`, `/srv` or `/mnt` gets Dockmesh's files removed, but the directory stays, and its `data/`, `stacks/` and other directories are removed only when the `dockmesh` account owns them. It also skips a directory that holds none of `data/`, `stacks/`, `.setup/`, `update/` or `dockmesh.env`.
 
 ### What `--purge` removes
 

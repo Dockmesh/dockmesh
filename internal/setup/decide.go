@@ -87,12 +87,8 @@ func Decide(f Facts) Mode {
 	}
 }
 
-// PurgedMarker is the file `uninstall.sh --purge` leaves in a data root
-// that still holds what it keeps on purpose: stacks a container uses or
-// with files Dockmesh did not write, and what a restore set aside. Those
-// then don't count as data of an install; the database, its keys and the
-// agent CA still do. Only an account that may write the data root can
-// create it.
+// PurgedMarker, left by `uninstall.sh --purge`, makes kept stacks and restore
+// set-asides no data; only an account that may write the data root can create it.
 const PurgedMarker = ".dockmesh-purged"
 
 // Probe lists where an install may keep its config and data.

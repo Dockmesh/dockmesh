@@ -848,3 +848,36 @@ func TestUninstallOwnsKeptInstall(t *testing.T) {
 		})
 	}
 }
+
+// Root's trees in a shared root such as /opt belong to other software,
+// also where root otherwise counts as the service account (macOS).
+func TestUninstallSharedRootIgnoresRootOwner(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if fi, err := os.Stat("/"); err != nil || !fi.IsDir() {
+		t.Skip("no root directory")
+	}
+	if out, err := exec.Command("stat", "-c", "%U", "/").Output(); err != nil || strings.TrimSpace(string(out)) != "root" {
+		t.Skip("/ is not owned by root")
+	}
+	tests := []struct {
+		name   string
+		shared string
+		want   bool
+	}{
+		{name: "own data root", shared: "0", want: true},
+		{name: "shared root", shared: "1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := `SERVICE_USERS="dockmesh root"
+PURGE_SHARED="$1"
+owner_ok /`
+			err := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", tt.shared).Run()
+			if got := err == nil; got != tt.want {
+				t.Errorf("owner_ok / = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

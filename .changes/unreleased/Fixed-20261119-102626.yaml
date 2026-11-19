@@ -1,3 +1,3 @@
 kind: Fixed
-body: A new install after `uninstall.sh --purge` starts in setup mode with a setup code, also when the purge kept stacks or backups. With a data root of `/data` (or `/opt`, `/srv`, `/mnt`) the purge removes Dockmesh's files in it instead of skipping it, removes the age key history too, and the summary lists every kept path instead of claiming the database and keys are gone
+body: 'A new install after `uninstall.sh --purge` starts in setup mode, also when the purge kept stacks or backups or the data root was `/data`, `/opt`, `/srv` or `/mnt`.'
 time: 2026-11-19T10:26:26.373323132Z

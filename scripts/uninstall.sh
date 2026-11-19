@@ -206,11 +206,13 @@ shared_root() {
   return 1
 }
 
-# owner_ok P succeeds when one of SERVICE_USERS owns P.
+# owner_ok P succeeds when one of SERVICE_USERS owns P. In a shared root
+# root's trees belong to other software, so root never counts there.
 owner_ok() {
   local o u
   o="$(stat -c %U -- "$1" 2>/dev/null || stat -f %Su -- "$1" 2>/dev/null)" || return 1
   for u in $SERVICE_USERS; do
+    [ "$PURGE_SHARED" = "1" ] && [ "$u" = "root" ] && continue
     [ "$o" = "$u" ] && return 0
   done
   return 1
