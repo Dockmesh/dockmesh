@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Migrations no longer leave a `<stack>__source` entry in the stack deployments; the update removes the old ones. The migration history still shows where each stack came from'
+time: 2026-11-19T19:24:29.271056194Z
+custom:
+    Audience: admins
+    Id: migration-source-rows

@@ -1,0 +1,3 @@
+kind: Fixed
+body: Draining the server's own host is refused by the API as well, not only hidden in the UI
+time: 2026-11-19T19:24:26.462664707Z

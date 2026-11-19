@@ -121,7 +121,7 @@ func scanDrain(r drainScanner) (*Drain, error) {
 }
 
 // DrainOrchestrator manages an in-flight drain operation. It runs
-// P.9 migrations sequentially in plan order, pausing on failure.
+// migrations sequentially in plan order, pausing on failure.
 type DrainOrchestrator struct {
 	migSvc     *Service
 	drainStore *DrainStore
@@ -140,6 +140,9 @@ func NewDrainOrchestrator(migSvc *Service, ds *DrainStore) *DrainOrchestrator {
 	}
 }
 
+// drainPoll is how often await polls a running migration.
+var drainPoll = 3 * time.Second
+
 // Execute runs the drain plan sequentially. Blocks until all stacks
 // are migrated, the drain is aborted, or the context is cancelled.
 func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID string, confirmHooks map[string]string) {
@@ -150,80 +153,30 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 	_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainExecuting)
 
 	for _, entry := range drain.Plan {
-		// Check abort.
-		o.mu.Lock()
-		if o.aborted {
-			o.mu.Unlock()
-			_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainAborted)
-			slog.Info("drain aborted", "id", drain.ID)
+		if !o.wait(ctx, drain.ID) {
+			o.stopped(ctx, drain.ID)
 			return
 		}
-		// Check pause.
-		if o.paused {
-			o.mu.Unlock()
-			_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainPaused)
-			slog.Info("drain paused", "id", drain.ID)
-			select {
-			case <-o.pauseCh:
-				_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainExecuting)
-			case <-ctx.Done():
-				return
-			}
-		} else {
-			o.mu.Unlock()
-		}
-
 		if !entry.Feasible {
 			slog.Warn("drain: skipping infeasible entry",
 				"stack", entry.StackName, "detail", entry.Detail)
 			continue
 		}
 
-		// Initiate migration for this stack.
 		m, err := o.migSvc.Initiate(ctx, entry.StackName, entry.TargetHostID, userID, confirmHooks[entry.StackName])
 		if err != nil {
-			slog.Warn("drain: migration initiate failed",
+			slog.Warn("drain: migration initiate failed — pausing",
 				"stack", entry.StackName, "err", err)
-			// Pause for user decision.
-			o.mu.Lock()
-			o.paused = true
-			o.pauseCh = make(chan struct{})
-			o.mu.Unlock()
-			_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainPaused)
-			select {
-			case <-o.pauseCh:
-				_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainExecuting)
-			case <-ctx.Done():
-				return
-			}
+		} else if status := o.await(ctx, m.ID); status != StatusCompleted {
+			slog.Warn("drain: migration did not complete — pausing",
+				"stack", entry.StackName, "status", status)
+		} else {
 			continue
 		}
-
-		// Wait for migration to complete.
-		for {
-			time.Sleep(3 * time.Second)
-			cur, err := o.migSvc.Store().Get(ctx, m.ID)
-			if err != nil {
-				break
-			}
-			if cur.IsTerminal() {
-				if cur.Status == StatusFailed || cur.Status == StatusRolledBack {
-					slog.Warn("drain: migration failed — pausing",
-						"stack", entry.StackName, "status", cur.Status)
-					o.mu.Lock()
-					o.paused = true
-					o.pauseCh = make(chan struct{})
-					o.mu.Unlock()
-					_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainPaused)
-					select {
-					case <-o.pauseCh:
-						_ = o.drainStore.UpdateStatus(ctx, drain.ID, DrainExecuting)
-					case <-ctx.Done():
-						return
-					}
-				}
-				break
-			}
+		o.Pause()
+		if !o.wait(ctx, drain.ID) {
+			o.stopped(ctx, drain.ID)
+			return
 		}
 	}
 
@@ -231,11 +184,71 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 	slog.Info("drain completed", "id", drain.ID)
 }
 
+// await polls migration id until it is terminal and returns its status,
+// "" when it can't be read or ctx ends.
+func (o *DrainOrchestrator) await(ctx context.Context, id string) string {
+	for {
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(drainPoll):
+		}
+		cur, err := o.migSvc.Store().Get(ctx, id)
+		if err != nil {
+			return ""
+		}
+		if cur.IsTerminal() {
+			return cur.Status
+		}
+	}
+}
+
+// wait blocks while the drain is paused. It reports false once the drain
+// is aborted or ctx ends.
+func (o *DrainOrchestrator) wait(ctx context.Context, drainID string) bool {
+	o.mu.Lock()
+	if o.aborted || !o.paused {
+		aborted := o.aborted
+		o.mu.Unlock()
+		return !aborted && ctx.Err() == nil
+	}
+	resumed := o.pauseCh
+	o.mu.Unlock()
+
+	_ = o.drainStore.UpdateStatus(ctx, drainID, DrainPaused)
+	slog.Info("drain paused", "id", drainID)
+	select {
+	case <-resumed:
+	case <-ctx.Done():
+		return false
+	}
+	o.mu.Lock()
+	aborted := o.aborted
+	o.mu.Unlock()
+	if aborted {
+		return false
+	}
+	_ = o.drainStore.UpdateStatus(ctx, drainID, DrainExecuting)
+	return true
+}
+
+// stopped records an aborted drain; a cancelled ctx leaves the record as
+// it is.
+func (o *DrainOrchestrator) stopped(ctx context.Context, drainID string) {
+	if ctx.Err() != nil {
+		return
+	}
+	_ = o.drainStore.UpdateStatus(ctx, drainID, DrainAborted)
+	slog.Info("drain aborted", "id", drainID)
+}
+
 func (o *DrainOrchestrator) Pause() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.paused = true
-	o.pauseCh = make(chan struct{})
+	if !o.paused {
+		o.paused = true
+		o.pauseCh = make(chan struct{})
+	}
 }
 
 func (o *DrainOrchestrator) Resume() {
@@ -253,9 +266,12 @@ func (o *DrainOrchestrator) Abort() {
 	o.aborted = true
 	if o.paused {
 		o.paused = false
-		close(o.pauseCh) // unblock
+		close(o.pauseCh)
 	}
 }
+
+// ErrDrainServerHost refuses a drain of the host Dockmesh itself runs on.
+var ErrDrainServerHost = errors.New("the local server runs Dockmesh itself and cannot be drained")
 
 // DrainService wraps the orchestrator lifecycle for the API.
 type DrainService struct {
@@ -279,6 +295,9 @@ func (s *DrainService) Store() *DrainStore { return s.drainStore }
 // Plan assigns the host's stacks to targets and lists each stack's hook
 // commands, which the drain would run.
 func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPlan, error) {
+	if sourceHostID == "" || sourceHostID == "local" {
+		return nil, ErrDrainServerHost
+	}
 	plan, err := PlanDrain(ctx, sourceHostID, s.migSvc.hosts, s.migSvc.deployments, s.migSvc.stacks)
 	if err != nil {
 		return nil, err

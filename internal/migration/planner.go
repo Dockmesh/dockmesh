@@ -99,9 +99,6 @@ func PlanDrain(
 	}
 	var stks []stackWeight
 	for _, d := range deps {
-		if d.Status == "migrated_away" {
-			continue
-		}
 		// Use a fixed estimate per stack since we can't easily measure
 		// per-stack disk usage. 500MB default weight.
 		w := int64(500 * 1024 * 1024)

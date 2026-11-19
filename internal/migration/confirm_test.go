@@ -69,7 +69,7 @@ func TestInitiateNeedsHookConfirmation(t *testing.T) {
 	if m.Status != StatusCompleted {
 		t.Fatalf("status %s: %s", m.Status, m.ErrorMessage)
 	}
-	if want := []string{"local-web: sh -c pg_dump -f /dump.sql"}; !reflect.DeepEqual(e.source.execs, want) {
+	if want := []string{"agent0-web: sh -c pg_dump -f /dump.sql"}; !reflect.DeepEqual(e.source.execs, want) {
 		t.Errorf("source ran %q, want %q", e.source.execs, want)
 	}
 	if want := []string{"agent1-web: sh -c psql -f /dump.sql"}; !reflect.DeepEqual(e.target.execs, want) {
@@ -83,7 +83,7 @@ func TestDrainNeedsHookConfirmation(t *testing.T) {
 	e.setHooks(t, "pg_dump -f /dump.sql", "")
 	drains := NewDrainService(e.svc, e.svc.db)
 
-	plan, err := drains.Plan(context.Background(), "local")
+	plan, err := drains.Plan(context.Background(), "agent0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +93,13 @@ func TestDrainNeedsHookConfirmation(t *testing.T) {
 	digest := plan.Entries[0].Hooks.Digest
 
 	for _, confirm := range []map[string]string{nil, {"web": "nope"}, {"other": digest}} {
-		_, err := drains.Execute(context.Background(), "local", "u1", confirm)
+		_, err := drains.Execute(context.Background(), "agent0", "u1", confirm)
 		var unconfirmed *DrainHooksUnconfirmedError
 		if !errors.As(err, &unconfirmed) || len(unconfirmed.Entries) != 1 || unconfirmed.Entries[0].StackName != "web" {
 			t.Fatalf("confirm %v: err = %v", confirm, err)
 		}
 	}
-	d, err := drains.Execute(context.Background(), "local", "u1", map[string]string{"web": digest})
+	d, err := drains.Execute(context.Background(), "agent0", "u1", map[string]string{"web": digest})
 	if err != nil {
 		t.Fatalf("confirmed drain: %v", err)
 	}
