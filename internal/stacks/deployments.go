@@ -14,7 +14,7 @@ type Deployment struct {
 	StackName  string    `json:"stack_name"`
 	HostID     string    `json:"host_id"`
 	HostName   string    `json:"host_name,omitempty"` // populated at query time, not stored
-	Status     string    `json:"status"`              // deployed | stopped | migrating | migrated_away | delete_pending
+	Status     string    `json:"status"`              // deployed | stopped | migrating | delete_pending
 	DeployedAt time.Time `json:"deployed_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

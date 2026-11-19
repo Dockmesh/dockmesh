@@ -500,13 +500,7 @@ func (s *Service) phaseHealthCheck(ctx context.Context, m *Migration) error {
 
 func (s *Service) phaseCommit(ctx context.Context, m *Migration) error {
 	slog.Info("migration commit", "id", m.ID)
-	// Update deployment to point at the new host.
-	if err := s.deployments.Set(ctx, m.StackName, m.TargetHostID, "deployed"); err != nil {
-		return err
-	}
-	// Mark source as migrated_away.
-	_ = s.deployments.Set(ctx, m.StackName+"__source", m.SourceHostID, "migrated_away")
-	return nil
+	return s.deployments.Set(ctx, m.StackName, m.TargetHostID, "deployed")
 }
 
 // rollback restarts the source stack after a failed or completed

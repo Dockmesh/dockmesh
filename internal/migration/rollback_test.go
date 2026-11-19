@@ -111,6 +111,7 @@ func (h fakeHosts) DaemonInfo(_ context.Context, id string) (*agents.DaemonInfo,
 
 type migrationEnv struct {
 	svc            *Service
+	db             *sql.DB
 	mgr            *stacks.Manager
 	source, target *fakeHost
 }
@@ -148,15 +149,16 @@ func newMigrationEnv(t *testing.T) *migrationEnv {
 		t.Fatal(err)
 	}
 	deps := stacks.NewDeploymentStore(database)
-	if err := deps.Set(context.Background(), "web", "local", "deployed"); err != nil {
+	if err := deps.Set(context.Background(), "web", "agent0", "deployed"); err != nil {
 		t.Fatal(err)
 	}
 	e := &migrationEnv{
+		db:     database,
 		mgr:    mgr,
-		source: &fakeHost{id: "local", deployed: true},
+		source: &fakeHost{id: "agent0", deployed: true},
 		target: &fakeHost{id: "agent1"},
 	}
-	e.svc = NewService(database, fakeHosts{"local": e.source, "agent1": e.target}, mgr, deps)
+	e.svc = NewService(database, fakeHosts{"agent0": e.source, "agent1": e.target}, mgr, deps)
 	e.svc.SetGlobalEnv(func(context.Context) ([]globalenv.Var, error) {
 		return []globalenv.Var{{Key: "GLOBAL", Value: "g"}}, nil
 	})

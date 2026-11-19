@@ -23,11 +23,10 @@ func TestStackRequestsStayOnTheStacksHost(t *testing.T) {
 	deps := stacks.NewDeploymentStore(database)
 	h := &Handlers{Deployments: deps, Hosts: host.NewRegistry(nil, nil)}
 	for name, row := range map[string][2]string{
-		"on-agent":   {"agent-1", "deployed"},
-		"stopped":    {"agent-1", "stopped"},
-		"moving":     {"agent-1", "migrating"},
-		"moved-away": {"agent-1", "migrated_away"},
-		"on-local":   {"local", "deployed"},
+		"on-agent": {"agent-1", "deployed"},
+		"stopped":  {"agent-1", "stopped"},
+		"moving":   {"agent-1", "migrating"},
+		"on-local": {"local", "deployed"},
 	} {
 		if err := deps.Set(ctx, name, row[0], row[1]); err != nil {
 			t.Fatal(err)
@@ -74,7 +73,6 @@ func TestStackRequestsStayOnTheStacksHost(t *testing.T) {
 		{"deployed elsewhere", "on-agent", local, true},
 		{"stopped elsewhere", "stopped", local, true},
 		{"migrating", "moving", local, true},
-		{"migrated away", "moved-away", local, false},
 		{"own host", "on-agent", agent, false},
 		{"no record", "new", local, false},
 		{"local stack to an agent", "on-local", agent, true},
