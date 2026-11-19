@@ -528,6 +528,7 @@
   "apierr_docker_unavailable": "docker unavailable",
   "apierr_docker_unavailable_cannot_test": "docker unavailable — cannot test",
   "apierr_drain_needs_hosts_manage": "draining a host moves its stacks to other hosts and needs Hosts: Manage on everything",
+  "apierr_drain_not_found": "drain not found",
   "apierr_drain_service_unavailable": "drain service unavailable",
   "apierr_email_taken": "email taken",
   "apierr_enroll_first": "enroll first",

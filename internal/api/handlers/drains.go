@@ -35,21 +35,62 @@ func (h *Handlers) PlanDrain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plan)
 }
 
+// drainDenial is a right the caller lacks for one stack of a drain.
+type drainDenial struct {
+	perm  rbac.Perm
+	res   rbac.Resource
+	label string
+}
+
+func (d *drainDenial) Error() string { return "missing " + string(d.perm) + " for " + d.label }
+
+func (h *Handlers) writeDrainDenial(w http.ResponseWriter, r *http.Request, d *drainDenial) {
+	h.writeScopeDenied(w, r, d.perm, d.res, d.label)
+}
+
 // checkDrainHooksReadable refuses a drain whose stacks run hook commands
 // the caller may not read: they are shown for confirmation and can hold
 // the same secrets as the stack's .env.
 func (h *Handlers) checkDrainHooksReadable(w http.ResponseWriter, r *http.Request, hostID string, entries []migration.PlanEntry) bool {
+	if d := h.drainHooksDenial(r, hostID, entries); d != nil {
+		h.writeDrainDenial(w, r, d)
+		return false
+	}
+	return true
+}
+
+func (h *Handlers) drainHooksDenial(r *http.Request, hostID string, entries []migration.PlanEntry) *drainDenial {
 	for _, e := range entries {
 		if e.Hooks == nil {
 			continue
 		}
 		res := h.stackScopeReq(hostID, e.StackName)
 		if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
-			h.writeScopeDenied(w, r, rbac.PermStacksDeploy, res, "hook commands of stack "+e.StackName)
-			return false
+			return &drainDenial{rbac.PermStacksDeploy, res, "hook commands of stack " + e.StackName}
 		}
 	}
-	return true
+	return nil
+}
+
+// drainMovesDenial finds a stack of the drain the caller could not
+// migrate by hand: Migrate on it here, Migrate and Deploy at its target.
+func (h *Handlers) drainMovesDenial(r *http.Request, hostID string, entries []migration.PlanEntry) *drainDenial {
+	for _, e := range entries {
+		src := h.stackScopeReq(hostID, e.StackName)
+		if !middleware.AllowedOn(r.Context(), rbac.PermStacksMigrate, src) {
+			return &drainDenial{rbac.PermStacksMigrate, src, "stack " + e.StackName}
+		}
+		if e.TargetHostID == "" {
+			continue
+		}
+		dst := h.stackScopeReq(e.TargetHostID, e.StackName)
+		for _, p := range []rbac.Perm{rbac.PermStacksMigrate, rbac.PermStacksDeploy} {
+			if !middleware.AllowedOn(r.Context(), p, dst) {
+				return &drainDenial{p, dst, "stack " + e.StackName + " on host " + e.TargetHostID}
+			}
+		}
+	}
+	return nil
 }
 
 // ExecuteDrain runs a drain plan.
@@ -69,14 +110,6 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
 		return
 	}
-	plan, err := h.Drains.Plan(r.Context(), hostID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !h.checkDrainHooksReadable(w, r, hostID, plan.Entries) {
-		return
-	}
 	var req struct {
 		ConfirmHooks map[string]string `json:"confirm_hooks"`
 	}
@@ -88,11 +121,26 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	userID := middleware.UserID(r.Context())
-	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks)
+	// Checked on the plan that runs: targets and stacks can change
+	// between two plans.
+	authorize := func(entries []migration.PlanEntry) error {
+		if d := h.drainHooksDenial(r, hostID, entries); d != nil {
+			return d
+		}
+		if d := h.drainMovesDenial(r, hostID, entries); d != nil {
+			return d
+		}
+		return nil
+	}
+	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks, authorize)
+	var denied *drainDenial
+	if errors.As(err, &denied) {
+		h.writeDrainDenial(w, r, denied)
+		return
+	}
 	var blocked *migration.DrainBlockedError
 	if errors.As(err, &blocked) {
-		// Without the hook commands: the caller's right to read them was
-		// checked on another plan.
+		// Without the hook commands, like every 409 of this route.
 		entries := make([]migration.PlanEntry, len(blocked.Plan.Entries))
 		for i, e := range blocked.Plan.Entries {
 			e.Hooks = nil
@@ -141,13 +189,21 @@ func (h *Handlers) GetDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
-	d, err := h.Drains.Get(r.Context(), drainID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	d, ok := h.hostDrain(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
+}
+
+// hostDrain loads drain {drain_id} and requires it to drain host {id}.
+func (h *Handlers) hostDrain(w http.ResponseWriter, r *http.Request) (*migration.Drain, bool) {
+	d, err := h.Drains.Get(r.Context(), chi.URLParam(r, "drain_id"))
+	if err != nil || d.SourceHostID != chi.URLParam(r, "id") {
+		writeError(w, http.StatusNotFound, "drain not found")
+		return nil, false
+	}
+	return d, true
 }
 
 // PauseDrain pauses a running drain between stacks.
@@ -161,8 +217,11 @@ func (h *Handlers) PauseDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
-	if err := h.Drains.PauseDrain(drainID); err != nil {
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Drains.PauseDrain(d.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -180,8 +239,11 @@ func (h *Handlers) ResumeDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
-	if err := h.Drains.ResumeDrain(drainID); err != nil {
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Drains.ResumeDrain(d.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -199,14 +261,17 @@ func (h *Handlers) AbortDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
-	drainID := chi.URLParam(r, "drain_id")
-	if err := h.Drains.AbortDrain(drainID); err != nil {
+	d, ok := h.hostDrain(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Drains.AbortDrain(d.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.audit(r, audit.ActionHostDrainAbort, chi.URLParam(r, "id"), map[string]any{
 		"action":   "drain-abort",
-		"drain_id": drainID,
+		"drain_id": d.ID,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "aborted"})
 }

@@ -4536,7 +4536,11 @@ paths:
         those entries) and nothing runs. A plan with a stack that can't
         move (named volumes, no target with room) is refused with 409
         `drain_blocked`, listing every entry with the reason in `detail`.
-        The server's own host (`local`) is refused with 400.
+        The server's own host (`local`) is refused with 400. Every stack in
+        the plan needs Stacks: Manage on this host and Deploy on its target
+        host, Manage and Deploy on its target host, as a manual migration
+        would (403 otherwise). The rights are checked on the plan that
+        runs.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
@@ -4584,6 +4588,7 @@ paths:
       operationId: drain.status
       tags: [migrations]
       summary: Poll drain progress
+      description: A drain of another host is not found under this one.
       responses:
         "200":
           description: Current state.
@@ -4597,6 +4602,7 @@ paths:
       operationId: drain.pause
       tags: [migrations]
       summary: Pause a running drain between stacks
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"
@@ -4619,6 +4625,7 @@ paths:
       operationId: drain.resume
       tags: [migrations]
       summary: Resume a paused drain
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"
@@ -4636,6 +4643,7 @@ paths:
       operationId: drain.abort
       tags: [migrations]
       summary: Abort a drain; in-flight migrations are rolled back
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"
@@ -8247,12 +8255,16 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: integer, format: int64}
+        schema: {type: string, format: uuid}
         description: Migration id returned by `/stacks/{name}/migrate`.
     get:
       operationId: stacks.migrate_status
       tags: [stacks, migrations]
       summary: Poll a running migration
+      description: |
+        Needs Stacks: Manage on the stack on the migration's source or
+        target host. A migration of another stack, or one between hosts
+        the caller can't reach, is not found.
       responses:
         "200":
           description: Current state.
@@ -8265,27 +8277,36 @@ paths:
     post:
       operationId: stacks.migrate_rollback
       tags: [stacks, migrations]
-      summary: Roll back a completed migration (restart source, stop target)
+      summary: Roll back a completed migration (stop target, restart source)
+      description: |
+        Stops the stack on the target and deploys it on the source again,
+        in the background; the volumes the migration copied to the target
+        stay there. Needs Stacks: Manage on the stack where it runs now and
+        on both hosts of the migration, and Deploy on the source. A
+        finalised migration can't be rolled back (400).
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id
           in: path
           required: true
-          schema: {type: integer, format: int64}
+          schema: {type: string, format: uuid}
       responses:
-        "200":
-          description: Rolled back.
+        "202":
+          description: Rollback started — poll `/stacks/{name}/migrate/{id}`.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/MigrationStatus"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "403": {$ref: "#/components/responses/Forbidden"}
-        "404": {$ref: "#/components/responses/NotFound"}
-        "409":
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: rollback initiated}
+        "400":
           description: Migration in a state that cannot be rolled back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /stacks/from-git:
     post:
       operationId: stacks.create_from_git
@@ -8467,21 +8488,27 @@ paths:
     delete:
       operationId: stacks.migrate_finalize
       tags: [stacks, migrations]
-      summary: Finalise a successful migration (stop the source, remove copied volumes)
+      summary: Finalise a completed migration (stop the source, remove copied volumes)
       description: |
         Called by the operator once they've verified the target is healthy.
         Stops what is left of the stack on the source host and removes the
         volumes the migration copied from there, giving up the rollback.
         Refused (400) while the stack runs on the source again or another
-        finalise of it runs. Also needs Volumes: delete on the source host.
+        finalise of it runs. Needs Stacks: Manage on the stack on both hosts
+        of the migration and Volumes: delete on the source host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id
           in: path
           required: true
-          schema: {type: integer, format: int64}
+          schema: {type: string, format: uuid}
       responses:
         "204": {description: Source cleaned up.}
+        "400":
+          description: The migration has not completed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
