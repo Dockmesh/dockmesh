@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/volume"
 
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -66,10 +68,33 @@ func (f *fakeHost) CreateVolume(_ context.Context, name, _ string, labels map[st
 }
 
 func (f *fakeHost) RemoveVolume(_ context.Context, name string, _ bool) error {
+	f.mu.Lock()
+	for _, c := range f.containers {
+		for _, mt := range c.Mounts {
+			if mt.Name == name {
+				f.mu.Unlock()
+				return fmt.Errorf("Error response from daemon: remove %s: volume is in use - [%s]", name, c.ID)
+			}
+		}
+	}
+	f.mu.Unlock()
 	f.vols.mu.Lock()
 	defer f.vols.mu.Unlock()
 	delete(f.vols.vols, name)
 	f.vols.removed = append(f.vols.removed, name)
+	return nil
+}
+
+func (f *fakeHost) RemoveContainer(_ context.Context, id string, _ bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kept := f.containers[:0]
+	for _, c := range f.containers {
+		if c.ID != id {
+			kept = append(kept, c)
+		}
+	}
+	f.containers = kept
 	return nil
 }
 
@@ -570,5 +595,29 @@ func TestRollbackLeavesStackDeployedOnTargetMeanwhile(t *testing.T) {
 	}
 	if !e.target.vols.hasPG() || e.target.stops != 0 || len(e.source.deploys) != 0 {
 		t.Fatal("rollback touched the stack deployed on the target")
+	}
+}
+
+// A helper left behind by an agent killed mid-copy doesn't keep the
+// rollback from removing the volume; a user's container does.
+func TestRollbackRemovesVolumeHeldByStoppedHelper(t *testing.T) {
+	e := volumeEnv(t)
+	ctx := context.Background()
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}}
+	mounts := []container.MountPoint{{Type: mount.TypeVolume, Name: "db_pgdata"}}
+	e.target.containers = []container.Summary{{ID: "helper", State: container.StateExited, Labels: map[string]string{"dockmesh.component": "backup-helper"}, Mounts: mounts}}
+	m := &Migration{ID: "m1", Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}
+	if left := e.svc.removeCreatedVolumes(ctx, m, e.target); len(left) != 0 || e.target.vols.hasPG() {
+		t.Fatalf("left %v", left)
+	}
+
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}}
+	e.target.containers = []container.Summary{{ID: "app", State: container.StateExited, Mounts: mounts}}
+	old := targetWaitMax
+	targetWaitMax = 0
+	t.Cleanup(func() { targetWaitMax = old })
+	m.Progress.CreatedVolumes = []string{"db_pgdata"}
+	if left := e.svc.removeCreatedVolumes(ctx, m, e.target); len(left) != 1 || !e.target.vols.hasPG() {
+		t.Fatalf("left %v, volume kept %v", left, e.target.vols.hasPG())
 	}
 }

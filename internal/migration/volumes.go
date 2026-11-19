@@ -10,6 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 )
 
@@ -286,7 +290,7 @@ func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target
 func removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, name string, deadline time.Time) error {
 	for {
 		err := removeIfOurs(ctx, m, target, name)
-		if err == nil || !dockerUnreachable(err) || time.Now().After(deadline) {
+		if err == nil || !mayClear(err) || time.Now().After(deadline) {
 			return err
 		}
 		select {
@@ -297,15 +301,16 @@ func removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, na
 	}
 }
 
-// dockerUnreachable reports whether err says the host's Docker or agent
-// didn't answer, which may clear; anything else won't by waiting.
-func dockerUnreachable(err error) bool {
+// mayClear reports whether err may clear by waiting: the host's
+// Docker or agent didn't answer, or a helper still holds the volume.
+func mayClear(err error) bool {
 	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
+	// A helper still running when the copy broke off exits on its own.
 	return strings.Contains(msg, "connect to the docker daemon") || strings.Contains(msg, "docker daemon unavailable") ||
-		strings.Contains(msg, "docker unavailable")
+		strings.Contains(msg, "docker unavailable") || strings.Contains(msg, "volume is in use")
 }
 
 var errNotOurs = errors.New("the volume lacks this migration's marker; left as it is")
@@ -321,10 +326,38 @@ func removeIfOurs(ctx context.Context, m *Migration, target host.Host, name stri
 	if vol.Labels[labelMigration] != m.ID {
 		return errNotOurs
 	}
-	if err := target.RemoveVolume(ctx, name, false); err != nil && !host.VolumeMissing(err) {
+	err = target.RemoveVolume(ctx, name, false)
+	if err != nil && strings.Contains(err.Error(), "volume is in use") {
+		// An agent killed during the copy leaves its helper behind.
+		removeStoppedHelpers(ctx, target, name)
+		err = target.RemoveVolume(ctx, name, false)
+	}
+	if err != nil && !host.VolumeMissing(err) {
 		return err
 	}
 	return nil
+}
+
+// removeStoppedHelpers removes Dockmesh's own stopped helper containers
+// that mount volume name on h.
+func removeStoppedHelpers(ctx context.Context, h host.Host, name string) {
+	list, err := h.ListContainers(ctx, true)
+	if err != nil {
+		return
+	}
+	for _, c := range list {
+		if c.Labels["dockmesh.component"] != docker.BackupHelperComponent || c.State == container.StateRunning {
+			continue
+		}
+		for _, mt := range c.Mounts {
+			if mt.Type == mount.TypeVolume && mt.Name == name {
+				if err := h.RemoveContainer(ctx, c.ID, false); err != nil {
+					slog.Warn("migration rollback: remove stopped helper", "container", c.ID, "err", err)
+				}
+				break
+			}
+		}
+	}
 }
 
 func (s *Service) saveProgress(ctx context.Context, m *Migration) {
