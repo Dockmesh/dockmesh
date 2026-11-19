@@ -17,14 +17,18 @@ import (
 // so the secrets service can decrypt .env.age into memory and hand us the
 // plaintext without touching the filesystem.
 func LoadProject(ctx context.Context, stackDir, stackName, envContent string) (*types.Project, error) {
-	return loadChecked(ctx, stackDir, []string{filepath.Join(stackDir, "compose.yaml")}, stackName, envContent)
+	return loadChecked(ctx, stackDir, []string{filepath.Join(stackDir, "compose.yaml")}, stackName, envContent, true)
 }
 
 // loadChecked loads the compose files in stackDir after checking every
 // file they make compose-go read: include and extends targets before the
 // load, env and label files before compose-go resolves them. All of them
 // must be regular files inside stackDir.
-func loadChecked(ctx context.Context, stackDir string, composeFiles []string, stackName, envContent string) (*types.Project, error) {
+//
+// Without resolvePaths, relative paths stay as written and env and label
+// files are checked but not read: the project is only re-serialised for a
+// host that loads it again with its own checks.
+func loadChecked(ctx context.Context, stackDir string, composeFiles []string, stackName, envContent string, resolvePaths bool) (*types.Project, error) {
 	files, err := openStackFiles(stackDir)
 	if err != nil {
 		return nil, err
@@ -44,7 +48,7 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 		cli.WithName(stackName),
 		cli.WithWorkingDirectory(files.dir),
 		cli.WithEnv(envSlice),
-		cli.WithResolvedPaths(true),
+		cli.WithResolvedPaths(resolvePaths),
 		cli.WithoutEnvironmentResolution,
 		cli.WithLoadOptions(func(o *loader.Options) { o.SkipResolveLabels = true }),
 	)
@@ -63,8 +67,11 @@ func loadChecked(ctx context.Context, stackDir string, composeFiles []string, st
 	if err != nil {
 		return nil, fmt.Errorf("load project: %w", err)
 	}
-	if err := checkProjectFileRefs(files, proj); err != nil {
+	if err := checkProjectFileRefs(files, proj, !resolvePaths); err != nil {
 		return nil, err
+	}
+	if !resolvePaths {
+		return proj, nil
 	}
 	proj, err = proj.WithServicesEnvironmentResolved(false)
 	if err != nil {

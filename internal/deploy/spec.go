@@ -58,7 +58,8 @@ func ActiveOverride(dir string) string {
 // Resolve builds the spec for deploys that run without a request, such as
 // git auto-deploys and migrations: globals plus the stack's default
 // override, the same as a manual deploy without ?environment.
-func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, stackEnv string) (Spec, error) {
+// keepRelative is compose.MergeEnvironment's, for the host deployed to.
+func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, stackEnv string, keepRelative bool) (Spec, error) {
 	spec := Spec{Compose: baseCompose, Env: stackEnv}
 	if globals != nil {
 		vars, err := globals(ctx)
@@ -73,7 +74,7 @@ func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, st
 	if spec.Override == "" {
 		return spec, nil
 	}
-	_, merged, err := compose.MergeEnvironment(ctx, dir, name, spec.Env, spec.Override)
+	_, merged, err := compose.MergeEnvironment(ctx, dir, name, spec.Env, spec.Override, keepRelative)
 	if err != nil {
 		return Spec{}, fmt.Errorf("environment %s: %w", spec.Override, err)
 	}
@@ -85,7 +86,7 @@ func Resolve(ctx context.Context, globals GlobalVars, dir, name, baseCompose, st
 // override comes from the snapshot's meta file and is merged from the
 // snapshot's bytes, and it must be the one the last manual deploy
 // confirmed, so nothing is read from the stack directory a second time.
-func ResolveSnapshot(ctx context.Context, globals GlobalVars, sm *stacks.Manager, dir string, snap *stacks.Snapshot) (Spec, error) {
+func ResolveSnapshot(ctx context.Context, globals GlobalVars, sm *stacks.Manager, dir string, snap *stacks.Snapshot, keepRelative bool) (Spec, error) {
 	spec := Spec{Compose: snap.Detail.Compose, Env: snap.Detail.Env, Override: snap.ActiveOverride}
 	if globals != nil {
 		vars, err := globals(ctx)
@@ -102,7 +103,7 @@ func ResolveSnapshot(ctx context.Context, globals GlobalVars, sm *stacks.Manager
 	if err := sm.CheckSnapshotOverride(snap, spec.Override); err != nil {
 		return Spec{}, err
 	}
-	merged, err := compose.MergeEnvironmentContent(ctx, dir, snap.Name, spec.Env, spec.Override, []byte(snap.Detail.Compose), snap.OverrideFile)
+	merged, err := compose.MergeEnvironmentContent(ctx, dir, snap.Name, spec.Env, spec.Override, []byte(snap.Detail.Compose), snap.OverrideFile, keepRelative)
 	if err != nil {
 		return Spec{}, fmt.Errorf("environment %s: %w", spec.Override, err)
 	}

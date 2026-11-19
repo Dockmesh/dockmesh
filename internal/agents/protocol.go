@@ -204,7 +204,9 @@ const (
 	// without the plaintext env.
 	CapNoEnvMirror = "stacks.no_env_mirror"
 	// CapStackFiles, agent: takes StackDeployReq.Files and writes them into
-	// its stack directory.
+	// its stack directory, and resolves relative paths of a deployed
+	// compose file there, climbs, config and secret files and build
+	// contexts included.
 	CapStackFiles = "stacks.files"
 	// CapNetworkTopology, agent: answers req.networks.topology.
 	CapNetworkTopology = "networks.topology"

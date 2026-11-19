@@ -127,7 +127,7 @@ On hosts whose agent is older than the server, the server checks the compose fil
 
 Stacks deployed by earlier versions may still run with bind mounts into an old staging directory, which no longer exists on disk. Admins get a notice per stack ("Redeploy stack … on …"); on agent hosts, upgrade the agent first. The next deploy moves the files the old container wrote into the stack directory, if that directory is still empty, and then recreates the container. If the copy fails, the deploy stops, the old container is started again, and admins get a notice. Scaling and rolling updates are refused until the stack has been redeployed.
 
-When an environment override is active, the files are merged in the stack directory on the server first, so relative paths become absolute paths under the server's stacks root. That works on the server's host; on an agent host the path usually does not exist.
+When an environment override is active, the server merges the files first and keeps relative paths such as `./html` or `../shared` relative, so the host that deploys resolves them against its own stack directory, the same as without an override. Agents older than the server get the paths resolved against the server's stack directory instead, which usually does not exist on the agent host; update the agent from the **Hosts** page.
 
 ## Environment overrides
 

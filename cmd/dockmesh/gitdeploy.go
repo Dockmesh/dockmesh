@@ -120,7 +120,7 @@ func (g *gitDeployer) deployLocked(ctx context.Context, stackName, hostID string
 		if err != nil {
 			return fmt.Errorf("host %s: %w", hostID, err)
 		}
-		if spec, err = deploy.ResolveSnapshot(ctx, g.globals, g.stacks, dir, snap); err != nil {
+		if spec, err = deploy.ResolveSnapshot(ctx, g.globals, g.stacks, dir, snap, host.ResolvesStackPaths(target)); err != nil {
 			return err
 		}
 		// Force-pull so a new push under the same tag is picked up even

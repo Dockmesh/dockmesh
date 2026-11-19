@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Stacks deployed with an environment override to an agent get the agent's stack directory as bind source at their next deploy, instead of the server's stack path on the agent host. Move data a container wrote under the server's path on that host before redeploying
+time: 2026-11-19T10:22:06.588244906Z
+custom:
+    Audience: admins
+    Id: override-paths-on-agents

@@ -75,11 +75,15 @@ func ValidateEnvironmentName(name string) error {
 // The re-serialised YAML is what the host abstraction ships to the
 // deploy target (local or agent) — downstream code sees a single
 // flattened compose file and doesn't need to know about overrides.
+// With keepRelative, relative paths stay relative, so the deploying host
+// resolves them against its own stack directory as it does for a plain
+// compose.yaml; without it they are resolved against stackDir, for hosts
+// that would resolve them against their staging copy instead.
 //
 // When overrideName is empty or no matching file exists, returns an
 // error for the "requested-but-missing" case (caller bug); the "not
 // requested" case just loads the base.
-func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, overrideName string) (*types.Project, string, error) {
+func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, overrideName string, keepRelative bool) (*types.Project, string, error) {
 	files := []string{filepath.Join(stackDir, "compose.yaml")}
 	if overrideName != "" {
 		if err := ValidateEnvironmentName(overrideName); err != nil {
@@ -95,7 +99,7 @@ func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, over
 		files = append(files, overlay)
 	}
 
-	proj, err := loadChecked(ctx, stackDir, files, stackName, envContent)
+	proj, err := loadChecked(ctx, stackDir, files, stackName, envContent, !keepRelative)
 	if err != nil {
 		return nil, "", err
 	}
@@ -108,9 +112,9 @@ func MergeEnvironment(ctx context.Context, stackDir, stackName, envContent, over
 
 // MergeEnvironmentContent is MergeEnvironment on file contents already
 // read and checked: the base and the override are merged in a staging
-// directory holding only those two files, and relative bind mounts are
-// pointed at stackDir again.
-func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envContent, overrideName string, base, overlay []byte) (string, error) {
+// directory holding only those two files. Without keepRelative, relative
+// paths are pointed at stackDir again.
+func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envContent, overrideName string, base, overlay []byte, keepRelative bool) (string, error) {
 	if err := ValidateEnvironmentName(overrideName); err != nil {
 		return "", err
 	}
@@ -131,9 +135,9 @@ func MergeEnvironmentContent(ctx context.Context, stackDir, stackName, envConten
 	if err := os.WriteFile(filepath.Join(staged, "compose."+overrideName+".yaml"), overlay, 0o600); err != nil {
 		return "", err
 	}
-	proj, _, err := MergeEnvironment(ctx, staged, stackName, envContent, overrideName)
-	if err != nil {
-		return "", err
+	proj, merged, err := MergeEnvironment(ctx, staged, stackName, envContent, overrideName, keepRelative)
+	if err != nil || keepRelative {
+		return merged, err
 	}
 	RebaseStagedPaths(proj, staged, stackDir)
 	out, err := proj.MarshalYAML()

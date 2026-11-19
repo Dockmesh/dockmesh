@@ -1282,7 +1282,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, name, detail.Compose, mergedEnv)
+	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, target, name, detail.Compose, mergedEnv)
 	if envErr != nil {
 		writeError(w, http.StatusUnprocessableEntity, envErr.Error())
 		return

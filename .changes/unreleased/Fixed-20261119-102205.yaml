@@ -1,0 +1,3 @@
+kind: Fixed
+body: A deploy with an environment override to an agent binds relative paths (`./data`, `../shared`, config and secret files, build contexts) in the agent's stack directory instead of the server's, and the deploy names paths that leave the stack directory
+time: 2026-11-19T10:22:05.994972421Z
