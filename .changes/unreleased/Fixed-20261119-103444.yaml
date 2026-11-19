@@ -1,3 +1,3 @@
 kind: Fixed
-body: The agent installer waits up to 5 minutes for another package manager (unattended-upgrades on a freshly booted cloud VM) to release the dpkg lock before it installs Docker, instead of failing at once
+body: The agent installer waits for the dpkg lock (unattended-upgrades) before installing Docker instead of failing
 time: 2026-11-19T10:34:44.995172131Z

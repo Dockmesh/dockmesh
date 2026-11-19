@@ -431,14 +431,15 @@ if ! command -v docker >/dev/null 2>&1; then
   [[ $SKIP_DOCKER -eq 0 ]] || die "Docker is not installed. Install it, or run again without --skip-docker."
   STEPS=7
   step "Checking the system" "Linux $ARCH · systemd · Docker missing"
-  if ! wait_for_apt_lock 300 /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock; then
-    die "Installing Docker from get.docker.com failed: another package manager still holds the dpkg lock after 5 minutes. Install Docker yourself and run again."
+  APT_LOCK_MINUTES=5
+  if ! wait_for_apt_lock $((APT_LOCK_MINUTES * 60)) /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock; then
+    die "Another package manager still holds the dpkg lock after $APT_LOCK_MINUTES minutes. Wait for it to finish or install Docker yourself, then run again."
   fi
   DOCKER_LOG="$(mktemp /tmp/dockmesh-docker-install.XXXXXX)"
-  # apt-get of get.docker.com waits too if the lock is taken again
+  # get.docker.com's apt-get waits too if the lock is taken again
   # between the check above and its first install.
   APT_LOCK_CONF="$(mktemp /tmp/dockmesh-apt-lock.XXXXXX)"
-  echo 'DPkg::Lock::Timeout "300";' >"$APT_LOCK_CONF"
+  echo "DPkg::Lock::Timeout \"$((APT_LOCK_MINUTES * 60))\";" >"$APT_LOCK_CONF"
   if ! curl -fsSL https://get.docker.com | APT_CONFIG="${APT_CONFIG:-$APT_LOCK_CONF}" sh >"$DOCKER_LOG" 2>&1; then
     rm -f "$APT_LOCK_CONF"
     tail -n 20 "$DOCKER_LOG" >&2
