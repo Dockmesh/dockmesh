@@ -35,6 +35,7 @@ func TestSetupFileValues(t *testing.T) {
 	short := write("short", "too-short\n")
 	two := write("two", "a-long-password-1\nsecond-line-here\n")
 	same := write("same", "adminadminadmin\n")
+	hookURL := write("hook", "https://hooks.example.org/T0/secret\n")
 	tests := []struct {
 		name    string
 		file    setup.File
@@ -54,6 +55,10 @@ func TestSetupFileValues(t *testing.T) {
 			Proxy: setup.FileProxy{ACMEEmail: "ops@example.org"}, Admin: &setup.FileAdmin{PasswordFile: good}}, ""},
 		{"caddy without an ACME email", setup.File{Address: setup.FileAddress{BaseURL: "https://dm.example.org"}, TLS: setup.FileTLS{Mode: "caddy"},
 			Admin: &setup.FileAdmin{PasswordFile: good}}, "ACME email"},
+		{"notification with a secret file", setup.File{Notifications: []map[string]any{{"type": "slack", "name": "ops", "url_file": hookURL}},
+			Admin: &setup.FileAdmin{PasswordFile: good}}, ""},
+		{"notification with a missing file", setup.File{Notifications: []map[string]any{{"type": "slack", "url_file": filepath.Join(dir, "nope")}},
+			Admin: &setup.FileAdmin{PasswordFile: good}}, "url_file"},
 		{"agent port is the web port", setup.File{Address: setup.FileAddress{AgentPort: 8080}, Admin: &setup.FileAdmin{PasswordFile: good}}, "must differ"},
 		{"stacks dir in /etc", setup.File{StacksDir: "/etc/stacks", Admin: &setup.FileAdmin{PasswordFile: good}}, "stacks dir"},
 		{"trusted proxies without proxy mode", setup.File{TLS: setup.FileTLS{TrustedProxies: "10.0.0.2"}, Admin: &setup.FileAdmin{PasswordFile: good}}, "own reverse proxy"},
@@ -66,6 +71,10 @@ func TestSetupFileValues(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
 				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			case tt.wantErr == "" && len(tt.file.Notifications) > 0:
+				if len(v.Notifications) != 1 || !strings.Contains(string(v.Notifications[0].Config), "hooks.example.org/T0/secret\"") {
+					t.Fatalf("notifications %+v", v.Notifications)
+				}
 			case tt.wantErr == "" && tt.file.Admin != nil:
 				if v.Admin.Username != "admin" || !strings.HasPrefix(v.Admin.PasswordHash, "$argon2id$") || strings.Contains(v.Admin.PasswordHash, "a-long-password") {
 					t.Fatalf("values %+v", v.Admin)

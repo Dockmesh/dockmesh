@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rootupdate"
@@ -30,7 +31,7 @@ import (
 )
 
 // maxApplyFile bounds ApplyFile.
-const maxApplyFile = 16 << 10
+const maxApplyFile = 64 << 10
 
 // applyValuesFor turns the wizard input into the values setup-apply
 // commits. The password is checked against the policy and hashed here,
@@ -56,6 +57,7 @@ func applyValuesFor(in setup.CommitInput) (setup.ApplyValues, error) {
 	v.TrustedProxies = in.TLS.TrustedProxies
 	v.Proxy.Enabled = in.Proxy.Enabled
 	v.Proxy.ACMEEmail = in.Proxy.ACMEEmail
+	v.Notifications = in.Notifications
 	v.Admin.Username = in.Admin.Username
 	v.Admin.Email = in.Admin.Email
 	v.Admin.PasswordHash = hash
@@ -186,7 +188,21 @@ func materialize(ctx context.Context, v setup.ApplyValues, pkiDir string) error 
 			return err
 		}
 	}
-	return materializeProxy(ctx, conn, st, v)
+	if err := materializeProxy(ctx, conn, st, v); err != nil {
+		return err
+	}
+	return materializeNotifications(ctx, conn, v)
+}
+
+// materializeNotifications creates the notification channels of v.
+func materializeNotifications(ctx context.Context, conn *sql.DB, v setup.ApplyValues) error {
+	svc := notify.NewService(conn)
+	for _, n := range v.Notifications {
+		if _, err := svc.Create(ctx, notify.ChannelInput{Type: n.Type, Name: n.Name, Config: n.Config, Enabled: true}); err != nil {
+			return fmt.Errorf("create the notification channel %s: %w", n.Name, err)
+		}
+	}
+	return nil
 }
 
 // materializeProxy turns the proxy on and, for TLS mode caddy, stores the
@@ -379,11 +395,19 @@ func freshSetupRestore(dataDir string, restart func()) setup.RestorePrepareFunc 
 // applyFresh hands v to root's setup-apply and follows it until the server
 // restarts on the new config. Without the root updater (a container, a
 // source build) inProcess sets up the service's own data dir instead.
-func applyFresh(ctx context.Context, dataDir string, v setup.ApplyValues, emit func(step, msg, status string), inProcess func() error) error {
+func applyFresh(ctx context.Context, dataDir string, v setup.ApplyValues, emit func(step, msg, status string), inProcess func() error) (err error) {
 	if err := writeApplyValues(setup.StateDir(dataDir), v); err != nil {
 		emit("values", err.Error(), "fail")
 		return err
 	}
+	defer func() {
+		// The values file holds channel secrets; a retry writes it again.
+		if err != nil {
+			if rerr := os.Remove(filepath.Join(setup.StateDir(dataDir), setup.ApplyFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				emit("cleanup", rerr.Error(), "warn")
+			}
+		}
+	}()
 	if !rootUpdaterInstalled() {
 		return inProcess()
 	}

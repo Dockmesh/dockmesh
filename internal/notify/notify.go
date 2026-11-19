@@ -359,6 +359,12 @@ type ChannelInput struct {
 
 var ErrUnknownType = errors.New("unknown channel type")
 
+// ValidType reports a channel type Dockmesh can send to.
+func ValidType(t string) bool { return validType(t) }
+
+// Types are the channel types, for messages.
+const Types = "email, ntfy, gotify, webhook, discord, slack, teams, pushover or pagerduty"
+
 func validType(t string) bool {
 	switch t {
 	case "webhook", "ntfy", "discord", "slack", "teams", "gotify", "email",

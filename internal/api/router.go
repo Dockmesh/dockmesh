@@ -78,6 +78,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.With(middleware.RequireSetupHeader).Post("/setup/check-ports", h.SetupCheckPorts)
 		r.With(middleware.RequireSetupHeader).Post("/setup/check-cert", h.SetupCheckCert)
 		r.With(middleware.RequireSetupHeader).Post("/setup/check-proxy", h.SetupCheckProxy)
+		r.With(middleware.RequireSetupHeader).Post("/setup/test-notification", h.SetupTestNotification)
 		r.With(middleware.RequireSetupHeader).Post("/setup/validate-user", h.SetupValidateUser)
 		r.With(middleware.RequireSetupHeader).Post("/setup/test-url", h.SetupTestURL)
 		r.With(middleware.RequireSetupHeader).Post("/setup/commit", h.SetupCommit)

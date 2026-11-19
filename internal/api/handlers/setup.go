@@ -13,12 +13,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacksdir"
@@ -511,3 +514,87 @@ type setupProxyCheck struct {
 	PullError string          `json:"pull_error,omitempty"`
 	DNS       *setup.DNSCheck `json:"dns,omitempty"`
 }
+
+// SetupTestNotification sends a test message to a channel the wizard has
+// not stored yet. Body: `{ "type": "ntfy", "config": { … } }`.
+func (h *Handlers) SetupTestNotification(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWritable(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var in notify.ChannelInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := cleanChannelConfig(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Checked here too, so a bad config is a 400, not a failed send.
+	if err := notify.CheckChannel(in.Type, in.Config); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := notify.SendTest(ctx, setupNotifyClient, setupDialer.DialContext, in.Type, in.Config, setupTestNotification()); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setupTestNotification() notify.Notification {
+	return notify.Notification{
+		Title: i18n.T(i18n.Default, "notify.test_title"),
+		Body:  i18n.T(i18n.Default, "notify.test_body"),
+		Localize: func(lang string) (string, string) {
+			return i18n.T(lang, "notify.test_title"), i18n.T(lang, "notify.test_body")
+		},
+		Level: notify.LevelInfo,
+		Time:  time.Now(),
+	}
+}
+
+// setupDialer and setupNotifyClient dial for the wizard's Send test. Before
+// an admin exists it refuses link-local targets such as cloud metadata
+// services; LAN and loopback stay allowed for a self-hosted ntfy or Gotify.
+var setupDialer = &net.Dialer{Timeout: 5 * time.Second, Control: refuseLinkLocal}
+
+var setupNotifyClient = &http.Client{
+	Timeout:   15 * time.Second,
+	Transport: &http.Transport{DialContext: setupDialer.DialContext},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("too many redirects")
+		}
+		return nil
+	},
+}
+
+func refuseLinkLocal(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return err
+	}
+	ip = ip.Unmap()
+	if ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() || metadataAddrs[ip] || nat64.Contains(ip) {
+		return fmt.Errorf("%s is a link-local or metadata address", ip)
+	}
+	return nil
+}
+
+// metadataAddrs are cloud metadata services outside the link-local ranges.
+var metadataAddrs = map[netip.Addr]bool{
+	netip.MustParseAddr("fd00:ec2::254"):   true,
+	netip.MustParseAddr("100.100.100.200"): true,
+	netip.MustParseAddr("168.63.129.16"):   true,
+}
+
+// nat64 maps IPv4 addresses, link-local ones too, into IPv6.
+var nat64 = netip.MustParsePrefix("64:ff9b::/96")

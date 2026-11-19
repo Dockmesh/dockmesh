@@ -27,6 +27,11 @@ func TestParseFile(t *testing.T) {
 		{"relative key", "restore:\n  backup_file: /root/b\n  key_file: k\n", "absolute path"},
 		{"network keys", "stacks_dir: /srv/stacks\naddress:\n  agent_port: 9443\n  agent_url: wss://dm.lan:9443/connect\ntls:\n  mode: proxy\n  trusted_proxies: 10.0.0.2\nadmin:\n  password_file: /root/pw\n", ""},
 		{"proxy keys", "proxy:\n  enabled: true\n  acme_email: ops@example.org\nadmin:\n  password_file: /root/pw\n", ""},
+		{"notification", "notifications:\n  - type: ntfy\n    name: ops\n    priority: 4\n    token_file: /root/ntfy-token\n    url_file: /root/ntfy-url\nadmin:\n  password_file: /root/pw\n", ""},
+		{"notification secret inline", "notifications:\n  - type: ntfy\n    url: https://ntfy.sh/x\nadmin:\n  password_file: /root/pw\n", "url_file"},
+		{"notification unknown field", "notifications:\n  - type: email\n    smarthost: x\nadmin:\n  password_file: /root/pw\n", "not a field"},
+		{"notification without type", "notifications:\n  - name: x\nadmin:\n  password_file: /root/pw\n", "needs a type"},
+		{"notification relative file", "notifications:\n  - type: webhook\n    url_file: hook\nadmin:\n  password_file: /root/pw\n", "absolute path"},
 		{"agent port out of range", "address:\n  agent_port: 70000\nadmin:\n  password_file: /root/pw\n", "agent_port"},
 	}
 	for _, tt := range tests {

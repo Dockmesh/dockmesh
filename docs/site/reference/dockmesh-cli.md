@@ -108,6 +108,24 @@ tls:
   mode: internal
 ```
 
+A notification channel, with its secrets in files:
+
+```yaml
+notifications:
+  - type: ntfy
+    name: ops
+    url_file: /root/ntfy-url
+    token_file: /root/ntfy-token
+    priority: 4
+  - type: email
+    host: smtp.example.com
+    port: 587
+    username: dockmesh
+    password_file: /root/smtp-password
+    from: dockmesh@example.com
+    to: [ops@example.com]
+```
+
 Secrets are never written into the file: the admin password is `admin.password_file` (a file with the password alone, at least 12 characters) or `admin.password_hash` (argon2id); a restore names `restore.backup_file` and, for an encrypted backup, the exported key in `restore.key_file`. Unknown keys, such as a plain `password:`, are refused. When the setup file or one of the files it names is readable by group or others, the command warns, for example `warning  /root/dockmesh-setup.yaml is readable by other users (mode 0644). Run: chmod 600 /root/dockmesh-setup.yaml`, and continues. A file the setup file names is called by its key (`the file admin.password_file names is readable by other users. Run chmod 600 on it`).
 
 | Key | Default | What it sets |
@@ -125,6 +143,7 @@ Secrets are never written into the file: the admin password is `admin.password_f
 | `tls.trusted_proxies` | the listen address | With `mode: proxy`: addresses or networks of your proxy, comma separated; a network wider than /8 (IPv6 /32) is refused. |
 | `proxy.enabled` | `false`, `true` with `tls.mode: caddy` | Turns the managed Caddy proxy on; ports 80 and 443 must be free. |
 | `proxy.acme_email` | none | ACME email for the proxy's certificates; required with `tls.mode: caddy`, which also needs `address.base_url` with a DNS name and creates the proxy route for it. |
+| `notifications` | none | A list of channels to create. Each entry has `type` (`email`, `ntfy`, `gotify`, `webhook`, `discord`, `slack`, `teams`, `pushover`, `pagerduty`), an optional `name` and the channel's fields (as in **Alerts** → **Channels**). Secret fields (URLs of webhook-style channels, tokens, keys, the SMTP password) are only accepted as `<field>_file`, a file holding the value alone. |
 | `restore.backup_file`, `restore.key_file` | | A system backup to restore instead of `admin`. |
 
 `--dry-run` checks the file and the host and changes nothing. `--porcelain` prints `key=value` lines (`warning`, `url`, `fingerprint`, `admin`; `check=ok` with `--dry-run`) for the installer. As root, the setup file and every file it names must be regular files owned by root and, like their directories, writable only by root; a symlink is refused. Applies are serialized with the wizard's, and a failed apply puts everything back and leaves `dockmesh.service` stopped. Without root or outside Linux (a container, a source build, `make dev SETUP_FILE=<file>`) it sets up the data directory of `DOCKMESH_DATA_DIR` in place and writes no config or unit; `address.http_addr`, `address.agent_port` and `tls` then come from the environment, and a `stacks_dir` other than the server's own is refused.

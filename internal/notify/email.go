@@ -2,10 +2,12 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/smtp"
 	"sort"
 	"strconv"
@@ -27,6 +29,9 @@ type emailChannel struct {
 	cfg    emailCfg
 	lang   string
 	langOf func(ctx context.Context, addr string) (string, error)
+	// dial, when set, connects to the server instead of smtp.SendMail,
+	// and the whole delivery ends at the context's deadline.
+	dial func(ctx context.Context, network, addr string) (net.Conn, error)
 	// sent remembers the language groups already delivered, so a retry
 	// after one group failed doesn't mail the others again.
 	sent map[string]bool
@@ -69,12 +74,67 @@ func (c *emailChannel) Send(ctx context.Context, n Notification) error {
 			continue
 		}
 		to := groups[l]
-		if err := smtp.SendMail(addr, auth, c.cfg.From, to, c.message(n.in(l), to)); err != nil {
+		send := smtp.SendMail
+		if c.dial != nil {
+			send = func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+				return c.sendDialed(ctx, addr, a, from, to, msg)
+			}
+		}
+		if err := send(addr, auth, c.cfg.From, to, c.message(n.in(l), to)); err != nil {
 			return err
 		}
 		c.sent[l] = true
 	}
 	return nil
+}
+
+// sendDialed is smtp.SendMail over a connection from c.dial.
+func (c *emailChannel) sendDialed(ctx context.Context, addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+	conn, err := c.dial(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(dl); err != nil {
+			conn.Close()
+			return err
+		}
+	}
+	cl, err := smtp.NewClient(conn, c.cfg.Host)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	defer cl.Close()
+	if ok, _ := cl.Extension("STARTTLS"); ok {
+		if err := cl.StartTLS(&tls.Config{ServerName: c.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	}
+	if a != nil {
+		if err := cl.Auth(a); err != nil {
+			return err
+		}
+	}
+	if err := cl.Mail(from); err != nil {
+		return err
+	}
+	for _, r := range to {
+		if err := cl.Rcpt(r); err != nil {
+			return err
+		}
+	}
+	w, err := cl.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return cl.Quit()
 }
 
 func (c *emailChannel) recipientsByLanguage(ctx context.Context) map[string][]string {

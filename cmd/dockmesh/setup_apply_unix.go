@@ -96,6 +96,7 @@ func (a *setupApplier) run(ctx context.Context) error {
 	if err := rootupdate.RemoveServiceFile(a.reqDir, a.uid, rootupdate.RequestFile); err != nil {
 		return err
 	}
+	defer a.dropValues()
 	if mode := a.decide(); mode != setup.NeverSetUp {
 		a.result(applyRefused, "decide", fmt.Errorf("this server is %s; setup-apply only runs on a server that was never set up", mode))
 		return nil
@@ -108,6 +109,17 @@ func (a *setupApplier) run(ctx context.Context) error {
 	a.restoreFromState = v.Restore
 	a.commit(ctx, v)
 	return nil
+}
+
+// dropValues removes the wizard's values, which hold the secrets of
+// notification channels; a retry from the wizard sends them again.
+func (a *setupApplier) dropValues() {
+	if _, err := os.Lstat(setup.StateDir(a.dataDir)); err != nil {
+		return
+	}
+	if err := rootupdate.RemoveServiceFile(setup.StateDir(a.dataDir), a.uid, setup.ApplyFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		a.log.Warn("setup values not removed", "err", err)
+	}
 }
 
 // commit sets up a never set up server from v: target dir, config check,

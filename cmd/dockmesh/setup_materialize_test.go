@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
@@ -89,5 +90,34 @@ func TestMaterializeCaddyRoute(t *testing.T) {
 	routes, err := proxy.NewService(conn, nil, true).ListRoutes(context.Background())
 	if err != nil || len(routes) != 1 {
 		t.Fatalf("the proxy does not read the route: %v %d", err, len(routes))
+	}
+}
+
+func TestMaterializeNotification(t *testing.T) {
+	v := setup.ApplyValues{DataDir: filepath.Join(t.TempDir(), "dm"), BaseURL: "https://dm.lan:8080",
+		Notifications: []setup.NotificationValues{{Type: "ntfy", Name: "ops", Config: []byte(`{"url":"https://ntfy.sh/dm","priority":4}`)}}}
+	v.Admin.Username = "admin"
+	v.Admin.PasswordHash = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
+	if err := v.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.DataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := materialize(context.Background(), v, ""); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Open(filepath.Join(v.DataDir, "data", "dockmesh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	svc := notify.NewService(conn)
+	if err := svc.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	chs := svc.Channels()
+	if len(chs) != 1 || chs[0].Type != "ntfy" || chs[0].Name != "ops" || !chs[0].Enabled {
+		t.Fatalf("channels %+v", chs)
 	}
 }

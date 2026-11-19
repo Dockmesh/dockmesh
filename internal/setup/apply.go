@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,10 +13,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/layout"
+	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/webtls"
 )
@@ -73,6 +76,9 @@ type ApplyValues struct {
 		Enabled   bool   `json:"enabled,omitempty"`
 		ACMEEmail string `json:"acme_email,omitempty"`
 	} `json:"proxy,omitempty"`
+	// Notifications are channels to create, with their secrets: the state
+	// dir file holding them is removed after the apply.
+	Notifications []NotificationValues `json:"notifications,omitempty"`
 	// Restore restores the system backup the service left as
 	// RestoreArchiveFile (and RestoreKeyFile) in the state dir instead of
 	// creating an admin.
@@ -191,6 +197,9 @@ func (v *ApplyValues) ValidateServer() error {
 	if err := v.validateProxy(mode); err != nil {
 		return err
 	}
+	if err := v.validateNotifications(); err != nil {
+		return err
+	}
 	return v.validateTrustedProxies(mode)
 }
 
@@ -267,6 +276,39 @@ func checkCaddyListen(addr string) error {
 	switch port {
 	case "80", "443", "2019":
 		return fmt.Errorf("with tls mode caddy port %s belongs to Caddy", port)
+	}
+	return nil
+}
+
+// NotificationValues is one notification channel of a new install.
+type NotificationValues struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Config json.RawMessage `json:"config"`
+}
+
+// maxNotifications bounds the channels a setup creates.
+const maxNotifications = 10
+
+func (v *ApplyValues) validateNotifications() error {
+	if v.Restore && len(v.Notifications) > 0 {
+		return errors.New("a restore brings its notification channels from the backup")
+	}
+	if len(v.Notifications) > maxNotifications {
+		return fmt.Errorf("at most %d notification channels", maxNotifications)
+	}
+	for i := range v.Notifications {
+		n := &v.Notifications[i]
+		n.Name = strings.TrimSpace(n.Name)
+		if n.Name == "" {
+			n.Name = n.Type
+		}
+		if len(n.Name) > 100 || strings.ContainsFunc(n.Name, unicode.IsControl) {
+			return fmt.Errorf("notification %d: the name must be 1 to 100 characters without control characters", i+1)
+		}
+		if err := notify.CheckChannel(n.Type, n.Config); err != nil {
+			return fmt.Errorf("notification %d (%s): %w", i+1, n.Type, err)
+		}
 	}
 	return nil
 }

@@ -6,6 +6,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { Modal, Switch } from '$lib/components/ui';
   import { m } from '$lib/paraglide/messages.js';
+  import { channelConfig, channelTypes } from '$lib/notifyChannels';
 
   interface Props {
     open: boolean;
@@ -19,50 +20,7 @@
     onSaved,
   }: Props = $props();
 
-  interface FieldDef { key: string; label: string; placeholder?: string; secret?: boolean; }
-
-  const CHANNEL_TYPES: Array<{ id: string; label: string; fields: FieldDef[] }> = [
-    { id: 'webhook',  label: m.alerts_ch_generic_webhook(),
-      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://example.com/hook' }] },
-    { id: 'ntfy',     label: 'ntfy.sh',
-      fields: [
-        { key: 'url', label: m.alerts_ch_topic_url(), placeholder: 'https://ntfy.sh/my-topic' },
-        { key: 'priority', label: m.alerts_ch_priority(), placeholder: '3' },
-      ] },
-    { id: 'discord',  label: 'Discord',
-      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://discord.com/api/webhooks/...' }] },
-    { id: 'slack',    label: 'Slack',
-      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://hooks.slack.com/services/...' }] },
-    { id: 'teams',    label: 'Microsoft Teams',
-      fields: [{ key: 'url', label: m.alerts_ch_webhook_url(), placeholder: 'https://outlook.office.com/webhook/...' }] },
-    { id: 'gotify',   label: 'Gotify',
-      fields: [
-        { key: 'url', label: m.alerts_ch_server_url(), placeholder: 'https://gotify.example.com' },
-        { key: 'token', label: m.alerts_ch_app_token_gotify(), placeholder: 'APP_TOKEN', secret: true },
-      ] },
-    { id: 'email',    label: m.alerts_ch_email(),
-      fields: [
-        { key: 'host', label: m.alerts_ch_smtp_host(), placeholder: 'smtp.example.com' },
-        { key: 'port', label: m.common_port(), placeholder: '587' },
-        { key: 'username', label: m.alerts_ch_username() },
-        { key: 'password', label: m.alerts_ch_password(), secret: true },
-        { key: 'from', label: m.alerts_ch_from(), placeholder: 'alerts@example.com' },
-        { key: 'to', label: m.alerts_ch_to(), placeholder: 'admin@example.com' },
-      ] },
-    { id: 'pagerduty', label: 'PagerDuty',
-      fields: [
-        { key: 'integration_key', label: m.alerts_ch_integration_key(), placeholder: 'R01A2B3C4D5...' },
-        { key: 'client', label: m.alerts_ch_client_name(), placeholder: 'Dockmesh' },
-        { key: 'client_url', label: m.alerts_ch_client_url(), placeholder: 'https://dockmesh.example.com' },
-      ] },
-    { id: 'pushover', label: 'Pushover',
-      fields: [
-        { key: 'app_token', label: m.alerts_ch_app_token(), placeholder: 'azGDORePK8gMaC0QOYAMyEEuzJnyUi', secret: true },
-        { key: 'user_key',  label: m.alerts_ch_user_key(),  placeholder: 'uQiRzpo4DXghDmr9QzzfQu27cmVRsG', secret: true },
-        { key: 'device',    label: m.alerts_ch_device(), placeholder: 'iphone' },
-        { key: 'sound',     label: m.alerts_ch_sound(), placeholder: 'siren' },
-      ] },
-  ];
+  const CHANNEL_TYPES = channelTypes();
 
   let formType = $state('ntfy');
   let formName = $state('');
@@ -114,17 +72,7 @@
     saving = true;
     err = null;
     try {
-      const config: Record<string, any> = {};
-      for (const f of activeType.fields) {
-        let val: any = formFields[f.key] ?? '';
-        if (f.key === 'port' || f.key === 'priority') {
-          val = parseInt(val, 10) || 0;
-        } else if (f.key === 'to') {
-          val = val.split(',').map((s: string) => s.trim()).filter(Boolean);
-        }
-        config[f.key] = val;
-      }
-      config.language = formLanguage;
+      const config = channelConfig(activeType, formFields, formLanguage);
       const input = { type: formType, name: formName.trim(), config, enabled: formEnabled };
       if (editing) {
         await api.alerts.updateChannel(editing.id, input);

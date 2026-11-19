@@ -125,6 +125,7 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
+		{"notification", h.SetupTestNotification, `{"type":"webhook","config":{"url":"http://192.0.2.1/"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,6 +246,7 @@ func TestSetupHandlersNeedSession(t *testing.T) {
 		{"ports", h.SetupCheckPorts, `{"web_port":8080,"agent_port":8443}`},
 		{"cert", h.SetupCheckCert, `{"cert_file":"/etc/shadow","key_file":"/etc/shadow"}`},
 		{"proxy", h.SetupCheckProxy, `{"host":"dm.example.org"}`},
+		{"notification", h.SetupTestNotification, `{"type":"webhook","config":{"url":"http://192.0.2.1/"}}`},
 		{"commit", h.SetupCommit, setupCommitBody},
 		{"restore", h.SetupRestore, ""},
 	}
@@ -277,5 +279,29 @@ func TestSetupCodeEndpoint(t *testing.T) {
 	}
 	if len(rec.Result().Cookies()) != 0 {
 		t.Fatal("a wrong code set a cookie")
+	}
+}
+
+func TestRefuseLinkLocal(t *testing.T) {
+	tests := []struct {
+		addr string
+		ok   bool
+	}{
+		{"169.254.169.254:80", false},
+		{"[::ffff:169.254.169.254]:80", false},
+		{"[fe80::1]:80", false},
+		{"[fd00:ec2::254]:80", false},
+		{"100.100.100.200:80", false},
+		{"168.63.129.16:80", false},
+		{"[64:ff9b::a9fe:a9fe]:80", false},
+		{"0.0.0.0:80", false},
+		{"127.0.0.1:2586", true},
+		{"192.168.10.5:443", true},
+		{"[2001:db8::1]:443", true},
+	}
+	for _, tt := range tests {
+		if err := refuseLinkLocal("tcp", tt.addr, nil); (err == nil) != tt.ok {
+			t.Errorf("%s: %v, want ok=%v", tt.addr, err, tt.ok)
+		}
 	}
 }
