@@ -2,12 +2,16 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -57,12 +61,30 @@ func missing(format string, args ...any) error {
 	return &ArchiveMissingError{msg: fmt.Sprintf(format, args...)}
 }
 
+// ErrRunJobGone means a run's job row no longer exists and nothing the
+// run recorded leads to its archive.
+var ErrRunJobGone = errors.New("the run's job was deleted")
+
+// RunJobGoneError says why the archive of a run without a job can't be
+// opened and what the operator can do instead.
+type RunJobGoneError struct{ msg string }
+
+func (e *RunJobGoneError) Error() string        { return e.msg }
+func (e *RunJobGoneError) Is(target error) bool { return target == ErrRunJobGone }
+
+func jobGone(format string, args ...any) error {
+	return &RunJobGoneError{msg: fmt.Sprintf(format, args...)}
+}
+
 const stampTime = "2006-01-02 15:04 MST"
 
 // openRunArchive opens the archive of run as stored on its target. Runs
 // that recorded a location read from there with the current credentials
 // of their target; runs from before that read from the job's target.
 func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.ReadCloser, error) {
+	if job == nil {
+		return s.openJoblessArchive(ctx, run)
+	}
 	cands, err := runCandidates(ctx, s.store, s.notices, run, job)
 	if err != nil {
 		return nil, err
@@ -80,6 +102,116 @@ func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.Re
 	}
 	return nil, archiveNotFound(ctx, s.store, run, job, notFound)
 }
+
+// openJoblessArchive opens the archive of a run whose job row is gone,
+// which only happens for jobs deleted outright by older versions. Such
+// runs recorded nothing but the archive's path and hash, so every saved
+// target is tried and the hash decides whether the file found is the
+// run's archive.
+func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadCloser, error) {
+	if loc := run.Location; loc != nil && loc.TargetID > 0 {
+		t, err := targetAt(ctx, s.store, s.notices, run, nil, loc)
+		switch {
+		case err == nil:
+			rc, err := t.Read(ctx, run.TargetPath)
+			if err == nil {
+				return rc, nil
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+			if !loc.Inferred {
+				return nil, missing("archive %s of run %d is no longer at %s, where it was written; it was moved or deleted outside Dockmesh",
+					run.TargetPath, run.ID, loc.describe())
+			}
+		case !loc.Inferred:
+			return nil, err
+		}
+	}
+	if run.SHA256 == "" {
+		return nil, jobGone("the job of run %d was deleted and the run recorded neither its target nor a hash of its archive %s, so Dockmesh can't tell which file is its archive; copy the archive from the target the job wrote to and restore it by hand",
+			run.ID, run.TargetPath)
+	}
+	ts := s.store.targets()
+	saved, err := ts.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tried := make([]string, 0, len(saved))
+	for i := range saved {
+		st := &saved[i]
+		desc := fmt.Sprintf("%q", st.Name)
+		operations.FromContext(ctx).AddSecrets(targetSecretValues(st.Type, st.Config)...)
+		built, err := ts.BuildChecked(ctx, st, s.notices)
+		if err == nil {
+			tgt := wrapRunTarget(built)
+			var match bool
+			if match, err = holdsArchive(ctx, tgt, run); err == nil && match {
+				var rc io.ReadCloser
+				if rc, err = tgt.Read(ctx, run.TargetPath); err == nil {
+					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil
+				}
+			} else if err == nil {
+				tried = append(tried, desc+" (file does not match)")
+				continue
+			}
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("backup: look for the archive of a run without job", "run", run.ID, "target", st.Name, "err", err)
+			desc += " (unreachable)"
+		}
+		tried = append(tried, desc)
+	}
+	where := "there are no saved backup targets"
+	if len(tried) > 0 {
+		where = "it is on none of the saved backup targets " + strings.Join(tried, ", ")
+	}
+	return nil, jobGone("the job of run %d was deleted and the run didn't record its target; %s. Add the target the job wrote to again as a saved target, or copy the archive %s from it and restore it by hand",
+		run.ID, where, run.TargetPath)
+}
+
+// holdsArchive reports whether the file at the run's path on t has the
+// run's hash and size. The whole file is read: another job of the same
+// name may have written the same path to another target.
+func holdsArchive(ctx context.Context, t targets.Target, run *Run) (bool, error) {
+	rc, err := t.Read(ctx, run.TargetPath)
+	if err != nil {
+		return false, err
+	}
+	defer rc.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, ctxReader{ctx: ctx, r: rc})
+	if err != nil {
+		return false, err
+	}
+	sizeOK := run.SizeBytes <= 0 || n == run.SizeBytes
+	return sizeOK && strings.EqualFold(hex.EncodeToString(h.Sum(nil)), run.SHA256), nil
+}
+
+// hashCheckedReader fails the read that reaches the end of an archive
+// whose bytes don't hash to want, in case the file changed after
+// holdsArchive read it.
+type hashCheckedReader struct {
+	rc    io.ReadCloser
+	h     hash.Hash
+	want  string
+	where string
+}
+
+func (r *hashCheckedReader) Read(p []byte) (int, error) {
+	n, err := r.rc.Read(p)
+	r.h.Write(p[:n])
+	if errors.Is(err, io.EOF) {
+		if got := hex.EncodeToString(r.h.Sum(nil)); !strings.EqualFold(got, r.want) {
+			return n, fmt.Errorf("%w: the file found on %s has sha256 %s, the run recorded %s", ErrArchiveMismatch, r.where, got, r.want)
+		}
+	}
+	return n, err
+}
+
+func (r *hashCheckedReader) Close() error { return r.rc.Close() }
+
+func (r *hashCheckedReader) Break() error { return targets.Break(r.rc) }
 
 type candidate struct {
 	tgt  targets.Target

@@ -140,7 +140,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	} else if err := stacks.ValidateName(opts.Target); err != nil {
 		return nil, fmt.Errorf("invalid stack name: %w", err)
 	}
-	job, err := s.store.getJobForRun(ctx, run.JobID)
+	job, err := s.jobOfRun(ctx, run)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +631,7 @@ func (s *Service) RunHost(ctx context.Context, runID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	job, err := s.store.getJobForRun(ctx, run.JobID)
+	job, err := s.jobOfRun(ctx, run)
 	if err != nil {
 		return "", err
 	}
@@ -639,10 +639,13 @@ func (s *Service) RunHost(ctx context.Context, runID int64) (string, error) {
 }
 
 // RunHostOf is the host run was taken on; runs recorded before hosts were
-// stored on the run fall back to the job's host.
+// stored on the run fall back to the job's host, if it still exists.
 func RunHostOf(run *Run, job *Job) string {
 	if run.HostID != "" {
 		return run.HostID
+	}
+	if job == nil {
+		return "local"
 	}
 	return defaultStr(job.HostID, "local")
 }

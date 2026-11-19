@@ -407,7 +407,7 @@ func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.R
 	if !run.Restorable() {
 		return nil, ErrNotRestorable
 	}
-	job, err := s.store.getJobForRun(ctx, run.JobID)
+	job, err := s.jobOfRun(ctx, run)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +428,16 @@ func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.R
 	}
 	// Closing the decrypting reader closes src.
 	return dec, nil
+}
+
+// jobOfRun returns the run's job, deleted ones included, or nil when the
+// job row no longer exists.
+func (s *Service) jobOfRun(ctx context.Context, run *Run) (*Job, error) {
+	job, err := s.store.getJobForRun(ctx, run.JobID)
+	if errors.Is(err, ErrJobNotFound) {
+		return nil, nil
+	}
+	return job, err
 }
 
 type tappedReader struct {

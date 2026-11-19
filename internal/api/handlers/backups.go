@@ -400,8 +400,12 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	// Headers are flushed once copying starts; a failure can't become
-	// a JSON error anymore.
-	_, _ = io.Copy(w, src)
+	// a JSON error anymore, so the connection is cut instead: the client
+	// must not take a truncated or mismatching file for a complete one.
+	if _, err := io.Copy(w, src); err != nil {
+		slog.Warn("backup download aborted", "run", id, "err", err)
+		panic(http.ErrAbortHandler)
+	}
 }
 
 type restoreRequest struct {
@@ -724,16 +728,22 @@ func (h *Handlers) runTargetsVisible(r *http.Request, run *backup.Run) bool {
 }
 
 // writeArchiveMissing answers a run whose archive is not where it was
-// looked for: 404 with the explanation of where it most likely is. A
-// caller who can't see the run's target gets no server or path.
+// looked for: 404 with the explanation of where it most likely is, or 409
+// run_job_deleted when the run's job is gone and nothing recorded leads to
+// the archive. A caller who can't see the run's target gets no server or
+// path.
 func (h *Handlers) writeArchiveMissing(w http.ResponseWriter, r *http.Request, run *backup.Run, err error) bool {
-	if !errors.Is(err, backup.ErrArchiveMissing) {
+	status, code := http.StatusNotFound, "archive_not_found"
+	switch {
+	case errors.Is(err, backup.ErrRunJobGone):
+		status, code = http.StatusConflict, "run_job_deleted"
+	case !errors.Is(err, backup.ErrArchiveMissing):
 		return false
 	}
 	msg := err.Error()
 	if run != nil && !h.runTargetsVisible(r, run) {
 		msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "code": "archive_not_found"})
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 	return true
 }
