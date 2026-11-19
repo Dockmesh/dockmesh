@@ -620,14 +620,6 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			note("source not restarted: "+err.Error()+"; review the files and deploy the stack on "+m.SourceHostID))
 		return
 	}
-	if moved, err := s.deployedElsewhere(ctx, m); err != nil || moved != "" {
-		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
-		if err != nil {
-			msg = "source not restarted: " + err.Error()
-		}
-		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
-		return
-	}
 	spec, err := s.spec(ctx, m.StackName, source)
 	if err != nil {
 		slog.Error("rollback: stack read failed", "err", err)
@@ -637,14 +629,28 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	// The source's volumes stay on disk until purge-source, so a restart
 	// re-attaches the pre-migration data.
 	if stopTarget {
-		if target, terr := s.pickOnline(ctx, m.TargetHostID, targetWaitMax); terr == nil {
+		wait := targetWaitMax
+		if !targetMayRun(m.Phase) && m.Phase != "done" {
+			wait = hostWait
+		}
+		if target, terr := s.pickOnline(ctx, m.TargetHostID, wait); terr == nil {
 			if err := target.StopStack(ctx, m.StackName); err != nil {
 				slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
 			}
 		} else {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
-			reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
+			if targetMayRun(m.Phase) || m.Phase == "done" {
+				reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
+			}
 		}
+	}
+	if moved, err := s.deployedElsewhere(ctx, m); err != nil || moved != "" {
+		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "source not restarted: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
 	}
 	if _, err := source.DeployStack(ctx, m.StackName, spec.Compose, spec.Env); err != nil {
 		slog.Error("rollback: restart source failed", "err", err)
