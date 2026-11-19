@@ -4,7 +4,8 @@
     label: string;
     count?: number | string | null;
     href?: string;
-    dot?: boolean;
+    /** true: amber "needs attention" dot; 'ring': the accent ring of a host waiting for setup. */
+    dot?: boolean | 'ring';
   }
 </script>
 
@@ -42,8 +43,8 @@
         onclick={() => onchange?.(t.key)}
         data-sveltekit-noscroll
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
-            class="dot"
-            title={m.ui_tabs_needs_attention()}
+            class="dot dm-dot {t.dot === 'ring' ? 'ring' : 'warn'}"
+            title={t.dot === 'ring' ? m.label_host_waiting_setup() : m.ui_tabs_needs_attention()}
           ></span>{/if}</a
       >
     {:else}
@@ -55,8 +56,8 @@
         class:on={active === t.key}
         onclick={() => onchange?.(t.key)}
         >{t.label}{#if t.count != null && t.count !== ''}<span class="c">{t.count}</span>{/if}{#if t.dot}<span
-            class="dot"
-            title={m.ui_tabs_needs_attention()}
+            class="dot dm-dot {t.dot === 'ring' ? 'ring' : 'warn'}"
+            title={t.dot === 'ring' ? m.label_host_waiting_setup() : m.ui_tabs_needs_attention()}
           ></span>{/if}</button
       >
     {/if}
@@ -92,5 +93,5 @@
   button:hover { color: var(--fg); }
   .on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
   .c { color: var(--subtle); font-size: var(--fs-xs); font-weight: 400; margin-left: 2px; }
-  .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--warn); margin-left: 3px; }
+  .dot { width: 6px; height: 6px; margin-left: 3px; }
 </style>

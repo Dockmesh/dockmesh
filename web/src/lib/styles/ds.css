@@ -150,6 +150,8 @@
 .dm-dot.warn { background: var(--warn); }
 .dm-dot.bad { background: var(--bad); }
 .dm-dot.acc { background: var(--accent); }
+/* Connected but not usable yet: a ring instead of a filled dot, so it never reads like "pending". */
+.dm-dot.ring { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* ---------- key/value + sections ---------- */
 .dm-kv {
