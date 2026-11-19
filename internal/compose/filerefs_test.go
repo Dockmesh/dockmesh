@@ -443,11 +443,16 @@ func TestMergeEnvironmentRefusesOverlayInclude(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, _, err := MergeEnvironment(ctx, dir, "app", "", "prod"); !errors.Is(err, ErrComposeFileRef) {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := MergeEnvironmentContent(ctx, dir, "app", "", "prod", []byte(svcNginx), []byte("services:\n  web:\n    env_file: /etc/hostname\n")); !errors.Is(err, ErrComposeFileRef) {
-		t.Fatalf("content err = %v", err)
+	for _, keepRelative := range []bool{false, true} {
+		if _, _, err := MergeEnvironment(ctx, dir, "app", "", "prod", keepRelative); !errors.Is(err, ErrComposeFileRef) {
+			t.Fatalf("keepRelative=%v: err = %v", keepRelative, err)
+		}
+		for _, envFile := range []string{"/etc/hostname", "../outside.env", "sub/../../outside.env"} {
+			overlay := []byte("services:\n  web:\n    env_file: " + envFile + "\n")
+			if _, err := MergeEnvironmentContent(ctx, dir, "app", "", "prod", []byte(svcNginx), overlay, keepRelative); !errors.Is(err, ErrComposeFileRef) {
+				t.Fatalf("keepRelative=%v, env_file %s: content err = %v", keepRelative, envFile, err)
+			}
+		}
 	}
 }
 
@@ -506,7 +511,7 @@ func TestMergeEnvironmentRefusesOverlayIncludingBase(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, _, err := MergeEnvironment(ctx, dir, "app", "", "prod"); !errors.Is(err, ErrComposeFileRef) {
+	if _, _, err := MergeEnvironment(ctx, dir, "app", "", "prod", false); !errors.Is(err, ErrComposeFileRef) {
 		t.Fatalf("err = %v", err)
 	}
 }

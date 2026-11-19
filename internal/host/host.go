@@ -11,6 +11,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/topology"
@@ -187,4 +188,20 @@ type Info struct {
 	Tags   []string `json:"tags,omitempty"` // populated by the handler from hosttags service
 	// NeedsSetup: the host waits for setup and refuses deploys.
 	NeedsSetup bool `json:"needs_setup,omitempty"`
+}
+
+// ResolvesStackPaths reports whether h resolves the relative paths of a
+// deployed compose file against its own stack directory. The server does;
+// an agent does once it takes the stack's files, before that it resolves
+// some of them against its deleted staging copy.
+func ResolvesStackPaths(h Host) bool {
+	r, ok := h.(interface{ resolvesStackPaths() bool })
+	return ok && r.resolvesStackPaths()
+}
+
+func (h *LocalHost) resolvesStackPaths() bool { return h.stackDir != nil }
+
+func (h *RemoteHost) resolvesStackPaths() bool {
+	ag, err := h.live()
+	return err == nil && ag.Hello.Has(agents.CapStackFiles)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -167,7 +168,7 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 
 	deployYAML := entry.ComposeYAML
 	if entry.Environment != "" {
-		_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, mergedEnv, entry.Environment)
+		_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, mergedEnv, entry.Environment, host.ResolvesStackPaths(target))
 		if err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "apply environment override "+entry.Environment+": "+err.Error()+
 				". The stack's compose.yaml has already been overwritten with the rollback target.")

@@ -5,6 +5,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/go-chi/chi/v5"
 )
@@ -20,8 +21,7 @@ import (
 //
 // Errors surface cleanly to the handler: invalid name / missing overlay
 // file / compose merge errors all become 422.
-// P.12.8.
-func (h *Handlers) resolveEnvOverride(r *http.Request, name, composeYAML, envContent string) (string, string, error) {
+func (h *Handlers) resolveEnvOverride(r *http.Request, target host.Host, name, composeYAML, envContent string) (string, string, error) {
 	requested := r.URL.Query().Get("environment")
 	if requested == "" {
 		// Fall back to meta file.
@@ -42,7 +42,7 @@ func (h *Handlers) resolveEnvOverride(r *http.Request, name, composeYAML, envCon
 	if err != nil {
 		return "", "", err
 	}
-	_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, envContent, requested)
+	_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, envContent, requested, host.ResolvesStackPaths(target))
 	if err != nil {
 		return "", "", err
 	}
@@ -55,8 +55,6 @@ func (h *Handlers) resolveEnvOverride(r *http.Request, name, composeYAML, envCon
 // meta file.
 //
 //	GET /api/v1/stacks/{name}/environments
-//
-// P.12.8.
 func (h *Handlers) ListEnvironments(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	dir, err := h.Stacks.Dir(name)
@@ -96,8 +94,6 @@ type setActiveEnvironmentRequest struct {
 //
 //	PUT /api/v1/stacks/{name}/environments/active
 //	Body: { "active": "prod" }
-//
-// P.12.8.
 func (h *Handlers) SetActiveEnvironment(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	dir, err := h.Stacks.Dir(name)

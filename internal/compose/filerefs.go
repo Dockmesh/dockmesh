@@ -513,11 +513,18 @@ func strictStrings(file, field string, v any) ([]string, error) {
 // checkProjectFileRefs checks the env and label files compose-go resolved
 // for every service and pre_start hook, mirroring when compose-go would
 // read them (a missing optional env file is skipped), and the services'
-// develop.watch paths.
-func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
+// develop.watch paths. With unresolved set, the project was loaded without
+// resolving paths, and relative ones start from the stack folder.
+func checkProjectFileRefs(files *stackFiles, proj *types.Project, unresolved bool) error {
+	abs := func(p string) string {
+		if unresolved && !filepath.IsAbs(p) {
+			return filepath.Join(files.dir, p)
+		}
+		return p
+	}
 	checkSpec := func(spec *types.ContainerSpec) error {
 		for _, ef := range spec.EnvFiles {
-			if err := files.check(ef.Path); err != nil {
+			if err := files.check(abs(ef.Path)); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					if ef.Required {
 						return fmt.Errorf("env file %s not found", ef.Path)
@@ -528,7 +535,7 @@ func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
 			}
 		}
 		for _, lf := range spec.LabelFiles {
-			if err := files.check(lf); err != nil {
+			if err := files.check(abs(lf)); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					return fmt.Errorf("label file %s not found", lf)
 				}
@@ -544,7 +551,7 @@ func checkProjectFileRefs(files *stackFiles, proj *types.Project) error {
 		}
 		if svc.Develop != nil {
 			for _, tr := range svc.Develop.Watch {
-				if _, err := files.rel(tr.Path); err != nil {
+				if _, err := files.rel(abs(tr.Path)); err != nil {
 					return err
 				}
 			}

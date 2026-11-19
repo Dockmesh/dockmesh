@@ -271,9 +271,9 @@ func (s *Service) checkFiles(name string) error {
 	return nil
 }
 
-// spec is the compose and env a migration deploys: the same globals and
-// default override as a manual deploy.
-func (s *Service) spec(ctx context.Context, name string) (deploy.Spec, error) {
+// spec is the compose and env a migration deploys to target: the same
+// globals and default override as a manual deploy.
+func (s *Service) spec(ctx context.Context, name string, target host.Host) (deploy.Spec, error) {
 	detail, err := s.stacks.Get(name)
 	if err != nil {
 		return deploy.Spec{}, err
@@ -282,7 +282,7 @@ func (s *Service) spec(ctx context.Context, name string) (deploy.Spec, error) {
 	if err != nil {
 		return deploy.Spec{}, err
 	}
-	spec, err := deploy.Resolve(ctx, s.globals, dir, name, detail.Compose, detail.Env)
+	spec, err := deploy.Resolve(ctx, s.globals, dir, name, detail.Compose, detail.Env, host.ResolvesStackPaths(target))
 	if err != nil {
 		return deploy.Spec{}, err
 	}
@@ -297,7 +297,7 @@ func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	if err := s.checkFiles(m.StackName); err != nil {
 		return err
 	}
-	if _, err := s.spec(ctx, m.StackName); err != nil {
+	if _, err := s.spec(ctx, m.StackName, nil); err != nil {
 		return err
 	}
 	detail, err := s.stacks.Get(m.StackName)
@@ -440,7 +440,7 @@ func (s *Service) phaseStarting(ctx context.Context, m *Migration) error {
 	if err := s.checkFiles(m.StackName); err != nil {
 		return err
 	}
-	spec, err := s.spec(ctx, m.StackName)
+	spec, err := s.spec(ctx, m.StackName, target)
 	if err != nil {
 		return err
 	}
@@ -519,7 +519,7 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool) {
 			"source not restarted: "+err.Error()+"; review the files and deploy the stack on "+m.SourceHostID)
 		return
 	}
-	spec, err := s.spec(ctx, m.StackName)
+	spec, err := s.spec(ctx, m.StackName, source)
 	if err != nil {
 		slog.Error("rollback: stack read failed", "err", err)
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "stack read failed: "+err.Error())

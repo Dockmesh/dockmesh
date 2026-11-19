@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestValidateEnvironmentName(t *testing.T) {
@@ -55,7 +58,7 @@ func TestMergeEnvironment_BaseOnly(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    image: nginx:1.25\n"), 0o644)
 
-	_, merged, err := MergeEnvironment(context.Background(), dir, "app", "", "")
+	_, merged, err := MergeEnvironment(context.Background(), dir, "app", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +74,7 @@ func TestMergeEnvironment_WithOverride(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "compose.prod.yaml"),
 		[]byte("services:\n  web:\n    image: nginx:1.26\n    environment:\n      - TIER=prod\n"), 0o644)
 
-	_, merged, err := MergeEnvironment(context.Background(), dir, "app", "", "prod")
+	_, merged, err := MergeEnvironment(context.Background(), dir, "app", "", "prod", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +93,7 @@ func TestMergeEnvironment_MissingOverride(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    image: nginx:1.25\n"), 0o644)
 
-	_, _, err := MergeEnvironment(context.Background(), dir, "app", "", "prod")
+	_, _, err := MergeEnvironment(context.Background(), dir, "app", "", "prod", false)
 	if err == nil {
 		t.Fatal("want error for missing override")
 	}
@@ -103,8 +106,127 @@ func TestMergeEnvironment_BadName(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    image: nginx:1.25\n"), 0o644)
 
-	_, _, err := MergeEnvironment(context.Background(), dir, "app", "", "../../etc/passwd")
+	_, _, err := MergeEnvironment(context.Background(), dir, "app", "", "../../etc/passwd", false)
 	if err == nil {
 		t.Fatal("want error for bad name")
+	}
+}
+
+const pathsBase = `services:
+  web:
+    image: nginx
+    volumes:
+      - ./html:/html
+      - ../shared:/shared
+      - /srv/abs:/abs
+      - .:/app
+    build:
+      context: ./src
+    configs: [cfg]
+    secrets: [key]
+configs:
+  cfg:
+    file: ./cfg.txt
+secrets:
+  key:
+    file: ../keys/key.pem
+`
+
+const pathsOverride = "services:\n  web:\n    image: nginx:1.26\n    volumes:\n      - ./prod-data:/data\n"
+
+func TestMergeEnvironmentPaths(t *testing.T) {
+	stackDir := filepath.Join(t.TempDir(), "app")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"compose.yaml": pathsBase, "compose.prod.yaml": pathsOverride} {
+		if err := os.WriteFile(filepath.Join(stackDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parent := filepath.Dir(stackDir)
+	merge := map[string]func(keepRelative bool) (string, error){
+		"files": func(keepRelative bool) (string, error) {
+			_, out, err := MergeEnvironment(context.Background(), stackDir, "app", "", "prod", keepRelative)
+			return out, err
+		},
+		"content": func(keepRelative bool) (string, error) {
+			return MergeEnvironmentContent(context.Background(), stackDir, "app", "", "prod", []byte(pathsBase), []byte(pathsOverride), keepRelative)
+		},
+	}
+	tests := []struct {
+		name         string
+		keepRelative bool
+		want         map[string]string
+	}{
+		{"relative paths stay relative", true, map[string]string{
+			"/html": "./html", "/shared": "../shared", "/abs": "/srv/abs", "/app": ".", "/data": "./prod-data",
+			"context": "./src", "config": "./cfg.txt", "secret": "../keys/key.pem",
+		}},
+		{"resolved against the stack directory", false, map[string]string{
+			"/html": filepath.Join(stackDir, "html"), "/shared": filepath.Join(parent, "shared"), "/abs": "/srv/abs",
+			"/app": stackDir, "/data": filepath.Join(stackDir, "prod-data"), "context": filepath.Join(stackDir, "src"),
+			"config": filepath.Join(stackDir, "cfg.txt"), "secret": filepath.Join(parent, "keys", "key.pem"),
+		}},
+	}
+	for _, tt := range tests {
+		for via, fn := range merge {
+			t.Run(tt.name+"/"+via, func(t *testing.T) {
+				out, err := fn(tt.keepRelative)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := mergedPaths(t, out); !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("paths = %v\nwant    %v\nyaml:\n%s", got, tt.want, out)
+				}
+			})
+		}
+	}
+}
+
+// mergedPaths reads the bind sources by target and the other file paths
+// of service web back from a merged compose file.
+func mergedPaths(t *testing.T, merged string) map[string]string {
+	t.Helper()
+	var doc struct {
+		Services map[string]struct {
+			Volumes []struct{ Source, Target string }
+			Build   struct{ Context string }
+		}
+		Configs map[string]struct{ File string }
+		Secrets map[string]struct{ File string }
+	}
+	if err := yaml.Unmarshal([]byte(merged), &doc); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	web := doc.Services["web"]
+	for _, v := range web.Volumes {
+		out[v.Target] = v.Source
+	}
+	out["context"] = web.Build.Context
+	out["config"] = doc.Configs["cfg"].File
+	out["secret"] = doc.Secrets["key"].File
+	return out
+}
+
+func TestMergeEnvironmentKeepsEnvFileRelative(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"compose.yaml":      "services:\n  web:\n    image: nginx\n    env_file: [web.env]\n",
+		"compose.prod.yaml": "services:\n  web:\n    image: nginx:1.26\n",
+		"web.env":           "A=1\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, out, err := MergeEnvironment(context.Background(), dir, "app", "", "prod", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "path: web.env") || strings.Contains(out, dir) {
+		t.Fatalf("env_file not kept relative:\n%s", out)
 	}
 }
