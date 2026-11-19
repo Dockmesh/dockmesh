@@ -121,7 +121,7 @@ func scanDrain(r drainScanner) (*Drain, error) {
 }
 
 // DrainOrchestrator manages an in-flight drain operation. It runs
-// P.9 migrations sequentially in plan order, pausing on failure.
+// migrations sequentially in plan order, pausing on failure.
 type DrainOrchestrator struct {
 	migSvc     *Service
 	drainStore *DrainStore
@@ -140,7 +140,7 @@ func NewDrainOrchestrator(migSvc *Service, ds *DrainStore) *DrainOrchestrator {
 	}
 }
 
-// drainPoll is how often Execute checks a running migration.
+// drainPoll is how often await polls a running migration.
 var drainPoll = 3 * time.Second
 
 // Execute runs the drain plan sequentially. Blocks until all stacks
@@ -167,14 +167,13 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 		if err != nil {
 			slog.Warn("drain: migration initiate failed — pausing",
 				"stack", entry.StackName, "err", err)
-			o.Pause()
-		} else if status := o.await(ctx, m.ID); status == StatusFailed || status == StatusRolledBack {
-			slog.Warn("drain: migration failed — pausing",
+		} else if status := o.await(ctx, m.ID); status != StatusCompleted {
+			slog.Warn("drain: migration did not complete — pausing",
 				"stack", entry.StackName, "status", status)
-			o.Pause()
+		} else {
+			continue
 		}
-		// A failed stack waits for the user here, also when it is the last
-		// one: Resume goes on with the next, Abort ends the drain.
+		o.Pause()
 		if !o.wait(ctx, drain.ID) {
 			o.stopped(ctx, drain.ID)
 			return

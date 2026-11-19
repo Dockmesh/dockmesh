@@ -54,7 +54,7 @@ func TestDrainPausedOnLastStack(t *testing.T) {
 				orch.Execute(context.Background(), d, "u1", nil)
 				close(done)
 			}()
-			waitDrainStatus(t, store, DrainPaused)
+			waitDrainStatus(t, store, "d1", DrainPaused)
 			tt.decide(orch)
 			select {
 			case <-done:
@@ -72,11 +72,11 @@ func TestDrainPausedOnLastStack(t *testing.T) {
 	}
 }
 
-func waitDrainStatus(t *testing.T, store *DrainStore, want string) {
+func waitDrainStatus(t *testing.T, store *DrainStore, id, want string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		d, err := store.Get(context.Background(), "d1")
+		d, err := store.Get(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
