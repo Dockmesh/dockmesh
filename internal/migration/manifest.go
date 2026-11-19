@@ -66,25 +66,24 @@ func readManifest(r io.Reader, progress func(int64)) (*manifest, error) {
 		if typ == tar.TypeRegA { //nolint:staticcheck // old archives still write TypeRegA
 			typ = tar.TypeReg
 		}
-		var fields [8]int64
-		fields[0], fields[1], fields[2], fields[3] = int64(typ), hdr.Mode&0o7777, int64(hdr.Uid), int64(hdr.Gid)
-		fields[4], fields[5] = hdr.Devmajor, hdr.Devminor
+		var size int64
 		if typ == tar.TypeReg {
 			n, err := io.Copy(h, tr) //nolint:gosec // streamed into a hash, never held in memory
 			if err != nil {
 				return nil, fmt.Errorf("archive: %w", err)
 			}
-			fields[6] = n
+			size = n
 			m.bytes += n
 			if progress != nil {
 				progress(m.bytes)
 			}
 		}
+		fields := [...]int64{int64(typ), hdr.Mode & 0o7777, int64(hdr.Uid), int64(hdr.Gid), hdr.Devmajor, hdr.Devminor, size}
 		for _, f := range fields {
 			_ = binary.Write(h, binary.BigEndian, f)
 		}
 		if typ == tar.TypeSymlink {
-			h.Write([]byte(hdr.Linkname))
+			_, _ = io.WriteString(h, hdr.Linkname)
 		}
 		writeXattrs(h, hdr.PAXRecords)
 		var sum [sha256.Size]byte

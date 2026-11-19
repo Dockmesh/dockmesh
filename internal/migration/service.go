@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -722,6 +723,9 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	// Again: waiting for the target gave a deploy time to move the stack.
 	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
 		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
+		if moved == m.TargetHostID && slices.Contains(p.Undo, UndoRemoveVolumes) {
+			msg += " with the volumes this rollback removed there; its data is on " + m.SourceHostID
+		}
 		if err != nil {
 			msg = "source not restarted: " + err.Error()
 		}
@@ -763,6 +767,7 @@ func (s *Service) cleanTargetLater(ctx context.Context, m *Migration, msg string
 		return
 	}
 	if moved, err := s.deployedElsewhere(ctx, m, false); err != nil || moved != "" {
+		slog.Warn("migration: the stack was deployed since the rollback, target volumes stay", "id", m.ID, "volumes", m.progress().CreatedVolumes, "deployed_on", moved, "err", err)
 		return
 	}
 	if left := s.removeCreatedVolumes(ctx, m, target); len(left) > 0 {

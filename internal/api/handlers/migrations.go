@@ -232,7 +232,6 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// It removes the stack's volumes on the source host.
 	if src := h.stackScopeReq(m.SourceHostID, name); !h.allowedOn(r, src, rbac.PermVolumesDelete) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, src, "volumes of stack "+name+" on the source host")
 		return

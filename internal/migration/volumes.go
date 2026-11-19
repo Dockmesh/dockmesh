@@ -264,7 +264,8 @@ func readBack(ctx context.Context, src VolumeIO, name string) (*manifest, error)
 }
 
 // removeCreatedVolumes removes the volumes m created on target, retrying
-// for up to targetWaitMax in all while the target's Docker doesn't answer.
+// for up to targetWaitMax in all while the target's Docker doesn't answer
+// or a helper still holds a volume.
 // A volume without m's marker is left alone. It returns the ones it could
 // not remove.
 func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target host.Host) []string {
@@ -274,7 +275,6 @@ func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target
 	for _, name := range p.CreatedVolumes {
 		err := removeCreatedVolume(ctx, m, target, name, deadline)
 		if errors.Is(err, errNotOurs) {
-			// Someone else's volume took the name since; not ours to remove.
 			slog.Warn("migration rollback: volume on the target was replaced since the migration", "id", m.ID, "volume", name)
 			continue
 		}
@@ -301,17 +301,21 @@ func removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, na
 	}
 }
 
-// mayClear reports whether err may clear by waiting: the host's
-// Docker or agent didn't answer, or a helper still holds the volume.
+// mayClear reports whether err may clear by waiting: the host's Docker or
+// agent didn't answer, or a Dockmesh helper still holds the volume.
 func mayClear(err error) bool {
 	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
-	// A helper still running when the copy broke off exits on its own.
-	return strings.Contains(msg, "connect to the docker daemon") || strings.Contains(msg, "docker daemon unavailable") ||
-		strings.Contains(msg, "docker unavailable") || strings.Contains(msg, "volume is in use")
+	if strings.Contains(msg, "connect to the docker daemon") || strings.Contains(msg, "docker daemon unavailable") ||
+		strings.Contains(msg, "docker unavailable") {
+		return true
+	}
+	return errors.Is(err, errHelperHolds)
 }
+
+func volumeInUse(err error) bool { return strings.Contains(err.Error(), "volume is in use") }
 
 var errNotOurs = errors.New("the volume lacks this migration's marker; left as it is")
 
@@ -327,10 +331,14 @@ func removeIfOurs(ctx context.Context, m *Migration, target host.Host, name stri
 		return errNotOurs
 	}
 	err = target.RemoveVolume(ctx, name, false)
-	if err != nil && strings.Contains(err.Error(), "volume is in use") {
+	if err != nil && volumeInUse(err) {
 		// An agent killed during the copy leaves its helper behind.
-		removeStoppedHelpers(ctx, target, name)
-		err = target.RemoveVolume(ctx, name, false)
+		if !removeStoppedHelpers(ctx, target, name) {
+			return err
+		}
+		if err = target.RemoveVolume(ctx, name, false); err != nil && volumeInUse(err) {
+			return fmt.Errorf("%w: %w", errHelperHolds, err)
+		}
 	}
 	if err != nil && !host.VolumeMissing(err) {
 		return err
@@ -338,26 +346,41 @@ func removeIfOurs(ctx context.Context, m *Migration, target host.Host, name stri
 	return nil
 }
 
+// errHelperHolds is a volume still mounted by one of Dockmesh's helpers,
+// which exits on its own once the copy broke off.
+var errHelperHolds = errors.New("a Dockmesh helper still uses the volume")
+
 // removeStoppedHelpers removes Dockmesh's own stopped helper containers
-// that mount volume name on h.
-func removeStoppedHelpers(ctx context.Context, h host.Host, name string) {
+// that mount volume name on h. It reports whether any helper, stopped or
+// still running, mounts it.
+func removeStoppedHelpers(ctx context.Context, h host.Host, name string) bool {
 	list, err := h.ListContainers(ctx, true)
 	if err != nil {
-		return
+		return false
 	}
+	found := false
 	for _, c := range list {
-		if c.Labels["dockmesh.component"] != docker.BackupHelperComponent || c.State == container.StateRunning {
+		if c.Labels["dockmesh.component"] != docker.BackupHelperComponent || !mountsVolume(c, name) {
 			continue
 		}
-		for _, mt := range c.Mounts {
-			if mt.Type == mount.TypeVolume && mt.Name == name {
-				if err := h.RemoveContainer(ctx, c.ID, false); err != nil {
-					slog.Warn("migration rollback: remove stopped helper", "container", c.ID, "err", err)
-				}
-				break
-			}
+		found = true
+		if c.State == container.StateRunning {
+			continue
+		}
+		if err := h.RemoveContainer(ctx, c.ID, false); err != nil {
+			slog.Warn("migration rollback: remove stopped helper", "container", c.ID, "err", err)
 		}
 	}
+	return found
+}
+
+func mountsVolume(c container.Summary, name string) bool {
+	for _, mt := range c.Mounts {
+		if mt.Type == mount.TypeVolume && mt.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) saveProgress(ctx context.Context, m *Migration) {

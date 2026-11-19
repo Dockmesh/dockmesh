@@ -1039,7 +1039,7 @@ paths:
     post:
       operationId: stacks.migrate_rollback
       tags: [stacks, migrations]
-      summary: Roll back a migration (restart source, drop target)
+      summary: Roll back a completed migration (restart source, stop target)
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id
@@ -1246,7 +1246,8 @@ paths:
         Called by the operator once they've verified the target is healthy.
         Stops what is left of the stack on the source host and removes the
         volumes the migration copied from there, giving up the rollback.
-        Refused (400) while the stack runs on the source again.
+        Refused (400) while the stack runs on the source again or another
+        finalise of it runs. Also needs Volumes: delete on the source host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id
