@@ -128,15 +128,12 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer release()
-	if !h.checkStackFiles(w, r, name) {
+	snap, ok := h.checkStack(w, r, name)
+	if !ok {
 		return
 	}
-	// Read current env so rollback only swings compose.yaml — secrets stay put.
-	current, err := h.Stacks.Get(name)
-	if err != nil {
-		writeStackError(w, err)
-		return
-	}
+	// Keep the checked env so rollback only swings compose.yaml — secrets stay put.
+	current := snap.Detail
 	dir, err := h.Stacks.Dir(name)
 	if err != nil {
 		writeStackError(w, err)
@@ -161,6 +158,9 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !h.confirmStack(w, r, snap) {
+		return
+	}
 	if _, err := h.Stacks.Update(name, entry.ComposeYAML, current.Env); err != nil {
 		writeError(w, http.StatusInternalServerError, "update stack files: "+err.Error())
 		return

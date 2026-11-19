@@ -31,7 +31,8 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if h.writeIfSwarmTask(w, r, id) {
 		return
 	}
-	if !h.allowStackRebuild(w, r, id) {
+	r, ok := h.allowStackRebuild(w, r, id)
+	if !ok {
 		return
 	}
 	// Detached from the request: closing the tab mid-update must not cancel
@@ -86,7 +87,8 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 	if h.writeIfSwarmTask(w, r, id) {
 		return
 	}
-	if !h.allowStackRebuild(w, r, id) {
+	r, ok := h.allowStackRebuild(w, r, id)
+	if !ok {
 		return
 	}
 	res, err := h.Updater.Rollback(r.Context(), id, req.HistoryID, middleware.UserID(r.Context()))
@@ -172,17 +174,26 @@ func trim(s string) string {
 // allowStackRebuild additionally requires stacks.deploy when the update
 // rebuilds the container from its stack's compose.yaml, since that
 // applies compose changes saved since the last deploy, and refuses stack
-// files changed outside Dockmesh like a deploy does.
-func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, containerID string) bool {
+// files changed outside Dockmesh like a deploy does. The returned request
+// carries a confirmation of such changes; the updater records it once it
+// holds the stack.
+func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, containerID string) (*http.Request, bool) {
 	stack := h.Updater.ManagedStack(r.Context(), containerID)
 	if stack == "" {
-		return true
+		return r, true
 	}
 	if !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
 		h.denyPerm(w, r, rbac.PermStacksDeploy, "updating a container of stack "+stack+" needs the stacks.deploy permission")
-		return false
+		return nil, false
 	}
-	return h.checkStackFiles(w, r, stack)
+	snap, ok := h.checkStack(w, r, stack)
+	if !ok {
+		return nil, false
+	}
+	if c := h.confirmation(r, snap); c != nil {
+		r = r.WithContext(stacks.WithConfirmation(r.Context(), c))
+	}
+	return r, true
 }
 
 // writeIfSwarmTask answers 409 for a task container of a Swarm service

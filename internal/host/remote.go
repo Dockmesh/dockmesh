@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/stackfiles"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/topology"
 	"github.com/moby/moby/api/types/container"
@@ -985,6 +986,9 @@ func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envCon
 		return nil, err
 	}
 	if err := h.checkReservedLabels(composeYAML); err != nil {
+		return nil, err
+	}
+	if err := stacks.AcceptConfirmed(ctx, name); err != nil {
 		return nil, err
 	}
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{

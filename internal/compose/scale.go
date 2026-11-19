@@ -10,6 +10,7 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -147,6 +148,9 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		} else {
 			stale = append(stale, c)
 		}
+	}
+	if err := stacks.AcceptConfirmed(ctx, proj.Name); err != nil {
+		return nil, err
 	}
 	for _, c := range stale {
 		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})

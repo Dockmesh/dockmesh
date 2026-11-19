@@ -10,6 +10,7 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"go.opentelemetry.io/otel/attribute"
@@ -206,6 +207,9 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 	}
 	if len(existing) == 0 {
 		return res, nil
+	}
+	if err := stacks.AcceptConfirmed(ctx, proj.Name); err != nil {
+		return nil, err
 	}
 	// Capture rollback image from the first existing container — all
 	// replicas should be on the same image, so this is safe.

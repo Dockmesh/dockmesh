@@ -163,7 +163,7 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 			continue
 		}
 
-		m, err := o.migSvc.Initiate(ctx, entry.StackName, entry.TargetHostID, userID, confirmHooks[entry.StackName])
+		m, err := o.migSvc.Initiate(ctx, entry.StackName, entry.TargetHostID, userID, confirmHooks[entry.StackName], nil)
 		if err != nil {
 			slog.Warn("drain: migration initiate failed — pausing",
 				"stack", entry.StackName, "err", err)
