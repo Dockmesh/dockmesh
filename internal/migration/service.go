@@ -718,6 +718,7 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			}
 		}
 	}
+	cleanLater := len(p.CreatedVolumes) > 0 && !committed
 	// Again: waiting for the target gave a deploy time to move the stack.
 	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
 		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
@@ -739,8 +740,40 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	if s.deployments != nil {
 		_ = s.deployments.Set(ctx, m.StackName, m.SourceHostID, "deployed")
 	}
-	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", note("stack restored on the source")); err != nil {
+	final := note("stack restored on the source")
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", final); err != nil {
 		slog.Error("rollback: stack restored on source, but the result could not be recorded", "migration", m.ID, "err", err)
+	}
+	if cleanLater {
+		go s.cleanTargetLater(ctx, m, final)
+	}
+}
+
+// lateCleanupMax bounds how long a rolled-back migration waits for its
+// target to come back and take the volumes the rollback couldn't remove.
+var lateCleanupMax = time.Hour
+
+// cleanTargetLater removes the volumes a rollback left on the target once
+// the target answers again, unless the stack was deployed anywhere but the
+// source meanwhile.
+func (s *Service) cleanTargetLater(ctx context.Context, m *Migration, msg string) {
+	target, err := s.pickOnline(ctx, m.TargetHostID, lateCleanupMax)
+	if err != nil {
+		slog.Warn("migration: target still unavailable, its volumes stay", "id", m.ID, "volumes", m.progress().CreatedVolumes, "err", err)
+		return
+	}
+	if moved, err := s.deployedElsewhere(ctx, m, false); err != nil || moved != "" {
+		return
+	}
+	if left := s.removeCreatedVolumes(ctx, m, target); len(left) > 0 {
+		s.saveProgress(ctx, m)
+		return
+	}
+	p := m.progress()
+	p.Undo = append(p.Undo, UndoRemoveVolumes)
+	s.saveProgress(ctx, m)
+	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", msg+"; the volumes on "+m.TargetHostID+" were removed once it was back"); err != nil {
+		slog.Warn("migration: target volumes removed, but the result could not be recorded", "id", m.ID, "err", err)
 	}
 }
 

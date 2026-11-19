@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -620,4 +621,45 @@ func TestRollbackRemovesVolumeHeldByStoppedHelper(t *testing.T) {
 	if left := e.svc.removeCreatedVolumes(ctx, m, e.target); len(left) != 1 || !e.target.vols.hasPG() {
 		t.Fatalf("left %v, volume kept %v", left, e.target.vols.hasPG())
 	}
+}
+
+// A target that is back only after the rollback still gets its copied
+// volumes removed.
+func TestRollbackCleansTargetOnceBack(t *testing.T) {
+	e := volumeEnv(t)
+	ctx := context.Background()
+	oldWait, oldMax, oldHost := targetWaitMax, lateCleanupMax, hostWait
+	targetWaitMax, lateCleanupMax, hostWait = 50*time.Millisecond, 10*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { targetWaitMax, lateCleanupMax, hostWait = oldWait, oldMax, oldHost })
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}}
+	m := &Migration{ID: "m1", StackName: "db", SourceHostID: "agent0", TargetHostID: "agent1", Status: StatusSyncing, Phase: StatusSyncing,
+		Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}
+	if err := e.svc.store.Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	e.target.offline.Store(true)
+	e.svc.rollback(ctx, m, false, "phase syncing: test")
+	got := e.wait(t, "m1")
+	if got.Status != StatusRolledBack || !e.target.vols.hasPG() {
+		t.Fatalf("status %s, target volume %v: %s", got.Status, e.target.vols.hasPG(), got.ErrorMessage)
+	}
+	e.target.offline.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for e.target.vols.hasPG() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if e.target.vols.hasPG() {
+		t.Fatal("volume not removed once the target was back")
+	}
+	for time.Now().Before(deadline) {
+		got, err := e.svc.Store().Get(ctx, "m1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got.ErrorMessage, "removed once it was back") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("result not recorded")
 }
