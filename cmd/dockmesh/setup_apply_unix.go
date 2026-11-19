@@ -400,8 +400,16 @@ func (a *setupApplier) values() (setup.ApplyValues, error) {
 // cannot swap a parent for a symlink between these steps.
 func (a *setupApplier) prepareTarget(dir string) (created bool, err error) {
 	exists, err := a.checkTarget(dir)
-	if err != nil || exists {
+	if err != nil {
 		return false, err
+	}
+	if exists {
+		// Left in place, the marker would hide this install's stacks from
+		// the setup decision.
+		if err := os.Remove(filepath.Join(dir, setup.PurgedMarker)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		return false, nil
 	}
 	if err := os.Mkdir(dir, 0o750); err != nil {
 		return false, err
@@ -483,6 +491,7 @@ func (a *setupApplier) onlySetupLeftovers(dir string) error {
 		name := e.Name()
 		switch {
 		case same && (name == setup.StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir))):
+		case name == setup.PurgedMarker && e.Type().IsRegular():
 		case failedName.MatchString(name) && (e.Type().IsRegular() || e.IsDir()):
 		case (name == "data" || name == "stacks") && e.IsDir():
 			if err := onlyFailed(filepath.Join(dir, name)); err != nil {

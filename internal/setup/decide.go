@@ -87,6 +87,10 @@ func Decide(f Facts) Mode {
 	}
 }
 
+// PurgedMarker, left by `uninstall.sh --purge`, makes kept stacks and restore
+// set-asides no data; only an account that may write the data root can create it.
+const PurgedMarker = ".dockmesh-purged"
+
 // Probe lists where an install may keep its config and data.
 type Probe struct {
 	// ConfigFiles are extra env files to look for: --env-file and the one
@@ -169,15 +173,20 @@ func (p Probe) Scan() Facts {
 		p.Paths.AuditGenesisPath,
 		filepath.Join(dataDir, "agents-ca.key"),
 		filepath.Join(dataDir, "agents-ca.crt"),
-		filepath.Join(dataDir, restore.StagingDir),
-		filepath.Join(dataDir, restore.PreRestoreDir),
+	}
+	if p.Paths.SecretsKeyPath != "" {
+		data = append(data, p.Paths.SecretsKeyPath+".history")
+	}
+	purged := p.Paths.DataDir != "" && regularFile(lstat, filepath.Join(p.Paths.DataDir, PurgedMarker))
+	if !purged {
+		data = append(data, filepath.Join(dataDir, restore.StagingDir), filepath.Join(dataDir, restore.PreRestoreDir))
 	}
 	for _, d := range data {
 		if d != "" && present(lstat, d) {
 			f.Data = true
 		}
 	}
-	if stacks := p.Paths.StacksRoot; stacks != "" {
+	if stacks := p.Paths.StacksRoot; stacks != "" && !purged {
 		if hasStack(readDir, stacks) {
 			f.Data = true
 		}
@@ -221,6 +230,12 @@ func sameFile(stat func(string) (fs.FileInfo, error), a, b fs.FileInfo, pathA, p
 	ta, errA := stat(pathA)
 	tb, errB := stat(pathB)
 	return errA == nil && errB == nil && os.SameFile(ta, tb)
+}
+
+// regularFile reports a regular file at path, not a symlink to one.
+func regularFile(lstat func(string) (fs.FileInfo, error), path string) bool {
+	fi, err := lstat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // present counts any answer but "does not exist" as a file being there:

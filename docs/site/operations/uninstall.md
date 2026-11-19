@@ -24,7 +24,7 @@ It asks one question per component:
 | Remove the dockmesh binary? | yes | `dockmesh`, `dockmesh.bak` and `dmctl` in `/usr/local/bin` (or `DOCKMESH_INSTALL_DIR`) |
 | Remove agent installer + bundled binaries? | yes | The asset directory, normally `/usr/local/share/dockmesh` |
 | Remove data directory (DB, stacks, age-keys)? | **no** | Dockmesh's files in the data root, see below |
-| Remove the 'dockmesh' service user? | yes | `userdel dockmesh` (Linux only), after killing its processes |
+| Remove the 'dockmesh' service user? | yes | `userdel dockmesh` (Linux only), after killing its processes. Skipped while the account still owns the kept data root or `/etc/dockmesh` |
 
 | Flag | Effect |
 |---|---|
@@ -42,14 +42,14 @@ The script reads `DOCKMESH_DATA_DIR` from `/etc/dockmesh/dockmesh.env`, so a dat
 
 Without a data root in that file, the script looks for `dockmesh.env` (or the symlink to `/etc/dockmesh/dockmesh.env` an upgrade leaves) in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`, and uses the first directory where it finds one, else `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`).
 
-The script refuses a data root that is not a plain absolute path, has a symlink anywhere in it, or is `/` or a system directory such as `/etc`, `/usr`, `/var`, `/home`, `/root`, `/opt`, `/srv`, `/data` or `/mnt`. It prints why and leaves the directory alone; remove Dockmesh's files there by hand. It also skips a directory that holds none of `data/`, `stacks/`, `.setup/`, `update/` or `dockmesh.env`.
+The script refuses a data root that is not a plain absolute path, has a symlink anywhere in it, or is `/` or a system directory such as `/etc`, `/usr`, `/var`, `/home` or `/root`. It prints why and leaves the directory alone; remove Dockmesh's files there by hand. A data root of `/data`, `/opt`, `/srv` or `/mnt` gets Dockmesh's files removed, but the directory stays, and its `data/`, `stacks/` and other directories are removed only when the `dockmesh` account owns them. It also skips a directory that holds none of `data/`, `stacks/`, `.setup/`, `update/` or `dockmesh.env`.
 
 ### What `--purge` removes
 
 `--purge` removes only the files Dockmesh writes, from the data root and from `/var/lib/dockmesh` (macOS: `/usr/local/var/dockmesh`), where setup keeps its state before the wizard has chosen the data root:
 
 - the database with its WAL, SHM and pre-migration and pre-update snapshots
-- `secrets.env`, the age key `secrets.age-key`, `audit-genesis.sha256` and the agent and web certificates and keys
+- `secrets.env`, the age key `secrets.age-key` with its key history, `audit-genesis.sha256` and the agent and web certificates and keys
 - the scanner, Git and proxy socket caches in `data/`, the update, agent release, setup and restore staging directories, and `dockmesh.env`
 - every stack directory that holds only `compose.yaml`, `compose.<environment>.yaml`, `.env`, `.env.age`, `.dockmesh.meta.json` and empty directories
 
@@ -59,7 +59,9 @@ Everything else stays, and the script prints one `keep` line with the reason for
 keep    /srv/dockmesh/stacks/app: contains files not written by Dockmesh (e.g. data/db.sqlite)
 ```
 
-That covers a stack directory with data a container wrote through a relative bind mount, a directory a container mounts (even an empty one), a symlink, or any other file; all stacks when Docker can't be asked which directories containers mount; directories not owned by the `dockmesh` account; local backups and audit archives such as `data/backups`; what a restore or a failed setup set aside; and anything the script doesn't know. A data root that is used by an agent on the same host is kept as well. The data root itself is removed only once it is empty. If it is a mount point, the mount point stays. `--purge` stops the server first and also removes `/etc/dockmesh`. When something it keeps still belongs to the `dockmesh` account, the account stays too, so a new account can't inherit those files.
+That covers a stack directory with data a container wrote through a relative bind mount, a directory a container mounts (even an empty one), a symlink, or any other file; all stacks when Docker can't be asked which directories containers mount; directories not owned by the `dockmesh` account; local backups and audit archives such as `data/backups`; what a restore or a failed setup set aside; and anything the script doesn't know. A data root that is used by an agent on the same host is kept as well. The data root itself is removed only once it is empty. If it is a mount point, the mount point stays. `--purge` stops the server first and also removes `/etc/dockmesh`. When something it keeps still belongs to the `dockmesh` account, the account stays too, so a new account can't inherit those files. The summary at the end lists every kept path again.
+
+When the data root itself stays because something in it was kept, `--purge` leaves an empty `.dockmesh-purged` file in it. A new install then does not count the kept stacks and restore set-asides there as the data of an earlier install and starts in setup mode; a database, `secrets.env`, an age key or the agent CA that is still there keeps the new install closed as before. The setup wizard removes the file when it takes the directory over.
 
 Encrypted backups stored elsewhere can no longer be decrypted unless you kept a copy of the age key. Run `--purge --dry-run` first to see what would be removed and kept.
 
@@ -125,4 +127,6 @@ If you kept the data root, run the installer again:
 curl -fsSL https://get.dockmesh.dev | sudo bash
 ```
 
-Because the binary is gone it runs as a fresh install, but it finds the kept `dockmesh.env` in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh` (or at `$DOCKMESH_DATA_DIR/dockmesh.env`), keeps the file unchanged and uses the database, stacks and keys next to it. It does not open the setup wizard; sign in with your existing account. A recreated `dockmesh` user can get a new UID, so the installer hands `data/` and `stacks/` back to it. The installer refuses to reuse an env file when the file or its directory is writable by group or others, or belongs to an account other than root or `dockmesh`.
+Because the binary is gone it runs as a fresh install, but it finds the kept `dockmesh.env` in `/var/lib/dockmesh`, `/data` or `/usr/local/var/dockmesh` (or at `$DOCKMESH_DATA_DIR/dockmesh.env`), keeps the file unchanged and uses the database, stacks and keys next to it. It does not open the setup wizard; sign in with your existing account. If the `dockmesh` user was removed anyway, a recreated one can get a new UID, so the installer hands `data/` and `stacks/` back to it.
+
+After `--purge` the installer runs a new install in setup mode and prints the setup code. Choose a new data directory in the wizard if the old one still holds kept paths. The installer refuses to reuse an env file when the file or its directory is writable by group or others, or belongs to an account other than root or `dockmesh`.

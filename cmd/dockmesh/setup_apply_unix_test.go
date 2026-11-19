@@ -29,6 +29,8 @@ func TestOnlySetupLeftovers(t *testing.T) {
 		{name: "a database", entries: []string{"data/", "data/dockmesh.db"}},
 		{name: "a stack", entries: []string{"stacks/", "stacks/web/"}},
 		{name: "other files", entries: []string{"notes.txt"}},
+		{name: "purge marker", entries: []string{".dockmesh-purged", "data/"}, ok: true},
+		{name: "purge marker as a directory", entries: []string{".dockmesh-purged/"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

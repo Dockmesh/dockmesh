@@ -1,12 +1,16 @@
 package scripts
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dockmesh/dockmesh/internal/config"
+	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
 // --dry-run only holds if every mutating command goes through run().
@@ -187,6 +191,8 @@ func TestUninstallPurge(t *testing.T) {
 		"dm-root/data/dockmesh.db.pre-update.bak":                       "snap",
 		"dm-root/data/secrets.env":                                      "jwt",
 		"dm-root/data/secrets.age-key":                                  "key",
+		"dm-root/data/secrets.age-key.history":                          "old keys",
+		"dm-root/data/secrets.age-key.old":                              "old key",
 		"dm-root/data/audit-genesis.sha256":                             "g",
 		"dm-root/data/agents-ca.crt":                                    "c",
 		"dm-root/data/agents-ca.key":                                    "k",
@@ -225,7 +231,10 @@ func TestUninstallPurge(t *testing.T) {
 		inUse      string
 		dockerDown bool
 		// owners replaces the accounts that may own Dockmesh's trees.
-		owners  string
+		owners string
+		// shared is a directory below root that counts as a system
+		// directory a data root may be.
+		shared  string
 		gone    []string
 		present []string
 		out     []string
@@ -241,21 +250,24 @@ func TestUninstallPurge(t *testing.T) {
 			}),
 			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
 			gone:    []string{"dm-root/data", "dm-root/stacks/web", "dm-root/update", "dm-root/agent-release", "dm-root/.setup"},
-			present: []string{"dm-root/stacks/app/compose.yaml", "dm-root/stacks/app/.env", "dm-root/stacks/app/data/db.sqlite"},
+			present: []string{"dm-root/stacks/app/compose.yaml", "dm-root/stacks/app/.env", "dm-root/stacks/app/data/db.sqlite", "dm-root/.dockmesh-purged"},
 			out: []string{
 				"keep    {root}/dm-root/stacks/app: contains files not written by Dockmesh (e.g. data/db.sqlite)",
 				"removed {root}/dm-root/data/dockmesh.db",
+				"removed {root}/dm-root/data/secrets.age-key.history",
 				"removed {root}/dm-root/stacks/web",
+				"wrote {root}/dm-root/.dockmesh-purged",
+				"These were kept:\n\n     {root}/dm-root/stacks/app\n\n",
 			},
-			notOut: []string{"removed {root}/dm-root\n", "removed {root}/dm-root/stacks\n"},
+			notOut: []string{"removed {root}/dm-root\n", "removed {root}/dm-root/stacks\n", "The database, stacks"},
 		},
 		{
 			name:   "only Dockmesh files",
 			files:  with(map[string]string{"dm-root/dockmesh.env": "->{root}/etc-dockmesh.env"}),
 			env:    "export DOCKMESH_DATA_DIR=\"{root}/dm-root/\"\n",
 			gone:   []string{"dm-root"},
-			out:    []string{"removed {root}/dm-root\n"},
-			notOut: []string{"keep "},
+			out:    []string{"removed {root}/dm-root\n", "The database, stacks, deployment history"},
+			notOut: []string{"keep ", "wrote ", "These were kept"},
 		},
 		{
 			name: "symlinks in the stacks dir",
@@ -280,7 +292,7 @@ func TestUninstallPurge(t *testing.T) {
 			env:     "DOCKMESH_DATA_DIR=/\n",
 			present: []string{"fallback/data/dockmesh.db", "fallback/stacks/web/compose.yaml"},
 			out:     []string{"keep    /: is a system directory"},
-			notOut:  []string{"removed"},
+			notOut:  []string{"[ok] removed"},
 		},
 		{
 			name:    "data dir is /etc",
@@ -288,19 +300,19 @@ func TestUninstallPurge(t *testing.T) {
 			env:     "DOCKMESH_DATA_DIR='/etc'\n",
 			present: []string{"fallback/data/dockmesh.db"},
 			out:     []string{"keep    /etc: is a system directory"},
-			notOut:  []string{"removed"},
+			notOut:  []string{"[ok] removed"},
 		},
 		{
 			name:   "data dir below a system dir",
 			env:    "DOCKMESH_DATA_DIR=/usr/lib/dockmesh\n",
 			out:    []string{"keep    /usr/lib/dockmesh: lies in a system directory"},
-			notOut: []string{"removed"},
+			notOut: []string{"[ok] removed"},
 		},
 		{
 			name:   "relative data dir",
 			env:    "DOCKMESH_DATA_DIR=dm-root\n",
 			out:    []string{"keep    dm-root: not an absolute path"},
-			notOut: []string{"removed"},
+			notOut: []string{"[ok] removed"},
 		},
 		{
 			name:    "data dir with ..",
@@ -308,7 +320,7 @@ func TestUninstallPurge(t *testing.T) {
 			files:   dockmeshFiles,
 			present: []string{"dm-root/data/dockmesh.db"},
 			out:     []string{"keep    {root}/x/../dm-root: not a plain path"},
-			notOut:  []string{"removed"},
+			notOut:  []string{"[ok] removed"},
 		},
 		{
 			name:    "symlink on the way to the data dir",
@@ -316,7 +328,7 @@ func TestUninstallPurge(t *testing.T) {
 			env:     "DOCKMESH_DATA_DIR={root}/link/dm-root\n",
 			present: []string{"real/dm-root/data/dockmesh.db"},
 			out:     []string{"keep    {root}/link/dm-root: {root}/link is a symbolic link"},
-			notOut:  []string{"removed"},
+			notOut:  []string{"[ok] removed"},
 		},
 		{
 			name:    "mount point",
@@ -338,7 +350,7 @@ func TestUninstallPurge(t *testing.T) {
 				"[dry-run] rm -rf --one-file-system -- {root}/dm-root/stacks/web",
 				"keep    {root}/dm-root/stacks/app: contains files not written by Dockmesh (e.g. data/db.sqlite)",
 			},
-			notOut: []string{"removed"},
+			notOut: []string{"[ok] removed"},
 		},
 		{
 			name:    "agent dirs",
@@ -444,6 +456,83 @@ func TestUninstallPurge(t *testing.T) {
 			notOut: []string{"\x1b"},
 		},
 		{
+			name: "shared system directory as the data root",
+			files: map[string]string{
+				"shared/dockmesh.env":                   "DOCKMESH_DATA_DIR=/data\n",
+				"shared/data/dockmesh.db":               "db",
+				"shared/data/dockmesh.db-wal":           "wal",
+				"shared/data/secrets.env":               "jwt",
+				"shared/data/secrets.age-key":           "key",
+				"shared/data/secrets.age-key.history":   "old keys",
+				"shared/data/audit-genesis.sha256":      "g",
+				"shared/data/agents-ca.key":             "k",
+				"shared/data/backups/system-1.tar.gz":   "b",
+				"shared/stacks/web/compose.yaml":        "services: {}",
+				"shared/stacks/app/compose.yaml":        "services: {}",
+				"shared/stacks/app/uploads":             "/",
+				"shared/update/result.json":             "{}",
+				"shared/other-app/state.json":           "not ours",
+				"shared/data.pre-restore-20261101/x.db": "aside",
+			},
+			env:    "DOCKMESH_DATA_DIR={root}/shared\n",
+			shared: "shared",
+			inUse:  "{root}/shared/stacks/app/uploads",
+			gone: []string{"shared/dockmesh.env", "shared/data/dockmesh.db", "shared/data/dockmesh.db-wal", "shared/data/secrets.env",
+				"shared/data/secrets.age-key", "shared/data/secrets.age-key.history", "shared/data/audit-genesis.sha256",
+				"shared/data/agents-ca.key", "shared/stacks/web", "shared/update"},
+			present: []string{"shared/data/backups/system-1.tar.gz", "shared/stacks/app/compose.yaml", "shared/other-app/state.json",
+				"shared/data.pre-restore-20261101/x.db", "shared/.dockmesh-purged"},
+			out: []string{
+				"keep    {root}/shared: is a system directory; only Dockmesh's files in it were removed\n",
+				"keep    {root}/shared/other-app: not written by Dockmesh\n",
+				"wrote {root}/shared/.dockmesh-purged",
+				"     {root}/shared/data/backups\n",
+				"     {root}/shared/stacks/app\n",
+				"     {root}/shared\n",
+			},
+			notOut: []string{"The database, stacks", "is a system directory; not purged"},
+		},
+		{
+			name: "shared system directory with trees of another account",
+			files: map[string]string{
+				"shared/data/dockmesh.db":        "db",
+				"shared/data/secrets.age-key":    "key",
+				"shared/stacks/web/compose.yaml": "services: {}",
+				"shared/update/result.json":      "{}",
+			},
+			env:     "DOCKMESH_DATA_DIR={root}/shared\n",
+			shared:  "shared",
+			owners:  "nobody",
+			present: []string{"shared/data/dockmesh.db", "shared/data/secrets.age-key", "shared/stacks/web/compose.yaml", "shared/update/result.json"},
+			out: []string{
+				"keep    {root}/shared/data: not owned by the dockmesh account\n",
+				"keep    {root}/shared/update: not owned by the dockmesh account\n",
+			},
+			notOut: []string{"[ok] removed"},
+		},
+		{
+			name:    "empty shared system directory",
+			files:   map[string]string{"shared": "/"},
+			env:     "DOCKMESH_DATA_DIR={root}/shared\n",
+			shared:  "shared",
+			present: []string{"shared"},
+			notOut:  []string{"keep ", "[ok] removed", "wrote "},
+		},
+		{
+			name: "symlink where the marker goes",
+			files: with(map[string]string{
+				"dm-root/stacks/app/compose.yaml":   "services: {}",
+				"dm-root/stacks/app/data/db.sqlite": "x",
+				"dm-root/.dockmesh-purged":          "->{root}/outside/planted",
+				"outside":                           "/",
+			}),
+			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
+			gone:    []string{"outside/planted"},
+			present: []string{"dm-root/.dockmesh-purged"},
+			out:     []string{"removed {root}/dm-root/.dockmesh-purged", "wrote {root}/dm-root/.dockmesh-purged"},
+			notOut:  []string{"keep    {root}/dm-root/.dockmesh-purged"},
+		},
+		{
 			name:    "agent files at the root are checked first",
 			files:   with(map[string]string{"dm-root/enroll-token": "t"}),
 			env:     "DOCKMESH_DATA_DIR={root}/dm-root\n",
@@ -473,7 +562,9 @@ IFS=: read -ra AGENT_DIRS <<<"${TEST_AGENTS:-}"
 IFS=: read -ra IN_USE <<<"${TEST_IN_USE:-}"
 IN_USE_KNOWN="${TEST_IN_USE_KNOWN:-1}"
 SERVICE_USERS="${TEST_SERVICE_USERS:-$(id -un)}"
-purge_root || true`
+SHARED_ROOTS="${TEST_SHARED_ROOTS:-$SHARED_ROOTS}"
+purge_root || true
+purge_summary`
 			cmd := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", env, root+"/fallback")
 			cmd.Env = append(os.Environ(), "NO_COLOR=1", "TEST_AGENTS="+sub(tt.agents), "TEST_IN_USE="+sub(tt.inUse))
 			if tt.dockerDown {
@@ -481,6 +572,9 @@ purge_root || true`
 			}
 			if tt.owners != "" {
 				cmd.Env = append(cmd.Env, "TEST_SERVICE_USERS="+tt.owners)
+			}
+			if tt.shared != "" {
+				cmd.Env = append(cmd.Env, "TEST_SHARED_ROOTS="+root+"/"+tt.shared)
 			}
 			if tt.dryRun {
 				cmd.Env = append(cmd.Env, "DRYRUN=1")
@@ -512,6 +606,9 @@ purge_root || true`
 				if strings.Contains(out, sub(w)) {
 					t.Errorf("output has %q\n%s", sub(w), out)
 				}
+			}
+			if fi, err := os.Lstat(filepath.Join(root, "dm-root/.dockmesh-purged")); err == nil && !fi.Mode().IsRegular() {
+				t.Errorf("the marker is not a regular file: %v", fi.Mode())
 			}
 			if tt.dryRun {
 				for rel := range tt.files {
@@ -607,5 +704,180 @@ echo "known=$IN_USE_KNOWN mounts=${IN_USE[*]}"`
 	}
 	if got := strings.TrimSpace(string(out)); got != "known=1 mounts=/srv/dm/stacks/app/uploads" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A reinstall after a purge decides on what the purge kept: setup mode
+// unless a database or key of the old install is left.
+func TestPurgeThenSetupDecision(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	install := func(dataRoot string) map[string]string {
+		return map[string]string{
+			dataRoot + "/data/dockmesh.db":               "db",
+			dataRoot + "/data/dockmesh.db-wal":           "wal",
+			dataRoot + "/data/secrets.env":               "jwt",
+			dataRoot + "/data/secrets.age-key":           "key",
+			dataRoot + "/data/secrets.age-key.history":   "old keys",
+			dataRoot + "/data/audit-genesis.sha256":      "g",
+			dataRoot + "/data/agents-ca.key":             "k",
+			dataRoot + "/data/agents-ca.crt":             "c",
+			dataRoot + "/data/backups/system-1.tar.gz":   "b",
+			dataRoot + "/data/.pre-restore/dockmesh.db":  "aside",
+			dataRoot + "/stacks/web/compose.yaml":        "services: {}",
+			dataRoot + "/stacks/app/compose.yaml":        "services: {}",
+			dataRoot + "/stacks/app/uploads/a.png":       "x",
+			dataRoot + "/stacks.pre-restore-20261101/x/": "/",
+		}
+	}
+	tests := []struct {
+		name     string
+		dataRoot string
+		shared   bool
+		purge    bool
+		owners   string
+		// dropMarker removes the purge's marker again.
+		dropMarker bool
+		want       setup.Mode
+	}{
+		{name: "default layout kept", dataRoot: "var/lib/dockmesh", want: setup.SetUp},
+		{name: "default layout purged", dataRoot: "var/lib/dockmesh", purge: true, want: setup.NeverSetUp},
+		{name: "kept stacks without the marker", dataRoot: "var/lib/dockmesh", purge: true, dropMarker: true, want: setup.SetUp},
+		{name: "data layout kept", dataRoot: "data", shared: true, want: setup.SetUp},
+		{name: "data layout purged", dataRoot: "data", shared: true, purge: true, want: setup.NeverSetUp},
+		{name: "database kept", dataRoot: "data", shared: true, purge: true, owners: "nobody", want: setup.SetUp},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			host = filepath.ToSlash(host)
+			buildTree(t, host, install(tt.dataRoot))
+			root := host + "/" + tt.dataRoot
+			if tt.purge {
+				env := filepath.Join(t.TempDir(), "dockmesh.env")
+				mustWrite(t, env, "DOCKMESH_DATA_DIR="+root+"\n")
+				call := `resolve_purge_paths "$1" ""
+IN_USE=("$2/stacks/app/uploads")
+IN_USE_KNOWN=1
+SERVICE_USERS="${TEST_SERVICE_USERS:-$(id -un)}"
+SHARED_ROOTS="${TEST_SHARED_ROOTS:-}"
+purge_root || true`
+				cmd := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", env, root)
+				cmd.Env = append(os.Environ(), "NO_COLOR=1")
+				if tt.shared {
+					cmd.Env = append(cmd.Env, "TEST_SHARED_ROOTS="+root)
+				}
+				if tt.owners != "" {
+					cmd.Env = append(cmd.Env, "TEST_SERVICE_USERS="+tt.owners)
+				}
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("purge: %v\n%s", err, out)
+				}
+				for _, rel := range []string{"data/dockmesh.db", "data/secrets.age-key", "data/secrets.age-key.history"} {
+					if _, err := os.Lstat(filepath.Join(root, rel)); (err == nil) != (tt.owners != "") {
+						t.Fatalf("%s present = %v\n%s", rel, err == nil, out)
+					}
+				}
+				if tt.dropMarker {
+					if err := os.Remove(filepath.Join(root, setup.PurgedMarker)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			// The new install runs setup mode on the default data dir, with
+			// every absolute path below host.
+			below := func(p string) string { return filepath.Join(host, p) }
+			facts := setup.Probe{
+				Paths:   config.ResolvePaths(func(string) string { return "" }),
+				Lstat:   func(p string) (fs.FileInfo, error) { return os.Lstat(below(p)) },
+				Stat:    func(p string) (fs.FileInfo, error) { return os.Stat(below(p)) },
+				ReadDir: func(p string) ([]fs.DirEntry, error) { return os.ReadDir(below(p)) },
+			}.Scan()
+			if !facts.DB && !facts.ForeignDB {
+				facts.Users = 0
+			}
+			if got := setup.Decide(facts); got != tt.want {
+				t.Fatalf("mode = %v, want %v (facts %+v)", got, tt.want, facts)
+			}
+		})
+	}
+}
+
+// Without --purge the data dir and config stay, and so does the account
+// that owns them.
+func TestUninstallOwnsKeptInstall(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := exec.Command("stat", "-c", "%U", ".").Output(); err != nil {
+		t.Skip("GNU stat not available")
+	}
+	u, err := exec.Command("id", "-un").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := exec.Command("id", "-gn").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, group := strings.TrimSpace(string(u)), strings.TrimSpace(string(g))
+	dir := filepath.ToSlash(t.TempDir())
+	tests := []struct {
+		name    string
+		account string
+		data    string
+		config  string
+		want    bool
+	}{
+		{name: "owns the data dir", account: user, data: dir, config: dir + "/missing", want: true},
+		{name: "group of the config dir", account: group, data: dir + "/missing", config: dir, want: true},
+		{name: "another account", account: "dockmesh-test-nobody", data: dir, config: dir},
+		{name: "nothing kept", account: user, data: dir + "/missing", config: dir + "/missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", purgeScript(t, `owns_kept_install "$@"`), "uninstall-test", tt.account, tt.data, tt.config)
+			if got := cmd.Run() == nil; got != tt.want {
+				t.Errorf("owns_kept_install = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Root's trees in a shared root such as /opt belong to other software,
+// also where root otherwise counts as the service account (macOS).
+func TestUninstallSharedRootIgnoresRootOwner(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if fi, err := os.Stat("/"); err != nil || !fi.IsDir() {
+		t.Skip("no root directory")
+	}
+	if out, err := exec.Command("stat", "-c", "%U", "/").Output(); err != nil || strings.TrimSpace(string(out)) != "root" {
+		t.Skip("/ is not owned by root")
+	}
+	tests := []struct {
+		name   string
+		shared string
+		want   bool
+	}{
+		{name: "own data root", shared: "0", want: true},
+		{name: "shared root", shared: "1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := `SERVICE_USERS="dockmesh root"
+PURGE_SHARED="$1"
+owner_ok /`
+			err := exec.Command("bash", "-c", purgeScript(t, call), "uninstall-test", tt.shared).Run()
+			if got := err == nil; got != tt.want {
+				t.Errorf("owner_ok / = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

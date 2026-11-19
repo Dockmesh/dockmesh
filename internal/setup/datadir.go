@@ -204,6 +204,8 @@ func setupLeftover(dir string, e fs.DirEntry) bool {
 	switch {
 	case name == StateDirName || name == filepath.Base(layout.UpdateRequestDir(dir)):
 		return true
+	case name == PurgedMarker:
+		return e.Type().IsRegular()
 	case (name == "data" || name == "stacks") && e.IsDir():
 		f, err := os.Open(filepath.Join(dir, name))
 		if err != nil {
