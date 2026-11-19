@@ -1,12 +1,15 @@
 package scripts
 
 import (
+	"bufio"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // agentScriptFunc returns the source of a shell function in install-agent.sh,
@@ -325,6 +328,82 @@ func TestInstallAgentBoxNext(t *testing.T) {
 			}
 			if string(out) != tt.want {
 				t.Errorf("NEXT = %q, want %q", out, tt.want)
+			}
+		})
+	}
+}
+
+// holdLock locks path with flock(1) for hold seconds and returns once the
+// lock is taken. /proc/locks lists flock and fcntl (apt, dpkg) locks alike.
+func holdLock(t *testing.T, path string, hold int) {
+	t.Helper()
+	cmd := exec.Command("flock", "-o", path, "sh", "-c", "echo held; exec sleep "+strconv.Itoa(hold))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "held\n" {
+		t.Fatalf("lock holder: %q, %v", line, err)
+	}
+}
+
+func TestInstallAgentWaitForAptLock(t *testing.T) {
+	fn := agentScriptFunc(t, "apt_lock_held") + agentScriptFunc(t, "wait_for_apt_lock")
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("flock not available")
+	}
+	if _, err := os.Stat("/proc/locks"); err != nil {
+		t.Skip("no /proc/locks")
+	}
+	const waiting = "Waiting for another package manager to finish (unattended-upgrades?)"
+	tests := []struct {
+		name     string
+		hold     int // seconds the lock is held, 0 for not held
+		timeout  int
+		wantCode int
+		wantWait bool
+	}{
+		{"free", 0, 1, 0, false},
+		{"released before the timeout", 2, 10, 0, true},
+		{"held past the timeout", 5, 1, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			frontend := filepath.Join(dir, "lock-frontend")
+			if err := os.WriteFile(frontend, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tt.hold > 0 {
+				holdLock(t, frontend, tt.hold)
+			}
+			script := "set -euo pipefail\nnote() { echo \"$2\"; }\n" + fn +
+				"\nwait_for_apt_lock \"$1\" \"$2\" \"$3\""
+			start := time.Now()
+			out, err := exec.Command("bash", "-c", script, "t", strconv.Itoa(tt.timeout), filepath.Join(dir, "missing"), frontend).CombinedOutput()
+			elapsed := time.Since(start)
+			code := 0
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				code = exitErr.ExitCode()
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if code != tt.wantCode {
+				t.Errorf("exit code %d, want %d: %s", code, tt.wantCode, out)
+			}
+			if got := strings.Contains(string(out), waiting); got != tt.wantWait {
+				t.Errorf("waiting line printed = %v, want %v: %s", got, tt.wantWait, out)
+			}
+			if tt.hold > 0 && tt.wantCode == 0 && elapsed < time.Second {
+				t.Errorf("returned after %v while the lock was held", elapsed)
 			}
 		})
 	}
