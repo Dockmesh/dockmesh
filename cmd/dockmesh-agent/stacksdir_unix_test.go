@@ -91,6 +91,7 @@ func TestCheckStacksDir(t *testing.T) {
 		issue  string
 		ok     bool
 		create bool
+		msg    string
 	}{
 		{name: "new dir in an allowed parent", path: root + "/srv/stacks", ok: true, create: true},
 		{name: "new dir in opt", path: root + "/opt/stacks", ok: true, create: true},
@@ -125,6 +126,16 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "default dir", path: root + "/data/stacks2", issue: sdAgentData},
 		{name: "unchanged", path: root + "/data/stacks", ok: true, issue: sdUnchanged},
 		{name: "back to the default", path: root + "/data/stacks", edit: func(r *stacksDirRules) { r.current = root + "/srv" }, ok: true},
+		{
+			name: "back to the default from the agent's sandbox", path: root + "/data/stacks",
+			edit: func(r *stacksDirRules) {
+				r.current = root + "/srv"
+				mounts := "22 1 8:1 / / rw - ext4 /dev/sda1 rw\n" +
+					"60 22 8:1 " + root + "/data " + root + "/data rw - ext4 /dev/sda1 rw\n"
+				r.mountinfo = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(mounts)), nil }
+			},
+			issue: sdAgentData, msg: "can't be moved into the data directory of the agent (" + root + "/data). Choose a directory of its own, for example /srv/dockmesh/stacks.",
+		},
 		{name: "relative", path: "srv/stacks", issue: sdNotAbsolute},
 		{name: "dot dot", path: root + "/srv/../etc", issue: sdBadChars},
 		{name: "trailing slash", path: root + "/srv/", issue: sdBadChars},
@@ -147,7 +158,7 @@ func TestCheckStacksDir(t *testing.T) {
 		{name: "tmp", path: "/tmp/stacks", edit: func(r *stacksDirRules) { r.deny = stacksdir.DenyRoots }, issue: sdSystemDir},
 		{name: "default dir in var", path: "/var/lib/dockmesh-agent/stacks", edit: func(r *stacksDirRules) { r.dataDir = "/var/lib/dockmesh-agent"; r.current = "/srv/s" }, ok: true, create: true},
 		{name: "inside a stacks dir", path: root + "/cur/s/x", issue: sdInStacks},
-		{name: "bind mount of a subdirectory", path: root + "/bind/x", issue: sdBindMount},
+		{name: "bind mount of a subdirectory", path: root + "/bind/x", issue: sdBindMount, msg: "is on a bind mount of /etc/ssh"},
 		{name: "fuse", path: root + "/fuse/stacks", issue: sdFUSE},
 		{name: "inside the data dir", path: root + "/data/other", issue: sdAgentData},
 		{name: "the data dir", path: root + "/data", issue: sdAgentData},
@@ -174,6 +185,9 @@ func TestCheckStacksDir(t *testing.T) {
 			lowSpaceOK := tt.ok && got.Issue == sdLowSpace
 			if got.ok() != tt.ok || tt.issue != "" && got.Issue != tt.issue && !lowSpaceOK {
 				t.Fatalf("checkStacksDir(%q) = %+v, want ok=%v issue=%q", tt.path, got.StacksDirCheck, tt.ok, tt.issue)
+			}
+			if tt.msg != "" && !strings.Contains(got.Message, tt.msg) {
+				t.Errorf("message = %q, want %q in it", got.Message, tt.msg)
 			}
 			if tt.ok && tt.issue == "" && got.WillCreate != tt.create {
 				t.Errorf("will_create = %v, want %v", got.WillCreate, tt.create)
