@@ -2,6 +2,7 @@ package layout
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io/fs"
 	"os"
@@ -177,4 +178,126 @@ func TestHasCheckoutDB(t *testing.T) {
 			t.Errorf("HasCheckoutDB(%q) = %v, want %v", tt.dir, got, tt.want)
 		}
 	}
+}
+
+func TestUnitFallbackNotice(t *testing.T) {
+	ctx := context.Background()
+	template, err := RenderServerUnit(ServerUnit{Binary: "/usr/local/bin/dockmesh", EnvFile: ConfigFile, DataDir: "/var/lib/dockmesh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := "[Service]\nUser=dockmesh\nGroup=docker\nExecStart=/usr/local/bin/dockmesh serve\n"
+	for _, tt := range []struct {
+		name string
+		unit *string
+		want bool
+	}{
+		{name: "restored unit", unit: ptr(RestoredUnitMarker + "\n" + legacy), want: true},
+		{name: "unit from the template", unit: ptr(string(template))},
+		{name: "unit from an older installer", unit: ptr(legacy)},
+		{name: "marker not on the first line", unit: ptr("# local edit\n" + RestoredUnitMarker + "\n" + legacy)},
+		{name: "marker without a line end", unit: ptr(RestoredUnitMarker)},
+		{name: "no unit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			unitFile := filepath.Join(t.TempDir(), "dockmesh.service")
+			if tt.unit != nil {
+				if err := os.WriteFile(unitFile, []byte(*tt.unit), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ns := notices.NewService(openNoticeDB(t))
+			// Every start runs the check; the second must not add a notice.
+			for range 2 {
+				if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := openNotices(t, ns, UnitFallbackNoticeKey); len(got) > 1 || (len(got) == 1) != tt.want {
+				t.Fatalf("%d notices open, want open = %v", len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestUnitFallbackNoticeResolvesOnTemplateUnit(t *testing.T) {
+	ctx := context.Background()
+	unitFile := filepath.Join(t.TempDir(), "dockmesh.service")
+	ns := notices.NewService(openNoticeDB(t))
+	start := func(unit string) []notices.Notice {
+		t.Helper()
+		if err := os.WriteFile(unitFile, []byte(unit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err != nil {
+			t.Fatal(err)
+		}
+		return openNotices(t, ns, UnitFallbackNoticeKey)
+	}
+	restored := RestoredUnitMarker + "\n[Service]\nExecStart=/usr/local/bin/dockmesh serve\n"
+	first := start(restored)
+	if len(first) != 1 {
+		t.Fatalf("after the fallback: %d notices open, want 1", len(first))
+	}
+	if body := first[0].Body; !strings.Contains(body, "journalctl -u dockmesh") || !strings.Contains(body, "sudo dockmesh system write-unit") {
+		t.Errorf("body = %q, want the journalctl hint and the write-unit command", body)
+	}
+	if again := start(restored); len(again) != 1 || again[0].ID != first[0].ID {
+		t.Fatalf("second start with the restored unit: %+v, want notice %d unchanged", again, first[0].ID)
+	}
+	if got := start("[Service]\nExecStart=/usr/local/bin/dockmesh serve\n"); len(got) != 0 {
+		t.Fatalf("after the template unit is back: %d notices open, want 0", len(got))
+	}
+}
+
+func TestUnitFallbackNoticeUnreadableUnitKeepsState(t *testing.T) {
+	ctx := context.Background()
+	ns := notices.NewService(openNoticeDB(t))
+	unitFile := filepath.Join(t.TempDir(), "dockmesh.service")
+	if err := os.WriteFile(unitFile, []byte(RestoredUnitMarker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
+	// A directory in place of the unit fails the read.
+	if err := os.Remove(unitFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(unitFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnitFallbackNoticeCheck(unitFile)(ctx, ns); err == nil {
+		t.Fatal("want an error for an unreadable unit")
+	}
+	if got := openNotices(t, ns, UnitFallbackNoticeKey); len(got) != 1 {
+		t.Fatalf("%d notices open, want the notice kept", len(got))
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+func openNoticeDB(t *testing.T) *sql.DB {
+	t.Helper()
+	conn, err := dbtest.Open(filepath.Join(t.TempDir(), "dockmesh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+func openNotices(t *testing.T, ns *notices.Service, key string) []notices.Notice {
+	t.Helper()
+	open, err := ns.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []notices.Notice
+	for _, n := range open {
+		if n.Key == key {
+			found = append(found, n)
+		}
+	}
+	return found
 }
