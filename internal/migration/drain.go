@@ -362,19 +362,20 @@ func (e *DrainHooksUnconfirmedError) Error() string {
 
 func (e *DrainHooksUnconfirmedError) Is(target error) bool { return target == ErrHooksUnconfirmed }
 
-// Execute plans the drain again and runs it. authorize, when set, vets
-// that plan, the one that runs, before anything else. confirmHooks maps a
-// stack name to the digest of the hook commands the caller was shown;
-// every stack in the plan with hooks needs its current digest there.
+// Execute plans the drain again and runs it. authorize vets that plan,
+// the one that runs, before anything else. confirmHooks maps a stack name
+// to the digest of the hook commands the caller was shown; every stack in
+// the plan with hooks needs its current digest there.
 func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string, confirmHooks map[string]string, authorize func([]PlanEntry) error) (*Drain, error) {
 	plan, err := s.Plan(ctx, sourceHostID)
 	if err != nil {
 		return nil, err
 	}
-	if authorize != nil {
-		if err := authorize(plan.Entries); err != nil {
-			return nil, err
-		}
+	if authorize == nil {
+		return nil, errors.New("drain: no rights check given")
+	}
+	if err := authorize(plan.Entries); err != nil {
+		return nil, err
 	}
 	if !plan.Feasible {
 		return nil, &DrainBlockedError{Plan: plan}

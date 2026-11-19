@@ -17,7 +17,7 @@ func TestDrainRefusesServerHost(t *testing.T) {
 		if _, err := drains.Plan(context.Background(), id); !errors.Is(err, ErrDrainServerHost) {
 			t.Errorf("plan %q: err = %v, want ErrDrainServerHost", id, err)
 		}
-		if _, err := drains.Execute(context.Background(), id, "u1", nil, nil); !errors.Is(err, ErrDrainServerHost) {
+		if _, err := drains.Execute(context.Background(), id, "u1", nil, allowAll); !errors.Is(err, ErrDrainServerHost) {
 			t.Errorf("execute %q: err = %v, want ErrDrainServerHost", id, err)
 		}
 	}
@@ -149,7 +149,7 @@ func TestDrainPlanBlocksNamedVolumes(t *testing.T) {
 	if web := got["web"]; !web.Feasible || web.TargetHostID != "agent1" {
 		t.Fatalf("web entry = %+v", web)
 	}
-	_, err = drains.Execute(context.Background(), "agent0", "u1", nil, nil)
+	_, err = drains.Execute(context.Background(), "agent0", "u1", nil, allowAll)
 	var blocked *DrainBlockedError
 	if !errors.As(err, &blocked) {
 		t.Fatalf("execute: err = %v, want DrainBlockedError", err)
@@ -196,3 +196,5 @@ func TestDrainStepRefusesStackMovedMeanwhile(t *testing.T) {
 		t.Fatal("source stopped")
 	}
 }
+
+func allowAll([]PlanEntry) error { return nil }
