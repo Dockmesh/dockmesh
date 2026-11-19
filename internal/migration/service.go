@@ -33,6 +33,7 @@ type Service struct {
 	notifs      *notifications.Service
 	globals     deploy.GlobalVars
 	usage       ContainerUsage
+	volumeIO    func(hostID string) (VolumeIO, error)
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel
@@ -164,14 +165,6 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID,
 	if sourceHostID == targetHostID {
 		return nil, fmt.Errorf("source and target are the same host")
 	}
-	vols, err := s.namedVolumes(ctx, stackName)
-	if err != nil {
-		return nil, err
-	}
-	if len(vols) > 0 {
-		return nil, fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
-	}
-
 	hooks, err := s.checkHooksConfirmed(stackName, confirmHooks)
 	if err != nil {
 		return nil, err
@@ -260,6 +253,8 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 				"id", m.ID, "stack", m.StackName,
 				"phase", p.status, "err", err)
 			reason := "phase " + p.status + ": " + err.Error()
+			m.progress().FailedPhase = p.status
+			s.saveProgress(ctx, m)
 			if stopsSource(p.status) {
 				s.rollback(context.WithoutCancel(ctx), m, targetMayRun(p.status), reason)
 			} else {
@@ -397,7 +392,8 @@ func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	}
 
 	if len(toPull) > 0 {
-		p := &Progress{ImagesTotal: len(toPull)}
+		p := m.progress()
+		p.ImagesTotal = len(toPull)
 		_ = s.store.UpdateProgress(ctx, m.ID, p)
 		slog.Info("migration prepare: pulling images on target",
 			"id", m.ID, "count", len(toPull))
@@ -438,17 +434,22 @@ func (s *Service) phaseStopping(ctx context.Context, m *Migration) error {
 	return source.StopStack(ctx, m.StackName)
 }
 
+// phaseSyncing copies the stack's volumes to the target while the stack
+// is stopped on the source. The source's volumes are left as they are.
 func (s *Service) phaseSyncing(ctx context.Context, m *Migration) error {
-	// Initiate refuses stacks with named volumes; checked again in case the
-	// compose file changed while the migration was queued.
-	volumes, err := s.namedVolumes(ctx, m.StackName)
+	source, err := s.hosts.Pick(m.SourceHostID)
 	if err != nil {
+		return fmt.Errorf("source host: %w", err)
+	}
+	target, err := s.hosts.Pick(m.TargetHostID)
+	if err != nil {
+		return fmt.Errorf("target host: %w", err)
+	}
+	vols, err := s.volumePlan(ctx, m, source, target)
+	if err != nil || len(vols) == 0 {
 		return err
 	}
-	if len(volumes) > 0 {
-		return fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(volumes, ", "))
-	}
-	return nil
+	return s.copyVolumes(ctx, m, target, vols)
 }
 
 // namedVolumes returns the Docker volume names the stack's services use.
@@ -634,19 +635,41 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	}
 	// The source's volumes stay on disk until purge-source, so a restart
 	// re-attaches the pre-migration data.
-	if stopTarget {
+	p := m.progress()
+	committed := m.Phase == "done"
+	if stopTarget || len(p.CreatedVolumes) > 0 {
 		wait := targetWaitMax
-		if !targetMayRun(m.Phase) && m.Phase != "done" {
+		if !targetMayRun(m.Phase) && !committed && len(p.CreatedVolumes) == 0 {
 			wait = hostWait
 		}
 		if target, terr := s.pickOnline(ctx, m.TargetHostID, wait); terr == nil {
-			if err := target.StopStack(ctx, m.StackName); err != nil {
-				slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
+			if stopTarget {
+				if err := target.StopStack(ctx, m.StackName); err != nil {
+					slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
+				} else {
+					p.Undo = append(p.Undo, UndoStopTarget)
+				}
 			}
+			switch {
+			case len(p.CreatedVolumes) == 0:
+			case committed:
+				p.Undo = append(p.Undo, UndoKeepVolumes)
+				reason = note("volumes " + strings.Join(p.CreatedVolumes, ", ") + " stay on " + m.TargetHostID + " with the data written there since the migration")
+			default:
+				if left := s.removeCreatedVolumes(ctx, m, target); len(left) > 0 {
+					reason = note("remove volumes " + strings.Join(left, ", ") + " on " + m.TargetHostID + " by hand")
+				} else {
+					p.Undo = append(p.Undo, UndoRemoveVolumes)
+				}
+			}
+			s.saveProgress(ctx, m)
 		} else {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
-			if targetMayRun(m.Phase) || m.Phase == "done" {
+			if targetMayRun(m.Phase) || committed {
 				reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
+			}
+			if len(p.CreatedVolumes) > 0 && !committed {
+				reason = note("target " + m.TargetHostID + " was offline, remove volumes " + strings.Join(p.CreatedVolumes, ", ") + " there once it is back")
 			}
 		}
 	}
@@ -663,6 +686,8 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note("source restart failed: "+err.Error()))
 		return
 	}
+	p.Undo = append(p.Undo, UndoRestartSource)
+	s.saveProgress(ctx, m)
 	// Reassert deployment ownership on source, clearing any lingering
 	// target-side record from the completed migration.
 	if s.deployments != nil {

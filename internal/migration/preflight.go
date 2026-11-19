@@ -47,13 +47,6 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		}
 	}
 
-	if vols, err := s.namedVolumes(ctx, m.StackName); err != nil {
-		add("named_volumes", false, err.Error())
-	} else if len(vols) > 0 {
-		add("named_volumes", false, fmt.Sprintf("%s: %s", ErrNamedVolumes.Error(), strings.Join(vols, ", ")))
-	} else {
-		add("named_volumes", true, "no named volumes")
-	}
 
 	// 2. No other active migration for this stack (already checked at
 	//    initiation, but re-verify since we may have been queued).
@@ -79,6 +72,17 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("source_online", true, source.Name())
+	if vols, err := s.volumePlan(ctx, m, source, target); err != nil {
+		add("named_volumes", false, err.Error())
+	} else if len(vols) == 0 {
+		add("named_volumes", true, "no volume data to copy")
+	} else {
+		names := make([]string, len(vols))
+		for i, v := range vols {
+			names[i] = v.name
+		}
+		add("named_volumes", true, "copied to the target while the stack is stopped: "+strings.Join(names, ", "))
+	}
 
 	srcMetrics, err := source.SystemMetrics(ctx)
 	if err != nil {

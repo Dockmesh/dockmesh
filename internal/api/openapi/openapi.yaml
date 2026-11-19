@@ -8094,10 +8094,20 @@ paths:
       tags: [stacks, migrations]
       summary: Start a cross-host migration (P.9)
       description: |
-        Snapshots volumes on the source host, ships them over the agent
-        mTLS tunnel to the target host, deploys the stack there, and
-        finally stops the source containers. The source files are kept
-        for rollback until `/migrate/{id}/source` is called.
+        Stops the stack on the source host, copies its named volumes to
+        the target host (through the server, over the agents' mTLS
+        connections) and reads each copy back to compare contents, owners
+        and modes, then deploys the stack on the target. A failure in any
+        phase from the stop on stops the target, removes the volumes the
+        migration created there and starts the stack on the source again;
+        `progress.failed_phase` and `progress.undo` say what happened. The
+        source's volumes are kept until `/migrate/{id}/source` is called.
+
+        Refused before anything stops (failing `named_volumes` preflight
+        check): a volume of that name already on the target, volumes with
+        a driver or driver options, an external volume missing on the
+        target, and agents too old to stream volumes. External volumes are
+        not copied.
 
         The target gets the same files as a manual deploy: global
         variables and the stack's default environment override (only one
@@ -8124,7 +8134,6 @@ paths:
               required: [target_host_id]
               properties:
                 target_host_id: {type: string, format: uuid}
-                include_volumes: {type: boolean, default: true}
                 confirm_hooks:
                   type: string
                   description: Digest of the stack's hook commands (`hooks.digest` of the preflight). Required when the stack has any.
@@ -8133,20 +8142,14 @@ paths:
           description: Migration accepted — poll `/migrate/{id}` for progress.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  migration_id: {type: integer, format: int64}
-                  status: {type: string}
+              schema: {$ref: "#/components/schemas/MigrationStatus"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: |
-            The stack uses named volumes (volume data can't be transferred
-            yet, the same as the failing `named_volumes` preflight check),
-            or its compose.yaml or .env changed outside Dockmesh
+            The stack's compose.yaml or .env changed outside Dockmesh
             (`code: modified_outside`; repeat with `confirm_external=1`
             after reviewing them), or its hook commands were not confirmed
             or changed (`code: hooks_unconfirmed`, with the current `hooks`).
@@ -8452,8 +8455,9 @@ paths:
       summary: Finalise a successful migration (remove source files + volumes)
       description: |
         Called by the operator once they've verified the target is healthy.
-        Removes the source host's stack files and (optionally) volumes,
-        giving up the rollback option.
+        Stops what is left of the stack on the source host and removes the
+        volumes the migration copied from there, giving up the rollback.
+        Refused (400) while the stack runs on the source again.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - name: id
@@ -10260,6 +10264,26 @@ components:
             bytes_done: {type: integer, format: int64}
             images_pulled: {type: integer}
             images_total: {type: integer}
+            created_volumes:
+              type: array
+              items: {type: string}
+              description: Volumes the migration created on the target; a rollback before the commit removes them.
+            volumes_copied:
+              type: array
+              description: Volumes copied to the target and read back identical (contents, owners, modes).
+              items:
+                type: object
+                properties:
+                  name: {type: string}
+                  bytes: {type: integer, format: int64}
+                  entries: {type: integer}
+            failed_phase: {type: string, description: The phase a failed migration stopped in.}
+            undo:
+              type: array
+              description: What the rollback did, in order.
+              items:
+                type: string
+                enum: [stop_target, remove_target_volumes, keep_target_volumes, restart_source]
         started_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
         error_message: {type: string}

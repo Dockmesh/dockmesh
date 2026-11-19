@@ -3270,7 +3270,9 @@
     }
   ],
   "ops_mig_bytes": "{done} of {total}",
+  "ops_mig_copied": "{done} copied",
   "ops_mig_empty": "No migrations yet. Move a stack from its detail page.",
+  "ops_mig_failed_in": "Failed in {phase}",
   "ops_mig_image": "image {i} of {n}",
   "ops_mig_n_failed": [
     {
@@ -3321,6 +3323,11 @@
   "ops_mig_st_syncing": "syncing",
   "ops_mig_started": "Started {ago} by {who}",
   "ops_mig_title": "Stack migrations",
+  "ops_mig_undo_keep_target_volumes": "volumes kept on the target with the data written there",
+  "ops_mig_undo_remove_target_volumes": "volumes removed from the target",
+  "ops_mig_undo_restart_source": "started again on the source",
+  "ops_mig_undo_stop_target": "stopped on the target",
+  "ops_mig_undone": "Undone: {steps}",
   "ops_mig_volume": "volume {i} of {n}",
   "ops_n_running": "{count} running",
   "ops_no_log": "No log lines.",

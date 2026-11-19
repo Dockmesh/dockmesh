@@ -2,8 +2,12 @@ package migration
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/host"
 )
 
 const (
@@ -53,8 +57,14 @@ func (s *Service) cleanerTick(ctx context.Context) {
 	}
 }
 
-// PurgeSource removes the source stack's files and volumes on the
-// original host. Called via DELETE /stacks/{name}/migrate/{id}/source.
+// ErrStackOnSource refuses finalising a migration whose stack runs on the
+// source host again.
+var ErrStackOnSource = errors.New("the stack runs on the source host again; finalising this migration would stop it")
+
+// PurgeSource finalises a completed migration on the source host: it
+// stops what is left of the stack there and removes the volumes the
+// migration copied, giving up the rollback. Called via
+// DELETE /stacks/{name}/migrate/{id}/source.
 func (s *Service) PurgeSource(ctx context.Context, migrationID string) error {
 	m, err := s.store.Get(ctx, migrationID)
 	if err != nil {
@@ -63,16 +73,32 @@ func (s *Service) PurgeSource(ctx context.Context, migrationID string) error {
 	if m.Status != StatusCompleted {
 		return ErrNotCompleted
 	}
+	if s.deployments != nil {
+		dep, err := s.deployments.Get(ctx, m.StackName)
+		if err != nil {
+			return err
+		}
+		if dep != nil && dep.HostID != m.TargetHostID {
+			return ErrStackOnSource
+		}
+	}
 
-	// Stop any lingering containers on source.
 	source, err := s.hosts.Pick(m.SourceHostID)
 	if err != nil {
 		slog.Warn("purge source: host unavailable", "err", err)
 		// Not fatal — source may already be decommissioned.
 		return nil
 	}
-	_ = source.StopStack(ctx, m.StackName)
-
+	if err := source.StopStack(ctx, m.StackName); err != nil {
+		return fmt.Errorf("stop the stack on the source: %w", err)
+	}
+	if m.Progress != nil {
+		for _, v := range m.Progress.VolumesCopied {
+			if err := source.RemoveVolume(ctx, v.Name, false); err != nil && !host.VolumeMissing(err) {
+				return fmt.Errorf("remove volume %s on the source: %w", v.Name, err)
+			}
+		}
+	}
 	slog.Info("migration source purged",
 		"id", m.ID, "stack", m.StackName, "source", m.SourceHostID)
 	return nil
