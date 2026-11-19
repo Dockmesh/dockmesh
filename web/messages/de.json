@@ -2678,7 +2678,7 @@
       }
     }
   ],
-  "hosts_drain_stuck_hint": "Kein anderer Online-Host hat genug freien Speicherplatz. Auf einem anderen Host Platz schaffen oder einen Host hinzufügen.",
+  "hosts_drain_stuck_hint": "Leeren starten bleibt gesperrt, bis jeder Stack umziehen kann; der Grund steht bei jedem Stack.",
   "hosts_drain_title": "{name} leeren",
   "hosts_dur_dh": "{d} T {h} h",
   "hosts_edit_tags": "Tags bearbeiten",
@@ -3315,6 +3315,7 @@
   "ops_mig_st_preflight": "Vorabprüfung",
   "ops_mig_st_preparing": "Vorbereitung",
   "ops_mig_st_rolled_back": "zurückgerollt",
+  "ops_mig_st_rolling_back": "wird zurückgerollt",
   "ops_mig_st_starting": "wird gestartet",
   "ops_mig_st_stopping": "wird gestoppt",
   "ops_mig_st_syncing": "wird synchronisiert",

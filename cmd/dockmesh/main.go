@@ -1105,6 +1105,7 @@ func main() {
 		slog.Warn("migration service start", "err", err)
 	}
 	jobGate.Run(ctx, "migration cleaner", func() { migrationSvc.StartCleaner(ctx) })
+	jobGate.Run(ctx, "migration recovery", func() { migrationSvc.Recover(ctx) })
 	// Deferred after every gated start, so it runs before their Stops.
 	defer jobGate.Close()
 	drainSvc := migration.NewDrainService(migrationSvc, database)

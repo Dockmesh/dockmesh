@@ -1,0 +1,3 @@
+kind: Fixed
+body: The drain plan lists stacks with named volumes as blockers with the reason, and Begin drain stays disabled instead of pausing on the first stateful stack
+time: 2026-11-19T20:05:48.87088727Z

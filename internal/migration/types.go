@@ -23,6 +23,9 @@ const (
 	StatusCompleted    = "completed"
 	StatusFailed       = "failed"
 	StatusRolledBack   = "rolled_back"
+	// StatusRollingBack is a migration whose stack is being restored on
+	// the source; its phase stays the one it failed or stopped in.
+	StatusRollingBack = "rolling_back"
 )
 
 // Migration is one row of the migrations table.

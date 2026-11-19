@@ -3,8 +3,11 @@ package migration
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/system"
 )
 
 func TestDrainRefusesServerHost(t *testing.T) {
@@ -114,5 +117,44 @@ func TestMigrationCommitKeepsOneDeploymentRow(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0] != "web@agent1/deployed" {
 		t.Fatalf("stack_deployments = %v, want [web@agent1/deployed]", rows)
+	}
+}
+
+// A stack with named volumes can't move, so the plan lists it as a
+// blocker with the reason and the drain is refused.
+func TestDrainPlanBlocksNamedVolumes(t *testing.T) {
+	e := newMigrationEnv(t)
+	e.target.metrics = system.Metrics{DiskTotal: 100 << 30}
+	if _, err := e.mgr.Create("db", "services:\n  db:\n    image: postgres\n    volumes: [data:/var/lib/postgresql/data]\nvolumes:\n  data: {}\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.deployments.Set(context.Background(), "db", "agent0", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	drains := NewDrainService(e.svc, e.db)
+	plan, err := drains.Plan(context.Background(), "agent0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Feasible {
+		t.Fatal("plan with a named-volume stack is feasible")
+	}
+	got := map[string]PlanEntry{}
+	for _, en := range plan.Entries {
+		got[en.StackName] = en
+	}
+	if db := got["db"]; db.Feasible || db.TargetHostID != "" || !strings.Contains(db.Detail, "named volumes") || !strings.Contains(db.Detail, "db_data") {
+		t.Fatalf("db entry = %+v", db)
+	}
+	if web := got["web"]; !web.Feasible || web.TargetHostID != "agent1" {
+		t.Fatalf("web entry = %+v", web)
+	}
+	_, err = drains.Execute(context.Background(), "agent0", "u1", nil)
+	var blocked *DrainBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("execute: err = %v, want DrainBlockedError", err)
+	}
+	if e.source.stops != 0 {
+		t.Fatal("a blocked drain stopped a stack")
 	}
 }

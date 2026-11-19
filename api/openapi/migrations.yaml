@@ -78,8 +78,10 @@ paths:
         Every stack in the plan with hook commands needs their digest in
         `confirm_hooks` (from `entries[].hooks.digest` of the plan);
         otherwise the drain is refused (409 `hooks_unconfirmed`, listing
-        those entries) and nothing runs. The server's own host (`local`)
-        is refused with 400.
+        those entries) and nothing runs. A plan with a stack that can't
+        move (named volumes, no target with room) is refused with 409
+        `drain_blocked`, listing every entry with the reason in `detail`.
+        The server's own host (`local`) is refused with 400.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
@@ -107,7 +109,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Hook commands in the plan were not confirmed or changed (`code` `hooks_unconfirmed`).
+          description: A stack in the plan can't move (`drain_blocked`), or hook commands in the plan were not confirmed or changed (`hooks_unconfirmed`).
           content:
             application/json:
               schema:
@@ -115,7 +117,7 @@ paths:
                 required: [error, code, entries]
                 properties:
                   error: {type: string}
-                  code: {type: string, enum: [hooks_unconfirmed]}
+                  code: {type: string, enum: [hooks_unconfirmed, drain_blocked]}
                   entries:
                     type: array
                     items: {$ref: "#/components/schemas/DrainPlanEntry"}
