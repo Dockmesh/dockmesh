@@ -1,7 +1,11 @@
 package layout
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"runtime"
 	"strings"
@@ -66,6 +70,54 @@ func CheckoutNoticeCheck(checkoutDir, binary string, rootTrusted bool) notices.C
 			Severity: notices.SevInfo,
 			Title:    i18n.Msg("notice.checkout_data.title"),
 			Body:     body,
+		})
+	}
+}
+
+// UnitFallbackNoticeKey is the notice raised while the server runs with
+// the unit the installer put back because the service did not start with
+// the one written from the template.
+const UnitFallbackNoticeKey = "install.unit-fallback"
+
+func restoredUnit(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(RestoredUnitMarker+"\n"))
+}
+
+// RestoredUnit reports whether the unit at path starts with
+// RestoredUnitMarker; a missing unit is not one.
+func RestoredUnit(path string) (bool, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	head := make([]byte, len(RestoredUnitMarker)+1)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return false, err
+	}
+	return restoredUnit(head[:n]), nil
+}
+
+// UnitFallbackNoticeCheck raises the admin notice while unitFile is a unit
+// RestoreServerUnit put back and resolves it once a write from the
+// template replaced it. An unreadable unit leaves the notice as it is.
+func UnitFallbackNoticeCheck(unitFile string) notices.Check {
+	return func(ctx context.Context, n *notices.Service) error {
+		restored, err := RestoredUnit(unitFile)
+		if err != nil {
+			return err
+		}
+		return n.Set(ctx, restored, notices.RaiseInput{
+			Key:      UnitFallbackNoticeKey,
+			Audience: notices.Admins(),
+			Severity: notices.SevWarning,
+			Title:    i18n.Msg("notice.unit_fallback.title"),
+			Body: i18n.Msg("notice.unit_fallback.body", "journalctl -u dockmesh",
+				"sudo dockmesh system write-unit && sudo systemctl restart dockmesh"),
 		})
 	}
 }
