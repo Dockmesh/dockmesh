@@ -422,7 +422,7 @@
               <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
                 onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'acc setupdot' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
+            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'ring' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
               <span class="nmline">
                 <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
@@ -531,8 +531,6 @@
   .nmline > a:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .setup { flex: none; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; text-decoration: none; white-space: nowrap; }
   a.setup:hover { text-decoration: underline; }
-  /* Connected but not usable yet: a ring instead of a filled dot, so it never reads like "pending". */
-  .setupdot { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
   .legacy { margin-left: 6px; font-family: var(--font-sans); font-size: var(--fs-xs); line-height: 18px; }
   .tagf {
     display: inline-flex; align-items: center; gap: 4px;

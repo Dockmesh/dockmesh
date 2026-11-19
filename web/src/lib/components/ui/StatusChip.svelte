@@ -12,10 +12,11 @@
 </script>
 
 <script lang="ts">
-  let { tone = 'off', label, title }: { tone?: Tone; label: string; title?: string } = $props();
+  // ring: the accent ring of a host that waits for setup instead of a filled dot.
+  let { tone = 'off', label, title, ring = false }: { tone?: Tone; label: string; title?: string; ring?: boolean } = $props();
 </script>
 
-<span class="chip {tone}" {title}><i aria-hidden="true"></i>{statusWord(label)}</span>
+<span class="chip {tone}" {title}><i aria-hidden="true" class="dm-dot {tone}" class:ring></i>{statusWord(label)}</span>
 
 <style>
   .chip {
@@ -37,16 +38,9 @@
   i {
     width: 7px;
     height: 7px;
-    border-radius: 50%;
-    background: var(--off);
-    flex: none;
   }
-  .ok { color: var(--ok); background: var(--ok-bg); }
-  .ok i { background: var(--ok); }
-  .warn { color: var(--warn); background: var(--warn-bg); }
-  .warn i { background: var(--warn); }
-  .bad { color: var(--bad); background: var(--bad-bg); }
-  .bad i { background: var(--bad); }
-  .acc { color: var(--accent); background: var(--accent-soft); }
-  .acc i { background: var(--accent); }
+  .chip.ok { color: var(--ok); background: var(--ok-bg); }
+  .chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .chip.bad { color: var(--bad); background: var(--bad-bg); }
+  .chip.acc { color: var(--accent); background: var(--accent-soft); }
 </style>

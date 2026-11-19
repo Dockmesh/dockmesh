@@ -197,7 +197,7 @@
 
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));
   const waitingSetup = $derived(!isLocal && status === 'online' && !!agent?.needs_setup);
-  const statusTone = $derived<Tone>(waitingSetup ? 'warn' : status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
+  const statusTone = $derived<Tone>(waitingSetup ? 'acc' : status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
   const hostname = $derived(isLocal ? 'localhost' : (agent?.hostname ?? ''));
   const hostKind = $derived(isLocal ? m.hosts_kind_local() : m.hosts_kind_agent());
   const hostName = $derived(isLocal ? localName : (agent?.name ?? id));
@@ -248,7 +248,7 @@
     { key: 'stacks', label: m.common_stacks(), count: stacksOnHost.length },
     { key: 'migrations', label: m.hosts_tab_migrations(), count: migrations.length },
     { key: 'tags', label: m.hosts_col_tags(), count: tags.length },
-    ...(isLocal ? [] : [{ key: 'setup', label: m.hosts_tab_setup(), dot: waitingSetup }]),
+    ...(isLocal ? [] : [{ key: 'setup', label: m.hosts_tab_setup(), dot: waitingSetup ? ('ring' as const) : false }]),
     { key: 'maintenance', label: m.hosts_tab_maintenance(), dot: needsUpgrade }
   ]);
 
@@ -361,7 +361,7 @@
   {:else}
     <div class="dm-ph">
       <h1>{hostName}</h1>
-      <StatusChip tone={statusTone} label={waitingSetup ? m.label_host_waiting_setup() : hostStatusLabel(status)} />
+      <StatusChip tone={statusTone} ring={waitingSetup} label={waitingSetup ? m.label_host_waiting_setup() : hostStatusLabel(status)} />
       <span class="dm-sub dm-trunc">
         {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · ${m.hosts_up({ dur: fmtUptime(agent.online_since) })}` : ''}
       </span>
