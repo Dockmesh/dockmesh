@@ -37,6 +37,8 @@ type fakeHost struct {
 	containers []container.Summary
 
 	offline atomic.Bool
+	// gone is a deleted agent: offline to Pick and missing from List.
+	gone atomic.Bool
 
 	mu       sync.Mutex
 	stops    int
@@ -94,7 +96,7 @@ type fakeHosts map[string]*fakeHost
 
 func (h fakeHosts) Pick(id string) (host.Host, error) {
 	if f, ok := h[id]; ok {
-		if f.offline.Load() {
+		if f.offline.Load() || f.gone.Load() {
 			return nil, host.ErrAgentOffline
 		}
 		return f, nil
@@ -103,7 +105,10 @@ func (h fakeHosts) Pick(id string) (host.Host, error) {
 }
 func (h fakeHosts) List(context.Context) ([]host.Info, error) {
 	var out []host.Info
-	for id := range h {
+	for id, f := range h {
+		if f.gone.Load() {
+			continue
+		}
 		out = append(out, host.Info{ID: id, Name: id, Status: "online"})
 	}
 	return out, nil

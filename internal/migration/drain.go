@@ -186,13 +186,20 @@ func (o *DrainOrchestrator) Execute(ctx context.Context, drain *Drain, userID st
 }
 
 // await polls migration id until it is terminal and returns its status,
-// "" when it can't be read or ctx ends.
+// "" when it can't be read, ctx ends or the drain is aborted. An aborted
+// drain leaves the migration to finish or roll back on its own.
 func (o *DrainOrchestrator) await(ctx context.Context, id string) string {
 	for {
 		select {
 		case <-ctx.Done():
 			return ""
 		case <-time.After(drainPoll):
+		}
+		o.mu.Lock()
+		aborted := o.aborted
+		o.mu.Unlock()
+		if aborted {
+			return ""
 		}
 		cur, err := o.migSvc.Store().Get(ctx, id)
 		if err != nil {

@@ -80,6 +80,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, m := range active {
 		if m.Status == StatusRollingBack {
 			continue
@@ -87,20 +88,20 @@ func (s *Service) Start(ctx context.Context) error {
 		if !stopsSource(m.Phase) {
 			slog.Warn("migration interrupted by server restart before the source was stopped",
 				"id", m.ID, "stack", m.StackName, "phase", m.Phase)
-			if err := s.store.UpdateStatus(ctx, m.ID, StatusFailed, m.Phase,
+			if err := s.store.updateStatusRetry(ctx, m.ID, StatusFailed, m.Phase,
 				"server restarted during the migration; the stack still runs on "+m.SourceHostID); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 			continue
 		}
 		slog.Warn("migration interrupted by server restart; restoring the stack on the source",
 			"id", m.ID, "stack", m.StackName, "phase", m.Phase)
-		if err := s.store.UpdateStatus(ctx, m.ID, StatusRollingBack, m.Phase,
+		if err := s.store.updateStatusRetry(ctx, m.ID, StatusRollingBack, m.Phase,
 			"server restarted during the migration; restoring the stack on "+m.SourceHostID); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Recover restores the stacks of migrations Start left rolling_back on
@@ -113,7 +114,10 @@ func (s *Service) Recover(ctx context.Context) {
 	}
 	for _, m := range active {
 		if m.Status == StatusRollingBack {
-			go s.rollback(ctx, m, targetMayRun(m.Phase), "server restarted during the migration")
+			// The phase doesn't tell where a manual rollback of a completed
+			// migration stood; stopping a target that never ran the stack
+			// does nothing.
+			go s.rollback(ctx, m, true, "server restarted during the migration")
 		}
 	}
 }
@@ -253,7 +257,7 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 			if stopsSource(p.status) {
 				s.rollback(context.WithoutCancel(ctx), m, targetMayRun(p.status), reason)
 			} else {
-				_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, p.status, err.Error())
+				_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, p.status, reason)
 			}
 			if s.notifs != nil {
 				_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
@@ -553,7 +557,8 @@ var hostWait = 5 * time.Second
 var targetWaitMax = 2 * time.Minute
 
 // pickOnline returns host id, waiting while it is an agent that is not
-// connected; max 0 waits until ctx ends.
+// connected; max 0 waits until ctx ends. A host that is no longer
+// registered ends the wait with host.ErrUnknownHost.
 func (s *Service) pickOnline(ctx context.Context, id string, max time.Duration) (host.Host, error) {
 	var deadline <-chan time.Time
 	if max > 0 {
@@ -564,6 +569,9 @@ func (s *Service) pickOnline(ctx context.Context, id string, max time.Duration) 
 		if !errors.Is(err, host.ErrAgentOffline) {
 			return h, err
 		}
+		if known, lerr := s.hostKnown(ctx, id); lerr == nil && !known {
+			return nil, host.ErrUnknownHost
+		}
 		select {
 		case <-ctx.Done():
 			return nil, err
@@ -572,6 +580,19 @@ func (s *Service) pickOnline(ctx context.Context, id string, max time.Duration) 
 		case <-time.After(hostWait):
 		}
 	}
+}
+
+func (s *Service) hostKnown(ctx context.Context, id string) (bool, error) {
+	list, err := s.hosts.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, h := range list {
+		if h.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // rollback restarts the source stack after a failed or completed
@@ -599,6 +620,14 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			note("source not restarted: "+err.Error()+"; review the files and deploy the stack on "+m.SourceHostID))
 		return
 	}
+	if moved, err := s.deployedElsewhere(ctx, m); err != nil || moved != "" {
+		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "source not restarted: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
+	}
 	spec, err := s.spec(ctx, m.StackName, source)
 	if err != nil {
 		slog.Error("rollback: stack read failed", "err", err)
@@ -614,6 +643,7 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			}
 		} else {
 			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
+			reason = note("target " + m.TargetHostID + " was offline, stop the stack there once it is back")
 		}
 	}
 	if _, err := source.DeployStack(ctx, m.StackName, spec.Compose, spec.Env); err != nil {
@@ -629,6 +659,23 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	if err := s.store.updateStatusRetry(ctx, m.ID, StatusRolledBack, "rollback", note("stack restored on the source")); err != nil {
 		slog.Error("rollback: stack restored on source, but the result could not be recorded", "migration", m.ID, "err", err)
 	}
+}
+
+// deployedElsewhere returns the host the stack is deployed on when that is
+// neither end of migration m: a deploy since then moved it, and restoring
+// the source would run it twice.
+func (s *Service) deployedElsewhere(ctx context.Context, m *Migration) (string, error) {
+	if s.deployments == nil {
+		return "", nil
+	}
+	dep, err := s.deployments.Get(ctx, m.StackName)
+	if err != nil || dep == nil {
+		return "", err
+	}
+	if dep.HostID != m.SourceHostID && dep.HostID != m.TargetHostID {
+		return dep.HostID, nil
+	}
+	return "", nil
 }
 
 // Preflight runs the pre-flight checks without starting a migration.
@@ -667,6 +714,13 @@ func (s *Service) Rollback(ctx context.Context, migrationID string) error {
 	}
 	if m.Status != StatusCompleted {
 		return fmt.Errorf("can only rollback completed migrations (current: %s)", m.Status)
+	}
+	claimed, err := s.store.claimRollback(ctx, m.ID)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return fmt.Errorf("migration %s is already being rolled back", m.ID)
 	}
 	go s.rollback(context.WithoutCancel(ctx), m, true, "")
 	return nil

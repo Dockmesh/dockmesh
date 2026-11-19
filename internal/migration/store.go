@@ -50,6 +50,18 @@ func (s *Store) UpdateStatus(ctx context.Context, id, status, phase, errMsg stri
 	return err
 }
 
+// claimRollback moves completed migration id to rolling_back and reports
+// whether it did; a second caller finds it claimed.
+func (s *Store) claimRollback(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE migrations SET status = ? WHERE id = ? AND status = ?`,
+		StatusRollingBack, id, StatusCompleted)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // statusRetryDelays spans about a minute on top of the connection's
 // busy_timeout: long enough to outlast a burst of writes.
 var statusRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 30 * time.Second}

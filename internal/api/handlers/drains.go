@@ -91,10 +91,17 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 	d, err := h.Drains.Execute(r.Context(), hostID, userID, req.ConfirmHooks)
 	var blocked *migration.DrainBlockedError
 	if errors.As(err, &blocked) {
+		// Without the hook commands: the caller's right to read them was
+		// checked on another plan.
+		entries := make([]migration.PlanEntry, len(blocked.Plan.Entries))
+		for i, e := range blocked.Plan.Entries {
+			e.Hooks = nil
+			entries[i] = e
+		}
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":   err.Error(),
 			"code":    "drain_blocked",
-			"entries": blocked.Plan.Entries,
+			"entries": entries,
 		})
 		return
 	}

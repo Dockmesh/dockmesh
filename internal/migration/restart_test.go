@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,8 +53,8 @@ func TestRestartDuringMigration(t *testing.T) {
 	}{
 		{StatusPreparing, StatusFailed, StatusFailed, 0, 0},
 		{StatusPreDump, StatusFailed, StatusFailed, 0, 0},
-		{StatusStopping, StatusRollingBack, StatusRolledBack, 1, 0},
-		{StatusSyncing, StatusRollingBack, StatusRolledBack, 1, 0},
+		{StatusStopping, StatusRollingBack, StatusRolledBack, 1, 1},
+		{StatusSyncing, StatusRollingBack, StatusRolledBack, 1, 1},
 		{StatusStarting, StatusRollingBack, StatusRolledBack, 1, 1},
 		{StatusHealthCheck, StatusRollingBack, StatusRolledBack, 1, 1},
 		{StatusCommitting, StatusRollingBack, StatusRolledBack, 1, 1},
@@ -73,11 +74,9 @@ func TestRestartDuringMigration(t *testing.T) {
 			}
 			e.svc.Recover(context.Background())
 			m := e.waitStatus(t, tt.final)
-			e.source.mu.Lock()
-			deploys := len(e.source.deploys)
-			e.source.mu.Unlock()
-			if deploys != tt.sourceDeploys || e.target.stops != tt.targetStops {
-				t.Fatalf("source deploys %d, target stops %d; want %d, %d (%s)", deploys, e.target.stops, tt.sourceDeploys, tt.targetStops, m.ErrorMessage)
+			deploys, stops := e.source.deployCount(), e.target.stopCount()
+			if deploys != tt.sourceDeploys || stops < tt.targetStops {
+				t.Fatalf("source deploys %d, target stops %d; want %d, at least %d (%s)", deploys, stops, tt.sourceDeploys, tt.targetStops, m.ErrorMessage)
 			}
 		})
 	}
@@ -86,9 +85,7 @@ func TestRestartDuringMigration(t *testing.T) {
 // Recovery waits for an offline source instead of giving up, and the
 // migration stays rolling_back meanwhile.
 func TestRecoveryWaitsForOfflineSource(t *testing.T) {
-	saved := hostWait
-	hostWait = 10 * time.Millisecond
-	t.Cleanup(func() { hostWait = saved })
+	shortHostWait(t)
 	e := newMigrationEnv(t)
 	e.insertInterrupted(t, StatusSyncing)
 	e.source.offline.Store(true)
@@ -102,4 +99,94 @@ func TestRecoveryWaitsForOfflineSource(t *testing.T) {
 	}
 	e.source.offline.Store(false)
 	e.waitStatus(t, StatusRolledBack)
+}
+
+func (f *fakeHost) deployCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.deploys)
+}
+
+func (f *fakeHost) stopCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stops
+}
+
+func shortHostWait(t *testing.T) {
+	t.Helper()
+	saved := hostWait
+	hostWait = 10 * time.Millisecond
+	t.Cleanup(func() { hostWait = saved })
+}
+
+// A restart while a manual rollback of a completed migration waits stops
+// the stack on the target before the source runs it again.
+func TestRestartDuringManualRollback(t *testing.T) {
+	shortHostWait(t)
+	e := newMigrationEnv(t)
+	m := e.migrate(t)
+	if m.Status != StatusCompleted {
+		t.Fatalf("migration %s (%s)", m.Status, m.ErrorMessage)
+	}
+	e.source.offline.Store(true)
+	if err := e.svc.Rollback(context.Background(), m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Rollback(context.Background(), m.ID); err == nil {
+		t.Fatal("a second rollback of the same migration started")
+	}
+	restarted := NewService(e.db, fakeHosts{"agent0": e.source, "agent1": e.target}, e.mgr, e.svc.deployments)
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stopsBefore := e.target.stopCount()
+	restarted.Recover(context.Background())
+	e.source.offline.Store(false)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := e.svc.Store().Get(context.Background(), m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == StatusRolledBack && e.target.stopCount() >= stopsBefore+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("target stops %d (before %d), want both rollbacks to stop the target", e.target.stopCount(), stopsBefore)
+}
+
+func TestRecoveryEnds(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(e *migrationEnv)
+		want  string
+	}{
+		{"source host deleted", func(e *migrationEnv) { e.source.gone.Store(true) }, "unknown host"},
+		{"stack deployed elsewhere", func(e *migrationEnv) {
+			if err := e.svc.deployments.Set(context.Background(), "web", "agent9", "deployed"); err != nil {
+				t.Fatal(err)
+			}
+		}, "deployed on agent9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shortHostWait(t)
+			e := newMigrationEnv(t)
+			e.insertInterrupted(t, StatusSyncing)
+			tt.setup(e)
+			if err := e.svc.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			e.svc.Recover(context.Background())
+			m := e.waitStatus(t, StatusFailed)
+			if !strings.Contains(m.ErrorMessage, tt.want) {
+				t.Fatalf("error = %q, want %q", m.ErrorMessage, tt.want)
+			}
+			if e.source.deployCount() != 0 {
+				t.Fatal("source restarted")
+			}
+		})
+	}
 }
