@@ -81,7 +81,11 @@ paths:
         those entries) and nothing runs. A plan with a stack that can't
         move (named volumes, no target with room) is refused with 409
         `drain_blocked`, listing every entry with the reason in `detail`.
-        The server's own host (`local`) is refused with 400.
+        The server's own host (`local`) is refused with 400. Every stack in
+        the plan needs Stacks: Manage on this host and Deploy on its target
+        host, Manage and Deploy on its target host, as a manual migration
+        would (403 otherwise). The rights are checked on the plan that
+        runs.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
       requestBody:
@@ -129,6 +133,7 @@ paths:
       operationId: drain.status
       tags: [migrations]
       summary: Poll drain progress
+      description: A drain of another host is not found under this one.
       responses:
         "200":
           description: Current state.
@@ -142,6 +147,7 @@ paths:
       operationId: drain.pause
       tags: [migrations]
       summary: Pause a running drain between stacks
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"
@@ -164,6 +170,7 @@ paths:
       operationId: drain.resume
       tags: [migrations]
       summary: Resume a paused drain
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"
@@ -181,6 +188,7 @@ paths:
       operationId: drain.abort
       tags: [migrations]
       summary: Abort a drain; in-flight migrations are rolled back
+      description: A drain of another host is not found under this one.
       parameters:
         - $ref: "#/components/parameters/HostIDPath"
         - $ref: "#/components/parameters/DrainIDPath"

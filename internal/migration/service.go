@@ -147,6 +147,12 @@ func targetMayRun(phase string) bool {
 // hook commands needs their digest in confirmHooks. confirm, when set,
 // runs after every refusal, before anything is written.
 func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID, confirmHooks string, confirm func(context.Context) error) (*Migration, error) {
+	return s.initiate(ctx, stackName, "", targetHostID, userID, confirmHooks, confirm)
+}
+
+// initiate is Initiate that, with from set, refuses a stack deployed on
+// any other host.
+func (s *Service) initiate(ctx context.Context, stackName, from, targetHostID, userID, confirmHooks string, confirm func(context.Context) error) (*Migration, error) {
 	// Validate stack exists.
 	if _, err := s.stacks.Get(stackName); err != nil {
 		return nil, fmt.Errorf("stack %q: %w", stackName, err)
@@ -161,6 +167,9 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID,
 		return nil, fmt.Errorf("stack %q has no deployment — deploy it first", stackName)
 	}
 	sourceHostID := dep.HostID
+	if from != "" && sourceHostID != from {
+		return nil, fmt.Errorf("stack %q runs on %s now, not on %s", stackName, sourceHostID, from)
+	}
 	if sourceHostID == targetHostID {
 		return nil, fmt.Errorf("source and target are the same host")
 	}

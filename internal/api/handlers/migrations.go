@@ -95,7 +95,39 @@ func (h *Handlers) GetMigration(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The stack may run elsewhere by now; the record is about the two
+	// hosts it moved between.
+	if !h.allowedOn(r, h.stackScopeReq(m.SourceHostID, m.StackName)) && !h.allowedOn(r, h.stackScopeReq(m.TargetHostID, m.StackName)) {
+		writeError(w, http.StatusNotFound, "migration not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// allowedOnMigration refuses a caller who lacks the route's permissions
+// on the stack on either host of m, or lacks extra on the source, where
+// the stack is started again. A caller who reaches neither host gets the
+// same 404 as GetMigration.
+func (h *Handlers) allowedOnMigration(w http.ResponseWriter, r *http.Request, m *migration.Migration, extra ...rbac.Perm) bool {
+	source := h.stackScopeReq(m.SourceHostID, m.StackName)
+	target := h.stackScopeReq(m.TargetHostID, m.StackName)
+	if !h.allowedOn(r, source) && !h.allowedOn(r, target) {
+		writeError(w, http.StatusNotFound, "migration not found")
+		return false
+	}
+	if !h.allowedOn(r, source, extra...) {
+		perm := rbac.PermStacksMigrate
+		if len(extra) > 0 && h.allowedOn(r, source) {
+			perm = extra[0]
+		}
+		h.writeScopeDenied(w, r, perm, source, "stack "+m.StackName+" on the source host")
+		return false
+	}
+	if !h.allowedOn(r, target) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, target, "stack "+m.StackName+" on the target host")
+		return false
+	}
+	return true
 }
 
 // stackMigration loads migration {id} and requires it to belong to
@@ -143,17 +175,20 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
-	if _, ok := h.stackMigration(w, r); !ok {
+	m, ok := h.stackMigration(w, r)
+	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
-	if err := h.Migrations.Rollback(r.Context(), id); err != nil {
+	if !h.allowedOnMigration(w, r, m, rbac.PermStacksDeploy) {
+		return
+	}
+	if err := h.Migrations.Rollback(r.Context(), m.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
 		"action":       "migrate-rollback",
-		"migration_id": id,
+		"migration_id": m.ID,
 	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "rollback initiated"})
 }
@@ -222,7 +257,7 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// PurgeSource removes the source host's files/volumes after migration.
+// PurgeSource stops what is left of the stack on the source host.
 //
 //	DELETE /api/v1/stacks/{name}/migrate/{id}/source
 func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
@@ -236,11 +271,14 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
-	if _, ok := h.stackMigration(w, r); !ok {
+	m, ok := h.stackMigration(w, r)
+	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
-	if err := h.Migrations.PurgeSource(r.Context(), id); err != nil {
+	if !h.allowedOnMigration(w, r, m) {
+		return
+	}
+	if err := h.Migrations.PurgeSource(r.Context(), m.ID); err != nil {
 		if err == migration.ErrNotFound {
 			writeError(w, http.StatusNotFound, "migration not found")
 		} else {
@@ -250,7 +288,7 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
 		"action":       "migrate-purge-source",
-		"migration_id": id,
+		"migration_id": m.ID,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -1,0 +1,3 @@
+kind: Security
+body: 'Rolling back or finalising a migration needs Stacks: Manage on both of its hosts, a migration record is only shown to users with access to one of them, and drain routes only find drains of the host in the URL'
+time: 2026-11-19T21:20:59.109819368Z
