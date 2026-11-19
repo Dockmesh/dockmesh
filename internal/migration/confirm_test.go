@@ -49,7 +49,7 @@ func TestInitiateNeedsHookConfirmation(t *testing.T) {
 	}
 
 	for _, confirm := range []string{"", "0000"} {
-		_, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", confirm, allowAll)
+		_, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", confirm, nil)
 		var unconfirmed *HooksUnconfirmedError
 		if !errors.As(err, &unconfirmed) || !errors.Is(err, ErrHooksUnconfirmed) || unconfirmed.Hooks.Digest != pre.Hooks.Digest {
 			t.Fatalf("confirm %q: err = %v", confirm, err)
