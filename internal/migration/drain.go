@@ -310,11 +310,20 @@ func (s *DrainService) Plan(ctx context.Context, sourceHostID string) (*DrainPla
 	if err != nil {
 		return nil, err
 	}
+	// An unreachable source is caught by each migration's preflight.
+	var scan *swarmScan
+	if source, err := s.migSvc.hosts.Pick(sourceHostID); err == nil {
+		sc := s.migSvc.scanForSwarm(ctx, source)
+		scan = &sc
+	}
 	for i := range plan.Entries {
 		e := &plan.Entries[i]
 		vols, err := s.migSvc.namedVolumes(ctx, e.StackName)
 		if err == nil && len(vols) > 0 {
 			err = fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
+		}
+		if err == nil && scan != nil {
+			err = scan.check(e.StackName)
 		}
 		if err != nil {
 			e.TargetHostID, e.TargetName = "", ""

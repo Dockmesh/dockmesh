@@ -79,6 +79,11 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("source_online", true, source.Name())
+	if err := s.checkSwarm(ctx, source, m.StackName); err != nil {
+		add("swarm", false, err.Error())
+	} else {
+		add("swarm", true, "host stack")
+	}
 
 	srcMetrics, err := source.SystemMetrics(ctx)
 	if err != nil {

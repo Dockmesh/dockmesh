@@ -1,0 +1,3 @@
+kind: Changed
+body: 'Migrations and drains refuse stacks whose containers are Swarm tasks: Swarm places tasks itself, so use node drain or a placement constraint in the compose file'
+time: 2026-11-19T21:24:04.067294205Z

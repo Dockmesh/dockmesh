@@ -57,3 +57,35 @@ func TestPreflightNeedsDeployOnTarget(t *testing.T) {
 		})
 	}
 }
+
+// Host stacks only move to hosts; a cluster target is refused up front.
+func TestMigrationRefusesClusterTarget(t *testing.T) {
+	e := newScopeEnv(t)
+	mgr, err := stacks.NewManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { mgr.Close() })
+	e.h.Stacks = mgr
+	e.h.Migrations = migration.NewService(e.db, e.h.Hosts, mgr, e.h.Deployments)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.Use(middleware.RequirePerm(rbac.PermStacksMigrate))
+		r.Post("/api/v1/stacks/{name}/migrate", e.h.InitiateMigration)
+		r.Post("/api/v1/stacks/{name}/migrate/preflight", e.h.PreflightMigration)
+	})
+	if err := e.h.Deployments.Set(context.Background(), "web", "local", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	e.user("root", "admin")
+	tok := e.login("root").AccessToken
+	for _, path := range []string{"/api/v1/stacks/web/migrate", "/api/v1/stacks/web/migrate/preflight"} {
+		for _, kind := range []string{migration.TargetKindCluster, "node"} {
+			rr := e.do(http.MethodPost, path, tok, map[string]any{"target_host_id": "c1", "target_kind": kind})
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("%s %s: %d, want 400: %s", path, kind, rr.Code, rr.Body)
+			}
+		}
+	}
+}

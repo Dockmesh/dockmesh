@@ -171,6 +171,12 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID,
 	if len(vols) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
 	}
+	// An unreachable source fails the preflight, which checks this again.
+	if source, err := s.hosts.Pick(sourceHostID); err == nil {
+		if err := s.checkSwarm(ctx, source, stackName); errors.Is(err, ErrSwarmStack) || errors.Is(err, ErrSwarmUnclear) {
+			return nil, err
+		}
+	}
 
 	hooks, err := s.checkHooksConfirmed(stackName, confirmHooks)
 	if err != nil {
