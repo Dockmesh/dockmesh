@@ -144,8 +144,9 @@ func targetMayRun(phase string) bool {
 
 // Initiate starts a new migration. Returns the migration record.
 // The actual work happens asynchronously in a goroutine. A stack with
-// hook commands needs their digest in confirmHooks.
-func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID, confirmHooks string) (*Migration, error) {
+// hook commands needs their digest in confirmHooks. confirm, when set,
+// runs after every refusal, before anything is written.
+func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID, confirmHooks string, confirm func(context.Context) error) (*Migration, error) {
 	// Validate stack exists.
 	if _, err := s.stacks.Get(stackName); err != nil {
 		return nil, fmt.Errorf("stack %q: %w", stackName, err)
@@ -183,6 +184,11 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID,
 	}
 	if hasActive {
 		return nil, fmt.Errorf("stack %q already has an active migration", stackName)
+	}
+	if confirm != nil {
+		if err := confirm(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	now := time.Now()

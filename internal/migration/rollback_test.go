@@ -185,7 +185,7 @@ func (e *migrationEnv) migrate(t *testing.T) *Migration {
 // migrateConfirmed is migrate with the digest of confirmed hooks.
 func (e *migrationEnv) migrateConfirmed(t *testing.T, hooks string) *Migration {
 	t.Helper()
-	m, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", hooks)
+	m, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", hooks, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

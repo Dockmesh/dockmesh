@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -41,11 +42,16 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name+" on the target host")
 		return
 	}
-	if !h.checkStackFiles(w, r, name) {
+	snap, ok := h.checkStack(w, r, name)
+	if !ok {
 		return
 	}
+	var confirm func(context.Context) error
+	if c := h.confirmation(r, snap); c != nil {
+		confirm = c.Accept
+	}
 	userID := middleware.UserID(r.Context())
-	m, err := h.Migrations.Initiate(r.Context(), name, req.TargetHostID, userID, req.ConfirmHooks)
+	m, err := h.Migrations.Initiate(r.Context(), name, req.TargetHostID, userID, req.ConfirmHooks, confirm)
 	var unconfirmed *migration.HooksUnconfirmedError
 	if errors.As(err, &unconfirmed) {
 		writeJSON(w, http.StatusConflict, map[string]any{

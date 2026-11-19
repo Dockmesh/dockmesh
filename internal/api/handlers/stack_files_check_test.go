@@ -16,12 +16,15 @@ import (
 )
 
 func TestScaleAndRollingUpdateRefuseOutsideChanges(t *testing.T) {
+	// Without Docker neither gets as far as a write, so the confirmation
+	// is not recorded.
 	routes := []struct {
 		name, path string
 		body       map[string]any
+		accepted   bool
 	}{
-		{"scale", "/stacks/app/services/web/scale", map[string]any{"replicas": 2}},
-		{"rolling update", "/stacks/app/services/web/rolling-update", map[string]any{"parallelism": 1}},
+		{"scale", "/stacks/app/services/web/scale", map[string]any{"replicas": 2}, false},
+		{"rolling update", "/stacks/app/services/web/rolling-update", map[string]any{"parallelism": 1}, false},
 	}
 	changes := []struct {
 		file, content string
@@ -78,8 +81,12 @@ func TestScaleAndRollingUpdateRefuseOutsideChanges(t *testing.T) {
 				if rr.Code == http.StatusConflict {
 					t.Fatalf("confirmed: still 409: %s", rr.Body)
 				}
-				if changed, err := mgr.ModifiedOutside("app"); err != nil || len(changed) != 0 {
-					t.Errorf("after confirm: %v, %v", changed, err)
+				changed, err := mgr.ModifiedOutside("app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if accepted := len(changed) == 0; accepted != rt.accepted {
+					t.Errorf("after confirm: changed %v, want accepted %v", changed, rt.accepted)
 				}
 			})
 		}
