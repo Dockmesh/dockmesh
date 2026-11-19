@@ -15,7 +15,7 @@ import (
 
 // maxManifestEntries bounds the files of one copied volume; the server
 // holds both manifests in memory while it compares them.
-var maxManifestEntries = 4_000_000
+var maxManifestEntries = 1_000_000
 
 // errTooManyEntries refuses a volume with more files than a copy checks.
 var errTooManyEntries = fmt.Errorf("the volume has more than %d files, more than a migration checks; move it yourself", maxManifestEntries)
@@ -23,7 +23,8 @@ var errTooManyEntries = fmt.Errorf("the volume has more than %d files, more than
 // manifest describes a volume archive: per path (hashed, so a volume's
 // file names never reach an error message and every entry has the same
 // size) the hash of what a copy must keep of it. Times are left out: the
-// copy is checked for content, owners, modes and extended attributes.
+// copy is checked for content, owners, modes and the extended attributes
+// an archive carries.
 type manifest struct {
 	entries map[[sha256.Size]byte][sha256.Size]byte
 	bytes   int64

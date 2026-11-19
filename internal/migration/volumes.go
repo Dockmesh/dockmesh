@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -111,7 +112,7 @@ func (s *Service) volumePlan(ctx context.Context, m *Migration, source, target h
 		// A volume another stack created under that name holds that
 		// stack's data, which a finalised migration would remove here.
 		if p := src.Labels["com.docker.compose.project"]; p != "" && p != v.project {
-			return nil, fmt.Errorf("volume %s belongs to stack %s and is not copied with this one", v.name, p)
+			return nil, fmt.Errorf("volume %s belongs to another stack and is not copied with this one", v.name)
 		}
 		if _, err := target.InspectVolume(ctx, v.name); err == nil {
 			return nil, fmt.Errorf("volume %s already exists on the target; remove it there first, it would not be overwritten", v.name)
@@ -259,14 +260,15 @@ func readBack(ctx context.Context, src VolumeIO, name string) (*manifest, error)
 }
 
 // removeCreatedVolumes removes the volumes m created on target, retrying
-// for up to targetWaitMax while the target's Docker doesn't answer. A
-// volume without m's marker is left alone. It returns the ones it could
+// for up to targetWaitMax in all while the target's Docker doesn't answer.
+// A volume without m's marker is left alone. It returns the ones it could
 // not remove.
 func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target host.Host) []string {
 	p := m.progress()
+	deadline := time.Now().Add(targetWaitMax)
 	var left []string
 	for _, name := range p.CreatedVolumes {
-		if err := s.removeCreatedVolume(ctx, m, target, name); err != nil {
+		if err := removeCreatedVolume(ctx, m, target, name, deadline); err != nil {
 			slog.Warn("migration rollback: remove volume on the target", "id", m.ID, "volume", name, "err", err)
 			left = append(left, name)
 		}
@@ -275,11 +277,10 @@ func (s *Service) removeCreatedVolumes(ctx context.Context, m *Migration, target
 	return left
 }
 
-func (s *Service) removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, name string) error {
-	deadline := time.Now().Add(targetWaitMax)
+func removeCreatedVolume(ctx context.Context, m *Migration, target host.Host, name string, deadline time.Time) error {
 	for {
 		err := removeIfOurs(ctx, m, target, name)
-		if err == nil || errors.Is(err, errNotOurs) || time.Now().After(deadline) {
+		if err == nil || !dockerUnreachable(err) || time.Now().After(deadline) {
 			return err
 		}
 		select {
@@ -288,6 +289,17 @@ func (s *Service) removeCreatedVolume(ctx context.Context, m *Migration, target 
 		case <-time.After(hostWait):
 		}
 	}
+}
+
+// dockerUnreachable reports whether err says the host's Docker or agent
+// didn't answer, which may clear; anything else won't by waiting.
+func dockerUnreachable(err error) bool {
+	if errors.Is(err, host.ErrAgentOffline) || errors.Is(err, host.ErrNoDocker) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connect to the docker daemon") || strings.Contains(msg, "docker daemon unavailable") ||
+		strings.Contains(msg, "docker unavailable")
 }
 
 var errNotOurs = errors.New("the volume lacks this migration's marker; left as it is")

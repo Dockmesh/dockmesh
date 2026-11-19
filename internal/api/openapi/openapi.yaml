@@ -8107,7 +8107,8 @@ paths:
         check): a volume of that name already on the target, volumes with
         a driver or driver options, an external volume missing on the
         target, and agents too old to stream volumes. External volumes are
-        not copied.
+        not copied, and neither are ACLs and file capabilities (the volume
+        archive doesn't carry them).
 
         The target gets the same files as a manual deploy: global
         variables and the stack's default environment override (only one

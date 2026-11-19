@@ -668,6 +668,16 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	// re-attaches the pre-migration data.
 	p := m.progress()
 	committed := s.committed(ctx, m)
+	// Checked before either host is touched: a deploy since then owns the
+	// stack, and on the target it runs on the volumes copied there.
+	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
+		msg := "nothing undone: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "nothing undone: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
+	}
 	if stopTarget || len(p.CreatedVolumes) > 0 {
 		wait := targetWaitMax
 		if !targetMayRun(m.Phase) && !committed && len(p.CreatedVolumes) == 0 {
@@ -708,14 +718,6 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 			}
 		}
 	}
-	if moved, err := s.deployedElsewhere(ctx, m); err != nil || moved != "" {
-		msg := "source not restarted: the stack was deployed on " + moved + " meanwhile"
-		if err != nil {
-			msg = "source not restarted: " + err.Error()
-		}
-		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
-		return
-	}
 	if _, err := source.DeployStack(ctx, m.StackName, spec.Compose, spec.Env); err != nil {
 		slog.Error("rollback: restart source failed", "err", err)
 		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note("source restart failed: "+err.Error()))
@@ -733,10 +735,11 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	}
 }
 
-// deployedElsewhere returns the host the stack is deployed on when that is
-// neither end of migration m: a deploy since then moved it, and restoring
-// the source would run it twice.
-func (s *Service) deployedElsewhere(ctx context.Context, m *Migration) (string, error) {
+// deployedElsewhere returns the host the stack is deployed on when a deploy
+// since migration m moved it there: any host but the source, or but either
+// end once m committed. Undoing m then would stop that deploy or run the
+// stack twice.
+func (s *Service) deployedElsewhere(ctx context.Context, m *Migration, committed bool) (string, error) {
 	if s.deployments == nil {
 		return "", nil
 	}
@@ -744,10 +747,10 @@ func (s *Service) deployedElsewhere(ctx context.Context, m *Migration) (string, 
 	if err != nil || dep == nil {
 		return "", err
 	}
-	if dep.HostID != m.SourceHostID && dep.HostID != m.TargetHostID {
-		return dep.HostID, nil
+	if dep.HostID == m.SourceHostID || (committed && dep.HostID == m.TargetHostID) {
+		return "", nil
 	}
-	return "", nil
+	return dep.HostID, nil
 }
 
 // Preflight runs the pre-flight checks without starting a migration.

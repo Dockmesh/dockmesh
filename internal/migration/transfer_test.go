@@ -542,9 +542,33 @@ func TestPreflightRefusesOtherStacksVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range res.Checks {
-		if c.Name == "named_volumes" && c.Status == CheckFail && strings.Contains(c.Detail, "belongs to stack other") {
+		if c.Name == "named_volumes" && c.Status == CheckFail && strings.Contains(c.Detail, "belongs to another stack") {
 			return
 		}
 	}
 	t.Fatalf("checks %+v", res.Checks)
+}
+
+// A deploy on the target while the rollback waited for the source owns the
+// copied volumes; the rollback then leaves both hosts alone.
+func TestRollbackLeavesStackDeployedOnTargetMeanwhile(t *testing.T) {
+	e := volumeEnv(t)
+	ctx := context.Background()
+	e.target.vols.vols["db_pgdata"] = &fakeVolume{labels: map[string]string{labelMigration: "m1"}, data: []byte("written since")}
+	m := &Migration{ID: "m1", StackName: "db", SourceHostID: "agent0", TargetHostID: "agent1", Status: StatusHealthCheck, Phase: StatusHealthCheck,
+		Progress: &Progress{CreatedVolumes: []string{"db_pgdata"}}}
+	if err := e.svc.store.Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.deployments.Set(ctx, "db", "agent1", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.rollback(ctx, m, true, "phase health_check: test")
+	got := e.wait(t, "m1")
+	if got.Status != StatusFailed || !strings.Contains(got.ErrorMessage, "nothing undone") {
+		t.Fatalf("status %s: %s", got.Status, got.ErrorMessage)
+	}
+	if !e.target.vols.hasPG() || e.target.stops != 0 || len(e.source.deploys) != 0 {
+		t.Fatal("rollback touched the stack deployed on the target")
+	}
 }
