@@ -118,6 +118,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.recordCert(r.Context(), agent.ID, fp, peer.NotAfter); err != nil {
 		slog.Warn("agent cert record", "agent", agent.Name, "err", err)
 	}
+	if err := h.svc.SyncLegacyLayoutNotice(r.Context(), h.svc.notices); err != nil {
+		slog.Warn("agent legacy layout notice", "agent", agent.Name, "err", err)
+	}
 	if hello.MirroredEnv {
 		h.svc.raiseEnvMirrorNotice(r.Context(), agent.ID, agent.Name)
 	}

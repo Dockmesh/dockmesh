@@ -123,6 +123,9 @@ type Service struct {
 	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
 	notifs  *notifications.Service
 	notices *notices.Service
+	// layoutNoticeMu keeps concurrent hellos from replacing the legacy
+	// layout notice at the same time.
+	layoutNoticeMu sync.Mutex
 	// metricsSink stores agent history; nil turns it off.
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex
@@ -757,6 +760,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       swarm_node_state = ?,
 		       swarm_role = ?,
 		       swarm_cluster_id = ?,
+		       layout = ?,
 		       last_seen_at = CURRENT_TIMESTAMP,
 		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
@@ -768,6 +772,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		d.swarmCol(func(s *SwarmState) string { return s.NodeState }),
 		d.swarmCol(func(s *SwarmState) string { return s.Role }),
 		d.swarmCol(func(s *SwarmState) string { return s.ClusterID }),
+		hello.HelloLayout(),
 		ag.ID, ag.certFP, ag.certFP)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n != 1 {

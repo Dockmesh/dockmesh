@@ -96,13 +96,17 @@ func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.Ra
 	return &CertRenewRes{ClientCert: string(certPEM)}, nil
 }
 
-// RunCertNotices keeps the cert-expiry notices current until ctx ends.
+// RunCertNotices keeps the cert-expiry and legacy layout notices current
+// until ctx ends.
 func (s *Service) RunCertNotices(ctx context.Context, n *notices.Service) {
 	t := time.NewTicker(labtime.Tick(time.Hour))
 	defer t.Stop()
 	for {
 		if err := s.SyncCertNotices(ctx, n); err != nil && ctx.Err() == nil {
 			slog.Warn("agent cert notices", "err", err)
+		}
+		if err := s.SyncLegacyLayoutNotice(ctx, n); err != nil && ctx.Err() == nil {
+			slog.Warn("agent legacy layout notice", "err", err)
 		}
 		select {
 		case <-ctx.Done():

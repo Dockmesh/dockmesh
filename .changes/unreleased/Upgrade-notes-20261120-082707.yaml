@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: Agents in the current layout get the new service unit with their next update; agents still in the older layout (the host page shows the install command to run again) keep stopping with Docker until that command is run on the host
+body: Agents in the current layout get the new service unit with their next update; agents still in the older layout keep stopping with Docker until the install command shown on their host page is run again (no token needed), and a notice for admins lists them until none is left
 time: 2026-11-20T08:27:07.825732697Z
 custom:
     Audience: admins
