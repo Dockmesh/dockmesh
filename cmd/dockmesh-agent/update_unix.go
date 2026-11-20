@@ -285,9 +285,14 @@ func (s *agentService) RestoreSnapshot(context.Context) error { return nil }
 
 // Healthy is true once the agent started by this run connected to the
 // server as want and wrote runningFile.
-func (s *agentService) Healthy(_ context.Context, want string) bool {
+func (s *agentService) Healthy(ctx context.Context, want string) bool {
+	return s.HealthySince(ctx, want, s.started)
+}
+
+// HealthySince is true once an agent connected as want after since.
+func (s *agentService) HealthySince(_ context.Context, want string, since time.Time) bool {
 	data, mod, err := rootupdate.ReadServiceFile(s.reqDir, s.uid, runningFile, 256)
-	if err != nil || mod.Before(s.started) {
+	if err != nil || mod.Before(since) {
 		return false
 	}
 	return strings.TrimPrefix(strings.TrimSpace(string(data)), "v") == strings.TrimPrefix(want, "v")

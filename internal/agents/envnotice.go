@@ -61,8 +61,8 @@ func (s *Service) updateResultNotice(ctx context.Context, id, name, running stri
 		title = i18n.Msg("notice.agent_upd_unconfirmed.title", name, res.To)
 		body = i18n.Msg("notice.agent_upd_unconfirmed.body", res.From, res.Reason)
 	case "failed":
-		// A root updater that predates the unconfirmed state reports a
-		// rollback whose old version only came back late as failed.
+		// The agent connected on the old version, so whatever failed, it
+		// runs again; the root updater still holds the update open.
 		if res.From != "" && strings.TrimPrefix(running, "v") == strings.TrimPrefix(res.From, "v") {
 			title = i18n.Msg("notice.agent_upd_stuck.title", name, res.To, res.From)
 			body = i18n.Msg("notice.agent_upd_stuck.body", res.From, "sudo systemctl start dockmesh-agent-update.service", res.Reason)
@@ -78,8 +78,9 @@ func (s *Service) updateResultNotice(ctx context.Context, id, name, running stri
 		return
 	}
 	// Every connect reports the result again; only a changed outcome
-	// replaces the notice, since Raise leaves an open one as it is.
-	same, err := s.notices.OpenWithBody(ctx, key, body)
+	// replaces the notice, since Raise leaves an open one as it is. The
+	// reason is the agent's free text and doesn't count.
+	same, err := s.notices.OpenWithTitle(ctx, key, title)
 	if err != nil {
 		slog.Warn("agent update notice", "agent", name, "err", err)
 		return

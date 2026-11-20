@@ -19,8 +19,8 @@ func TestUpdateResultNoticeSaysWhatRuns(t *testing.T) {
 	}{
 		{"unconfirmed rollback", "v0.6.0",
 			AgentUpdateResult{Status: "rollback_unconfirmed", From: "v0.6.0", To: "v0.6.1", Step: "health", Reason: "v0.6.1 did not report healthy within 3m0s"},
-			notices.SevWarning, "Agent update on m1 to v0.6.1 was rolled back, waiting for the agent to report back",
-			[]string{"put v0.6.0 back and started it", "v0.6.1 did not report healthy"}},
+			notices.SevWarning, "Agent update on m1 to v0.6.1 was rolled back, confirmation pending",
+			[]string{"put v0.6.0 back and started it", "asked it to confirm", "v0.6.1 did not report healthy"}},
 		{"failed, agent back on the previous version", "0.6.0",
 			AgentUpdateResult{Status: "failed", From: "v0.6.0", To: "v0.6.1", Step: "health", Reason: "v0.6.1 did not report healthy within 3m0s; rollback: v0.6.0 did not report healthy after the rollback"},
 			notices.SevWarning, "Agent update on m1 to v0.6.1 was rolled back, v0.6.0 runs again",
@@ -97,8 +97,9 @@ func TestUpdateResultNoticeConfirmedReplacesUnconfirmed(t *testing.T) {
 	}
 }
 
-// Every connect reports the same result again; that leaves the open
-// notice as it is instead of reopening it, which would clear dismissals.
+// Every connect reports the result again, possibly with another reason;
+// that leaves the open notice as it is instead of reopening it, which
+// would clear dismissals.
 func TestUpdateResultNoticeRepeatedLeavesItAlone(t *testing.T) {
 	svc, _ := newTestService(t)
 	n := notices.NewService(svc.db)
@@ -117,6 +118,7 @@ func TestUpdateResultNoticeRepeatedLeavesItAlone(t *testing.T) {
 	if open, err = n.Open(ctx); err != nil {
 		t.Fatal(err)
 	}
+	res.Reason = "another free-text reason"
 	svc.updateResultNotice(ctx, "a1", "m1", "v0.6.0", res)
 	again, err := n.Open(ctx)
 	if err != nil || len(again) != 1 || again[0].ID != open[0].ID || !again[0].CreatedAt.Equal(open[0].CreatedAt) {

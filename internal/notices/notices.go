@@ -288,6 +288,17 @@ func (s *Service) OpenWithBody(ctx context.Context, key string, body i18n.Text) 
 	return n > 0, err
 }
 
+// OpenWithTitle is OpenWithBody for producers whose body carries detail
+// that may change while the condition itself stays the same.
+func (s *Service) OpenWithTitle(ctx context.Context, key string, title i18n.Text) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM notices
+		  WHERE key = ? AND resolved_at IS NULL AND (title_i18n = ? OR (title_i18n = '' AND title = ?))`,
+		key, title.Encode(), title.In(i18n.Default)).Scan(&n)
+	return n > 0, err
+}
+
 // Set raises or resolves key depending on whether the condition holds.
 func (s *Service) Set(ctx context.Context, active bool, in RaiseInput) error {
 	if active {

@@ -45,12 +45,12 @@ type journal struct {
 	Installed bool          `json:"installed"`
 	Unit      []byte        `json:"unit,omitempty"`
 	Files     []journalFile `json:"files,omitempty"`
-	// Restored is set when a rollback put everything back and started the
-	// old version, which did not report healthy yet (StatusUnconfirmed).
-	// Step and Reason keep why the update failed for the final result.
-	Restored bool   `json:"restored,omitempty"`
-	Step     string `json:"step,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	// Restored: the rollback put everything back and started the old
+	// version at RestartedAt; Step and Reason keep why the update failed.
+	Restored    bool      `json:"restored,omitempty"`
+	RestartedAt time.Time `json:"restarted_at,omitzero"`
+	Step        string    `json:"step,omitempty"`
+	Reason      string    `json:"reason,omitempty"`
 }
 
 // journalFile is one replaced file: Backup holds the old content, or
@@ -324,9 +324,19 @@ func (u *updater) install(j *journal, i int, f staged) error {
 }
 
 func (u *updater) waitHealthy(ctx context.Context, version string) bool {
+	return u.waitHealthySince(ctx, version, time.Time{})
+}
+
+// waitHealthySince is waitHealthy for a run that did not start the
+// service itself: a health report from before since does not count.
+func (u *updater) waitHealthySince(ctx context.Context, version string, since time.Time) bool {
+	healthy := u.cfg.Service.Healthy
+	if s, ok := u.cfg.Service.(HealthSince); ok && !since.IsZero() {
+		healthy = func(ctx context.Context, v string) bool { return s.HealthySince(ctx, v, since) }
+	}
 	deadline := u.cfg.Now().Add(u.cfg.HealthTimeout)
 	for {
-		if u.cfg.Service.Healthy(ctx, version) {
+		if healthy(ctx, version) {
 			return true
 		}
 		if !u.cfg.Now().Before(deadline) {
@@ -401,11 +411,12 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 			errs = append(errs, fmt.Errorf("restore data: %w", err))
 		}
 	}
+	restarted := u.cfg.Now().UTC()
 	if err := svc.Start(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("start: %w", err))
 	} else if !u.waitHealthy(ctx, j.From) {
 		if len(errs) == 0 && u.cfg.ConfirmRollbackLater {
-			return u.unconfirmed(j, res)
+			return u.unconfirmed(j, res, restarted)
 		}
 		errs = append(errs, fmt.Errorf("%s did not report healthy after the rollback", j.From))
 	}
@@ -422,12 +433,10 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 	return res
 }
 
-// unconfirmed records that the rollback in j put everything back and
-// started the old version, which did not report healthy yet. The journal
-// and PendingFile stay; a later run confirms the rollback once the old
-// version answers.
-func (u *updater) unconfirmed(j *journal, res Result) Result {
-	j.Restored, j.Step, j.Reason = true, res.Step, res.Reason
+// unconfirmed records a rollback that put everything back but has not
+// seen the old version healthy.
+func (u *updater) unconfirmed(j *journal, res Result, restarted time.Time) Result {
+	j.Restored, j.RestartedAt, j.Step, j.Reason = true, restarted, res.Step, res.Reason
 	if err := u.saveJournal(j); err != nil {
 		res.Status = StatusFailed
 		res.Reason += "; rollback: " + err.Error()
@@ -453,7 +462,7 @@ func (u *updater) recover(ctx context.Context, j *journal) Result {
 	}
 	if j.Restored {
 		r := Result{From: j.From, To: j.To, Step: j.Step, Reason: j.Reason, Status: StatusUnconfirmed}
-		if u.waitHealthy(ctx, j.From) {
+		if u.waitHealthySince(ctx, j.From, j.RestartedAt) {
 			u.finish()
 			r.Status = StatusRolledBack
 			u.cfg.Log.Info("rollback confirmed", "from", j.From, "to", j.To)

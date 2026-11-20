@@ -286,7 +286,7 @@ func reconnectForResult(ctx context.Context, conn io.Closer, dataDir string, sen
 	if _, err := os.Lstat(pending); err != nil {
 		return
 	}
-	confirmRollback(dataDir, sent)
+	asked := confirmRollback(dataDir, sent)
 	deadline := time.After(resultWaitLimit)
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -299,6 +299,11 @@ func reconnectForResult(ctx context.Context, conn io.Closer, dataDir string, sen
 		case <-tick.C:
 		}
 		if _, err := os.Lstat(pending); err == nil {
+			// The result may land after the hello, e.g. when this agent
+			// connected while root's health wait was running out.
+			if !asked {
+				asked = confirmRollback(dataDir, lastUpdateResult(dataDir))
+			}
 			continue
 		}
 		if lastUpdateResult(dataDir) != nil {
@@ -339,20 +344,21 @@ func clearUpdateResult(dataDir string, res *agents.AgentUpdateResult) {
 // confirmRollback asks the root oneshot to finish a rollback to this
 // version that it could not see come back, e.g. because the server was
 // out of reach. Called once connected and markRunning wrote the health
-// file root checks.
-func confirmRollback(dataDir string, res *agents.AgentUpdateResult) {
+// file root checks. It reports whether res was such a rollback.
+func confirmRollback(dataDir string, res *agents.AgentUpdateResult) bool {
 	if res == nil || res.Status != string(rootupdate.StatusUnconfirmed) ||
 		strings.TrimPrefix(res.From, "v") != strings.TrimPrefix(version.Version, "v") {
-		return
+		return false
 	}
 	dir := updateDir(dataDir)
 	if _, err := os.Lstat(filepath.Join(dir, rootupdate.RequestFile)); err == nil {
-		return
+		return true
 	}
 	body, _ := json.Marshal(rootupdate.Request{Type: rootupdate.RequestConfirmRollback})
 	if err := writeStaged(dir, rootupdate.RequestFile, body); err != nil {
 		slog.Warn("agent update: ask the root updater to confirm the rollback", "err", err)
-		return
+		return true
 	}
 	slog.Info("agent update: asked the root updater to confirm the rollback", "from", res.From, "to", res.To)
+	return true
 }

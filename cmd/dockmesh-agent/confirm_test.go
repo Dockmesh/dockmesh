@@ -62,8 +62,17 @@ func TestConfirmRollbackAsksOnlyForItsOwnUnconfirmedRollback(t *testing.T) {
 }
 
 // Connected on the old version after an unconfirmed rollback: the agent
-// asks root to confirm it and reconnects once root wrote the result.
+// asks root to confirm it and reconnects once root wrote the result. The
+// result may also land only after the hello.
 func TestReconnectForResultConfirmsUnconfirmedRollback(t *testing.T) {
+	for _, late := range []bool{false, true} {
+		t.Run(map[bool]string{false: "result in the hello", true: "result after the hello"}[late], func(t *testing.T) {
+			reconnectConfirms(t, late)
+		})
+	}
+}
+
+func reconnectConfirms(t *testing.T, late bool) {
 	setAgentVersion(t, "v0.6.0")
 	data := t.TempDir()
 	dir := updateDir(data)
@@ -75,6 +84,9 @@ func TestReconnectForResultConfirmsUnconfirmedRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := &agents.AgentUpdateResult{Status: string(rootupdate.StatusUnconfirmed), From: "v0.6.0", To: "v0.6.1"}
+	if late {
+		sent = nil
+	}
 	conn := &closeCounter{}
 	done := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -84,6 +96,12 @@ func TestReconnectForResultConfirmsUnconfirmedRollback(t *testing.T) {
 		close(done)
 	}()
 
+	if late {
+		b, _ := json.Marshal(rootupdate.Result{Status: rootupdate.StatusUnconfirmed, From: "v0.6.0", To: "v0.6.1"})
+		if err := os.WriteFile(filepath.Join(dir, rootupdate.ResultFile), b, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
 	reqPath := filepath.Join(dir, rootupdate.RequestFile)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
