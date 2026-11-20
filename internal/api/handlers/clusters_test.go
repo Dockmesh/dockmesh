@@ -102,7 +102,10 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 		for i := range cs {
 			cs[i].Status = nil
 		}
-		out, _ := json.Marshal(cs)
+		out, err := json.Marshal(cs)
+		if err != nil {
+			t.Fatal(err)
+		}
 		return string(out)
 	}
 	if _, err := e.db.Exec(`UPDATE cluster_memberships SET linked_at = '2000-01-01 00:00:00'`); err != nil {

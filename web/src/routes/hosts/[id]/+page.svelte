@@ -442,7 +442,7 @@
     {/if}
 
     {#if membership}
-      <div class="infobox member" role="note" data-testid="cluster-member">
+      <div class="infobox" role="note" data-testid="cluster-member">
         <Network size={14} strokeWidth={1.8} />
         <div class="infobody">
           <span><b>{m.hosts_member_of({ cluster: membership.cluster_name })}</b> · {memberRoleLine(membership)} · <span class="dm-mono dm-dim" title={membership.node_id}>{membership.node_id.slice(0, 12)}</span></span>

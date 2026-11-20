@@ -43,11 +43,11 @@ func TestClusterStatus(t *testing.T) {
 	cases := []struct {
 		name string
 		// after runs between create and the reconcile.
-		after             func(f *fakeHosts, errs map[string]error)
-		state             string
-		managers, reach   int
-		down, withoutAgnt int
-		listFresh         bool
+		after           func(f *fakeHosts, errs map[string]error)
+		state           string
+		managers, reach int
+		down, noAgent   int
+		listFresh       bool
 	}{
 		{"healthy", func(*fakeHosts, map[string]error) {}, StateHealthy, 2, 2, 0, 1, true},
 		{"manager unreachable", func(f *fakeHosts, _ map[string]error) {
@@ -99,7 +99,7 @@ func TestClusterStatus(t *testing.T) {
 			}
 			st := onlyCluster(t, s).Status
 			if st.State != tc.state || st.Managers != tc.managers || st.ManagersReachable != tc.reach ||
-				st.NodesDown != tc.down || st.NodesWithoutAgent != tc.withoutAgnt || st.Workers != 2 || st.Leader != "m1" {
+				st.NodesDown != tc.down || st.NodesWithoutAgent != tc.noAgent || st.Workers != 2 || st.Leader != "m1" {
 				t.Fatalf("status = %+v", st)
 			}
 			if st.CheckedAt == nil || st.KnownAt == nil {
