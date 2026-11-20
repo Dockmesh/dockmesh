@@ -77,6 +77,13 @@ type UpgradeController struct {
 	lockWait       time.Duration
 	manualLockWait time.Duration
 	holdMax        time.Duration
+
+	gate           managerGate
+	swarmState     SwarmStateFunc
+	managerHoldMax time.Duration
+	pollEvery      time.Duration
+	// ctx outlives requests: queued manager updates run on it.
+	ctx context.Context
 }
 
 // Waits around an agent update; see UpgradeController.lockWait.
@@ -135,11 +142,16 @@ func NewUpgradeController(svc *Service, settings SettingsStore) *UpgradeControll
 		lockWait:       agentUpdateLockWait,
 		manualLockWait: agentUpdateManualLockWait,
 		holdMax:        agentUpdateHoldMax,
+		managerHoldMax: managerHoldMax,
+		pollEvery:      time.Second,
 	}
 }
 
 // Start launches the evaluator goroutine. Evaluates every 60s.
 func (c *UpgradeController) Start(ctx context.Context) {
+	c.mu.Lock()
+	c.ctx = ctx
+	c.mu.Unlock()
 	go c.loop(ctx)
 }
 
@@ -368,12 +380,21 @@ func (c *UpgradeController) allowAttempt(agentID, target string, manual bool) bo
 	return true
 }
 
+// upgradeOne updates ag; on a Swarm manager it waits its turn behind the
+// other managers of the same Swarm.
 func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, manual bool) (*AgentUpgradeReq, error) {
 	req, err := c.buildUpgradeReq(ctx, ag)
 	if err != nil {
 		slog.Warn("agent upgrade: nothing to offer", "agent", ag.ID, "arch", ag.Hello.Arch, "layout", ag.Hello.HelloLayout(), "err", err)
 		return nil, err
 	}
+	if key := c.managerKey(ctx, ag); key != "" {
+		return c.upgradeManager(ctx, ag, req, key, manual)
+	}
+	return c.dispatch(ctx, ag, req, manual)
+}
+
+func (c *UpgradeController) dispatch(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool) (*AgentUpgradeReq, error) {
 	if !c.allowAttempt(ag.ID, attemptTarget(req), manual) {
 		return nil, errUpgradeBackoff
 	}

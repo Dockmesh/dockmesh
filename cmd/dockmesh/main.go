@@ -1084,6 +1084,7 @@ func main() {
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
 	agentUpgrade.SetLocks(stackLocks)
+	agentUpgrade.SetSwarmState(hostRegistry.CurrentDaemonInfo)
 	agentRelease := &agents.ReleaseCache{
 		Dir:      filepath.Join(config.ResolvePaths(os.Getenv).DataDir, "agent-release"),
 		Version:  version.Version,

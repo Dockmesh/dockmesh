@@ -301,7 +301,7 @@
     upgradeBusy = true;
     try {
       const r = await api.agents.upgrade(id);
-      toast.success(m.hosts_upgrade_dispatched(), `${hostName} → ${fmtVersion(r.version)}`);
+      toast.success(r.status === 'queued' ? m.hosts_upgrade_queued() : m.hosts_upgrade_dispatched(), `${hostName} → ${fmtVersion(r.version)}`);
       await loadAll();
     } catch (err) {
       toast.error(m.hosts_upgrade_failed(), err instanceof ApiError ? err.message : undefined);

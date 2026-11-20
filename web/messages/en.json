@@ -2886,6 +2886,7 @@
   "hosts_upgrade": "Upgrade",
   "hosts_upgrade_agent": "Upgrade agent",
   "hosts_upgrade_dispatched": "Upgrade dispatched",
+  "hosts_upgrade_queued": "Upgrade queued: another manager of this Swarm is updating first",
   "hosts_upgrade_explain": "On {current}, the server is on {server}. The agent reconnects within about 10 seconds; containers keep running.",
   "hosts_upgrade_failed": "Upgrade failed",
   "hosts_upgrade_now": "Upgrade now",

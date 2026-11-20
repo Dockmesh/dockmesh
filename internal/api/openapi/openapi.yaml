@@ -224,7 +224,11 @@ paths:
         operations on the host and refuses new ones until the agent is back
         (at most 5 minutes). Agent must be currently connected. Automatic
         upgrades back off after three attempts per target; this endpoint
-        always dispatches.
+        always dispatches. Agents on the managers of one Swarm are updated
+        one after another in every mode: while another manager of the same
+        Swarm is updating, the request is queued (202) and dispatched once
+        that agent reconnected with the new version, or after 5 minutes,
+        with a notice to admins.
       parameters:
         - name: id
           in: path
@@ -239,6 +243,15 @@ paths:
                 type: object
                 properties:
                   status: {type: string, example: upgrading}
+                  version: {type: string}
+        "202":
+          description: Queued behind another manager of the same Swarm.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: queued}
                   version: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
