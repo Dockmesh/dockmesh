@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: stream the logs of every task of a service through the cluster''s manager over a WebSocket, each line with its task and node, with tail, since and follow; needs containers.logs on the cluster'
+time: 2026-11-20T14:25:55.807656003Z

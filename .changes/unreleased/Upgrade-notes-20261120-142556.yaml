@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Swarm service logs are read through the cluster's manager agent, which has to run this version; an older one answers that it is too old to stream service logs
+time: 2026-11-20T14:25:56.230800985Z
+custom:
+    Audience: admins
+    Id: swarm-service-logs-agent
