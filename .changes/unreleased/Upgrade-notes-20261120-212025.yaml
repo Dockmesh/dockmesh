@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'Rolling back or finalising a migration now needs Stacks: Manage on both its source and target host, and finalising also needs Images, volumes, networks & registries: Manage on the source because it removes the copied volumes there; roles scoped to only one of the hosts get 403'
+body: 'Rolling back or finalising a migration now needs Stacks: Manage on the stack on both its source and target host, and finalising also needs Images, volumes, networks & registries: Manage on the source because it removes the copied volumes there; roles scoped to only one of the hosts get 403'
 time: 2026-11-20T21:20:25.903705674Z
 custom:
     Audience: admins

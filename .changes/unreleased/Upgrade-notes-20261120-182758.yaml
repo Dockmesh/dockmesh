@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'Swarm managers whose agent is older than this version count as unverified until their agent is updated; Dockmesh reads the cluster through the manager it was created from meanwhile and raises a notice while no manager is verified'
+body: 'Other Swarm managers whose agent is older than this version count as unverified until their agent is updated; while no manager is verified, Dockmesh reads the cluster through the manager it was created from and raises a notice'
 time: 2026-11-20T18:27:58.737518449Z
 custom:
     Audience: admins

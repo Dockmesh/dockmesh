@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'Creating a Swarm cluster and reading its nodes, services, tasks, networks and service logs go through a manager''s agent, which has to run this version; an older agent answers 503 that it is too old'
+body: 'Creating a Swarm cluster and reading its nodes, services, tasks, networks and service logs go through a manager''s agent, which has to run this version; an older agent is refused with 503 (agent too old)'
 time: 2026-11-20T14:25:56.230800985Z
 custom:
     Audience: admins
