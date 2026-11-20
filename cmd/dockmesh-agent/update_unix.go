@@ -138,6 +138,9 @@ func updateApply(args []string) error {
 		Verifier: releasesig.Default(),
 		Log:      logger,
 		Service:  &agentService{reqDir: reqDir, uid: uid},
+		// The old agent may be cut off from the server for longer than
+		// the health check; it asks for the confirmation once it is back.
+		ConfirmRollbackLater: true,
 	})
 	if err != nil {
 		return err

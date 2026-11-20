@@ -45,6 +45,12 @@ type journal struct {
 	Installed bool          `json:"installed"`
 	Unit      []byte        `json:"unit,omitempty"`
 	Files     []journalFile `json:"files,omitempty"`
+	// Restored is set when a rollback put everything back and started the
+	// old version, which did not report healthy yet (StatusUnconfirmed).
+	// Step and Reason keep why the update failed for the final result.
+	Restored bool   `json:"restored,omitempty"`
+	Step     string `json:"step,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // journalFile is one replaced file: Backup holds the old content, or
@@ -104,8 +110,9 @@ func Apply(ctx context.Context, cfg Config) (Result, error) {
 		cfg.Log.Error("write update result", "err", err)
 	}
 	// The service reads the result once PendingFile is gone, so it goes
-	// last. After a failed rollback it stays: the update is not over.
-	if res.Status != StatusFailed && u.req != nil {
+	// last. After a failed or unconfirmed rollback it stays: the update is
+	// not over.
+	if res.Status != StatusFailed && res.Status != StatusUnconfirmed && u.req != nil {
 		if err := removeEntry(u.req, PendingFile); err != nil {
 			cfg.Log.Warn("remove pending marker", "err", err)
 		}
@@ -175,6 +182,10 @@ func (u *updater) readRequest() (string, error) {
 	var r Request
 	if err := json.Unmarshal(data, &r); err != nil {
 		return "", refused(StepRequest, "request is not valid JSON")
+	}
+	// Without a journal there is no rollback left to confirm.
+	if r.Type == RequestConfirmRollback {
+		return "", fs.ErrNotExist
 	}
 	to := r.Version
 	if !releasesig.ValidTag(to) {
@@ -393,6 +404,9 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 	if err := svc.Start(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("start: %w", err))
 	} else if !u.waitHealthy(ctx, j.From) {
+		if len(errs) == 0 && u.cfg.ConfirmRollbackLater {
+			return u.unconfirmed(j, res)
+		}
 		errs = append(errs, fmt.Errorf("%s did not report healthy after the rollback", j.From))
 	}
 	if len(errs) > 0 {
@@ -408,8 +422,26 @@ func (u *updater) rollback(ctx context.Context, j *journal, cause error) Result 
 	return res
 }
 
+// unconfirmed records that the rollback in j put everything back and
+// started the old version, which did not report healthy yet. The journal
+// and PendingFile stay; a later run confirms the rollback once the old
+// version answers.
+func (u *updater) unconfirmed(j *journal, res Result) Result {
+	j.Restored, j.Step, j.Reason = true, res.Step, res.Reason
+	if err := u.saveJournal(j); err != nil {
+		res.Status = StatusFailed
+		res.Reason += "; rollback: " + err.Error()
+		return res
+	}
+	res.Status = StatusUnconfirmed
+	u.cfg.Log.Warn("update rolled back, the old version has not reported healthy yet", "from", j.From, "to", j.To)
+	return res
+}
+
 // recover finishes an update an earlier run did not: it is kept when the
-// new version answers, else rolled back.
+// new version answers, else rolled back. A rollback that already put
+// everything back is only confirmed: the old version is never stopped
+// again for it.
 func (u *updater) recover(ctx context.Context, j *journal) Result {
 	u.cfg.Log.Warn("finishing an interrupted update", "from", j.From, "to", j.To)
 	// A request made meanwhile is moot; left in place it would start the
@@ -418,6 +450,15 @@ func (u *updater) recover(ctx context.Context, j *journal) Result {
 		if err := removeEntry(u.req, RequestFile); err != nil {
 			u.cfg.Log.Warn("remove update request", "err", err)
 		}
+	}
+	if j.Restored {
+		r := Result{From: j.From, To: j.To, Step: j.Step, Reason: j.Reason, Status: StatusUnconfirmed}
+		if u.waitHealthy(ctx, j.From) {
+			u.finish()
+			r.Status = StatusRolledBack
+			u.cfg.Log.Info("rollback confirmed", "from", j.From, "to", j.To)
+		}
+		return r
 	}
 	if j.Installed && u.waitHealthy(ctx, j.To) {
 		u.finish()

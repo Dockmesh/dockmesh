@@ -126,9 +126,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.svc.raiseEnvMirrorNotice(r.Context(), agent.ID, agent.Name)
 	}
 	if hello.UpdateResult != nil && hello.HelloLayout() == LayoutManaged {
-		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, *hello.UpdateResult)
+		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, hello.Version, *hello.UpdateResult)
 	} else if agentIsUpToDate(ag) {
-		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, AgentUpdateResult{Status: "updated"})
+		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, hello.Version, AgentUpdateResult{Status: "updated"})
 	}
 	if agentIsUpToDate(ag) {
 		h.svc.resolveManagerNotices(r.Context(), agent.ID)

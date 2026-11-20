@@ -58,6 +58,11 @@ type Request struct {
 	Path string `json:"path,omitempty"`
 }
 
+// RequestConfirmRollback asks root to finish a StatusUnconfirmed
+// rollback once the old version runs; root checks its health itself. It
+// changes nothing when no rollback waits for that.
+const RequestConfirmRollback = "confirm-rollback"
+
 // RequestStacksDirApply asks an agent's root updater to make Path the
 // agent's stacks directory. Root checks the path itself.
 const RequestStacksDirApply = "stacks-dir-apply"
@@ -119,6 +124,11 @@ const (
 	StatusRolledBack Status = "rolled_back"
 	// StatusFailed: the rollback itself failed; someone has to look.
 	StatusFailed Status = "failed"
+	// StatusUnconfirmed: the rollback put the old files, unit and data
+	// back and started the old version, which has not reported healthy
+	// yet. PendingFile stays until a later run sees it healthy (see
+	// Config.ConfirmRollbackLater).
+	StatusUnconfirmed Status = "rollback_unconfirmed"
 )
 
 // Result is written to ResultFile when Apply ends.
@@ -183,6 +193,13 @@ type Config struct {
 	Verifier *releasesig.Verifier
 	Service  Service
 	Log      *slog.Logger
+
+	// ConfirmRollbackLater: a rollback that put everything back and
+	// started the old version, but did not see it report healthy, ends
+	// StatusUnconfirmed instead of StatusFailed. For a service whose
+	// health depends on more than this host, e.g. an agent that has to
+	// reach its server.
+	ConfirmRollbackLater bool
 
 	// Zero values pick the defaults.
 	MaxArtifactSize int64

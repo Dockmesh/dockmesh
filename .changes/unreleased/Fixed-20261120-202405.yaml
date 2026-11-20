@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A managed agent cut off from the server during its update is no longer reported as ''failed and was not rolled back'' once the update is rolled back: the notice says the previous version was put back and waits for it, and when it reconnects the rollback is confirmed and agent updates work again without a manual step on the host'
+time: 2026-11-20T20:24:05.866932077Z
