@@ -207,6 +207,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/clusters/{id}/services/{service}", h.ClusterService)
 				r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/clusters/{id}/tasks", h.ClusterTasks)
 				r.With(middleware.RequirePerm(rbac.PermNetworksView)).Get("/clusters/{id}/networks", h.ClusterNetworks)
+				r.With(middleware.RequirePerm(rbac.PermVolumesView)).Get("/clusters/{id}/volumes", h.ClusterVolumes)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermClustersCreate))

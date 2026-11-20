@@ -77,6 +77,7 @@
   });
 
   const owner = $derived(inspect?.Labels?.['com.docker.compose.project'] ?? null);
+  const swarmStack = $derived(owner ? null : (inspect?.Labels?.['com.docker.stack.namespace'] ?? null));
   const labelEntries = $derived(inspect?.Labels ? Object.entries(inspect.Labels) : []);
   const optionsEntries = $derived(inspect?.Options ? Object.entries(inspect.Options) : []);
   const ipamConfig = $derived(inspect?.IPAM?.Config ?? []);
@@ -128,7 +129,7 @@
       <div class="net-detail-title-text">
         <h1 class="ed-title net-detail-title">{inspect?.Name ?? id}</h1>
         <p class="ed-subtitle net-detail-subtitle">
-          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.networks_sub_host({ host: hostId })}{owner ? ` · ${m.networks_sub_stack({ stack: owner })}` : ''}{isSystem ? ` · ${m.networks_sub_system()}` : ''}
+          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.networks_sub_host({ host: hostId })}{owner ? ` · ${m.networks_sub_stack({ stack: owner })}` : ''}{swarmStack ? ` · ${m.networks_sub_swarm_stack({ stack: swarmStack })}` : ''}{isSystem ? ` · ${m.networks_sub_system()}` : ''}
         </p>
       </div>
       <div class="ed-actions">

@@ -138,11 +138,15 @@ func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm
 			target = "<unknown>"
 		}
 	}
-	h.auditDenied(r, perm, target, map[string]any{
+	details := map[string]any{
 		"permission": string(perm),
 		"host_id":    req.HostID,
 		"stack_name": req.StackName,
-	})
+	}
+	if req.ClusterID != "" {
+		details["cluster_id"] = req.ClusterID
+	}
+	h.auditDenied(r, perm, target, details)
 	writeError(w, http.StatusForbidden, "out of scope: none of your assignments allows this here")
 }
 

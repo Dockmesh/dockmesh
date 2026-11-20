@@ -1220,6 +1220,8 @@ export interface TopoContainer {
   image: string;
   stack?: string;
   ports?: TopoPort[];
+  /** Running/desired tasks, set when the node is a Swarm service. */
+  tasks?: string;
 }
 
 export interface TopoPort {
@@ -1230,13 +1232,14 @@ export interface TopoPort {
 
 export interface TopoLink {
   network_id: string;
-  container_id: string;
+  container_id?: string;
+  service_id?: string;
   ipv4?: string;
   aliases?: string[];
 }
 
 export interface TopoTarget {
-  kind: 'host';
+  kind: 'host' | 'cluster';
   id: string;
   name: string;
 }
@@ -1246,6 +1249,20 @@ export interface Topology {
   networks: TopoNetwork[];
   containers: TopoContainer[];
   links: TopoLink[];
+  services?: TopoService[];
+  truncated?: boolean;
+}
+
+/** A Swarm service in a cluster graph. */
+export interface TopoService {
+  id: string;
+  name: string;
+  image?: string;
+  mode: string;
+  running_tasks: number;
+  desired_tasks: number;
+  stack?: string;
+  ports?: { protocol?: string; target_port: number; published_port?: number; publish_mode?: string }[];
 }
 
 export interface BackupTarget {
@@ -2565,7 +2582,8 @@ export const api = {
     remove: (id: string, host = 'local') =>
       request<void>(`/networks/${encodeURIComponent(id)}${hostQs(host)}`, { method: 'DELETE' }),
     prune: (host = 'local') => request<any>(`/networks/prune${hostQs(host)}`, { method: 'POST' }),
-    topology: (host: string) => request<Topology>(`/networks/topology${hostQs(host)}`)
+    topology: (host: string) => request<Topology>(`/networks/topology${hostQs(host)}`),
+    clusterTopology: (cluster: string) => request<Topology>(`/networks/topology?cluster=${encodeURIComponent(cluster)}`)
   },
 
   volumes: {

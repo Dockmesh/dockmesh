@@ -47,12 +47,15 @@ func TestClusterReadRoutesFollowClusterScope(t *testing.T) {
 	routes := []struct {
 		path string
 		perm rbac.Perm
+		also rbac.Perm
 	}{
-		{"/api/v1/clusters/c1/nodes", rbac.PermHostsView},
-		{"/api/v1/clusters/c1/services", rbac.PermStacksView},
-		{"/api/v1/clusters/c1/services/web_app", rbac.PermStacksView},
-		{"/api/v1/clusters/c1/tasks?service=web_app", rbac.PermStacksView},
-		{"/api/v1/clusters/c1/networks", rbac.PermNetworksView},
+		{"/api/v1/clusters/c1/nodes", rbac.PermHostsView, ""},
+		{"/api/v1/clusters/c1/services", rbac.PermStacksView, ""},
+		{"/api/v1/clusters/c1/services/web_app", rbac.PermStacksView, ""},
+		{"/api/v1/clusters/c1/tasks?service=web_app", rbac.PermStacksView, ""},
+		{"/api/v1/clusters/c1/networks", rbac.PermNetworksView, ""},
+		{"/api/v1/clusters/c1/volumes", rbac.PermVolumesView, rbac.PermHostsView},
+		{"/api/v1/networks/topology?cluster=c1", rbac.PermNetworksView, rbac.PermStacksView},
 	}
 	for _, rt := range routes {
 		for _, c := range callers {
@@ -60,7 +63,7 @@ func TestClusterReadRoutesFollowClusterScope(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+c.bearer)
 			rr := httptest.NewRecorder()
 			router.ServeHTTP(rr, req)
-			want := c.reach && c.perms[rt.perm]
+			want := c.reach && c.perms[rt.perm] && (rt.also == "" || c.perms[rt.also])
 			denied := rr.Code == http.StatusForbidden
 			if denied == want {
 				t.Errorf("GET %s as %s: %d %s, want allowed=%v", rt.path, c.name, rr.Code, strings.TrimSpace(rr.Body.String()), want)

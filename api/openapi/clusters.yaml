@@ -300,7 +300,8 @@ paths:
       description: |
         Needs `networks.view` on the cluster. Overlay and ingress networks
         (at most 500, by name); `truncated` is set when the manager had
-        more.
+        more. With `stacks.view` on the cluster each network also lists
+        the services attached to it.
       parameters:
         - name: id
           in: path
@@ -322,6 +323,36 @@ paths:
               schema: {$ref: "#/components/schemas/Error"}
         "503":
           description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/volumes:
+    get:
+      operationId: clusters.volumes
+      tags: [clusters]
+      summary: Volumes of Swarm stacks and the nodes they exist on
+      description: |
+        Needs `volumes.view` and `hosts.view` on the cluster. Lists every volume with a
+        `com.docker.stack.namespace` label on the cluster's member hosts
+        (nodes with an agent), grouped per stack and volume, with the hosts
+        that hold a copy. Volumes of a compose project are left out even
+        when they carry the label. Nodes without an agent are not read.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Volumes per stack.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterVolumes"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: Clusters are not available.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -474,31 +505,6 @@ components:
               engine_version: {type: string}
               nano_cpus: {type: integer, format: int64}
               memory_bytes: {type: integer, format: int64}
-    SwarmService:
-      type: object
-      required: [id, name, mode, running_tasks, desired_tasks, created_at, updated_at]
-      properties:
-        id: {type: string}
-        name: {type: string}
-        image: {type: string}
-        mode: {type: string, enum: [replicated, global, replicated-job, global-job, ""]}
-        replicas: {type: integer, format: int64}
-        running_tasks: {type: integer, format: int64}
-        desired_tasks: {type: integer, format: int64}
-        stack: {type: string, description: The `com.docker.stack.namespace` label.}
-        ports:
-          type: array
-          items:
-            type: object
-            required: [target_port]
-            properties:
-              protocol: {type: string}
-              target_port: {type: integer}
-              published_port: {type: integer}
-              publish_mode: {type: string}
-        update_state: {type: string}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
     ClusterServices:
       type: object
       required: [read_host, services]
@@ -630,7 +636,51 @@ components:
                 items: {type: string}
               stack: {type: string}
               created_at: {type: string, format: date-time}
+              services:
+                type: array
+                description: Services attached to the network; only for callers with `stacks.view` on the cluster.
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id: {type: string}
+                    name: {type: string}
+                    stack: {type: string}
         truncated: {type: boolean}
+    ClusterVolumes:
+      type: object
+      required: [volumes, read_hosts, unreachable_hosts]
+      properties:
+        volumes:
+          type: array
+          items:
+            type: object
+            required: [stack, name, nodes]
+            properties:
+              stack: {type: string, description: The `com.docker.stack.namespace` label.}
+              name: {type: string}
+              nodes:
+                type: array
+                description: Member hosts that hold a copy of the volume.
+                items:
+                  type: object
+                  required: [host_id, host_name, driver]
+                  properties:
+                    host_id: {type: string}
+                    host_name: {type: string}
+                    driver: {type: string}
+        read_hosts:
+          type: array
+          description: Member hosts that answered. Nodes without an agent are never read.
+          items: {type: string}
+        unreachable_hosts:
+          type: array
+          items:
+            type: object
+            properties:
+              host_id: {type: string}
+              host_name: {type: string}
+              reason: {type: string}
     Cluster:
       type: object
       required: [id, name, origin_host, created_at, members]

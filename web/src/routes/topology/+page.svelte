@@ -1,8 +1,8 @@
 <script lang="ts">
-  // Topology: how containers, networks and the reverse proxy connect. Each
-  // stack is a group with its networks on top and its containers below;
-  // edges are network memberships. Reloads on Docker and stack events.
-  import { api, ApiError, type Topology, type TopoNetwork, type TopoContainer } from '$lib/api';
+  // Topology: how containers (or a Swarm cluster's services), networks and
+  // the reverse proxy connect. Each stack is a group with its networks on
+  // top and its containers below; edges are network memberships. Reloads on Docker and stack events.
+  import { api, ApiError, type Cluster, type Topology, type TopoNetwork, type TopoContainer, type TopoService } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { Skeleton, EmptyState, StatusChip, Switch, LiveIndicator } from '$lib/components/ui';
@@ -18,6 +18,9 @@
   let outdated = $state(false);
   // Topology is per host, so in all-hosts mode the page picks one itself.
   let pick = $state('local');
+  // A Swarm cluster's graph instead of the host's; '' follows the host.
+  let clusterPick = $state('');
+  let clusters = $state<Cluster[]>([]);
   let routes = $state<Route[]>([]);
   let loading = $state(true);
   let lastLoaded = $state<number | null>(null);
@@ -49,7 +52,8 @@
     return mt ? Number(mt[1]) : null;
   }
   const realHosts = $derived(hosts.available.filter((h) => h.id === 'local' || h.status === 'online'));
-  const target = $derived(hosts.isAll ? pick : hosts.id || 'local');
+  const target = $derived(clusterPick ? `cluster:${clusterPick}` : hosts.isAll ? pick : hosts.id || 'local');
+  const isCluster = $derived(target.startsWith('cluster:'));
   const lensKnown = $derived(hosts.usable(allowed('hosts.view')));
   // Routes are matched by published port, which only says something for
   // the server's own host, where Caddy runs.
@@ -101,7 +105,7 @@
       const group: Group = {
         key,
         label: g.label,
-        sub: m.stacks_n_containers({ count: g.cts.length }),
+        sub: isCluster ? m.topology_n_services({ count: g.cts.length }) : m.stacks_n_containers({ count: g.cts.length }),
         x, y, w, h, color, nets: [], cts: []
       };
       const netStep = w / (g.nets.length + 1);
@@ -181,11 +185,32 @@
     proxied: [...scene.cts.values()].filter((c) => routesFor(c.ct).length > 0).length
   });
 
+  // Services take the place of containers, so the layout stays the same.
+  function serviceState(s: TopoService): string {
+    if (s.desired_tasks === 0) return 'exited';
+    if (s.running_tasks >= s.desired_tasks) return 'running';
+    return s.running_tasks > 0 ? 'restarting' : 'dead';
+  }
+  function asGraph(t: Topology): Topology {
+    if (t.target.kind !== 'cluster') return t;
+    const containers: TopoContainer[] = (t.services ?? []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      state: serviceState(s),
+      image: s.image ?? '',
+      stack: s.stack,
+      ports: (s.ports ?? []).filter((p) => p.published_port).map((p) => ({ host_port: p.published_port!, container_port: p.target_port, protocol: p.protocol ?? 'tcp' })),
+      tasks: `${s.running_tasks}/${s.desired_tasks}`
+    }));
+    const links = t.links.filter((l) => l.service_id).map((l) => ({ network_id: l.network_id, container_id: l.service_id! }));
+    return { ...t, containers, links };
+  }
+
   async function load() {
     const want = target;
     try {
       const [t, r] = await Promise.all([
-        api.networks.topology(want),
+        want.startsWith('cluster:') ? api.networks.clusterTopology(want.slice('cluster:'.length)).then(asGraph) : api.networks.topology(want),
         allowed('proxy.view') && want === 'local' ? api.proxy.listRoutes().catch(() => [] as Route[]) : Promise.resolve([] as Route[])
       ]);
       if (want !== target) return;
@@ -217,6 +242,10 @@
   });
   $effect(() => {
     if (realHosts.length > 0 && !realHosts.some((h) => h.id === pick)) pick = realHosts[0].id;
+  });
+  $effect(() => {
+    if (!allowed('hosts.view') || !allowed('stacks.view')) return;
+    api.clusters.list().then((c) => (clusters = c)).catch(() => (clusters = []));
   });
   $effect(() => {
     if (!lensKnown) return;
@@ -256,7 +285,15 @@
 
   <div class="dm-toolbar">
     <input type="search" class="dm-filter" style="width: 260px" placeholder={m.topology_search_placeholder()} aria-label={m.topology_search_label()} bind:value={search} />
-    {#if hosts.isAll && realHosts.length > 0}
+    {#if clusters.length > 0}
+      <select bind:value={clusterPick} class="dm-input text-sm" aria-label={m.topology_view_label()}>
+        <option value="">{m.topology_view_host()}</option>
+        {#each clusters as c (c.id)}
+          <option value={c.id}>{m.topology_view_cluster({ name: c.name })}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if !isCluster && hosts.isAll && realHosts.length > 0}
       <select bind:value={pick} class="dm-input text-sm" aria-label={m.common_host()}>
         {#each realHosts as h (h.id)}
           <option value={h.id}>{h.name}</option>
@@ -355,9 +392,10 @@
           <p class="dm-sub">{m.topology_select_hint()}</p>
           <dl class="dm-kv">
             <dt>{m.common_stacks()}</dt><dd>{totals.groups}</dd>
-            <dt>{m.common_containers()}</dt><dd>{totals.containers}</dd>
+            <dt>{isCluster ? m.topology_services() : m.common_containers()}</dt><dd>{totals.containers}</dd>
             <dt>{m.common_networks()}</dt><dd>{totals.networks}</dd>
-            <dt>{m.topology_behind_proxy()}</dt><dd>{m.stacks_n_containers({ count: totals.proxied })}</dd>
+            {#if !isCluster}<dt>{m.topology_behind_proxy()}</dt><dd>{m.stacks_n_containers({ count: totals.proxied })}</dd>{/if}
+            {#if topo?.truncated}<dt></dt><dd class="dm-dim">{m.topology_truncated()}</dd>{/if}
           </dl>
         {:else if sel.kind === 'network'}
           <h2 class="dm-h2 dm-mono">{sel.net.name}</h2>
@@ -365,19 +403,25 @@
             <dt>{m.topology_driver()}</dt><dd>{sel.net.driver}</dd>
             <dt>{m.topology_scope()}</dt><dd>{sel.net.scope}{sel.net.internal ? ` · ${m.topology_internal()}` : ''}</dd>
             {#if sel.net.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.net.stack)}">{sel.net.stack}</a></dd>{/if}
-            <dt>{m.common_containers()}</dt>
+            <dt>{isCluster ? m.topology_services() : m.common_containers()}</dt>
             <dd>
               {#each sel.members as mb (mb.l.container_id)}
                 <div class="dm-trunc"><span>{mb.c?.name ?? mb.l.container_id.slice(0, 12)}</span>{#if mb.l.ipv4}<span class="dm-mono dm-dim"> {mb.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}?host={encodeURIComponent(target)}">{m.topology_open_network()}</a>
+          {#if !isCluster}
+            <a class="dm-btn dm-btn-sm side-btn" href="/networks/{encodeURIComponent(sel.net.id)}?host={encodeURIComponent(target)}">{m.topology_open_network()}</a>
+          {/if}
         {:else}
           {@const domains = routesFor(sel.ct)}
           <h2 class="dm-h2 dm-mono">{sel.ct.name}</h2>
           <dl class="dm-kv">
-            <dt>{m.common_status()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={containerStateLabel(sel.ct.state)} /></dd>
+            {#if sel.ct.tasks}
+              <dt>{m.topology_tasks()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={m.topology_tasks_running({ tasks: sel.ct.tasks })} /></dd>
+            {:else}
+              <dt>{m.common_status()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={containerStateLabel(sel.ct.state)} /></dd>
+            {/if}
             <dt>{m.common_image()}</dt><dd class="dm-mono">{sel.ct.image}</dd>
             <dt>{m.common_ports()}</dt>
             <dd class="dm-mono">{(sel.ct.ports ?? []).map((p) => (p.host_port ? `${p.host_port}:${p.container_port}` : `${p.container_port}`) + `/${p.protocol}`).join(', ') || '—'}</dd>
@@ -387,10 +431,12 @@
                 <div class="dm-trunc">{mb.n?.name ?? mb.l.network_id.slice(0, 12)}{#if mb.l.ipv4}<span class="dm-mono dm-dim"> {mb.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
-            <dt>{m.topology_domain()}</dt><dd>{domains.join(', ') || '—'}</dd>
+            {#if !isCluster}<dt>{m.topology_domain()}</dt><dd>{domains.join(', ') || '—'}</dd>{/if}
             {#if sel.ct.stack}<dt>{m.common_stack()}</dt><dd><a href="/stacks/{encodeURIComponent(sel.ct.stack)}">{sel.ct.stack}</a></dd>{/if}
           </dl>
-          <a class="dm-btn dm-btn-sm side-btn" href="/containers/{encodeURIComponent(sel.ct.id)}?host={encodeURIComponent(target)}">{m.topology_open_container()}</a>
+          {#if !isCluster}
+            <a class="dm-btn dm-btn-sm side-btn" href="/containers/{encodeURIComponent(sel.ct.id)}?host={encodeURIComponent(target)}">{m.topology_open_container()}</a>
+          {/if}
         {/if}
       </aside>
     </div>

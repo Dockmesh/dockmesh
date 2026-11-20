@@ -200,7 +200,9 @@ The cluster's nodes, services, tasks and overlay networks are read through its o
 
 - `GET /api/v1/clusters/{id}/nodes` needs Hosts: View on the cluster; it lists every node, including those without an agent.
 - `GET /api/v1/clusters/{id}/services`, `…/services/{service}` and `…/tasks` (optionally `?service=`) need Stacks: View on the cluster.
-- `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster.
+- `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster. With Stacks: View on the cluster as well, each network lists the services attached to it.
+- `GET /api/v1/networks/topology?cluster={id}` is the cluster graph of the **Topology** page and needs Networks: View and Stacks: View on the cluster.
+- `GET /api/v1/clusters/{id}/volumes` needs Volumes: View and Hosts: View on the cluster. It lists the volumes of every Swarm stack (label `com.docker.stack.namespace`) per stack, with the linked hosts that hold a copy. Swarm creates a stack's `local` volumes on each node a task ran on, so one volume usually appears on several hosts. Only hosts with an agent are read; a host that doesn't answer is listed as unreachable, and volumes of a Compose project are left out even when they carry the label.
 
 A host or host tag assignment on one of the nodes does not reach these. A service shows the names of its environment variables but never their values, and its secrets and configs by name only; their data never leaves the manager. Lists are capped (1000 services, 5000 tasks, 500 networks) and say so when they are cut.
 
@@ -208,7 +210,7 @@ Only a Swarm manager answers: an agent on a worker refuses, and while the origin
 
 ### Service logs
 
-`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the origin manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs Containers: Logs on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
+`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the origin manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs `containers.logs` (Containers: View or Stacks: View) on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
 
 - `tail`: lines per task to send first, 0 to 5000 (default 100).
 - `since`: only lines from then on, as a duration back from now (`15m`, at most 90 days), an RFC 3339 time or unix seconds.
