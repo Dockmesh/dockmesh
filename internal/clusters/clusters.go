@@ -104,8 +104,12 @@ type Service struct {
 	// mu serialises the membership writes of Create, Reconcile and Delete.
 	mu sync.Mutex
 	// smu guards seen, what the last reconcile learned per cluster.
-	smu  sync.Mutex
-	seen map[string]seen
+	smu      sync.Mutex
+	seen     map[string]seen
+	loadOnce sync.Once
+	// wmu orders the writes of seen to cluster_status, so smu isn't held
+	// across the I/O.
+	wmu sync.Mutex
 }
 
 // Auditor records membership changes; audit.Service is one.

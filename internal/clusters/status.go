@@ -2,6 +2,10 @@ package clusters
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -56,31 +60,141 @@ type seen struct {
 	checkedAt time.Time
 	nodes     []agents.SwarmNode
 	knownAt   time.Time
+	// nodesSum is the hash of the stored nodes JSON, so an unchanged list
+	// isn't written again on every check.
+	nodesSum [sha256.Size]byte
+	// stored: loaded at start and not checked since.
+	stored bool
 }
 
-// record keeps the outcome of asking the origin. A failed ask keeps the
-// last node list.
+// record keeps the outcome of asking the origin and writes it through to
+// cluster_status. A failed ask keeps the last node list.
 func (s *Service) record(clusterID, state string, nodes []agents.SwarmNode, at time.Time) {
+	s.load()
+	var raw []byte
+	var sum [sha256.Size]byte
+	if nodes != nil {
+		var err error
+		if raw, err = json.Marshal(nodes); err != nil {
+			slog.Warn("cluster status: encode node list", "cluster", clusterID, "err", err)
+			return
+		}
+		sum = sha256.Sum256(raw)
+	}
+
 	s.smu.Lock()
-	defer s.smu.Unlock()
 	if s.seen == nil {
 		s.seen = map[string]seen{}
 	}
 	v := s.seen[clusterID]
-	v.state, v.checkedAt = state, at
+	v.state, v.checkedAt, v.stored = state, at, false
+	var knownAt any
 	if nodes != nil {
-		v.nodes, v.knownAt = nodes, at
+		if v.nodes != nil && v.nodesSum == sum {
+			raw = nil
+		}
+		v.nodes, v.knownAt, v.nodesSum = nodes, at, sum
+		knownAt = at.UTC()
 	}
 	s.seen[clusterID] = v
+	s.smu.Unlock()
+
+	var nodesJSON any
+	if raw != nil {
+		nodesJSON = string(raw)
+	}
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.Exec(`INSERT INTO cluster_status (cluster_id, state, checked_at, nodes, known_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(cluster_id) DO UPDATE SET state = excluded.state, checked_at = excluded.checked_at,
+			nodes = COALESCE(excluded.nodes, cluster_status.nodes), known_at = COALESCE(excluded.known_at, cluster_status.known_at)`,
+		clusterID, state, at.UTC(), nodesJSON, knownAt); err != nil {
+		slog.Warn("cluster status: store", "cluster", clusterID, "err", err)
+		if raw != nil {
+			// Make the next check write the list again.
+			s.smu.Lock()
+			if v, ok := s.seen[clusterID]; ok {
+				v.nodesSum = [sha256.Size]byte{}
+				s.seen[clusterID] = v
+			}
+			s.smu.Unlock()
+		}
+	}
 }
 
+// load reads the stored status of every cluster once, before the first
+// use of seen. A row that doesn't load is skipped: that cluster reads as
+// not checked until its next check.
+func (s *Service) load() {
+	s.loadOnce.Do(func() {
+		rows, err := s.db.Query(`SELECT cluster_id, state, checked_at, nodes, known_at FROM cluster_status`)
+		if err != nil {
+			slog.Warn("cluster status: load", "err", err)
+			return
+		}
+		defer rows.Close()
+		loaded := map[string]seen{}
+		for rows.Next() {
+			var (
+				id, state string
+				checkedAt time.Time
+				nodesJSON sql.NullString
+				knownAt   sql.NullTime
+			)
+			if err := rows.Scan(&id, &state, &checkedAt, &nodesJSON, &knownAt); err != nil {
+				slog.Warn("cluster status: load", "err", err)
+				continue
+			}
+			if !knownState(state) {
+				continue
+			}
+			v := seen{state: state, checkedAt: checkedAt, stored: true}
+			if nodesJSON.Valid && knownAt.Valid {
+				var nodes []agents.SwarmNode
+				if err := json.Unmarshal([]byte(nodesJSON.String), &nodes); err != nil {
+					slog.Warn("cluster status: load node list", "cluster", id, "err", err)
+				} else {
+					v.nodes, v.knownAt = agents.SanitizeSwarmNodes(nodes), knownAt.Time
+					v.nodesSum = sha256.Sum256([]byte(nodesJSON.String))
+				}
+			}
+			loaded[id] = v
+		}
+		if err := rows.Err(); err != nil {
+			slog.Warn("cluster status: load", "err", err)
+		}
+		s.smu.Lock()
+		defer s.smu.Unlock()
+		if s.seen == nil {
+			s.seen = map[string]seen{}
+		}
+		for id, v := range loaded {
+			if _, ok := s.seen[id]; !ok {
+				s.seen[id] = v
+			}
+		}
+	})
+}
+
+func knownState(state string) bool {
+	switch state {
+	case StateHealthy, StateDegraded, StateNoQuorum, StateUnreachable:
+		return true
+	}
+	return false
+}
+
+// forget drops the cluster's status from memory; its row goes with the
+// cluster (ON DELETE CASCADE).
 func (s *Service) forget(clusterID string) {
+	s.load()
 	s.smu.Lock()
 	delete(s.seen, clusterID)
 	s.smu.Unlock()
 }
 
 func (s *Service) seenOf(clusterID string) (seen, bool) {
+	s.load()
 	s.smu.Lock()
 	defer s.smu.Unlock()
 	v, ok := s.seen[clusterID]
@@ -158,10 +272,11 @@ func (s *Service) Memberships(ctx context.Context) ([]Membership, error) {
 	}
 	out := []Membership{}
 	for _, c := range list {
-		// A list from an earlier check would show a leader that may be gone.
+		// A list from an earlier check, or from before the server started,
+		// would show a leader that may be gone; host pages show no time.
 		v, _ := s.seenOf(c.ID)
 		byID := map[string]agents.SwarmNode{}
-		if v.state == StateHealthy || v.state == StateDegraded {
+		if !v.stored && (v.state == StateHealthy || v.state == StateDegraded) {
 			for _, n := range v.nodes {
 				byID[n.ID] = n
 			}

@@ -192,7 +192,7 @@ On the Hosts page a cluster is one expandable row: its state, how many managers 
 - **No quorum**: the origin is online but its Swarm has no leader, so Swarm can't change anything.
 - **Unreachable**: the origin's agent is offline or can't list the nodes; the row shows the last known state with its time.
 
-Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without a link and without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
+The last state is kept across a server restart: until the first check after the start, the row shows the stored state with the time it was checked, and an unreachable cluster keeps its last known state and time. A cluster that has never been checked reads "Not checked yet". The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without a link and without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
 
 While the origin answers, the row also counts the running tasks and says whether the load is spread evenly or which node runs more than its share.
 
