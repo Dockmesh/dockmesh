@@ -6493,5 +6493,6 @@
   "hosts_member_leader": "Leader",
   "hosts_member_drain": "entleert",
   "hosts_member_pause": "pausiert",
-  "hosts_member_detail": "Swarm führt hier Task-Container seiner Dienste aus. Statt Neustart gibt es Task ersetzen; Dienst-Aktionen gehören zum Cluster."
+  "hosts_member_detail": "Swarm führt hier Task-Container seiner Dienste aus. Statt Neustart gibt es Task ersetzen; Dienst-Aktionen gehören zum Cluster.",
+  "apierr_cluster_memberships_failed": "Die Cluster-Mitgliedschaften konnten nicht geladen werden"
 }

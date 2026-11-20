@@ -6493,5 +6493,6 @@
   "hosts_member_leader": "leader",
   "hosts_member_drain": "drained",
   "hosts_member_pause": "paused",
-  "hosts_member_detail": "Swarm runs task containers of its services here. Restart is replaced by Replace task; service actions belong to the cluster."
+  "hosts_member_detail": "Swarm runs task containers of its services here. Restart is replaced by Replace task; service actions belong to the cluster.",
+  "apierr_cluster_memberships_failed": "Could not list the cluster memberships"
 }
