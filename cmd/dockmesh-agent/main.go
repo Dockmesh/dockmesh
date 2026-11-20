@@ -55,6 +55,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/swarmprove"
 	"github.com/dockmesh/dockmesh/internal/swarmread"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/gorilla/websocket"
@@ -1088,6 +1089,15 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		agents.FrameReqSwarmTasks, agents.FrameReqSwarmNetworks:
 		data, err := swarmread.Read(ctx, cli, f.Type, f.Payload)
 		respond(conn, f.ID, data, err)
+
+	case agents.FrameReqSwarmProve:
+		var req agents.SwarmProveReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrBadProofRequest)
+			break
+		}
+		proof, err := swarmprove.Prove(ctx, cli, req)
+		respond(conn, f.ID, proof, err)
 
 	case agents.FrameReqNetworkInspect:
 		var req agents.ResourceIDReq

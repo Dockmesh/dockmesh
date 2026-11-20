@@ -216,6 +216,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/clusters", h.CreateCluster)
 				r.Get("/clusters/{id}/access", h.ClusterAccess)
 				r.Delete("/clusters/{id}", h.DeleteCluster)
+				r.Post("/clusters/{id}/trust-root/confirm", h.ConfirmClusterTrustRoot)
 			})
 
 			r.Group(func(r chi.Router) {

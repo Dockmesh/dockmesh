@@ -14,11 +14,11 @@ type nodeErrHosts struct {
 	errs map[string]error
 }
 
-func (f *nodeErrHosts) SwarmNodes(ctx context.Context, id string) ([]agents.SwarmNode, error) {
+func (f *nodeErrHosts) SwarmNodeList(ctx context.Context, id string) (agents.SwarmNodesResp, error) {
 	if err := f.errs[id]; err != nil {
-		return nil, err
+		return agents.SwarmNodesResp{}, err
 	}
-	return f.fakeHosts.SwarmNodes(ctx, id)
+	return f.fakeHosts.SwarmNodeList(ctx, id)
 }
 
 func readyNodes() []agents.SwarmNode {

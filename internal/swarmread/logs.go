@@ -45,7 +45,7 @@ func ServiceLogs(ctx context.Context, cli LogsAPI, req agents.SwarmLogsReq, emit
 	}
 	setup, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	if err := requireManager(setup, cli); err != nil {
+	if _, err := requireManager(setup, cli); err != nil {
 		return err
 	}
 	res, err := cli.ServiceInspect(setup, req.Service, client.ServiceInspectOptions{})

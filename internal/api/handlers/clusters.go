@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,9 +38,16 @@ func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
 	access := middleware.AccessOf(r.Context())
 	out := []clusters.Cluster{}
 	for _, c := range list {
-		if access.AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: c.ID}) {
-			out = append(out, c)
+		if !access.AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: c.ID}) {
+			continue
 		}
+		// The agent's address belongs to its host, not to the cluster.
+		for i, m := range c.Members {
+			if m.AddrWarning != "" && !access.AllowsOn(rbac.PermHostsView, h.hostScopeReq(m.HostID)) {
+				c.Members[i].AddrWarning = ""
+			}
+		}
+		out = append(out, c)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -305,6 +313,46 @@ func (h *Handlers) ClusterScope(next http.Handler) http.Handler {
 		res := rbac.Resource{ClusterID: chi.URLParam(r, "id")}
 		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
 	})
+}
+
+// ConfirmClusterTrustRoot accepts the changed root CA of a Swarm with a
+// single manager, where no second manager can agree to it.
+//
+//	POST /api/v1/clusters/{id}/trust-root/confirm
+func (h *Handlers) ConfirmClusterTrustRoot(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || req.Fingerprint == "" {
+		writeError(w, http.StatusBadRequest, "fingerprint required")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	c, err := h.Clusters.ConfirmTrustRoot(r.Context(), id, req.Fingerprint, middleware.UserID(r.Context()))
+	switch {
+	case err == nil:
+	case errors.Is(err, clusters.ErrNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case errors.Is(err, clusters.ErrNoPendingRoot):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_no_pending_root"})
+		return
+	case errors.Is(err, clusters.ErrConfirmNeedsManagers):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_root_needs_managers"})
+		return
+	case errors.Is(err, clusters.ErrRootChanged):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_root_changed"})
+		return
+	default:
+		slog.Error("confirm cluster trust root", "cluster", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "confirming the trust root failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 // clusterReadHost resolves the host a cluster is read through and writes

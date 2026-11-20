@@ -108,6 +108,13 @@ const (
 	ActionScopeDenied = "auth.scope_denied"
 )
 
+// Swarm node identity proofs and the root CA they are checked against.
+const (
+	ActionClusterNodeVerified   = "cluster.node_verified"
+	ActionClusterNodeUnverified = "cluster.node_unverified"
+	ActionClusterTrustRoot      = "cluster.trust_root"
+)
+
 type Entry struct {
 	ID       int64     `json:"id"`
 	TS       time.Time `json:"ts"`

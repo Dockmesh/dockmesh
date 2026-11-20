@@ -72,6 +72,10 @@ const (
 	FrameReqSwarmServiceInspect = "req.swarm.service.inspect" // ResourceIDReq → SwarmServiceDetail
 	FrameReqSwarmTasks          = "req.swarm.tasks"           // SwarmTasksReq → SwarmTasksResp
 	FrameReqSwarmNetworks       = "req.swarm.networks"        // SwarmNetworksResp
+	// FrameReqSwarmProve asks the agent to sign a SwarmProveReq with its
+	// Swarm node key (SwarmProveResp); only sent to agents advertising
+	// CapSwarmProve. Answered on managers and workers.
+	FrameReqSwarmProve = "req.swarm.prove"
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
@@ -223,6 +227,8 @@ const (
 	// CapSwarmRead, agent: answers the Swarm service, task and network
 	// read frames, and refuses every Swarm frame unless it is a manager.
 	CapSwarmRead = "swarm.read"
+	// CapSwarmProve, agent: answers req.swarm.prove.
+	CapSwarmProve = "swarm.prove"
 	// CapSwarmLogs, agent: serves the StreamKindSwarmServiceLogs stream
 	// kind on a manager.
 	CapSwarmLogs = "swarm.logs"

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -80,6 +81,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ag := newConnectedAgent(agent.ID, agent.Name, func() { _ = conn.Close() })
 	ag.certFP = fp
 	ag.certNotAfter = peer.NotAfter
+	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		ag.RemoteIP = ip
+	}
 	conn.SetReadLimit(MaxFrameBytes)
 
 	// Wait for the hello frame before marking the agent online so the DB

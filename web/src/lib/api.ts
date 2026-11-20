@@ -160,11 +160,29 @@ export interface ContainerStatsBatch {
   containers: ContainerLatest[];
 }
 
+export type ClusterProof = 'verified' | 'local' | 'pending' | 'agent_too_old' | 'no_trust_root' | 'key_locked' | 'invalid' | 'failed';
+
 export interface ClusterMember {
   host_id: string;
   node_id: string;
   role: 'manager' | 'worker';
   linked_at: string;
+  verified: boolean;
+  verified_at?: string;
+  cert_not_after?: string;
+  proof: ClusterProof;
+  // "<agent address>|<node address>" when they differ.
+  addr_warning?: string;
+}
+
+export interface ClusterTrust {
+  pinned: boolean;
+  pinned_fingerprint?: string;
+  pending_fingerprint?: string;
+  pending?: boolean;
+  pending_since?: string;
+  confirmable?: boolean;
+  origin_verified: boolean;
 }
 
 export interface Cluster {
@@ -175,6 +193,7 @@ export interface Cluster {
   created_at: string;
   members: ClusterMember[];
   status?: ClusterStatus;
+  trust: ClusterTrust;
 }
 
 export type ClusterState = 'healthy' | 'degraded' | 'no_quorum' | 'unreachable' | 'unknown';
@@ -2434,6 +2453,8 @@ export const api = {
       request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
     access: (id: string) => request<ClusterAccess>(`/clusters/${encodeURIComponent(id)}/access`),
     delete: (id: string) => request<void>(`/clusters/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    confirmTrustRoot: (id: string, fingerprint: string) =>
+      request<Cluster>(`/clusters/${encodeURIComponent(id)}/trust-root/confirm`, { method: 'POST', body: JSON.stringify({ fingerprint }) }),
     distribution: (id: string, usage = true) =>
       request<ClusterDistribution>(`/clusters/${encodeURIComponent(id)}/distribution${usage ? '' : '?usage=false'}`),
     services: (id: string) =>

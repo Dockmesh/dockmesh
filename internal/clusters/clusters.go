@@ -64,7 +64,14 @@ type Hosts interface {
 	DaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error)
 	// CurrentDaemonInfo asks online hosts live.
 	CurrentDaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error)
-	SwarmNodes(ctx context.Context, id string) ([]agents.SwarmNode, error)
+	// SwarmNodeList is a manager's node list and the trust root it reports.
+	SwarmNodeList(ctx context.Context, id string) (agents.SwarmNodesResp, error)
+	// SwarmProve asks an agent host to sign a node identity proof.
+	SwarmProve(ctx context.Context, id string, req agents.SwarmProveReq) (agents.SwarmProveResp, error)
+	// JoinedAt is when the agent's current session began, zero if offline.
+	JoinedAt(id string) time.Time
+	// RemoteIP is the agent session's peer address, "" if unknown.
+	RemoteIP(id string) string
 }
 
 type Cluster struct {
@@ -75,14 +82,43 @@ type Cluster struct {
 	CreatedAt  time.Time `json:"created_at"`
 	Members    []Member  `json:"members"`
 	Status     *Status   `json:"status,omitempty"`
+	Trust      Trust     `json:"trust"`
+
+	trustRoot, trustPending string
 }
 
-// Member is a host linked to a cluster.
+// Trust is the state of the root CA node proofs are checked against.
+// Pending is set while the managers report a different root that is not
+// accepted yet; Confirmable when that waits for an admin because the Swarm
+// has a single manager.
+type Trust struct {
+	Pinned bool `json:"pinned"`
+	// The fingerprints are SHA-256 over the root certificate, as
+	// openssl x509 -fingerprint -sha256 prints it for swarm-root-ca.crt.
+	PinnedFingerprint  string     `json:"pinned_fingerprint,omitempty"`
+	PendingFingerprint string     `json:"pending_fingerprint,omitempty"`
+	Pending            bool       `json:"pending,omitempty"`
+	PendingSince       *time.Time `json:"pending_since,omitempty"`
+	Confirmable        bool       `json:"confirmable,omitempty"`
+	OriginVerified     bool       `json:"origin_verified"`
+}
+
+// Member is a host linked to a cluster. Verified is set while the host's
+// last proof of the node's key holds; Proof says why it isn't.
 type Member struct {
-	HostID   string    `json:"host_id"`
-	NodeID   string    `json:"node_id"`
-	Role     string    `json:"role"`
-	LinkedAt time.Time `json:"linked_at"`
+	HostID       string     `json:"host_id"`
+	NodeID       string     `json:"node_id"`
+	Role         string     `json:"role"`
+	LinkedAt     time.Time  `json:"linked_at"`
+	Verified     bool       `json:"verified"`
+	VerifiedAt   *time.Time `json:"verified_at,omitempty"`
+	CertNotAfter *time.Time `json:"cert_not_after,omitempty"`
+	Proof        string     `json:"proof"`
+	// AddrWarning: the agent connects from another address than the one
+	// the Swarm lists for the node. Only a hint; NAT and proxies cause it.
+	AddrWarning string `json:"addr_warning,omitempty"`
+
+	certIssuer string
 }
 
 // Candidate is a Swarm that has a manager host but no cluster yet.
@@ -110,6 +146,16 @@ type Service struct {
 	// wmu orders the writes of seen to cluster_status, so smu isn't held
 	// across the I/O.
 	wmu sync.Mutex
+	// serverID is bound into every proof; see SetServerID.
+	serverID string
+	notices  Noticer
+	// pmu guards proofs and addrWarn, per host.
+	pmu      sync.Mutex
+	proofs   map[string]proofTry
+	addrWarn map[string]string
+	// sole: the cluster's origin was its only manager at the last check.
+	sole map[string]bool
+	now  func() time.Time
 }
 
 // Auditor records membership changes; audit.Service is one.
@@ -121,12 +167,13 @@ type Auditor interface {
 func (s *Service) SetAudit(a Auditor) { s.audit = a }
 
 func New(db *sql.DB, hosts Hosts) *Service {
-	return &Service{db: db, hosts: hosts}
+	return &Service{db: db, hosts: hosts, now: time.Now}
 }
 
 // List returns every cluster with its members, by name.
 func (s *Service) List(ctx context.Context) ([]Cluster, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, origin_host, COALESCE(created_by, ''), created_at FROM clusters ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, origin_host, COALESCE(created_by, ''), created_at,
+		COALESCE(trust_root, ''), COALESCE(trust_root_pending, ''), trust_root_pending_at FROM clusters ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +181,18 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 	idx := map[string]int{}
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.Name, &c.OriginHost, &c.CreatedBy, &c.CreatedAt); err != nil {
+		var pendingAt sql.NullTime
+		if err := rows.Scan(&c.ID, &c.Name, &c.OriginHost, &c.CreatedBy, &c.CreatedAt, &c.trustRoot, &c.trustPending, &pendingAt); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		c.Trust.Pinned = c.trustRoot != ""
+		c.Trust.Pending = c.trustPending != ""
+		c.Trust.PinnedFingerprint = rootFingerprint(c.trustRoot)
+		c.Trust.PendingFingerprint = rootFingerprint(c.trustPending)
+		if c.Trust.Pending && pendingAt.Valid {
+			t := pendingAt.Time
+			c.Trust.PendingSince = &t
 		}
 		c.Members = []Member{}
 		idx[c.ID] = len(out)
@@ -156,6 +212,7 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 		}
 	}
 	for i := range out {
+		s.annotate(&out[i])
 		out[i].Status = s.statusOf(out[i])
 	}
 	return out, nil
@@ -163,7 +220,8 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 
 // members returns cluster id → members, by host id.
 func (s *Service) members(ctx context.Context) (map[string][]Member, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT cluster_id, host_id, node_id, role, linked_at FROM cluster_memberships ORDER BY host_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT cluster_id, host_id, node_id, role, linked_at,
+		verified_at, cert_not_after, COALESCE(cert_issuer, '') FROM cluster_memberships ORDER BY host_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -172,8 +230,17 @@ func (s *Service) members(ctx context.Context) (map[string][]Member, error) {
 	for rows.Next() {
 		var cid string
 		var m Member
-		if err := rows.Scan(&cid, &m.HostID, &m.NodeID, &m.Role, &m.LinkedAt); err != nil {
+		var verifiedAt, notAfter sql.NullTime
+		if err := rows.Scan(&cid, &m.HostID, &m.NodeID, &m.Role, &m.LinkedAt, &verifiedAt, &notAfter, &m.certIssuer); err != nil {
 			return nil, err
+		}
+		if verifiedAt.Valid {
+			t := verifiedAt.Time
+			m.VerifiedAt = &t
+		}
+		if notAfter.Valid {
+			t := notAfter.Time
+			m.CertNotAfter = &t
 		}
 		out[cid] = append(out[cid], m)
 	}
@@ -230,10 +297,10 @@ func activeManager(info *agents.DaemonInfo) bool {
 		info.Swarm.Role == RoleManager && info.Swarm.ClusterID != "" && info.Swarm.NodeID != ""
 }
 
-func (s *Service) nodesOf(ctx context.Context, hostID string) ([]agents.SwarmNode, error) {
+func (s *Service) nodesOf(ctx context.Context, hostID string) (agents.SwarmNodesResp, error) {
 	ctx, cancel := context.WithTimeout(ctx, hostTimeout)
 	defer cancel()
-	return s.hosts.SwarmNodes(ctx, hostID)
+	return s.hosts.SwarmNodeList(ctx, hostID)
 }
 
 // Create creates the cluster of the Swarm hostID is a manager of and links
@@ -253,10 +320,11 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		return Cluster{}, ErrNotManager
 	}
 	id, nodeID := info.Swarm.ClusterID, info.Swarm.NodeID
-	nodes, err := s.nodesOf(ctx, hostID)
+	list, err := s.nodesOf(ctx, hostID)
 	if err != nil {
 		return Cluster{}, fmt.Errorf("list the Swarm's nodes: %w", err)
 	}
+	nodes, root := list.Nodes, canonicalRoot(list.TrustRoot)
 	if !listsManager(nodes, nodeID) {
 		return Cluster{}, ErrNotManager
 	}
@@ -264,6 +332,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	if err != nil {
 		return Cluster{}, err
 	}
+	agreed, blocked := 0, false
 	for other, st := range snap {
 		if other == hostID || !st.known || st.swarm == nil || st.swarm.ClusterID != id || st.swarm.Role != RoleManager {
 			continue
@@ -272,38 +341,68 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		if err != nil {
 			continue
 		}
-		if !listsManager(theirs, nodeID) {
+		if !listsManager(theirs.Nodes, nodeID) {
 			slog.Warn("swarm managers disagree", "cluster", id, "origin", hostID, "other", other)
 			return Cluster{}, &ConflictError{Host: other}
 		}
+		if !listsManager(nodes, st.swarm.NodeID) {
+			// The origin leaves out a host that says it manages the
+			// Swarm: don't take the origin's word for the root.
+			blocked = true
+			continue
+		}
+		r := canonicalRoot(theirs.TrustRoot)
+		if r == "" || root == "" {
+			continue
+		}
+		if r != root {
+			slog.Warn("swarm managers report different trust roots", "cluster", id, "origin", hostID, "other", other)
+			return Cluster{}, &ConflictError{Host: other}
+		}
+		agreed++
+	}
+	if blocked || !pinnable(agreed, soleManager(nodes, snap, id, hostID)) {
+		root = ""
 	}
 	if name == "" {
 		name = "swarm-" + id[:min(8, len(id))]
 	}
+	if err := s.insert(ctx, id, name, hostID, actor, root, nodes, snap); err != nil {
+		return Cluster{}, err
+	}
+	c, err := s.get(ctx, id)
+	if err != nil {
+		return Cluster{}, err
+	}
+	s.prove(ctx, c, nodes, snap, false)
+	return s.get(ctx, id)
+}
 
+// insert stores a new cluster and links its first members.
+func (s *Service) insert(ctx context.Context, id, name, hostID, actor, root string, nodes []agents.SwarmNode, snap map[string]hostState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ok, err := s.exists(ctx, id); err != nil {
-		return Cluster{}, err
+		return err
 	} else if ok {
-		return Cluster{}, ErrExists
+		return ErrExists
 	}
 	var taken int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM clusters WHERE name = ?`, name).Scan(&taken); err != nil {
-		return Cluster{}, err
+		return err
 	}
 	if taken > 0 {
-		return Cluster{}, ErrNameTaken
+		return ErrNameTaken
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO clusters (id, name, origin_host, created_by) VALUES (?, ?, ?, ?)`,
-		id, name, hostID, nullable(actor)); err != nil {
-		return Cluster{}, err
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO clusters (id, name, origin_host, created_by, trust_root) VALUES (?, ?, ?, ?, ?)`,
+		id, name, hostID, nullable(actor), nullable(root)); err != nil {
+		return err
 	}
 	if err := s.link(ctx, id, hostID, nodes, snap); err != nil {
-		return Cluster{}, err
+		return err
 	}
 	s.record(id, stateOf(nodes), nodes, time.Now())
-	return s.get(ctx, id)
+	return nil
 }
 
 // Delete removes a cluster, its memberships and everything granting or
@@ -343,6 +442,7 @@ func (s *Service) Delete(ctx context.Context, id string, allow func(Access) erro
 		return Cluster{}, Access{}, err
 	}
 	s.forget(id)
+	s.resolveNotices(ctx, id)
 	return c, a, nil
 }
 
@@ -440,7 +540,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, c := range clusters {
-		nodes, state := s.askOrigin(ctx, c, snap)
+		list, state := s.askOrigin(ctx, c, snap)
+		nodes := list.Nodes
 		s.record(c.ID, state, nodes, time.Now())
 		if nodes == nil {
 			continue
@@ -449,6 +550,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		err := s.link(ctx, c.ID, c.OriginHost, nodes, snap)
 		s.mu.Unlock()
 		if err != nil {
+			return fmt.Errorf("cluster %s: %w", c.Name, err)
+		}
+		if err := s.reconcileIdentity(ctx, c.ID, list, snap); err != nil {
 			return fmt.Errorf("cluster %s: %w", c.Name, err)
 		}
 	}
@@ -496,31 +600,32 @@ func originIsLinkedManager(c Cluster, info *agents.DaemonInfo) bool {
 // shows. The list is nil when the origin is not the linked manager node
 // of this Swarm right now. A linked origin whose dockerd no longer knows
 // the cluster, or refuses the list for want of a leader, has lost quorum.
-func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) ([]agents.SwarmNode, string) {
+func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) (agents.SwarmNodesResp, string) {
+	var none agents.SwarmNodesResp
 	linked := linkedNode(c)
 	st := snap[c.OriginHost]
 	sw := st.swarm
 	if linked == "" || !st.known || st.offline || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager || sw.NodeID != linked {
-		return nil, StateUnreachable
+		return none, StateUnreachable
 	}
 	if sw.ClusterID == "" {
-		return nil, StateNoQuorum
+		return none, StateNoQuorum
 	}
 	if !originIsLinkedManager(c, &agents.DaemonInfo{Swarm: sw}) {
-		return nil, StateUnreachable
+		return none, StateUnreachable
 	}
-	nodes, err := s.nodesOf(ctx, c.OriginHost)
+	list, err := s.nodesOf(ctx, c.OriginHost)
 	if err != nil {
 		slog.Debug("swarm node list failed", "cluster", c.ID, "host", c.OriginHost, "err", err)
 		if lostQuorum(err) {
-			return nil, StateNoQuorum
+			return none, StateNoQuorum
 		}
-		return nil, StateUnreachable
+		return none, StateUnreachable
 	}
-	if !listsManager(nodes, linked) {
-		return nil, StateUnreachable
+	if !listsManager(list.Nodes, linked) {
+		return none, StateUnreachable
 	}
-	return nodes, stateOf(nodes)
+	return list, stateOf(list.Nodes)
 }
 
 // claims reports whether a host's Swarm state claims node n of cluster
