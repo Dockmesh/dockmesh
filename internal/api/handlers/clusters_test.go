@@ -308,3 +308,67 @@ func TestDeleteClusterAccessAboveOwn(t *testing.T) {
 		})
 	}
 }
+
+// Without tokens.manage_others, a user owns the tokens they created, an
+// API token only itself, and a caller without an owner none, also not
+// tokens without an owner.
+func TestClusterTokenOwnership(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.Clusters = clusters.New(e.db, swarmHosts{})
+	if _, err := e.h.Clusters.Create(context.Background(), "local", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	e.role("hosts-manager", []rbac.Perm{rbac.PermClustersCreate})
+	u := e.user("hosta", "hosts-manager")
+	access := e.h.Roles.AccessFor(u.ID)
+	insert := func(owner any) int64 {
+		var id int64
+		if err := e.db.QueryRow(`INSERT INTO api_tokens (token_prefix, token_hash, name, role, created_by_user_id, scope_type, scope_host)
+			VALUES ('dmt_' || hex(randomblob(4)), hex(randomblob(8)), 'tok', 'viewer', ?, 'cluster', 'c1') RETURNING id`, owner).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	tests := []struct {
+		name      string
+		owner     any
+		identity  func(tokenID int64) middleware.Identity
+		wantNamed bool
+	}{
+		{"user's own token", u.ID, func(int64) middleware.Identity { return middleware.Identity{UserID: u.ID, Access: access} }, true},
+		{"the calling token itself", u.ID, func(id int64) middleware.Identity {
+			return middleware.Identity{APITokenID: id, TokenOwnerID: u.ID, Access: access}
+		}, true},
+		{"sibling token of the calling token", u.ID, func(id int64) middleware.Identity {
+			return middleware.Identity{APITokenID: id + 1000, TokenOwnerID: u.ID, Access: access}
+		}, false},
+		{"ownerless caller, ownerless token", nil, func(int64) middleware.Identity { return middleware.Identity{Access: access} }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := e.db.Exec(`DELETE FROM api_tokens`); err != nil {
+				t.Fatal(err)
+			}
+			id := insert(tt.owner)
+			ctx := middleware.WithIdentity(context.Background(), tt.identity(id))
+			rr := clusterIDCall(ctx, e.h.ClusterAccess, http.MethodGet, "c1")
+			var v clusterAccessView
+			if err := json.Unmarshal(rr.Body.Bytes(), &v); err != nil || v.Counts["tokens"] != 1 {
+				t.Fatalf("access %d %s", rr.Code, rr.Body)
+			}
+			if named := len(v.Tokens) == 1; named != tt.wantNamed {
+				t.Fatalf("token named %v, want %v: %s", named, tt.wantNamed, rr.Body)
+			}
+			err := e.h.checkClusterAccess(httptest.NewRequest(http.MethodDelete, "/", nil).WithContext(ctx), "c1", clusters.Access{Tokens: []clusters.ScopedToken{{ID: id, OwnerID: ownerString(tt.owner)}}})
+			if (err == nil) != tt.wantNamed {
+				t.Fatalf("delete check %v, want allowed %v", err, tt.wantNamed)
+			}
+		})
+	}
+}
+
+func ownerString(v any) string {
+	s, _ := v.(string)
+	return s
+}

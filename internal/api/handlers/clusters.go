@@ -126,10 +126,9 @@ func (h *Handlers) viewClusterAccess(r *http.Request, a clusters.Access) cluster
 		v.Complete = len(a.Assignments)+len(a.Invites)+len(a.Mappings) == 0
 	}
 	if !acc.HoldsOn(rbac.PermTokensManageOthers, rbac.Global, h.hostTags) {
-		me := actorID(r)
 		own := []clusters.ScopedToken{}
 		for _, t := range a.Tokens {
-			if t.OwnerID == me {
+			if ownsClusterToken(r, t) {
 				own = append(own, t)
 			}
 		}
@@ -137,6 +136,18 @@ func (h *Handlers) viewClusterAccess(r *http.Request, a clusters.Access) cluster
 		v.Tokens = own
 	}
 	return v
+}
+
+// ownsClusterToken applies RevokeAPIToken's self rule: a user owns the
+// tokens they created, an API token only itself, and a caller without a
+// known owner owns none.
+func ownsClusterToken(r *http.Request, t clusters.ScopedToken) bool {
+	me := callerTokenOwner(r)
+	if me == "" || t.OwnerID != me {
+		return false
+	}
+	self := middleware.APITokenID(r.Context())
+	return self == 0 || self == t.ID
 }
 
 // errClusterAccessAboveOwn refuses a cluster delete that would remove
@@ -169,9 +180,8 @@ func (h *Handlers) checkClusterAccess(r *http.Request, id string, a clusters.Acc
 		}
 	}
 	manageOthers := middleware.AccessOf(r.Context()).HoldsOn(rbac.PermTokensManageOthers, rbac.Global, h.hostTags)
-	me := actorID(r)
 	for _, t := range a.Tokens {
-		if t.OwnerID != me && !manageOthers {
+		if !manageOthers && !ownsClusterToken(r, t) {
 			return fmt.Errorf("%w: an API token of another user is restricted to the cluster, and revoking it needs tokens.manage_others", errClusterAccessAboveOwn)
 		}
 	}
