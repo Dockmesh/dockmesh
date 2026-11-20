@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: each agent proves it is the node it claims by signing a challenge with the node''s Swarm key; the cluster page marks every node verified or says why not, and asks an admin to confirm a rotated root CA in a single-manager Swarm'
+time: 2026-11-20T18:27:57.293000047Z

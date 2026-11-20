@@ -307,6 +307,36 @@ func (h *Handlers) ClusterScope(next http.Handler) http.Handler {
 	})
 }
 
+// ConfirmClusterTrustRoot accepts the changed root CA of a Swarm with a
+// single manager, where no second manager can agree to it.
+//
+//	POST /api/v1/clusters/{id}/trust-root/confirm
+func (h *Handlers) ConfirmClusterTrustRoot(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	c, err := h.Clusters.ConfirmTrustRoot(r.Context(), id, middleware.UserID(r.Context()))
+	switch {
+	case err == nil:
+	case errors.Is(err, clusters.ErrNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case errors.Is(err, clusters.ErrNoPendingRoot):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_no_pending_root"})
+		return
+	case errors.Is(err, clusters.ErrConfirmNeedsManagers):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_root_needs_managers"})
+		return
+	default:
+		slog.Error("confirm cluster trust root", "cluster", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "confirming the trust root failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
 // clusterReadHost resolves the host a cluster is read through and writes
 // the error response when there is none.
 func (h *Handlers) clusterReadHost(w http.ResponseWriter, r *http.Request) (string, bool) {

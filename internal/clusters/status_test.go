@@ -21,6 +21,13 @@ func (f *nodeErrHosts) SwarmNodes(ctx context.Context, id string) ([]agents.Swar
 	return f.fakeHosts.SwarmNodes(ctx, id)
 }
 
+func (f *nodeErrHosts) SwarmNodeList(ctx context.Context, id string) (agents.SwarmNodesResp, error) {
+	if err := f.errs[id]; err != nil {
+		return agents.SwarmNodesResp{}, err
+	}
+	return f.fakeHosts.SwarmNodeList(ctx, id)
+}
+
 func readyNodes() []agents.SwarmNode {
 	return []agents.SwarmNode{
 		{ID: "n1", Hostname: "m1", Role: RoleManager, Leader: true, State: "ready", Availability: "active", Reachability: "reachable"},

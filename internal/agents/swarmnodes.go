@@ -21,11 +21,16 @@ type SwarmNode struct {
 	EngineVersion string `json:"engine_version,omitempty"`
 	NanoCPUs      int64  `json:"nano_cpus,omitempty"`
 	MemoryBytes   int64  `json:"memory_bytes,omitempty"`
+	// TLSIssuer is IssuerKeyID of the issuer of the node's certificate;
+	// it changes when the Swarm's CA is rotated.
+	TLSIssuer string `json:"tls_issuer,omitempty"`
 }
 
 // SwarmNodesResp is the agent's answer to FrameReqSwarmNodes.
 type SwarmNodesResp struct {
 	Nodes []SwarmNode `json:"nodes"`
+	// TrustRoot is the Swarm's root CA (PEM) as the manager reports it.
+	TrustRoot string `json:"trust_root,omitempty"`
 }
 
 // maxSwarmNodes bounds what the server accepts from one manager.
@@ -45,6 +50,7 @@ func SwarmNodesFrom(nodes []swarm.Node) []SwarmNode {
 			EngineVersion: n.Description.Engine.EngineVersion,
 			NanoCPUs:      n.Description.Resources.NanoCPUs,
 			MemoryBytes:   n.Description.Resources.MemoryBytes,
+			TLSIssuer:     IssuerKeyID(n.Description.TLSInfo.CertIssuerPublicKey),
 		}
 		if n.ManagerStatus != nil {
 			sn.Leader = n.ManagerStatus.Leader
@@ -82,6 +88,7 @@ func SanitizeSwarmNodes(nodes []SwarmNode) []SwarmNode {
 			EngineVersion: token(strings.ToLower(n.EngineVersion), 64, ".-+~"),
 			NanoCPUs:      max(n.NanoCPUs, 0),
 			MemoryBytes:   max(n.MemoryBytes, 0),
+			TLSIssuer:     token(n.TLSIssuer, 64, ""),
 		})
 	}
 	return out

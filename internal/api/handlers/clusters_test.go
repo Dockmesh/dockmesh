@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -47,6 +48,16 @@ func (swarmHosts) SwarmNodes(_ context.Context, id string) ([]agents.SwarmNode, 
 	}
 	return []agents.SwarmNode{{ID: "n1", Role: "manager", Leader: true}, {ID: "n2", Role: "worker"}}, nil
 }
+
+func (s swarmHosts) SwarmNodeList(ctx context.Context, id string) (agents.SwarmNodesResp, error) {
+	nodes, err := s.SwarmNodes(ctx, id)
+	return agents.SwarmNodesResp{Nodes: nodes}, err
+}
+func (swarmHosts) SwarmProve(context.Context, string, agents.SwarmProveReq) (agents.SwarmProveResp, error) {
+	return agents.SwarmProveResp{}, host.ErrAgentNoSwarmProve
+}
+func (swarmHosts) JoinedAt(string) time.Time { return time.Time{} }
+func (swarmHosts) RemoteIP(string) string    { return "" }
 
 func clusterCall(ctx context.Context, handler http.HandlerFunc, method string, body any) *httptest.ResponseRecorder {
 	var buf bytes.Buffer

@@ -2705,6 +2705,39 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/trust-root/confirm:
+    post:
+      operationId: clusters.confirmTrustRoot
+      tags: [clusters]
+      summary: Accept the changed root CA of a single-manager Swarm
+      description: |
+        Needs the global-only `clusters.create`. Only for a cluster whose
+        trust root is pending and whose Swarm has a single manager, so no
+        second manager can agree to the change. The pending root replaces
+        the pinned one and every member proves its identity again. Audited
+        as `cluster.trust_root` with `change: confirmed`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Accepted; the cluster as it is now.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cluster"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            Nothing to confirm (code `cluster_no_pending_root`), or the Swarm
+            has several managers and accepts the new root only when two
+            verified managers report it (code `cluster_root_needs_managers`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /clusters/{id}/access:
     get:
       operationId: clusters.access
@@ -10673,6 +10706,7 @@ components:
               engine_version: {type: string}
               nano_cpus: {type: integer, format: int64}
               memory_bytes: {type: integer, format: int64}
+              tls_issuer: {type: string, description: SHA-256 (hex) of the public key that issued the node's certificate; changes with a CA rotation.}
     ClusterDistribution:
       type: object
       required: [nodes, tasks, counted_nodes, fair_share]
@@ -10924,13 +10958,54 @@ components:
           type: array
           items:
             type: object
-            required: [host_id, node_id, role, linked_at]
+            required: [host_id, node_id, role, linked_at, verified, proof]
             properties:
               host_id: {type: string}
               node_id: {type: string}
               role: {type: string, enum: [manager, worker]}
               linked_at: {type: string, format: date-time}
+              verified:
+                type: boolean
+                description: |
+                  The host proved that its daemon holds the node's Swarm key:
+                  its agent signed a fresh challenge with the node key, and the
+                  node certificate chains to the cluster's pinned root CA and
+                  names this node, Swarm and role. The server's own host counts
+                  as verified without a proof.
+              verified_at: {type: string, format: date-time}
+              cert_not_after: {type: string, format: date-time, description: Expiry of the certificate the host proved with.}
+              proof:
+                type: string
+                enum: [verified, local, pending, agent_too_old, no_trust_root, key_locked, invalid, failed]
+                description: |
+                  Why the member is or is not verified. `pending`: not asked
+                  yet; `agent_too_old`: the agent can't prove; `no_trust_root`:
+                  no root CA pinned yet; `key_locked`: the Swarm uses autolock,
+                  so the key on disk can't sign; `invalid`: the proof was
+                  refused; `failed`: the agent could not make one.
+              addr_warning:
+                type: string
+                description: |
+                  Set when the agent connects from another address than the
+                  Swarm lists for the node, as `<agent address>|<node
+                  address>`. Only a hint: NAT and proxies cause it too.
         status: {$ref: "#/components/schemas/ClusterStatus"}
+        trust:
+          type: object
+          required: [pinned, origin_verified]
+          description: |
+            The root CA node proofs are checked against. It is pinned from the
+            origin when the cluster is created (or, for clusters created
+            before, at the first check) and must match what the other manager
+            hosts report. A different root (after `docker swarm ca --rotate`)
+            stays `pending` until two verified managers report it; in a Swarm
+            with a single manager an admin confirms it (`confirmable`).
+          properties:
+            pinned: {type: boolean}
+            pending: {type: boolean}
+            pending_since: {type: string, format: date-time}
+            confirmable: {type: boolean}
+            origin_verified: {type: boolean, description: The origin proved its node identity. Reads keep going through an unverified origin.}
     ClusterStatus:
       type: object
       description: |

@@ -173,6 +173,9 @@ type ConnectedAgent struct {
 	Name     string
 	Hello    HelloPayload
 	JoinedAt time.Time
+	// RemoteIP is the TCP peer of the session, compared with the Swarm's
+	// node addresses only to warn.
+	RemoteIP string
 	// send is never closed: senders select on done instead, so a frame
 	// sent after the session ended fails rather than panics.
 	send      chan Frame

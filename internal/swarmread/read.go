@@ -45,7 +45,8 @@ type API interface {
 func Read(ctx context.Context, cli API, frameType string, payload json.RawMessage) (any, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	if err := requireManager(ctx, cli); err != nil {
+	sw, err := requireManager(ctx, cli)
+	if err != nil {
 		return nil, err
 	}
 	switch frameType {
@@ -54,7 +55,11 @@ func Read(ctx context.Context, cli API, frameType string, payload json.RawMessag
 		if err != nil {
 			return nil, err
 		}
-		return agents.SwarmNodesResp{Nodes: agents.SwarmNodesFrom(res.Items)}, nil
+		out := agents.SwarmNodesResp{Nodes: agents.SwarmNodesFrom(res.Items)}
+		if sw.Cluster != nil && len(sw.Cluster.TLSInfo.TrustRoot) <= agents.MaxTrustRootPEM {
+			out.TrustRoot = sw.Cluster.TLSInfo.TrustRoot
+		}
+		return out, nil
 
 	case agents.FrameReqSwarmServices:
 		res, err := cli.ServiceList(ctx, client.ServiceListOptions{Status: true})
@@ -119,14 +124,14 @@ func Read(ctx context.Context, cli API, frameType string, payload json.RawMessag
 	return nil, fmt.Errorf("unknown swarm frame %q", frameType)
 }
 
-func requireManager(ctx context.Context, cli API) error {
+func requireManager(ctx context.Context, cli API) (swarm.Info, error) {
 	res, err := cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
-		return fmt.Errorf("read swarm state: %w", err)
+		return swarm.Info{}, fmt.Errorf("read swarm state: %w", err)
 	}
 	sw := res.Info.Swarm
 	if sw.LocalNodeState != swarm.LocalNodeStateActive || !sw.ControlAvailable {
-		return agents.ErrNotSwarmManager
+		return swarm.Info{}, agents.ErrNotSwarmManager
 	}
-	return nil
+	return sw, nil
 }

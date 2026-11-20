@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Existing Swarm clusters stay linked but unverified until the agents on their nodes run this version; Dockmesh keeps reading through the origin manager meanwhile and raises a notice while no manager is verified
+time: 2026-11-20T18:27:58.737518449Z
+custom:
+    Audience: admins
+    Id: swarm-node-proof

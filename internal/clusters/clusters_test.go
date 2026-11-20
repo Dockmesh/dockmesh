@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
@@ -23,6 +24,14 @@ type fakeHosts struct {
 	failing map[string]bool // CurrentDaemonInfo fails (host unreadable)
 	status  map[string]string
 	nodes   map[string][]agents.SwarmNode
+	// roots is the trust root each manager host reports.
+	roots map[string]string
+	// provers answer SwarmProve per host; a host without one has an agent
+	// too old to prove.
+	provers map[string]func(agents.SwarmProveReq) (agents.SwarmProveResp, error)
+	proved  map[string]int
+	joined  map[string]time.Time
+	peers   map[string]string
 }
 
 func (f *fakeHosts) List(context.Context) ([]host.Info, error) {
@@ -67,6 +76,48 @@ func (f *fakeHosts) SwarmNodes(_ context.Context, id string) ([]agents.SwarmNode
 	return n, nil
 }
 
+func (f *fakeHosts) SwarmNodeList(ctx context.Context, id string) (agents.SwarmNodesResp, error) {
+	nodes, err := f.SwarmNodes(ctx, id)
+	if err != nil {
+		return agents.SwarmNodesResp{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return agents.SwarmNodesResp{Nodes: nodes, TrustRoot: f.roots[id]}, nil
+}
+
+func (f *fakeHosts) SwarmProve(_ context.Context, id string, req agents.SwarmProveReq) (agents.SwarmProveResp, error) {
+	f.mu.Lock()
+	p := f.provers[id]
+	if f.proved == nil {
+		f.proved = map[string]int{}
+	}
+	f.proved[id]++
+	f.mu.Unlock()
+	if p == nil {
+		return agents.SwarmProveResp{}, host.ErrAgentNoSwarmProve
+	}
+	return p(req)
+}
+
+func (f *fakeHosts) JoinedAt(id string) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.joined[id]
+}
+
+func (f *fakeHosts) RemoteIP(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.peers[id]
+}
+
+func (f *fakeHosts) provedCount(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.proved[id]
+}
+
 func swarmInfo(cluster, node, role string) *agents.DaemonInfo {
 	return &agents.DaemonInfo{OS: "linux", Arch: "amd64", Swarm: &agents.SwarmState{NodeID: node, NodeState: "active", Role: role, ClusterID: cluster}}
 }
@@ -107,7 +158,8 @@ func newService(t *testing.T, f *fakeHosts) *Service {
 type auditRec struct{ got []string }
 
 func (a *auditRec) Write(_ context.Context, _, action, _ string, details any) {
-	a.got = append(a.got, action+" "+details.(map[string]any)["host"].(string))
+	h, _ := details.(map[string]any)["host"].(string)
+	a.got = append(a.got, action+" "+h)
 }
 
 func backdate(t *testing.T, s *Service) {
