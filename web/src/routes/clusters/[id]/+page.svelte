@@ -155,6 +155,8 @@
   const namedStacks = $derived(stacks.filter((g) => g.stack !== ''));
   const desired = $derived((services ?? []).reduce((a, s) => a + s.desired_tasks, 0));
   const running = $derived(services ? services.reduce((a, s) => a + s.running_tasks, 0) : (dist?.tasks ?? 0));
+  // What an empty list says: an error, nothing read while read-only, or loading.
+  const waitText = $derived(readError ?? (readOnly ? m.cl_stale_none() : m.cl_loading()));
   const top = $derived(heaviest(dist));
   const maxTasks = $derived(Math.max(1, ...nodes.map((n) => n.tasks)));
 
@@ -376,7 +378,7 @@
             {/if}
           </div>
           {#if !dist}
-            <p class="dm-sub">{readError ?? m.cl_loading()}</p>
+            <p class="dm-sub">{waitText}</p>
           {:else if distView === 'service' && dist.services}
             {@render matrix(dist)}
           {:else}
@@ -518,7 +520,7 @@
 
 {#snippet nodeTable()}
   {#if nodes.length === 0}
-    <p class="dm-sub">{readError ?? m.cl_loading()}</p>
+    <p class="dm-sub">{waitText}</p>
   {:else}
     <div class="dm-tbl" role="table" aria-label={m.cl_tab_nodes()} data-testid="cluster-nodes">
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {NODE_COLS}">
@@ -557,7 +559,7 @@
 
 {#snippet serviceTable()}
   {#if !services}
-    <p class="dm-sub">{readError ?? m.cl_loading()}</p>
+    <p class="dm-sub">{waitText}</p>
   {:else if services.length === 0}
     <EmptyState icon={Network} title={m.cl_no_services()} description={m.cl_no_services_hint()} />
   {:else}
@@ -615,7 +617,7 @@
     <input type="search" class="dm-filter" style="width: 240px" placeholder={m.cl_task_search()} aria-label={m.cl_task_search()} bind:value={taskSearch} />
   </div>
   {#if !tasks}
-    <p class="dm-sub">{readError ?? m.cl_loading()}</p>
+    <p class="dm-sub">{waitText}</p>
   {:else if shownTasks.length === 0}
     <p class="dm-sub empty">{taskFilter === 'problems' ? m.cl_tasks_no_problems() : m.cl_tasks_none()}</p>
   {:else}
@@ -679,7 +681,7 @@
 
 {#snippet networkTable()}
   {#if !networks}
-    <p class="dm-sub">{readError ?? m.cl_loading()}</p>
+    <p class="dm-sub">{waitText}</p>
   {:else if networks.length === 0}
     <p class="dm-sub empty">{m.cl_no_networks()}</p>
   {:else}
