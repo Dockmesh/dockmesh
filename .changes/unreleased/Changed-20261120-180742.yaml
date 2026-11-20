@@ -1,0 +1,3 @@
+kind: Changed
+body: The Hosts page and the cluster page keep a Swarm cluster's last known state and its time across server restarts
+time: 2026-11-20T18:07:42.08973343Z
