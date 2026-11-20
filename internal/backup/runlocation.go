@@ -100,7 +100,19 @@ func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.Re
 		}
 		notFound = append(notFound, c.desc)
 	}
+	if guessed(run) && run.SHA256 != "" {
+		rc, _, err := s.findOnSavedTargets(ctx, run)
+		if rc != nil || err != nil {
+			return rc, err
+		}
+	}
 	return nil, archiveNotFound(ctx, s.store, run, job, notFound)
+}
+
+// guessed reports whether nothing certain is known about where run wrote
+// its archive.
+func guessed(run *Run) bool {
+	return run.Location == nil || run.Location.Inferred
 }
 
 // openJoblessArchive opens the archive of a run whose job row is gone,
@@ -132,10 +144,27 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 		return nil, jobGone("the job of run %d was deleted and the run recorded neither its target nor a hash of its archive %s, so Dockmesh can't tell which file is its archive; copy the archive from the target the job wrote to and restore it by hand",
 			run.ID, run.TargetPath)
 	}
+	rc, tried, err := s.findOnSavedTargets(ctx, run)
+	if rc != nil || err != nil {
+		return rc, err
+	}
+	where := "there are no saved backup targets"
+	if len(tried) > 0 {
+		where = "it is on none of the saved backup targets " + strings.Join(tried, ", ")
+	}
+	return nil, jobGone("the job of run %d was deleted and the run didn't record its target; %s. Add the target the job wrote to again as a saved target, or copy the archive %s from it and restore it by hand",
+		run.ID, where, run.TargetPath)
+}
+
+// findOnSavedTargets looks for run's archive at its path on every saved
+// target and returns the first file with the run's hash and size, so it
+// is the run's own archive wherever it is found. tried describes the
+// targets without it.
+func (s *Service) findOnSavedTargets(ctx context.Context, run *Run) (io.ReadCloser, []string, error) {
 	ts := s.store.targets()
 	saved, err := ts.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tried := make([]string, 0, len(saved))
 	for i := range saved {
@@ -149,7 +178,7 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 			if match, err = holdsArchive(ctx, tgt, run); err == nil && match {
 				var rc io.ReadCloser
 				if rc, err = tgt.Read(ctx, run.TargetPath); err == nil {
-					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil
+					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil, nil
 				}
 			} else if err == nil {
 				tried = append(tried, desc+" (file does not match)")
@@ -157,17 +186,12 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 			}
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("backup: look for the archive of a run without job", "run", run.ID, "target", st.Name, "err", err)
+			slog.Warn("backup: look for the archive of a run on the saved targets", "run", run.ID, "target", st.Name, "err", err)
 			desc += " (unreachable)"
 		}
 		tried = append(tried, desc)
 	}
-	where := "there are no saved backup targets"
-	if len(tried) > 0 {
-		where = "it is on none of the saved backup targets " + strings.Join(tried, ", ")
-	}
-	return nil, jobGone("the job of run %d was deleted and the run didn't record its target; %s. Add the target the job wrote to again as a saved target, or copy the archive %s from it and restore it by hand",
-		run.ID, where, run.TargetPath)
+	return nil, tried, nil
 }
 
 // holdsArchive reports whether the file at the run's path on t has the
@@ -395,7 +419,10 @@ func unmarshalLocation(targetID sql.NullInt64, raw sql.NullString) *RunLocation 
 // stampLegacyRuns records loc as the inferred location of the runs that
 // have none recorded, of the jobs on target targetID or of job jobID
 // (0 matches all). It runs right before the place loc describes changes,
-// which is the last moment it is known.
+// which is the last moment it is known. Runs that started before their
+// job last switched targets were written elsewhere and stay unstamped;
+// switches before this was recorded are unknown, so the stamp stays a
+// guess that reads and retention check.
 func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, targetID, jobID int64) error {
 	now := time.Now().UTC()
 	stamp := *loc
@@ -405,7 +432,9 @@ func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, targetID,
 		UPDATE backup_runs SET target_id = ?, target_location = ?
 		WHERE target_location IS NULL AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
 		  AND (? = 0 OR job_id IN (SELECT id FROM backup_jobs WHERE target_id = ?))
-		  AND (? = 0 OR job_id = ?)`,
+		  AND (? = 0 OR job_id = ?)
+		  AND started_at >= COALESCE(
+		      (SELECT target_changed_at FROM backup_jobs WHERE id = backup_runs.job_id), '')`,
 		tid, raw, targetID, targetID, jobID, jobID)
 	return err
 }

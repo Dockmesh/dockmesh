@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,6 +324,220 @@ func TestRecordedLocationFallbacks(t *testing.T) {
 			}
 			if err := lt.readable(t, r); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// switchBeforeUpgrade moves the job to a second saved target the way a
+// version without recorded locations did: nothing stamped, no marker.
+func (lt *locTest) switchBeforeUpgrade(t *testing.T) *targets.StoredTarget {
+	t.Helper()
+	other, err := lt.svc.Targets().Create(context.Background(), targets.TargetInput{Name: "spare", Type: "local", Config: map[string]any{"path": lt.rootB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lt.svc.store.db.Exec(`UPDATE backup_jobs SET target_id = ? WHERE id = ?`, other.ID, lt.job.ID); err != nil {
+		t.Fatal(err)
+	}
+	return other
+}
+
+func TestLegacyRunOfJobSwitchedBeforeUpgrade(t *testing.T) {
+	cases := []struct {
+		name  string
+		after func(t *testing.T, lt *locTest, now *targets.StoredTarget)
+	}{
+		{"no change since the upgrade", func(*testing.T, *locTest, *targets.StoredTarget) {}},
+		{"the job's new target edited since", func(t *testing.T, lt *locTest, now *targets.StoredTarget) {
+			moved := t.TempDir()
+			targets.SetLocalRoots(func() []string { return []string{lt.rootA, lt.rootB, moved} })
+			cfg := map[string]any{"path": moved}
+			if _, err := lt.svc.PrepareTargetChange(context.Background(), now.ID, "local", cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := lt.svc.Targets().Update(context.Background(), now.ID, targets.TargetInput{Name: "spare", Type: "local", Config: cfg}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLocTest(t, 0)
+			r := lt.run(t)
+			legacy(t, lt.svc, r.ID)
+			now := lt.switchBeforeUpgrade(t)
+			tc.after(t, lt, now)
+			if err := lt.readable(t, r); err != nil {
+				t.Fatalf("first run on the old target: %v", err)
+			}
+		})
+	}
+}
+
+// A run that started before its job's recorded switch was not written to
+// the job's new target, so editing that target doesn't stamp it.
+func TestStampSkipsRunsBeforeTheJobSwitch(t *testing.T) {
+	cases := []struct {
+		name      string
+		startedAt string
+		wantStamp bool
+	}{
+		{"run before the switch", "datetime('now', '-1 hour')", false},
+		{"run after the switch", "datetime('now', '+1 minute')", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLocTest(t, 0)
+			r := lt.run(t)
+			legacy(t, lt.svc, r.ID)
+			if _, err := lt.svc.store.db.Exec(`UPDATE backup_runs SET started_at = `+tc.startedAt+` WHERE id = ?`, r.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := lt.svc.store.db.Exec(`UPDATE backup_jobs SET target_changed_at = CURRENT_TIMESTAMP WHERE id = ?`, lt.job.ID); err != nil {
+				t.Fatal(err)
+			}
+			lt.movePath(t, lt.rootB)
+			var loc *string
+			if err := lt.svc.store.db.QueryRow(`SELECT target_location FROM backup_runs WHERE id = ?`, r.ID).Scan(&loc); err != nil {
+				t.Fatal(err)
+			}
+			if (loc != nil) != tc.wantStamp {
+				t.Fatalf("stamped = %v, want %v", loc != nil, tc.wantStamp)
+			}
+		})
+	}
+}
+
+func TestJobSwitchRecordsTheChange(t *testing.T) {
+	lt := newLocTest(t, 0)
+	ctx := context.Background()
+	changedAt := func() *string {
+		t.Helper()
+		var at *string
+		if err := lt.svc.store.db.QueryRow(`SELECT target_changed_at FROM backup_jobs WHERE id = ?`, lt.job.ID).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	in := volumeJob("db", "")
+	in.TargetID, in.TargetType, in.TargetConfig = lt.target.ID, "", nil
+	in.Schedule = "0 4 * * *"
+	if _, err := lt.svc.UpdateJob(ctx, lt.job.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if at := changedAt(); at != nil {
+		t.Fatalf("an edit on the same target recorded a switch at %s", *at)
+	}
+	other, err := lt.svc.Targets().Create(ctx, targets.TargetInput{Name: "spare", Type: "local", Config: map[string]any{"path": lt.rootB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.TargetID = other.ID
+	if _, err := lt.svc.UpdateJob(ctx, lt.job.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if changedAt() == nil {
+		t.Fatal("the switch was not recorded")
+	}
+}
+
+// Retention keeps a run listed whose archive isn't where it looked, so
+// the archive is never forgotten; a failed run's partial file may never
+// have existed.
+func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
+	cases := []struct {
+		name string
+		lose func(t *testing.T, lt *locTest, r *Run)
+	}{
+		{"legacy run not on the job's target", func(t *testing.T, lt *locTest, r *Run) {
+			legacy(t, lt.svc, r.ID)
+			hide(t, lt.rootA, r.TargetPath)
+		}},
+		{"inferred location wrong", func(t *testing.T, lt *locTest, r *Run) {
+			legacy(t, lt.svc, r.ID)
+			hide(t, lt.rootA, r.TargetPath)
+			lt.movePath(t, lt.rootB)
+		}},
+		{"recorded location emptied outside", func(t *testing.T, lt *locTest, r *Run) {
+			hide(t, lt.rootA, r.TargetPath)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLocTest(t, 1)
+			old := lt.run(t)
+			tc.lose(t, lt, old)
+			lt.run(t)
+			got, err := lt.svc.GetRun(context.Background(), old.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.PrunedAt != nil {
+				t.Fatal("retention marked a run pruned whose archive it did not find")
+			}
+		})
+	}
+}
+
+func TestRetentionPrunesMissingPartialFile(t *testing.T) {
+	lt := newLocTest(t, 1)
+	r := lt.run(t)
+	if _, err := lt.svc.store.db.Exec(`UPDATE backup_runs SET status = 'failed', sha256 = '' WHERE id = ?`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	hide(t, lt.rootA, r.TargetPath)
+	lt.run(t)
+	got, err := lt.svc.GetRun(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PrunedAt == nil {
+		t.Fatal("the failed run with no partial file stays listed")
+	}
+}
+
+// hide moves an archive out of root, like a file moved outside Dockmesh.
+func hide(t *testing.T, root, rel string) {
+	t.Helper()
+	if err := os.Rename(filepath.Join(root, filepath.FromSlash(rel)), filepath.Join(t.TempDir(), "gone")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinishRecordsTheLocation(t *testing.T) {
+	lt := newLocTest(t, 0)
+	svc, job, ctx := lt.svc, lt.job, context.Background()
+	early := &RunLocation{Type: "sftp", Config: map[string]any{"host": "nas", "host_key": "ssh-ed25519 AAAA"}}
+	late := &RunLocation{Type: "sftp", Config: map[string]any{"host": "nas"}}
+	cases := []struct {
+		name    string
+		atStart *RunLocation
+		want    string
+	}{
+		{"not recorded at the start", nil, "nas"},
+		{"recorded at the start", early, "ssh-ed25519 AAAA"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := svc.store.startRun(ctx, job)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.atStart != nil {
+				if err := svc.store.setRunLocation(ctx, id, tc.atStart); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := svc.store.finishRun(ctx, id, StatusSuccess, 1, "jobs/x", "00", late, nil); err != nil {
+				t.Fatal(err)
+			}
+			r, err := svc.store.getRun(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Location == nil || !strings.Contains(r.Location.describe()+fmt.Sprint(r.Location.Config), tc.want) {
+				t.Fatalf("location = %+v, want it to hold %q", r.Location, tc.want)
 			}
 		})
 	}

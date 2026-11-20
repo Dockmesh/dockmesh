@@ -136,7 +136,9 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 	return id, nil
 }
 
-func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
+// updateJob saves in; switched records that the job moved to another
+// target.
+func (s *store) updateJob(ctx context.Context, id int64, in JobInput, switched bool) error {
 	tcfg, err := targets.SealConfig(s.sec, in.TargetConfig)
 	if err != nil {
 		return err
@@ -149,11 +151,12 @@ func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
 			name = ?, host_id = ?, target_id = ?, target_type = ?, target_config = ?, sources = ?,
 			schedule = ?, retention_count = ?, retention_days = ?,
 			encrypt = ?, pre_hooks = ?, post_hooks = ?, enabled = ?,
+			target_changed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE target_changed_at END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, tcfg, string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
-		string(pre), string(post), boolInt(in.Enabled), id)
+		string(pre), string(post), boolInt(in.Enabled), switched, id)
 	return err
 }
 
@@ -283,18 +286,22 @@ func (s *store) setRunLocation(ctx context.Context, runID int64, loc *RunLocatio
 	return err
 }
 
-// finishRun records the outcome; sha covers the archive as stored on the target.
-func (s *store) finishRun(ctx context.Context, runID int64, status string, size int64, path, sha string, runErr error) error {
+// finishRun records the outcome; sha covers the archive as stored on the
+// target, loc is where it was written. A location recorded at the start
+// of the run is kept: it may hold the SFTP host key.
+func (s *store) finishRun(ctx context.Context, runID int64, status string, size int64, path, sha string, loc *RunLocation, runErr error) error {
 	now := time.Now()
 	var errStr string
 	if runErr != nil {
 		errStr = runErr.Error()
 	}
+	tid, raw := marshalLocation(loc)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_runs SET status = ?, finished_at = ?, size_bytes = ?,
-			target_path = ?, sha256 = ?, error = ?
+			target_path = ?, sha256 = ?, error = ?,
+			target_id = COALESCE(target_id, ?), target_location = COALESCE(target_location, ?)
 		WHERE id = ?`,
-		status, now, size, path, sha, errStr, runID)
+		status, now, size, path, sha, errStr, tid, raw, runID)
 	return err
 }
 
