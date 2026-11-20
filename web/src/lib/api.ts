@@ -1208,7 +1208,7 @@ export interface TopoPort {
 
 export interface TopoLink {
   network_id: string;
-  container_id: string;
+  container_id?: string;
   service_id?: string;
   ipv4?: string;
   aliases?: string[];

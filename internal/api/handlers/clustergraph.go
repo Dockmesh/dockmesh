@@ -9,15 +9,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/clusters"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/topology"
 )
-
-// labelStackNamespace marks the services, networks and volumes of a stack
-// deployed to a Swarm.
-const labelStackNamespace = "com.docker.stack.namespace"
 
 // clusterTopology answers GET /networks/topology?cluster=<id>: the Swarm's
 // services and the Swarm-scoped networks they attach to, read through the
@@ -26,7 +23,7 @@ const labelStackNamespace = "com.docker.stack.namespace"
 func (h *Handlers) clusterTopology(w http.ResponseWriter, r *http.Request, id string) {
 	res := rbac.Resource{ClusterID: id}
 	if !h.allowedOn(r, res, rbac.PermStacksView) {
-		h.writeScopeDenied(w, r, rbac.PermStacksView, res, "cluster "+id)
+		h.writeScopeDenied(w, r, h.missingOn(r, res, rbac.PermStacksView), res, "cluster "+id)
 		return
 	}
 	hostID, ok := h.clusterReadHostOf(w, r, id)
@@ -53,6 +50,19 @@ func (h *Handlers) clusterTopology(w http.ResponseWriter, r *http.Request, id st
 		Services:  svcs.Services,
 		Truncated: nets.Truncated || svcs.Truncated,
 	})
+}
+
+// missingOn names the first of the route's permissions and extra that the
+// caller lacks on res, for the denial message and audit entry.
+func (h *Handlers) missingOn(r *http.Request, res rbac.Resource, extra ...rbac.Perm) rbac.Perm {
+	acc := middleware.AccessOf(r.Context())
+	perms := scopePerms(r, extra...)
+	for _, p := range perms {
+		if !acc.AllowsOn(p, res) {
+			return p
+		}
+	}
+	return perms[len(perms)-1]
 }
 
 // clusterGraph links every service to the networks it attaches to. A
@@ -150,15 +160,22 @@ type clusterVolumesResponse struct {
 }
 
 // ClusterVolumes lists the volumes of Swarm stacks per stack, with the
-// member hosts (nodes with an agent) each one exists on.
+// member hosts (nodes with an agent) each one exists on. The hosts are
+// the cluster's node inventory, so it needs hosts.view on the cluster
+// next to the route's volumes.view.
 //
 //	GET /api/v1/clusters/{id}/volumes
 func (h *Handlers) ClusterVolumes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if res := (rbac.Resource{ClusterID: id}); !h.allowedOn(r, res, rbac.PermHostsView) {
+		h.writeScopeDenied(w, r, h.missingOn(r, res, rbac.PermHostsView), res, "cluster "+id)
+		return
+	}
 	if h.Clusters == nil || h.Hosts == nil {
 		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
 		return
 	}
-	c, err := h.Clusters.Get(r.Context(), chi.URLParam(r, "id"))
+	c, err := h.Clusters.Get(r.Context(), id)
 	if errors.Is(err, clusters.ErrNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -167,53 +184,66 @@ func (h *Handlers) ClusterVolumes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := clusterVolumesResponse{Volumes: []clusterStackVolume{}, ReadHosts: []string{}, Unreachable: []host.Unreachable{}}
+	names := map[string]string{}
+	if infos, err := h.Hosts.List(r.Context()); err == nil {
+		for _, i := range infos {
+			names[i.ID] = i.Name
+		}
+	}
 	var targets []host.Host
 	for _, m := range c.Members {
 		hh, err := h.Hosts.Pick(m.HostID)
 		if err != nil {
-			out.Unreachable = append(out.Unreachable, host.Unreachable{HostID: m.HostID, HostName: m.HostID, Reason: err.Error()})
+			name := names[m.HostID]
+			if name == "" {
+				name = m.HostID
+			}
+			out.Unreachable = append(out.Unreachable, host.Unreachable{HostID: m.HostID, HostName: name, Reason: err.Error()})
 			continue
 		}
 		targets = append(targets, hh)
 	}
-	type row struct {
-		node         clusterVolumeNode
-		stack, name  string
-		answeredOnly bool
+	type stackVolume struct {
+		node        clusterVolumeNode
+		stack, name string
 	}
-	fan := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]row, error) {
+	type hostVolumes struct {
+		hostID string
+		vols   []stackVolume
+	}
+	fan := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]hostVolumes, error) {
 		list, err := hh.ListVolumes(ctx)
 		if err != nil {
 			return nil, err
 		}
-		rows := []row{{node: clusterVolumeNode{HostID: hh.ID()}, answeredOnly: true}}
+		hv := hostVolumes{hostID: hh.ID()}
 		for _, v := range list {
 			m := toMap(v)
 			labels, _ := m["Labels"].(map[string]any)
-			stack, _ := labels[labelStackNamespace].(string)
+			stack, _ := labels[agents.LabelStackNamespace].(string)
 			name, _ := m["Name"].(string)
-			if stack == "" || name == "" {
+			// A compose project that sets the label itself is a host stack.
+			if _, compose := labels["com.docker.compose.project"]; compose || stack == "" || name == "" {
 				continue
 			}
 			driver, _ := m["Driver"].(string)
-			rows = append(rows, row{node: clusterVolumeNode{HostID: hh.ID(), HostName: hh.Name(), Driver: driver}, stack: stack, name: name})
+			hv.vols = append(hv.vols, stackVolume{node: clusterVolumeNode{HostID: hh.ID(), HostName: hh.Name(), Driver: driver}, stack: stack, name: name})
 		}
-		return rows, nil
+		return []hostVolumes{hv}, nil
 	})
 	out.Unreachable = append(out.Unreachable, fan.Unreachable...)
 	byKey := map[[2]string]*clusterStackVolume{}
-	for _, rw := range fan.Items {
-		if rw.answeredOnly {
-			out.ReadHosts = append(out.ReadHosts, rw.node.HostID)
-			continue
+	for _, hv := range fan.Items {
+		out.ReadHosts = append(out.ReadHosts, hv.hostID)
+		for _, sv := range hv.vols {
+			k := [2]string{sv.stack, sv.name}
+			v := byKey[k]
+			if v == nil {
+				v = &clusterStackVolume{Stack: sv.stack, Name: sv.name}
+				byKey[k] = v
+			}
+			v.Nodes = append(v.Nodes, sv.node)
 		}
-		k := [2]string{rw.stack, rw.name}
-		v := byKey[k]
-		if v == nil {
-			v = &clusterStackVolume{Stack: rw.stack, Name: rw.name}
-			byKey[k] = v
-		}
-		v.Nodes = append(v.Nodes, rw.node)
 	}
 	for _, v := range byKey {
 		sort.Slice(v.Nodes, func(i, j int) bool { return v.Nodes[i].HostName < v.Nodes[j].HostName })

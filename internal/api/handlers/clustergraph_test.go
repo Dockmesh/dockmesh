@@ -80,7 +80,7 @@ func (f *volumeHost) ListVolumes(context.Context) ([]any, error) { return f.vols
 func vol(name, stack string) map[string]any {
 	labels := map[string]any{}
 	if stack != "" {
-		labels["com.docker.stack.namespace"] = stack
+		labels[agents.LabelStackNamespace] = stack
 	}
 	return map[string]any{"Name": name, "Driver": "local", "Labels": labels}
 }

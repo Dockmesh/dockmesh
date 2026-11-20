@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Topology: how containers, networks and the reverse proxy connect. Each
-  // stack is a group with its networks on top and its containers below;
-  // edges are network memberships. Reloads on Docker and stack events.
+  // Topology: how containers (or a Swarm cluster's services), networks and
+  // the reverse proxy connect. Each stack is a group with its networks on
+  // top and its containers below; edges are network memberships. Reloads on Docker and stack events.
   import { api, ApiError, type Cluster, type Topology, type TopoNetwork, type TopoContainer, type TopoService } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';

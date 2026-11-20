@@ -91,21 +91,22 @@ func TestTopologyFollowsTargetAndScope(t *testing.T) {
 		containers        []string
 		networks          []string
 		links             int
+		code              string
 	}{
 		{"no host means the server", "boss", "", http.StatusOK, "local",
-			[]string{"l-c-web", "l-c-db", "l-c-solo"}, []string{"l-n-web", "l-n-db", "l-n-edge", "l-n-bridge"}, 5},
+			[]string{"l-c-web", "l-c-db", "l-c-solo"}, []string{"l-n-web", "l-n-db", "l-n-edge", "l-n-bridge"}, 5, ""},
 		{"agent host", "boss", "?host=agent-1", http.StatusOK, "agent-1",
-			[]string{"a-c-web", "a-c-db", "a-c-solo"}, []string{"a-n-web", "a-n-db", "a-n-edge", "a-n-bridge"}, 5},
+			[]string{"a-c-web", "a-c-db", "a-c-solo"}, []string{"a-n-web", "a-n-db", "a-n-edge", "a-n-bridge"}, 5, ""},
 		{"host scope sees its host", "tagged", "?host=agent-1", http.StatusOK, "agent-1",
-			[]string{"a-c-web", "a-c-db", "a-c-solo"}, []string{"a-n-web", "a-n-db", "a-n-edge", "a-n-bridge"}, 5},
-		{"host scope is refused elsewhere", "tagged", "", http.StatusForbidden, "", nil, nil, 0},
+			[]string{"a-c-web", "a-c-db", "a-c-solo"}, []string{"a-n-web", "a-n-db", "a-n-edge", "a-n-bridge"}, 5, ""},
+		{"host scope is refused elsewhere", "tagged", "", http.StatusForbidden, "", nil, nil, 0, ""},
 		{"stack scope sees its stack and the shared network", "webby", "?host=agent-1", http.StatusOK, "agent-1",
-			[]string{"a-c-web"}, []string{"a-n-web", "a-n-edge"}, 2},
-		{"stack scope is refused on another host", "webby", "", http.StatusForbidden, "", nil, nil, 0},
-		{"all hosts", "boss", "?host=all", http.StatusBadRequest, "", nil, nil, 0},
-		{"host and cluster", "boss", "?host=local&cluster=c1", http.StatusBadRequest, "", nil, nil, 0},
-		{"cluster without clusters", "boss", "?cluster=c1", http.StatusServiceUnavailable, "", nil, nil, 0},
-		{"old agent", "boss", "?host=agent-old", http.StatusServiceUnavailable, "", nil, nil, 0},
+			[]string{"a-c-web"}, []string{"a-n-web", "a-n-edge"}, 2, ""},
+		{"stack scope is refused on another host", "webby", "", http.StatusForbidden, "", nil, nil, 0, ""},
+		{"all hosts", "boss", "?host=all", http.StatusBadRequest, "", nil, nil, 0, ""},
+		{"host and cluster", "boss", "?host=local&cluster=c1", http.StatusBadRequest, "", nil, nil, 0, ""},
+		{"cluster without clusters", "boss", "?cluster=c1", http.StatusServiceUnavailable, "", nil, nil, 0, ""},
+		{"old agent", "boss", "?host=agent-old", http.StatusServiceUnavailable, "", nil, nil, 0, "topology_agent_outdated"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,9 +114,9 @@ func TestTopologyFollowsTargetAndScope(t *testing.T) {
 			if rr.Code != tt.status {
 				t.Fatalf("status %d, want %d: %s", rr.Code, tt.status, rr.Body)
 			}
-			if tt.status == http.StatusServiceUnavailable && tt.name == "old agent" {
+			if tt.code != "" {
 				var body map[string]string
-				if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body["code"] != "topology_agent_outdated" {
+				if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body["code"] != tt.code {
 					t.Fatalf("old agent body %s", rr.Body)
 				}
 			}

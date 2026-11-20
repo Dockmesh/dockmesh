@@ -53,7 +53,7 @@ func TestClusterReadRoutesFollowClusterScope(t *testing.T) {
 		{"/api/v1/clusters/c1/services/web_app", rbac.PermStacksView, ""},
 		{"/api/v1/clusters/c1/tasks?service=web_app", rbac.PermStacksView, ""},
 		{"/api/v1/clusters/c1/networks", rbac.PermNetworksView, ""},
-		{"/api/v1/clusters/c1/volumes", rbac.PermVolumesView, ""},
+		{"/api/v1/clusters/c1/volumes", rbac.PermVolumesView, rbac.PermHostsView},
 		{"/api/v1/networks/topology?cluster=c1", rbac.PermNetworksView, rbac.PermStacksView},
 	}
 	for _, rt := range routes {

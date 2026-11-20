@@ -2924,10 +2924,11 @@ paths:
       tags: [clusters]
       summary: Volumes of Swarm stacks and the nodes they exist on
       description: |
-        Needs `volumes.view` on the cluster. Lists every volume with a
+        Needs `volumes.view` and `hosts.view` on the cluster. Lists every volume with a
         `com.docker.stack.namespace` label on the cluster's member hosts
         (nodes with an agent), grouped per stack and volume, with the hosts
-        that hold a copy. Nodes without an agent are not read.
+        that hold a copy. Volumes of a compose project are left out even
+        when they carry the label. Nodes without an agent are not read.
       parameters:
         - name: id
           in: path

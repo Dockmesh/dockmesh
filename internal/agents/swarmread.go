@@ -162,7 +162,9 @@ type SwarmNetworksResp struct {
 	Truncated bool           `json:"truncated,omitempty"`
 }
 
-const labelStackNamespace = "com.docker.stack.namespace"
+// LabelStackNamespace marks the services, networks and volumes of a
+// stack deployed to a Swarm.
+const LabelStackNamespace = "com.docker.stack.namespace"
 
 // SwarmServicesFrom converts a daemon's service list (with status).
 func SwarmServicesFrom(list []swarm.Service) SwarmServicesResp {
@@ -177,7 +179,7 @@ func serviceSummary(s swarm.Service) SwarmService {
 	sv := SwarmService{
 		ID:        s.ID,
 		Name:      s.Spec.Name,
-		Stack:     s.Spec.Labels[labelStackNamespace],
+		Stack:     s.Spec.Labels[LabelStackNamespace],
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}
@@ -326,7 +328,7 @@ func SwarmNetworksFrom(list []network.Summary) SwarmNetworksResp {
 		}
 		sn := SwarmNetwork{
 			ID: n.ID, Name: n.Name, Driver: n.Driver, Attachable: n.Attachable,
-			Ingress: n.Ingress, Internal: n.Internal, Stack: n.Labels[labelStackNamespace],
+			Ingress: n.Ingress, Internal: n.Internal, Stack: n.Labels[LabelStackNamespace],
 			CreatedAt: n.Created,
 		}
 		_, sn.Encrypted = n.Options["encrypted"]
