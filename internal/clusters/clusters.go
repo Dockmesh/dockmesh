@@ -153,11 +153,11 @@ type Service struct {
 	pmu      sync.Mutex
 	proofs   map[string]proofTry
 	addrWarn map[string]string
-	// sole: the cluster's origin was its only manager at the last check.
+	// sole: the manager read through was the only manager at the last check.
 	sole map[string]bool
 	// reader is the host each cluster is read through (see readers).
 	reader map[string]string
-	now  func() time.Time
+	now    func() time.Time
 }
 
 // Auditor records membership changes; audit.Service is one.
@@ -309,7 +309,8 @@ func (s *Service) nodesOf(ctx context.Context, hostID string) (agents.SwarmNodes
 // the hosts its node list confirms. The host's role is checked live
 // against its own node list, and every other host that claims to manage
 // the same Swarm and answers must list it as a manager too. The host
-// becomes the cluster's origin: only its node list changes memberships.
+// becomes the cluster's origin: its node list changes memberships, and
+// another verified manager's list only adds members while it can't answer.
 func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Cluster, error) {
 	if name != "" && !namePattern.MatchString(name) {
 		return Cluster{}, ErrBadName
@@ -400,7 +401,7 @@ func (s *Service) insert(ctx context.Context, id, name, hostID, actor, root stri
 		id, name, hostID, nullable(actor), nullable(root)); err != nil {
 		return err
 	}
-	if err := s.link(ctx, id, hostID, nodes, snap); err != nil {
+	if err := s.link(ctx, id, hostID, nodes, snap, false); err != nil {
 		return err
 	}
 	s.record(id, stateOf(nodes), nodes, time.Now())
@@ -529,9 +530,11 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 	return out, nil
 }
 
-// Reconcile refreshes the memberships of every cluster from its origin's
-// node list. A cluster whose origin can't be asked, or no longer is the
-// manager node it was linked as, keeps its last known members.
+// Reconcile reads every cluster through its reader (see readers) and
+// refreshes its memberships from the origin's node list. While the origin
+// can't be asked, the reader's list only adds members, so a manager that
+// took over can't unlink or demote anyone; with no manager answering the
+// last known members stay.
 func (s *Service) Reconcile(ctx context.Context) error {
 	clusters, err := s.List(ctx)
 	if err != nil || len(clusters) == 0 {
@@ -548,8 +551,16 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if nodes == nil {
 			continue
 		}
+		src, srcNodes, addOnly := by, nodes, false
+		if by != c.OriginHost {
+			if ol, _ := s.askManager(ctx, c, c.OriginHost, snap); ol.Nodes != nil {
+				src, srcNodes = c.OriginHost, ol.Nodes
+			} else {
+				addOnly = true
+			}
+		}
 		s.mu.Lock()
-		err := s.link(ctx, c.ID, by, nodes, snap)
+		err := s.link(ctx, c.ID, src, srcNodes, snap, addOnly)
 		s.mu.Unlock()
 		if err != nil {
 			return fmt.Errorf("cluster %s: %w", c.Name, err)
@@ -560,9 +571,6 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	return nil
 }
-
-// linkedNode returns the node ID c's origin is linked as, or "".
-func linkedNode(c Cluster) string { return nodeOf(c, c.OriginHost) }
 
 // nodeOf returns the node ID host is linked as in c, or "".
 func nodeOf(c Cluster, host string) string {
@@ -598,8 +606,9 @@ func claims(sw *agents.SwarmState, clusterID string, n agents.SwarmNode) bool {
 // listedBy: a host is a member when its state claims a node the list
 // contains; the role is the list's. Rows are only written when they
 // change. Two hosts claiming one node keep listedBy or the one already
-// linked; any other tie links neither.
-func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []agents.SwarmNode, snap map[string]hostState) error {
+// linked; any other tie links neither. With addOnly, existing members and
+// their nodes are left as they are and only new ones are linked.
+func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []agents.SwarmNode, snap map[string]hostState, addOnly bool) error {
 	byNode := make(map[string]agents.SwarmNode, len(nodes))
 	for _, n := range nodes {
 		byNode[n.ID] = n
@@ -649,9 +658,13 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	linkedNodes := map[string]bool{}
+	for _, m := range existing {
+		linkedNodes[m.NodeID] = true
+	}
 	for hostID, m := range existing {
 		st, inSnap := snap[hostID]
-		if _, keep := want[hostID]; keep || (inSnap && !st.known) {
+		if _, keep := want[hostID]; keep || addOnly || (inSnap && !st.known) {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_memberships WHERE host_id = ? AND cluster_id = ?`, hostID, clusterID); err != nil {
@@ -661,6 +674,9 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 	}
 	for hostID, m := range want {
 		if old, ok := existing[hostID]; ok && old.NodeID == m.NodeID && old.Role == m.Role {
+			continue
+		}
+		if _, ok := existing[hostID]; addOnly && (ok || linkedNodes[m.NodeID]) {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_memberships WHERE host_id = ? OR (cluster_id = ? AND node_id = ?)`,

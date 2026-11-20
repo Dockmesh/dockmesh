@@ -141,12 +141,15 @@
     const n = nodes.find((x) => x.id === nodeId);
     return n ? nodeLabel(n) : nodeId ? nodeId.slice(0, 12) : '—';
   };
-  const originNode = $derived(nodes.find((n) => n.host_id === cluster?.origin_host));
   // Hosts the caller can't view are named by their node's hostname.
-  const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? (originNode ? nodeLabel(originNode) : cluster.origin_host)) : '');
+  const nameOf = (hostId: string) => {
+    const n = nodes.find((x) => x.host_id === hostId);
+    return hostNames[hostId] ?? (n ? nodeLabel(n) : hostId);
+  };
+  const originName = $derived(cluster ? nameOf(cluster.origin_host) : '');
   const readId = $derived(st?.read_host ?? cluster?.origin_host ?? '');
   const readNode = $derived(nodes.find((n) => n.host_id === readId));
-  const readName = $derived(readId ? (hostNames[readId] ?? (readNode ? nodeLabel(readNode) : readId)) : '');
+  const readName = $derived(readId ? nameOf(readId) : '');
   const failover = $derived(!!st?.failover);
   const managers = $derived(st?.managers ?? nodes.filter((n) => n.role === 'manager').length);
   const reachable = $derived(st?.managers_reachable ?? 0);
@@ -367,8 +370,8 @@
       <div class="note grey" role="status" data-testid="cluster-notice">
         <CircleDashed size={14} strokeWidth={1.8} />
         <div>
-          <b>{m.cl_unreach_title({ host: originName })}</b>
-          <span>{st?.known_at ? m.cl_unreach_known({ ago: fmtAgo(st.known_at) }) : m.cl_unreach_unknown()} {m.cl_unreach_check({ host: originName })}</span>
+          <b>{failover ? m.cl_unreach_title_any() : m.cl_unreach_title({ host: originName })}</b>
+          <span>{st?.known_at ? m.cl_unreach_known({ ago: fmtAgo(st.known_at) }) : m.cl_unreach_unknown()} {failover ? m.cl_unreach_check_any() : m.cl_unreach_check({ host: originName })}</span>
         </div>
       </div>
     {:else if cstate === 'unknown'}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -12,9 +13,10 @@ import (
 // readers returns the hosts that may serve c's Swarm reads, in the order
 // they are tried. Only managers that proved their node identity take part
 // in failover: the current reader first, so a working choice sticks, then
-// the leader, then the origin, then the others by host id. An unverified
-// origin comes last, so an install whose agents can't prove yet keeps its
-// read-only view. While a changed root CA waits, only the origin is used.
+// the leader, then the origin, then the others by host id. While no
+// manager is verified, the origin serves alone, so an install whose agents
+// can't prove yet keeps its read-only view. While a changed root CA waits,
+// only the origin is used.
 func (s *Service) readers(c Cluster, nodes []agents.SwarmNode) []string {
 	if c.Trust.Pending {
 		return []string{c.OriginHost}
@@ -34,39 +36,28 @@ func (s *Service) readers(c Cluster, nodes []agents.SwarmNode) []string {
 			leader = m.HostID
 		}
 	}
+	if len(verified) == 0 {
+		return []string{c.OriginHost}
+	}
 	sort.Strings(verified)
-	out := make([]string, 0, len(verified)+1)
+	out := make([]string, 0, len(verified))
 	add := func(h string) {
-		if h == "" {
-			return
+		if slices.Contains(verified, h) && !slices.Contains(out, h) {
+			out = append(out, h)
 		}
-		for _, x := range out {
-			if x == h {
-				return
-			}
-		}
-		out = append(out, h)
 	}
-	has := func(h string) bool {
-		for _, v := range verified {
-			if v == h {
-				return true
-			}
-		}
-		return false
-	}
-	if cur := s.readerOf(c.ID); has(cur) {
-		add(cur)
-	}
+	add(s.readerOf(c.ID))
 	add(leader)
-	if has(c.OriginHost) {
-		add(c.OriginHost)
-	}
+	add(c.OriginHost)
 	for _, h := range verified {
 		add(h)
 	}
-	add(c.OriginHost)
 	return out
+}
+
+func (s *Service) lastNodes(id string) []agents.SwarmNode {
+	v, _ := s.seenOf(id)
+	return v.nodes
 }
 
 func (s *Service) readerOf(id string) string {
@@ -94,12 +85,8 @@ func (s *Service) setReader(id, host string) {
 // it. With none answering the cluster is unreachable, or without quorum
 // when a linked manager reported that.
 func (s *Service) askManagers(ctx context.Context, c Cluster, snap map[string]hostState) (agents.SwarmNodesResp, string, string) {
-	var nodes []agents.SwarmNode
-	if v, ok := s.seenOf(c.ID); ok {
-		nodes = v.nodes
-	}
 	state := StateUnreachable
-	for _, h := range s.readers(c, nodes) {
+	for _, h := range s.readers(c, s.lastNodes(c.ID)) {
 		list, st := s.askManager(ctx, c, h, snap)
 		if list.Nodes != nil {
 			s.setReader(c.ID, h)
@@ -127,7 +114,7 @@ func (s *Service) askManager(ctx context.Context, c Cluster, host string, snap m
 	if sw.ClusterID == "" {
 		return none, StateNoQuorum
 	}
-	if !isLinkedManager(c, host, &agents.DaemonInfo{Swarm: sw}) {
+	if sw.ClusterID != c.ID {
 		return none, StateUnreachable
 	}
 	list, err := s.nodesOf(ctx, host)
@@ -152,12 +139,12 @@ func (s *Service) ReadHost(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var nodes []agents.SwarmNode
-	if v, ok := s.seenOf(id); ok {
-		nodes = v.nodes
-	}
+	// One deadline for all candidates, so a read waits at most this long
+	// however many managers are tried.
+	ctx, cancel := context.WithTimeout(ctx, 2*hostTimeout)
+	defer cancel()
 	var last error
-	for _, h := range s.readers(c, nodes) {
+	for _, h := range s.readers(c, s.lastNodes(id)) {
 		// An offline agent's daemon info is its last hello.
 		if h != "local" && s.hosts.JoinedAt(h).IsZero() {
 			continue

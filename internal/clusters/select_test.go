@@ -115,7 +115,7 @@ func TestUnverifiedNeverTakesOver(t *testing.T) {
 		nodes := append(slices.Clone(f.nodes["m1"]), agents.SwarmNode{ID: "n5", Role: RoleManager})
 		f.nodes = map[string][]agents.SwarmNode{"m1": nodes, "m2": nodes}
 		f.infos["fake"] = swarmInfo(swarmID, "n5", RoleManager)
-		f.provers["fake"] = ca.issue(t, "n4", swarmID, RoleWorker, futureCert()).prover(t)
+		f.provers["fake"] = ca.issue(t, "n4", swarmID, RoleWorker, time.Now().Add(90*24*time.Hour)).prover(t)
 		s := newService(t, f)
 		s.SetServerID("server-1")
 		if _, err := s.Create(context.Background(), "m1", "", "u1"); err != nil {
@@ -156,4 +156,56 @@ func TestNoFailoverWhileRootPending(t *testing.T) {
 	}
 }
 
-func futureCert() time.Time { return time.Now().Add(90 * 24 * time.Hour) }
+// A manager that took over reads can't unlink or demote anyone while the
+// origin is away, and the origin's list rules again once it answers.
+func TestReaderListOnlyAdds(t *testing.T) {
+	f, _ := provedLab(t)
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	if _, err := s.Create(context.Background(), "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	setOffline(f, "m1", true)
+	forged := []agents.SwarmNode{{ID: "n1", Role: RoleManager}, {ID: "n2", Role: RoleManager, Leader: true}}
+	f.mu.Lock()
+	f.nodes["m2"] = forged
+	f.mu.Unlock()
+	if got, err := readNow(t, s); err != nil || got != "m2" {
+		t.Fatalf("read host %q, %v", got, err)
+	}
+	c, _ := s.Get(context.Background(), swarmID)
+	if want := map[string]string{"m1": "n1/manager", "m2": "n2/manager", "w1": "n3/worker"}; !equal(roles(c), want) {
+		t.Fatalf("members %v", roles(c))
+	}
+	setOffline(f, "m1", false)
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = s.Get(context.Background(), swarmID)
+	if c.Status.ReadHost != "m2" {
+		t.Fatalf("reader %q, want m2 (sticky)", c.Status.ReadHost)
+	}
+	if roles(c)["w1"] != "n3/worker" {
+		t.Fatalf("origin's list not used: %v", roles(c))
+	}
+}
+
+// An origin whose proof was refused is no fallback once other managers
+// are verified.
+func TestRefusedOriginNoFallback(t *testing.T) {
+	f, ca := provedLab(t)
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	f.provers["m1"] = ca.issue(t, "n9", swarmID, RoleManager, time.Now().Add(90*24*time.Hour)).prover(t)
+	if _, err := s.Create(context.Background(), "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.Get(context.Background(), swarmID)
+	if c.Trust.OriginVerified || !slices.Equal(s.readers(c, nil), []string{"m2"}) {
+		t.Fatalf("origin verified %v, readers %v", c.Trust.OriginVerified, s.readers(c, nil))
+	}
+	setOffline(f, "m2", true)
+	if got, err := readNow(t, s); !errors.Is(err, ErrUnreadable) {
+		t.Fatalf("read through %q (%v)", got, err)
+	}
+}

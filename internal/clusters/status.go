@@ -196,6 +196,9 @@ func (s *Service) forget(clusterID string) {
 	s.smu.Lock()
 	delete(s.seen, clusterID)
 	s.smu.Unlock()
+	s.pmu.Lock()
+	delete(s.reader, clusterID)
+	s.pmu.Unlock()
 }
 
 func (s *Service) seenOf(clusterID string) (seen, bool) {

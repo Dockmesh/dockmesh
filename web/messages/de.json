@@ -6568,6 +6568,8 @@
   "cl_unreach_known": "Das ist der letzte bekannte Zustand von {ago}, nur lesend.",
   "cl_unreach_unknown": "Seit dem Start von Dockmesh wurde nichts gelesen.",
   "cl_unreach_check": "Der Swarm selbst kann in Ordnung sein; Dockmesh liest ihn nur über {host}, prüfe also den Agent dort.",
+  "cl_unreach_title_any": "Dockmesh erreicht den Agent auf keinem verifizierten Manager.",
+  "cl_unreach_check_any": "Der Swarm selbst kann in Ordnung sein; prüfe die Agents auf den Manager-Hosts.",
   "cl_res_read": "Dockmesh liest diesen Swarm nur über {host} und wechselt nicht zu einem anderen Manager; ist dieser Agent offline, zeigt die Seite den letzten bekannten Zustand.",
   "cl_res_failover": "Dockmesh liest diesen Swarm über {host} und wechselt zu einem anderen der {n} verifizierten Manager, wenn dieser Agent wegfällt.",
   "cl_res_need_two": "Failover braucht Agents auf mindestens 2 Managern, die ihre Node-Identität nachgewiesen haben.",

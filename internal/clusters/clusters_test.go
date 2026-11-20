@@ -100,8 +100,8 @@ func (f *fakeHosts) SwarmProve(_ context.Context, id string, req agents.SwarmPro
 	return p(req)
 }
 
-// JoinedAt: hosts are online since long ago unless marked offline or
-// failing, or given a session start in joined.
+// JoinedAt reports a fixed old session start unless the host is offline,
+// failing, or set in joined.
 func (f *fakeHosts) JoinedAt(id string) time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
