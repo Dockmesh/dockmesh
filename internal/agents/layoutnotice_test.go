@@ -14,7 +14,7 @@ import (
 
 // connectAs enrolls an agent called name and records the hello it would
 // send, then lets it go offline again.
-func connectAs(t *testing.T, svc *Service, name string, hello HelloPayload) string {
+func connectAs(t *testing.T, svc *Service, name string, hello HelloPayload) *ConnectedAgent {
 	t.Helper()
 	ctx := context.Background()
 	res, err := svc.Create(ctx, name)
@@ -32,24 +32,27 @@ func connectAs(t *testing.T, svc *Service, name string, hello HelloPayload) stri
 	}
 	ag := newConnectedAgent(res.Agent.ID, name, nil)
 	ag.certFP = pki.FingerprintFromCert(cert)
-	if err := svc.markOnline(ctx, ag, hello); err != nil {
+	reconnect(t, svc, ag, hello)
+	return ag
+}
+
+func reconnect(t *testing.T, svc *Service, ag *ConnectedAgent, hello HelloPayload) {
+	t.Helper()
+	if err := svc.markOnline(context.Background(), ag, hello); err != nil {
 		t.Fatal(err)
 	}
 	svc.markOffline(ag)
-	return res.Agent.ID
 }
 
 func TestLegacyLayoutNotice(t *testing.T) {
 	legacy := HelloPayload{OS: "linux"}
 	managed := HelloPayload{OS: "linux", Layout: LayoutManaged}
 	tests := []struct {
-		name string
-		// hellos are the agents' names and what they reported.
+		name     string
 		hellos   map[string]HelloPayload
 		wantOpen bool
-		// wantIn and wantOut are checked against the notice body.
-		wantIn  []string
-		wantOut []string
+		wantIn   []string
+		wantOut  []string
 	}{
 		{"only managed agents", map[string]HelloPayload{"m1": managed, "m2": managed}, false, nil, nil},
 		{"legacy and managed", map[string]HelloPayload{"old-1": legacy, "new-1": managed}, true,
@@ -99,25 +102,23 @@ func TestLegacyLayoutNotice(t *testing.T) {
 	}
 }
 
+// TestLegacyLayoutNoticeLifecycle relies on the syncs the agent events
+// run themselves.
 func TestLegacyLayoutNoticeLifecycle(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 	n := notices.NewService(svc.db)
-	sync := func() []notices.Notice {
-		t.Helper()
-		if err := svc.SyncLegacyLayoutNotice(ctx, n); err != nil {
-			t.Fatal(err)
-		}
-		return openLayoutNotices(t, n)
-	}
+	svc.SetNotices(n)
+	legacy := HelloPayload{OS: "linux"}
+	managed := HelloPayload{OS: "linux", Layout: LayoutManaged}
 
 	// connectAs leaves every agent offline: an agent Docker took down
 	// stays listed.
-	var ids []string
+	var ags []*ConnectedAgent
 	for i := range 12 {
-		ids = append(ids, connectAs(t, svc, fmt.Sprintf("old-%02d", i), HelloPayload{OS: "linux"}))
+		ags = append(ags, connectAs(t, svc, fmt.Sprintf("old-%02d", i), legacy))
 	}
-	got := sync()
+	got := openLayoutNotices(t, n)
 	if len(got) != 1 || !strings.Contains(got[0].Body, "old-09") || strings.Contains(got[0].Body, "old-10") ||
 		!strings.Contains(got[0].Body, "and 2 more") {
 		t.Fatalf("12 legacy agents: %+v", got)
@@ -126,24 +127,47 @@ func TestLegacyLayoutNoticeLifecycle(t *testing.T) {
 		t.Errorf("notice = %+v", got[0])
 	}
 
-	if err := svc.Delete(ctx, ids[0]); err != nil {
+	admin := notices.Viewer{UserID: "u-admin", Allowed: func(string) bool { return true }}
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO users (id, username, password) VALUES ('u-admin', 'admin', 'x')`); err != nil {
 		t.Fatal(err)
 	}
-	got = sync()
+	if err := n.Dismiss(ctx, admin, got[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	reconnect(t, svc, ags[1], legacy)
+	if err := svc.SyncLegacyLayoutNotice(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := n.ForViewer(ctx, admin); err != nil || len(v) != 1 || !v[0].Dismissed {
+		t.Fatalf("an unchanged layout brought a dismissed notice back: %+v, %v", v, err)
+	}
+
+	if err := svc.Delete(ctx, ags[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	got = openLayoutNotices(t, n)
 	if len(got) != 1 || strings.Contains(got[0].Body, "old-00") || !strings.Contains(got[0].Body, "and 1 more") {
 		t.Fatalf("after deleting one: %+v", got)
 	}
 
-	for _, id := range ids[1:] {
-		if _, err := svc.db.ExecContext(ctx, `UPDATE agents SET layout = ? WHERE id = ?`, LayoutManaged, id); err != nil {
-			t.Fatal(err)
-		}
+	if err := svc.markUninstalled(ctx, ags[1]); err != nil {
+		t.Fatal(err)
 	}
-	if got := sync(); len(got) != 0 {
+	if got = openLayoutNotices(t, n); len(got) != 1 || strings.Contains(got[0].Body, "old-01") {
+		t.Fatalf("after one removed itself: %+v", got)
+	}
+
+	for _, ag := range ags[2:] {
+		reconnect(t, svc, ag, managed)
+	}
+	if got := openLayoutNotices(t, n); len(got) != 0 {
 		t.Fatalf("all agents moved to the managed layout, notice still open: %+v", got)
 	}
-	if got := sync(); len(got) != 0 {
-		t.Fatalf("second sync reopened the notice: %+v", got)
+	if err := svc.SyncLegacyLayoutNotice(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if got := openLayoutNotices(t, n); len(got) != 0 {
+		t.Fatalf("the periodic sync reopened the notice: %+v", got)
 	}
 }
 

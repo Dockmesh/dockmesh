@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,14 @@ const (
 	// legacyLayoutNoticeNames caps the agent names the notice lists.
 	legacyLayoutNoticeNames = 10
 )
+
+// syncLegacyLayoutNotice is SyncLegacyLayoutNotice with the service's own
+// notices, for the events that change the list.
+func (s *Service) syncLegacyLayoutNotice(ctx context.Context) {
+	if err := s.SyncLegacyLayoutNotice(ctx, s.notices); err != nil {
+		slog.Warn("agent legacy layout notice", "err", err)
+	}
+}
 
 // SyncLegacyLayoutNotice raises one notice naming the Linux agents whose
 // last hello reported the legacy layout, and resolves it once none is
@@ -48,13 +57,11 @@ func (s *Service) SyncLegacyLayoutNotice(ctx context.Context, n *notices.Service
 	if len(names) == 0 {
 		return n.Resolve(ctx, legacyLayoutNoticeKey)
 	}
-	var body i18n.Text
+	var list any = strings.Join(names, ", ")
 	if extra := len(names) - legacyLayoutNoticeNames; extra > 0 {
-		body = i18n.Msg("notice.agent_legacy_layout.more",
-			strings.Join(names[:legacyLayoutNoticeNames], ", "), strconv.Itoa(extra))
-	} else {
-		body = i18n.Msg("notice.agent_legacy_layout.body", strings.Join(names, ", "))
+		list = i18n.Msg("notice.agent_legacy_layout.more", strings.Join(names[:legacyLayoutNoticeNames], ", "), strconv.Itoa(extra))
 	}
+	body := i18n.Msg("notice.agent_legacy_layout.body", list)
 	same, err := n.OpenWithBody(ctx, legacyLayoutNoticeKey, body)
 	if err != nil || same {
 		return err
