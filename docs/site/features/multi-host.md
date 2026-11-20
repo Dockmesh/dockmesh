@@ -193,7 +193,9 @@ The cluster's nodes, services, tasks and overlay networks are read through its o
 
 - `GET /api/v1/clusters/{id}/nodes` needs Hosts: View on the cluster; it lists every node, including those without an agent.
 - `GET /api/v1/clusters/{id}/services`, `…/services/{service}` and `…/tasks` (optionally `?service=`) need Stacks: View on the cluster.
-- `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster.
+- `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster. With Stacks: View on the cluster as well, each network lists the services attached to it.
+- `GET /api/v1/networks/topology?cluster={id}` is the cluster graph of the **Topology** page and needs Networks: View and Stacks: View on the cluster.
+- `GET /api/v1/clusters/{id}/volumes` needs Volumes: View and Hosts: View on the cluster. It lists the volumes of every Swarm stack (label `com.docker.stack.namespace`) per stack, with the linked hosts that hold a copy. Swarm creates a stack's `local` volumes on each node a task ran on, so one volume usually appears on several hosts. Only hosts with an agent are read; a host that doesn't answer is listed as unreachable, and volumes of a Compose project are left out even when they carry the label.
 
 A host or host tag assignment on one of the nodes does not reach these. A service shows the names of its environment variables but never their values, and its secrets and configs by name only; their data never leaves the manager. Lists are capped (1000 services, 5000 tasks, 500 networks) and say so when they are cut.
 
