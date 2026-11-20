@@ -107,6 +107,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"issuer_url required", "issuer_url_required"},
 	{"ldap not configured", "ldap_not_configured"},
 	{"legacy API tokens can't create tokens; sign in, or use a token created after the upgrade", "legacy_token_cannot_create_tokens"},
+	{"list cluster memberships failed", "cluster_memberships_failed"},
 	{"login failed", "login_failed"},
 	{"metrics collector not configured", "metrics_collector_not_configured"},
 	{"metrics not configured", "metrics_not_configured"},

@@ -44,6 +44,32 @@ func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// ListClusterMemberships returns the memberships of the hosts the caller
+// holds hosts.view on, so a host-only user learns the cluster's name but
+// nothing else about it.
+//
+//	GET /api/v1/clusters/memberships
+func (h *Handlers) ListClusterMemberships(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeJSON(w, http.StatusOK, []clusters.Membership{})
+		return
+	}
+	list, err := h.Clusters.Memberships(r.Context())
+	if err != nil {
+		slog.Error("list cluster memberships", "err", err)
+		writeError(w, http.StatusInternalServerError, "list cluster memberships failed")
+		return
+	}
+	access := middleware.AccessOf(r.Context())
+	out := []clusters.Membership{}
+	for _, m := range list {
+		if access.AllowsOn(rbac.PermHostsView, h.hostScopeReq(m.HostID)) {
+			out = append(out, m)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // ListClusterCandidates lists Swarms that have a manager host but no
 // cluster yet.
 //

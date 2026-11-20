@@ -183,9 +183,16 @@ When several hosts manage the Swarm, pick the one to create it from. That host b
 
 The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the origin's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from the origin: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While the origin is unreachable or no longer a manager, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
 
-**Delete…** on the cluster's line of the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
+**Delete…** in the menu of the cluster's row on the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
 
-The host list marks linked hosts with their role and cluster. Hosts that are not in a Swarm behave exactly as before.
+On the Hosts page a cluster is one expandable row: its state, how many managers and workers it has, how many nodes have no Dockmesh agent, and the leader or, when the origin can't be reached, when its state was last known. The linked hosts are listed indented below it with their role; a node without an agent is not a host and doesn't appear there. The state comes from the origin's view, checked every minute:
+
+- **Healthy**: every node is ready and every manager reachable.
+- **Degraded**: a node is down or a manager unreachable, but the Swarm still has quorum.
+- **No quorum**: the origin is online but its Swarm has no leader, so Swarm can't change anything.
+- **Unreachable**: the origin's agent is offline or can't list the nodes; the row shows the last known state with its time.
+
+Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
 
 ### Reading a cluster through the API
 

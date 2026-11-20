@@ -15,8 +15,9 @@
   import {
     api, ApiError,
     type Agent, type SystemMetrics, type Migration, type StackListEntry,
-    type DrainPlan
+    type DrainPlan, type ClusterMembership
   } from '$lib/api';
+  import { memberRoleLine } from '$lib/cluster';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState, StatBar, StatusChip, Tabs, TagPill, Modal, LiveIndicator } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
@@ -32,7 +33,7 @@
   import SetupTab from './_SetupTab.svelte';
   import HostMetrics from '$lib/components/HostMetrics.svelte';
   import TopConsumers from '$lib/components/TopConsumers.svelte';
-  import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle, Info, Copy } from 'lucide-svelte';
+  import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle, Info, Copy, Network } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
   const isLocal = $derived(id === 'local');
@@ -48,6 +49,7 @@
   let containers = $state<any[]>([]);
   let stacks = $state<StackListEntry[]>([]);
   let migrations = $state<Migration[]>([]);
+  let membership = $state<ClusterMembership | null>(null);
   let tags = $state<string[]>([]);
   let allFleetTags = $state<string[]>([]);
   let upgradePolicyVersion = $state<string>('');
@@ -116,12 +118,14 @@
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
       }
-      const [t, allT, migRes] = await Promise.all([
+      const [t, allT, migRes, mships] = await Promise.all([
         api.hosts.listTags(id).catch(() => []),
         api.hosts.allTags().catch(() => []),
-        api.migrations.list(50).catch(() => [])
+        api.migrations.list(50).catch(() => []),
+        api.clusters.memberships().catch(() => [])
       ]);
       if (!current()) return;
+      membership = mships.find((x) => x.host_id === id) ?? null;
       // A tag edit in progress survives the 10 s refresh.
       const dirty = tagsDraft.join(',') !== tags.join(',');
       tags = t;
@@ -434,6 +438,16 @@
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs infox" onclick={hideLegacy} aria-label={m.hosts_legacy_hide()} title={m.hosts_legacy_hide()}>
           <X size={13} strokeWidth={1.8} />
         </button>
+      </div>
+    {/if}
+
+    {#if membership}
+      <div class="infobox" role="note" data-testid="cluster-member">
+        <Network size={14} strokeWidth={1.8} />
+        <div class="infobody">
+          <span><b>{m.hosts_member_of({ cluster: membership.cluster_name })}</b> · {memberRoleLine(membership)} · <span class="dm-mono dm-dim" title={membership.node_id}>{membership.node_id.slice(0, 12)}</span></span>
+          <span class="dm-dim">{m.hosts_member_detail()}</span>
+        </div>
       </div>
     {/if}
 

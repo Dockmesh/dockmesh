@@ -1,0 +1,3 @@
+kind: Added
+body: Hosts list shows a Swarm cluster as an expandable row with its state and nodes; host pages say which cluster the host belongs to
+time: 2026-11-20T12:50:05.07951807Z
