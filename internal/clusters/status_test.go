@@ -167,6 +167,22 @@ func TestMemberships(t *testing.T) {
 		t.Fatalf("w1 = %+v %+v", w, w.Node)
 	}
 
+	f.mu.Lock()
+	f.failing["m1"] = true
+	f.mu.Unlock()
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.Memberships(ctx)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("origin offline: %v %v", list, err)
+	}
+	for _, m := range list {
+		if m.Node != nil {
+			t.Fatalf("node state from an old list: %+v", m)
+		}
+	}
+
 	restarted := New(s.db, f)
 	list, err = restarted.Memberships(ctx)
 	if err != nil || len(list) != 3 {

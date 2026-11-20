@@ -150,7 +150,7 @@ func (s *Service) statusOf(c Cluster) *Status {
 }
 
 // Memberships lists every linked host with its cluster and, when the last
-// node list has it, its node's state.
+// check returned a node list, its node's state.
 func (s *Service) Memberships(ctx context.Context) ([]Membership, error) {
 	list, err := s.List(ctx)
 	if err != nil {
@@ -158,10 +158,13 @@ func (s *Service) Memberships(ctx context.Context) ([]Membership, error) {
 	}
 	out := []Membership{}
 	for _, c := range list {
+		// A list from an earlier check would show a leader that may be gone.
 		v, _ := s.seenOf(c.ID)
-		byID := make(map[string]agents.SwarmNode, len(v.nodes))
-		for _, n := range v.nodes {
-			byID[n.ID] = n
+		byID := map[string]agents.SwarmNode{}
+		if v.state == StateHealthy || v.state == StateDegraded {
+			for _, n := range v.nodes {
+				byID[n.ID] = n
+			}
 		}
 		for _, m := range c.Members {
 			ms := Membership{HostID: m.HostID, ClusterID: c.ID, ClusterName: c.Name, NodeID: m.NodeID, Role: m.Role}

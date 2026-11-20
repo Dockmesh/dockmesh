@@ -178,8 +178,9 @@ paths:
         scope, host tag or globally; a cluster scope alone shows none. Names
         the cluster even when the caller can't open it, so a host page can
         say which cluster the host belongs to. `node` is the host's entry in
-        the origin manager's last node list and is missing until the first
-        check after a server start.
+        the node list of the origin manager's last check; it is missing
+        when that check returned no list (cluster unreachable or without
+        quorum) and before the first check after a server start.
       responses:
         "200":
           description: Memberships.
