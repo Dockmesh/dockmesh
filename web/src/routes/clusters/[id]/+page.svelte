@@ -155,7 +155,6 @@
   const namedStacks = $derived(stacks.filter((g) => g.stack !== ''));
   const desired = $derived((services ?? []).reduce((a, s) => a + s.desired_tasks, 0));
   const running = $derived(services ? services.reduce((a, s) => a + s.running_tasks, 0) : (dist?.tasks ?? 0));
-  // What an empty list says: an error, nothing read while read-only, or loading.
   const waitText = $derived(readError ?? (readOnly ? m.cl_stale_none() : m.cl_loading()));
   const top = $derived(heaviest(dist));
   const maxTasks = $derived(Math.max(1, ...nodes.map((n) => n.tasks)));

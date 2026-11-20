@@ -6675,5 +6675,5 @@
   "cl_stacks_external_one": "1 Stack · außerhalb von Dockmesh deployt",
   "hosts_cluster_tasks_one": "1 Task",
   "cl_no_metrics_access": "Keine Metriken: braucht eine Rolle auf diesem Host",
-  "cl_agent_yes": "Agent"
+  "cl_agent_yes": "Verknüpfter Host (kein Zugriff)"
 }

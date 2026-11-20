@@ -128,8 +128,8 @@ export function nodeLabel(n: { id: string; hostname?: string }): string {
   return n.hostname || n.id.slice(0, 12);
 }
 
-/** Whether a placement constraint ties a service to one node, as the
- * server's pinned rule reads it. */
+/** The placement constraint that ties a service to one node, as the
+ * server's pinned rule reads it, or null. */
 export function pinningConstraint(constraints: string[] | undefined): string | null {
   return constraints?.find((c) => /^\s*node\.(hostname|id)\s*==\s*\S+\s*$/.test(c)) ?? null;
 }
