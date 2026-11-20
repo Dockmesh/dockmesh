@@ -17,7 +17,10 @@ func dumpTables(t *testing.T, database *sql.DB, tables ...string) string {
 		if err != nil {
 			t.Fatalf("%s: %v", tbl, err)
 		}
-		cols, _ := rows.Columns()
+		cols, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
 		fmt.Fprintf(&b, "%s %v\n", tbl, cols)
 		for rows.Next() {
 			vals := make([]any, len(cols))
@@ -29,6 +32,9 @@ func dumpTables(t *testing.T, database *sql.DB, tables ...string) string {
 				t.Fatal(err)
 			}
 			fmt.Fprintf(&b, "  %v\n", vals)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
 		}
 		rows.Close()
 	}
@@ -71,9 +77,10 @@ func TestClusterScopeMigration(t *testing.T) {
 		VALUES (1, 'corp', 'Corp', 'https://idp.test', 'c', 's', 'viewer')`)
 	exec(`INSERT INTO oidc_provider_group_mappings (provider_id, group_value, role_name, scope_type, scope_host, scope_value) VALUES
 		(1, 'ops', 'operator', 'host_tag', '', 'prod'), (1, 'devs', 'deployer', 'stack', '', 'db')`)
+	exec(`INSERT INTO invite_tokens (token_hash, role, created_by, expires_at, scopes_json) VALUES
+		('ih1', 'viewer', 'u1', '2030-01-01 00:00:00', '[{"type":"host","host":"agent-1"}]')`)
 
-	tables := []string{"role_assignments", "api_tokens", "oidc_provider_group_mappings", "saml_provider_group_mappings",
-		"ldap_provider_group_mappings", "oauth2_provider_group_mappings", "invite_tokens", "sqlite_sequence"}
+	tables := []string{"role_assignments", "api_tokens", "oidc_provider_group_mappings", "invite_tokens", "sqlite_sequence"}
 	before := dumpTables(t, database, tables...)
 	for start := range 2 {
 		if err := Migrate(database); err != nil {

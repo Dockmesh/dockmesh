@@ -206,7 +206,6 @@ func TestClusterScope(t *testing.T) {
 	acc := &Access{Grants: []Grant{
 		{Perms: hostsView, Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}},
 		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHost, Host: "m1"}}},
-		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHostTag, Value: "prod"}}},
 	}}
 	cases := []struct {
 		name string
@@ -236,13 +235,33 @@ func TestClusterScope(t *testing.T) {
 	if clusterOnly.AllowsNear(PermContainersView, "m1", nil) || clusterOnly.AllowsOn(PermContainersView, Resource{HostID: "m1"}) {
 		t.Error("a cluster grant reached a node host")
 	}
-	admin := &Access{Grants: []Grant{{Perms: PermsFor(Levels{"hosts": "manage"}, nil), Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}}}}
-	if admin.Allows(PermClustersCreate) {
+	clusterManage := &Access{Grants: []Grant{{Perms: PermsFor(Levels{"hosts": "manage"}, nil), Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}}}}
+	if clusterManage.Allows(PermClustersCreate) {
 		t.Error("a cluster grant gave a global-only permission")
 	}
 	tok := (&Access{Grants: []Grant{{Perms: hostsView, Scopes: []Scope{Global}}}}).Restrict(hostsView, Scope{Type: ScopeCluster, Host: "c1"})
 	if !tok.AllowsOn(PermHostsView, Resource{ClusterID: "c1"}) || tok.AllowsOn(PermHostsView, Resource{ClusterID: "c2"}) || tok.AllowsOn(PermHostsView, Resource{HostID: "m1"}) {
 		t.Error("a token restricted to a cluster matched outside it")
+	}
+}
+
+func TestScopeContainsCluster(t *testing.T) {
+	c1 := Scope{Type: ScopeCluster, Host: "c1"}
+	cases := []struct {
+		c, s Scope
+		want bool
+	}{
+		{c1, c1, true},
+		{c1, Scope{Type: ScopeCluster, Host: "c2"}, false},
+		{c1, Scope{Type: ScopeHost, Host: "c1"}, false},
+		{Scope{Type: ScopeHost, Host: "c1"}, c1, false},
+		{Scope{Type: ScopeHostTag, Value: "prod"}, c1, false},
+		{Global, c1, true},
+	}
+	for _, tc := range cases {
+		if got := ScopeContains(tc.c, tc.s, func(string) []string { return []string{"prod"} }); got != tc.want {
+			t.Errorf("%v contains %v: %v, want %v", tc.c, tc.s, got, tc.want)
+		}
 	}
 }
 

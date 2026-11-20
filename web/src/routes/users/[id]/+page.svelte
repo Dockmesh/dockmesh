@@ -55,12 +55,12 @@
         api.clusters.list().catch(() => [] as Cluster[])
       ]);
       user = u;
-      clusters = cl;
       users = all;
       roles = r;
       catalog = c;
       hosts = h.filter((x) => x.kind !== 'all' && x.status !== 'revoked');
       stacks = s;
+      clusters = cl;
       draftEmail = u.email ?? '';
       draftName = u.display_name ?? '';
       if (allowed('tokens.manage_others') || isSelf) {

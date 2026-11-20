@@ -18,11 +18,10 @@ const (
 // stack scopes and the Swarm cluster id for a cluster scope; Value is the
 // tag or the stack name. A cluster scope covers the cluster's own
 // resources only, never the hosts that are its nodes, and a host scope
-// never covers the cluster. Stack names are
-// unique across the instance (one deployment host per stack). A stack
-// scope with a Host matches the stack while it is deployed there; without
-// a Host it matches the stack wherever it runs and while it is not
-// deployed.
+// never covers the cluster. Stack names are unique across the instance
+// (one deployment host per stack). A stack scope with a Host matches the
+// stack while it is deployed there; without a Host it matches the stack
+// wherever it runs and while it is not deployed.
 type Scope struct {
 	Type  string `json:"type"`
 	Host  string `json:"host,omitempty"`
@@ -445,6 +444,8 @@ func ScopeContains(c, s Scope, tags func(hostID string) []string) bool {
 		}
 	case ScopeStack:
 		return s.Type == ScopeStack && s.Value == c.Value && (c.Host == "" || c.Host == s.Host)
+	case ScopeCluster:
+		return s.Type == ScopeCluster && s.Host == c.Host
 	}
 	return false
 }

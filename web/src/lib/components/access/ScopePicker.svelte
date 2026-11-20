@@ -33,8 +33,6 @@
     clusters = c;
   });
 
-  // Cluster is offered only once a cluster exists (or the scope already
-  // names one).
   const OPTIONS = $derived([
     { key: 'global', label: m.access_scope_everything() },
     { key: 'host', label: m.common_host() },
