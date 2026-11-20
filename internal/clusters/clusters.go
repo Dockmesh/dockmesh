@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -27,8 +28,20 @@ var (
 	ErrBadName    = errors.New("invalid name: 1 to 64 letters, digits, spaces, '.', '-' or '_'")
 	ErrNotManager = errors.New("the host is not a manager of an active Swarm")
 	ErrNotFound   = errors.New("cluster not found")
-	ErrConflict   = errors.New("another manager host of this Swarm does not list this host as a manager")
 )
+
+// ConflictError refuses a create because Host, another host claiming to
+// manage the Swarm, does not list the chosen host as a manager.
+type ConflictError struct{ Host string }
+
+func (e *ConflictError) Error() string {
+	return "host " + e.Host + " also reports to manage this Swarm but does not list the chosen host as a manager; check or revoke it"
+}
+
+func (e *ConflictError) Is(target error) bool { return target == ErrConflict }
+
+// ErrConflict matches every *ConflictError.
+var ErrConflict = errors.New("swarm managers disagree")
 
 // hostTimeout bounds each live call to one host, so an agent that never
 // answers can't stall a reconcile or a create.
@@ -247,7 +260,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		}
 		if !listsManager(theirs, nodeID) {
 			slog.Warn("swarm managers disagree", "cluster", id, "origin", hostID, "other", other)
-			return Cluster{}, ErrConflict
+			return Cluster{}, &ConflictError{Host: other}
 		}
 	}
 	if name == "" {
@@ -280,17 +293,17 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 
 // Delete removes a cluster and its memberships; nothing changes on the
 // Swarm. It is the way out of a cluster created from the wrong host.
-func (s *Service) Delete(ctx context.Context, id string) error {
+func (s *Service) Delete(ctx context.Context, id string) (Cluster, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id)
+	c, err := s.get(ctx, id)
 	if err != nil {
-		return err
+		return Cluster{}, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id); err != nil {
+		return Cluster{}, err
 	}
-	return nil
+	return c, nil
 }
 
 func (s *Service) get(ctx context.Context, id string) (Cluster, error) {
@@ -438,8 +451,8 @@ func claims(sw *agents.SwarmState, clusterID string, n agents.SwarmNode) bool {
 // link makes the cluster's memberships match nodes, the node list of
 // listedBy: a host is a member when its state claims a node the list
 // contains; the role is the list's. Rows are only written when they
-// change. Two hosts claiming one node keep the one already linked; a new
-// tie links neither.
+// change. Two hosts claiming one node keep listedBy or the one already
+// linked; any other tie links neither.
 func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []agents.SwarmNode, snap map[string]hostState) error {
 	byNode := make(map[string]agents.SwarmNode, len(nodes))
 	for _, n := range nodes {
@@ -463,6 +476,9 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 		pick := ""
 		if len(hostIDs) == 1 {
 			pick = hostIDs[0]
+		} else if slices.Contains(hostIDs, listedBy) {
+			// The list's own host was checked live against it.
+			pick = listedBy
 		} else {
 			for _, h := range hostIDs {
 				if m, ok := existing[h]; ok && m.NodeID == nodeID {

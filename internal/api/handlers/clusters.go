@@ -108,13 +108,18 @@ func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := h.Clusters.Delete(r.Context(), id); errors.Is(err, clusters.ErrNotFound) {
+	c, err := h.Clusters.Delete(r.Context(), id)
+	if errors.Is(err, clusters.ErrNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionClusterDelete, id, nil)
+	hosts := make([]string, 0, len(c.Members))
+	for _, m := range c.Members {
+		hosts = append(hosts, m.HostID)
+	}
+	h.audit(r, audit.ActionClusterDelete, id, map[string]any{"name": c.Name, "origin": c.OriginHost, "members": hosts})
 	w.WriteHeader(http.StatusNoContent)
 }

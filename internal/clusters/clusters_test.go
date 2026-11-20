@@ -339,10 +339,10 @@ func TestDelete(t *testing.T) {
 	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Delete(ctx, swarmID); err != nil {
-		t.Fatal(err)
+	if c, err := s.Delete(ctx, swarmID); err != nil || len(c.Members) != 3 {
+		t.Fatalf("delete: %+v %v", c, err)
 	}
-	if err := s.Delete(ctx, swarmID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Delete(ctx, swarmID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
 	var n int
@@ -370,5 +370,31 @@ func TestReconcileNoOriginKeepsMembers(t *testing.T) {
 	c, _ := s.get(ctx, swarmID)
 	if len(c.Members) != 3 {
 		t.Fatalf("members %v", roles(c))
+	}
+}
+
+// A host claiming the origin's own node can't keep the origin unlinked.
+func TestOriginWinsTie(t *testing.T) {
+	ctx := context.Background()
+	f := lab()
+	f.infos["imposter"] = swarmInfo(swarmID, "n1", RoleManager)
+	f.nodes["imposter"] = f.nodes["m1"]
+	s := newService(t, f)
+	c, err := s.Create(ctx, "m1", "prod", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(c); got["m1"] != "n1/manager" || got["imposter"] != "" {
+		t.Fatalf("members %v", got)
+	}
+}
+
+func TestConflictNamesHost(t *testing.T) {
+	f := lab()
+	f.nodes["m2"] = []agents.SwarmNode{{ID: "n2", Role: RoleManager}}
+	_, err := newService(t, f).Create(context.Background(), "m1", "", "")
+	var ce *ConflictError
+	if !errors.As(err, &ce) || ce.Host != "m2" {
+		t.Fatalf("err %v", err)
 	}
 }
