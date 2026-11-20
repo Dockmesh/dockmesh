@@ -33,6 +33,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -89,6 +90,8 @@ type Service struct {
 	rollbackKeep int
 
 	locks *stacklock.Locks
+	// migrating reports an unfinished migration of the stack.
+	migrating func(ctx context.Context, stack string) (bool, error)
 
 	mu   sync.Mutex
 	busy map[string]bool
@@ -101,6 +104,12 @@ func NewService(dockerCli *docker.Client, db *sql.DB) *Service {
 // SetLocks replaces the updater's own stack locks with the ones deploys,
 // scaling and rolling updates share.
 func (s *Service) SetLocks(l *stacklock.Locks) { s.locks = l }
+
+// SetMigrating makes updates and rollbacks of stack containers refuse a
+// stack with an unfinished migration: its rollback would undo the swap.
+func (s *Service) SetMigrating(f func(ctx context.Context, stack string) (bool, error)) {
+	s.migrating = f
+}
 
 // acquire serialises swaps per stack (or per standalone container), so
 // two updates never rename and recreate the same replicas at once. A stack
@@ -122,6 +131,23 @@ func (s *Service) acquire(info *container.InspectResponse, st *stackTarget, op s
 		delete(s.busy, key)
 		s.mu.Unlock()
 	}, nil
+}
+
+// refuseMigrating returns migration.ErrMigrationActive while st's stack
+// has an unfinished migration. Called with the stack lock held, which a
+// migration takes before it records itself.
+func (s *Service) refuseMigrating(ctx context.Context, st *stackTarget) error {
+	if st == nil || s.migrating == nil {
+		return nil
+	}
+	active, err := s.migrating(ctx, st.stack)
+	if err != nil {
+		return err
+	}
+	if active {
+		return migration.ErrMigrationActive
+	}
+	return nil
 }
 
 // ManagedStack returns the stack a container belongs to when that stack
@@ -234,6 +260,9 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		return nil, err
 	}
 	defer release()
+	if err := s.refuseMigrating(ctx, st); err != nil {
+		return nil, err
+	}
 	if err := st.accept(ctx); err != nil {
 		return nil, err
 	}
@@ -398,6 +427,9 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 		return nil, err
 	}
 	defer release()
+	if err := s.refuseMigrating(ctx, st); err != nil {
+		return nil, err
+	}
 	if err := st.accept(ctx); err != nil {
 		return nil, err
 	}

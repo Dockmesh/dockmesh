@@ -3414,7 +3414,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "An update of this container is already running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "An update of this container is already running, another operation is changing its stack (`stack_busy`), its stack has a migration or migration rollback that has not finished (`migration_active`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
@@ -3465,7 +3465,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: "Already rolled back, the rollback image was pruned or removed, an update of this container is running, another operation is changing its stack (`stack_busy`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
+          description: "Already rolled back, the rollback image was pruned or removed, an update of this container is running, another operation is changing its stack (`stack_busy`), its stack has a migration or migration rollback that has not finished (`migration_active`), the stack files changed outside Dockmesh (`modified_outside`), or the container is a Swarm task (`swarm_managed`)."
           content:
             application/json:
               schema:
@@ -8598,15 +8598,17 @@ paths:
             repeat with `confirm_external=1` after reviewing `files`), the
             stack is on another host (`code: stack_on_other_host`), another
             operation is changing the stack (`code: stack_busy`, with
-            `operation` and `since`), or the service looks stateful
-            (`warning: stateful_service`; repeat with `force: true`).
+            `operation` and `since`), the stack has a migration or migration
+            rollback that has not finished (`code: migration_active`), or the
+            service looks stateful (`warning: stateful_service`; repeat with
+            `force: true`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: {type: string}
-                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy, migration_active]}
                   stack: {type: string}
                   host_id: {type: string}
                   files:
@@ -13201,7 +13203,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy or deployment rollback of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy, deployment rollback or rolling update of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
       content:
         application/json:
           schema:

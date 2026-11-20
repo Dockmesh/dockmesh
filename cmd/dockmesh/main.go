@@ -683,6 +683,7 @@ func main() {
 	stackLocks := stacklock.New()
 	updaterSvc := updater.NewService(dockerCli, database)
 	updaterSvc.SetLocks(stackLocks)
+	updaterSvc.SetMigrating(migration.NewStore(database).HasActive)
 	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
@@ -1002,7 +1003,7 @@ func main() {
 			}
 			return scaling.NewHostTarget(h, stack, service), nil
 		},
-		scaling.CheckedScale(stacksMgr, stackLocks, deployStore))
+		scaling.CheckedScale(stacksMgr, stackLocks, deployStore, migration.NewStore(database).HasActive))
 	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
 	defer scaleController.Stop()
 
