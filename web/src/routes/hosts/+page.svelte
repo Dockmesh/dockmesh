@@ -350,14 +350,16 @@
       toast.error(m.hosts_cluster_delete_failed(), err instanceof ApiError ? err.message : undefined);
       return;
     }
-    const items = accessLines(access);
+    const n = access.counts;
+    let body: string = n.assignments + n.mappings + n.invites + n.tokens > 0
+      ? m.hosts_cluster_delete_access({ assignments: n.assignments, mappings: n.mappings, invites: n.invites, tokens: n.tokens })
+      : m.hosts_cluster_delete_no_access();
+    if (!access.complete) body += ` ${m.hosts_cluster_delete_names_hidden()}`;
     if (!(await confirm.ask({
       title: m.hosts_cluster_delete_title({ name: c.name }),
       message: m.hosts_cluster_delete_message({ count: c.members.length }),
-      body: items.length > 0
-        ? m.hosts_cluster_delete_access({ assignments: access.assignments.length, mappings: access.mappings.length, invites: access.invites.length, tokens: access.tokens.length })
-        : m.hosts_cluster_delete_no_access(),
-      items, confirmLabel: m.hosts_cluster_delete(), danger: true, typeToConfirm: c.name
+      body, items: accessLines(access),
+      confirmLabel: m.hosts_cluster_delete(), danger: true, typeToConfirm: c.name
     }))) return;
     try {
       await api.clusters.delete(c.id);

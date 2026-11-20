@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -106,6 +108,76 @@ func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
+// clusterAccessView is what the caller may see of a cluster's access:
+// every count, and the names only where the caller could list them
+// elsewhere (users.view on everything; other users' tokens only with
+// tokens.manage_others).
+type clusterAccessView struct {
+	clusters.Access
+	Counts   map[string]int `json:"counts"`
+	Complete bool           `json:"complete"`
+}
+
+func (h *Handlers) viewClusterAccess(r *http.Request, a clusters.Access) clusterAccessView {
+	acc := middleware.AccessOf(r.Context())
+	v := clusterAccessView{Access: a, Counts: a.Counts(), Complete: true}
+	if !acc.HoldsOn(rbac.PermUsersView, rbac.Global, h.hostTags) {
+		v.Assignments, v.Invites, v.Mappings = []clusters.ScopedAssignment{}, []clusters.ScopedInvite{}, []clusters.ScopedMapping{}
+		v.Complete = len(a.Assignments)+len(a.Invites)+len(a.Mappings) == 0
+	}
+	if !acc.HoldsOn(rbac.PermTokensManageOthers, rbac.Global, h.hostTags) {
+		me := actorID(r)
+		own := []clusters.ScopedToken{}
+		for _, t := range a.Tokens {
+			if t.OwnerID == me {
+				own = append(own, t)
+			}
+		}
+		v.Complete = v.Complete && len(own) == len(a.Tokens)
+		v.Tokens = own
+	}
+	return v
+}
+
+// errClusterAccessAboveOwn refuses a cluster delete that would remove
+// access the caller could not have granted.
+var errClusterAccessAboveOwn = errors.New("cluster access above own")
+
+// checkClusterAccess applies the rule of checkGrant to deleting the
+// cluster's access: every assignment and group mapping role on it must be
+// one the caller may manage there, and other users' tokens need
+// tokens.manage_others.
+func (h *Handlers) checkClusterAccess(r *http.Request, id string, a clusters.Access) error {
+	scope := rbac.Scope{Type: rbac.ScopeCluster, Host: id}
+	check := func(what, role string) error {
+		if _, known := h.Roles.Role(role); !known {
+			return nil
+		}
+		if err := h.checkGrant(r, role, scope); err != nil {
+			return fmt.Errorf("%w: %s has the role %s, which you can't manage (%s)", errClusterAccessAboveOwn, what, role, strings.TrimPrefix(err.Error(), errGrantExceedsCaller.Error()+": "))
+		}
+		return nil
+	}
+	for _, x := range a.Assignments {
+		if err := check("a role assignment", x.Role); err != nil {
+			return err
+		}
+	}
+	for _, x := range a.Mappings {
+		if err := check("a "+strings.ToUpper(x.Kind)+" group mapping", x.Role); err != nil {
+			return err
+		}
+	}
+	manageOthers := middleware.AccessOf(r.Context()).HoldsOn(rbac.PermTokensManageOthers, rbac.Global, h.hostTags)
+	me := actorID(r)
+	for _, t := range a.Tokens {
+		if t.OwnerID != me && !manageOthers {
+			return fmt.Errorf("%w: an API token of another user is restricted to the cluster, and revoking it needs tokens.manage_others", errClusterAccessAboveOwn)
+		}
+	}
+	return nil
+}
+
 // ClusterAccess lists the role assignments, invites, IdP group mappings
 // and API tokens that deleting the cluster removes or revokes.
 //
@@ -123,7 +195,7 @@ func (h *Handlers) ClusterAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	writeJSON(w, http.StatusOK, h.viewClusterAccess(r, a))
 }
 
 // DeleteCluster removes a cluster, its memberships and the access on its
@@ -136,17 +208,29 @@ func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
 		return
 	}
-	id := chi.URLParam(r, "id")
-	c, removed, err := h.Clusters.Delete(r.Context(), id)
-	if errors.Is(err, clusters.ErrNotFound) {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if h.Roles == nil {
+		writeError(w, http.StatusServiceUnavailable, "roles store unavailable")
 		return
 	}
-	if err := h.Roles.Load(r.Context()); err != nil {
-		slog.Error("reload roles after cluster delete", "cluster", id, "err", err)
+	id := chi.URLParam(r, "id")
+	c, removed, err := h.Clusters.Delete(r.Context(), id, func(a clusters.Access) error {
+		return h.checkClusterAccess(r, id, a)
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, clusters.ErrNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case errors.Is(err, errClusterAccessAboveOwn):
+		h.AuditPermDenied(r, routePerm(r))
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "you can't delete this cluster: " + strings.TrimPrefix(err.Error(), errClusterAccessAboveOwn.Error()+": "),
+			"code":  "cluster_access_above_own",
+		})
+		return
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	hosts := make([]string, 0, len(c.Members))
 	for _, m := range c.Members {
@@ -160,5 +244,18 @@ func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		"name": c.Name, "origin": c.OriginHost, "members": hosts,
 		"removed": removed.Counts(), "revoked_tokens": tokens,
 	})
+	if err := h.reloadRoles(r.Context()); err != nil {
+		slog.Error("reload roles after cluster delete", "cluster", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "the cluster and its access were deleted, but the permission cache could not be reloaded; restart Dockmesh so the removed roles stop applying")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// reloadRoles reloads the role cache, once more after a failure.
+func (h *Handlers) reloadRoles(ctx context.Context) error {
+	if err := h.Roles.Load(ctx); err == nil {
+		return nil
+	}
+	return h.Roles.Load(ctx)
 }

@@ -181,6 +181,9 @@ export interface ClusterAccess {
   invites: { id: number; email_hint?: string; role: string; expired: boolean }[];
   mappings: { kind: 'oidc' | 'saml' | 'ldap' | 'oauth2'; provider: string; group: string; role: string }[];
   tokens: { id: number; name: string; owner?: string }[];
+  counts: { assignments: number; invites: number; mappings: number; tokens: number };
+  // False when names the caller may not see were left out of the lists.
+  complete: boolean;
 }
 
 export interface ClusterCandidate {

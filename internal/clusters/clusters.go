@@ -294,8 +294,10 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 // Delete removes a cluster, its memberships and everything granting or
 // restricting access on its scope (see Access), in one transaction;
 // nothing changes on the Swarm. It is the way out of a cluster created
-// from the wrong host. The caller reloads the role cache.
-func (s *Service) Delete(ctx context.Context, id string) (Cluster, Access, error) {
+// from the wrong host. allow sees what would go, inside the transaction,
+// and stops the delete by returning an error. The caller reloads the role
+// cache.
+func (s *Service) Delete(ctx context.Context, id string, allow func(Access) error) (Cluster, Access, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, err := s.get(ctx, id)
@@ -310,6 +312,11 @@ func (s *Service) Delete(ctx context.Context, id string) (Cluster, Access, error
 	a, invites, err := accessOf(ctx, tx, id)
 	if err != nil {
 		return Cluster{}, Access{}, err
+	}
+	if allow != nil {
+		if err := allow(a); err != nil {
+			return Cluster{}, Access{}, err
+		}
 	}
 	if err := removeAccess(ctx, tx, id, invites); err != nil {
 		return Cluster{}, Access{}, err

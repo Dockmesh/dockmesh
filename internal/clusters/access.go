@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"slices"
 
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -48,9 +49,10 @@ type ScopedMapping struct {
 // ScopedToken is an API token restricted to the cluster; it is revoked,
 // never left without its restriction.
 type ScopedToken struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Owner string `json:"owner,omitempty"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Owner   string `json:"owner,omitempty"`
+	OwnerID string `json:"-"`
 }
 
 // Counts sums Access up per kind, for the audit entry.
@@ -123,12 +125,12 @@ func accessOf(ctx context.Context, q querier, id string) (Access, []inviteRewrit
 	}
 	err = scanRows(ctx, q, func(r *sql.Rows) error {
 		var x ScopedToken
-		if err := r.Scan(&x.ID, &x.Name, &x.Owner); err != nil {
+		if err := r.Scan(&x.ID, &x.Name, &x.Owner, &x.OwnerID); err != nil {
 			return err
 		}
 		a.Tokens = append(a.Tokens, x)
 		return nil
-	}, `SELECT t.id, t.name, COALESCE(u.username, '') FROM api_tokens t
+	}, `SELECT t.id, t.name, COALESCE(u.username, ''), COALESCE(t.created_by_user_id, '') FROM api_tokens t
 		LEFT JOIN users u ON u.id = t.created_by_user_id
 		WHERE t.revoked_at IS NULL AND t.scope_type = ? AND t.scope_host = ? ORDER BY t.name, t.id`, rbac.ScopeCluster, id)
 	if err != nil {
@@ -142,7 +144,9 @@ func accessOf(ctx context.Context, q querier, id string) (Access, []inviteRewrit
 			return err
 		}
 		var scopes []rbac.Scope
-		_ = json.Unmarshal([]byte(raw), &scopes)
+		if err := json.Unmarshal([]byte(raw), &scopes); err != nil {
+			return fmt.Errorf("invite %d: read scopes: %w", x.ID, err)
+		}
 		onCluster := func(sc rbac.Scope) bool { return sc.Type == rbac.ScopeCluster && sc.Host == id }
 		if !slices.ContainsFunc(scopes, onCluster) {
 			return nil

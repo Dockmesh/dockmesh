@@ -83,8 +83,11 @@ paths:
         `cluster` scope, revokes API tokens restricted to it (never widens
         them), and drops the cluster from unused invites; an invite left
         with no scope expires. `GET /clusters/{id}/access` lists all of it
-        beforehand. Nothing changes on the Swarm. Audited as
-        `cluster.delete` with the counts per kind and the revoked token ids.
+        beforehand. The caller must be able to grant every assignment and
+        group mapping role on the cluster scope, and needs
+        `tokens.manage_others` when another user's token would be revoked.
+        Nothing changes on the Swarm. Audited as `cluster.delete` with the
+        counts per kind and the revoked token ids.
       parameters:
         - name: id
           in: path
@@ -93,8 +96,21 @@ paths:
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
-        "403": {$ref: "#/components/responses/Forbidden"}
+        "403":
+          description: |
+            Missing `clusters.create`, or (code `cluster_access_above_own`)
+            the cluster holds access above the caller's own; the message
+            names the assignment, mapping or token that blocks the delete.
+            Nothing was deleted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "500":
+          description: Deleting failed and nothing changed, or (code `cluster_deleted_cache_stale`) everything was deleted but the permission cache could not be reloaded.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /clusters/{id}/access:
     get:
       operationId: clusters.access
@@ -103,7 +119,11 @@ paths:
       description: |
         Needs the global-only `clusters.create`. Lists the role assignments,
         unused invites, IdP group mappings (OIDC, SAML, LDAP, OAuth2) and
-        active API tokens on the cluster's scope.
+        active API tokens on the cluster's scope. `counts` always covers
+        everything; the lists name users, invites and mappings only for
+        callers with `users.view` on everything, and other users' tokens
+        only with `tokens.manage_others`. `complete` is false when names
+        were left out.
       parameters:
         - name: id
           in: path
@@ -170,8 +190,17 @@ components:
               linked_at: {type: string, format: date-time}
     ClusterAccess:
       type: object
-      required: [assignments, invites, mappings, tokens]
+      required: [assignments, invites, mappings, tokens, counts, complete]
       properties:
+        counts:
+          type: object
+          required: [assignments, invites, mappings, tokens]
+          properties:
+            assignments: {type: integer}
+            invites: {type: integer}
+            mappings: {type: integer}
+            tokens: {type: integer}
+        complete: {type: boolean}
         assignments:
           type: array
           items:

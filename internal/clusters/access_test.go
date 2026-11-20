@@ -56,7 +56,7 @@ func TestDeleteRemovesClusterAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, removed, err := s.Delete(ctx, swarmID)
+	_, removed, err := s.Delete(ctx, swarmID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestDeleteIsAtomic(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER fail_delete BEFORE DELETE ON clusters BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Delete(ctx, swarmID); err == nil {
+	if _, _, err := s.Delete(ctx, swarmID, nil); err == nil {
 		t.Fatal("delete succeeded")
 	}
 	a, err := s.AccessOf(ctx, swarmID)
@@ -127,5 +127,30 @@ func TestDeleteIsAtomic(t *testing.T) {
 	}
 	if c := a.Counts(); c["assignments"] != 2 || c["tokens"] != 1 || c["mappings"] != 3 || c["invites"] != 2 {
 		t.Fatalf("access after failed delete: %v", c)
+	}
+}
+
+// A refusal from allow leaves the cluster and its access as they were.
+func TestDeleteRefusedByAllow(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t, lab())
+	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	seedAccess(t, s)
+	refuse := errors.New("refused")
+	var seen Access
+	if _, _, err := s.Delete(ctx, swarmID, func(a Access) error { seen = a; return refuse }); !errors.Is(err, refuse) {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(seen.Tokens) != 1 || seen.Tokens[0].OwnerID != "u1" {
+		t.Fatalf("allow saw %+v", seen.Tokens)
+	}
+	a, err := s.AccessOf(ctx, swarmID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := a.Counts(); c["assignments"] != 2 || c["tokens"] != 1 || c["mappings"] != 3 || c["invites"] != 2 {
+		t.Fatalf("access after refused delete: %v", c)
 	}
 }
