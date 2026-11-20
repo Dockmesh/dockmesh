@@ -280,8 +280,8 @@ func (h *Handlers) ClusterDistribution(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if withUsage {
-		h.measureNodes(r.Context(), &in, withServices, func(hostID string) bool {
-			return middleware.AllowedOn(r.Context(), rbac.PermHostsView, h.hostScopeReq(hostID))
+		h.measureNodes(r.Context(), &in, withServices, func(ctx context.Context, hostID string) bool {
+			return middleware.AllowedOn(ctx, rbac.PermHostsView, h.hostScopeReq(hostID))
 		})
 	}
 	d := distribute(in)
@@ -293,7 +293,7 @@ func (h *Handlers) ClusterDistribution(w http.ResponseWriter, r *http.Request) {
 // measureNodes asks every ready node host the caller may view for its CPU
 // and memory and, with services, sums the newest samples of its task
 // containers per service.
-func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices bool, canView func(hostID string) bool) {
+func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices bool, canView func(ctx context.Context, hostID string) bool) {
 	in.usage, in.offline, in.denied = map[string]nodeUsage{}, map[string]bool{}, map[string]bool{}
 	if withServices && h.Metrics != nil {
 		in.measured = map[string]map[string]svcUsage{}
@@ -305,7 +305,7 @@ func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices
 		if hostID == "" || n.State != "ready" {
 			continue
 		}
-		if !canView(hostID) {
+		if !canView(ctx, hostID) {
 			in.denied[n.ID] = true
 			continue
 		}

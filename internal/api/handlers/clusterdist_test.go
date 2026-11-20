@@ -190,7 +190,7 @@ func TestMeasureNodesNeedsHostAccess(t *testing.T) {
 	nodes[2].State = "down"
 	in := distInput{nodes: nodes, hostOf: map[string]string{"n1": "a1", "n2": "a2", "n3": "a3"}}
 	asked := map[string]bool{}
-	(&Handlers{}).measureNodes(context.Background(), &in, true, func(hostID string) bool {
+	(&Handlers{}).measureNodes(context.Background(), &in, true, func(_ context.Context, hostID string) bool {
 		asked[hostID] = true
 		return hostID == "a1"
 	})
