@@ -49,24 +49,26 @@ func parseLogsSince(s string, now time.Time) (string, bool) {
 	return "", false
 }
 
+var errLogsTail, errLogsSince = errors.New("bad tail"), errors.New("bad since")
+
 // serviceLogsReqAt reads tail, since and follow of a service log request;
 // a relative since counts back from now.
-func serviceLogsReqAt(r *http.Request, service string, now time.Time) (agents.SwarmLogsReq, string) {
+func serviceLogsReqAt(r *http.Request, service string, now time.Time) (agents.SwarmLogsReq, error) {
 	q := r.URL.Query()
 	req := agents.SwarmLogsReq{Service: service, Tail: 100, Follow: q.Get("follow") != "0" && q.Get("follow") != "false"}
 	if t := q.Get("tail"); t != "" {
 		n, err := strconv.Atoi(t)
 		if err != nil || n < 0 || n > agents.MaxSwarmLogTail {
-			return req, "tail must be a number from 0 to " + strconv.Itoa(agents.MaxSwarmLogTail)
+			return req, errLogsTail
 		}
 		req.Tail = n
 	}
 	since, ok := parseLogsSince(q.Get("since"), now)
 	if !ok {
-		return req, "since must be a duration like 15m (at most 90 days), an RFC 3339 time or unix seconds"
+		return req, errLogsSince
 	}
 	req.Since = since
-	return req, ""
+	return req, nil
 }
 
 // WSClusterServiceLogs streams the logs of every task of a Swarm service,
@@ -91,9 +93,13 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}
-	req, bad := serviceLogsReqAt(r, service, time.Now())
-	if bad != "" {
-		writeError(w, http.StatusBadRequest, bad)
+	req, err := serviceLogsReqAt(r, service, time.Now())
+	switch {
+	case errors.Is(err, errLogsTail):
+		writeError(w, http.StatusBadRequest, "tail must be a number from 0 to 5000")
+		return
+	case errors.Is(err, errLogsSince):
+		writeError(w, http.StatusBadRequest, "since must be a duration like 15m (at most 90 days), an RFC 3339 time or unix seconds")
 		return
 	}
 	hostID, ok := h.clusterReadHost(w, r)

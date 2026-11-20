@@ -31,9 +31,9 @@ func TestServiceLogsReq(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/?"+tt.query, nil)
-			req, bad := serviceLogsReqAt(r, "web", now)
-			if (bad != "") != tt.bad {
-				t.Fatalf("bad %q, want bad=%v", bad, tt.bad)
+			req, err := serviceLogsReqAt(r, "web", now)
+			if (err != nil) != tt.bad {
+				t.Fatalf("err %v, want bad=%v", err, tt.bad)
 			}
 			if tt.bad {
 				return
