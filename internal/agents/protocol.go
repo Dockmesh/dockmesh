@@ -172,7 +172,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 8
+const ProtocolVersion = 9
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -223,6 +223,9 @@ const (
 	// CapSwarmRead, agent: answers the Swarm service, task and network
 	// read frames, and refuses every Swarm frame unless it is a manager.
 	CapSwarmRead = "swarm.read"
+	// CapSwarmLogs, agent: serves the StreamKindSwarmServiceLogs stream
+	// kind on a manager.
+	CapSwarmLogs = "swarm.logs"
 )
 
 // Stream control ops beyond the exec "resize".

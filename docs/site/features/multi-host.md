@@ -206,6 +206,16 @@ A host or host tag assignment on one of the nodes does not reach these. A servic
 
 Only a Swarm manager answers: an agent on a worker refuses, and while the origin is offline or no longer a manager the API answers 503. Reading services, tasks and networks needs an agent of this version on the origin.
 
+### Service logs
+
+`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the origin manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs Containers: Logs on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
+
+- `tail`: lines per task to send first, 0 to 5000 (default 100).
+- `since`: only lines from then on, as a duration back from now (`15m`, at most 90 days), an RFC 3339 time or unix seconds.
+- `follow=0`: end the stream after the existing lines instead of following.
+
+Closing the socket stops the stream on the manager. Of the log metadata only the task and node are passed on; attributes a log driver adds from labels or environment variables stay on the manager. At most 32 service log streams are open at once and 4 per user or API token; more answer 429. The origin's agent has to run this version, otherwise the request is refused with 503.
+
 ## Agent upgrades
 
 When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` from the agent listener over HTTPS with its client certificate, checks it against the SHA-256 the server sends, replaces itself and reconnects.
