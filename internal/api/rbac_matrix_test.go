@@ -197,6 +197,11 @@ var routeGates = []struct {
 	{"POST", "/api/v1/clusters", rbac.PermClustersCreate},
 	{"GET", "/api/v1/clusters/{id}/access", rbac.PermClustersCreate},
 	{"DELETE", "/api/v1/clusters/{id}", rbac.PermClustersCreate},
+	{"GET", "/api/v1/clusters/{id}/nodes", rbac.PermHostsView},
+	{"GET", "/api/v1/clusters/{id}/services", rbac.PermStacksView},
+	{"GET", "/api/v1/clusters/{id}/services/{service}", rbac.PermStacksView},
+	{"GET", "/api/v1/clusters/{id}/tasks", rbac.PermStacksView},
+	{"GET", "/api/v1/clusters/{id}/networks", rbac.PermNetworksView},
 	{"PUT", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"POST", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"DELETE", "/api/v1/hosts/{id}/tags/{tag}", rbac.PermHostsTag},
@@ -546,6 +551,16 @@ var alsoNeeds = map[string]rbac.Perm{
 	"DELETE /api/v1/containers/{id}/files": rbac.PermContainersExec,
 }
 
+// clusterScoped are routes on a cluster's own resources: a host scope,
+// even on one of its nodes, never reaches them.
+var clusterScoped = map[string]bool{
+	"GET /api/v1/clusters/{id}/nodes":              true,
+	"GET /api/v1/clusters/{id}/services":           true,
+	"GET /api/v1/clusters/{id}/services/{service}": true,
+	"GET /api/v1/clusters/{id}/tasks":              true,
+	"GET /api/v1/clusters/{id}/networks":           true,
+}
+
 // fleetWide are routes whose handler also needs the permission on
 // everything, because the action reaches every host.
 var fleetWide = map[string]bool{
@@ -643,7 +658,7 @@ func runGateMatrix(t *testing.T, router http.Handler, h *handlers.Handlers, call
 			if also, ok := alsoNeeds[g.method+" "+g.path]; ok {
 				want = want && c.perms[also]
 			}
-			if fleetWide[g.method+" "+g.path] {
+			if fleetWide[g.method+" "+g.path] || clusterScoped[g.method+" "+g.path] {
 				want = want && c.scope.IsGlobal()
 			}
 			code, body := call(g.method, path, c.token)

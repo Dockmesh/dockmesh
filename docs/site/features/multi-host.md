@@ -194,6 +194,18 @@ On the Hosts page a cluster is one expandable row: its state, how many managers 
 
 Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
 
+### Reading a cluster through the API
+
+The cluster's nodes, services, tasks and overlay networks are read through its origin manager. The API offers them read-only:
+
+- `GET /api/v1/clusters/{id}/nodes` needs Hosts: View on the cluster; it lists every node, including those without an agent.
+- `GET /api/v1/clusters/{id}/services`, `…/services/{service}` and `…/tasks` (optionally `?service=`) need Stacks: View on the cluster.
+- `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster.
+
+A host or host tag assignment on one of the nodes does not reach these. A service shows the names of its environment variables but never their values, and its secrets and configs by name only; their data never leaves the manager. Lists are capped (1000 services, 5000 tasks, 500 networks) and say so when they are cut.
+
+Only a Swarm manager answers: an agent on a worker refuses, and while the origin is offline or no longer a manager the API answers 503. Reading services, tasks and networks needs an agent of this version on the origin.
+
 ## Agent upgrades
 
 When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` from the agent listener over HTTPS with its client certificate, checks it against the SHA-256 the server sends, replaces itself and reconnects.
