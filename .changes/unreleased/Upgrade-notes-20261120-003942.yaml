@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: The role assignments table is rebuilt once on start to allow the new cluster scope; every assignment, IdP group mapping and token restriction keeps its id and scope
+time: 2026-11-20T00:39:42.197679491Z
+custom:
+    Audience: admins
+    Id: role-assignments-cluster-scope

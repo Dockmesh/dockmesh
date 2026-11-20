@@ -1,7 +1,7 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
   import { onMount } from 'svelte';
-  import { api, type HostInfo, type Scope, type ScopeType, type StackListEntry } from '$lib/api';
+  import { api, type Cluster, type HostInfo, type Scope, type ScopeType, type StackListEntry } from '$lib/api';
   import { Segmented } from '$lib/components/ui';
 
   let {
@@ -18,30 +18,37 @@
   let hosts = $state<HostInfo[]>([]);
   let tags = $state<string[]>([]);
   let stacks = $state<StackListEntry[]>([]);
+  let clusters = $state<Cluster[]>([]);
 
   onMount(async () => {
-    const [h, t, s] = await Promise.all([
+    const [h, t, s, c] = await Promise.all([
       api.hosts.list().catch(() => [] as HostInfo[]),
       api.hosts.allTags().catch(() => [] as string[]),
-      api.stacks.list().catch(() => [] as StackListEntry[])
+      api.stacks.list().catch(() => [] as StackListEntry[]),
+      api.clusters.list().catch(() => [] as Cluster[])
     ]);
     hosts = h.filter((x) => x.kind !== 'all' && x.status !== 'revoked');
     tags = t;
     stacks = s;
+    clusters = c;
   });
 
-  const OPTIONS = [
+  // Cluster is offered only once a cluster exists (or the scope already
+  // names one).
+  const OPTIONS = $derived([
     { key: 'global', label: m.access_scope_everything() },
     { key: 'host', label: m.common_host() },
     { key: 'host_tag', label: m.access_scope_host_tag() },
-    { key: 'stack', label: m.common_stack() }
-  ];
+    { key: 'stack', label: m.common_stack() },
+    ...(clusters.length > 0 || value.type === 'cluster' ? [{ key: 'cluster', label: m.access_scope_cluster() }] : [])
+  ]);
 
   function setType(t: string) {
     const type = t as ScopeType;
     if (type === 'global') set({ type });
     else if (type === 'host') set({ type, host: hosts[0]?.id ?? 'local' });
     else if (type === 'host_tag') set({ type, value: tags[0] ?? '' });
+    else if (type === 'cluster') set({ type, host: clusters[0]?.id ?? '' });
     else {
       const s = stacks[0];
       set({ type, value: s?.name ?? '', host: s?.deployment?.host_id ?? '' });
@@ -62,6 +69,12 @@
     <select class="dm-input" aria-label={m.common_host()} value={value.host} onchange={(e) => set({ type: 'host', host: e.currentTarget.value })}>
       {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
     </select>
+  {:else if value.type === 'cluster'}
+    <select class="dm-input" aria-label={m.access_scope_cluster()} value={value.host} onchange={(e) => set({ type: 'cluster', host: e.currentTarget.value })}>
+      {#each clusters as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+      {#if value.host && !clusters.some((c) => c.id === value.host)}<option value={value.host}>{value.host}</option>{/if}
+    </select>
+    <span class="dm-sub">{m.access_scope_cluster_hint()}</span>
   {:else if value.type === 'host_tag'}
     <input class="dm-input" aria-label={m.access_scope_host_tag()} list="scope-tags" placeholder={m.access_scope_tag_placeholder()} value={value.value ?? ''}
       oninput={(e) => set({ type: 'host_tag', value: e.currentTarget.value.trim().toLowerCase() })} />

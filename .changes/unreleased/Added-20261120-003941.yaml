@@ -1,0 +1,3 @@
+kind: Added
+body: Roles can be assigned on a Docker Swarm cluster (new scope type cluster) for users, invites, identity provider group mappings and API token restrictions; a cluster role covers the cluster itself, not the hosts that are its nodes
+time: 2026-11-20T00:39:41.749960607Z

@@ -1,7 +1,13 @@
-import type { Assignment, CustomRole, RoleCatalog, Scope } from './api';
+import type { Assignment, Cluster, CustomRole, RoleCatalog, Scope } from './api';
 import { m } from '$lib/paraglide/messages.js';
 
+// Host ids and cluster ids (Swarm cluster IDs never look like a host id)
+// to display names.
 export type HostNames = Record<string, string>;
+
+export function withClusterNames(names: HostNames, clusters: Cluster[]): HostNames {
+  return { ...names, ...Object.fromEntries(clusters.map((c) => [c.id, c.name])) };
+}
 
 export function scopeLabel(s: Scope | undefined, hosts: HostNames = {}): string {
   const hn = (id?: string) => (id ? hosts[id] ?? id : '');
@@ -10,6 +16,8 @@ export function scopeLabel(s: Scope | undefined, hosts: HostNames = {}): string 
       return m.lib_scope_host({ host: hn(s.host) });
     case 'host_tag':
       return m.lib_scope_host_tag({ tag: s.value ?? '' });
+    case 'cluster':
+      return m.lib_scope_cluster({ cluster: hn(s.host) });
     case 'stack':
       return s.host ? m.lib_scope_stack_on({ stack: s.value ?? '', host: hn(s.host) }) : m.lib_scope_stack({ stack: s.value ?? '' });
     default:

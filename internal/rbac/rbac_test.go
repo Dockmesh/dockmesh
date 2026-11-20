@@ -198,3 +198,67 @@ func TestLevelsCoveringNeverWidens(t *testing.T) {
 		t.Errorf("stacks level = %s, want deploy", levels["stacks"])
 	}
 }
+
+// A cluster scope covers the cluster's own resources and nothing on its
+// nodes; host and host tag scopes never reach the cluster.
+func TestClusterScope(t *testing.T) {
+	hostsView := PermsFor(Levels{"hosts": "view", "containers": "view"}, nil)
+	acc := &Access{Grants: []Grant{
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}},
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHost, Host: "m1"}}},
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHostTag, Value: "prod"}}},
+	}}
+	cases := []struct {
+		name string
+		res  Resource
+		want bool
+	}{
+		{"own cluster", Resource{ClusterID: "c1"}, true},
+		{"other cluster", Resource{ClusterID: "c2"}, false},
+		{"node host by its host grant", Resource{HostID: "m1"}, true},
+		{"node host without host grant", Resource{HostID: "m2"}, false},
+		{"empty resource", Resource{}, false},
+	}
+	for _, tc := range cases {
+		if got := acc.AllowsOn(PermHostsView, tc.res); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	hostOnly := &Access{Grants: []Grant{
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHost, Host: "m1"}}},
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeHostTag, Value: "prod"}}},
+		{Perms: hostsView, Scopes: []Scope{{Type: ScopeStack, Value: "web"}}},
+	}}
+	if hostOnly.AllowsOn(PermHostsView, Resource{ClusterID: "c1"}) {
+		t.Error("a host, tag or stack grant reached a cluster")
+	}
+	clusterOnly := &Access{Grants: []Grant{{Perms: hostsView, Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}}}}
+	if clusterOnly.AllowsNear(PermContainersView, "m1", nil) || clusterOnly.AllowsOn(PermContainersView, Resource{HostID: "m1"}) {
+		t.Error("a cluster grant reached a node host")
+	}
+	admin := &Access{Grants: []Grant{{Perms: PermsFor(Levels{"hosts": "manage"}, nil), Scopes: []Scope{{Type: ScopeCluster, Host: "c1"}}}}}
+	if admin.Allows(PermClustersCreate) {
+		t.Error("a cluster grant gave a global-only permission")
+	}
+	tok := (&Access{Grants: []Grant{{Perms: hostsView, Scopes: []Scope{Global}}}}).Restrict(hostsView, Scope{Type: ScopeCluster, Host: "c1"})
+	if !tok.AllowsOn(PermHostsView, Resource{ClusterID: "c1"}) || tok.AllowsOn(PermHostsView, Resource{ClusterID: "c2"}) || tok.AllowsOn(PermHostsView, Resource{HostID: "m1"}) {
+		t.Error("a token restricted to a cluster matched outside it")
+	}
+}
+
+func TestScopeValidate(t *testing.T) {
+	cases := []struct {
+		s  Scope
+		ok bool
+	}{
+		{Scope{Type: ScopeCluster, Host: "c1"}, true},
+		{Scope{Type: ScopeCluster}, false},
+		{Scope{Type: ScopeCluster, Host: "c1", Value: "x"}, false},
+		{Scope{Type: "swarm", Host: "c1"}, false},
+	}
+	for _, tc := range cases {
+		if err := tc.s.Validate(); (err == nil) != tc.ok {
+			t.Errorf("%+v: %v, want ok=%v", tc.s, err, tc.ok)
+		}
+	}
+}

@@ -136,17 +136,35 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 	}
 }
 
-// A host-scoped hosts.view sees no clusters.
-func TestListClustersNeedsGlobalView(t *testing.T) {
+// A cluster-scoped hosts.view sees that cluster; a host scope on one of
+// its nodes, a host tag or another cluster sees none.
+func TestListClustersByScope(t *testing.T) {
 	e := newAuthzEnv(t)
 	e.h.Clusters = clusters.New(e.db, swarmHosts{})
 	if _, err := e.h.Clusters.Create(context.Background(), "local", "prod", ""); err != nil {
 		t.Fatal(err)
 	}
-	e.roleScopes = map[string][]rbac.Scope{"viewer": {{Type: rbac.ScopeHost, Host: "local"}}}
-	u := e.user("v", "viewer")
-	ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})
-	if rr := clusterCall(ctx, e.h.ListClusters, http.MethodGet, nil); rr.Body.String() != "[]\n" {
-		t.Fatalf("host-scoped viewer sees %s", rr.Body)
+	tests := []struct {
+		name  string
+		scope rbac.Scope
+		want  int
+	}{
+		{"cluster", rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"}, 1},
+		{"global", rbac.Global, 1},
+		{"node host", rbac.Scope{Type: rbac.ScopeHost, Host: "local"}, 0},
+		{"host tag", rbac.Scope{Type: rbac.ScopeHostTag, Value: "prod"}, 0},
+		{"other cluster", rbac.Scope{Type: rbac.ScopeCluster, Host: "c2"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e.roleScopes = map[string][]rbac.Scope{"viewer": {tt.scope}}
+			u := e.user("v-"+strings.ReplaceAll(tt.name, " ", "-"), "viewer")
+			ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})
+			var got []clusters.Cluster
+			rr := clusterCall(ctx, e.h.ListClusters, http.MethodGet, nil)
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || len(got) != tt.want {
+				t.Fatalf("got %s, want %d clusters", rr.Body, tt.want)
+			}
+		})
 	}
 }

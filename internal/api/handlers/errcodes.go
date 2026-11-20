@@ -77,6 +77,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"host not found", "host_not_found"},
 	{"host tags unavailable", "host_tags_unavailable"},
 	{"host_tag can't be combined with host or stack", "host_tag_exclusive"},
+	{"cluster can't be combined with host, host_tag or stack", "cluster_exclusive"},
 	{"image required", "image_required"},
 	{"install runner not wired", "install_runner_not_wired"},
 	{"invalid JSON body", "invalid_json_body"},

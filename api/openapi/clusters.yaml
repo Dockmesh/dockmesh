@@ -5,8 +5,8 @@ paths:
       tags: [clusters]
       summary: List clusters and their linked hosts
       description: |
-        Only a global `hosts.view` sees clusters; everyone else gets an empty
-        list. A host is linked when a manager's node list contains the node
+        Lists the clusters the caller holds `hosts.view` on, globally or on a
+        `cluster` scope; a host scope on a node shows nothing. A host is linked when a manager's node list contains the node
         ID the host reports; the role is the manager's view.
       responses:
         "200":
