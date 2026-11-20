@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/clusters"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/deploy"
@@ -97,6 +98,7 @@ type Handlers struct {
 	Agents            *agents.Service
 	Hosts             *host.Registry
 	HostTags          *hosttags.Service
+	Clusters          *clusters.Service
 	Roles             *rbac.Store
 	Settings          *settings.Store
 	GlobalEnv         *globalenv.Store
@@ -186,6 +188,7 @@ type Deps struct {
 	Agents         *agents.Service
 	Hosts          *host.Registry
 	HostTags       *hosttags.Service
+	Clusters       *clusters.Service
 	Roles          *rbac.Store
 	Settings       *settings.Store
 	GlobalEnv      *globalenv.Store
@@ -250,6 +253,7 @@ func New(d Deps) *Handlers {
 		Agents:            d.Agents,
 		Hosts:             d.Hosts,
 		HostTags:          d.HostTags,
+		Clusters:          d.Clusters,
 		Roles:             d.Roles,
 		Settings:          d.Settings,
 		GlobalEnv:         d.GlobalEnv,

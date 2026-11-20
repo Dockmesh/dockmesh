@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Roles with Hosts: Manage on everything, Admin and a global Host Admin included, can now create Swarm clusters (clusters.create); nothing else changes until someone creates one'
+time: 2026-11-20T00:18:59.258966866Z
+custom:
+    Audience: admins
+    Id: clusters-create-permission

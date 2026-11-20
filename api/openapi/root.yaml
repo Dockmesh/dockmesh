@@ -64,6 +64,8 @@ tags:
     description: Free-form host tagging used for RBAC + scope filtering.
   - name: agents
     description: Remote-agent enrollment and revocation.
+  - name: clusters
+    description: Docker Swarms managed as clusters and the hosts linked to them as nodes.
   - name: containers
     description: Docker container lifecycle — list, inspect, start/stop/restart/pause/kill, logs, stats, exec.
   - name: stacks

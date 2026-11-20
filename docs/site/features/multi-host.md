@@ -175,6 +175,18 @@ Tags are lowercase labels (letters, digits and hyphens, starting with a letter o
 
 Tags limit access (an assignment on a host tag covers every host with that tag, see [Permissions](../concepts/permissions.md)), registry credentials and alert rules to the hosts that carry them.
 
+## Docker Swarm clusters
+
+When a host is a manager of a Docker Swarm, the **Hosts** page shows "Docker Swarm detected" to users who may create clusters (`clusters.create`, granted only on everything). **Create cluster** makes the Swarm a Dockmesh cluster; Dockmesh never creates one on its own, and nothing changes on the Swarm itself.
+
+When several hosts manage the Swarm, pick the one to create it from. That host becomes the cluster's origin, and Dockmesh refuses to create the cluster if another manager host doesn't list it as a manager.
+
+The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the origin's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from the origin: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While the origin is unreachable or no longer a manager, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
+
+`DELETE /api/v1/clusters/{id}` (also `clusters.create`) removes a cluster created from the wrong host; the Swarm itself is not touched.
+
+The host list marks linked hosts with their role and cluster. Hosts that are not in a Swarm behave exactly as before.
+
 ## Agent upgrades
 
 When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` from the agent listener over HTTPS with its client certificate, checks it against the SHA-256 the server sends, replaces itself and reconnects.

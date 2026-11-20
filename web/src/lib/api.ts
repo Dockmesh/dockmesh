@@ -160,6 +160,27 @@ export interface ContainerStatsBatch {
   containers: ContainerLatest[];
 }
 
+export interface ClusterMember {
+  host_id: string;
+  node_id: string;
+  role: 'manager' | 'worker';
+  linked_at: string;
+}
+
+export interface Cluster {
+  id: string;
+  name: string;
+  origin_host: string;
+  created_by?: string;
+  created_at: string;
+  members: ClusterMember[];
+}
+
+export interface ClusterCandidate {
+  cluster_id: string;
+  managers: { host_id: string; host_name: string; node_id: string }[];
+}
+
 export interface HostInfo {
   id: string;
   name: string;
@@ -2261,6 +2282,13 @@ export const api = {
         body: JSON.stringify(payload)
       }),
     download: (id: number, slug: string): Promise<void> => saveDownload(`/templates/${id}/export`, `${slug}.yaml`)
+  },
+
+  clusters: {
+    list: () => request<Cluster[]>('/clusters'),
+    candidates: () => request<ClusterCandidate[]>('/clusters/candidates'),
+    create: (hostId: string, name?: string) =>
+      request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
   },
 
   hosts: {

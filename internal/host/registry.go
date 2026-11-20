@@ -133,3 +133,17 @@ func (r *Registry) DaemonInfo(ctx context.Context, id string) (*agents.DaemonInf
 	}
 	return r.agents.DaemonInfo(ctx, id)
 }
+
+// CurrentDaemonInfo is DaemonInfo asked live from an online agent; an
+// offline agent falls back to what its last hello reported.
+func (r *Registry) CurrentDaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error) {
+	if id == "" || id == "local" || r.agents == nil || r.fixed != nil {
+		return r.DaemonInfo(ctx, id)
+	}
+	if live := r.agents.GetConnected(id); live != nil {
+		if info, err := NewRemote(live.ID, live.Name, r.agents).DaemonInfo(ctx); err == nil {
+			return info, nil
+		}
+	}
+	return r.DaemonInfo(ctx, id)
+}

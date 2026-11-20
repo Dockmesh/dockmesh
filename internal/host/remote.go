@@ -21,6 +21,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
+	dockersystem "github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/api/types/volume"
 )
 
@@ -1154,4 +1155,18 @@ func requireRemoteVolume(ctx context.Context, h volumeInspector, name string) er
 		return &docker.VolumeNotFoundError{Name: name}
 	}
 	return fmt.Errorf("inspect volume %s: %w", name, err)
+}
+
+// DaemonInfo asks the agent's daemon now, so a host that joined or left
+// a Swarm after the agent connected is seen without a reconnect.
+func (h *RemoteHost) DaemonInfo(ctx context.Context) (*agents.DaemonInfo, error) {
+	data, err := h.request(ctx, agents.FrameReqDaemonInfo, nil)
+	if err != nil {
+		return nil, err
+	}
+	var info dockersystem.Info
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("decode daemon info: %w", err)
+	}
+	return agents.DaemonInfoFrom(info), nil
 }

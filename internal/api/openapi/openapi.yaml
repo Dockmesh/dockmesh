@@ -66,6 +66,8 @@ tags:
     description: Free-form host tagging used for RBAC + scope filtering.
   - name: agents
     description: Remote-agent enrollment and revocation.
+  - name: clusters
+    description: Docker Swarms managed as clusters and the hosts linked to them as nodes.
   - name: containers
     description: Docker container lifecycle — list, inspect, start/stop/restart/pause/kill, logs, stats, exec.
   - name: stacks
@@ -2577,6 +2579,123 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /clusters:
+    get:
+      operationId: clusters.list
+      tags: [clusters]
+      summary: List clusters and their linked hosts
+      description: |
+        Only a global `hosts.view` sees clusters; everyone else gets an empty
+        list. A host is linked when a manager's node list contains the node
+        ID the host reports; the role is the manager's view.
+      responses:
+        "200":
+          description: Clusters by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Cluster"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: clusters.create
+      tags: [clusters]
+      summary: Create the cluster of the Swarm a host manages
+      description: |
+        Needs the global-only `clusters.create`. The host must be a manager
+        of an active Swarm, checked live against its own node list, and
+        every other host claiming to manage the Swarm that answers must
+        list it as a manager. The cluster id is the Swarm's cluster ID; the
+        host becomes the origin, whose node list alone links and unlinks
+        hosts (every minute; changes audited as `cluster.member_link` /
+        `cluster.member_unlink`). Audited as `cluster.create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host_id]
+              properties:
+                host_id: {type: string, description: "`local` or an agent host id."}
+                name:
+                  type: string
+                  description: 1 to 64 letters, digits, spaces, `.`, `-` or `_`; defaults to `swarm-` plus the first 8 characters of the cluster ID.
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cluster"}
+        "400":
+          description: Invalid name, or the host is not a manager of an active Swarm.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: A cluster for this Swarm or with this name exists, or another manager host does not list this host as a manager.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The host's Swarm state could not be read.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The host is offline, has no Docker, or its agent is too old to list Swarm nodes.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}:
+    delete:
+      operationId: clusters.delete
+      tags: [clusters]
+      summary: Delete a cluster and its memberships
+      description: Needs the global-only `clusters.create`. Nothing changes on the Swarm. Audited as `cluster.delete`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /clusters/candidates:
+    get:
+      operationId: clusters.candidates
+      tags: [clusters]
+      summary: Swarms with a manager host that are not a cluster yet
+      description: Needs the global-only `clusters.create`. From each host's last reported Swarm state.
+      responses:
+        "200":
+          description: One entry per Swarm.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [cluster_id, managers]
+                  properties:
+                    cluster_id: {type: string}
+                    managers:
+                      type: array
+                      items:
+                        type: object
+                        required: [host_id, host_name, node_id]
+                        properties:
+                          host_id: {type: string}
+                          host_name: {type: string}
+                          node_id: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /containers:
     get:
       operationId: containers.list
@@ -10070,6 +10189,25 @@ components:
           type: boolean
           description: >-
             Set when a local directory is read-only for the service, which is the case for a directory added to `backups.local_roots` after the service unit was written; `POST /system/unit-rewrite` fixes it.
+    Cluster:
+      type: object
+      required: [id, name, origin_host, created_at, members]
+      properties:
+        id: {type: string, description: The Swarm's cluster ID.}
+        name: {type: string}
+        origin_host: {type: string, description: The manager host the cluster was created from.}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        members:
+          type: array
+          items:
+            type: object
+            required: [host_id, node_id, role, linked_at]
+            properties:
+              host_id: {type: string}
+              node_id: {type: string}
+              role: {type: string, enum: [manager, worker]}
+              linked_at: {type: string, format: date-time}
     StacksDirCheck:
       type: object
       required: [path, status, message]

@@ -1,0 +1,3 @@
+kind: Added
+body: Hosts that manage a Docker Swarm show a hint to users with the new clusters.create permission; Create cluster makes the Swarm a cluster and links every node that runs a Dockmesh agent, confirmed by a manager's node list
+time: 2026-11-20T00:18:47.025506726Z

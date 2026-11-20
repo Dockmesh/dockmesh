@@ -55,6 +55,8 @@ const (
 	PermHostsDelete Perm = "hosts.delete"
 	PermHostsTag    Perm = "hosts.tag"
 
+	PermClustersCreate Perm = "clusters.create"
+
 	PermUsersView   Perm = "users.view"
 	PermUsersCreate Perm = "users.create"
 	PermUsersUpdate Perm = "users.update"
@@ -139,7 +141,7 @@ var globalOnly = map[Perm]bool{
 	PermTokensManageOthers: true,
 	PermAuditView:          true, PermAuditExport: true, PermAuditWrite: true,
 	PermSystemUpdate: true, PermSystemUpgrade: true,
-	PermHostsCreate: true, PermHostsTag: true,
+	PermHostsCreate: true, PermHostsTag: true, PermClustersCreate: true,
 	PermRegistriesCreate: true, PermRegistriesUpdate: true, PermRegistriesDelete: true,
 	PermTemplatesCreate: true, PermTemplatesUpdate: true, PermTemplatesDelete: true,
 	PermMetricsView:      true,
