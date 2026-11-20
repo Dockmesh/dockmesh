@@ -209,3 +209,28 @@ func TestRefusedOriginNoFallback(t *testing.T) {
 		t.Fatalf("read through %q (%v)", got, err)
 	}
 }
+
+// A refused origin's list can't demote the verified managers and so win
+// reads back.
+func TestRefusedOriginCantDemote(t *testing.T) {
+	f, ca := provedLab(t)
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	f.provers["m1"] = ca.issue(t, "n9", swarmID, RoleManager, time.Now().Add(90*24*time.Hour)).prover(t)
+	if _, err := s.Create(context.Background(), "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	demoted := []agents.SwarmNode{{ID: "n1", Role: RoleManager, Leader: true}, {ID: "n2", Role: RoleWorker}, {ID: "n3", Role: RoleWorker}}
+	f.mu.Lock()
+	f.nodes["m1"] = demoted
+	f.mu.Unlock()
+	for range 2 {
+		if got, err := readNow(t, s); err != nil || got != "m2" {
+			t.Fatalf("read host %q, %v", got, err)
+		}
+	}
+	c, _ := s.Get(context.Background(), swarmID)
+	if roles(c)["m2"] != "n2/manager" {
+		t.Fatalf("members %v", roles(c))
+	}
+}

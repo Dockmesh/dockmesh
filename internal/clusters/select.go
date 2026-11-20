@@ -16,10 +16,13 @@ import (
 // the leader, then the origin, then the others by host id. While no
 // manager is verified, the origin serves alone, so an install whose agents
 // can't prove yet keeps its read-only view. While a changed root CA waits,
-// only the origin is used.
+// only the origin is used, and only when it would be used anyway.
 func (s *Service) readers(c Cluster, nodes []agents.SwarmNode) []string {
 	if c.Trust.Pending {
-		return []string{c.OriginHost}
+		if c.Trust.OriginVerified || verifiedManagers(c) == 0 {
+			return []string{c.OriginHost}
+		}
+		return nil
 	}
 	byNode := map[string]agents.SwarmNode{}
 	for _, n := range nodes {

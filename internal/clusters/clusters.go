@@ -553,7 +553,10 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 		src, srcNodes, addOnly := by, nodes, false
 		if by != c.OriginHost {
-			if ol, _ := s.askManager(ctx, c, c.OriginHost, snap); ol.Nodes != nil {
+			// The origin keeps authority over members only while it may
+			// also serve reads: verified, or nobody is.
+			trusted := c.Trust.OriginVerified || verifiedManagers(c) == 0
+			if ol, _ := s.askManager(ctx, c, c.OriginHost, snap); trusted && ol.Nodes != nil {
 				src, srcNodes = c.OriginHost, ol.Nodes
 			} else {
 				addOnly = true
@@ -662,6 +665,12 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 	for _, m := range existing {
 		linkedNodes[m.NodeID] = true
 	}
+	inOtherCluster := map[string]bool{}
+	if addOnly {
+		if inOtherCluster, err = s.hostsInOtherClusters(ctx, clusterID); err != nil {
+			return err
+		}
+	}
 	for hostID, m := range existing {
 		st, inSnap := snap[hostID]
 		if _, keep := want[hostID]; keep || addOnly || (inSnap && !st.known) {
@@ -676,7 +685,7 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 		if old, ok := existing[hostID]; ok && old.NodeID == m.NodeID && old.Role == m.Role {
 			continue
 		}
-		if _, ok := existing[hostID]; addOnly && (ok || linkedNodes[m.NodeID]) {
+		if _, ok := existing[hostID]; addOnly && (ok || linkedNodes[m.NodeID] || inOtherCluster[hostID]) {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_memberships WHERE host_id = ? OR (cluster_id = ? AND node_id = ?)`,
@@ -705,6 +714,24 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 		}
 	}
 	return nil
+}
+
+// hostsInOtherClusters returns the hosts linked to a cluster other than id.
+func (s *Service) hostsInOtherClusters(ctx context.Context, id string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT host_id FROM cluster_memberships WHERE cluster_id <> ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out[h] = true
+	}
+	return out, rows.Err()
 }
 
 func (s *Service) membersOf(ctx context.Context, clusterID string) (map[string]Member, error) {

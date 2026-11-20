@@ -141,8 +141,7 @@ func managersIn(nodes []agents.SwarmNode) int {
 	return n
 }
 
-// reconcileIdentity pins or rotates the trust root from the list of by, the
-// manager read through,
+// reconcileIdentity pins or rotates the trust root from the list of by,
 // proves the members that are due and refreshes the cluster's notices.
 func (s *Service) reconcileIdentity(ctx context.Context, id, by string, list agents.SwarmNodesResp, snap map[string]hostState) error {
 	c, err := s.get(ctx, id)
