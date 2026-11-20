@@ -181,7 +181,7 @@ When a host is a manager of a Docker Swarm, the **Hosts** page shows "Docker Swa
 
 When several hosts manage the Swarm, pick the one to create it from. That host becomes the cluster's origin, and Dockmesh refuses to create the cluster if another manager host doesn't list it as a manager.
 
-The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the origin's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from the origin: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While the origin is unreachable or no longer a manager, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
+The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the node list of the manager Dockmesh reads through (the origin, or a verified manager after a failover) contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While no manager can be read, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
 
 ### Node identity
 
@@ -197,12 +197,14 @@ On the Hosts page a cluster is one expandable row: its state, how many managers 
 
 - **Healthy**: every node is ready and every manager reachable.
 - **Degraded**: a node is down or a manager unreachable, but the Swarm still has quorum.
-- **No quorum**: the origin is online but its Swarm has no leader, so Swarm can't change anything.
-- **Unreachable**: the origin's agent is offline or can't list the nodes; the row shows the last known state with its time.
+- **No quorum**: a manager is online but its Swarm has no leader, so Swarm can't change anything.
+- **Unreachable**: no manager's agent is online and able to list the nodes; the row shows the last known state with its time.
+
+**Which manager Dockmesh reads through.** Dockmesh reads a cluster through one manager host at a time, shown as "read through X". It uses only manager hosts that proved their node identity (see below), and the server's own host when it is a manager. While the current one answers, Dockmesh stays with it. When it goes away, reads switch to the leader if its host has a verified agent, otherwise to the origin, otherwise to the next verified manager, and stay on the new one when the old one comes back. With fewer than two verified managers there is no failover: the cluster is read through the origin alone (also while the origin itself is unverified), and the page says that failover needs agents on at least 2 managers. While a changed root CA waits to be accepted, reads stay on the origin.
 
 The last state is kept across a server restart: until the first check after the start, the row shows the stored state with the time it was checked, and an unreachable cluster keeps its last known state and time. A cluster that has never been checked reads "Not checked yet". The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without a link and without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
 
-While the origin answers, the row also counts the running tasks and says whether the load is spread evenly or which node runs more than its share.
+While a manager answers, the row also counts the running tasks and says whether the load is spread evenly or which node runs more than its share.
 
 ### Cluster page
 
@@ -220,7 +222,7 @@ Services, tasks and stacks need Stacks: View on the cluster, networks Networks: 
 
 ### Reading a cluster through the API
 
-The cluster's nodes, services, tasks and overlay networks are read through its origin manager. The API offers them read-only:
+The cluster's nodes, services, tasks and overlay networks are read through the manager chosen above. The API offers them read-only:
 
 - `GET /api/v1/clusters/{id}/nodes` needs Hosts: View on the cluster; it lists every node, including those without an agent.
 - `GET /api/v1/clusters/{id}/distribution` needs Hosts: View on the cluster. It returns the running tasks per node, the fair share, which nodes are heavy, and the CPU and memory of each node host the caller may view; with Stacks: View on the cluster also the tasks of every service per node with the CPU and memory of its task containers. `?usage=false` leaves out CPU, memory and the services. When no manager can be read it answers with the last known node list, `stale` and `known_at`.
@@ -231,11 +233,11 @@ The cluster's nodes, services, tasks and overlay networks are read through its o
 
 A host or host tag assignment on one of the nodes does not reach these. A service shows the names of its environment variables but never their values, and its secrets and configs by name only; their data never leaves the manager. Lists are capped (1000 services, 5000 tasks, 500 networks) and say so when they are cut.
 
-Only a Swarm manager answers: an agent on a worker refuses, and while the origin is offline or no longer a manager the API answers 503. Reading services, tasks and networks needs an agent of this version on the origin.
+Only a Swarm manager answers: an agent on a worker refuses, and while no verified manager (or the origin) is online and still a manager the API answers 503. Reading services, tasks and networks needs an agent of this version on the origin.
 
 ### Service logs
 
-`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the origin manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs `containers.logs` (Containers: View or Stacks: View) on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
+`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the chosen manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs `containers.logs` (Containers: View or Stacks: View) on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
 
 - `tail`: lines per task to send first, 0 to 5000 (default 100).
 - `since`: only lines from then on, as a duration back from now (`15m`, at most 90 days), an RFC 3339 time or unix seconds.

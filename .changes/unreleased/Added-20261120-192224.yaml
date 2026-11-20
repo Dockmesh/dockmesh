@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: reads fail over to another manager that proved its node identity when the current one goes away, stay there when it returns, and the cluster page and host list say which manager they read through'
+time: 2026-11-20T19:22:24.993839094Z
