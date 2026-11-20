@@ -8,7 +8,7 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
-    type Agent, type AgentUpgradePolicy, type HostInfo
+    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
@@ -16,7 +16,7 @@
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { Server, Plus, RefreshCw, X } from 'lucide-svelte';
+  import { Server, Plus, RefreshCw, X, Network } from 'lucide-svelte';
 
   let remoteAgents = $state<Agent[]>([]);
   let localHostInfo = $state<HostInfo | null>(null);
@@ -26,6 +26,16 @@
   let containerCounts = $state<Record<string, number>>({});
   let metricsByHost = $state<Record<string, { cpu: number; cores: number; memUsed: number; memTotal: number; disk: number } | null>>({});
   let upgradePolicy = $state<AgentUpgradePolicy | null>(null);
+  let clusterList = $state<Cluster[]>([]);
+  let clusterCandidates = $state<ClusterCandidate[]>([]);
+  let creatingCluster = $state<string | null>(null);
+
+  // host id → its cluster membership, for the row pill.
+  const membership = $derived.by(() => {
+    const out: Record<string, { cluster: string; role: string }> = {};
+    for (const c of clusterList) for (const mb of c.members) out[mb.host_id] = { cluster: c.name, role: mb.role };
+    return out;
+  });
 
   let filter = $state<'all' | 'online' | 'offline' | 'pending' | 'agents'>('all');
   let search = $state('');
@@ -122,12 +132,16 @@
     if (!allowed('hosts.update') && !allowed('hosts.view')) return;
     refreshing = true;
     try {
-      const [agents, hostList, policy] = await Promise.all([
+      const [agents, hostList, policy, clist, cands] = await Promise.all([
         api.agents.list(),
         api.hosts.list().catch(() => []),
-        api.agents.getUpgradePolicy().catch(() => null)
+        api.agents.getUpgradePolicy().catch(() => null),
+        api.clusters.list().catch(() => []),
+        allowed('clusters.create') ? api.clusters.candidates().catch(() => []) : Promise.resolve([])
       ]);
       remoteAgents = agents;
+      clusterList = clist;
+      clusterCandidates = cands;
       localHostInfo = hostList.find((h) => h.kind === 'local') ?? null;
       upgradePolicy = policy;
       const ids = [...(localHostInfo ? ['local'] : []), ...agents.map((a) => a.id)];
@@ -306,6 +320,21 @@
     return items;
   }
 
+  async function createCluster(c: ClusterCandidate) {
+    const hostId = c.managers[0]?.host_id;
+    if (!hostId) return;
+    creatingCluster = c.cluster_id;
+    try {
+      const created = await api.clusters.create(hostId);
+      toast.success(m.hosts_cluster_created({ name: created.name }), m.hosts_cluster_linked({ count: created.members.length }));
+      await loadAll();
+    } catch (err) {
+      toast.error(m.hosts_cluster_create_failed(), err instanceof ApiError ? err.message : undefined);
+    } finally {
+      creatingCluster = null;
+    }
+  }
+
   const COLS = '22px 14px minmax(180px, 1.6fr) 64px 100px 100px 100px minmax(110px, 200px) minmax(90px, 150px) 40px';
 </script>
 
@@ -347,6 +376,20 @@
         {/if}
       </div>
     {/if}
+
+    {#each clusterCandidates as c (c.cluster_id)}
+      <div class="swarm-hint" role="status" data-testid="cluster-hint">
+        <Network size={14} strokeWidth={1.8} />
+        <span class="dm-trunc">
+          <b>{m.hosts_cluster_hint({ hosts: c.managers.map((x) => x.host_name).join(', ') })}</b>
+          <span class="dm-dim">{m.hosts_cluster_hint_detail()}</span>
+        </span>
+        <span class="dm-sp"></span>
+        <button type="button" class="dm-btn dm-btn-sm dm-btn-primary" data-testid="create-cluster" disabled={creatingCluster !== null} onclick={() => createCluster(c)}>
+          {creatingCluster === c.cluster_id ? m.hosts_cluster_creating() : m.hosts_cluster_create()}
+        </button>
+      </div>
+    {/each}
 
     {#if !loading && rows.length > 0}
       <div class="dm-toolbar">
@@ -426,6 +469,9 @@
             <span role="cell" class="dm-nm">
               <span class="nmline">
                 <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
+                {#if membership[r.id]}
+                  <span class="dm-pill" title={m.hosts_cluster_member_title({ cluster: membership[r.id].cluster })}>{membership[r.id].role === 'manager' ? m.hosts_cluster_role_manager() : m.hosts_cluster_role_worker()} · {membership[r.id].cluster}</span>
+                {/if}
                 {#if waitingSetup(r)}
                   {#if allowed('hosts.update')}
                     <a class="dm-pill dm-pill-info setup" data-testid="row-setup" href="/hosts/{r.id}?tab=setup" title={m.hosts_setup_row_title()} onclick={(e) => e.stopPropagation()}>{m.label_host_waiting_setup()} →</a>
@@ -539,6 +585,11 @@
   }
   .tagf button { all: unset; cursor: pointer; display: inline-flex; padding: 2px; color: var(--muted); }
   .tagf button:hover { color: var(--fg); }
+  .swarm-hint {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--accent); background: var(--accent-soft); color: inherit;
+    border-radius: var(--r); padding: 8px 14px; font-size: var(--fs-sm); min-width: 0; margin-bottom: 10px;
+  }
   .policy {
     display: flex; align-items: center; gap: 10px;
     border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn);

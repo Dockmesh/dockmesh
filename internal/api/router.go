@@ -197,6 +197,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				// Host registry — local + every connected agent.
 				r.Get("/hosts", h.ListHosts)
+				r.Get("/clusters", h.ListClusters)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermClustersCreate))
+				r.Get("/clusters/candidates", h.ListClusterCandidates)
+				r.Post("/clusters", h.CreateCluster)
 			})
 
 			r.Group(func(r chi.Router) {

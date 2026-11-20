@@ -91,6 +91,7 @@ var categories = map[string]string{
 	ActionAgentDelete:               CategoryChanges,
 	ActionAgentUpgrade:              CategoryChanges,
 	ActionHostDrain:                 CategoryChanges,
+	ActionClusterCreate:             CategoryChanges,
 	ActionHostDrainAbort:            CategoryChanges,
 	ActionStackDeploy:               CategoryChanges,
 	ActionStackStop:                 CategoryChanges,

@@ -59,6 +59,7 @@ const (
 	ActionAgentDelete        = "agent.delete"
 	ActionAgentUpgrade       = "agent.upgrade"
 	ActionHostDrain          = "host.drain"
+	ActionClusterCreate      = "cluster.create"
 	ActionHostDrainAbort     = "host.drain_abort"
 	ActionStackDeploy        = "stack.deploy"
 	ActionStackStop          = "stack.stop"

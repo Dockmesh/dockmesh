@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 )
@@ -167,6 +168,12 @@ func (c *Client) Close() error {
 // considered in Phase 1 but deferred — the SDK surface is large and the
 // value of wrapping every call is marginal compared to the churn. Keep.
 func (c *Client) Raw() *client.Client { return c.cli }
+
+// SwarmNodes lists the Swarm's nodes; only a manager can.
+func (c *Client) SwarmNodes(ctx context.Context) ([]swarm.Node, error) {
+	res, err := c.cli.NodeList(ctx, client.NodeListOptions{})
+	return res.Items, err
+}
 
 // Wrap adopts an existing low-level docker SDK client. Used by the agent
 // where we already have a *client.Client from the heartbeat / request

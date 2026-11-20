@@ -175,6 +175,14 @@ Tags are lowercase labels (letters, digits and hyphens, starting with a letter o
 
 Tags limit access (an assignment on a host tag covers every host with that tag, see [Permissions](../concepts/permissions.md)), registry credentials and alert rules to the hosts that carry them.
 
+## Docker Swarm clusters
+
+When a host is a manager of a Docker Swarm, the **Hosts** page shows "Docker Swarm detected" to users who may create clusters (`clusters.create`, granted only on everything). **Create cluster** makes the Swarm a Dockmesh cluster; Dockmesh never creates one on its own, and nothing changes on the Swarm itself.
+
+The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when a Swarm manager's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from a manager it has an agent on: a host that left the Swarm or was removed from Dockmesh is unlinked, while a host it can't reach keeps its link. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the manager.
+
+The host list marks linked hosts with their role and cluster. Hosts that are not in a Swarm behave exactly as before.
+
 ## Agent upgrades
 
 When an agent runs a different build than the server, **Hosts** marks its version with an arrow. To upgrade it, use **Upgrade agent** in the row menu, **Upgrade to …** in the header of the host page or **Upgrade now** on its **Maintenance** tab, or select several hosts and click **Upgrade**. This needs `hosts.update`. The agent downloads `dockmesh-agent-linux-<arch>` from the agent listener over HTTPS with its client certificate, checks it against the SHA-256 the server sends, replaces itself and reconnects.

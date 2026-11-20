@@ -66,6 +66,9 @@ const (
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
+	// FrameReqSwarmNodes asks a Swarm manager for its node list
+	// (SwarmNodesResp); only sent to agents advertising CapSwarmNodes.
+	FrameReqSwarmNodes = "req.swarm.nodes"
 	FrameReqVolumeList      = "req.volumes.list"
 	FrameReqVolumeInspect   = "req.volumes.inspect"
 	FrameReqVolumeCreate    = "req.volumes.create"
@@ -209,6 +212,8 @@ const (
 	CapStackFiles = "stacks.files"
 	// CapNetworkTopology, agent: answers req.networks.topology.
 	CapNetworkTopology = "networks.topology"
+	// CapSwarmNodes, agent: answers req.swarm.nodes.
+	CapSwarmNodes = "swarm.nodes"
 )
 
 // Stream control ops beyond the exec "resize".

@@ -1,0 +1,100 @@
+package handlers
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/clusters"
+	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
+)
+
+// ListClusters returns every cluster with its linked hosts. Clusters are
+// not a scope target yet, so only a global hosts.view sees them.
+//
+//	GET /api/v1/clusters
+func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil || !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsView) {
+		writeJSON(w, http.StatusOK, []clusters.Cluster{})
+		return
+	}
+	list, err := h.Clusters.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if list == nil {
+		list = []clusters.Cluster{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// ListClusterCandidates lists Swarms that have a manager host but no
+// cluster yet.
+//
+//	GET /api/v1/clusters/candidates
+func (h *Handlers) ListClusterCandidates(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeJSON(w, http.StatusOK, []clusters.Candidate{})
+		return
+	}
+	list, err := h.Clusters.Candidates(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+type createClusterRequest struct {
+	HostID string `json:"host_id"`
+	Name   string `json:"name"`
+}
+
+// CreateCluster makes the Swarm that host_id manages a cluster.
+//
+//	POST /api/v1/clusters
+func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return
+	}
+	var req createClusterRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	req.HostID = strings.TrimSpace(req.HostID)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.HostID == "" {
+		writeError(w, http.StatusBadRequest, "host_id is required")
+		return
+	}
+	c, err := h.Clusters.Create(r.Context(), req.HostID, req.Name, actorID(r))
+	switch {
+	case err == nil:
+	case errors.Is(err, clusters.ErrExists), errors.Is(err, clusters.ErrNameTaken):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, clusters.ErrBadName), errors.Is(err, clusters.ErrNotManager):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, host.ErrUnknownHost), errors.Is(err, agents.ErrNotFound):
+		writeError(w, http.StatusNotFound, "host not found")
+		return
+	case errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker), errors.Is(err, host.ErrAgentNoSwarmNodes):
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	default:
+		slog.Warn("create cluster", "host", req.HostID, "err", err)
+		writeError(w, http.StatusBadGateway, "cannot read the host's Swarm state")
+		return
+	}
+	h.audit(r, audit.ActionClusterCreate, c.ID, map[string]any{"name": c.Name, "host": req.HostID, "members": len(c.Members)})
+	writeJSON(w, http.StatusCreated, c)
+}

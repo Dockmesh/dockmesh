@@ -68,6 +68,7 @@ const TEXTS = new Map<string, () => string>([
   ["Add and revoke hosts", m.rbac_add_and_revoke_hosts],
   ["Edit host tags", m.rbac_edit_host_tags],
   ["Drain hosts and upgrade agents", m.rbac_drain_hosts_and_upgrade_agents],
+  ["Create Swarm clusters", m.rbac_create_swarm_clusters],
   ["See routes and certificates", m.rbac_see_routes_and_certificates],
   ["Add, edit and delete routes", m.rbac_add_edit_and_delete_routes],
   ["Start and stop the proxy", m.rbac_start_and_stop_the_proxy],

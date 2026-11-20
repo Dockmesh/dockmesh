@@ -33,6 +33,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/clusters"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
@@ -954,6 +955,8 @@ func main() {
 		slog.Warn("host tags load", "err", err)
 	}
 	registriesSvc.SetHostTags(hostTagsSvc.Tags)
+	clustersSvc := clusters.New(database, hostRegistry)
+	go clustersSvc.Run(ctx, time.Minute)
 	localAuth := registriesSvc.ForHost("local")
 	composeSvc.SetAuthResolver(localAuth)
 	updaterSvc.SetAuthResolver(localAuth)
@@ -1305,6 +1308,7 @@ func main() {
 		Agents:            agentsSvc,
 		Hosts:             hostRegistry,
 		HostTags:          hostTagsSvc,
+		Clusters:          clustersSvc,
 		Roles:             rolesStore,
 		Settings:          settingsStore,
 		GlobalEnv:         globalEnvStore,

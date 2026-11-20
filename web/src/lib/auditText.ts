@@ -69,6 +69,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'container.update': [m.audit_act_container_update, m.audit_sen_container_update],
   'container.write_file': [m.audit_act_container_write_file, m.audit_sen_container_write_file],
   'host.drain': [m.audit_act_host_drain, m.audit_sen_host_drain],
+  'cluster.create': [m.audit_act_cluster_create, m.audit_sen_cluster_create],
   'host.drain_abort': [m.audit_act_host_drain_abort, m.audit_sen_host_drain_abort],
   'host.tag_add': [m.audit_act_host_tag_add, m.audit_sen_host_tag_add],
   'host.tag_remove': [m.audit_act_host_tag_remove, m.audit_sen_host_tag_remove],

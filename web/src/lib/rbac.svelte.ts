@@ -15,6 +15,7 @@ export type Perm =
   | 'images.view' | 'images.create' | 'images.delete' | 'images.scan'
   | 'registries.view' | 'registries.create' | 'registries.update' | 'registries.delete'
   | 'hosts.view' | 'hosts.create' | 'hosts.update' | 'hosts.delete' | 'hosts.tag'
+  | 'clusters.create'
   | 'users.view' | 'users.create' | 'users.update' | 'users.delete'
   | 'roles.view' | 'roles.create' | 'roles.update' | 'roles.delete'
   | 'tokens.view' | 'tokens.create' | 'tokens.delete' | 'tokens.manage_others'

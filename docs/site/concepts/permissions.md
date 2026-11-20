@@ -62,7 +62,7 @@ Other pages, API error messages and `dmctl whoami -o json` name single permissio
 | `images.view`, `volumes.view`, `networks.view`, `registries.view` | Images, volumes, networks & registries: View |
 | `images.create`, `images.delete`, `images.scan`, `volumes.create`, `volumes.delete`, `networks.create`, `networks.delete`, `registries.create`, `registries.update`, `registries.delete` | Images, volumes, networks & registries: Manage |
 | `hosts.view` | Hosts: View |
-| `hosts.create`, `hosts.update`, `hosts.delete`, `hosts.tag` | Hosts: Manage |
+| `hosts.create`, `hosts.update`, `hosts.delete`, `hosts.tag`, `clusters.create` | Hosts: Manage |
 | `proxy.view` | Proxy: View |
 | `proxy.create`, `proxy.update`, `proxy.delete` | Proxy: Manage |
 | `backups.view` | Backups: View |

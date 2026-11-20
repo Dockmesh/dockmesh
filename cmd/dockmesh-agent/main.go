@@ -1071,6 +1071,10 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		g, err := buildTopology(ctx, cli)
 		respond(conn, f.ID, g, err)
 
+	case agents.FrameReqSwarmNodes:
+		res, err := cli.NodeList(ctx, client.NodeListOptions{})
+		respond(conn, f.ID, agents.SwarmNodesResp{Nodes: agents.SwarmNodesFrom(res.Items)}, err)
+
 	case agents.FrameReqNetworkInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
