@@ -849,21 +849,11 @@
       else if (op === 'restart') await api.containers.restart(id, targetHost);
       else if (op === 'pause') await api.containers.pause(id, targetHost);
       else if (op === 'unpause') await api.containers.unpause(id, targetHost);
-      toast.success(OP_DONE[op]());
+      toast.success(op === 'stop' && swarmService ? m.containers_swarm_replace_done() : OP_DONE[op]());
       await loadInfo();
       if (tab === 'logs') connectLogs();
     } catch (err) {
       toast.error(m.containers_op_failed({ op: OP_NAME[op]() }), err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function replaceTask() {
-    try {
-      await api.containers.stop(id, targetHost);
-      toast.success(m.containers_swarm_replace_done());
-      await loadInfo();
-    } catch (err) {
-      toast.error(m.containers_op_failed({ op: OP_NAME.stop() }), err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -1083,7 +1073,7 @@
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> {m.containers_detail_resume()}</button>
         {:else if info.State?.Running && swarmService}
           <span class="dm-sub">{m.containers_swarm_new_task()}</span>
-          <button type="button" class="dm-btn dm-btn-primary" title={m.containers_swarm_replace_hint()} onclick={replaceTask}><RotateCw size={14} /> {m.containers_swarm_replace_task()}</button>
+          <button type="button" class="dm-btn dm-btn-primary" title={m.containers_swarm_replace_hint()} onclick={() => action('stop')}><RotateCw size={14} /> {m.containers_swarm_replace_task()}</button>
           <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else if info.State?.Running}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> {m.common_restart()}</button>

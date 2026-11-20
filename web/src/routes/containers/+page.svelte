@@ -253,7 +253,7 @@
       items.push({ separator: true });
       if (running && c.swarm_service) {
         items.push(
-          { label: m.containers_swarm_replace_task(), hint: m.containers_swarm_replace_hint(), onclick: () => replaceTask(c) },
+          { label: m.containers_swarm_replace_task(), hint: m.containers_swarm_replace_hint(), onclick: () => action(c, 'stop') },
           { label: m.common_stop(), hint: m.containers_swarm_new_task(), onclick: () => action(c, 'stop') },
         );
       } else if (running) {
@@ -344,20 +344,10 @@
         }))) return;
         await api.containers.remove(c.Id, true, targetHost);
       }
-      toast.success(opDone(op), nameOf(c));
+      toast.success(op === 'stop' && c.swarm_service ? m.containers_swarm_replace_done() : opDone(op), nameOf(c));
       await load();
     } catch (err) {
       toast.error(m.containers_op_failed({ op: opName(op) }), err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function replaceTask(c: Container) {
-    try {
-      await api.containers.stop(c.Id, c.host_id ?? hosts.id);
-      toast.success(m.containers_swarm_replace_done(), nameOf(c));
-      await load();
-    } catch (err) {
-      toast.error(m.containers_op_failed({ op: opName('stop') }), err instanceof ApiError ? err.message : undefined);
     }
   }
 

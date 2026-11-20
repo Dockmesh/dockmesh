@@ -8,11 +8,11 @@ import (
 	"sync"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
-	"github.com/dockmesh/dockmesh/internal/swarmtask"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/go-chi/chi/v5"
 	"github.com/moby/moby/api/types/container"
 )

@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
 
@@ -59,13 +60,17 @@ func TestRemoteRestartRefusesSwarmTask(t *testing.T) {
 			mu.Unlock()
 			err := h.RestartContainer(context.Background(), tt.id)
 			svc, refused := swarmtask.AsManaged(err)
-			if svc != tt.wantSvc || (tt.wantSvc == "" && err != nil) {
-				t.Fatalf("err %v (service %q, refused %v), want service %q", err, svc, refused, tt.wantSvc)
+			if refused != (tt.wantSvc != "") || svc != tt.wantSvc || (!refused && err != nil) {
+				t.Fatalf("err %v, want refusal for service %q", err, tt.wantSvc)
+			}
+			var want []string
+			if !refused {
+				want = []string{tt.id}
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if want := tt.wantSvc == ""; (len(restarted) == 1) != want {
-				t.Fatalf("restart frames %v, want sent=%v", restarted, want)
+			if !slices.Equal(restarted, want) {
+				t.Fatalf("restart frames %v, want %v", restarted, want)
 			}
 		})
 	}

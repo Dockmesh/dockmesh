@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -172,8 +173,12 @@ func TestRestartRefusesSwarmTask(t *testing.T) {
 			if rr.Code != tt.want {
 				t.Fatalf("status %d, want %d: %s", rr.Code, tt.want, rr.Body)
 			}
-			if got := restarted(); (len(got) == 1 && got[0] == tt.container) != tt.wantRestarted || len(got) > 1 {
-				t.Fatalf("daemon restarts %v, want restarted=%v", got, tt.wantRestarted)
+			var want []string
+			if tt.wantRestarted {
+				want = []string{tt.container}
+			}
+			if got := restarted(); !slices.Equal(got, want) {
+				t.Fatalf("daemon restarts %v, want %v", got, want)
 			}
 			if !tt.wantRestarted {
 				var got swarmSkip
