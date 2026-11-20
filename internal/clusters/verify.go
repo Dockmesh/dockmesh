@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -53,6 +54,21 @@ func canonicalRoot(p string) string {
 		_ = pem.Encode(&b, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})
 	}
 	return b.String()
+}
+
+// rootFingerprint is the SHA-256 of the first certificate of a root PEM,
+// as colon-separated upper-case hex, or "".
+func rootFingerprint(p string) string {
+	certs, err := parseCerts([]byte(p))
+	if err != nil || len(certs) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(certs[0].Raw)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	return strings.Join(parts, ":")
 }
 
 func parseCerts(p []byte) ([]*x509.Certificate, error) {

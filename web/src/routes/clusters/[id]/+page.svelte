@@ -292,7 +292,7 @@
     if (!cluster || confirming) return;
     confirming = true;
     try {
-      cluster = await api.clusters.confirmTrustRoot(cluster.id);
+      cluster = await api.clusters.confirmTrustRoot(cluster.id, cluster.trust.pending_fingerprint ?? '');
       toast.success(m.cl_trust_confirmed());
     } catch (e) {
       toast.error(m.cl_trust_confirm_failed(), e instanceof ApiError ? e.message : undefined);
@@ -392,6 +392,11 @@
         <div>
           <b>{m.cl_trust_pending_title()}</b>
           <span>{cluster.trust.confirmable ? m.cl_trust_pending_single() : m.cl_trust_pending_many()}</span>
+          <small class="dm-mono fp" data-testid="cluster-trust-fp">
+            {m.cl_trust_fp_pinned()} {cluster.trust.pinned_fingerprint ?? '—'}<br />
+            {m.cl_trust_fp_new()} {cluster.trust.pending_fingerprint ?? '—'}
+          </small>
+          {#if cluster.trust.confirmable}<small class="dm-sub">{m.cl_trust_fp_hint()}</small>{/if}
           {#if cluster.trust.confirmable && allowed('clusters.create')}
             <div class="noteact"><button type="button" class="dm-btn" disabled={confirming} onclick={confirmRoot}>{m.cl_trust_confirm()}</button></div>
           {/if}
@@ -598,6 +603,7 @@
         <span role="columnheader">{m.cl_col_address()}</span>
       </div>
       {#each nodes as n (n.id)}
+        {@const mb = memberOf(n.host_id)}
         <div class="dm-tr" role="row" style="grid-template-columns: {NODE_COLS}">
           <span role="cell"><span class="dm-dot {nodeTone(n)}"></span></span>
           <span role="cell" class="dm-nm">
@@ -611,7 +617,6 @@
           <span role="cell" class:lead-t={n.leader} class:badc={n.role === 'manager' && n.reachability === 'unreachable'} class:dm-dim={n.role !== 'manager'}>{managerStatus(n)}</span>
           <span role="cell" class="r dm-num">{n.state === 'ready' && !dist?.stale ? n.tasks : '—'}</span>
           <span role="cell" class="dm-mono">{n.engine_version || '—'}</span>
-          {@const mb = memberOf(n.host_id)}
           <span role="cell" class="agentc">
             {#if n.host_id && hostNames[n.host_id]}<a class="lnk" href="/hosts/{n.host_id}">{hostNames[n.host_id]}</a>{:else if n.host_id}{m.cl_agent_yes()}{:else}<span class="dm-dim">{m.cl_no_agent()}</span>{/if}
             {#if mb?.verified}
@@ -799,6 +804,7 @@
   .note small { font-size: var(--fs-xs); }
   .hint { margin-top: 12px; }
   .noteact { margin-top: 4px; }
+  .fp { color: var(--fg); word-break: break-all; }
   .agentc { display: inline-flex; align-items: center; gap: 6px; }
   .proof { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-xs); vertical-align: middle; }
   .proof.ok { color: var(--ok); }

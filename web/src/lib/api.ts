@@ -177,6 +177,8 @@ export interface ClusterMember {
 
 export interface ClusterTrust {
   pinned: boolean;
+  pinned_fingerprint?: string;
+  pending_fingerprint?: string;
   pending?: boolean;
   pending_since?: string;
   confirmable?: boolean;
@@ -2451,8 +2453,8 @@ export const api = {
       request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
     access: (id: string) => request<ClusterAccess>(`/clusters/${encodeURIComponent(id)}/access`),
     delete: (id: string) => request<void>(`/clusters/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    confirmTrustRoot: (id: string) =>
-      request<Cluster>(`/clusters/${encodeURIComponent(id)}/trust-root/confirm`, { method: 'POST' }),
+    confirmTrustRoot: (id: string, fingerprint: string) =>
+      request<Cluster>(`/clusters/${encodeURIComponent(id)}/trust-root/confirm`, { method: 'POST', body: JSON.stringify({ fingerprint }) }),
     distribution: (id: string, usage = true) =>
       request<ClusterDistribution>(`/clusters/${encodeURIComponent(id)}/distribution${usage ? '' : '?usage=false'}`),
     services: (id: string) =>

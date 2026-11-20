@@ -404,7 +404,7 @@ func TestTrustRootRotation(t *testing.T) {
 		if !c.Trust.Pending || c.Trust.Confirmable {
 			t.Fatalf("one manager reports the new root: %+v", c.Trust)
 		}
-		if _, err := s.ConfirmTrustRoot(ctx, swarmID, "u1"); !errors.Is(err, ErrConfirmNeedsManagers) {
+		if _, err := s.ConfirmTrustRoot(ctx, swarmID, "x", "u1"); !errors.Is(err, ErrConfirmNeedsManagers) {
 			t.Fatalf("confirm with two managers: %v", err)
 		}
 		f.mu.Lock()
@@ -431,13 +431,13 @@ func TestTrustRootRotation(t *testing.T) {
 		s.SetServerID("server-1")
 		n := &noticeRec{}
 		s.SetNotices(n)
-		if _, err := s.ConfirmTrustRoot(ctx, "missing", "u1"); !errors.Is(err, ErrNotFound) {
+		if _, err := s.ConfirmTrustRoot(ctx, "missing", "x", "u1"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("unknown cluster: %v", err)
 		}
 		if _, err := s.Create(ctx, "m1", "", "u1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.ConfirmTrustRoot(ctx, swarmID, "u1"); !errors.Is(err, ErrNoPendingRoot) {
+		if _, err := s.ConfirmTrustRoot(ctx, swarmID, "x", "u1"); !errors.Is(err, ErrNoPendingRoot) {
 			t.Fatalf("nothing pending: %v", err)
 		}
 		next := newSwarmCA(t)
@@ -451,7 +451,13 @@ func TestTrustRootRotation(t *testing.T) {
 		if !c.Trust.Pending || !c.Trust.Confirmable || !n.open(trustRootKey(swarmID)) {
 			t.Fatalf("trust %+v notices %v", c.Trust, n.active)
 		}
-		if c, err := s.ConfirmTrustRoot(ctx, swarmID, "u1"); err != nil || c.Trust.Pending || c.trustRoot != canonicalRoot(next.pem) {
+		if _, err := s.ConfirmTrustRoot(ctx, swarmID, rootFingerprint(newSwarmCA(t).pem), "u1"); !errors.Is(err, ErrRootChanged) {
+			t.Fatalf("confirm another root: %v", err)
+		}
+		if c.Trust.PendingFingerprint != rootFingerprint(next.pem) || c.Trust.PinnedFingerprint == "" {
+			t.Fatalf("fingerprints %+v", c.Trust)
+		}
+		if c, err := s.ConfirmTrustRoot(ctx, swarmID, strings.ToLower(c.Trust.PendingFingerprint), "u1"); err != nil || c.Trust.Pending || c.trustRoot != canonicalRoot(next.pem) {
 			t.Fatalf("confirm: %+v %v", c.Trust, err)
 		}
 		if n.open(trustRootKey(swarmID)) {
@@ -518,3 +524,53 @@ func (n *noticeRec) Set(_ context.Context, active bool, in notices.RaiseInput) e
 }
 
 func (n *noticeRec) open(key string) bool { return n.active[key] }
+
+// With several managers the origin alone can't pin a root: a manager whose
+// agent reports none (too old) is no agreement, and the cluster stays
+// unpinned until one does.
+func TestPinNeedsSecondManager(t *testing.T) {
+	ctx := context.Background()
+	f, ca := provedLab(t)
+	f.roots = map[string]string{"m1": ca.pem}
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	c, err := s.Create(ctx, "m1", "", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Trust.Pinned || c.Trust.OriginVerified {
+		t.Fatalf("origin alone pinned: %+v", c.Trust)
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = s.Get(ctx, swarmID); c.Trust.Pinned {
+		t.Fatal("pinned at reconcile without a second manager")
+	}
+	f.mu.Lock()
+	f.roots["m2"] = ca.pem
+	f.mu.Unlock()
+	s.now = func() time.Time { return time.Now().Add(proofRetry) }
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = s.Get(ctx, swarmID); !c.Trust.Pinned || !c.Trust.OriginVerified {
+		t.Fatalf("after m2 agrees: %+v", c.Trust)
+	}
+}
+
+// A proof that isn't renewed stops counting even while its certificate is
+// valid.
+func TestStaleProofExpires(t *testing.T) {
+	now := time.Now()
+	old, recent, notAfter := now.Add(-proofStale-time.Minute), now.Add(-time.Hour), now.Add(30*24*time.Hour)
+	if verifiedNow(Member{VerifiedAt: &old, CertNotAfter: &notAfter}, now) {
+		t.Fatal("stale proof counts")
+	}
+	if !verifiedNow(Member{VerifiedAt: &recent, CertNotAfter: &notAfter}, now) {
+		t.Fatal("recent proof does not count")
+	}
+	if verifiedNow(Member{VerifiedAt: &recent, CertNotAfter: &recent}, now) {
+		t.Fatal("expired certificate counts")
+	}
+}

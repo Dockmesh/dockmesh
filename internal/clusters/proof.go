@@ -49,6 +49,9 @@ var ErrNoPendingRoot = errors.New("the cluster has no changed trust root to conf
 // admin's confirmation; with several, two verified managers must agree.
 var ErrConfirmNeedsManagers = errors.New("a new trust root can be confirmed only in a Swarm with a single manager; with several, two verified managers must report it")
 
+// ErrRootChanged: the pending root is not the one the caller confirmed.
+var ErrRootChanged = errors.New("the pending root CA is not the one you confirmed; compare its fingerprint again")
+
 // Noticer raises and resolves action-required notices.
 type Noticer interface {
 	Set(ctx context.Context, active bool, in notices.RaiseInput) error
@@ -67,9 +70,13 @@ type proofTry struct {
 	code string
 }
 
+// proofStale is how long a proof counts without being renewed: a host
+// that stops answering loses it, even while its certificate is valid.
+const proofStale = proofEvery + 2*time.Hour
+
 // verifiedNow reports whether m's last proof holds at now.
 func verifiedNow(m Member, now time.Time) bool {
-	return m.VerifiedAt != nil && (m.CertNotAfter == nil || now.Before(*m.CertNotAfter))
+	return m.VerifiedAt != nil && now.Sub(*m.VerifiedAt) < proofStale && (m.CertNotAfter == nil || now.Before(*m.CertNotAfter))
 }
 
 // annotate fills the proof fields of c's members and its trust summary.
@@ -99,6 +106,14 @@ func (s *Service) annotate(c *Cluster) {
 			c.Trust.Confirmable = true
 		}
 	}
+}
+
+// pinnable reports whether a root the origin reports may be pinned: the
+// origin alone could make up a root and prove itself against it, so a
+// second manager host must report the same root unless the Swarm has a
+// single manager.
+func pinnable(agreed int, nodes []agents.SwarmNode) bool {
+	return agreed > 0 || managersIn(nodes) == 1
 }
 
 func managersIn(nodes []agents.SwarmNode) int {
@@ -144,25 +159,33 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 	}
 	switch {
 	case c.trustRoot == "":
+		var agreed []string
 		for other, st := range snap {
-			if other == c.OriginHost || !st.known || st.offline || st.swarm == nil || st.swarm.ClusterID != c.ID || st.swarm.Role != RoleManager {
+			if other == c.OriginHost || !st.known || st.offline || st.swarm == nil || st.swarm.ClusterID != c.ID ||
+				st.swarm.Role != RoleManager || !listsManager(nodes, st.swarm.NodeID) {
 				continue
 			}
 			theirs, err := s.nodesOf(ctx, other)
 			if err != nil {
 				continue
 			}
-			if r := canonicalRoot(theirs.TrustRoot); r != "" && r != reported {
+			switch r := canonicalRoot(theirs.TrustRoot); {
+			case r == reported:
+				agreed = append(agreed, other)
+			case r != "":
 				slog.Warn("swarm managers report different trust roots; not pinning", "cluster", c.ID, "origin", c.OriginHost, "other", other)
 				return false, nil
 			}
+		}
+		if !pinnable(len(agreed), nodes) {
+			return false, nil
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ? WHERE id = ? AND trust_root IS NULL`, reported, c.ID)
 		if err != nil {
 			return false, err
 		}
 		if n, _ := res.RowsAffected(); n > 0 && s.audit != nil {
-			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "pinned", "reported_by": c.OriginHost})
+			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "pinned", "reported_by": c.OriginHost, "agreed_by": agreed})
 		}
 		return false, nil
 
@@ -223,8 +246,9 @@ func (s *Service) acceptRoot(ctx context.Context, id, root string) error {
 }
 
 // ConfirmTrustRoot accepts the pending trust root of a Swarm with a single
-// manager, where no second manager can agree to it.
-func (s *Service) ConfirmTrustRoot(ctx context.Context, id, actor string) (Cluster, error) {
+// manager, where no second manager can agree to it. fingerprint is the one
+// the admin compared, so a root that changed meanwhile is refused.
+func (s *Service) ConfirmTrustRoot(ctx context.Context, id, fingerprint, actor string) (Cluster, error) {
 	c, err := s.get(ctx, id)
 	if err != nil {
 		return Cluster{}, err
@@ -235,11 +259,14 @@ func (s *Service) ConfirmTrustRoot(ctx context.Context, id, actor string) (Clust
 	if !c.Trust.Confirmable {
 		return Cluster{}, ErrConfirmNeedsManagers
 	}
+	if fingerprint == "" || !strings.EqualFold(fingerprint, c.Trust.PendingFingerprint) {
+		return Cluster{}, ErrRootChanged
+	}
 	if err := s.acceptRoot(ctx, id, c.trustPending); err != nil {
 		return Cluster{}, err
 	}
 	if s.audit != nil {
-		s.audit.Write(ctx, actor, audit.ActionClusterTrustRoot, id, map[string]any{"change": "confirmed"})
+		s.audit.Write(ctx, actor, audit.ActionClusterTrustRoot, id, map[string]any{"change": "confirmed", "fingerprint": c.Trust.PendingFingerprint})
 	}
 	s.pmu.Lock()
 	for _, m := range c.Members {

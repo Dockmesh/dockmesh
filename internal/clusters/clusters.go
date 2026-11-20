@@ -92,11 +92,15 @@ type Cluster struct {
 // accepted yet; Confirmable when that waits for an admin because the Swarm
 // has a single manager.
 type Trust struct {
-	Pinned         bool       `json:"pinned"`
-	Pending        bool       `json:"pending,omitempty"`
-	PendingSince   *time.Time `json:"pending_since,omitempty"`
-	Confirmable    bool       `json:"confirmable,omitempty"`
-	OriginVerified bool       `json:"origin_verified"`
+	Pinned bool `json:"pinned"`
+	// The fingerprints are SHA-256 over the root certificate, as
+	// openssl x509 -fingerprint -sha256 prints it for swarm-root-ca.crt.
+	PinnedFingerprint  string     `json:"pinned_fingerprint,omitempty"`
+	PendingFingerprint string     `json:"pending_fingerprint,omitempty"`
+	Pending            bool       `json:"pending,omitempty"`
+	PendingSince       *time.Time `json:"pending_since,omitempty"`
+	Confirmable        bool       `json:"confirmable,omitempty"`
+	OriginVerified     bool       `json:"origin_verified"`
 }
 
 // Member is a host linked to a cluster. Verified is set while the host's
@@ -178,6 +182,8 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 		}
 		c.Trust.Pinned = c.trustRoot != ""
 		c.Trust.Pending = c.trustPending != ""
+		c.Trust.PinnedFingerprint = rootFingerprint(c.trustRoot)
+		c.Trust.PendingFingerprint = rootFingerprint(c.trustPending)
 		if c.Trust.Pending && pendingAt.Valid {
 			t := pendingAt.Time
 			c.Trust.PendingSince = &t
@@ -320,6 +326,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	if err != nil {
 		return Cluster{}, err
 	}
+	agreed := 0
 	for other, st := range snap {
 		if other == hostID || !st.known || st.swarm == nil || st.swarm.ClusterID != id || st.swarm.Role != RoleManager {
 			continue
@@ -332,10 +339,18 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 			slog.Warn("swarm managers disagree", "cluster", id, "origin", hostID, "other", other)
 			return Cluster{}, &ConflictError{Host: other}
 		}
-		if r := canonicalRoot(theirs.TrustRoot); r != "" && root != "" && r != root {
+		r := canonicalRoot(theirs.TrustRoot)
+		if r == "" || root == "" || !listsManager(nodes, st.swarm.NodeID) {
+			continue
+		}
+		if r != root {
 			slog.Warn("swarm managers report different trust roots", "cluster", id, "origin", hostID, "other", other)
 			return Cluster{}, &ConflictError{Host: other}
 		}
+		agreed++
+	}
+	if !pinnable(agreed, nodes) {
+		root = ""
 	}
 	if name == "" {
 		name = "swarm-" + id[:min(8, len(id))]

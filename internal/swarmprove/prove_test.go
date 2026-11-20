@@ -46,6 +46,10 @@ func (f *fakeDocker) ImageInspect(context.Context, string, ...client.ImageInspec
 	return client.ImageInspectResult{}, nil
 }
 
+func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{}, nil
+}
+
 func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
 	f.created = append(f.created, o)
 	return client.ContainerCreateResult{ID: "helper1"}, nil

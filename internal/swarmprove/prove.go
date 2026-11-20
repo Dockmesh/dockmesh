@@ -23,6 +23,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -63,6 +64,7 @@ var (
 type API interface {
 	Info(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error)
 	client.ImageAPIClient
+	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
 	ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error)
 	CopyFromContainer(ctx context.Context, id string, options client.CopyFromContainerOptions) (client.CopyFromContainerResult, error)
 	ContainerRemove(ctx context.Context, id string, opts client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
@@ -104,12 +106,19 @@ func Prove(ctx context.Context, cli API, req agents.SwarmProveReq) (agents.Swarm
 	return agents.SwarmProveResp{CertPEM: bundle, Signature: sig}, nil
 }
 
+// mu runs one proof at a time, so the sweep below never removes the
+// helper of a proof in flight.
+var mu sync.Mutex
+
 // readFiles copies the node certificate and key out of a helper that is
 // never started. The caller clears the key bytes.
 func readFiles(ctx context.Context, cli API, dir string) (cert, key []byte, err error) {
+	mu.Lock()
+	defer mu.Unlock()
 	if err := ensureImage(ctx, cli); err != nil {
 		return nil, nil, err
 	}
+	sweep(ctx, cli)
 	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:           Image,
@@ -149,9 +158,24 @@ func readFiles(ctx context.Context, cli API, dir string) (cert, key []byte, err 
 	return cert, key, nil
 }
 
-// copyFile returns the one regular file name from the helper's mount. The
-// archive's buffers are never pooled, so nothing of a key outlives the
-// returned slice.
+// sweep removes helpers a killed agent left behind: they still hold the
+// certificates directory mounted.
+func sweep(ctx context.Context, cli API) {
+	list, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: client.Filters{}.Add("label", "dockmesh.component="+Component)})
+	if err != nil {
+		return
+	}
+	for _, c := range list.Items {
+		if c.Image != Image || c.Labels[docker.LabelManaged] != "true" {
+			continue
+		}
+		_, _ = cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
+	}
+}
+
+// copyFile returns the one regular file name from the helper's mount. Only
+// the returned slice is cleared by the caller; the Docker client's
+// connection buffers may still hold a copy until they are reused.
 func copyFile(ctx context.Context, cli API, id, name string) ([]byte, error) {
 	res, err := cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: path.Join(mountPoint, name)})
 	if err != nil {
@@ -186,9 +210,9 @@ func ensureImage(ctx context.Context, cli API) error {
 	return nil
 }
 
-// sign signs msg with the PEM key and overwrites every copy of the key it
-// made. Go can't promise that no copy is left in freed memory, but none
-// is kept, logged or returned.
+// sign signs msg with the PEM key and overwrites the copies it holds. The
+// crypto library may make internal copies it does not clear; none is kept,
+// logged or returned.
 func sign(keyPEM, msg []byte) ([]byte, error) {
 	blk, _ := pem.Decode(keyPEM)
 	if blk == nil {

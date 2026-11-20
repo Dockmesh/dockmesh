@@ -2715,24 +2715,37 @@ paths:
         trust root is pending and whose Swarm has a single manager, so no
         second manager can agree to the change. The pending root replaces
         the pinned one and every member proves its identity again. Audited
-        as `cluster.trust_root` with `change: confirmed`.
+        as `cluster.trust_root` with `change: confirmed`. The body names the
+        fingerprint the admin compared (`trust.pending_fingerprint`), so a
+        root that changed meanwhile is refused.
       parameters:
         - name: id
           in: path
           required: true
           schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint]
+              properties:
+                fingerprint: {type: string, description: The pending root's fingerprint as shown in `trust.pending_fingerprint`; case-insensitive.}
       responses:
         "200":
           description: Accepted; the cluster as it is now.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Cluster"}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: |
-            Nothing to confirm (code `cluster_no_pending_root`), or the Swarm
+            The pending root is not the one named (code `cluster_root_changed`),
+            nothing to confirm (code `cluster_no_pending_root`), or the Swarm
             has several managers and accepts the new root only when two
             verified managers report it (code `cluster_root_needs_managers`).
           content:
@@ -11002,6 +11015,8 @@ components:
             with a single manager an admin confirms it (`confirmable`).
           properties:
             pinned: {type: boolean}
+            pinned_fingerprint: {type: string, description: "SHA-256 over the pinned root certificate, colon-separated upper-case hex (openssl x509 -fingerprint -sha256)."}
+            pending_fingerprint: {type: string, description: SHA-256 of the reported root that waits to be accepted.}
             pending: {type: boolean}
             pending_since: {type: string, format: date-time}
             confirmable: {type: boolean}

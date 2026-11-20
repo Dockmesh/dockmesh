@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,9 +38,16 @@ func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
 	access := middleware.AccessOf(r.Context())
 	out := []clusters.Cluster{}
 	for _, c := range list {
-		if access.AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: c.ID}) {
-			out = append(out, c)
+		if !access.AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: c.ID}) {
+			continue
 		}
+		// The agent's address belongs to its host, not to the cluster.
+		for i, m := range c.Members {
+			if m.AddrWarning != "" && !access.AllowsOn(rbac.PermHostsView, h.hostScopeReq(m.HostID)) {
+				c.Members[i].AddrWarning = ""
+			}
+		}
+		out = append(out, c)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -316,8 +324,15 @@ func (h *Handlers) ConfirmClusterTrustRoot(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
 		return
 	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || req.Fingerprint == "" {
+		writeError(w, http.StatusBadRequest, "fingerprint required")
+		return
+	}
 	id := chi.URLParam(r, "id")
-	c, err := h.Clusters.ConfirmTrustRoot(r.Context(), id, middleware.UserID(r.Context()))
+	c, err := h.Clusters.ConfirmTrustRoot(r.Context(), id, req.Fingerprint, middleware.UserID(r.Context()))
 	switch {
 	case err == nil:
 	case errors.Is(err, clusters.ErrNotFound):
@@ -328,6 +343,9 @@ func (h *Handlers) ConfirmClusterTrustRoot(w http.ResponseWriter, r *http.Reques
 		return
 	case errors.Is(err, clusters.ErrConfirmNeedsManagers):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_root_needs_managers"})
+		return
+	case errors.Is(err, clusters.ErrRootChanged):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "cluster_root_changed"})
 		return
 	default:
 		slog.Error("confirm cluster trust root", "cluster", id, "err", err)

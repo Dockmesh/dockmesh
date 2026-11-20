@@ -77,11 +77,11 @@ func (h *RemoteHost) SwarmProve(ctx context.Context, req agents.SwarmProveReq) (
 	}
 	var out agents.SwarmProveResp
 	if err := json.Unmarshal(data, &out); err != nil {
-		return agents.SwarmProveResp{}, fmt.Errorf("decode swarm proof: %w", err)
+		return agents.SwarmProveResp{}, fmt.Errorf("%w: undecodable answer", ErrProofRefused)
 	}
 	p, ok := agents.SanitizeProof(out)
 	if !ok {
-		return agents.SwarmProveResp{}, errors.New("swarm proof too large or empty")
+		return agents.SwarmProveResp{}, fmt.Errorf("%w: answer too large or empty", ErrProofRefused)
 	}
 	return p, nil
 }
