@@ -249,6 +249,18 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	if errors.Is(err, agents.ErrUpgradeQueued) {
+		h.audit(r, audit.ActionAgentUpgrade, id, map[string]any{
+			"action":  "agent-upgrade",
+			"version": req.Version,
+			"queued":  true,
+		})
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"status":  "queued",
+			"version": req.Version,
+		})
+		return
+	}
 	if errors.Is(err, agents.ErrNoAgentBinary) || errors.Is(err, agents.ErrNoRelease) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return

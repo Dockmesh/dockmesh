@@ -605,6 +605,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			slog.Warn("resolve agent .env notice", "agent", id, "err", err)
 		}
 	}
+	s.resolveManagerNotices(ctx, id)
 	s.syncLegacyLayoutNotice(ctx)
 	return nil
 }
@@ -976,6 +977,7 @@ func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error
 		delete(s.connected, ag.ID)
 	}
 	s.mu.Unlock()
+	s.resolveManagerNotices(ctx, ag.ID)
 	s.syncLegacyLayoutNotice(ctx)
 	return nil
 }

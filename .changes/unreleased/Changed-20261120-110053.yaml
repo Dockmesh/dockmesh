@@ -1,0 +1,3 @@
+kind: Changed
+body: Agents linked as managers of one Swarm cluster are updated one after another in every update mode; the next starts once the previous is back with the new version, or after 5 minutes with a notice
+time: 2026-11-20T11:00:53.696033947Z
