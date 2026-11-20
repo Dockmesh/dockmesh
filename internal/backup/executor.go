@@ -753,7 +753,7 @@ func (e *Executor) deleteArchive(ctx context.Context, job *Job, cur targets.Targ
 		err = cur.Delete(ctx, r.TargetPath)
 	}
 	switch {
-	case errors.Is(err, fs.ErrNotExist) && partial:
+	case errors.Is(err, fs.ErrNotExist) && partial: // nothing to delete; prune below
 	case errors.Is(err, fs.ErrNotExist) && r.Location == nil:
 		return fmt.Errorf("archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target, so the run stays listed", r.ID)
 	case errors.Is(err, fs.ErrNotExist):

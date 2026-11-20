@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,9 +441,6 @@ func TestJobSwitchRecordsTheChange(t *testing.T) {
 	}
 }
 
-// Retention keeps a run listed whose archive isn't where it looked, so
-// the archive is never forgotten; a failed run's partial file may never
-// have existed.
 func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
 	cases := []struct {
 		name string
@@ -515,7 +511,7 @@ func TestFinishRecordsTheLocation(t *testing.T) {
 		atStart *RunLocation
 		want    string
 	}{
-		{"not recorded at the start", nil, "nas"},
+		{"not recorded at the start", nil, ""},
 		{"recorded at the start", early, "ssh-ed25519 AAAA"},
 	}
 	for _, tc := range cases {
@@ -536,8 +532,11 @@ func TestFinishRecordsTheLocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.Location == nil || !strings.Contains(r.Location.describe()+fmt.Sprint(r.Location.Config), tc.want) {
-				t.Fatalf("location = %+v, want it to hold %q", r.Location, tc.want)
+			if r.Location == nil {
+				t.Fatal("no location recorded")
+			}
+			if got, _ := r.Location.Config["host_key"].(string); got != tc.want {
+				t.Fatalf("host_key = %q, want %q", got, tc.want)
 			}
 		})
 	}
