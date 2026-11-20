@@ -92,8 +92,8 @@ func waitDrainEnded(t *testing.T, s *DrainService, id string) {
 	t.Fatalf("drain %s still running", id)
 }
 
-// waitMigrations waits for every migration's run to end: a run aborted
-// drains leave behind keeps writing below the test's temp dirs.
+// waitMigrations waits for every migration run to end: an aborted drain
+// can leave a run behind that keeps writing into the test's temp dirs.
 func (e *migrationEnv) waitMigrations(t *testing.T) {
 	t.Helper()
 	all, err := e.svc.Store().ListAll(context.Background(), 500)
