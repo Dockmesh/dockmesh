@@ -37,7 +37,7 @@ func (h *RemoteHost) SwarmNodes(ctx context.Context) ([]agents.SwarmNode, error)
 	}
 	data, err := h.request(ctx, agents.FrameReqSwarmNodes, nil)
 	if err != nil {
-		return nil, err
+		return nil, agentSwarmError(err)
 	}
 	var out agents.SwarmNodesResp
 	if err := json.Unmarshal(data, &out); err != nil {
