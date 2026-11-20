@@ -55,7 +55,7 @@ export const NAV: NavGroup[] = [
   {
     title: m.shell_nav_infrastructure(),
     items: [
-      { key: 'hosts', href: '/hosts', label: m.common_hosts(), icon: Server, show: () => allowed('hosts.view'), also: ['/agents'] },
+      { key: 'hosts', href: '/hosts', label: m.common_hosts(), icon: Server, show: () => allowed('hosts.view'), also: ['/agents', '/clusters'] },
       {
         key: 'resources',
         href: '/resources',

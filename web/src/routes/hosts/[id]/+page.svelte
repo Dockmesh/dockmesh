@@ -50,6 +50,8 @@
   let stacks = $state<StackListEntry[]>([]);
   let migrations = $state<Migration[]>([]);
   let membership = $state<ClusterMembership | null>(null);
+  // Whether the caller may open the membership's cluster page.
+  let clusterOpen = $state(false);
   let tags = $state<string[]>([]);
   let allFleetTags = $state<string[]>([]);
   let upgradePolicyVersion = $state<string>('');
@@ -118,14 +120,16 @@
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
       }
-      const [t, allT, migRes, mships] = await Promise.all([
+      const [t, allT, migRes, mships, clist] = await Promise.all([
         api.hosts.listTags(id).catch(() => []),
         api.hosts.allTags().catch(() => []),
         api.migrations.list(50).catch(() => []),
-        api.clusters.memberships().catch(() => [])
+        api.clusters.memberships().catch(() => []),
+        api.clusters.list().catch(() => [])
       ]);
       if (!current()) return;
       membership = mships.find((x) => x.host_id === id) ?? null;
+      clusterOpen = !!membership && clist.some((c) => c.id === membership!.cluster_id);
       // A tag edit in progress survives the 10 s refresh.
       const dirty = tagsDraft.join(',') !== tags.join(',');
       tags = t;
@@ -445,7 +449,7 @@
       <div class="infobox" role="note" data-testid="cluster-member">
         <Network size={14} strokeWidth={1.8} />
         <div class="infobody">
-          <span><b>{m.hosts_member_of({ cluster: membership.cluster_name })}</b> · {memberRoleLine(membership)} · <span class="dm-mono dm-dim" title={membership.node_id}>{membership.node_id.slice(0, 12)}</span></span>
+          <span><b>{#if clusterOpen}{m.hosts_member_of_prefix()} <a class="clink" href="/clusters/{membership.cluster_id}" data-testid="cluster-link">{membership.cluster_name}</a>{:else}{m.hosts_member_of({ cluster: membership.cluster_name })}{/if}</b> · {memberRoleLine(membership)} · <span class="dm-mono dm-dim" title={membership.node_id}>{membership.node_id.slice(0, 12)}</span></span>
           <span class="dm-dim">{m.hosts_member_detail()}</span>
         </div>
       </div>
@@ -801,6 +805,7 @@
   .infocmd { display: flex; gap: 8px; align-items: flex-start; }
   .infocmd .cmd { flex: 1; min-width: 0; }
   .infobox .docs { color: var(--accent); align-self: flex-start; }
+  .infobox .clink { color: var(--accent); }
   .infox { margin: -2px -6px 0 0; }
   .tok { display: flex; flex-direction: column; gap: 12px; }
   .tok p { margin: 0; }

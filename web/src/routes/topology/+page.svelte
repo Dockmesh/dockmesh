@@ -10,6 +10,7 @@
   import { EventStream, type ConnStatus } from '$lib/events';
   import { Waypoints, Minus, Plus, CircleAlert } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { page } from '$app/state';
   import { containerStateLabel } from '$lib/labels';
 
   type Route = { id: number; host: string; upstream: string; enabled: boolean };
@@ -19,7 +20,7 @@
   // Topology is per host, so in all-hosts mode the page picks one itself.
   let pick = $state('local');
   // A Swarm cluster's graph instead of the host's; '' follows the host.
-  let clusterPick = $state('');
+  let clusterPick = $state(page.url.searchParams.get('cluster') ?? '');
   let clusters = $state<Cluster[]>([]);
   let routes = $state<Route[]>([]);
   let loading = $state(true);

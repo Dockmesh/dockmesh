@@ -215,6 +215,97 @@ export interface ClusterCandidate {
   managers: { host_id: string; host_name: string; node_id: string }[];
 }
 
+export interface SwarmNode {
+  id: string;
+  hostname?: string;
+  role: 'manager' | 'worker';
+  state?: string;
+  availability?: string;
+  leader?: boolean;
+  reachability?: string;
+  addr?: string;
+  engine_version?: string;
+  nano_cpus?: number;
+  memory_bytes?: number;
+}
+
+export interface SwarmService {
+  id: string;
+  name: string;
+  image?: string;
+  mode: string;
+  replicas?: number;
+  running_tasks: number;
+  desired_tasks: number;
+  stack?: string;
+  update_state?: string;
+  constraints?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SwarmTask {
+  id: string;
+  service_id: string;
+  node_id?: string;
+  slot?: number;
+  desired_state: string;
+  state: string;
+  message?: string;
+  error?: string;
+  container_id?: string;
+  image?: string;
+  updated_at: string;
+}
+
+export interface SwarmNetwork {
+  id: string;
+  name: string;
+  driver: string;
+  attachable?: boolean;
+  ingress?: boolean;
+  internal?: boolean;
+  encrypted?: boolean;
+  subnets?: string[];
+  stack?: string;
+  created_at: string;
+  services?: { id: string; name: string; stack?: string }[];
+}
+
+export interface ClusterDistNode extends SwarmNode {
+  host_id?: string;
+  tasks: number;
+  cpu_percent?: number;
+  mem_percent?: number;
+  no_metrics?: 'no_agent' | 'unreachable' | 'agent_offline';
+  counted: boolean;
+  heavy?: boolean;
+  pinned?: { service: string; tasks: number }[];
+}
+
+export interface ClusterDistService {
+  id: string;
+  name: string;
+  stack?: string;
+  per_node: Record<string, number>;
+  running: number;
+  cpu_cores?: number;
+  mem_bytes?: number;
+  partial?: boolean;
+}
+
+export interface ClusterDistribution {
+  read_host?: string;
+  nodes: ClusterDistNode[];
+  tasks: number;
+  counted_nodes: number;
+  fair_share: number;
+  services?: ClusterDistService[];
+  truncated?: boolean;
+  stale?: boolean;
+  known_at?: string;
+}
+
 export interface HostInfo {
   id: string;
   name: string;
@@ -2343,6 +2434,14 @@ export const api = {
       request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
     access: (id: string) => request<ClusterAccess>(`/clusters/${encodeURIComponent(id)}/access`),
     delete: (id: string) => request<void>(`/clusters/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    distribution: (id: string, usage = true) =>
+      request<ClusterDistribution>(`/clusters/${encodeURIComponent(id)}/distribution${usage ? '' : '?usage=false'}`),
+    services: (id: string) =>
+      request<{ read_host: string; services: SwarmService[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/services`),
+    tasks: (id: string) =>
+      request<{ read_host: string; tasks: SwarmTask[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/tasks`),
+    networks: (id: string) =>
+      request<{ read_host: string; networks: SwarmNetwork[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/networks`)
   },
 
   hosts: {
