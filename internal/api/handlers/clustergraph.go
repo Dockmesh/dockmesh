@@ -62,6 +62,9 @@ func (h *Handlers) missingOn(r *http.Request, res rbac.Resource, extra ...rbac.P
 			return p
 		}
 	}
+	if len(perms) == 0 {
+		return routePerm(r)
+	}
 	return perms[len(perms)-1]
 }
 
