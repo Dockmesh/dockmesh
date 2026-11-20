@@ -224,8 +224,8 @@ paths:
         operations on the host and refuses new ones until the agent is back
         (at most 5 minutes). Agent must be currently connected. Automatic
         upgrades back off after three attempts per target; this endpoint
-        always dispatches. Agents on the managers of one Swarm are updated
-        one after another in every mode: while another manager of the same
+        always dispatches. Agents linked as managers of one cluster are
+        updated one after another in every mode: while another manager of the same
         Swarm is updating, the request is queued (202) and dispatched once
         that agent reconnected with the new version, or after 5 minutes,
         with a notice to admins.
