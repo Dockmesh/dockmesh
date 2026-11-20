@@ -63,12 +63,12 @@ const (
 	FrameReqNetworkCreate  = "req.networks.create"
 	FrameReqNetworkRemove  = "req.networks.remove"
 	FrameReqNetworkPrune   = "req.networks.prune"
-	// FrameReqNetworkTopology asks for the host's topology.Graph; only
-	// sent to agents advertising CapNetworkTopology.
-	FrameReqNetworkTopology = "req.networks.topology"
 	// FrameReqSwarmNodes asks a Swarm manager for its node list
 	// (SwarmNodesResp); only sent to agents advertising CapSwarmNodes.
 	FrameReqSwarmNodes = "req.swarm.nodes"
+	// FrameReqNetworkTopology asks for the host's topology.Graph; only
+	// sent to agents advertising CapNetworkTopology.
+	FrameReqNetworkTopology = "req.networks.topology"
 	FrameReqVolumeList      = "req.volumes.list"
 	FrameReqVolumeInspect   = "req.volumes.inspect"
 	FrameReqVolumeCreate    = "req.volumes.create"

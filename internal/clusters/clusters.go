@@ -474,12 +474,13 @@ func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []
 	want := map[string]Member{}
 	for nodeID, hostIDs := range claimants {
 		pick := ""
-		if len(hostIDs) == 1 {
+		switch {
+		case len(hostIDs) == 1:
 			pick = hostIDs[0]
-		} else if slices.Contains(hostIDs, listedBy) {
+		case slices.Contains(hostIDs, listedBy):
 			// The list's own host was checked live against it.
 			pick = listedBy
-		} else {
+		default:
 			for _, h := range hostIDs {
 				if m, ok := existing[h]; ok && m.NodeID == nodeID {
 					pick = h
