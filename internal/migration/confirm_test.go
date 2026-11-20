@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -82,6 +83,7 @@ func TestDrainNeedsHookConfirmation(t *testing.T) {
 	e.target.metrics = system.Metrics{DiskTotal: 100 << 30}
 	e.setHooks(t, "pg_dump -f /dump.sql", "")
 	drains := NewDrainService(e.svc, e.svc.db)
+	drains.poll = 10 * time.Millisecond
 
 	plan, err := drains.Plan(context.Background(), "agent0")
 	if err != nil {
@@ -104,6 +106,8 @@ func TestDrainNeedsHookConfirmation(t *testing.T) {
 		t.Fatalf("confirmed drain: %v", err)
 	}
 	_ = drains.AbortDrain(d.ID)
+	waitDrainEnded(t, drains, d.ID)
+	e.waitMigrations(t)
 	stored, err := drains.Get(context.Background(), d.ID)
 	if err != nil {
 		t.Fatal(err)

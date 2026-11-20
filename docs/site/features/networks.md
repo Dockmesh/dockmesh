@@ -30,7 +30,7 @@ The tabs:
 - **Containers**: attached containers with their IPv4, IPv6 and MAC addresses.
 - **IPAM**: subnets, gateways, IP ranges and auxiliary addresses.
 
-The **Topology** page in the sidebar draws the networks and containers of one host as a graph, limited to what your access covers. It follows the host picker; with **All hosts** it has its own host picker. When a Docker Swarm cluster exists, the **Graph** picker also offers **Swarm cluster X**: the cluster's services and the overlay networks they attach to, with running and desired tasks per service, read through the cluster's origin manager. Ingress counts as a system network and is hidden unless **Show system networks** is on. The cluster graph needs Networks: View and Stacks: View on the cluster ([Docker Swarm clusters](./multi-host.md#docker-swarm-clusters)).
+The **Topology** page in the sidebar draws the networks and containers of one host as a graph, limited to what your access covers. It follows the host picker; with **All hosts** it has its own host picker. When a Docker Swarm cluster exists, the **Graph** picker also offers **Swarm cluster X**: the cluster's services and the overlay networks they attach to, with running and desired tasks per service, read through one of the cluster's managers. Ingress counts as a system network and is hidden unless **Show system networks** is on. The cluster graph needs Networks: View and Stacks: View on the cluster ([Docker Swarm clusters](./multi-host.md#docker-swarm-clusters)).
 
 ## Creating a network
 

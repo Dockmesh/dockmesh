@@ -126,6 +126,7 @@ func scanDrain(r drainScanner) (*Drain, error) {
 type DrainOrchestrator struct {
 	migSvc     *Service
 	drainStore *DrainStore
+	poll       time.Duration // how often await polls a running migration
 
 	mu      sync.Mutex
 	paused  bool
@@ -133,16 +134,16 @@ type DrainOrchestrator struct {
 	aborted bool
 }
 
+const drainPoll = 3 * time.Second
+
 func NewDrainOrchestrator(migSvc *Service, ds *DrainStore) *DrainOrchestrator {
 	return &DrainOrchestrator{
 		migSvc:     migSvc,
 		drainStore: ds,
+		poll:       drainPoll,
 		pauseCh:    make(chan struct{}),
 	}
 }
-
-// drainPoll is how often await polls a running migration.
-var drainPoll = 3 * time.Second
 
 // Execute runs the drain plan sequentially. Blocks until all stacks
 // are migrated, the drain is aborted, or the context is cancelled.
@@ -194,7 +195,7 @@ func (o *DrainOrchestrator) await(ctx context.Context, id string) string {
 		select {
 		case <-ctx.Done():
 			return ""
-		case <-time.After(drainPoll):
+		case <-time.After(o.poll):
 		}
 		o.mu.Lock()
 		aborted := o.aborted
@@ -286,6 +287,7 @@ var ErrDrainServerHost = errors.New("the local server runs Dockmesh itself and c
 type DrainService struct {
 	migSvc     *Service
 	drainStore *DrainStore
+	poll       time.Duration
 
 	mu     sync.Mutex
 	active map[string]*DrainOrchestrator // drain ID → orchestrator
@@ -295,6 +297,7 @@ func NewDrainService(migSvc *Service, db *sql.DB) *DrainService {
 	return &DrainService{
 		migSvc:     migSvc,
 		drainStore: NewDrainStore(db),
+		poll:       drainPoll,
 		active:     make(map[string]*DrainOrchestrator),
 	}
 }
@@ -422,6 +425,7 @@ func (s *DrainService) Execute(ctx context.Context, sourceHostID, userID string,
 	}
 
 	orch := NewDrainOrchestrator(s.migSvc, s.drainStore)
+	orch.poll = s.poll
 	s.mu.Lock()
 	s.active[d.ID] = orch
 	s.mu.Unlock()

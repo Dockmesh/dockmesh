@@ -193,7 +193,7 @@ The **Nodes** table marks each node with an agent as verified or not, with the r
 
 **Delete…** in the menu of the cluster's row on the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
 
-On the Hosts page a cluster is one expandable row: its state, how many managers and workers it has, how many nodes have no Dockmesh agent, and the leader or, when the origin can't be reached, when its state was last known. The linked hosts are listed indented below it with their role; a node without an agent is not a host and doesn't appear there. The state comes from the origin's view, checked every minute:
+On the Hosts page a cluster is one expandable row: its state, how many managers and workers it has, how many nodes have no Dockmesh agent, and the leader or, when no manager can be read, when its state was last known. The linked hosts are listed indented below it with their role; a node without an agent is not a host and doesn't appear there. The state comes from the view of the manager it is read through, checked every minute:
 
 - **Healthy**: every node is ready and every manager reachable.
 - **Degraded**: a node is down or a manager unreachable, but the Swarm still has quorum.
