@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -103,5 +104,34 @@ func TestText(t *testing.T) {
 		if got := text(tt.in, tt.max); got != tt.want {
 			t.Errorf("text(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
 		}
+	}
+}
+
+func TestMaskCredentials(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"mount failed: password=hunter2,user=x", "mount failed: password=***,user=x"},
+		{`token: "a b c" end`, `token: *** end`},
+		{"pull https://bob:hunter2@reg.example/x failed", "pull https://***@reg.example/x failed"},
+		{"no such image: nginx:1", "no such image: nginx:1"},
+	}
+	for _, tt := range tests {
+		if got := maskCredentials(tt.in); got != tt.want {
+			t.Errorf("maskCredentials(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// Escaping can blow a list up beyond its raw size; the answer is cut to
+// maxAnswerBytes encoded.
+func TestSanitizeSwarmTasksFitsEncoded(t *testing.T) {
+	long := strings.Repeat("<&", maxTextLen/2)
+	in := SwarmTasksResp{}
+	for i := range maxSwarmTasks {
+		in.Tasks = append(in.Tasks, SwarmTask{ID: fmt.Sprintf("t%d", i), ServiceID: "s", Message: long, Error: long, Image: long})
+	}
+	out := SanitizeSwarmTasks(in)
+	b, _ := json.Marshal(out)
+	if len(b) > maxAnswerBytes+1024 || !out.Truncated || len(out.Tasks) == 0 {
+		t.Fatalf("%d bytes, %d tasks, truncated %v", len(b), len(out.Tasks), out.Truncated)
 	}
 }

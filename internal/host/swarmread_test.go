@@ -78,10 +78,9 @@ func TestRemoteSwarmReadSanitizes(t *testing.T) {
 		case agents.FrameReqSwarmServiceInspect:
 			return map[string]any{
 				"id": "s1", "name": "web", "mode": "replicated",
-				"env_keys":   []string{"DB_PASSWORD=hunter2", "OK"},
-				"secrets":    []map[string]any{{"id": "x", "name": "pw", "data": "hunter2"}},
-				"spec":       map[string]any{"Env": []string{"A=hunter2"}},
-				"update_msg": "x",
+				"env_keys": []string{"DB_PASSWORD=hunter2", "OK"},
+				"secrets":  []map[string]any{{"id": "x", "name": "pw", "data": "hunter2"}},
+				"spec":     map[string]any{"Env": []string{"A=hunter2"}},
 			}, nil
 		case agents.FrameReqSwarmTasks:
 			return map[string]any{"tasks": tasks}, nil

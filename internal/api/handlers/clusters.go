@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/clusters"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/swarmread"
 )
 
 // ListClusters returns the clusters the caller holds hosts.view on (a
@@ -281,9 +281,6 @@ func (h *Handlers) ClusterScope(next http.Handler) http.Handler {
 	})
 }
 
-// swarmRef is a service ID or name as dockerd accepts them.
-var swarmRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
-
 // clusterReadHost resolves the host a cluster is read through and writes
 // the error response when there is none.
 func (h *Handlers) clusterReadHost(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -305,7 +302,10 @@ func writeClusterReadError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agents.ErrSwarmServiceNotFound):
 		writeError(w, http.StatusNotFound, "service not found")
-	case errors.Is(err, clusters.ErrUnreadable), errors.Is(err, agents.ErrNotSwarmManager),
+	case errors.Is(err, clusters.ErrUnreadable):
+		slog.Info("cluster read", "err", err)
+		writeError(w, http.StatusServiceUnavailable, clusters.ErrUnreadable.Error())
+	case errors.Is(err, agents.ErrNotSwarmManager),
 		errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker),
 		errors.Is(err, host.ErrAgentNoSwarmNodes), errors.Is(err, host.ErrAgentNoSwarmRead):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -369,7 +369,7 @@ type clusterServiceResponse struct {
 //	GET /api/v1/clusters/{id}/services/{service}
 func (h *Handlers) ClusterService(w http.ResponseWriter, r *http.Request) {
 	service := chi.URLParam(r, "service")
-	if !swarmRef.MatchString(service) {
+	if !swarmread.ValidRef(service) {
 		writeError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}
@@ -396,7 +396,7 @@ type clusterTasksResponse struct {
 //	GET /api/v1/clusters/{id}/tasks
 func (h *Handlers) ClusterTasks(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
-	if service != "" && !swarmRef.MatchString(service) {
+	if service != "" && !swarmread.ValidRef(service) {
 		writeError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}

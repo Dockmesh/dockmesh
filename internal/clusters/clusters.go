@@ -438,7 +438,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 // ReadHost returns the host the cluster's Swarm state is read through:
 // its origin, checked live to still be the linked manager node of this
-// Swarm. Manager failover replaces this later.
+// Swarm.
 func (s *Service) ReadHost(ctx context.Context, id string) (string, error) {
 	c, err := s.get(ctx, id)
 	if err != nil {

@@ -23,8 +23,10 @@ const Timeout = 20 * time.Second
 
 var errInvalidID = errors.New("invalid service id")
 
-// objectRef is a service ID or name as dockerd accepts them.
 var objectRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// ValidRef reports whether s is a service ID or name dockerd accepts.
+func ValidRef(s string) bool { return objectRef.MatchString(s) }
 
 // API is the part of the Docker client the Swarm frames use.
 type API interface {
@@ -36,10 +38,10 @@ type API interface {
 	NetworkList(ctx context.Context, options client.NetworkListOptions) (client.NetworkListResult, error)
 }
 
-// Read answers a Swarm read frame of type frameType. Every one is refused unless the
-// local daemon is a manager of an active Swarm; the answers are built
-// from an allow-list of fields, so secret and config data and env values
-// never leave the host.
+// Read answers a Swarm read frame. Every one is refused unless the local
+// daemon is a manager of an active Swarm; the answers are built from an
+// allow-list of fields, so secret and config data and env values never
+// leave the host.
 func Read(ctx context.Context, cli API, frameType string, payload json.RawMessage) (any, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
@@ -63,7 +65,7 @@ func Read(ctx context.Context, cli API, frameType string, payload json.RawMessag
 
 	case agents.FrameReqSwarmServiceInspect:
 		var req agents.ResourceIDReq
-		if err := json.Unmarshal(payload, &req); err != nil || !objectRef.MatchString(req.ID) {
+		if err := json.Unmarshal(payload, &req); err != nil || !ValidRef(req.ID) {
 			return nil, errInvalidID
 		}
 		res, err := cli.ServiceInspect(ctx, req.ID, client.ServiceInspectOptions{})
@@ -79,12 +81,12 @@ func Read(ctx context.Context, cli API, frameType string, payload json.RawMessag
 		var req agents.SwarmTasksReq
 		if len(payload) > 0 {
 			if err := json.Unmarshal(payload, &req); err != nil {
-				return nil, errInvalidID
+				return nil, fmt.Errorf("decode %s: %w", frameType, err)
 			}
 		}
 		opts := client.TaskListOptions{}
 		if req.ServiceID != "" {
-			if !objectRef.MatchString(req.ServiceID) {
+			if !ValidRef(req.ServiceID) {
 				return nil, errInvalidID
 			}
 			opts.Filters = client.Filters{}.Add("service", req.ServiceID)

@@ -1,8 +1,10 @@
 package agents
 
 import (
+	"encoding/json"
 	"errors"
 	"net/netip"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +32,9 @@ const (
 	maxLabels        = 64
 	maxTextLen       = 512
 	maxLabelValueLen = 1024
+	// maxAnswerBytes is the encoded size a list answer is cut to; JSON
+	// escaping can make it several times its raw length.
+	maxAnswerBytes = 8 << 20
 )
 
 // SwarmPort is a port a service publishes.
@@ -307,9 +312,7 @@ func SwarmNetworksFrom(list []network.Summary) SwarmNetworksResp {
 			Ingress: n.Ingress, Internal: n.Internal, Stack: n.Labels[labelStackNamespace],
 			CreatedAt: n.Created,
 		}
-		if _, ok := n.Options["encrypted"]; ok {
-			sn.Encrypted = true
-		}
+		_, sn.Encrypted = n.Options["encrypted"]
 		for _, c := range n.IPAM.Config {
 			if c.Subnet.IsValid() {
 				sn.Subnets = append(sn.Subnets, c.Subnet.String())
@@ -340,6 +343,7 @@ func SanitizeSwarmServices(r SwarmServicesResp) SwarmServicesResp {
 		out.Services = append(out.Services, s)
 	}
 	sort.Slice(out.Services, func(i, j int) bool { return out.Services[i].Name < out.Services[j].Name })
+	out.Services, out.Truncated = fitEncoded(out.Services, out.Truncated)
 	return out
 }
 
@@ -409,7 +413,7 @@ func SanitizeSwarmServiceDetail(d SwarmServiceDetail) SwarmServiceDetail {
 	d.Constraints = texts(d.Constraints, 256)
 	d.UpdateConfig = sanitizePolicy(d.UpdateConfig)
 	d.RollbackConfig = sanitizePolicy(d.RollbackConfig)
-	d.UpdateMessage = text(d.UpdateMessage, maxTextLen)
+	d.UpdateMessage = maskCredentials(text(d.UpdateMessage, maxTextLen))
 	return d
 }
 
@@ -450,12 +454,13 @@ func SanitizeSwarmTasks(r SwarmTasksResp) SwarmTasksResp {
 		t.NodeID = token(t.NodeID, 64, "")
 		t.DesiredState = token(t.DesiredState, 16, "")
 		t.State = token(t.State, 16, "")
-		t.Message = text(t.Message, maxTextLen)
-		t.Error = text(t.Error, maxTextLen)
+		t.Message = maskCredentials(text(t.Message, maxTextLen))
+		t.Error = maskCredentials(text(t.Error, maxTextLen))
 		t.ContainerID = token(t.ContainerID, 64, "")
 		t.Image = text(t.Image, maxTextLen)
 		out.Tasks = append(out.Tasks, t)
 	}
+	out.Tasks, out.Truncated = fitEncoded(out.Tasks, out.Truncated)
 	return out
 }
 
@@ -488,9 +493,9 @@ func SanitizeSwarmNetworks(r SwarmNetworksResp) SwarmNetworksResp {
 	return out
 }
 
-// text returns s cut to at most max bytes on a rune boundary, with control
+// text returns s cut to at most limit bytes on a rune boundary, with control
 // characters removed.
-func text(s string, max int) string {
+func text(s string, limit int) string {
 	if !utf8.ValidString(s) {
 		s = strings.ToValidUTF8(s, "")
 	}
@@ -500,21 +505,21 @@ func text(s string, max int) string {
 		}
 		return r
 	}, s)
-	if len(s) <= max {
+	if len(s) <= limit {
 		return s
 	}
-	cut := max
+	cut := limit
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut]
 }
 
-func texts(in []string, max int) []string {
+func texts(in []string, limit int) []string {
 	in = capList(in)
 	out := make([]string, 0, len(in))
 	for _, s := range in {
-		if s = text(s, max); s != "" {
+		if s = text(s, limit); s != "" {
 			out = append(out, s)
 		}
 	}
@@ -540,6 +545,32 @@ func labels(in map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// fitEncoded drops entries from the end until list encodes to at most
+// maxAnswerBytes, so one answer never reaches MaxFrameBytes.
+func fitEncoded[T any](list []T, truncated bool) ([]T, bool) {
+	for len(list) > 0 {
+		b, err := json.Marshal(list)
+		if err != nil || len(b) <= maxAnswerBytes {
+			return list, truncated
+		}
+		list = list[:int(int64(len(list))*maxAnswerBytes*9/10/int64(len(b)))]
+		truncated = true
+	}
+	return list, truncated
+}
+
+var (
+	credentialPair = regexp.MustCompile(`(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|credentials?)\s*[=:]\s*)("[^"]*"|[^\s,;&]+)`)
+	urlUserinfo    = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@`)
+)
+
+// maskCredentials hides key=value credentials and URL passwords in free
+// text from dockerd or plugins, which may quote driver options in errors.
+func maskCredentials(s string) string {
+	s = credentialPair.ReplaceAllString(s, "${1}***")
+	return urlUserinfo.ReplaceAllString(s, "${1}***@")
 }
 
 func capList[T any](in []T) []T {

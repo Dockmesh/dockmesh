@@ -10,17 +10,17 @@ import (
 // SwarmNode is one entry of a Swarm manager's node list. Only a manager
 // can list nodes; the list is what links hosts to a cluster.
 type SwarmNode struct {
-	ID           string `json:"id"`
-	Hostname     string `json:"hostname,omitempty"`
-	Role         string `json:"role"` // "manager" | "worker"
-	State        string `json:"state,omitempty"`
-	Availability string `json:"availability,omitempty"`
-	Leader       bool   `json:"leader,omitempty"`
-	Reachability string `json:"reachability,omitempty"`
-	Addr         string `json:"addr,omitempty"`
-	Engine       string `json:"engine_version,omitempty"`
-	NanoCPUs     int64  `json:"nano_cpus,omitempty"`
-	MemoryBytes  int64  `json:"memory_bytes,omitempty"`
+	ID            string `json:"id"`
+	Hostname      string `json:"hostname,omitempty"`
+	Role          string `json:"role"` // "manager" | "worker"
+	State         string `json:"state,omitempty"`
+	Availability  string `json:"availability,omitempty"`
+	Leader        bool   `json:"leader,omitempty"`
+	Reachability  string `json:"reachability,omitempty"`
+	Addr          string `json:"addr,omitempty"`
+	EngineVersion string `json:"engine_version,omitempty"`
+	NanoCPUs      int64  `json:"nano_cpus,omitempty"`
+	MemoryBytes   int64  `json:"memory_bytes,omitempty"`
 }
 
 // SwarmNodesResp is the agent's answer to FrameReqSwarmNodes.
@@ -36,15 +36,15 @@ func SwarmNodesFrom(nodes []swarm.Node) []SwarmNode {
 	out := make([]SwarmNode, 0, len(nodes))
 	for _, n := range nodes {
 		sn := SwarmNode{
-			ID:           n.ID,
-			Hostname:     n.Description.Hostname,
-			Role:         string(n.Spec.Role),
-			State:        string(n.Status.State),
-			Availability: string(n.Spec.Availability),
-			Addr:         n.Status.Addr,
-			Engine:       n.Description.Engine.EngineVersion,
-			NanoCPUs:     n.Description.Resources.NanoCPUs,
-			MemoryBytes:  n.Description.Resources.MemoryBytes,
+			ID:            n.ID,
+			Hostname:      n.Description.Hostname,
+			Role:          string(n.Spec.Role),
+			State:         string(n.Status.State),
+			Availability:  string(n.Spec.Availability),
+			Addr:          n.Status.Addr,
+			EngineVersion: n.Description.Engine.EngineVersion,
+			NanoCPUs:      n.Description.Resources.NanoCPUs,
+			MemoryBytes:   n.Description.Resources.MemoryBytes,
 		}
 		if n.ManagerStatus != nil {
 			sn.Leader = n.ManagerStatus.Leader
@@ -71,17 +71,17 @@ func SanitizeSwarmNodes(nodes []SwarmNode) []SwarmNode {
 		}
 		seen[id] = true
 		out = append(out, SwarmNode{
-			ID:           id,
-			Hostname:     hostname(n.Hostname),
-			Role:         n.Role,
-			State:        token(n.State, 16, ""),
-			Availability: token(n.Availability, 16, ""),
-			Leader:       n.Leader && n.Role == "manager",
-			Reachability: token(n.Reachability, 16, ""),
-			Addr:         addr(n.Addr),
-			Engine:       token(strings.ToLower(n.Engine), 64, ".-+~"),
-			NanoCPUs:     max(n.NanoCPUs, 0),
-			MemoryBytes:  max(n.MemoryBytes, 0),
+			ID:            id,
+			Hostname:      hostname(n.Hostname),
+			Role:          n.Role,
+			State:         token(n.State, 16, ""),
+			Availability:  token(n.Availability, 16, ""),
+			Leader:        n.Leader && n.Role == "manager",
+			Reachability:  token(n.Reachability, 16, ""),
+			Addr:          addr(n.Addr),
+			EngineVersion: token(strings.ToLower(n.EngineVersion), 64, ".-+~"),
+			NanoCPUs:      max(n.NanoCPUs, 0),
+			MemoryBytes:   max(n.MemoryBytes, 0),
 		})
 	}
 	return out

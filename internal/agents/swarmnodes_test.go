@@ -44,13 +44,13 @@ func TestSwarmNodesFrom(t *testing.T) {
 
 func TestSanitizeSwarmNodeDetails(t *testing.T) {
 	got := SanitizeSwarmNodes([]SwarmNode{
-		{ID: "n1", Role: "manager", Addr: "192.168.10.241", Engine: "29.9.2", NanoCPUs: 2e9, MemoryBytes: 4 << 30},
-		{ID: "n2", Role: "worker", Addr: "m1; rm -rf", Engine: "29 <b>", NanoCPUs: -1, MemoryBytes: -1},
+		{ID: "n1", Role: "manager", Addr: "192.168.10.241", EngineVersion: "29.9.2", NanoCPUs: 2e9, MemoryBytes: 4 << 30},
+		{ID: "n2", Role: "worker", Addr: "m1; rm -rf", EngineVersion: "29 <b>", NanoCPUs: -1, MemoryBytes: -1},
 	})
-	if got[0].Addr != "192.168.10.241" || got[0].Engine != "29.9.2" || got[0].NanoCPUs != 2e9 {
+	if got[0].Addr != "192.168.10.241" || got[0].EngineVersion != "29.9.2" || got[0].NanoCPUs != 2e9 {
 		t.Fatalf("manager %+v", got[0])
 	}
-	if got[1].Addr != "" || got[1].Engine != "" || got[1].NanoCPUs != 0 || got[1].MemoryBytes != 0 {
+	if got[1].Addr != "" || got[1].EngineVersion != "" || got[1].NanoCPUs != 0 || got[1].MemoryBytes != 0 {
 		t.Fatalf("worker %+v", got[1])
 	}
 }
