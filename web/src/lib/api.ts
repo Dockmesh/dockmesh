@@ -191,7 +191,7 @@ export interface Cluster {
   created_at: string;
   members: ClusterMember[];
   status?: ClusterStatus;
-  trust?: ClusterTrust;
+  trust: ClusterTrust;
 }
 
 export type ClusterState = 'healthy' | 'degraded' | 'no_quorum' | 'unreachable' | 'unknown';

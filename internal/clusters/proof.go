@@ -45,9 +45,9 @@ const (
 // ErrNoPendingRoot: there is no changed trust root to confirm.
 var ErrNoPendingRoot = errors.New("the cluster has no changed trust root to confirm")
 
-// ErrConfirmNeedsManagers: a Swarm with more than one manager accepts a new
-// trust root only when two verified managers report it.
-var ErrConfirmNeedsManagers = errors.New("this Swarm has several managers; a new trust root is accepted when two verified managers report it")
+// ErrConfirmNeedsManagers: only a Swarm with a single manager takes an
+// admin's confirmation; with several, two verified managers must agree.
+var ErrConfirmNeedsManagers = errors.New("a new trust root can be confirmed only in a Swarm with a single manager; with several, two verified managers must report it")
 
 // Noticer raises and resolves action-required notices.
 type Noticer interface {
@@ -157,10 +157,11 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 				return false, nil
 			}
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ? WHERE id = ? AND trust_root IS NULL`, reported, c.ID); err != nil {
+		res, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ? WHERE id = ? AND trust_root IS NULL`, reported, c.ID)
+		if err != nil {
 			return false, err
 		}
-		if s.audit != nil {
+		if n, _ := res.RowsAffected(); n > 0 && s.audit != nil {
 			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "pinned", "reported_by": c.OriginHost})
 		}
 		return false, nil
@@ -340,7 +341,7 @@ func (s *Service) proveOne(ctx context.Context, c Cluster, m Member) {
 		case errors.Is(err, host.ErrProofRefused) && strings.Contains(err.Error(), "autolock"):
 			code = ProofKeyLocked
 		case !errors.Is(err, host.ErrProofRefused):
-			// Offline or timed out: the next session proves again.
+			// Not an answer from the agent: keep the last proof.
 			definite = false
 		}
 		slog.Info("swarm node proof failed", "cluster", c.ID, "host", m.HostID, "node", m.NodeID, "err", err)

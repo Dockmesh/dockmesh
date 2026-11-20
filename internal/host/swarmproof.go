@@ -118,14 +118,14 @@ func (r *Registry) SwarmProve(ctx context.Context, id string, req agents.SwarmPr
 
 // JoinedAt is when agent id's current session started, or zero when it is
 // not connected.
-func (r *Registry) JoinedAt(id string) (t time.Time) {
+func (r *Registry) JoinedAt(id string) time.Time {
 	if r.agents == nil {
-		return t
+		return time.Time{}
 	}
 	if live := r.agents.GetConnected(id); live != nil {
 		return live.JoinedAt
 	}
-	return t
+	return time.Time{}
 }
 
 // RemoteIP is the peer address of agent id's current session, or "".

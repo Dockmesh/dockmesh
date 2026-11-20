@@ -249,8 +249,10 @@ func TestFakeAgentClaimingNodeStaysUnverified(t *testing.T) {
 	for name, p := range map[string]func(agents.SwarmProveReq) (agents.SwarmProveResp, error){
 		"own worker certificate": own.prover(t),
 		"forged certificate":     forged.prover(t),
-		"refuses":                func(agents.SwarmProveReq) (agents.SwarmProveResp, error) { return agents.SwarmProveResp{}, host.ErrProofRefused },
-		"too old":                nil,
+		"refuses": func(agents.SwarmProveReq) (agents.SwarmProveResp, error) {
+			return agents.SwarmProveResp{}, host.ErrProofRefused
+		},
+		"too old": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			f.mu.Lock()
@@ -363,6 +365,17 @@ func TestUpgradePinsTrustRoot(t *testing.T) {
 		}
 		if !disagree && proofs(c)["m2"] != ProofVerified {
 			t.Fatalf("after pin: %v", proofs(c))
+		}
+		rec := &auditRec{}
+		s.SetAudit(rec)
+		var before, after string
+		_ = s.db.QueryRow(`SELECT COALESCE(trust_root, '') FROM clusters`).Scan(&before)
+		if err := s.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		_ = s.db.QueryRow(`SELECT COALESCE(trust_root, '') FROM clusters`).Scan(&after)
+		if before != after || len(rec.got) != 0 {
+			t.Fatalf("second start changed the root or audited %v", rec.got)
 		}
 	}
 }

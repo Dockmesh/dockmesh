@@ -8,7 +8,7 @@
   import {
     api, ApiError,
     type Cluster, type ClusterDistribution, type ClusterDistNode, type ClusterDistService,
-    type ClusterMembership, type HostInfo, type SwarmService, type SwarmTask, type SwarmNetwork
+    type ClusterMembership, type ClusterProof, type HostInfo, type SwarmService, type SwarmTask, type SwarmNetwork
   } from '$lib/api';
   import {
     clusterTone, clusterStateLabel, heaviest, taskProblems, servicesByStack,
@@ -262,7 +262,7 @@
   }
 
   const memberOf = (hostId: string | undefined) => (hostId ? cluster?.members.find((x) => x.host_id === hostId) : undefined);
-  function proofText(p: string): string {
+  function proofText(p: ClusterProof): string {
     switch (p) {
       case 'verified':
         return m.cl_proof_verified();
@@ -386,7 +386,7 @@
       </div>
     {/if}
 
-    {#if cluster.trust?.pending}
+    {#if cluster.trust.pending}
       <div class="note warn" role="status" data-testid="cluster-trust-pending">
         <ShieldAlert size={14} strokeWidth={1.8} />
         <div>
@@ -397,7 +397,7 @@
           {/if}
         </div>
       </div>
-    {:else if cluster.trust && !cluster.trust.origin_verified}
+    {:else if !cluster.trust.origin_verified}
       <div class="note grey" role="note" data-testid="cluster-origin-unverified">
         <ShieldAlert size={14} strokeWidth={1.8} />
         <div>
@@ -611,21 +611,19 @@
           <span role="cell" class:lead-t={n.leader} class:badc={n.role === 'manager' && n.reachability === 'unreachable'} class:dm-dim={n.role !== 'manager'}>{managerStatus(n)}</span>
           <span role="cell" class="r dm-num">{n.state === 'ready' && !dist?.stale ? n.tasks : '—'}</span>
           <span role="cell" class="dm-mono">{n.engine_version || '—'}</span>
+          {@const mb = memberOf(n.host_id)}
           <span role="cell" class="agentc">
             {#if n.host_id && hostNames[n.host_id]}<a class="lnk" href="/hosts/{n.host_id}">{hostNames[n.host_id]}</a>{:else if n.host_id}{m.cl_agent_yes()}{:else}<span class="dm-dim">{m.cl_no_agent()}</span>{/if}
-            {#if memberOf(n.host_id)}
-              {@const mb = memberOf(n.host_id)!}
-              {#if mb.verified}
-                <span class="proof ok" title={proofText(mb.proof)} data-testid="node-verified"><ShieldCheck size={12} strokeWidth={1.8} /></span>
-              {:else}
-                <span class="proof warn" title={proofText(mb.proof)} data-testid="node-unverified"><ShieldAlert size={12} strokeWidth={1.8} /> {m.cl_proof_short()}</span>
-              {/if}
+            {#if mb?.verified}
+              <span class="proof ok" title={proofText(mb.proof)} data-testid="node-verified"><ShieldCheck size={12} strokeWidth={1.8} /></span>
+            {:else if mb}
+              <span class="proof warn" title={proofText(mb.proof)} data-testid="node-unverified"><ShieldAlert size={12} strokeWidth={1.8} /> {m.cl_proof_short()}</span>
             {/if}
           </span>
           <span role="cell" class="dm-mono dm-dim">
             {n.addr || '—'}
-            {#if memberOf(n.host_id)?.addr_warning}
-              <span class="proof warn" title={addrHint(memberOf(n.host_id)!.addr_warning!)} data-testid="node-addr-warning"><AlertTriangle size={12} strokeWidth={1.8} /></span>
+            {#if mb?.addr_warning}
+              <span class="proof warn" title={addrHint(mb.addr_warning)} data-testid="node-addr-warning"><AlertTriangle size={12} strokeWidth={1.8} /></span>
             {/if}
           </span>
         </div>

@@ -144,7 +144,6 @@ func readFiles(ctx context.Context, cli API, dir string) (cert, key []byte, err 
 	}
 	key, err = copyFile(ctx, cli, resp.ID, keyFile)
 	if err != nil {
-		clear(key)
 		return nil, nil, err
 	}
 	return cert, key, nil
