@@ -50,6 +50,8 @@ func TestClusterReadRoutesFollowClusterScope(t *testing.T) {
 		also rbac.Perm
 	}{
 		{"/api/v1/clusters/c1/nodes", rbac.PermHostsView, ""},
+		{"/api/v1/clusters/c1/distribution", rbac.PermHostsView, ""},
+		{"/api/v1/clusters/c1/distribution?usage=false", rbac.PermHostsView, ""},
 		{"/api/v1/clusters/c1/services", rbac.PermStacksView, ""},
 		{"/api/v1/clusters/c1/services/web_app", rbac.PermStacksView, ""},
 		{"/api/v1/clusters/c1/tasks?service=web_app", rbac.PermStacksView, ""},

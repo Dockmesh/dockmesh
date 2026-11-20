@@ -203,6 +203,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(h.ClusterScope)
 				r.With(middleware.RequirePerm(rbac.PermHostsView)).Get("/clusters/{id}/nodes", h.ClusterNodes)
+				r.With(middleware.RequirePerm(rbac.PermHostsView)).Get("/clusters/{id}/distribution", h.ClusterDistribution)
 				r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/clusters/{id}/services", h.ClusterServices)
 				r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/clusters/{id}/services/{service}", h.ClusterService)
 				r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/clusters/{id}/tasks", h.ClusterTasks)

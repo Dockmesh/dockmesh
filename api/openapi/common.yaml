@@ -27,6 +27,10 @@ components:
           type: array
           description: Ids (or names, as the spec gives them) of the networks the service's tasks attach to, ingress included.
           items: {type: string}
+        constraints:
+          type: array
+          description: Placement constraints of the service's tasks.
+          items: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     StacksDirCheck:
