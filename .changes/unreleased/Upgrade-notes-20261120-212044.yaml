@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Starting a drain whose plan contains a stack that can't move (named volumes, Swarm tasks, no target with room) is now refused with 409 drain_blocked and nothing moves, where it used to skip those stacks; move them first or migrate the others one at a time
+time: 2026-11-20T21:20:44.699734509Z
+custom:
+    Audience: admins
+    Id: drain-blocked-refuses-whole-drain
