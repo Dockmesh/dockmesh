@@ -192,13 +192,30 @@ On the Hosts page a cluster is one expandable row: its state, how many managers 
 - **No quorum**: the origin is online but its Swarm has no leader, so Swarm can't change anything.
 - **Unreachable**: the origin's agent is offline or can't list the nodes; the row shows the last known state with its time.
 
-Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
+Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without a link and without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
+
+While the origin answers, the row also counts the running tasks and says whether the load is spread evenly or which node runs more than its share.
+
+### Cluster page
+
+The cluster's name on the Hosts page, and on a node's host page, opens the cluster page for users with Hosts: View on the cluster or on everything. It is read-only and shows:
+
+- the state, the cluster ID and the host it is read through, with a notice for **Degraded** (which nodes are gone, how many more manager losses the Swarm survives), **No quorum** (what Swarm can't do until enough managers are back) and **Unreachable** (the last known node list and when);
+- key figures: nodes, managers reachable and the quorum they need, the leader, services and running tasks against the desired count;
+- **Workload distribution**: per node the running tasks, CPU and memory, with the fair share of tasks across the active nodes as a dashed line (**By node**), or a matrix of services × nodes with the totals (**By service**). A node is marked heavy when it runs at least 1.5 times and at least 3 tasks more than the fair share; drained, paused and unreachable nodes don't count. The hint names tasks a placement constraint (`node.hostname==` or `node.id==`) pins there; Swarm never moves running tasks, `docker service update --force` spreads a service again. CPU and memory bars turn yellow from 65 %. Nodes without an agent show their tasks but no CPU or memory, and CPU and memory of a node host need Hosts: View on that host as well, since a cluster role covers the Swarm but not the hosts that are its nodes;
+- **Nodes**: role, state (Ready, Down), availability (Active, Pause, Drain), manager status, tasks, engine version, the linked host and the address;
+- **Services**, grouped by stack: running against desired replicas, the nodes their tasks run on, and CPU (cores) and memory summed from the task containers on nodes with an agent, marked with `*` when some tasks run where no agent measures them;
+- **Tasks**: state, desired state, error and the failures of the task's slot in the last hour; failed and repeatedly failing tasks are marked, **Problems only** lists just those, and the overview links to them;
+- **Stacks** deployed with `docker stack deploy`, marked External, and the overlay **Networks** with the services attached to them.
+
+Services, tasks and stacks need Stacks: View on the cluster, networks Networks: View. The page refreshes every 15 seconds. When no manager can be read it shows the last node list Dockmesh knows, dimmed, and keeps the lists it read earlier on the open page.
 
 ### Reading a cluster through the API
 
 The cluster's nodes, services, tasks and overlay networks are read through its origin manager. The API offers them read-only:
 
 - `GET /api/v1/clusters/{id}/nodes` needs Hosts: View on the cluster; it lists every node, including those without an agent.
+- `GET /api/v1/clusters/{id}/distribution` needs Hosts: View on the cluster. It returns the running tasks per node, the fair share, which nodes are heavy, and the CPU and memory of each node host the caller may view; with Stacks: View on the cluster also the tasks of every service per node with the CPU and memory of its task containers. `?usage=false` leaves out CPU, memory and the services. When no manager can be read it answers with the last known node list, `stale` and `known_at`.
 - `GET /api/v1/clusters/{id}/services`, `…/services/{service}` and `…/tasks` (optionally `?service=`) need Stacks: View on the cluster.
 - `GET /api/v1/clusters/{id}/networks` needs Networks: View on the cluster. With Stacks: View on the cluster as well, each network lists the services attached to it.
 - `GET /api/v1/networks/topology?cluster={id}` is the cluster graph of the **Topology** page and needs Networks: View and Stacks: View on the cluster.

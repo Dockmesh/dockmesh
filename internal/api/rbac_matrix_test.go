@@ -198,6 +198,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/clusters/{id}/access", rbac.PermClustersCreate},
 	{"DELETE", "/api/v1/clusters/{id}", rbac.PermClustersCreate},
 	{"GET", "/api/v1/clusters/{id}/nodes", rbac.PermHostsView},
+	{"GET", "/api/v1/clusters/{id}/distribution", rbac.PermHostsView},
 	{"GET", "/api/v1/clusters/{id}/services", rbac.PermStacksView},
 	{"GET", "/api/v1/clusters/{id}/services/{service}", rbac.PermStacksView},
 	{"GET", "/api/v1/clusters/{id}/tasks", rbac.PermStacksView},
@@ -557,6 +558,7 @@ var alsoNeeds = map[string]rbac.Perm{
 // even on one of its nodes, never reaches them.
 var clusterScoped = map[string]bool{
 	"GET /api/v1/clusters/{id}/nodes":              true,
+	"GET /api/v1/clusters/{id}/distribution":       true,
 	"GET /api/v1/clusters/{id}/services":           true,
 	"GET /api/v1/clusters/{id}/services/{service}": true,
 	"GET /api/v1/clusters/{id}/tasks":              true,

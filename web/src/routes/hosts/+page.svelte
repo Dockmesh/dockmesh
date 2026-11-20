@@ -8,9 +8,9 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
-    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate, type ClusterAccess, type ClusterMembership
+    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate, type ClusterAccess, type ClusterMembership, type ClusterDistribution
   } from '$lib/api';
-  import { clusterTone, clusterStateLabel, clusterSummary, clusterLine } from '$lib/cluster';
+  import { clusterTone, clusterStateLabel, clusterSummary, clusterLine, spreadLine } from '$lib/cluster';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
   import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator, InfoTip, StatusChip } from '$lib/components/ui';
@@ -32,6 +32,8 @@
   let creatingCluster = $state<string | null>(null);
 
   let memberships = $state<ClusterMembership[]>([]);
+  // Task spread per cluster, read only while its managing node answers.
+  let spreadBy = $state<Record<string, ClusterDistribution | null>>({});
   const COLLAPSED_KEY = 'dm.hosts.collapsedClusters';
   let collapsed = $state<Set<string>>(new Set(readCollapsed()));
 
@@ -201,6 +203,11 @@
       remoteAgents = agents;
       clusterList = clist;
       memberships = mships;
+      for (const c of clist) {
+        if (c.status?.state === 'healthy' || c.status?.state === 'degraded') {
+          api.clusters.distribution(c.id, false).then((d) => (spreadBy[c.id] = d)).catch(() => (spreadBy[c.id] = null));
+        } else spreadBy[c.id] = null;
+      }
       clusterCandidates = cands;
       localHostInfo = hostList.find((h) => h.kind === 'local') ?? null;
       upgradePolicy = policy;
@@ -553,7 +560,9 @@
           {@const st = g.cluster?.status}
           {@const open = !collapsed.has(g.id)}
           {@const summary = g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}
+          {@const spread = g.cluster ? spreadLine(spreadBy[g.id]) : null}
           {@const line = g.cluster ? clusterLine(st) : ''}
+          {@const fresh = spreadBy[g.id]?.stale ? null : spreadBy[g.id]}
           <div
             class="dm-tr grp"
             role="row"
@@ -570,14 +579,18 @@
             </span>
             <span role="cell" class="dm-nm gnm">
               <span class="nmline">
-                <span class="gname">{g.name}</span>
+                {#if g.cluster}
+                  <a class="gname" href="/clusters/{g.id}" data-testid="cluster-link" onclick={(e) => e.stopPropagation()}>{g.name}</a>
+                {:else}
+                  <span class="gname">{g.name}</span>
+                {/if}
                 {#if g.cluster}
                   <StatusChip tone={clusterTone(st?.state)} label={clusterStateLabel(st?.state)} />
                 {/if}
               </span>
-              <small title={summary}>{summary}</small>
+              <small title={summary}>{summary}{fresh ? ` · ${fresh.tasks === 1 ? m.hosts_cluster_tasks_one() : m.hosts_cluster_tasks({ n: fresh.tasks })}` : ''}</small>
             </span>
-            <span role="cell" class="gline dm-dim dm-trunc" title={line}>{line}</span>
+            <span role="cell" class="gline dm-dim dm-trunc" title={spread ? `${spread.text} · ${line}` : line} data-testid="cluster-line">{#if spread}<span class:uneven={spread.uneven}>{spread.text}</span> · {/if}{line}</span>
             <span role="cell"></span>
             <span role="cell"></span>
             <span role="cell" class="dm-tr-menu">
@@ -745,7 +758,9 @@
   }
   .grp { cursor: pointer; }
   .grp .caret { display: inline-flex; align-items: center; color: var(--muted); }
-  .grp .gname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grp .gname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); text-decoration: none; }
+  .grp a.gname:hover { text-decoration: underline; }
+  .grp .uneven { color: var(--warn); }
   .grp .gnm { grid-column: span 2; }
   .grp .gline { grid-column: span 3; font-size: var(--fs-xs); }
   .child .dm-nm { padding-left: 18px; }

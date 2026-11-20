@@ -198,3 +198,35 @@ func TestMemberships(t *testing.T) {
 		}
 	}
 }
+
+// An unreachable origin keeps the last node list it returned; a restart
+// knows none.
+func TestLastNodes(t *testing.T) {
+	f := lab()
+	f.nodes["m1"] = readyNodes()
+	s := newService(t, f)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, "m1", "lab", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.LastNodes("other"); ok {
+		t.Fatal("node list of an unknown cluster")
+	}
+	nodes, known, ok := s.LastNodes(swarmID)
+	if !ok || len(nodes) != 4 || known.IsZero() {
+		t.Fatalf("after create: %v %v %v", nodes, known, ok)
+	}
+	f.mu.Lock()
+	f.failing["m1"] = true
+	f.mu.Unlock()
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again, knownAgain, ok := s.LastNodes(swarmID)
+	if !ok || len(again) != 4 || !knownAgain.Equal(known) {
+		t.Fatalf("origin offline: %v %v %v", again, knownAgain, ok)
+	}
+	if _, _, ok := New(s.db, f).LastNodes(swarmID); ok {
+		t.Fatal("node list after a restart")
+	}
+}

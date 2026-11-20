@@ -173,6 +173,58 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/distribution:
+    get:
+      operationId: clusters.distribution
+      tags: [clusters]
+      summary: How the cluster's running tasks spread over its nodes
+      description: |
+        Needs `hosts.view` on the cluster (global or `cluster` scope; a host
+        scope on a node is not enough). Per node the running tasks, whether
+        the node counts for the fair share (ready and active) and whether it
+        is heavy: it runs at least 1.5 times and at least 3 tasks more than
+        the fair share of the counted nodes. Nodes with an agent carry the
+        host's CPU and memory when the caller also holds `hosts.view` on that
+        host (a cluster role covers the Swarm, not its node hosts); the others
+        say why they have none.
+
+        With `stacks.view` on the cluster the answer also lists every
+        service with its running tasks per node and the CPU (cores) and
+        memory its task containers use on nodes with an agent; `partial`
+        marks services with tasks on nodes that were not measured. A heavy
+        node names the services a placement constraint
+        (`node.hostname==` or `node.id==`) pins to it.
+
+        When no manager can be read, the answer is the node list of the
+        last successful check with `stale` and `known_at`, and no tasks.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: usage
+          in: query
+          description: '`false` leaves out CPU, memory and the services (no request to the node hosts).'
+          schema: {type: string, enum: ["true", "false"]}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterDistribution"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: No manager can be read and no earlier node list is known (for example right after a server start).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /clusters/{id}/services:
     get:
       operationId: clusters.services
@@ -505,6 +557,71 @@ components:
               engine_version: {type: string}
               nano_cpus: {type: integer, format: int64}
               memory_bytes: {type: integer, format: int64}
+    ClusterDistribution:
+      type: object
+      required: [nodes, tasks, counted_nodes, fair_share]
+      properties:
+        read_host: {type: string}
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, role, tasks, counted]
+            properties:
+              id: {type: string}
+              hostname: {type: string}
+              role: {type: string, enum: [manager, worker]}
+              state: {type: string}
+              availability: {type: string}
+              leader: {type: boolean}
+              reachability: {type: string}
+              addr: {type: string}
+              engine_version: {type: string}
+              nano_cpus: {type: integer, format: int64}
+              memory_bytes: {type: integer, format: int64}
+              host_id: {type: string, description: The Dockmesh host linked to the node; absent for nodes without an agent.}
+              tasks: {type: integer, description: Running tasks on the node.}
+              cpu_percent: {type: number}
+              mem_percent: {type: number}
+              no_metrics:
+                type: string
+                enum: [no_agent, unreachable, agent_offline, no_access]
+                description: 'Why the node has no CPU and memory; `no_access` when the caller holds no hosts.view on the node''s host.'
+              counted: {type: boolean, description: The node is ready and active and counts for the fair share.}
+              heavy: {type: boolean}
+              pinned:
+                type: array
+                description: Services pinned to a heavy node by a placement constraint, with their running tasks there.
+                items:
+                  type: object
+                  required: [service, tasks]
+                  properties:
+                    service: {type: string}
+                    tasks: {type: integer}
+        tasks: {type: integer, description: Running tasks on ready nodes.}
+        counted_nodes: {type: integer}
+        fair_share: {type: number, description: Running tasks per counted node.}
+        services:
+          type: array
+          description: Only with `stacks.view` on the cluster.
+          items:
+            type: object
+            required: [id, name, per_node, running]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              stack: {type: string}
+              per_node:
+                type: object
+                description: Running tasks by node id.
+                additionalProperties: {type: integer}
+              running: {type: integer}
+              cpu_cores: {type: number, description: CPU of the service's task containers on measured nodes, in cores.}
+              mem_bytes: {type: integer, format: int64}
+              partial: {type: boolean}
+        truncated: {type: boolean, description: The manager had more tasks than one answer carries.}
+        stale: {type: boolean}
+        known_at: {type: string, format: date-time}
     ClusterServices:
       type: object
       required: [read_host, services]
@@ -569,9 +686,6 @@ components:
                   source: {type: string}
                   target: {type: string}
                   read_only: {type: boolean}
-            constraints:
-              type: array
-              items: {type: string}
             max_replicas_per_node: {type: integer, format: int64}
             limit_nano_cpus: {type: integer, format: int64}
             limit_memory_bytes: {type: integer, format: int64}

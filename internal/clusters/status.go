@@ -176,3 +176,13 @@ func (s *Service) Memberships(ctx context.Context) ([]Membership, error) {
 	}
 	return out, nil
 }
+
+// LastNodes returns the node list the last successful check of the
+// cluster's origin returned and when, or ok false when there is none.
+func (s *Service) LastNodes(clusterID string) (nodes []agents.SwarmNode, knownAt time.Time, ok bool) {
+	v, found := s.seenOf(clusterID)
+	if !found || v.nodes == nil {
+		return nil, time.Time{}, false
+	}
+	return v.nodes, v.knownAt, true
+}

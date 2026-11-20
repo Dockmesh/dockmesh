@@ -60,9 +60,11 @@ type SwarmService struct {
 	UpdateState  string      `json:"update_state,omitempty"`
 	// Networks are the ids (or names, as the spec gives them) of the
 	// networks the service's tasks attach to, ingress included.
-	Networks  []string  `json:"networks,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Networks []string `json:"networks,omitempty"`
+	// Constraints are the placement constraints of the service's tasks.
+	Constraints []string  `json:"constraints,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // SwarmRef names a secret or config a service uses. Their data is never
@@ -103,7 +105,6 @@ type SwarmServiceDetail struct {
 	Configs        []SwarmRef            `json:"configs,omitempty"`
 	Networks       []SwarmServiceNetwork `json:"networks,omitempty"`
 	Mounts         []SwarmMount          `json:"mounts,omitempty"`
-	Constraints    []string              `json:"constraints,omitempty"`
 	MaxPerNode     uint64                `json:"max_replicas_per_node,omitempty"`
 	LimitNanoCPUs  int64                 `json:"limit_nano_cpus,omitempty"`
 	LimitMemory    int64                 `json:"limit_memory_bytes,omitempty"`
@@ -220,6 +221,9 @@ func serviceSummary(s swarm.Service) SwarmService {
 	for _, v := range s.Endpoint.VirtualIPs {
 		sv.Networks = appendNew(sv.Networks, v.NetworkID)
 	}
+	if p := s.Spec.TaskTemplate.Placement; p != nil {
+		sv.Constraints = p.Constraints
+	}
 	return sv
 }
 
@@ -264,7 +268,6 @@ func SwarmServiceDetailFrom(s swarm.Service) SwarmServiceDetail {
 		d.Networks = append(d.Networks, SwarmServiceNetwork{ID: n.Target, Aliases: n.Aliases})
 	}
 	if p := t.Placement; p != nil {
-		d.Constraints = p.Constraints
 		d.MaxPerNode = p.MaxReplicas
 	}
 	if r := t.Resources; r != nil && r.Limits != nil {
@@ -384,6 +387,7 @@ func sanitizeService(s SwarmService) (SwarmService, bool) {
 	s.Stack = text(s.Stack, 128)
 	s.UpdateState = token(s.UpdateState, 32, "_")
 	s.Networks = texts(s.Networks, 128)
+	s.Constraints = texts(s.Constraints, 256)
 	if len(s.Ports) > maxListItems {
 		s.Ports = s.Ports[:maxListItems]
 	}
@@ -430,7 +434,6 @@ func SanitizeSwarmServiceDetail(d SwarmServiceDetail) SwarmServiceDetail {
 		m.Source = text(m.Source, maxTextLen)
 		m.Target = text(m.Target, maxTextLen)
 	}
-	d.Constraints = texts(d.Constraints, 256)
 	d.UpdateConfig = sanitizePolicy(d.UpdateConfig)
 	d.RollbackConfig = sanitizePolicy(d.RollbackConfig)
 	d.UpdateMessage = maskCredentials(text(d.UpdateMessage, maxTextLen))

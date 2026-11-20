@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: a read-only cluster page with state and resilience, the workload spread per node and per service with a hint for an overloaded node, and nodes, services (by stack, with CPU and memory), tasks (failing ones marked), stacks and networks. The cluster row on the Hosts page links to it and shows the task spread'
+time: 2026-11-20T16:16:25.008476406Z
