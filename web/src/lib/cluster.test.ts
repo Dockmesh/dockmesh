@@ -12,14 +12,14 @@ function task(p: Partial<SwarmTask>): SwarmTask {
 
 describe('taskProblems', () => {
   it('marks the newest task of a failed slot', () => {
-    const failed = task({ slot: 1, state: 'failed', desired_state: 'running', updated_at: ago(1) });
+    const failed = task({ slot: 1, state: 'failed', desired_state: 'running', updated_at: ago(1), error: 'exit 1' });
     const got = taskProblems([task({ slot: 1, state: 'shutdown', desired_state: 'shutdown', updated_at: ago(90) }), failed], now);
-    expect([...got.entries()]).toEqual([[failed.id, { kind: 'failed', failures: 1 }]]);
+    expect([...got.entries()]).toEqual([[failed.id, { kind: 'failed', failures: 1, lastError: 'exit 1' }]]);
   });
   it('marks a slot that failed twice in the window, even while it runs again', () => {
     const running = task({ slot: 2, updated_at: ago(1) });
-    const got = taskProblems([running, task({ slot: 2, state: 'failed', updated_at: ago(5) }), task({ slot: 2, state: 'rejected', updated_at: ago(30) })], now);
-    expect(got.get(running.id)).toEqual({ kind: 'restarting', failures: 2 });
+    const got = taskProblems([running, task({ slot: 2, state: 'failed', updated_at: ago(5), error: 'task: non-zero exit (1)' }), task({ slot: 2, state: 'rejected', updated_at: ago(30) })], now);
+    expect(got.get(running.id)).toEqual({ kind: 'restarting', failures: 2, lastError: 'task: non-zero exit (1)' });
   });
   it('ignores failures older than the window and updates that shut tasks down', () => {
     const old = ago(RESTART_WINDOW_MS / 60_000 + 5);

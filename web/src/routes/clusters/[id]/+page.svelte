@@ -132,7 +132,10 @@
   // Without a fresh read the page shows what was last read, read-only.
   const readOnly = $derived(cstate === 'no_quorum' || cstate === 'unreachable' || !!dist?.stale);
   const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? cluster.origin_host) : '');
-  const nodes = $derived(dist?.nodes ?? []);
+  // Managers first, then by name, as docker node ls reads.
+  const nodes = $derived(
+    [...(dist?.nodes ?? [])].sort((a, b) => (a.role === b.role ? nodeLabel(a).localeCompare(nodeLabel(b)) : a.role === 'manager' ? -1 : 1))
+  );
   const nodeName = (nodeId: string | undefined) => {
     const n = nodes.find((x) => x.id === nodeId);
     return n ? nodeLabel(n) : nodeId ? nodeId.slice(0, 12) : '—';
@@ -437,7 +440,7 @@
       <span role="columnheader">{m.hosts_col_memory()}</span>
       <span role="columnheader">{m.cl_col_availability()}</span>
     </div>
-    {#each d.nodes as n (n.id)}
+    {#each nodes as n (n.id)}
       {@const up = n.state === 'ready'}
       <div class="dm-tr" role="row" style="grid-template-columns: {DIST_COLS}">
         <span role="cell" class="dm-nm">
@@ -460,7 +463,6 @@
           <span role="cell">{@render bar(n.mem_percent)}</span>
         {:else}
           <span role="cell" class="na" title={noMetricsText(n)}>{noMetricsText(n)}</span>
-          <span role="cell"></span>
         {/if}
         <span role="cell">
           {#if !up}<StatusChip tone="bad" label={nodeStateLabel(n.state)} />{:else}<span class:dm-dim={n.availability === 'active'} class:warnc={n.availability !== 'active'}>{availabilityLabel(n.availability)}</span>{/if}
@@ -471,12 +473,12 @@
 {/snippet}
 
 {#snippet matrix(d: ClusterDistribution)}
-  {@const cols = `minmax(170px, 1.4fr) 92px repeat(${d.nodes.length}, minmax(76px, 1fr)) 80px`}
+  {@const cols = `minmax(170px, 1.4fr) 92px repeat(${nodes.length}, minmax(76px, 1fr)) 80px`}
   <div class="dm-tbl" role="table" aria-label={m.cl_dist_by_service()} data-testid="dist-by-service">
     <div class="dm-tr dm-th" role="row" style="grid-template-columns: {cols}">
       <span role="columnheader">{m.cl_col_service()}</span>
       <span role="columnheader">{m.cl_col_mode()}</span>
-      {#each d.nodes as n (n.id)}
+      {#each nodes as n (n.id)}
         <span role="columnheader" class="c" title={n.hostname}>{nodeLabel(n)}{n.leader ? ' ★' : ''}{n.host_id ? '' : ` (${m.cl_no_agent_short()})`}</span>
       {/each}
       <span role="columnheader" class="r">{m.cl_col_running()}</span>
@@ -486,7 +488,7 @@
       <div class="dm-tr" role="row" style="grid-template-columns: {cols}">
         <span role="cell" class="dm-nm"><span class="nmline"><span class="nm">{s.name}</span>{#if sv && pinningConstraint(sv.constraints)}<span class="dm-pill" title={pinningConstraint(sv.constraints)}>{m.cl_pinned()}</span>{/if}</span></span>
         <span role="cell" class="dm-dim">{sv?.mode ?? '—'}</span>
-        {#each d.nodes as n (n.id)}
+        {#each nodes as n (n.id)}
           {@const c = s.per_node[n.id] ?? 0}
           <span role="cell" class="c dm-num" class:dm-dim={!c}>{n.state !== 'ready' ? '—' : c || '·'}</span>
         {/each}
@@ -496,7 +498,7 @@
     <div class="dm-tr sum" role="row" style="grid-template-columns: {cols}">
       <span role="cell">{m.cl_all_tasks()}</span>
       <span role="cell"></span>
-      {#each d.nodes as n (n.id)}
+      {#each nodes as n (n.id)}
         <span role="cell" class="c dm-num" class:warnc={n.heavy}>{n.state !== 'ready' ? '—' : n.tasks}</span>
       {/each}
       <span role="cell" class="r dm-num">{d.tasks}</span>
@@ -504,7 +506,7 @@
     <div class="dm-tr sum" role="row" style="grid-template-columns: {cols}">
       <span role="cell">{m.cl_cpu_mem()}</span>
       <span role="cell"></span>
-      {#each d.nodes as n (n.id)}
+      {#each nodes as n (n.id)}
         <span role="cell" class="c dm-num" title={n.cpu_percent == null ? noMetricsText(n) : ''}>{n.cpu_percent == null ? '—' : `${Math.round(n.cpu_percent)}% · ${Math.round(n.mem_percent ?? 0)}%`}</span>
       {/each}
       <span role="cell"></span>
@@ -629,6 +631,7 @@
       </div>
       {#each shownTasks as t (t.id)}
         {@const p = problems.get(t.id)}
+        {@const err = t.error || p?.lastError}
         <div class="dm-tr" class:problem={!!p} role="row" style="grid-template-columns: {TASK_COLS}" data-testid={p ? 'task-problem' : undefined}>
           <span role="cell"><span class="dm-dot {taskTone(t)}"></span></span>
           <span role="cell" class="dm-nm"><span class="nmline"><span class="nm" title={t.id}>{taskName(t)}</span>{#if p}<span class="dm-pill bad">{p.kind === 'failed' ? m.cl_task_failed() : m.cl_task_restarting()}</span>{/if}</span></span>
@@ -636,7 +639,7 @@
           <span role="cell" class:badc={taskTone(t) === 'bad'}>{t.state}</span>
           <span role="cell" class="dm-dim">{t.desired_state}</span>
           <span role="cell" class="r dm-num" class:badc={!!p && p.failures >= 2}>{p ? p.failures : '—'}</span>
-          <span role="cell" class="dm-trunc" class:badc={!!t.error} title={t.error || t.message}>{t.error || t.message || '—'}</span>
+          <span role="cell" class="dm-trunc" class:badc={!!err} title={err || t.message}>{err || t.message || '—'}</span>
           <span role="cell" class="dm-dim">{fmtAgo(t.updated_at)}</span>
         </div>
       {/each}

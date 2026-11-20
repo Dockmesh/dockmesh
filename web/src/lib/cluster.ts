@@ -75,6 +75,8 @@ export interface TaskProblem {
   kind: 'failed' | 'restarting';
   /** Failed tasks of the slot within RESTART_WINDOW_MS. */
   failures: number;
+  /** The error of the slot's newest failed task. */
+  lastError?: string;
 }
 
 // A replicated task keeps its slot across replacements; a global task is
@@ -97,9 +99,11 @@ export function taskProblems(tasks: SwarmTask[], now = Date.now()): Map<string, 
   for (const list of slots.values()) {
     list.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
     const newest = list[0];
-    const failures = list.filter((t) => FAILED_STATES.has(t.state) && now - Date.parse(t.updated_at) <= RESTART_WINDOW_MS).length;
-    if (FAILED_STATES.has(newest.state) && newest.desired_state !== 'shutdown') out.set(newest.id, { kind: 'failed', failures });
-    else if (failures >= 2) out.set(newest.id, { kind: 'restarting', failures });
+    const failed = list.filter((t) => FAILED_STATES.has(t.state));
+    const failures = failed.filter((t) => now - Date.parse(t.updated_at) <= RESTART_WINDOW_MS).length;
+    const lastError = failed[0]?.error || failed[0]?.message || undefined;
+    if (FAILED_STATES.has(newest.state) && newest.desired_state !== 'shutdown') out.set(newest.id, { kind: 'failed', failures, lastError });
+    else if (failures >= 2) out.set(newest.id, { kind: 'restarting', failures, lastError });
   }
   return out;
 }
