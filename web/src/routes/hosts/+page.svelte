@@ -203,13 +203,11 @@
       remoteAgents = agents;
       clusterList = clist;
       memberships = mships;
-      void Promise.all(
-        clist.map((c) =>
-          c.status?.state === 'healthy' || c.status?.state === 'degraded'
-            ? api.clusters.distribution(c.id, false).then((d) => (spreadBy[c.id] = d)).catch(() => (spreadBy[c.id] = null))
-            : (spreadBy[c.id] = null)
-        )
-      );
+      for (const c of clist) {
+        if (c.status?.state === 'healthy' || c.status?.state === 'degraded') {
+          api.clusters.distribution(c.id, false).then((d) => (spreadBy[c.id] = d)).catch(() => (spreadBy[c.id] = null));
+        } else spreadBy[c.id] = null;
+      }
       clusterCandidates = cands;
       localHostInfo = hostList.find((h) => h.kind === 'local') ?? null;
       upgradePolicy = policy;
@@ -564,7 +562,7 @@
           {@const summary = g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}
           {@const spread = g.cluster ? spreadLine(spreadBy[g.id]) : null}
           {@const line = g.cluster ? clusterLine(st) : ''}
-          {@const tasks = spreadBy[g.id]?.tasks}
+          {@const fresh = spreadBy[g.id]?.stale ? null : spreadBy[g.id]}
           <div
             class="dm-tr grp"
             role="row"
@@ -590,7 +588,7 @@
                   <StatusChip tone={clusterTone(st?.state)} label={clusterStateLabel(st?.state)} />
                 {/if}
               </span>
-              <small title={summary}>{summary}{tasks != null && !spreadBy[g.id]?.stale ? ` · ${m.hosts_cluster_tasks({ n: tasks })}` : ''}</small>
+              <small title={summary}>{summary}{fresh ? ` · ${fresh.tasks === 1 ? m.hosts_cluster_tasks_one() : m.hosts_cluster_tasks({ n: fresh.tasks })}` : ''}</small>
             </span>
             <span role="cell" class="gline dm-dim dm-trunc" title={spread ? `${spread.text} · ${line}` : line} data-testid="cluster-line">{#if spread}<span class:uneven={spread.uneven}>{spread.text}</span> · {/if}{line}</span>
             <span role="cell"></span>

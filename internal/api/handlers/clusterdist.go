@@ -22,6 +22,7 @@ const (
 	noMetricsNoAgent      = "no_agent"
 	noMetricsUnreachable  = "unreachable"
 	noMetricsAgentOffline = "agent_offline"
+	noMetricsNoAccess     = "no_access"
 )
 
 // Heavy-node rule: a node that counts runs at least heavyFactor times and
@@ -32,7 +33,10 @@ const (
 	heavyMargin = 3
 )
 
-const labelSwarmServiceID = "com.docker.swarm.service.id"
+const (
+	labelSwarmServiceID = "com.docker.swarm.service.id"
+	labelSwarmTaskID    = "com.docker.swarm.task.id"
+)
 
 type distPinned struct {
 	Service string `json:"service"`
@@ -66,13 +70,13 @@ type distService struct {
 }
 
 type distribution struct {
-	ReadHost    string        `json:"read_host,omitempty"`
-	Nodes       []distNode    `json:"nodes"`
-	Tasks       int           `json:"tasks"`
-	CountedNode int           `json:"counted_nodes"`
-	FairShare   float64       `json:"fair_share"`
-	Services    []distService `json:"services,omitempty"`
-	Truncated   bool          `json:"truncated,omitempty"`
+	ReadHost     string        `json:"read_host,omitempty"`
+	Nodes        []distNode    `json:"nodes"`
+	Tasks        int           `json:"tasks"`
+	CountedNodes int           `json:"counted_nodes"`
+	FairShare    float64       `json:"fair_share"`
+	Services     []distService `json:"services,omitempty"`
+	Truncated    bool          `json:"truncated,omitempty"`
 	// Stale answers carry the node list of the last successful check and
 	// no tasks: no manager could be read now.
 	Stale   bool       `json:"stale,omitempty"`
@@ -99,6 +103,9 @@ type distInput struct {
 	hostOf   map[string]string // node id → linked host id
 	usage    map[string]nodeUsage
 	offline  map[string]bool // node id → its agent did not answer
+	// denied are the nodes whose host the caller holds no hosts.view on;
+	// a cluster role covers the Swarm, not the hosts that are its nodes.
+	denied   map[string]bool
 	measured map[string]map[string]svcUsage
 }
 
@@ -145,7 +152,7 @@ func distribute(in distInput) distribution {
 			d.Tasks += dn.Tasks
 		}
 		if dn.Counted {
-			d.CountedNode++
+			d.CountedNodes++
 			sum += dn.Tasks
 		}
 		switch u, ok := in.usage[n.ID]; {
@@ -153,6 +160,8 @@ func distribute(in distInput) distribution {
 			dn.NoMetrics = noMetricsNoAgent
 		case n.State != "ready":
 			dn.NoMetrics = noMetricsUnreachable
+		case in.denied[n.ID]:
+			dn.NoMetrics = noMetricsNoAccess
 		case ok:
 			cpu, mem := u.cpu, u.mem
 			dn.CPUPercent, dn.MemPercent = &cpu, &mem
@@ -161,8 +170,8 @@ func distribute(in distInput) distribution {
 		}
 		d.Nodes = append(d.Nodes, dn)
 	}
-	if d.CountedNode > 0 {
-		d.FairShare = float64(sum) / float64(d.CountedNode)
+	if d.CountedNodes > 0 {
+		d.FairShare = float64(sum) / float64(d.CountedNodes)
 	}
 	for i := range d.Nodes {
 		dn := &d.Nodes[i]
@@ -257,7 +266,8 @@ func (h *Handlers) ClusterDistribution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.tasks = tasks.Tasks
-	withServices := middleware.AllowedOn(r.Context(), rbac.PermStacksView, rbac.Resource{ClusterID: id})
+	withUsage := r.URL.Query().Get("usage") != "false"
+	withServices := withUsage && middleware.AllowedOn(r.Context(), rbac.PermStacksView, rbac.Resource{ClusterID: id})
 	if withServices {
 		svcs, err := h.Hosts.SwarmServices(r.Context(), readHost)
 		if err != nil {
@@ -269,8 +279,10 @@ func (h *Handlers) ClusterDistribution(w http.ResponseWriter, r *http.Request) {
 			in.services = []agents.SwarmService{}
 		}
 	}
-	if r.URL.Query().Get("usage") != "false" {
-		h.measureNodes(r.Context(), &in, withServices)
+	if withUsage {
+		h.measureNodes(r.Context(), &in, withServices, func(hostID string) bool {
+			return middleware.AllowedOn(r.Context(), rbac.PermHostsView, h.hostScopeReq(hostID))
+		})
 	}
 	d := distribute(in)
 	d.ReadHost = readHost
@@ -278,11 +290,11 @@ func (h *Handlers) ClusterDistribution(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
-// measureNodes asks every ready node with an agent for its CPU and memory
-// and, with services, sums the newest samples of its task containers per
-// service.
-func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices bool) {
-	in.usage, in.offline = map[string]nodeUsage{}, map[string]bool{}
+// measureNodes asks every ready node host the caller may view for its CPU
+// and memory and, with services, sums the newest samples of its task
+// containers per service.
+func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices bool, canView func(hostID string) bool) {
+	in.usage, in.offline, in.denied = map[string]nodeUsage{}, map[string]bool{}, map[string]bool{}
 	if withServices && h.Metrics != nil {
 		in.measured = map[string]map[string]svcUsage{}
 	}
@@ -291,6 +303,10 @@ func (h *Handlers) measureNodes(ctx context.Context, in *distInput, withServices
 	for _, n := range in.nodes {
 		hostID := in.hostOf[n.ID]
 		if hostID == "" || n.State != "ready" {
+			continue
+		}
+		if !canView(hostID) {
+			in.denied[n.ID] = true
 			continue
 		}
 		wg.Add(1)
@@ -336,7 +352,7 @@ func (h *Handlers) measureHost(ctx context.Context, hostID string, withServices 
 	}
 	svcOf := map[string]string{}
 	for _, c := range list {
-		if sid := c.Labels[labelSwarmServiceID]; sid != "" && len(c.Names) > 0 {
+		if sid := c.Labels[labelSwarmServiceID]; sid != "" && c.Labels[labelSwarmTaskID] != "" && len(c.Names) > 0 {
 			svcOf[strings.TrimPrefix(c.Names[0], "/")] = sid
 		}
 	}

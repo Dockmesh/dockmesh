@@ -66,7 +66,7 @@ export function memberRoleLine(ms: ClusterMembership): string {
 }
 
 /** Task states after which Swarm starts a replacement because the task broke. */
-const FAILED_STATES = new Set(['failed', 'rejected', 'orphaned']);
+export const FAILED_STATES = new Set(['failed', 'rejected', 'orphaned']);
 
 /** Window in which repeated failures of one slot count as restarting. */
 export const RESTART_WINDOW_MS = 60 * 60 * 1000;
@@ -119,6 +119,17 @@ export function servicesByStack<T extends { name: string; stack?: string }>(serv
     .map(([stack, list]) => ({ stack, services: [...list].sort((a, b) => a.name.localeCompare(b.name)) }));
 }
 
+/** A node's host name, or its short id when the manager reported none. */
+export function nodeLabel(n: { id: string; hostname?: string }): string {
+  return n.hostname || n.id.slice(0, 12);
+}
+
+/** Whether a placement constraint ties a service to one node, as the
+ * server's pinned rule reads it. */
+export function pinningConstraint(constraints: string[] | undefined): string | null {
+  return constraints?.find((c) => /^\s*node\.(hostname|id)\s*==\s*\S+\s*$/.test(c)) ?? null;
+}
+
 /** The busiest heavy node, or null when the spread is even. */
 export function heaviest(d: ClusterDistribution | null | undefined): ClusterDistNode | null {
   if (!d || d.stale) return null;
@@ -132,10 +143,9 @@ export function spreadLine(d: ClusterDistribution | null | undefined): { text: s
   if (!d || d.stale || d.tasks === 0) return null;
   const h = heaviest(d);
   if (!h) return { text: m.cluster_spread_even(), uneven: false };
-  return { text: m.cluster_spread_uneven({ node: h.hostname || h.id.slice(0, 12), n: h.tasks, total: d.tasks }), uneven: true };
+  return { text: m.cluster_spread_uneven({ node: nodeLabel(h), n: h.tasks, total: d.tasks }), uneven: true };
 }
 
-/** "Ready", "Down", "Unknown" for a node's state as dockerd reports it. */
 export function nodeStateLabel(state: string | undefined): string {
   switch (state) {
     case 'ready':

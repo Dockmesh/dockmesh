@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestDistributeHeavyRule(t *testing.T) {
 	}{
 		{"even", []int{4, 4, 4, 4}, nil, nil, 4, 16},
 		// fair 7.75: 14 is ≥ 1.5× and ≥ 3 above.
-		{"mockup", []int{14, 6, 7, 4}, nil, []string{"n1"}, 7.75, 31},
+		{"one heavy node", []int{14, 6, 7, 4}, nil, []string{"n1"}, 7.75, 31},
 		// fair 1.5: 3 is 2× but only 1.5 above.
 		{"small numbers", []int{3, 1, 1, 1}, nil, nil, 1.5, 6},
 		// fair 21.5: 25 is 3.5 above but below 1.5×.
@@ -179,5 +180,32 @@ func TestDistributeMetrics(t *testing.T) {
 	in.measured = nil
 	if web := distribute(in).Services[0]; web.Partial || web.CPUCores != nil {
 		t.Fatalf("without usage %+v", web)
+	}
+}
+
+// A cluster role covers the Swarm, not its node hosts: hosts the caller
+// can't view are never asked, and their nodes say so.
+func TestMeasureNodesNeedsHostAccess(t *testing.T) {
+	nodes := distNodes()
+	nodes[2].State = "down"
+	in := distInput{nodes: nodes, hostOf: map[string]string{"n1": "a1", "n2": "a2", "n3": "a3"}}
+	asked := map[string]bool{}
+	(&Handlers{}).measureNodes(context.Background(), &in, true, func(hostID string) bool {
+		asked[hostID] = true
+		return hostID == "a1"
+	})
+	if !reflect.DeepEqual(asked, map[string]bool{"a1": true, "a2": true}) {
+		t.Fatalf("access checked for %v", asked)
+	}
+	if !reflect.DeepEqual(in.denied, map[string]bool{"n2": true}) || !in.offline["n1"] || in.offline["n2"] {
+		t.Fatalf("denied %v offline %v", in.denied, in.offline)
+	}
+	got := map[string]string{}
+	for _, n := range distribute(in).Nodes {
+		got[n.ID] = n.NoMetrics
+	}
+	want := map[string]string{"n1": noMetricsAgentOffline, "n2": noMetricsNoAccess, "n3": noMetricsUnreachable, "n4": noMetricsNoAgent}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no_metrics %v", got)
 	}
 }

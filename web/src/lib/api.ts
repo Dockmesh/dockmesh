@@ -277,7 +277,7 @@ export interface ClusterDistNode extends SwarmNode {
   tasks: number;
   cpu_percent?: number;
   mem_percent?: number;
-  no_metrics?: 'no_agent' | 'unreachable' | 'agent_offline';
+  no_metrics?: 'no_agent' | 'unreachable' | 'agent_offline' | 'no_access';
   counted: boolean;
   heavy?: boolean;
   pinned?: { service: string; tasks: number }[];

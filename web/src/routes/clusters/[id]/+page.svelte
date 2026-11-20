@@ -12,7 +12,7 @@
   } from '$lib/api';
   import {
     clusterTone, clusterStateLabel, heaviest, taskProblems, servicesByStack,
-    nodeStateLabel, availabilityLabel, RESTART_WINDOW_MS, type TaskProblem
+    nodeStateLabel, availabilityLabel, nodeLabel, pinningConstraint, FAILED_STATES, RESTART_WINDOW_MS, type TaskProblem
   } from '$lib/cluster';
   import { fmtAgo, fmtMem } from '$lib/format';
   import { fmtNumber } from '$lib/i18n';
@@ -32,6 +32,7 @@
 
   // Above this share of CPU or memory a node's bar turns yellow.
   const BUSY_PCT = 65;
+  const MAX_TASKS = 500;
 
   let cluster = $state<Cluster | null>(null);
   let memberOnly = $state<ClusterMembership | null>(null);
@@ -128,13 +129,13 @@
 
   const st = $derived(cluster?.status);
   const cstate = $derived(st?.state ?? 'unknown');
-  // No quorum and Unreachable show what was last read, read-only.
+  // Without a fresh read the page shows what was last read, read-only.
   const readOnly = $derived(cstate === 'no_quorum' || cstate === 'unreachable' || !!dist?.stale);
   const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? cluster.origin_host) : '');
   const nodes = $derived(dist?.nodes ?? []);
   const nodeName = (nodeId: string | undefined) => {
     const n = nodes.find((x) => x.id === nodeId);
-    return n?.hostname || (nodeId ? nodeId.slice(0, 12) : '—');
+    return n ? nodeLabel(n) : nodeId ? nodeId.slice(0, 12) : '—';
   };
   const originNode = $derived(nodes.find((n) => n.host_id === cluster?.origin_host));
   const managers = $derived(st?.managers ?? nodes.filter((n) => n.role === 'manager').length);
@@ -175,10 +176,10 @@
     {
       label: m.cl_fig_leader(),
       value: cstate === 'healthy' || cstate === 'degraded' ? (st?.leader ?? '—') : '—',
-      note: cstate === 'healthy' || cstate === 'degraded' ? (nodes.find((n) => n.leader)?.host_id ? m.cl_has_agent() : m.cl_no_agent()) : ''
+      note: cstate === 'healthy' || cstate === 'degraded' ? (nodes.find((n) => n.leader)?.host_id ? m.cl_has_agent() : m.cl_no_agent_short()) : ''
     },
     ...(svcDenied ? [] : [
-      { label: m.cl_fig_services(), value: services?.length ?? '—', note: services ? m.cl_stacks_external({ n: namedStacks.length }) : '' },
+      { label: m.cl_fig_services(), value: services?.length ?? '—', note: services ? (namedStacks.length === 1 ? m.cl_stacks_external_one() : m.cl_stacks_external({ n: namedStacks.length })) : '' },
       {
         label: m.cl_fig_tasks(),
         value: readOnly ? '—' : running,
@@ -206,6 +207,8 @@
         return m.cl_no_metrics_unreachable();
       case 'agent_offline':
         return m.cl_no_metrics_offline();
+      case 'no_access':
+        return m.cl_no_metrics_access();
       default:
         return '—';
     }
@@ -220,9 +223,6 @@
     const parts = Object.entries(per).sort(([a], [b]) => nodeName(a).localeCompare(nodeName(b))).map(([n, c]) => (c > 1 ? `${nodeName(n)} ×${c}` : nodeName(n)));
     return parts.length ? parts.join(', ') : '—';
   }
-  function pinnedService(s: { constraints?: string[] }): string | null {
-    return s.constraints?.find((c) => /^\s*node\.(hostname|id)\s*==/.test(c)) ?? null;
-  }
   function cpuMem(s: ClusterDistService | undefined): { cpu: string; mem: string; partial: boolean } {
     if (!s || s.cpu_cores == null) return { cpu: '—', mem: '—', partial: !!s?.partial };
     return { cpu: fmtNumber(s.cpu_cores, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), mem: fmtMem(s.mem_bytes ?? 0), partial: !!s.partial };
@@ -232,7 +232,7 @@
     return t.slot ? `${svc}.${t.slot}` : `${svc}.${nodeName(t.node_id)}`;
   }
   function taskTone(t: SwarmTask): Tone {
-    if (['failed', 'rejected', 'orphaned'].includes(t.state)) return 'bad';
+    if (FAILED_STATES.has(t.state)) return 'bad';
     if (t.state === 'running') return 'ok';
     if (t.desired_state === 'running') return 'warn';
     return 'off';
@@ -246,7 +246,7 @@
       if (!q) return true;
       return taskName(t).toLowerCase().includes(q) || nodeName(t.node_id).toLowerCase().includes(q);
     });
-    return list.slice(0, 500);
+    return list.slice(0, MAX_TASKS);
   });
 
   function showProblems() {
@@ -296,7 +296,7 @@
       <div class="note warn" role="status" data-testid="cluster-notice">
         <AlertTriangle size={14} strokeWidth={1.8} />
         <div>
-          <b>{downNodes.length === 1 ? m.cl_degraded_one({ node: downNodes[0].hostname || downNodes[0].id.slice(0, 12) }) : m.cl_degraded_many({ nodes: downNodes.map((n) => n.hostname || n.id.slice(0, 12)).join(', ') })}</b>
+          <b>{downNodes.length === 1 ? m.cl_degraded_one({ node: nodeLabel(downNodes[0]) }) : m.cl_degraded_many({ nodes: downNodes.map(nodeLabel).join(', ') })}</b>
           <span>
             {m.cl_degraded_quorum({ n: reachable, total: managers })}
             {tolerance === 0 ? m.cl_tolerance_none() : tolerance === 1 ? m.cl_tolerance_one() : m.cl_tolerance({ n: tolerance })}
@@ -385,7 +385,7 @@
                 <div>
                   <b>{m.cl_heavy_title()}</b>
                   <span>
-                    {m.cl_heavy_text({ node: top.hostname || top.id.slice(0, 12), n: top.tasks, total: dist.tasks, fair: Math.round(dist.fair_share) })}{top.cpu_percent != null ? ` ${m.cl_heavy_cpu({ cpu: Math.round(top.cpu_percent) })}` : ''}
+                    {m.cl_heavy_text({ node: nodeLabel(top), n: top.tasks, total: dist.tasks, fair: Math.round(dist.fair_share) })}{top.cpu_percent != null ? ` ${m.cl_heavy_cpu({ cpu: Math.round(top.cpu_percent) })}` : ''}
                     {m.cl_heavy_never()}
                     {#if top.pinned?.length}
                       {m.cl_heavy_pinned({ n: top.pinned.reduce((a, p) => a + p.tasks, 0), services: top.pinned.map((p) => p.service).join(', ') })}
@@ -442,7 +442,7 @@
       <div class="dm-tr" role="row" style="grid-template-columns: {DIST_COLS}">
         <span role="cell" class="dm-nm">
           <span class="nmline">
-            {#if n.host_id}<a href="/hosts/{n.host_id}">{n.hostname || n.id.slice(0, 12)}</a>{:else}<span class="nm">{n.hostname || n.id.slice(0, 12)}</span>{/if}
+            {#if n.host_id}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
             {#if n.leader}<span class="lead">{m.hosts_cluster_leader()}</span>{/if}
           </span>
           <small>{n.role === 'manager' ? m.hosts_member_role_manager() : m.hosts_member_role_worker()}{n.host_id ? '' : ` · ${m.cl_no_agent_short()}`}</small>
@@ -477,14 +477,14 @@
       <span role="columnheader">{m.cl_col_service()}</span>
       <span role="columnheader">{m.cl_col_mode()}</span>
       {#each d.nodes as n (n.id)}
-        <span role="columnheader" class="c" title={n.hostname}>{n.hostname || n.id.slice(0, 12)}{n.leader ? ' ★' : ''}{n.host_id ? '' : ` (${m.cl_no_agent_short()})`}</span>
+        <span role="columnheader" class="c" title={n.hostname}>{nodeLabel(n)}{n.leader ? ' ★' : ''}{n.host_id ? '' : ` (${m.cl_no_agent_short()})`}</span>
       {/each}
       <span role="columnheader" class="r">{m.cl_col_running()}</span>
     </div>
     {#each d.services ?? [] as s (s.id)}
       {@const sv = svcById[s.id]}
       <div class="dm-tr" role="row" style="grid-template-columns: {cols}">
-        <span role="cell" class="dm-nm"><span class="nmline"><span class="nm">{s.name}</span>{#if sv && pinnedService(sv)}<span class="dm-pill" title={pinnedService(sv)}>{m.cl_pinned()}</span>{/if}</span></span>
+        <span role="cell" class="dm-nm"><span class="nmline"><span class="nm">{s.name}</span>{#if sv && pinningConstraint(sv.constraints)}<span class="dm-pill" title={pinningConstraint(sv.constraints)}>{m.cl_pinned()}</span>{/if}</span></span>
         <span role="cell" class="dm-dim">{sv?.mode ?? '—'}</span>
         {#each d.nodes as n (n.id)}
           {@const c = s.per_node[n.id] ?? 0}
@@ -535,7 +535,7 @@
           <span role="cell"><span class="dm-dot {nodeTone(n)}"></span></span>
           <span role="cell" class="dm-nm">
             <span class="nmline">
-              {#if n.host_id}<a href="/hosts/{n.host_id}">{n.hostname || n.id.slice(0, 12)}</a>{:else}<span class="nm">{n.hostname || n.id.slice(0, 12)}</span>{/if}
+              {#if n.host_id}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
             </span>
           </span>
           <span role="cell" class="dm-dim">{n.role === 'manager' ? m.hosts_member_role_manager() : m.hosts_member_role_worker()}</span>
@@ -581,7 +581,7 @@
         </div>
         {#each g.services as s (s.id)}
           {@const u = cpuMem(distSvcById[s.id])}
-          {@const pin = pinnedService(s)}
+          {@const pin = pinningConstraint(s.constraints)}
           <div class="dm-tr" role="row" style="grid-template-columns: {SVC_COLS}">
             <span role="cell"><span class="dm-dot {svcTone(s)}"></span></span>
             <span role="cell" class="dm-nm svcname"><span class="nm" title={s.name}>{s.name}</span></span>
@@ -641,7 +641,7 @@
         </div>
       {/each}
     </div>
-    {#if shownTasks.length === 500}<p class="dm-sub foot">{m.cl_tasks_capped()}</p>{/if}
+    {#if shownTasks.length === MAX_TASKS}<p class="dm-sub foot">{m.cl_tasks_capped()}</p>{/if}
   {/if}
 {/snippet}
 

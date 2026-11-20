@@ -184,7 +184,9 @@ paths:
         the node counts for the fair share (ready and active) and whether it
         is heavy: it runs at least 1.5 times and at least 3 tasks more than
         the fair share of the counted nodes. Nodes with an agent carry the
-        host's CPU and memory; the others say why they have none.
+        host's CPU and memory when the caller also holds `hosts.view` on that
+        host (a cluster role covers the Swarm, not its node hosts); the others
+        say why they have none.
 
         With `stacks.view` on the cluster the answer also lists every
         service with its running tasks per node and the CPU (cores) and
@@ -202,7 +204,7 @@ paths:
           schema: {type: string}
         - name: usage
           in: query
-          description: '`false` leaves out CPU and memory (no request to the node hosts).'
+          description: '`false` leaves out CPU, memory and the services (no request to the node hosts).'
           schema: {type: string, enum: ["true", "false"]}
       responses:
         "200":
@@ -583,8 +585,8 @@ components:
               mem_percent: {type: number}
               no_metrics:
                 type: string
-                enum: [no_agent, unreachable, agent_offline]
-                description: Why the node has no CPU and memory.
+                enum: [no_agent, unreachable, agent_offline, no_access]
+                description: 'Why the node has no CPU and memory; `no_access` when the caller holds no hosts.view on the node''s host.'
               counted: {type: boolean, description: The node is ready and active and counts for the fair share.}
               heavy: {type: boolean}
               pinned:
