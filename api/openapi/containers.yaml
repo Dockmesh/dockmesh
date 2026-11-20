@@ -132,6 +132,11 @@ paths:
       operationId: containers.restart
       tags: [containers]
       summary: Restart a container
+      description: |
+        Refused with 409 `swarm_managed` for a Swarm task container (label
+        `com.docker.swarm.service.id`): Docker brings the old container back
+        while Swarm starts a replacement task. Stop it instead; Swarm starts
+        a new task.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -140,6 +145,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The container is a Swarm task.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmManagedError"}
   /containers/{id}/pause:
     post:
       operationId: containers.pause

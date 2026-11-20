@@ -12,7 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/go-chi/chi/v5"
 	"github.com/moby/moby/api/types/container"
 )
@@ -84,7 +84,7 @@ func enrichRestartCounts(ctx context.Context, target host.Host, rows []container
 // from the background watcher cache, never for a Swarm task container.
 func (h *Handlers) applyImageUpdateFlags(rows []containerRow) {
 	for i := range rows {
-		rows[i].SwarmService = updater.SwarmService(rows[i].Labels)
+		rows[i].SwarmService = swarmtask.Service(rows[i].Labels)
 		if h.UpdateWatcher == nil || rows[i].SwarmService != "" {
 			continue
 		}
@@ -294,6 +294,10 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		err = target.UnpauseContainer(r.Context(), id)
 	default:
 		err = errors.New("unknown op: " + op)
+	}
+	if svc, ok := swarmtask.AsManaged(err); ok {
+		writeSwarmManaged(w, svc)
+		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -15,33 +15,13 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 )
 
 var swarmLabels = map[string]string{
-	LabelSwarmServiceID:        "x1y2z3",
-	LabelSwarmServiceName:      "web",
+	swarmtask.LabelServiceID:   "x1y2z3",
+	swarmtask.LabelServiceName: "web",
 	"com.docker.swarm.task.id": "t1",
-}
-
-func TestSwarmService(t *testing.T) {
-	tests := []struct {
-		name   string
-		labels map[string]string
-		want   string
-	}{
-		{"task container", swarmLabels, "web"},
-		{"name label missing", map[string]string{LabelSwarmServiceID: "x1y2z3"}, "x1y2z3"},
-		{"name without id", map[string]string{LabelSwarmServiceName: "web"}, ""},
-		{"compose container", map[string]string{"com.docker.compose.project": "app"}, ""},
-		{"no labels", nil, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := SwarmService(tt.labels); got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
 }
 
 // swarmDocker records the paths the fake daemon was asked for.
@@ -150,7 +130,7 @@ func TestUpdateAndRollbackRefuseSwarmTasks(t *testing.T) {
 			if pulled := fake.asked("/images/create"); pulled != tt.wantPull {
 				t.Fatalf("pulled = %v, want %v", pulled, tt.wantPull)
 			}
-			got, isSwarm := AsSwarmManaged(err)
+			got, isSwarm := swarmtask.AsManaged(err)
 			if isSwarm != tt.wantSwarm {
 				t.Fatalf("err = %v, swarm managed = %v, want %v", err, isSwarm, tt.wantSwarm)
 			}

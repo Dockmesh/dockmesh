@@ -126,6 +126,9 @@ func (h *LocalHost) RestartContainer(ctx context.Context, id string) error {
 	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
+	if err := refuseTaskRestart(ctx, h, id); err != nil {
+		return err
+	}
 	return h.cli.RestartContainer(ctx, id)
 }
 

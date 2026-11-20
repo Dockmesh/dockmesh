@@ -52,7 +52,8 @@ On a host that is a Docker Swarm node, the containers Swarm runs for a service's
 - The update check skips them, so they are never marked **update** or listed under **Apps**.
 - The **Updates** page lists them under **Managed by Swarm** with the service name, and their container page has no **Updates** tab.
 - `POST /api/v1/containers/{id}/update` and `/rollback` answer `409` with code `swarm_managed`. `POST /api/v1/containers/updates` leaves them out and returns them under `skipped`; if every container is one, it answers `409` `swarm_managed`.
-- Stop and restart still work. Swarm then starts a new task for the service.
+- Restart is refused: Docker would bring the old container back up while Swarm already starts a replacement, so one extra copy would keep running. `POST /api/v1/containers/{id}/restart` answers `409` `swarm_managed` for them, and a bulk restart in the container list skips them and says how many.
+- Use **Replace task** instead, on the container page or in the row menu of the container list. It stops the task container, and Swarm starts a new task for the service. **Stop** does the same.
 
 Hosts that are not in a Swarm have no such containers, so nothing changes there.
 

@@ -77,7 +77,7 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
-  // Same rule as updater.SwarmService on the server.
+  // Same rule as swarmtask.Service on the server.
   const swarmService = $derived.by(() => {
     const labels = info?.Config?.Labels as Record<string, string> | undefined;
     const id = labels?.['com.docker.swarm.service.id'];
@@ -849,7 +849,7 @@
       else if (op === 'restart') await api.containers.restart(id, targetHost);
       else if (op === 'pause') await api.containers.pause(id, targetHost);
       else if (op === 'unpause') await api.containers.unpause(id, targetHost);
-      toast.success(OP_DONE[op]());
+      toast.success(op === 'stop' && swarmService ? m.containers_swarm_replace_done() : OP_DONE[op]());
       await loadInfo();
       if (tab === 'logs') connectLogs();
     } catch (err) {
@@ -1071,8 +1071,11 @@
       {#if canControl}
         {#if info.State?.Paused}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> {m.containers_detail_resume()}</button>
+        {:else if info.State?.Running && swarmService}
+          <span class="dm-sub">{m.containers_swarm_new_task()}</span>
+          <button type="button" class="dm-btn dm-btn-primary" title={m.containers_swarm_replace_hint()} onclick={() => action('stop')}><RotateCw size={14} /> {m.containers_swarm_replace_task()}</button>
+          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else if info.State?.Running}
-          {#if swarmService}<span class="dm-sub">{m.containers_swarm_new_task()}</span>{/if}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> {m.common_restart()}</button>
           <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else}

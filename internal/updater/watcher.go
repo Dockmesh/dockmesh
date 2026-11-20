@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/moby/moby/client"
 )
 
@@ -193,7 +194,7 @@ func (w *Watcher) poll(ctx context.Context) {
 	}
 	seen := make(map[string]struct{}, len(containers.Items))
 	for _, c := range containers.Items {
-		if c.Image == "" || strings.HasPrefix(c.Image, "sha256:") || SwarmService(c.Labels) != "" {
+		if c.Image == "" || strings.HasPrefix(c.Image, "sha256:") || swarmtask.Service(c.Labels) != "" {
 			continue
 		}
 		ref := normalizeImageRef(baseRef(c.Image))
