@@ -399,13 +399,12 @@ func (c *UpgradeController) dispatch(ctx context.Context, ag *ConnectedAgent, re
 	if manual {
 		wait = c.manualLockWait
 	}
-	return c.send(ctx, ag, req, manual, wait, 0)
+	return c.send(ctx, ag, req, manual, wait)
 }
 
 // send dispatches the upgrade frame after the host's stack operations
-// finished, waiting at most lockWait for them; a frameTimeout above zero
-// shortens the frame's own timeout.
-func (c *UpgradeController) send(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool, lockWait, frameTimeout time.Duration) (*AgentUpgradeReq, error) {
+// finished, waiting at most lockWait for them.
+func (c *UpgradeController) send(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool, lockWait time.Duration) (*AgentUpgradeReq, error) {
 	if !c.allowAttempt(ag.ID, attemptTarget(req), manual) {
 		return nil, errUpgradeBackoff
 	}
@@ -416,13 +415,7 @@ func (c *UpgradeController) send(ctx context.Context, ag *ConnectedAgent, req *A
 		return req, ErrHostBusy
 	}
 	payload, _ := json.Marshal(req)
-	fctx := ctx
-	if frameTimeout > 0 {
-		var cancel context.CancelFunc
-		fctx, cancel = context.WithTimeout(ctx, frameTimeout)
-		defer cancel()
-	}
-	resp, err := ag.Request(fctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
+	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err == nil && !resp.OK {
 		err = errors.New(resp.Error)
 	}

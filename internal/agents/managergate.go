@@ -19,10 +19,9 @@ const (
 	// managerHoldMax is how long the next manager waits for the previous
 	// one to come back with the new version.
 	managerHoldMax = 5 * time.Minute
-	// While a manager holds its cluster's slot, its waits are short so a
-	// slow or stalling host can't keep the other managers back for long.
-	managerLockWait     = 30 * time.Second
-	managerFrameTimeout = 2 * time.Minute
+	// While a manager holds its cluster's slot, a host busy with stack
+	// operations doesn't keep the other managers back for long.
+	managerLockWait = 30 * time.Second
 
 	managerTimeoutNoticePrefix = "agents.manager-update-timeout."
 	managerDroppedNoticePrefix = "agents.manager-update-dropped."
@@ -141,21 +140,25 @@ func (c *UpgradeController) whenSlotFree(ctx context.Context, ag *ConnectedAgent
 	if err != nil {
 		return
 	}
+	// Automatic modes try again on their own; only a queued click is
+	// reported when it can't be sent.
 	if cur := c.agents.GetConnected(ag.ID); cur != ag {
 		release()
-		if cur != nil && !agentIsUpToDate(cur) {
-			c.droppedNotice(ctx, ag, errors.New("the agent reconnected while it waited"))
+		if manual && (cur == nil || !agentIsUpToDate(cur)) {
+			c.droppedNotice(ctx, ag, errors.New("the agent disconnected while it waited"))
 		}
 		return
 	}
 	if _, err := c.dispatchManager(ctx, ag, req, manual, release); err != nil && !errors.Is(err, ErrAgentCurrent) {
 		slog.Info("queued agent upgrade not dispatched", "agent", ag.ID, "err", err)
-		c.droppedNotice(ctx, ag, err)
+		if manual {
+			c.droppedNotice(ctx, ag, err)
+		}
 	}
 }
 
 func (c *UpgradeController) dispatchManager(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool, release func()) (*AgentUpgradeReq, error) {
-	out, err := c.send(ctx, ag, req, manual, managerLockWait, managerFrameTimeout)
+	out, err := c.send(ctx, ag, req, manual, managerLockWait)
 	if err != nil {
 		release()
 		return out, err
