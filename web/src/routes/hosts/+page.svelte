@@ -549,6 +549,8 @@
         {#each shownGroups as g (g.id)}
           {@const st = g.cluster?.status}
           {@const open = !collapsed.has(g.id)}
+          {@const summary = g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}
+          {@const line = g.cluster ? clusterLine(st) : ''}
           <div
             class="dm-tr grp"
             role="row"
@@ -570,9 +572,9 @@
                   <StatusChip tone={clusterTone(st?.state)} label={clusterStateLabel(st?.state)} />
                 {/if}
               </span>
-              <small>{g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}</small>
+              <small title={summary}>{summary}</small>
             </span>
-            <span role="cell" class="gline dm-dim dm-trunc">{g.cluster ? clusterLine(st) : ''}</span>
+            <span role="cell" class="gline dm-dim dm-trunc" title={line}>{line}</span>
             <span role="cell"></span>
             <span role="cell"></span>
             <span role="cell" class="dm-tr-menu">
