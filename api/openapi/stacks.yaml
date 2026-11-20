@@ -760,15 +760,17 @@ paths:
             repeat with `confirm_external=1` after reviewing `files`), the
             stack is on another host (`code: stack_on_other_host`), another
             operation is changing the stack (`code: stack_busy`, with
-            `operation` and `since`), or the service looks stateful
-            (`warning: stateful_service`; repeat with `force: true`).
+            `operation` and `since`), the stack has a migration or migration
+            rollback that has not finished (`code: migration_active`), or the
+            service looks stateful (`warning: stateful_service`; repeat with
+            `force: true`).
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: {type: string}
-                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
+                  code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy, migration_active]}
                   stack: {type: string}
                   host_id: {type: string}
                   files:

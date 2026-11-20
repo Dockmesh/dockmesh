@@ -1,0 +1,3 @@
+kind: Fixed
+body: Scaling a service, a rolling update, an image update or rollback of a stack container and auto-scaling are refused (409 migration_active) or skipped while the stack's migration or migration rollback has not finished, so the rollback no longer undoes them
+time: 2026-11-20T20:13:59.283862867Z

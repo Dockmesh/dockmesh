@@ -48,7 +48,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		writeSwarmManaged(w, svc)
 		return
 	}
-	if writeStackBusy(w, err) {
+	if writeMigrationConflict(w, err) {
 		return
 	}
 	if errors.Is(err, updater.ErrBusy) || errors.Is(err, operations.ErrCancelled) || errors.Is(err, stacks.ErrModifiedOutside) {
@@ -97,7 +97,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		writeSwarmManaged(w, svc)
 		return
 	}
-	if writeStackBusy(w, err) {
+	if writeMigrationConflict(w, err) {
 		return
 	}
 	if errors.Is(err, updater.ErrHistoryNotFound) {

@@ -239,7 +239,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy or deployment rollback of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy, deployment rollback or rolling update of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
       content:
         application/json:
           schema:
