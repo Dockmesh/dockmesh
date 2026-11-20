@@ -163,7 +163,7 @@ type reportClock struct {
 }
 
 func (r *reportClock) HealthySince(ctx context.Context, v string, since time.Time) bool {
-	return !r.reportedAt.Before(since) && r.fakeService.Healthy(ctx, v)
+	return !r.reportedAt.Before(since) && r.Healthy(ctx, v)
 }
 
 // A health report from before the rollback started the old version does
