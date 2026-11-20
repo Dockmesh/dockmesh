@@ -65,6 +65,9 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if writeStackBusy(w, err) {
+		return
+	}
 	if errors.Is(err, migration.ErrNamedVolumes) || errors.Is(err, migration.ErrSwarmStack) || errors.Is(err, migration.ErrSwarmUnclear) {
 		writeError(w, http.StatusConflict, err.Error())
 		return

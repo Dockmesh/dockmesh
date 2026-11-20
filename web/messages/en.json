@@ -578,6 +578,7 @@
   "apierr_login_failed": "login failed",
   "apierr_metrics_collector_not_configured": "metrics collector not configured",
   "apierr_metrics_not_configured": "metrics not configured",
+  "apierr_migration_active": "this stack is being migrated to another host; deploy or delete it once the migration or its rollback has finished",
   "apierr_mfa_already_enrolled": "mfa already enrolled",
   "apierr_mfa_disable_use_self_endpoint": "use DELETE /api/v1/mfa with a code to turn off your own 2FA",
   "apierr_mfa_failed": "mfa failed",

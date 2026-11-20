@@ -245,7 +245,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Stack has dependents (re-send with `?force=true` to override), or another operation such as a deploy holds the stack (`code` is `stack_busy`).
+          description: Stack has dependents (re-send with `?force=true` to override), another operation such as a deploy or a migration holds the stack (`code` is `stack_busy`), or the stack has a migration or migration rollback that has not finished (`code` is `migration_active`).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -950,7 +950,9 @@ paths:
             or its containers on the source are Swarm tasks (Swarm places
             them itself), or the source is a Swarm node without a running
             compose container of the stack (it may be a Swarm stack); both
-            match the failing `swarm` preflight check.
+            match the failing `swarm` preflight check. Another operation
+            such as a deploy holding the stack on the source or the target
+            answers `code: stack_busy` with `operation` and `since`.
           content:
             application/json:
               schema:

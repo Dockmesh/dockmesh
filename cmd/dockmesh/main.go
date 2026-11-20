@@ -1104,6 +1104,7 @@ func main() {
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	migrationSvc.SetGlobalEnv(globalEnvStore.List)
+	migrationSvc.SetLocks(stackLocks)
 	migrationSvc.SetUsage(metricsCol)
 	migrationSvc.SetVolumeIO(func(id string) (migration.VolumeIO, error) { return backupSvc.VolumeIO(id) })
 	if err := migrationSvc.Start(ctx); err != nil {

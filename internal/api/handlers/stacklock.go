@@ -41,3 +41,26 @@ func writeStackBusy(w http.ResponseWriter, err error) bool {
 	})
 	return true
 }
+
+// refuseMigrating answers 409 migration_active while stack has a
+// migration that is not finished. Call it with the stack lock held: a
+// migration takes the lock before it records itself, so either the
+// lock or this check refuses.
+func (h *Handlers) refuseMigrating(w http.ResponseWriter, r *http.Request, stack string) bool {
+	if h.Migrations == nil {
+		return false
+	}
+	active, err := h.Migrations.Store().HasActive(r.Context(), stack)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return true
+	}
+	if !active {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error": "stack " + stack + " is being migrated to another host; wait until the migration or its rollback has finished",
+		"code":  "migration_active",
+	})
+	return true
+}

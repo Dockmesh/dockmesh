@@ -36,6 +36,8 @@ type fakeHost struct {
 	images     []image.Summary
 	containers []container.Summary
 	vols       *fakeVolumes
+	// onDeploy runs at the start of every DeployStack, outside mu.
+	onDeploy func()
 
 	offline atomic.Bool
 	// gone is a deleted agent: offline to Pick and missing from List.
@@ -74,6 +76,9 @@ func (f *fakeHost) StopStack(context.Context, string) error {
 	return f.stopErr
 }
 func (f *fakeHost) DeployStack(_ context.Context, _, composeYAML, env string) (*compose.DeployResult, error) {
+	if f.onDeploy != nil {
+		f.onDeploy()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deploys = append(f.deploys, composeYAML+"\n---\n"+env)

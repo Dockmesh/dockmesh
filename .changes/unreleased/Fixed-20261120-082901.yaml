@@ -1,0 +1,3 @@
+kind: Fixed
+body: A stack being migrated or rolled back can no longer be deployed or deleted (409 migration_active); a migration doesn't start while a deploy or update holds the stack, and its rollback waits for one to finish before it stops or restarts the stack
+time: 2026-11-20T08:29:01.2465443Z

@@ -578,6 +578,7 @@
   "apierr_login_failed": "Anmeldung fehlgeschlagen",
   "apierr_metrics_collector_not_configured": "Metrikerfassung nicht konfiguriert",
   "apierr_metrics_not_configured": "Metriken nicht konfiguriert",
+  "apierr_migration_active": "Dieser Stack wird gerade auf einen anderen Host migriert; erst deployen oder löschen, wenn die Migration oder ihr Rollback abgeschlossen ist",
   "apierr_mfa_already_enrolled": "2FA bereits eingerichtet",
   "apierr_mfa_disable_use_self_endpoint": "Zum Abschalten der eigenen 2FA DELETE /api/v1/mfa mit einem Code verwenden",
   "apierr_mfa_failed": "2FA fehlgeschlagen",

@@ -865,6 +865,9 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 
 	var cleanupResult *compose.CleanupResult
 	var cleanupErr string
@@ -1193,6 +1196,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
