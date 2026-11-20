@@ -2588,7 +2588,8 @@ paths:
         Lists the clusters the caller holds `hosts.view` on, globally or on a
         `cluster` scope; a host scope on a node shows nothing. A host is
         linked when the origin manager's node list contains the node ID the
-        host reports; the role is the manager's view.
+        host reports; the role is the manager's view. `status` is the
+        state from the origin manager's last check.
       responses:
         "200":
           description: Clusters by name.
@@ -2745,6 +2746,28 @@ paths:
                           host_id: {type: string}
                           host_name: {type: string}
                           node_id: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /clusters/memberships:
+    get:
+      operationId: clusters.memberships
+      tags: [clusters]
+      summary: Cluster memberships of the hosts the caller can see
+      description: |
+        One entry per linked host the caller holds `hosts.view` on, by host
+        scope, host tag or globally; a cluster scope alone shows none. Names
+        the cluster even when the caller can't open it, so a host page can
+        say which cluster the host belongs to. `node` is the host's entry in
+        the origin manager's last node list and is missing until the first
+        check after a server start.
+      responses:
+        "200":
+          description: Memberships.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ClusterMembership"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
   /containers:
@@ -10279,6 +10302,46 @@ components:
               node_id: {type: string}
               role: {type: string, enum: [manager, worker]}
               linked_at: {type: string, format: date-time}
+        status: {$ref: "#/components/schemas/ClusterStatus"}
+    ClusterStatus:
+      type: object
+      description: |
+        The cluster as its origin manager showed it at the last check (every
+        minute). `healthy`: every node ready and every manager reachable;
+        `degraded`: a node is not ready or a manager is unreachable, quorum
+        held; `no_quorum`: the origin is online but its Swarm has no leader;
+        `unreachable`: the origin's agent is offline, can't list nodes or is
+        no longer the linked manager node; `unknown`: not checked since the
+        server started. The counts come from the last node list the origin
+        returned (`known_at`), so they keep the last known shape while the
+        cluster is unreachable or without quorum.
+      required: [state, managers, managers_reachable, workers, nodes_down, nodes_without_agent]
+      properties:
+        state: {type: string, enum: [healthy, degraded, no_quorum, unreachable, unknown]}
+        managers: {type: integer}
+        managers_reachable: {type: integer}
+        workers: {type: integer}
+        nodes_down: {type: integer, description: Nodes whose state is not `ready`.}
+        nodes_without_agent: {type: integer, description: Nodes no Dockmesh host is linked to.}
+        leader: {type: string, description: Host name of the leader node.}
+        checked_at: {type: string, format: date-time}
+        known_at: {type: string, format: date-time, description: When the origin last returned its node list.}
+    ClusterMembership:
+      type: object
+      required: [host_id, cluster_id, cluster_name, node_id, role]
+      properties:
+        host_id: {type: string}
+        cluster_id: {type: string}
+        cluster_name: {type: string}
+        node_id: {type: string}
+        role: {type: string, enum: [manager, worker]}
+        node:
+          type: object
+          properties:
+            state: {type: string, description: "Node state, e.g. `ready` or `down`."}
+            availability: {type: string, enum: [active, pause, drain]}
+            reachability: {type: string, description: "Manager reachability, e.g. `reachable` or `unreachable`; empty on workers."}
+            leader: {type: boolean}
     ClusterAccess:
       type: object
       required: [assignments, invites, mappings, tokens, counts, complete]

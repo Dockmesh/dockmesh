@@ -92,9 +92,18 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 		})
 	}
 
+	// The status carries check times; only the stored rows must not change.
 	list := func() string {
 		rr := clusterCall(ctx, e.h.ListClusters, http.MethodGet, nil)
-		return rr.Body.String()
+		var cs []clusters.Cluster
+		if err := json.Unmarshal(rr.Body.Bytes(), &cs); err != nil {
+			t.Fatal(err)
+		}
+		for i := range cs {
+			cs[i].Status = nil
+		}
+		out, _ := json.Marshal(cs)
+		return string(out)
 	}
 	if _, err := e.db.Exec(`UPDATE cluster_memberships SET linked_at = '2000-01-01 00:00:00'`); err != nil {
 		t.Fatal(err)
@@ -131,7 +140,7 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 	if code := del("c1"); code != http.StatusNotFound {
 		t.Fatalf("second delete: %d", code)
 	}
-	if after := list(); after != "[]\n" {
+	if after := list(); after != "[]" {
 		t.Fatalf("after delete: %s", after)
 	}
 }
@@ -164,6 +173,43 @@ func TestListClustersByScope(t *testing.T) {
 			rr := clusterCall(ctx, e.h.ListClusters, http.MethodGet, nil)
 			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || len(got) != tt.want {
 				t.Fatalf("got %s, want %d clusters", rr.Body, tt.want)
+			}
+		})
+	}
+}
+
+// A host scope shows its own host's membership with the cluster's name;
+// a cluster scope alone shows no host.
+func TestListClusterMembershipsByScope(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.Clusters = clusters.New(e.db, swarmHosts{})
+	if _, err := e.h.Clusters.Create(context.Background(), "local", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		scope rbac.Scope
+		want  []string
+	}{
+		{"global", rbac.Global, []string{"a1", "local"}},
+		{"node host", rbac.Scope{Type: rbac.ScopeHost, Host: "a1"}, []string{"a1"}},
+		{"other host", rbac.Scope{Type: rbac.ScopeHost, Host: "a2"}, nil},
+		{"cluster", rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e.roleScopes = map[string][]rbac.Scope{"viewer": {tt.scope}}
+			u := e.user("m-"+strings.ReplaceAll(tt.name, " ", "-"), "viewer")
+			ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})
+			var got []clusters.Membership
+			rr := clusterCall(ctx, e.h.ListClusterMemberships, http.MethodGet, nil)
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || len(got) != len(tt.want) {
+				t.Fatalf("got %s, want hosts %v", rr.Body, tt.want)
+			}
+			for i, m := range got {
+				if m.HostID != tt.want[i] || m.ClusterName != "prod" {
+					t.Fatalf("got %s, want hosts %v", rr.Body, tt.want)
+				}
 			}
 		})
 	}

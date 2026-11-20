@@ -8,15 +8,16 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
-    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate, type ClusterAccess
+    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate, type ClusterAccess, type ClusterMembership
   } from '$lib/api';
+  import { clusterTone, clusterStateLabel, clusterSummary, clusterLine } from '$lib/cluster';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
-  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator, InfoTip } from '$lib/components/ui';
+  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator, InfoTip, StatusChip } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { Server, Plus, RefreshCw, X, Network } from 'lucide-svelte';
+  import { Server, Plus, RefreshCw, X, Network, ChevronRight, ChevronDown } from 'lucide-svelte';
 
   let remoteAgents = $state<Agent[]>([]);
   let localHostInfo = $state<HostInfo | null>(null);
@@ -30,11 +31,49 @@
   let clusterCandidates = $state<ClusterCandidate[]>([]);
   let creatingCluster = $state<string | null>(null);
 
-  // host id → its cluster membership, for the row pill.
-  const membership = $derived.by(() => {
-    const out: Record<string, { cluster: string; role: string }> = {};
-    for (const c of clusterList) for (const mb of c.members) out[mb.host_id] = { cluster: c.name, role: mb.role };
-    return out;
+  let memberships = $state<ClusterMembership[]>([]);
+  const COLLAPSED_KEY = 'dm.hosts.collapsedClusters';
+  let collapsed = $state<Set<string>>(new Set(readCollapsed()));
+
+  function readCollapsed(): string[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
+      return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function toggleCluster(id: string) {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    collapsed = next;
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    } catch {
+      /* private mode: the state just isn't kept */
+    }
+  }
+
+  // host id → its membership, from the hosts the caller can see.
+  const membership = $derived(Object.fromEntries(memberships.map((x) => [x.host_id, x])) as Record<string, ClusterMembership>);
+
+  // One group per cluster the caller can open or has a node host of; a
+  // host-only user's group carries no Cluster and so no state.
+  type Group = { id: string; name: string; cluster: Cluster | null; hostIds: string[] };
+  const groups = $derived.by<Group[]>(() => {
+    const out = new Map<string, Group>();
+    for (const c of clusterList) out.set(c.id, { id: c.id, name: c.name, cluster: c, hostIds: [] });
+    for (const x of memberships) {
+      let g = out.get(x.cluster_id);
+      if (!g) {
+        g = { id: x.cluster_id, name: x.cluster_name, cluster: null, hostIds: [] };
+        out.set(x.cluster_id, g);
+      }
+      g.hostIds.push(x.host_id);
+    }
+    return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
   });
 
   let filter = $state<'all' | 'online' | 'offline' | 'pending' | 'agents'>('all');
@@ -94,6 +133,25 @@
     })
   );
 
+  const ungrouped = $derived(filteredRows.filter((r) => !membership[r.id]));
+
+  // A group shows when one of its hosts passes the filters, or with no
+  // status/tag filter when the search is empty or names the cluster.
+  const shownGroups = $derived.by(() => {
+    const q = search.toLowerCase();
+    const plain = filter === 'all' && !tagFilter;
+    return groups.flatMap((g) => {
+      const nameHit = !!q && g.name.toLowerCase().includes(q);
+      const kids = (nameHit && plain ? rows : filteredRows).filter((r) => membership[r.id]?.cluster_id === g.id);
+      if (kids.length === 0 && !(plain && (!q || nameHit))) return [];
+      return [{ ...g, rows: kids }];
+    });
+  });
+
+  function clusterMenu(c: Cluster): MenuItem[] {
+    return [{ label: m.hosts_cluster_delete_ellipsis(), danger: true, onclick: () => deleteCluster(c) }];
+  }
+
   const counts = $derived({
     all: rows.length,
     online: rows.filter((r) => r.status === 'online').length,
@@ -132,15 +190,17 @@
     if (!allowed('hosts.update') && !allowed('hosts.view')) return;
     refreshing = true;
     try {
-      const [agents, hostList, policy, clist, cands] = await Promise.all([
+      const [agents, hostList, policy, clist, cands, mships] = await Promise.all([
         api.agents.list(),
         api.hosts.list().catch(() => []),
         api.agents.getUpgradePolicy().catch(() => null),
         api.clusters.list().catch(() => []),
-        allowed('clusters.create') ? api.clusters.candidates().catch(() => []) : Promise.resolve([])
+        allowed('clusters.create') ? api.clusters.candidates().catch(() => []) : Promise.resolve([]),
+        api.clusters.memberships().catch(() => [])
       ]);
       remoteAgents = agents;
       clusterList = clist;
+      memberships = mships;
       clusterCandidates = cands;
       localHostInfo = hostList.find((h) => h.kind === 'local') ?? null;
       upgradePolicy = policy;
@@ -429,20 +489,6 @@
       </div>
     {/each}
 
-    {#if allowed('clusters.create')}
-      {#each clusterList as c (c.id)}
-        <div class="cluster-row" data-testid="cluster-row">
-          <Network size={14} strokeWidth={1.8} />
-          <span class="dm-trunc">
-            <b>{c.name}</b>
-            <span class="dm-dim">{m.hosts_cluster_summary({ count: c.members.length })}</span>
-          </span>
-          <span class="dm-sp"></span>
-          <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" data-testid="delete-cluster" onclick={() => deleteCluster(c)}>{m.hosts_cluster_delete_ellipsis()}</button>
-        </div>
-      {/each}
-    {/if}
-
     {#if !loading && rows.length > 0}
       <div class="dm-toolbar">
         <Segmented
@@ -475,7 +521,7 @@
           <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>
         {/each}
       </div>
-    {:else if filteredRows.length === 0}
+    {:else if ungrouped.length === 0 && shownGroups.length === 0}
       <EmptyState icon={Server} title={m.hosts_no_match()} description={search || filter !== 'all' || tagFilter ? m.hosts_no_match_hint() : m.hosts_empty_hint()}>
         {#snippet action()}
           {#if allowed('hosts.create')}
@@ -497,91 +543,142 @@
           <span role="columnheader">{m.hosts_col_tags()}</span>
           <span role="columnheader"></span>
         </div>
-        {#each filteredRows as r (r.id)}
-          {@const hm = metricsByHost[r.id]}
-          {@const memPct = hm && hm.memTotal > 0 ? Math.round((hm.memUsed / hm.memTotal) * 100) : null}
-          {@const cpuPct = hm ? Math.round(hm.cpu) : null}
-          {@const diskPct = hm ? Math.round(hm.disk) : null}
-          {@const tags = hostTags[r.id] ?? []}
-          {@const online = r.status === 'online'}
+        {#each ungrouped as r (r.id)}
+          {@render hostRow(r, false)}
+        {/each}
+        {#each shownGroups as g (g.id)}
+          {@const st = g.cluster?.status}
+          {@const open = !collapsed.has(g.id)}
           <div
-            class="dm-tr dm-click"
-            class:dm-sel={selected.has(r.id)}
+            class="dm-tr grp"
             role="row"
             tabindex="0"
+            data-testid="cluster-row"
+            aria-expanded={open}
             style="grid-template-columns: {COLS}"
-            onclick={() => goto(`/hosts/${r.id}`)}
-            onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/hosts/${r.id}`); }}
+            onclick={() => toggleCluster(g.id)}
+            onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); toggleCluster(g.id); } }}
           >
-            <span role="cell">
-              <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
-                onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
+            <span role="cell"></span>
+            <span role="cell" class="caret" title={open ? m.hosts_cluster_collapse({ name: g.name }) : m.hosts_cluster_expand({ name: g.name })}>
+              {#if open}<ChevronDown size={13} strokeWidth={2} />{:else}<ChevronRight size={13} strokeWidth={2} />{/if}
             </span>
-            <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'ring' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
               <span class="nmline">
-                <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
-                {#if membership[r.id]}
-                  <span class="dm-pill" title={m.hosts_cluster_member_title({ cluster: membership[r.id].cluster })}>{membership[r.id].role === 'manager' ? m.hosts_cluster_role_manager() : m.hosts_cluster_role_worker()} · {membership[r.id].cluster}</span>
-                {/if}
-                {#if waitingSetup(r)}
-                  {#if allowed('hosts.update')}
-                    <a class="dm-pill dm-pill-info setup" data-testid="row-setup" href="/hosts/{r.id}?tab=setup" title={m.hosts_setup_row_title()} onclick={(e) => e.stopPropagation()}>{m.label_host_waiting_setup()} →</a>
-                  {:else}
-                    <span class="dm-pill dm-pill-info setup">{m.label_host_waiting_setup()}</span>
-                  {/if}
+                <span class="gname">{g.name}</span>
+                {#if g.cluster}
+                  <StatusChip tone={clusterTone(st?.state)} label={clusterStateLabel(st?.state)} />
                 {/if}
               </span>
-              <small>
-                {#if r.status === 'offline'}
-                  <span class="off">{m.hosts_offline_last_seen({ ago: fmtAgoNever(r.last_seen_at) })}</span>
-                {:else if r.status === 'pending'}
-                  {m.hosts_waiting_for_agent()}
-                {:else if r.status === 'removed'}
-                  {m.label_host_removed()}
-                {:else if waitingSetup(r)}
-                  <span title={r.hostname}>{r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}</span>
-                {:else}
-                  {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
-                {/if}
-              </small>
+              <small>{g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}</small>
             </span>
-            <span role="cell" class="dm-dim">{r.kind === 'local' ? m.hosts_kind_local() : m.hosts_kind_agent()}</span>
-            {#if online && hm}
-              <span role="cell" class="mbar"><i><b class={pctTone(cpuPct ?? 0)} style="width:{Math.min(100, cpuPct ?? 0)}%"></b></i><span class="dm-num">{cpuPct}%</span></span>
-              <span role="cell" class="mbar" title={memPct != null ? m.hosts_mem_of({ used: fmtMem(hm.memUsed), total: fmtMem(hm.memTotal) }) : m.hosts_unavailable()}>
-                {#if memPct != null}<i><b class={pctTone(memPct, 80)} style="width:{Math.min(100, memPct)}%"></b></i><span class="dm-num">{memPct}%</span>{:else}<span class="dm-num dm-dim">—</span>{/if}
-              </span>
-              <span role="cell" class="mbar"><i><b class={pctTone(diskPct ?? 0, 80)} style="width:{Math.min(100, diskPct ?? 0)}%"></b></i><span class="dm-num">{diskPct}%</span></span>
-            {:else}
-              <span role="cell" class="dm-num dm-dim">—</span>
-              <span role="cell" class="dm-num dm-dim">—</span>
-              <span role="cell" class="dm-num dm-dim">—</span>
-            {/if}
-            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? m.hosts_server_is_on({ version: fmtVersion(upgradePolicy?.server_version) }) : r.update_recommended ? m.hosts_older_protocol() : ''].filter(Boolean).join(' · ')}>
-              {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
-              {#if r.layout === 'legacy'}<span class="dm-pill dm-pill-info legacy" title={m.hosts_legacy_badge_title()}>{m.hosts_legacy_badge()}</span>{/if}
-            </span>
-            <span role="cell" class="tagcell">
-              {#if tags.length}
+            <span role="cell" class="dm-dim">{m.hosts_kind_cluster()}</span>
+            <span role="cell" class="gline dm-dim dm-trunc">{g.cluster ? clusterLine(st) : ''}</span>
+            <span role="cell"></span>
+            <span role="cell"></span>
+            <span role="cell" class="dm-tr-menu">
+              {#if g.cluster && allowed('clusters.create')}
                 <span role="presentation" onclick={(e) => e.stopPropagation()}>
-                  <ChipList items={tags} max={2} active={tagFilter} onpick={(t) => (tagFilter = tagFilter === t ? null : t)} />
+                  <Menu label={m.hosts_cluster_actions_for({ name: g.name })} items={clusterMenu(g.cluster)} />
                 </span>
-              {:else}
-                <span class="dm-dim">—</span>
               {/if}
             </span>
-            <span role="cell" class="dm-tr-menu">
-              <span role="presentation" onclick={(e) => e.stopPropagation()}>
-                <Menu label={m.hosts_actions_for({ name: r.name })} items={rowMenu(r)} />
-              </span>
-            </span>
           </div>
+          {#if open}
+            {#each g.rows as r (r.id)}
+              {@render hostRow(r, true)}
+            {/each}
+          {/if}
         {/each}
       </div>
     {/if}
   {/if}
 </section>
+
+{#snippet hostRow(r: Row, child: boolean)}
+  {@const hm = metricsByHost[r.id]}
+  {@const memPct = hm && hm.memTotal > 0 ? Math.round((hm.memUsed / hm.memTotal) * 100) : null}
+  {@const cpuPct = hm ? Math.round(hm.cpu) : null}
+  {@const diskPct = hm ? Math.round(hm.disk) : null}
+  {@const tags = hostTags[r.id] ?? []}
+  {@const online = r.status === 'online'}
+  <div
+    class="dm-tr dm-click"
+    class:child
+    class:dm-sel={selected.has(r.id)}
+    role="row"
+    tabindex="0"
+    style="grid-template-columns: {COLS}"
+    onclick={() => goto(`/hosts/${r.id}`)}
+    onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/hosts/${r.id}`); }}
+  >
+    <span role="cell">
+      <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
+        onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
+    </span>
+    <span role="cell"><span class="dm-dot {waitingSetup(r) ? 'ring' : dotTone(r.status)}" title={waitingSetup(r) ? m.label_host_waiting_setup() : hostStatusLabel(r.status)}></span></span>
+    <span role="cell" class="dm-nm">
+      <span class="nmline">
+        <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
+        {#if membership[r.id]}
+          {@const ms = membership[r.id]}
+          <span class="dm-pill" title={m.hosts_cluster_member_title({ cluster: ms.cluster_name })}>{ms.role === 'manager' ? m.hosts_cluster_role_manager() : m.hosts_cluster_role_worker()}</span>
+          {#if ms.node?.leader}<span class="lead">{m.hosts_cluster_leader()}</span>{/if}
+        {/if}
+        {#if waitingSetup(r)}
+          {#if allowed('hosts.update')}
+            <a class="dm-pill dm-pill-info setup" data-testid="row-setup" href="/hosts/{r.id}?tab=setup" title={m.hosts_setup_row_title()} onclick={(e) => e.stopPropagation()}>{m.label_host_waiting_setup()} →</a>
+          {:else}
+            <span class="dm-pill dm-pill-info setup">{m.label_host_waiting_setup()}</span>
+          {/if}
+        {/if}
+      </span>
+      <small>
+        {#if r.status === 'offline'}
+          <span class="off">{m.hosts_offline_last_seen({ ago: fmtAgoNever(r.last_seen_at) })}</span>
+        {:else if r.status === 'pending'}
+          {m.hosts_waiting_for_agent()}
+        {:else if r.status === 'removed'}
+          {m.label_host_removed()}
+        {:else if waitingSetup(r)}
+          <span title={r.hostname}>{r.hostname || '—'}{r.os ? ` · ${r.os}/${r.arch}` : ''}</span>
+        {:else}
+          {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {m.hosts_n_containers({ n: containerCounts[r.id] ?? '—' })}{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
+        {/if}
+      </small>
+    </span>
+    <span role="cell" class="dm-dim">{r.kind === 'local' ? m.hosts_kind_local() : m.hosts_kind_agent()}</span>
+    {#if online && hm}
+      <span role="cell" class="mbar"><i><b class={pctTone(cpuPct ?? 0)} style="width:{Math.min(100, cpuPct ?? 0)}%"></b></i><span class="dm-num">{cpuPct}%</span></span>
+      <span role="cell" class="mbar" title={memPct != null ? m.hosts_mem_of({ used: fmtMem(hm.memUsed), total: fmtMem(hm.memTotal) }) : m.hosts_unavailable()}>
+        {#if memPct != null}<i><b class={pctTone(memPct, 80)} style="width:{Math.min(100, memPct)}%"></b></i><span class="dm-num">{memPct}%</span>{:else}<span class="dm-num dm-dim">—</span>{/if}
+      </span>
+      <span role="cell" class="mbar"><i><b class={pctTone(diskPct ?? 0, 80)} style="width:{Math.min(100, diskPct ?? 0)}%"></b></i><span class="dm-num">{diskPct}%</span></span>
+    {:else}
+      <span role="cell" class="dm-num dm-dim">—</span>
+      <span role="cell" class="dm-num dm-dim">—</span>
+      <span role="cell" class="dm-num dm-dim">—</span>
+    {/if}
+    <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? m.hosts_server_is_on({ version: fmtVersion(upgradePolicy?.server_version) }) : r.update_recommended ? m.hosts_older_protocol() : ''].filter(Boolean).join(' · ')}>
+      {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
+      {#if r.layout === 'legacy'}<span class="dm-pill dm-pill-info legacy" title={m.hosts_legacy_badge_title()}>{m.hosts_legacy_badge()}</span>{/if}
+    </span>
+    <span role="cell" class="tagcell">
+      {#if tags.length}
+        <span role="presentation" onclick={(e) => e.stopPropagation()}>
+          <ChipList items={tags} max={2} active={tagFilter} onpick={(t) => (tagFilter = tagFilter === t ? null : t)} />
+        </span>
+      {:else}
+        <span class="dm-dim">—</span>
+      {/if}
+    </span>
+    <span role="cell" class="dm-tr-menu">
+      <span role="presentation" onclick={(e) => e.stopPropagation()}>
+        <Menu label={m.hosts_actions_for({ name: r.name })} items={rowMenu(r)} />
+      </span>
+    </span>
+  </div>
+{/snippet}
 
 {#if showAdd}
   {#await import('./_AddHostModal.svelte') then mod}
@@ -642,11 +739,12 @@
     border: 1px solid var(--accent); background: var(--accent-soft); color: inherit;
     border-radius: var(--r); padding: 8px 14px; font-size: var(--fs-sm); min-width: 0; margin-bottom: 10px;
   }
-  .cluster-row {
-    display: flex; align-items: center; gap: 10px;
-    border: 1px solid var(--border); border-radius: var(--r); padding: 6px 14px;
-    font-size: var(--fs-sm); min-width: 0; margin-bottom: 10px;
-  }
+  .grp { cursor: pointer; }
+  .grp .caret { display: inline-flex; align-items: center; color: var(--muted); }
+  .grp .gname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grp .gline { grid-column: span 3; font-size: var(--fs-xs); }
+  .child .dm-nm { padding-left: 18px; }
+  .lead { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--accent); }
   .policy {
     display: flex; align-items: center; gap: 10px;
     border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn);

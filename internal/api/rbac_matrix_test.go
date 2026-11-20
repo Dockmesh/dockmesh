@@ -192,6 +192,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/hosts/tags/all", gateSignedIn},
 	{"GET", "/api/v1/hosts/{id}/tags", gateSignedIn},
 	{"GET", "/api/v1/clusters", rbac.PermHostsView},
+	{"GET", "/api/v1/clusters/memberships", rbac.PermHostsView},
 	{"GET", "/api/v1/clusters/candidates", rbac.PermClustersCreate},
 	{"POST", "/api/v1/clusters", rbac.PermClustersCreate},
 	{"GET", "/api/v1/clusters/{id}/access", rbac.PermClustersCreate},
