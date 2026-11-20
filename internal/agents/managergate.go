@@ -144,8 +144,12 @@ func (c *UpgradeController) whenSlotFree(ctx context.Context, ag *ConnectedAgent
 	// reported when it can't be sent.
 	if cur := c.agents.GetConnected(ag.ID); cur != ag {
 		release()
-		if manual && (cur == nil || !agentIsUpToDate(cur)) {
+		switch {
+		case !manual:
+		case cur == nil:
 			c.droppedNotice(ctx, ag, errors.New("the agent disconnected while it waited"))
+		case !agentIsUpToDate(cur):
+			c.droppedNotice(ctx, ag, errors.New("the agent reconnected on its old version while it waited"))
 		}
 		return
 	}
