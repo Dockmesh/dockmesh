@@ -21,6 +21,7 @@ type fakeDaemon struct {
 	state    swarm.LocalNodeState
 	control  bool
 	service  swarm.Service
+	status   *swarm.ServiceStatus
 	calls    int
 	block    bool
 	deadline time.Duration
@@ -50,11 +51,20 @@ func (f *fakeDaemon) NodeList(ctx context.Context, _ client.NodeListOptions) (cl
 	return client.NodeListResult{Items: []swarm.Node{{ID: "n1", Spec: swarm.NodeSpec{Role: swarm.NodeRoleManager}}}}, nil
 }
 
-func (f *fakeDaemon) ServiceList(ctx context.Context, _ client.ServiceListOptions) (client.ServiceListResult, error) {
+// ServiceList fills task counts only with Status set, and only the list
+// does, as dockerd does.
+func (f *fakeDaemon) ServiceList(ctx context.Context, o client.ServiceListOptions) (client.ServiceListResult, error) {
 	if err := f.wait(ctx); err != nil {
 		return client.ServiceListResult{}, err
 	}
-	return client.ServiceListResult{Items: []swarm.Service{f.service}}, nil
+	if ids := o.Filters.Clone()["id"]; len(ids) > 0 && !ids[f.service.ID] {
+		return client.ServiceListResult{}, nil
+	}
+	s := f.service
+	if o.Status {
+		s.ServiceStatus = f.status
+	}
+	return client.ServiceListResult{Items: []swarm.Service{s}}, nil
 }
 
 func (f *fakeDaemon) ServiceInspect(ctx context.Context, id string, _ client.ServiceInspectOptions) (client.ServiceInspectResult, error) {
@@ -136,7 +146,8 @@ func TestReadRefusedOffManagers(t *testing.T) {
 }
 
 func TestReadOnManager(t *testing.T) {
-	d := &fakeDaemon{state: swarm.LocalNodeStateActive, control: true, service: secretService()}
+	d := &fakeDaemon{state: swarm.LocalNodeStateActive, control: true, service: secretService(),
+		status: &swarm.ServiceStatus{RunningTasks: 3, DesiredTasks: 4}}
 	ctx := context.Background()
 
 	tests := []struct {
@@ -149,6 +160,8 @@ func TestReadOnManager(t *testing.T) {
 		{"nodes", agents.FrameReqSwarmNodes, "", `"id":"n1"`, nil},
 		{"services", agents.FrameReqSwarmServices, "", `"name":"web_app"`, nil},
 		{"inspect by name", agents.FrameReqSwarmServiceInspect, `{"id":"web_app"}`, `"env_keys":["DB_PASSWORD","PLAIN"]`, nil},
+		{"inspect counts tasks", agents.FrameReqSwarmServiceInspect, `{"id":"web_app"}`, `"running_tasks":3,"desired_tasks":4`, nil},
+		{"services count tasks", agents.FrameReqSwarmServices, "", `"running_tasks":3,"desired_tasks":4`, nil},
 		{"inspect unknown", agents.FrameReqSwarmServiceInspect, `{"id":"nope"}`, "", agents.ErrSwarmServiceNotFound},
 		{"inspect bad id", agents.FrameReqSwarmServiceInspect, `{"id":"../x"}`, "", errInvalidID},
 		{"inspect no payload", agents.FrameReqSwarmServiceInspect, ``, "", errInvalidID},

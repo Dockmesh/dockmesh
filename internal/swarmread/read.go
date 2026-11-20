@@ -75,7 +75,19 @@ func Read(ctx context.Context, cli API, frameType string, payload json.RawMessag
 		if err != nil {
 			return nil, err
 		}
-		return agents.SwarmServiceDetailFrom(res.Service), nil
+		svc := res.Service
+		// Inspect carries no task counts; only a list with Status set does.
+		// The id filter matches prefixes, hence the equality check.
+		list, err := cli.ServiceList(ctx, client.ServiceListOptions{Status: true, Filters: client.Filters{}.Add("id", svc.ID)})
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range list.Items {
+			if s.ID == svc.ID {
+				svc.ServiceStatus = s.ServiceStatus
+			}
+		}
+		return agents.SwarmServiceDetailFrom(svc), nil
 
 	case agents.FrameReqSwarmTasks:
 		var req agents.SwarmTasksReq
