@@ -55,6 +55,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stackfiles"
 	"github.com/dockmesh/dockmesh/internal/stackhelper"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/swarmread"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/gorilla/websocket"
 	"github.com/moby/moby/api/types/container"
@@ -1071,9 +1072,10 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		g, err := buildTopology(ctx, cli)
 		respond(conn, f.ID, g, err)
 
-	case agents.FrameReqSwarmNodes:
-		res, err := cli.NodeList(ctx, client.NodeListOptions{})
-		respond(conn, f.ID, agents.SwarmNodesResp{Nodes: agents.SwarmNodesFrom(res.Items)}, err)
+	case agents.FrameReqSwarmNodes, agents.FrameReqSwarmServices, agents.FrameReqSwarmServiceInspect,
+		agents.FrameReqSwarmTasks, agents.FrameReqSwarmNetworks:
+		data, err := swarmread.Read(ctx, cli, f.Type, f.Payload)
+		respond(conn, f.ID, data, err)
 
 	case agents.FrameReqNetworkInspect:
 		var req agents.ResourceIDReq
