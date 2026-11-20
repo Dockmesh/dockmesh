@@ -1,5 +1,34 @@
 components:
   schemas:
+    SwarmService:
+      type: object
+      required: [id, name, mode, running_tasks, desired_tasks, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        image: {type: string}
+        mode: {type: string, enum: [replicated, global, replicated-job, global-job, ""]}
+        replicas: {type: integer, format: int64}
+        running_tasks: {type: integer, format: int64}
+        desired_tasks: {type: integer, format: int64}
+        stack: {type: string, description: The `com.docker.stack.namespace` label.}
+        ports:
+          type: array
+          items:
+            type: object
+            required: [target_port]
+            properties:
+              protocol: {type: string}
+              target_port: {type: integer}
+              published_port: {type: integer}
+              publish_mode: {type: string}
+        update_state: {type: string}
+        networks:
+          type: array
+          description: Ids (or names, as the spec gives them) of the networks the service's tasks attach to, ingress included.
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     StacksDirCheck:
       type: object
       required: [path, status, message]

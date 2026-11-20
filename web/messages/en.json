@@ -510,7 +510,7 @@
   "apierr_base_url_needs_users_create": "Changing the Base URL also needs the users.create permission, because invite links and sign-in callbacks use it",
   "apierr_agent_url_needs_hosts_create": "Changing the agent public URL also needs the hosts.create permission, because install commands use it",
   "apierr_caddyfile_required": "caddyfile required",
-  "apierr_cluster_topology_unavailable": "cluster topology is not supported",
+  "apierr_topology_host_and_cluster": "topology takes a host or a cluster, not both",
   "apierr_cannot_delete_yourself": "cannot delete yourself",
   "apierr_clusters_unavailable": "Clusters are not available",
   "apierr_cluster_deleted_cache_stale": "The cluster and its access were deleted, but the permission cache could not be reloaded; restart Dockmesh so the removed roles stop applying",
@@ -3265,6 +3265,7 @@
   "networks_scope_flags": "Scope flags",
   "networks_sub_host": "host {host}",
   "networks_sub_stack": "stack {stack}",
+  "networks_sub_swarm_stack": "Swarm stack {stack}",
   "networks_sub_system": "system",
   "networks_subnet": "Subnet",
   "networks_system_network": "system network",
@@ -4385,6 +4386,7 @@
   "resources_show": "Show",
   "resources_show_system": "show system networks",
   "resources_stack_prefix": "stack:",
+  "resources_swarm_stack_prefix": "Swarm stack:",
   "resources_stat_anonymous": "Anonymous",
   "resources_stat_attachable": "Attachable",
   "resources_stat_attached": "attached to a container",
@@ -5940,6 +5942,7 @@
   "volumes_size_note_mid": "Open the",
   "volumes_sub_host": "host {host}",
   "volumes_sub_stack": "stack {stack}",
+  "volumes_sub_swarm_stack": "Swarm stack {stack}",
   "volumes_tab_files": "Files",
   "volumes_truncated_notice": "Only the first 1 MiB is shown. Download for the full file.",
   "volumes_truncated_preview": "truncated preview",
@@ -6468,6 +6471,28 @@
   "hosts_setup_waiting_picker": "Finish the setup of {name} first.",
   "setup_disk_not_stacks_place": "not at or one level below /srv, /opt, /data, /mnt or /media",
   "hosts_setup_current_ok": "This is the stacks directory in use.",
+  "topology_view_label": "Graph",
+  "topology_view_host": "Host network",
+  "topology_view_cluster": "Swarm cluster {name}",
+  "topology_services": "Services",
+  "topology_n_services": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} service",
+        "countPlural=*": "{count} services"
+      }
+    }
+  ],
+  "topology_tasks": "Tasks",
+  "topology_tasks_running": "{tasks} running",
+  "topology_truncated": "The manager returned only part of its services or networks.",
   "cluster_state_healthy": "Healthy",
   "cluster_state_degraded": "Degraded",
   "cluster_state_no_quorum": "No quorum",

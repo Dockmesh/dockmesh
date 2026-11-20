@@ -4,14 +4,19 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/topology"
 )
 
-// Topology is the network graph of one target.
+// Topology is the network graph of one target. A cluster's graph has
+// services instead of containers, linked to its Swarm-scoped networks.
 type Topology struct {
 	Target TopoTarget `json:"target"`
 	topology.Graph
+	Services []agents.SwarmService `json:"services,omitempty"`
+	// Truncated: the manager cut its service or network list.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type TopoTarget struct {
@@ -21,11 +26,16 @@ type TopoTarget struct {
 }
 
 // GetTopology returns the network graph of the host named by ?host=
-// (the server's own when empty), cut to what the caller may see.
+// (the server's own when empty), cut to what the caller may see, or of
+// the cluster named by ?cluster=.
 func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if q.Has("cluster") {
-		writeError(w, http.StatusBadRequest, "cluster topology is not supported")
+		if q.Has("host") {
+			writeError(w, http.StatusBadRequest, "topology takes a host or a cluster, not both")
+			return
+		}
+		h.clusterTopology(w, r, q.Get("cluster"))
 		return
 	}
 	if host.IsAll(q.Get("host")) {

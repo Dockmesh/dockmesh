@@ -48,9 +48,12 @@ type Port struct {
 	Protocol      string `json:"protocol"`
 }
 
+// Link joins a network to a container, or in a cluster graph to a
+// Swarm service.
 type Link struct {
 	NetworkID   string   `json:"network_id"`
-	ContainerID string   `json:"container_id"`
+	ContainerID string   `json:"container_id,omitempty"`
+	ServiceID   string   `json:"service_id,omitempty"`
 	IPv4        string   `json:"ipv4,omitempty"`
 	Aliases     []string `json:"aliases,omitempty"`
 }

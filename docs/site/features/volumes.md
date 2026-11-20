@@ -11,7 +11,7 @@ The summary row counts volumes (and how many come from stacks), orphaned volumes
 
 | Column | Shows |
 |---|---|
-| Name | Volume name, with the owning stack for volumes created by a Compose project and an **anon** tag for auto-named ones |
+| Name | Volume name, with the owning stack for volumes created by a Compose project or a Swarm stack (**Swarm stack**) and an **anon** tag for auto-named ones |
 | Driver | Usually `local` |
 | Mountpoint | Path on the host |
 | Used by | Number of containers that mount the volume, or **Orphan** |

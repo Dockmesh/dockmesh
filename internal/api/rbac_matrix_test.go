@@ -202,6 +202,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/clusters/{id}/services/{service}", rbac.PermStacksView},
 	{"GET", "/api/v1/clusters/{id}/tasks", rbac.PermStacksView},
 	{"GET", "/api/v1/clusters/{id}/networks", rbac.PermNetworksView},
+	{"GET", "/api/v1/clusters/{id}/volumes", rbac.PermVolumesView},
 	{"PUT", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"POST", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"DELETE", "/api/v1/hosts/{id}/tags/{tag}", rbac.PermHostsTag},
@@ -560,6 +561,7 @@ var clusterScoped = map[string]bool{
 	"GET /api/v1/clusters/{id}/services/{service}": true,
 	"GET /api/v1/clusters/{id}/tasks":              true,
 	"GET /api/v1/clusters/{id}/networks":           true,
+	"GET /api/v1/clusters/{id}/volumes":            true,
 }
 
 // fleetWide are routes whose handler also needs the permission on
