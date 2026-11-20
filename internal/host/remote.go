@@ -193,6 +193,9 @@ func (h *RemoteHost) StopContainer(ctx context.Context, id string) error {
 }
 
 func (h *RemoteHost) RestartContainer(ctx context.Context, id string) error {
+	if err := refuseTaskRestart(ctx, h, id); err != nil {
+		return err
+	}
 	_, err := h.request(ctx, agents.FrameReqContainerRestart, agents.ContainerIDReq{ID: id})
 	return err
 }

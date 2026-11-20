@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/dockmesh/dockmesh/internal/updater"
 )
 
@@ -344,7 +345,7 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 			}
 			id = info.ID
 			if info.Config != nil {
-				svc = updater.SwarmService(info.Config.Labels)
+				svc = swarmtask.Service(info.Config.Labels)
 			}
 		}
 		if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
