@@ -13,6 +13,8 @@ A stack can be migrated when it is deployed and none of its services mounts a na
 
 The check runs when you start the migration (the API answers `409 Conflict` and lists the volumes), as the `named_volumes` preflight check and again in the `syncing` phase, in case the compose file changed in between.
 
+Stacks whose containers on the source are Docker Swarm tasks are refused with `409 Conflict`, as is a stack where the source can't tell: Swarm places tasks itself. Drain the node in Swarm (`docker node update --availability drain`) or add a placement constraint to the compose file instead. The drain plan marks such stacks as not movable, with the same reason.
+
 ## Migrate a stack
 
 An assignment on the stack that names a host covers the stack only on that host, so it stops applying once the stack runs on the target; assignments on the stack without a host follow it.

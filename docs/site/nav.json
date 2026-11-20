@@ -33,6 +33,7 @@
         { "title": "Registries", "path": "features/registries.md" },
         { "title": "Scaling", "path": "features/scaling.md" },
         { "title": "Multi-host", "path": "features/multi-host.md" },
+        { "title": "Docker Swarm", "path": "features/swarm.md" },
         { "title": "Migration and drain", "path": "features/migration-and-drain.md" },
         { "title": "Reverse proxy", "path": "features/reverse-proxy.md" },
         { "title": "Vulnerability scanning", "path": "features/vulnerability-scanning.md" },
