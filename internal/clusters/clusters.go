@@ -74,6 +74,7 @@ type Cluster struct {
 	CreatedBy  string    `json:"created_by,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	Members    []Member  `json:"members"`
+	Status     *Status   `json:"status,omitempty"`
 }
 
 // Member is a host linked to a cluster.
@@ -102,6 +103,9 @@ type Service struct {
 	audit Auditor
 	// mu serialises the membership writes of Create, Reconcile and Delete.
 	mu sync.Mutex
+	// smu guards seen, what the last reconcile learned per cluster.
+	smu  sync.Mutex
+	seen map[string]seen
 }
 
 // Auditor records membership changes; audit.Service is one.
@@ -146,6 +150,9 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 		if i, ok := idx[cid]; ok {
 			out[i].Members = ms
 		}
+	}
+	for i := range out {
+		out[i].Status = s.statusOf(out[i])
 	}
 	return out, nil
 }
@@ -291,6 +298,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	if err := s.link(ctx, id, hostID, nodes, snap); err != nil {
 		return Cluster{}, err
 	}
+	s.record(id, stateOf(nodes), nodes, time.Now())
 	return s.get(ctx, id)
 }
 
@@ -330,6 +338,7 @@ func (s *Service) Delete(ctx context.Context, id string, allow func(Access) erro
 	if err := tx.Commit(); err != nil {
 		return Cluster{}, Access{}, err
 	}
+	s.forget(id)
 	return c, a, nil
 }
 
@@ -370,6 +379,8 @@ func nullable(s string) any {
 type hostState struct {
 	known bool
 	swarm *agents.SwarmState
+	// offline: the state is the host's last hello, not a live answer.
+	offline bool
 }
 
 // snapshot reads the Swarm state of every enrolled host once, several
@@ -392,11 +403,11 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(id string) {
+		go func(id string, offline bool) {
 			defer func() { <-sem; wg.Done() }()
 			hctx, cancel := context.WithTimeout(ctx, hostTimeout)
 			defer cancel()
-			st := hostState{}
+			st := hostState{offline: offline}
 			if info, err := s.hosts.CurrentDaemonInfo(hctx, id); err == nil {
 				st.known = true
 				if info != nil {
@@ -406,7 +417,7 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 			mu.Lock()
 			out[id] = st
 			mu.Unlock()
-		}(h.ID)
+		}(h.ID, h.Status == "offline")
 	}
 	wg.Wait()
 	return out, nil
@@ -425,7 +436,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, c := range clusters {
-		nodes := s.askOrigin(ctx, c, snap)
+		nodes, state := s.askOrigin(ctx, c, snap)
+		s.record(c.ID, state, nodes, time.Now())
 		if nodes == nil {
 			continue
 		}
@@ -459,35 +471,52 @@ func (s *Service) ReadHost(ctx context.Context, id string) (string, error) {
 	return c.OriginHost, nil
 }
 
+// linkedNode returns the node ID c's origin is linked as, or "".
+func linkedNode(c Cluster) string {
+	for _, m := range c.Members {
+		if m.HostID == c.OriginHost {
+			return m.NodeID
+		}
+	}
+	return ""
+}
+
 // originIsLinkedManager reports whether info shows c's origin as the
 // active manager node it is linked as.
 func originIsLinkedManager(c Cluster, info *agents.DaemonInfo) bool {
-	var linked string
-	for _, m := range c.Members {
-		if m.HostID == c.OriginHost {
-			linked = m.NodeID
-		}
-	}
+	linked := linkedNode(c)
 	return linked != "" && activeManager(info) && info.Swarm.ClusterID == c.ID && info.Swarm.NodeID == linked
 }
 
-// askOrigin returns the origin's node list, or nil when the origin is not
-// the linked manager node of this Swarm right now.
-func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) []agents.SwarmNode {
+// askOrigin returns the origin's node list and the cluster state it
+// shows. The list is nil when the origin is not the linked manager node
+// of this Swarm right now. A linked origin whose dockerd no longer knows
+// the cluster, or refuses the list for want of a leader, has lost quorum.
+func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) ([]agents.SwarmNode, string) {
+	linked := linkedNode(c)
 	st := snap[c.OriginHost]
-	if !st.known || !originIsLinkedManager(c, &agents.DaemonInfo{Swarm: st.swarm}) {
-		return nil
+	sw := st.swarm
+	if linked == "" || !st.known || st.offline || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager || sw.NodeID != linked {
+		return nil, StateUnreachable
 	}
-	linked := st.swarm.NodeID
+	if sw.ClusterID == "" {
+		return nil, StateNoQuorum
+	}
+	if !originIsLinkedManager(c, &agents.DaemonInfo{Swarm: sw}) {
+		return nil, StateUnreachable
+	}
 	nodes, err := s.nodesOf(ctx, c.OriginHost)
 	if err != nil {
 		slog.Debug("swarm node list failed", "cluster", c.ID, "host", c.OriginHost, "err", err)
-		return nil
+		if lostQuorum(err) {
+			return nil, StateNoQuorum
+		}
+		return nil, StateUnreachable
 	}
 	if !listsManager(nodes, linked) {
-		return nil
+		return nil, StateUnreachable
 	}
-	return nodes
+	return nodes, stateOf(nodes)
 }
 
 // claims reports whether a host's Swarm state claims node n of cluster

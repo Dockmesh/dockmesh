@@ -637,6 +637,8 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		err = runImagePullStream(conn, cli, open, reg)
 	case "image_export":
 		err = runImageExportStream(conn, cli, open, reg)
+	case agents.StreamKindSwarmServiceLogs:
+		err = runSwarmLogStream(conn, cli, open, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}
@@ -751,6 +753,16 @@ func runLogStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOp
 	}
 	defer rc.Close()
 	return reg.pumpOutput(conn, rc, 8192)
+}
+
+// runSwarmLogStream sends a service's task logs as NDJSON; swarmread
+// refuses it unless this node is a manager.
+func runSwarmLogStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	req := agents.SwarmLogsReqFrom(open.Container, open.Params)
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(swarmread.WriteServiceLogs(reg.ctx, cli, req, pw)) }()
+	defer pr.Close()
+	return reg.pumpOutput(conn, pr, 8192)
 }
 
 func sendStreamClose(conn *websocket.Conn, id, errMsg string) {

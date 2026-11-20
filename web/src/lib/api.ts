@@ -174,6 +174,30 @@ export interface Cluster {
   created_by?: string;
   created_at: string;
   members: ClusterMember[];
+  status?: ClusterStatus;
+}
+
+export type ClusterState = 'healthy' | 'degraded' | 'no_quorum' | 'unreachable' | 'unknown';
+
+export interface ClusterStatus {
+  state: ClusterState;
+  managers: number;
+  managers_reachable: number;
+  workers: number;
+  nodes_down: number;
+  nodes_without_agent: number;
+  leader?: string;
+  checked_at?: string;
+  known_at?: string;
+}
+
+export interface ClusterMembership {
+  host_id: string;
+  cluster_id: string;
+  cluster_name: string;
+  node_id: string;
+  role: 'manager' | 'worker';
+  node?: { state?: string; availability?: string; reachability?: string; leader?: boolean };
 }
 
 export interface ClusterAccess {
@@ -2314,6 +2338,7 @@ export const api = {
   clusters: {
     list: () => request<Cluster[]>('/clusters'),
     candidates: () => request<ClusterCandidate[]>('/clusters/candidates'),
+    memberships: () => request<ClusterMembership[]>('/clusters/memberships'),
     create: (hostId: string, name?: string) =>
       request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
     access: (id: string) => request<ClusterAccess>(`/clusters/${encodeURIComponent(id)}/access`),

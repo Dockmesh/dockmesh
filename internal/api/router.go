@@ -198,6 +198,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// Host registry — local + every connected agent.
 				r.Get("/hosts", h.ListHosts)
 				r.Get("/clusters", h.ListClusters)
+				r.Get("/clusters/memberships", h.ListClusterMemberships)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(h.ClusterScope)
@@ -880,6 +881,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/ws/events", h.WSEvents)
 		r.Get("/ws/exec/{id}", h.WSExec)
 		r.Get("/ws/stats/{id}", h.WSStats)
+		r.Get("/ws/clusters/{id}/services/{service}/logs", h.WSClusterServiceLogs)
 	})
 
 	// Public installer + binary download. Lives outside /api/v1 because

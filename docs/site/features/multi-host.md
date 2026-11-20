@@ -183,9 +183,16 @@ When several hosts manage the Swarm, pick the one to create it from. That host b
 
 The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the origin's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from the origin: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While the origin is unreachable or no longer a manager, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
 
-**Delete…** on the cluster's line of the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
+**Delete…** in the menu of the cluster's row on the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
 
-The host list marks linked hosts with their role and cluster. Hosts that are not in a Swarm behave exactly as before.
+On the Hosts page a cluster is one expandable row: its state, how many managers and workers it has, how many nodes have no Dockmesh agent, and the leader or, when the origin can't be reached, when its state was last known. The linked hosts are listed indented below it with their role; a node without an agent is not a host and doesn't appear there. The state comes from the origin's view, checked every minute:
+
+- **Healthy**: every node is ready and every manager reachable.
+- **Degraded**: a node is down or a manager unreachable, but the Swarm still has quorum.
+- **No quorum**: the origin is online but its Swarm has no leader, so Swarm can't change anything.
+- **Unreachable**: the origin's agent is offline or can't list the nodes; the row shows the last known state with its time.
+
+Right after a server start the state reads "Not checked yet" until the first check. The cluster's state and shape are shown to users with Hosts: View on the cluster or on everything. A user who can only see a node host sees the cluster's name on that row and "Member of cluster X" on the host page, without anything else about the cluster. Hosts that are not in a Swarm behave exactly as before.
 
 ### Reading a cluster through the API
 
@@ -200,6 +207,16 @@ The cluster's nodes, services, tasks and overlay networks are read through its o
 A host or host tag assignment on one of the nodes does not reach these. A service shows the names of its environment variables but never their values, and its secrets and configs by name only; their data never leaves the manager. Lists are capped (1000 services, 5000 tasks, 500 networks) and say so when they are cut.
 
 Only a Swarm manager answers: an agent on a worker refuses, and while the origin is offline or no longer a manager the API answers 503. Reading services, tasks and networks needs an agent of this version on the origin.
+
+### Service logs
+
+`GET /api/v1/ws/clusters/{id}/services/{service}/logs` is a WebSocket that streams the logs of every task of a service, read through the origin manager, so tasks on nodes without an agent are included. Get a ticket with `POST /api/v1/ws/ticket?for=containers.logs` and pass it as `?ticket=`; the caller needs `containers.logs` (Containers: View or Stacks: View) on the cluster. Each message is one JSON line with the time, the task (`web.2`, or `web.<node id>` for a global service), the node's host name, `stdout` or `stderr` and the message. Messages longer than 16 KiB are cut and marked `truncated`.
+
+- `tail`: lines per task to send first, 0 to 5000 (default 100).
+- `since`: only lines from then on, as a duration back from now (`15m`, at most 90 days), an RFC 3339 time or unix seconds.
+- `follow=0`: end the stream after the existing lines instead of following.
+
+Closing the socket stops the stream on the manager. Of the log metadata only the task and node are passed on; attributes a log driver adds from labels or environment variables stay on the manager. At most 32 service log streams are open at once and 4 per user or API token; more answer 429. The origin's agent has to run this version, otherwise the request is refused with 503.
 
 ## Agent upgrades
 
