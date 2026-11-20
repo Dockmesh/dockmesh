@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/moby/moby/api/types/system"
-
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
@@ -61,32 +59,4 @@ func (r *Registry) SwarmNodes(ctx context.Context, id string) ([]agents.SwarmNod
 		return nil, ErrUnknownHost
 	}
 	return l.SwarmNodes(ctx)
-}
-
-// DaemonInfo asks the agent's daemon now, so a host that joined or left
-// a Swarm after the agent connected is seen without a reconnect.
-func (h *RemoteHost) DaemonInfo(ctx context.Context) (*agents.DaemonInfo, error) {
-	data, err := h.request(ctx, agents.FrameReqDaemonInfo, nil)
-	if err != nil {
-		return nil, err
-	}
-	var info system.Info
-	if err := json.Unmarshal(data, &info); err != nil {
-		return nil, fmt.Errorf("decode daemon info: %w", err)
-	}
-	return agents.DaemonInfoFrom(info), nil
-}
-
-// CurrentDaemonInfo is DaemonInfo asked live from an online agent; an
-// offline agent falls back to what its last hello reported.
-func (r *Registry) CurrentDaemonInfo(ctx context.Context, id string) (*agents.DaemonInfo, error) {
-	if id == "" || id == "local" || r.agents == nil || r.fixed != nil {
-		return r.DaemonInfo(ctx, id)
-	}
-	if live := r.agents.GetConnected(id); live != nil {
-		if info, err := NewRemote(live.ID, live.Name, r.agents).DaemonInfo(ctx); err == nil {
-			return info, nil
-		}
-	}
-	return r.DaemonInfo(ctx, id)
 }

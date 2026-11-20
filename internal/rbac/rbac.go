@@ -55,8 +55,6 @@ const (
 	PermHostsDelete Perm = "hosts.delete"
 	PermHostsTag    Perm = "hosts.tag"
 
-	// PermClustersCreate makes a Docker Swarm a Dockmesh cluster, which
-	// creates a new scope target.
 	PermClustersCreate Perm = "clusters.create"
 
 	PermUsersView   Perm = "users.view"

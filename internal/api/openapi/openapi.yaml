@@ -2604,10 +2604,12 @@ paths:
       summary: Create the cluster of the Swarm a host manages
       description: |
         Needs the global-only `clusters.create`. The host must be a manager
-        of an active Swarm, checked live against its own node list; the
-        cluster id is the Swarm's cluster ID. Hosts the node list confirms
-        are linked right away and kept current afterwards. Audited as
-        `cluster.create`.
+        of an active Swarm, checked live against its own node list, and
+        every other host claiming to manage the Swarm that answers must
+        list it as a manager. The cluster id is the Swarm's cluster ID; the
+        host becomes the origin, whose node list alone links and unlinks
+        hosts (every minute; changes audited as `cluster.member_link` /
+        `cluster.member_unlink`). Audited as `cluster.create`.
       requestBody:
         required: true
         content:
@@ -2635,7 +2637,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A cluster for this Swarm or with this name exists.
+          description: A cluster for this Swarm or with this name exists, or another manager host does not list this host as a manager.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2649,6 +2651,22 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}:
+    delete:
+      operationId: clusters.delete
+      tags: [clusters]
+      summary: Delete a cluster and its memberships
+      description: Needs the global-only `clusters.create`. Nothing changes on the Swarm. Audited as `cluster.delete`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /clusters/candidates:
     get:
       operationId: clusters.candidates

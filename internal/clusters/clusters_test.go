@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -20,8 +21,8 @@ type fakeHosts struct {
 	mu      sync.Mutex
 	infos   map[string]*agents.DaemonInfo
 	failing map[string]bool // CurrentDaemonInfo fails (host unreadable)
+	status  map[string]string
 	nodes   map[string][]agents.SwarmNode
-	asked   []string // SwarmNodes calls
 }
 
 func (f *fakeHosts) List(context.Context) ([]host.Info, error) {
@@ -29,11 +30,11 @@ func (f *fakeHosts) List(context.Context) ([]host.Info, error) {
 	defer f.mu.Unlock()
 	var out []host.Info
 	for id := range f.infos {
-		out = append(out, host.Info{ID: id, Name: "h-" + id})
+		out = append(out, host.Info{ID: id, Name: "h-" + id, Status: f.status[id]})
 	}
 	for id := range f.failing {
 		if _, ok := f.infos[id]; !ok {
-			out = append(out, host.Info{ID: id, Name: "h-" + id})
+			out = append(out, host.Info{ID: id, Name: "h-" + id, Status: f.status[id]})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -59,7 +60,6 @@ func (f *fakeHosts) CurrentDaemonInfo(ctx context.Context, id string) (*agents.D
 func (f *fakeHosts) SwarmNodes(_ context.Context, id string) ([]agents.SwarmNode, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.asked = append(f.asked, id)
 	n, ok := f.nodes[id]
 	if !ok {
 		return nil, errors.New("not a manager")
@@ -71,8 +71,9 @@ func swarmInfo(cluster, node, role string) *agents.DaemonInfo {
 	return &agents.DaemonInfo{OS: "linux", Arch: "amd64", Swarm: &agents.SwarmState{NodeID: node, NodeState: "active", Role: role, ClusterID: cluster}}
 }
 
-// lab: m1, m2 managers, w1 worker, solo outside the Swarm, and a node
-// "w2" that has no agent (only in the node list).
+// lab: m1, m2 managers, w1 worker, solo outside the Swarm, and node "n4"
+// that has no agent (only in the node list). Like dockerd, the worker
+// reports no cluster ID.
 func lab() *fakeHosts {
 	nodes := []agents.SwarmNode{
 		{ID: "n1", Role: RoleManager, Leader: true},
@@ -84,10 +85,11 @@ func lab() *fakeHosts {
 		infos: map[string]*agents.DaemonInfo{
 			"m1":   swarmInfo(swarmID, "n1", RoleManager),
 			"m2":   swarmInfo(swarmID, "n2", RoleManager),
-			"w1":   swarmInfo(swarmID, "n3", RoleWorker),
+			"w1":   swarmInfo("", "n3", RoleWorker),
 			"solo": {OS: "linux", Swarm: &agents.SwarmState{NodeState: "inactive"}},
 		},
 		failing: map[string]bool{},
+		status:  map[string]string{},
 		nodes:   map[string][]agents.SwarmNode{"m1": nodes, "m2": nodes},
 	}
 }
@@ -100,6 +102,19 @@ func newService(t *testing.T, f *fakeHosts) *Service {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return New(db, f)
+}
+
+type auditRec struct{ got []string }
+
+func (a *auditRec) Write(_ context.Context, _, action, _ string, details any) {
+	a.got = append(a.got, action+" "+details.(map[string]any)["host"].(string))
+}
+
+func backdate(t *testing.T, s *Service) {
+	t.Helper()
+	if _, err := s.db.Exec(`UPDATE cluster_memberships SET linked_at = '2000-01-01 00:00:00'`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func roles(c Cluster) map[string]string {
@@ -182,8 +197,9 @@ func TestCreateRefuses(t *testing.T) {
 	}
 }
 
-// A host claiming a cluster's id and a node ID the managers don't list is
-// never linked, and neither is a second host claiming a linked node ID.
+// A host claiming the cluster with a node ID the origin doesn't list is
+// never linked, nor is a second host claiming a linked node ID, nor a
+// manager-looking worker claim without the cluster ID.
 func TestClaimsAloneDontLink(t *testing.T) {
 	ctx := context.Background()
 	f := lab()
@@ -192,7 +208,8 @@ func TestClaimsAloneDontLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.infos["fake"] = swarmInfo(swarmID, "n9", RoleManager)
-	f.infos["clone"] = swarmInfo(swarmID, "n3", RoleWorker)
+	f.infos["clone"] = swarmInfo("", "n3", RoleWorker)
+	f.infos["nocluster"] = swarmInfo("", "n4", RoleManager)
 	if err := s.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -202,18 +219,61 @@ func TestClaimsAloneDontLink(t *testing.T) {
 	}
 }
 
-// Reconcile follows the managers' node list; an unreadable host keeps its
-// membership, a host that left or was removed loses it, and running it
-// twice without a change writes nothing.
-func TestReconcile(t *testing.T) {
+// Only the origin's node list changes memberships: another linked
+// manager's list is never used, so it can't unlink anyone.
+func TestOnlyOriginListCounts(t *testing.T) {
 	ctx := context.Background()
 	f := lab()
 	s := newService(t, f)
 	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := s.get(ctx, swarmID)
+	want := map[string]string{"m1": "n1/manager", "m2": "n2/manager", "w1": "n3/worker"}
+	f.nodes["m2"] = []agents.SwarmNode{{ID: "n2", Role: RoleManager}}
+	tests := []struct {
+		name  string
+		setup func()
+	}{
+		{"origin unreadable", func() { f.failing["m1"] = true }},
+		{"origin left the swarm", func() {
+			delete(f.failing, "m1")
+			f.infos["m1"] = &agents.DaemonInfo{Swarm: &agents.SwarmState{NodeState: "inactive"}}
+		}},
+		{"origin reports another node", func() { f.infos["m1"] = swarmInfo(swarmID, "n2", RoleManager) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			if err := s.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			c, _ := s.get(ctx, swarmID)
+			if !equal(roles(c), want) {
+				t.Fatalf("members changed: %v", roles(c))
+			}
+		})
+	}
+}
 
+// Reconcile follows the origin's node list; an unreadable host keeps its
+// membership, a host that left, was revoked or removed loses it, and
+// running it twice without a change writes nothing.
+func TestReconcile(t *testing.T) {
+	ctx := context.Background()
+	f := lab()
+	s := newService(t, f)
+	rec := &auditRec{}
+	s.SetAudit(rec)
+	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(rec.got)
+	if want := []string{"cluster.member_link m1", "cluster.member_link m2", "cluster.member_link w1"}; !slices.Equal(rec.got, want) {
+		t.Fatalf("audit %v", rec.got)
+	}
+	rec.got = nil
+	backdate(t, s)
+	before, _ := s.get(ctx, swarmID)
 	for i := range 2 {
 		if err := s.Reconcile(ctx); err != nil {
 			t.Fatal(err)
@@ -222,51 +282,80 @@ func TestReconcile(t *testing.T) {
 		if !equal(roles(after), roles(before)) {
 			t.Fatalf("run %d changed members: %v → %v", i, roles(before), roles(after))
 		}
-		for j := range after.Members {
-			if !after.Members[j].LinkedAt.Equal(before.Members[j].LinkedAt) {
-				t.Fatalf("run %d rewrote %s", i, after.Members[j].HostID)
+		for _, m := range after.Members {
+			if m.LinkedAt.Year() != 2000 {
+				t.Fatalf("run %d rewrote %s", i, m.HostID)
 			}
 		}
 	}
+	if len(rec.got) != 0 {
+		t.Fatalf("unchanged runs audited %v", rec.got)
+	}
 
-	// Origin manager gone: m2 answers. w1 unreadable: kept. m2 promoted
-	// w1 → manager in the list.
-	f.failing["m1"] = true
 	f.failing["w1"] = true
-	f.nodes["m2"] = []agents.SwarmNode{{ID: "n1", Role: RoleManager}, {ID: "n2", Role: RoleManager}, {ID: "n3", Role: RoleManager}}
+	f.nodes["m1"] = []agents.SwarmNode{{ID: "n1", Role: RoleManager}, {ID: "n2", Role: RoleWorker}, {ID: "n3", Role: RoleWorker}}
 	if err := s.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := s.get(ctx, swarmID)
-	if want := map[string]string{"m1": "n1/manager", "m2": "n2/manager", "w1": "n3/worker"}; !equal(roles(c), want) {
-		t.Fatalf("unreadable hosts changed: %v", roles(c))
+	if want := map[string]string{"m1": "n1/manager", "m2": "n2/worker", "w1": "n3/worker"}; !equal(roles(c), want) {
+		t.Fatalf("after demote: %v", roles(c))
 	}
 
-	// w1 readable again and listed as manager; m1 left the Swarm.
 	delete(f.failing, "w1")
-	delete(f.failing, "m1")
-	f.infos["m1"] = &agents.DaemonInfo{Swarm: &agents.SwarmState{NodeState: "inactive"}}
+	f.infos["m2"] = &agents.DaemonInfo{Swarm: &agents.SwarmState{NodeState: "inactive"}}
+	f.status["w1"] = "revoked"
 	if err := s.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	c, _ = s.get(ctx, swarmID)
-	if want := map[string]string{"m2": "n2/manager", "w1": "n3/manager"}; !equal(roles(c), want) {
-		t.Fatalf("after leave: %v", roles(c))
+	if want := map[string]string{"m1": "n1/manager"}; !equal(roles(c), want) {
+		t.Fatalf("after leave and revoke: %v", roles(c))
 	}
-
-	// w1's agent is removed from Dockmesh.
-	delete(f.infos, "w1")
-	if err := s.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
-	c, _ = s.get(ctx, swarmID)
-	if want := map[string]string{"m2": "n2/manager"}; !equal(roles(c), want) {
-		t.Fatalf("after remove: %v", roles(c))
+	if !slices.Contains(rec.got, "cluster.member_unlink w1") || !slices.Contains(rec.got, "cluster.member_unlink m2") {
+		t.Fatalf("unlinks not audited: %v", rec.got)
 	}
 }
 
-// Without a manager that answers, the last known members stay.
-func TestReconcileNoManagerKeepsMembers(t *testing.T) {
+// Create refuses when another manager host of the Swarm doesn't list the
+// chosen host as a manager.
+func TestCreateConflict(t *testing.T) {
+	ctx := context.Background()
+	f := lab()
+	f.nodes["m2"] = []agents.SwarmNode{{ID: "n2", Role: RoleManager}}
+	s := newService(t, f)
+	if _, err := s.Create(ctx, "m1", "prod", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("err %v", err)
+	}
+	delete(f.nodes, "m2") // an unreachable manager doesn't block
+	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t, lab())
+	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, swarmID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, swarmID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM cluster_memberships`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("memberships left: %d %v", n, err)
+	}
+	if cands, _ := s.Candidates(ctx); len(cands) != 1 {
+		t.Fatalf("candidates after delete %+v", cands)
+	}
+}
+
+// Without the origin answering, the last known members stay.
+func TestReconcileNoOriginKeepsMembers(t *testing.T) {
 	ctx := context.Background()
 	f := lab()
 	s := newService(t, f)

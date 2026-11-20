@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -15,7 +17,7 @@ import (
 )
 
 // ListClusters returns every cluster with its linked hosts. Clusters are
-// not a scope target yet, so only a global hosts.view sees them.
+// not a scope target, so only a global hosts.view sees them.
 //
 //	GET /api/v1/clusters
 func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
@@ -27,9 +29,6 @@ func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if list == nil {
-		list = []clusters.Cluster{}
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -78,7 +77,7 @@ func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
 	c, err := h.Clusters.Create(r.Context(), req.HostID, req.Name, actorID(r))
 	switch {
 	case err == nil:
-	case errors.Is(err, clusters.ErrExists), errors.Is(err, clusters.ErrNameTaken):
+	case errors.Is(err, clusters.ErrExists), errors.Is(err, clusters.ErrNameTaken), errors.Is(err, clusters.ErrConflict):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, clusters.ErrBadName), errors.Is(err, clusters.ErrNotManager):
@@ -97,4 +96,25 @@ func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionClusterCreate, c.ID, map[string]any{"name": c.Name, "host": req.HostID, "members": len(c.Members)})
 	writeJSON(w, http.StatusCreated, c)
+}
+
+// DeleteCluster removes a cluster and its memberships; the Swarm itself
+// is not touched.
+//
+//	DELETE /api/v1/clusters/{id}
+func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if err := h.Clusters.Delete(r.Context(), id); errors.Is(err, clusters.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionClusterDelete, id, nil)
+	w.WriteHeader(http.StatusNoContent)
 }

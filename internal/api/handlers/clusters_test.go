@@ -7,7 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
@@ -22,7 +25,7 @@ type swarmHosts struct{}
 
 var swarmHostInfo = map[string]*agents.DaemonInfo{
 	"local": {OS: "linux", Swarm: &agents.SwarmState{NodeID: "n1", NodeState: "active", Role: "manager", ClusterID: "c1"}},
-	"a1":    {OS: "linux", Swarm: &agents.SwarmState{NodeID: "n2", NodeState: "active", Role: "worker", ClusterID: "c1"}},
+	"a1":    {OS: "linux", Swarm: &agents.SwarmState{NodeID: "n2", NodeState: "active", Role: "worker"}},
 	"a2":    {OS: "linux", Swarm: &agents.SwarmState{NodeState: "inactive"}},
 }
 
@@ -93,6 +96,9 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 		rr := clusterCall(ctx, e.h.ListClusters, http.MethodGet, nil)
 		return rr.Body.String()
 	}
+	if _, err := e.db.Exec(`UPDATE cluster_memberships SET linked_at = '2000-01-01 00:00:00'`); err != nil {
+		t.Fatal(err)
+	}
 	before := list()
 	var got []clusters.Cluster
 	if err := json.Unmarshal([]byte(before), &got); err != nil || len(got) != 1 || len(got[0].Members) != 2 {
@@ -105,6 +111,28 @@ func TestCreateClusterThroughAPI(t *testing.T) {
 		if after := list(); after != before {
 			t.Fatalf("reconcile %d changed the clusters:\n%s\n%s", i, before, after)
 		}
+	}
+	if !strings.Contains(before, "2000-01-01") {
+		t.Fatalf("backdated rows missing: %s", before)
+	}
+
+	del := func(id string) int {
+		req := httptest.NewRequest(http.MethodDelete, "/", nil)
+		rc := chi.NewRouteContext()
+		rc.URLParams.Add("id", id)
+		req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rc))
+		rr := httptest.NewRecorder()
+		e.h.DeleteCluster(rr, req)
+		return rr.Code
+	}
+	if code := del("c1"); code != http.StatusNoContent {
+		t.Fatalf("delete: %d", code)
+	}
+	if code := del("c1"); code != http.StatusNotFound {
+		t.Fatalf("second delete: %d", code)
+	}
+	if after := list(); after != "[]\n" {
+		t.Fatalf("after delete: %s", after)
 	}
 }
 

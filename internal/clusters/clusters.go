@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 )
 
@@ -26,7 +27,12 @@ var (
 	ErrBadName    = errors.New("invalid name: 1 to 64 letters, digits, spaces, '.', '-' or '_'")
 	ErrNotManager = errors.New("the host is not a manager of an active Swarm")
 	ErrNotFound   = errors.New("cluster not found")
+	ErrConflict   = errors.New("another manager host of this Swarm does not list this host as a manager")
 )
+
+// hostTimeout bounds each live call to one host, so an agent that never
+// answers can't stall a reconcile or a create.
+const hostTimeout = 5 * time.Second
 
 const (
 	RoleManager = "manager"
@@ -77,9 +83,18 @@ type CandidateHost struct {
 type Service struct {
 	db    *sql.DB
 	hosts Hosts
-	// mu serialises Create and Reconcile, which both rewrite memberships.
+	audit Auditor
+	// mu serialises the membership writes of Create, Reconcile and Delete.
 	mu sync.Mutex
 }
+
+// Auditor records membership changes; audit.Service is one.
+type Auditor interface {
+	Write(ctx context.Context, userID, action, target string, details any)
+}
+
+// SetAudit sets where membership changes are recorded.
+func (s *Service) SetAudit(a Auditor) { s.audit = a }
 
 func New(db *sql.DB, hosts Hosts) *Service {
 	return &Service{db: db, hosts: hosts}
@@ -91,7 +106,7 @@ func (s *Service) List(ctx context.Context) ([]Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []Cluster
+	out := []Cluster{}
 	idx := map[string]int{}
 	for rows.Next() {
 		var c Cluster
@@ -153,6 +168,9 @@ func (s *Service) Candidates(ctx context.Context) ([]Candidate, error) {
 	}
 	byCluster := map[string][]CandidateHost{}
 	for _, h := range hosts {
+		if !enrolled(h) {
+			continue
+		}
 		info, err := s.hosts.DaemonInfo(ctx, h.ID)
 		if err != nil || !activeManager(info) {
 			continue
@@ -174,17 +192,32 @@ func (s *Service) Candidates(ctx context.Context) ([]Candidate, error) {
 	return out, nil
 }
 
+// enrolled reports whether h is a working host: revoked, removed and
+// pending agents take no part in clusters.
+func enrolled(h host.Info) bool {
+	return h.Status != "revoked" && h.Status != "removed" && h.Status != "pending"
+}
+
 func activeManager(info *agents.DaemonInfo) bool {
 	return info != nil && info.Swarm != nil && info.Swarm.NodeState == "active" &&
 		info.Swarm.Role == RoleManager && info.Swarm.ClusterID != "" && info.Swarm.NodeID != ""
 }
 
+func (s *Service) nodesOf(ctx context.Context, hostID string) ([]agents.SwarmNode, error) {
+	ctx, cancel := context.WithTimeout(ctx, hostTimeout)
+	defer cancel()
+	return s.hosts.SwarmNodes(ctx, hostID)
+}
+
 // Create creates the cluster of the Swarm hostID is a manager of and links
 // the hosts its node list confirms. The host's role is checked live
-// against its own node list, not taken from its last hello.
+// against its own node list, and every other host that claims to manage
+// the same Swarm and answers must list it as a manager too. The host
+// becomes the cluster's origin: only its node list changes memberships.
 func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Cluster, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if name != "" && !namePattern.MatchString(name) {
+		return Cluster{}, ErrBadName
+	}
 	info, err := s.hosts.CurrentDaemonInfo(ctx, hostID)
 	if err != nil {
 		return Cluster{}, err
@@ -192,20 +225,37 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	if !activeManager(info) {
 		return Cluster{}, ErrNotManager
 	}
-	id := info.Swarm.ClusterID
-	nodes, err := s.hosts.SwarmNodes(ctx, hostID)
+	id, nodeID := info.Swarm.ClusterID, info.Swarm.NodeID
+	nodes, err := s.nodesOf(ctx, hostID)
 	if err != nil {
 		return Cluster{}, fmt.Errorf("list the Swarm's nodes: %w", err)
 	}
-	if !listsManager(nodes, info.Swarm.NodeID) {
+	if !listsManager(nodes, nodeID) {
 		return Cluster{}, ErrNotManager
+	}
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		return Cluster{}, err
+	}
+	for other, st := range snap {
+		if other == hostID || !st.known || st.swarm == nil || st.swarm.ClusterID != id || st.swarm.Role != RoleManager {
+			continue
+		}
+		theirs, err := s.nodesOf(ctx, other)
+		if err != nil {
+			continue
+		}
+		if !listsManager(theirs, nodeID) {
+			slog.Warn("swarm managers disagree", "cluster", id, "origin", hostID, "other", other)
+			return Cluster{}, ErrConflict
+		}
 	}
 	if name == "" {
 		name = "swarm-" + id[:min(8, len(id))]
 	}
-	if !namePattern.MatchString(name) {
-		return Cluster{}, ErrBadName
-	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if ok, err := s.exists(ctx, id); err != nil {
 		return Cluster{}, err
 	} else if ok {
@@ -222,14 +272,25 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		id, name, hostID, nullable(actor)); err != nil {
 		return Cluster{}, err
 	}
-	snap, err := s.snapshot(ctx)
-	if err != nil {
-		return Cluster{}, err
-	}
-	if err := s.link(ctx, id, nodes, snap); err != nil {
+	if err := s.link(ctx, id, hostID, nodes, snap); err != nil {
 		return Cluster{}, err
 	}
 	return s.get(ctx, id)
+}
+
+// Delete removes a cluster and its memberships; nothing changes on the
+// Swarm. It is the way out of a cluster created from the wrong host.
+func (s *Service) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Service) get(ctx context.Context, id string) (Cluster, error) {
@@ -268,34 +329,50 @@ type hostState struct {
 	swarm *agents.SwarmState
 }
 
-// snapshot reads every host's Swarm state once.
+// snapshot reads the Swarm state of every enrolled host once, several
+// hosts at a time. Hosts that are not enrolled are left out, so their
+// memberships end.
 func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 	hosts, err := s.hosts.List(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, 8)
+	)
 	out := make(map[string]hostState, len(hosts))
 	for _, h := range hosts {
-		info, err := s.hosts.CurrentDaemonInfo(ctx, h.ID)
-		if err != nil {
-			out[h.ID] = hostState{}
+		if !enrolled(h) {
 			continue
 		}
-		st := hostState{known: true}
-		if info != nil {
-			st.swarm = info.Swarm
-		}
-		out[h.ID] = st
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string) {
+			defer func() { <-sem; wg.Done() }()
+			hctx, cancel := context.WithTimeout(ctx, hostTimeout)
+			defer cancel()
+			st := hostState{}
+			if info, err := s.hosts.CurrentDaemonInfo(hctx, id); err == nil {
+				st.known = true
+				if info != nil {
+					st.swarm = info.Swarm
+				}
+			}
+			mu.Lock()
+			out[id] = st
+			mu.Unlock()
+		}(h.ID)
 	}
+	wg.Wait()
 	return out, nil
 }
 
-// Reconcile refreshes the memberships of every cluster from a manager's
-// node list. A cluster whose managers can't be asked keeps its last known
-// members.
+// Reconcile refreshes the memberships of every cluster from its origin's
+// node list. A cluster whose origin can't be asked, or no longer is the
+// manager node it was linked as, keeps its last known members.
 func (s *Service) Reconcile(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	clusters, err := s.List(ctx)
 	if err != nil || len(clusters) == 0 {
 		return err
@@ -305,48 +382,65 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, c := range clusters {
-		nodes := s.askManagers(ctx, c, snap)
+		nodes := s.askOrigin(ctx, c, snap)
 		if nodes == nil {
 			continue
 		}
-		if err := s.link(ctx, c.ID, nodes, snap); err != nil {
+		s.mu.Lock()
+		err := s.link(ctx, c.ID, c.OriginHost, nodes, snap)
+		s.mu.Unlock()
+		if err != nil {
 			return fmt.Errorf("cluster %s: %w", c.Name, err)
 		}
 	}
 	return nil
 }
 
-// askManagers returns the node list of the first linked manager (the
-// origin host first) that still is a manager of this Swarm, or nil.
-func (s *Service) askManagers(ctx context.Context, c Cluster, snap map[string]hostState) []agents.SwarmNode {
-	candidates := []string{c.OriginHost}
+// askOrigin returns the origin's node list, or nil when the origin is not
+// the linked manager node of this Swarm right now.
+func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) []agents.SwarmNode {
+	var linked string
 	for _, m := range c.Members {
-		if m.Role == RoleManager && m.HostID != c.OriginHost {
-			candidates = append(candidates, m.HostID)
+		if m.HostID == c.OriginHost {
+			linked = m.NodeID
 		}
 	}
-	for _, id := range candidates {
-		st := snap[id]
-		if !st.known || st.swarm == nil || st.swarm.ClusterID != c.ID || st.swarm.Role != RoleManager {
-			continue
-		}
-		nodes, err := s.hosts.SwarmNodes(ctx, id)
-		if err != nil {
-			slog.Debug("swarm node list failed", "cluster", c.ID, "host", id, "err", err)
-			continue
-		}
-		if listsManager(nodes, st.swarm.NodeID) {
-			return nodes
-		}
+	st := snap[c.OriginHost]
+	sw := st.swarm
+	if linked == "" || !st.known || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager ||
+		sw.ClusterID != c.ID || sw.NodeID != linked {
+		return nil
 	}
-	return nil
+	nodes, err := s.nodesOf(ctx, c.OriginHost)
+	if err != nil {
+		slog.Debug("swarm node list failed", "cluster", c.ID, "host", c.OriginHost, "err", err)
+		return nil
+	}
+	if !listsManager(nodes, linked) {
+		return nil
+	}
+	return nodes
 }
 
-// link makes the cluster's memberships match nodes: a host is a member
-// when it reports this cluster and a node ID the list contains. Rows are
-// only written when they change. Two hosts claiming one node ID keep the
-// one already linked; a new tie links neither.
-func (s *Service) link(ctx context.Context, clusterID string, nodes []agents.SwarmNode, snap map[string]hostState) error {
+// claims reports whether a host's Swarm state claims node n of cluster
+// clusterID. dockerd reports the cluster ID only on managers, so a worker
+// claims by node ID alone.
+func claims(sw *agents.SwarmState, clusterID string, n agents.SwarmNode) bool {
+	if sw == nil || sw.NodeState != "active" || sw.NodeID != n.ID {
+		return false
+	}
+	if sw.ClusterID == clusterID {
+		return true
+	}
+	return sw.ClusterID == "" && sw.Role == RoleWorker && n.Role == RoleWorker
+}
+
+// link makes the cluster's memberships match nodes, the node list of
+// listedBy: a host is a member when its state claims a node the list
+// contains; the role is the list's. Rows are only written when they
+// change. Two hosts claiming one node keep the one already linked; a new
+// tie links neither.
+func (s *Service) link(ctx context.Context, clusterID, listedBy string, nodes []agents.SwarmNode, snap map[string]hostState) error {
 	byNode := make(map[string]agents.SwarmNode, len(nodes))
 	for _, n := range nodes {
 		byNode[n.ID] = n
@@ -355,18 +449,17 @@ func (s *Service) link(ctx context.Context, clusterID string, nodes []agents.Swa
 	if err != nil {
 		return err
 	}
-	claims := map[string][]string{}
+	claimants := map[string][]string{}
 	for hostID, st := range snap {
-		sw := st.swarm
-		if !st.known || sw == nil || sw.NodeState != "active" || sw.ClusterID != clusterID {
+		if !st.known || st.swarm == nil {
 			continue
 		}
-		if _, ok := byNode[sw.NodeID]; ok {
-			claims[sw.NodeID] = append(claims[sw.NodeID], hostID)
+		if n, ok := byNode[st.swarm.NodeID]; ok && claims(st.swarm, clusterID, n) {
+			claimants[n.ID] = append(claimants[n.ID], hostID)
 		}
 	}
 	want := map[string]Member{}
-	for nodeID, hostIDs := range claims {
+	for nodeID, hostIDs := range claimants {
 		pick := ""
 		if len(hostIDs) == 1 {
 			pick = hostIDs[0]
@@ -383,6 +476,11 @@ func (s *Service) link(ctx context.Context, clusterID string, nodes []agents.Swa
 		}
 	}
 
+	type change struct {
+		linked bool
+		m      Member
+	}
+	var changes []change
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -396,7 +494,7 @@ func (s *Service) link(ctx context.Context, clusterID string, nodes []agents.Swa
 		if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_memberships WHERE host_id = ? AND cluster_id = ?`, hostID, clusterID); err != nil {
 			return err
 		}
-		slog.Info("host unlinked from cluster", "cluster", clusterID, "host", hostID, "node", m.NodeID)
+		changes = append(changes, change{false, m})
 	}
 	for hostID, m := range want {
 		if old, ok := existing[hostID]; ok && old.NodeID == m.NodeID && old.Role == m.Role {
@@ -410,9 +508,24 @@ func (s *Service) link(ctx context.Context, clusterID string, nodes []agents.Swa
 			hostID, clusterID, m.NodeID, m.Role); err != nil {
 			return err
 		}
-		slog.Info("host linked to cluster", "cluster", clusterID, "host", hostID, "node", m.NodeID, "role", m.Role)
+		changes = append(changes, change{true, m})
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, c := range changes {
+		slog.Info("cluster membership changed", "linked", c.linked, "cluster", clusterID, "host", c.m.HostID, "node", c.m.NodeID, "role", c.m.Role)
+		if s.audit == nil {
+			continue
+		}
+		details := map[string]any{"host": c.m.HostID, "node": c.m.NodeID, "role": c.m.Role, "listed_by": listedBy}
+		if c.linked {
+			s.audit.Write(ctx, "", audit.ActionClusterLink, clusterID, details)
+		} else {
+			s.audit.Write(ctx, "", audit.ActionClusterUnlink, clusterID, details)
+		}
+	}
+	return nil
 }
 
 func (s *Service) membersOf(ctx context.Context, clusterID string) (map[string]Member, error) {

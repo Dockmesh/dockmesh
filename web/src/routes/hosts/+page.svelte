@@ -320,9 +320,7 @@
     return items;
   }
 
-  async function createCluster(c: ClusterCandidate) {
-    const hostId = c.managers[0]?.host_id;
-    if (!hostId) return;
+  async function createCluster(c: ClusterCandidate, hostId: string) {
     creatingCluster = c.cluster_id;
     try {
       const created = await api.clusters.create(hostId);
@@ -385,9 +383,12 @@
           <span class="dm-dim">{m.hosts_cluster_hint_detail()}</span>
         </span>
         <span class="dm-sp"></span>
-        <button type="button" class="dm-btn dm-btn-sm dm-btn-primary" data-testid="create-cluster" disabled={creatingCluster !== null} onclick={() => createCluster(c)}>
-          {creatingCluster === c.cluster_id ? m.hosts_cluster_creating() : m.hosts_cluster_create()}
-        </button>
+        {#each c.managers as mg (mg.host_id)}
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-primary" data-testid="create-cluster" disabled={creatingCluster !== null}
+            title={m.hosts_cluster_create_from_title({ host: mg.host_name })} onclick={() => createCluster(c, mg.host_id)}>
+            {creatingCluster === c.cluster_id ? m.hosts_cluster_creating() : c.managers.length > 1 ? m.hosts_cluster_create_from({ host: mg.host_name }) : m.hosts_cluster_create()}
+          </button>
+        {/each}
       </div>
     {/each}
 

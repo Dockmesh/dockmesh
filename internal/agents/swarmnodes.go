@@ -77,9 +77,6 @@ func SanitizeSwarmNodes(nodes []SwarmNode) []SwarmNode {
 // hostname returns s when it is a plausible host name (letters, digits,
 // '.', '-', '_', at most 253 characters), else "".
 func hostname(s string) string {
-	if len(s) > 253 {
-		return ""
-	}
 	if token(strings.ToLower(s), 253, ".-_") == "" {
 		return ""
 	}

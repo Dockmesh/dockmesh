@@ -956,6 +956,7 @@ func main() {
 	}
 	registriesSvc.SetHostTags(hostTagsSvc.Tags)
 	clustersSvc := clusters.New(database, hostRegistry)
+	clustersSvc.SetAudit(auditSvc)
 	go clustersSvc.Run(ctx, time.Minute)
 	localAuth := registriesSvc.ForHost("local")
 	composeSvc.SetAuthResolver(localAuth)
