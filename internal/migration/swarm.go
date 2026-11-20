@@ -9,7 +9,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 
 	"github.com/dockmesh/dockmesh/internal/host"
-	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 )
 
 // ErrSwarmStack refuses moving a stack whose containers are Swarm tasks.
@@ -86,7 +86,7 @@ func (sc swarmScan) check(stack string) error {
 			if p != stack {
 				continue
 			}
-			if updater.SwarmService(c.Labels) != "" {
+			if swarmtask.Service(c.Labels) != "" {
 				return ErrSwarmStack
 			}
 			if c.State == container.StateRunning {
@@ -94,7 +94,7 @@ func (sc swarmScan) check(stack string) error {
 			}
 			continue
 		}
-		if c.Labels[labelStackNamespace] == stack && updater.SwarmService(c.Labels) != "" {
+		if c.Labels[labelStackNamespace] == stack && swarmtask.Service(c.Labels) != "" {
 			return ErrSwarmStack
 		}
 	}

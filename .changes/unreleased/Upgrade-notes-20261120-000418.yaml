@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Scripts that restart Swarm task containers through the API now get 409 swarm_managed; stop the container instead and Swarm starts a new task
+time: 2026-11-20T00:04:18.416520735Z
+custom:
+    Audience: admins
+    Id: swarm-task-restart
