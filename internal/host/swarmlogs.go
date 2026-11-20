@@ -43,6 +43,27 @@ func (h *RemoteHost) SwarmServiceLogs(ctx context.Context, req agents.SwarmLogsR
 	return &swarmStream{ReadCloser: s}, nil
 }
 
+// CheckSwarmLogs fails when host id can't stream service logs: an agent
+// that is offline or predates the stream.
+func (r *Registry) CheckSwarmLogs(id string) error {
+	h, err := r.Pick(id)
+	if err != nil {
+		return err
+	}
+	rh, ok := h.(*RemoteHost)
+	if !ok {
+		return nil
+	}
+	ag, err := rh.live()
+	if err != nil {
+		return err
+	}
+	if !ag.Hello.Has(agents.CapSwarmLogs) {
+		return ErrAgentNoSwarmLogs
+	}
+	return nil
+}
+
 // SwarmServiceLogs streams a service's logs through manager host id.
 func (r *Registry) SwarmServiceLogs(ctx context.Context, id string, req agents.SwarmLogsReq) (io.ReadCloser, error) {
 	h, err := r.Pick(id)

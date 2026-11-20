@@ -62,7 +62,7 @@ func ServiceLogs(ctx context.Context, cli LogsAPI, req agents.SwarmLogsReq, emit
 	}
 	opts := client.ServiceLogsOptions{
 		ShowStdout: true, ShowStderr: true, Follow: req.Follow,
-		Tail: strconv.Itoa(min(max(req.Tail, 0), agents.MaxSwarmLogTail)), Since: req.Since,
+		Tail: strconv.Itoa(req.Tail), Since: req.Since,
 		Timestamps: true, Details: true,
 	}
 	rc, err := cli.ServiceLogs(ctx, svc.ID, opts)
@@ -199,14 +199,16 @@ func (n *taskNames) fill(ctx context.Context, l *agents.SwarmLogLine) {
 	if !known {
 		task = n.service.Spec.Name
 	}
+	l.Task = task
 	n.mu.Lock()
-	l.Task, l.Node = task, n.nodes[l.NodeID]
+	l.Node = n.nodes[l.NodeID]
 	n.mu.Unlock()
 }
 
 // maxRawLine bounds one buffered line: the longest kept message plus room
-// for the timestamp and the details in front of it.
-const maxRawLine = agents.MaxSwarmLogLine + 4096
+// for the timestamp and the details in front of it, which grow with the
+// attributes a log driver adds.
+const maxRawLine = 2 * agents.MaxSwarmLogLine
 
 // lineWriter splits what it is written into lines and hands each to line,
 // cut to maxRawLine with the rest of an over-long line dropped.

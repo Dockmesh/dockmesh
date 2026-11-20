@@ -307,7 +307,8 @@ func writeClusterReadError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusServiceUnavailable, clusters.ErrUnreadable.Error())
 	case errors.Is(err, agents.ErrNotSwarmManager),
 		errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker),
-		errors.Is(err, host.ErrAgentNoSwarmNodes), errors.Is(err, host.ErrAgentNoSwarmRead):
+		errors.Is(err, host.ErrAgentNoSwarmNodes), errors.Is(err, host.ErrAgentNoSwarmRead),
+		errors.Is(err, host.ErrAgentNoSwarmLogs):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		slog.Warn("cluster read", "err", err)

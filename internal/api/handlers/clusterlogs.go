@@ -8,22 +8,63 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/swarmread"
 )
 
-// maxServiceLogStreams bounds the service log streams open at once across
-// all callers; each holds a manager's log stream with every task's logs.
-const maxServiceLogStreams = 32
+// Each service log stream holds a manager's log stream with every task's
+// logs, so they are bounded across all callers and per caller, and a
+// peer that stops answering pings is dropped.
+const (
+	maxServiceLogStreams       = 32
+	maxServiceLogStreamsCaller = 4
+	logsPingEvery              = 30 * time.Second
+	logsPeerTimeout            = 75 * time.Second
+	logsWriteTimeout           = 30 * time.Second
+)
 
-var serviceLogSlots = make(chan struct{}, maxServiceLogStreams)
+var serviceLogSlots = struct {
+	sync.Mutex
+	total     int
+	perCaller map[string]int
+}{perCaller: map[string]int{}}
+
+// takeServiceLogSlot reserves a stream for caller; release frees it.
+func takeServiceLogSlot(caller string) (release func(), ok bool) {
+	s := &serviceLogSlots
+	s.Lock()
+	defer s.Unlock()
+	if s.total >= maxServiceLogStreams || s.perCaller[caller] >= maxServiceLogStreamsCaller {
+		return nil, false
+	}
+	s.total++
+	s.perCaller[caller]++
+	return func() {
+		s.Lock()
+		defer s.Unlock()
+		s.total--
+		if s.perCaller[caller]--; s.perCaller[caller] <= 0 {
+			delete(s.perCaller, caller)
+		}
+	}, true
+}
+
+// logsCaller keys the per-caller cap: the user, or the API token in use.
+func logsCaller(r *http.Request) string {
+	if id := actorID(r); id != "" {
+		return "u:" + id
+	}
+	return "t:" + strconv.FormatInt(middleware.APITokenID(r.Context()), 10)
+}
 
 // maxSince is how far back a relative since may reach.
 const maxSince = 90 * 24 * time.Hour
@@ -78,7 +119,7 @@ func serviceLogsReqAt(r *http.Request, service string, now time.Time) (agents.Sw
 // cluster's scope.
 //
 //	GET /api/v1/ws/clusters/{id}/services/{service}/logs
-func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) { //nolint:contextcheck // every call uses r.Context() or a ctx derived from it
 	r, ok := h.wsAuth(w, r, rbac.PermContainersLogs)
 	if !ok {
 		return
@@ -106,8 +147,13 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	// Resolving the service first answers an unknown one, a worker or an
-	// old agent with a status code instead of a failed upgrade.
+	// Checking the agent and resolving the service first answers an old
+	// agent, an unknown service or a worker with a status code instead of
+	// a failed upgrade.
+	if err := h.Hosts.CheckSwarmLogs(hostID); err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
 	d, err := h.Hosts.SwarmService(r.Context(), hostID, service) //nolint:contextcheck // r carries the ticket's identity
 	if err != nil {
 		writeClusterReadError(w, err)
@@ -115,13 +161,12 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 	}
 	req.Service = d.ID
 
-	select {
-	case serviceLogSlots <- struct{}{}:
-	default:
+	release, ok := takeServiceLogSlot(logsCaller(r))
+	if !ok {
 		writeError(w, http.StatusTooManyRequests, "too many service log streams are open; close one and try again")
 		return
 	}
-	defer func() { <-serviceLogSlots }()
+	defer release()
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -133,11 +178,28 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	_ = conn.SetReadDeadline(time.Now().Add(logsPeerTimeout))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(logsPeerTimeout)) })
 	go func() {
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				cancel()
 				return
+			}
+		}
+	}()
+	go func() {
+		t := time.NewTicker(logsPingEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(logsWriteTimeout)) != nil {
+					cancel()
+					return
+				}
 			}
 		}
 	}()
@@ -161,6 +223,7 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 		if l, ok = agents.SanitizeSwarmLogLine(l); !ok {
 			continue
 		}
+		_ = conn.SetWriteDeadline(time.Now().Add(logsWriteTimeout))
 		if err := conn.WriteJSON(l); err != nil {
 			return
 		}
@@ -175,9 +238,10 @@ func (h *Handlers) WSClusterServiceLogs(w http.ResponseWriter, r *http.Request) 
 // when the stream did not end cleanly.
 func writeServiceLogsEnd(conn *websocket.Conn, err error) {
 	if err != nil {
-		msg := "the log stream ended: " + err.Error()
+		msg := "the log stream ended unexpectedly"
 		switch {
-		case errors.Is(err, agents.ErrNotSwarmManager), errors.Is(err, agents.ErrSwarmServiceNotFound):
+		case errors.Is(err, agents.ErrNotSwarmManager), errors.Is(err, agents.ErrSwarmServiceNotFound),
+			errors.Is(err, host.ErrAgentNoSwarmLogs), errors.Is(err, host.ErrAgentOffline):
 			msg = err.Error()
 		case errors.Is(err, bufio.ErrTooLong):
 			msg = "the log stream sent a line that is too long"
@@ -186,7 +250,8 @@ func writeServiceLogsEnd(conn *websocket.Conn, err error) {
 		default:
 			slog.Info("service logs", "err", err)
 		}
-		_ = conn.WriteJSON(map[string]string{"error": strings.TrimSpace(msg)})
+		_ = conn.SetWriteDeadline(time.Now().Add(logsWriteTimeout))
+		_ = conn.WriteJSON(map[string]string{"error": msg})
 	}
 	_ = conn.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))

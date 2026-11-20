@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -42,5 +43,35 @@ func TestServiceLogsReq(t *testing.T) {
 				t.Fatalf("got %+v", req)
 			}
 		})
+	}
+}
+
+func TestServiceLogSlots(t *testing.T) {
+	var releases []func()
+	for i := range maxServiceLogStreamsCaller {
+		rel, ok := takeServiceLogSlot("u:alice")
+		if !ok {
+			t.Fatalf("stream %d refused", i)
+		}
+		releases = append(releases, rel)
+	}
+	if _, ok := takeServiceLogSlot("u:alice"); ok {
+		t.Fatal("a caller got more than its share")
+	}
+	for i := 0; len(releases) < maxServiceLogStreams; i++ {
+		rel, ok := takeServiceLogSlot("u:other" + strconv.Itoa(i%8))
+		if !ok {
+			t.Fatalf("stream %d refused below the total", len(releases))
+		}
+		releases = append(releases, rel)
+	}
+	if _, ok := takeServiceLogSlot("u:bob"); ok {
+		t.Fatal("more than the total")
+	}
+	for _, rel := range releases {
+		rel()
+	}
+	if serviceLogSlots.total != 0 || len(serviceLogSlots.perCaller) != 0 {
+		t.Fatalf("slots left: %d %v", serviceLogSlots.total, serviceLogSlots.perCaller)
 	}
 }
