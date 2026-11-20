@@ -131,7 +131,6 @@
   const cstate = $derived(st?.state ?? 'unknown');
   // Without a fresh read the page shows what was last read, read-only.
   const readOnly = $derived(cstate === 'no_quorum' || cstate === 'unreachable' || !!dist?.stale);
-  const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? cluster.origin_host) : '');
   // Managers first, then by name, as docker node ls reads.
   const nodes = $derived(
     [...(dist?.nodes ?? [])].sort((a, b) => (a.role === b.role ? nodeLabel(a).localeCompare(nodeLabel(b)) : a.role === 'manager' ? -1 : 1))
@@ -141,6 +140,8 @@
     return n ? nodeLabel(n) : nodeId ? nodeId.slice(0, 12) : '—';
   };
   const originNode = $derived(nodes.find((n) => n.host_id === cluster?.origin_host));
+  // Hosts the caller can't view are named by their node's hostname.
+  const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? (originNode ? nodeLabel(originNode) : cluster.origin_host)) : '');
   const managers = $derived(st?.managers ?? nodes.filter((n) => n.role === 'manager').length);
   const reachable = $derived(st?.managers_reachable ?? 0);
   const quorum = $derived(Math.floor(managers / 2) + 1);
@@ -445,7 +446,7 @@
       <div class="dm-tr" role="row" style="grid-template-columns: {DIST_COLS}">
         <span role="cell" class="dm-nm">
           <span class="nmline">
-            {#if n.host_id}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
+            {#if n.host_id && hostNames[n.host_id]}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
             {#if n.leader}<span class="lead">{m.hosts_cluster_leader()}</span>{/if}
           </span>
           <small>{n.role === 'manager' ? m.hosts_member_role_manager() : m.hosts_member_role_worker()}{n.host_id ? '' : ` · ${m.cl_no_agent_short()}`}</small>
@@ -537,7 +538,7 @@
           <span role="cell"><span class="dm-dot {nodeTone(n)}"></span></span>
           <span role="cell" class="dm-nm">
             <span class="nmline">
-              {#if n.host_id}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
+              {#if n.host_id && hostNames[n.host_id]}<a href="/hosts/{n.host_id}">{nodeLabel(n)}</a>{:else}<span class="nm">{nodeLabel(n)}</span>{/if}
             </span>
           </span>
           <span role="cell" class="dm-dim">{n.role === 'manager' ? m.hosts_member_role_manager() : m.hosts_member_role_worker()}</span>
@@ -546,7 +547,7 @@
           <span role="cell" class:lead-t={n.leader} class:badc={n.role === 'manager' && n.reachability === 'unreachable'} class:dm-dim={n.role !== 'manager'}>{managerStatus(n)}</span>
           <span role="cell" class="r dm-num">{n.state === 'ready' && !dist?.stale ? n.tasks : '—'}</span>
           <span role="cell" class="dm-mono">{n.engine_version || '—'}</span>
-          <span role="cell">{#if n.host_id}<a class="lnk" href="/hosts/{n.host_id}">{hostNames[n.host_id] ?? n.host_id}</a>{:else}<span class="dm-dim">{m.cl_no_agent()}</span>{/if}</span>
+          <span role="cell">{#if n.host_id && hostNames[n.host_id]}<a class="lnk" href="/hosts/{n.host_id}">{hostNames[n.host_id]}</a>{:else if n.host_id}{m.cl_agent_yes()}{:else}<span class="dm-dim">{m.cl_no_agent()}</span>{/if}</span>
           <span role="cell" class="dm-mono dm-dim">{n.addr || '—'}</span>
         </div>
       {/each}
