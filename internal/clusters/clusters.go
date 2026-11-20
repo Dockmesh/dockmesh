@@ -373,6 +373,8 @@ func nullable(s string) any {
 type hostState struct {
 	known bool
 	swarm *agents.SwarmState
+	// offline: the state is the host's last hello, not a live answer.
+	offline bool
 }
 
 // snapshot reads the Swarm state of every enrolled host once, several
@@ -395,11 +397,11 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(id string) {
+		go func(id string, offline bool) {
 			defer func() { <-sem; wg.Done() }()
 			hctx, cancel := context.WithTimeout(ctx, hostTimeout)
 			defer cancel()
-			st := hostState{}
+			st := hostState{offline: offline}
 			if info, err := s.hosts.CurrentDaemonInfo(hctx, id); err == nil {
 				st.known = true
 				if info != nil {
@@ -409,7 +411,7 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 			mu.Lock()
 			out[id] = st
 			mu.Unlock()
-		}(h.ID)
+		}(h.ID, h.Status == "offline")
 	}
 	wg.Wait()
 	return out, nil
@@ -456,7 +458,7 @@ func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]host
 	}
 	st := snap[c.OriginHost]
 	sw := st.swarm
-	if linked == "" || !st.known || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager || sw.NodeID != linked {
+	if linked == "" || !st.known || st.offline || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager || sw.NodeID != linked {
 		return nil, StateUnreachable
 	}
 	if sw.ClusterID == "" {

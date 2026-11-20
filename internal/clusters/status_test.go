@@ -69,6 +69,10 @@ func TestClusterStatus(t *testing.T) {
 		{"origin offline", func(f *fakeHosts, _ map[string]error) {
 			f.failing["m1"] = true
 		}, StateUnreachable, 2, 2, 0, 1, false},
+		{"origin offline after a hello without quorum", func(f *fakeHosts, _ map[string]error) {
+			f.infos["m1"] = swarmInfo("", "n1", RoleManager)
+			f.status["m1"] = "offline"
+		}, StateUnreachable, 2, 2, 0, 1, false},
 		{"origin list fails", func(_ *fakeHosts, errs map[string]error) {
 			errs["m1"] = errors.New("agent timeout")
 		}, StateUnreachable, 2, 2, 0, 1, false},
