@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/api/types/swarm"
 )
 
 func TestSanitizeSwarmServices(t *testing.T) {
@@ -133,5 +135,15 @@ func TestSanitizeSwarmTasksFitsEncoded(t *testing.T) {
 	b, _ := json.Marshal(out)
 	if len(b) > maxAnswerBytes+1024 || !out.Truncated || len(out.Tasks) == 0 {
 		t.Fatalf("%d bytes, %d tasks, truncated %v", len(b), len(out.Tasks), out.Truncated)
+	}
+}
+
+func TestSwarmServiceNetworks(t *testing.T) {
+	s := swarm.Service{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web"},
+		TaskTemplate: swarm.TaskSpec{Networks: []swarm.NetworkAttachmentConfig{{Target: "n1"}, {Target: "app_back"}}}},
+		Endpoint: swarm.Endpoint{VirtualIPs: []swarm.EndpointVirtualIP{{NetworkID: "ing"}, {NetworkID: "n1"}}}}
+	got := SwarmServicesFrom([]swarm.Service{s}).Services[0].Networks
+	if strings.Join(got, ",") != "n1,app_back,ing" {
+		t.Fatalf("networks %v", got)
 	}
 }

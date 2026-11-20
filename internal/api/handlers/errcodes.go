@@ -50,7 +50,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"topology needs one host, not all hosts", "topology_needs_one_host"},
 	{"update_channel must be stable or prerelease", "update_channel_invalid"},
 	{"choose the host this stack is for: you can only create stacks on some hosts", "stack_host_required"},
-	{"cluster topology is not supported", "cluster_topology_unavailable"},
+	{"topology takes a host or a cluster, not both", "topology_host_and_cluster"},
 	{"code required", "code_required"},
 	{"command required", "command_required"},
 	{"compose required", "compose_required"},

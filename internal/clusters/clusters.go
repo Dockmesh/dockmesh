@@ -333,6 +333,9 @@ func (s *Service) Delete(ctx context.Context, id string, allow func(Access) erro
 	return c, a, nil
 }
 
+// Get returns one cluster with its members, or ErrNotFound.
+func (s *Service) Get(ctx context.Context, id string) (Cluster, error) { return s.get(ctx, id) }
+
 func (s *Service) get(ctx context.Context, id string) (Cluster, error) {
 	all, err := s.List(ctx)
 	if err != nil {

@@ -284,11 +284,15 @@ func (h *Handlers) ClusterScope(next http.Handler) http.Handler {
 // clusterReadHost resolves the host a cluster is read through and writes
 // the error response when there is none.
 func (h *Handlers) clusterReadHost(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return h.clusterReadHostOf(w, r, chi.URLParam(r, "id"))
+}
+
+func (h *Handlers) clusterReadHostOf(w http.ResponseWriter, r *http.Request, id string) (string, bool) {
 	if h.Clusters == nil || h.Hosts == nil {
 		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
 		return "", false
 	}
-	hostID, err := h.Clusters.ReadHost(r.Context(), chi.URLParam(r, "id"))
+	hostID, err := h.Clusters.ReadHost(r.Context(), id)
 	if err != nil {
 		writeClusterReadError(w, err)
 		return "", false
@@ -413,11 +417,14 @@ func (h *Handlers) ClusterTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 type clusterNetworksResponse struct {
-	ReadHost string `json:"read_host"`
-	agents.SwarmNetworksResp
+	ReadHost  string           `json:"read_host"`
+	Networks  []clusterNetwork `json:"networks"`
+	Truncated bool             `json:"truncated,omitempty"`
 }
 
 // ClusterNetworks lists the networks with Swarm scope (overlay, ingress).
+// Callers with stacks.view on the cluster also get the services attached
+// to each network.
 //
 //	GET /api/v1/clusters/{id}/networks
 func (h *Handlers) ClusterNetworks(w http.ResponseWriter, r *http.Request) {
@@ -430,5 +437,14 @@ func (h *Handlers) ClusterNetworks(w http.ResponseWriter, r *http.Request) {
 		writeClusterReadError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, clusterNetworksResponse{ReadHost: hostID, SwarmNetworksResp: res})
+	var svcs []agents.SwarmService
+	if middleware.AllowedOn(r.Context(), rbac.PermStacksView, rbac.Resource{ClusterID: chi.URLParam(r, "id")}) {
+		list, err := h.Hosts.SwarmServices(r.Context(), hostID)
+		if err != nil {
+			writeClusterReadError(w, err)
+			return
+		}
+		svcs = list.Services
+	}
+	writeJSON(w, http.StatusOK, clusterNetworksResponse{ReadHost: hostID, Networks: attachServices(res.Networks, svcs), Truncated: res.Truncated})
 }

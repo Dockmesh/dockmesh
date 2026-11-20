@@ -510,7 +510,7 @@
   "apierr_base_url_needs_users_create": "Zum Ändern der Basis-URL ist zusätzlich die Berechtigung users.create nötig, weil Einladungslinks und Anmelde-Callbacks sie verwenden",
   "apierr_agent_url_needs_hosts_create": "Zum Ändern der öffentlichen Agent-URL ist zusätzlich die Berechtigung hosts.create nötig, weil Installationsbefehle sie verwenden",
   "apierr_caddyfile_required": "Caddyfile erforderlich",
-  "apierr_cluster_topology_unavailable": "Cluster-Topologie wird nicht unterstützt",
+  "apierr_topology_host_and_cluster": "Die Topologie nimmt einen Host oder einen Cluster, nicht beides",
   "apierr_cannot_delete_yourself": "Das eigene Konto kann nicht gelöscht werden",
   "apierr_clusters_unavailable": "Cluster sind nicht verfügbar",
   "apierr_cluster_deleted_cache_stale": "Der Cluster und sein Zugriff wurden gelöscht, aber der Berechtigungs-Cache konnte nicht neu geladen werden; starte Dockmesh neu, damit die entfernten Rollen nicht mehr gelten",

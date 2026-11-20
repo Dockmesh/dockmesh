@@ -74,7 +74,7 @@ paths:
     get:
       operationId: networks.topology
       tags: [networks]
-      summary: Network graph of one host
+      summary: Network graph of one host or cluster
       description: |
         Networks, containers and their memberships on one host, for the
         topology view. On an agent host the agent builds the graph for its
@@ -82,7 +82,13 @@ paths:
         `topology_agent_outdated`. The answer holds only containers in the
         caller's scope, plus the networks of stacks in scope and any network a
         visible container is attached to. `target` names what the graph
-        shows; a cluster target will use the same shape with `kind: cluster`.
+        shows.
+
+        With `cluster=<id>` the graph is the Swarm's, read through the
+        cluster's manager: `services` instead of containers, Swarm-scoped
+        networks (ingress counts as a system network) and links from
+        services to networks. It needs `networks.view` and `stacks.view` on
+        the cluster.
       parameters:
         - name: host
           in: query
@@ -92,7 +98,7 @@ paths:
         - name: cluster
           in: query
           required: false
-          description: Reserved for cluster targets; refused with 400 until they exist.
+          description: Cluster id; the graph of that Swarm instead of a host. Refused with 400 together with `host`.
           schema: {type: string}
       responses:
         "200":
@@ -103,8 +109,14 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The cluster's manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "503":
-          description: Host offline, no Docker, or the agent is too old (code `topology_agent_outdated`).
+          description: Host offline, no Docker, or the agent is too old (code `topology_agent_outdated`); for a cluster, its manager is unreachable or too old for the Swarm read frames.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -154,8 +166,8 @@ components:
           properties:
             kind:
               type: string
-              enum: [host]
-              description: What the graph shows. Only `host` exists today.
+              enum: [host, cluster]
+              description: What the graph shows.
             id: {type: string}
             name: {type: string}
         networks:
@@ -193,14 +205,20 @@ components:
                     protocol: {type: string}
         links:
           type: array
-          description: Container memberships of networks.
+          description: Container memberships of networks; in a cluster graph, service attachments.
           items:
             type: object
-            required: [network_id, container_id]
+            required: [network_id]
             properties:
               network_id: {type: string}
               container_id: {type: string}
+              service_id: {type: string}
               ipv4: {type: string}
               aliases:
                 type: array
                 items: {type: string}
+        services:
+          type: array
+          description: Only in a cluster graph.
+          items: {$ref: "#/components/schemas/SwarmService"}
+        truncated: {type: boolean, description: The manager cut its service or network list.}

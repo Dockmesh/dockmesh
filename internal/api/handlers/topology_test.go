@@ -103,7 +103,8 @@ func TestTopologyFollowsTargetAndScope(t *testing.T) {
 			[]string{"a-c-web"}, []string{"a-n-web", "a-n-edge"}, 2},
 		{"stack scope is refused on another host", "webby", "", http.StatusForbidden, "", nil, nil, 0},
 		{"all hosts", "boss", "?host=all", http.StatusBadRequest, "", nil, nil, 0},
-		{"cluster target", "boss", "?cluster=c1", http.StatusBadRequest, "", nil, nil, 0},
+		{"host and cluster", "boss", "?host=local&cluster=c1", http.StatusBadRequest, "", nil, nil, 0},
+		{"cluster without clusters", "boss", "?cluster=c1", http.StatusServiceUnavailable, "", nil, nil, 0},
 		{"old agent", "boss", "?host=agent-old", http.StatusServiceUnavailable, "", nil, nil, 0},
 	}
 	for _, tt := range tests {
@@ -112,7 +113,7 @@ func TestTopologyFollowsTargetAndScope(t *testing.T) {
 			if rr.Code != tt.status {
 				t.Fatalf("status %d, want %d: %s", rr.Code, tt.status, rr.Body)
 			}
-			if tt.status == http.StatusServiceUnavailable {
+			if tt.status == http.StatusServiceUnavailable && tt.name == "old agent" {
 				var body map[string]string
 				if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body["code"] != "topology_agent_outdated" {
 					t.Fatalf("old agent body %s", rr.Body)

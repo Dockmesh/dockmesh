@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,8 +58,11 @@ type SwarmService struct {
 	Stack        string      `json:"stack,omitempty"`
 	Ports        []SwarmPort `json:"ports,omitempty"`
 	UpdateState  string      `json:"update_state,omitempty"`
-	CreatedAt    time.Time   `json:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at"`
+	// Networks are the ids (or names, as the spec gives them) of the
+	// networks the service's tasks attach to, ingress included.
+	Networks  []string  `json:"networks,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // SwarmRef names a secret or config a service uses. Their data is never
@@ -208,7 +212,20 @@ func serviceSummary(s swarm.Service) SwarmService {
 	if s.UpdateStatus != nil {
 		sv.UpdateState = string(s.UpdateStatus.State)
 	}
+	for _, n := range s.Spec.TaskTemplate.Networks {
+		sv.Networks = appendNew(sv.Networks, n.Target)
+	}
+	for _, v := range s.Endpoint.VirtualIPs {
+		sv.Networks = appendNew(sv.Networks, v.NetworkID)
+	}
 	return sv
+}
+
+func appendNew(list []string, s string) []string {
+	if s == "" || slices.Contains(list, s) {
+		return list
+	}
+	return append(list, s)
 }
 
 // SwarmServiceDetailFrom converts a daemon's service inspect.
@@ -364,6 +381,7 @@ func sanitizeService(s SwarmService) (SwarmService, bool) {
 	s.Image = text(s.Image, maxTextLen)
 	s.Stack = text(s.Stack, 128)
 	s.UpdateState = token(s.UpdateState, 32, "_")
+	s.Networks = texts(s.Networks, 128)
 	if len(s.Ports) > maxListItems {
 		s.Ports = s.Ports[:maxListItems]
 	}
