@@ -31,10 +31,6 @@ func TestDrainRefusesServerHost(t *testing.T) {
 // A drain that pauses on its last stack ends as the user decides: Abort
 // records aborted, Resume completed.
 func TestDrainPausedOnLastStack(t *testing.T) {
-	saved := drainPoll
-	drainPoll = 10 * time.Millisecond
-	t.Cleanup(func() { drainPoll = saved })
-
 	tests := []struct {
 		name   string
 		decide func(*DrainOrchestrator)
@@ -54,6 +50,7 @@ func TestDrainPausedOnLastStack(t *testing.T) {
 				t.Fatal(err)
 			}
 			orch := NewDrainOrchestrator(e.svc, store)
+			orch.poll = 10 * time.Millisecond
 			done := make(chan struct{})
 			go func() {
 				orch.Execute(context.Background(), d, "u1", nil)
@@ -66,6 +63,7 @@ func TestDrainPausedOnLastStack(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("drain did not end")
 			}
+			e.waitMigrations(t)
 			got, err := store.Get(context.Background(), "d1")
 			if err != nil {
 				t.Fatal(err)
@@ -74,6 +72,36 @@ func TestDrainPausedOnLastStack(t *testing.T) {
 				t.Fatalf("status = %s (completed_at %v), want %s", got.Status, got.CompletedAt, tt.want)
 			}
 		})
+	}
+}
+
+// waitDrainEnded waits until drain id has left the service's active set,
+// so no drain goroutine outlives the test.
+func waitDrainEnded(t *testing.T, s *DrainService, id string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		_, running := s.active[id]
+		s.mu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("drain %s still running", id)
+}
+
+// waitMigrations waits for every migration's run to end: a run aborted
+// drains leave behind keeps writing below the test's temp dirs.
+func (e *migrationEnv) waitMigrations(t *testing.T) {
+	t.Helper()
+	all, err := e.svc.Store().ListAll(context.Background(), 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range all {
+		e.wait(t, m.ID)
 	}
 }
 
