@@ -65,14 +65,24 @@ func (s *Service) SetGlobalEnv(g deploy.GlobalVars) { s.globals = g }
 // take, on the source and the target host.
 func (s *Service) SetLocks(l *stacklock.Locks) { s.locks = l }
 
+// ErrMigrationActive refuses changing a stack whose migration or
+// migration rollback has not finished.
+var ErrMigrationActive = errors.New("the stack has a migration or migration rollback that has not finished; try again once it has")
+
+// migrationKeys orders the keys by host id: two rollbacks of opposite
+// migrations of a stack must not each hold one and wait for the other.
 func migrationKeys(m *Migration) []stacklock.Key {
-	return []stacklock.Key{
+	keys := []stacklock.Key{
 		stacklock.HostKey(m.SourceHostID, m.StackName),
 		stacklock.HostKey(m.TargetHostID, m.StackName),
 	}
+	if keys[1].Target.ID < keys[0].Target.ID {
+		keys[0], keys[1] = keys[1], keys[0]
+	}
+	return keys
 }
 
-// lockHosts takes the stack on both hosts of m, source first. With wait
+// lockHosts takes the stack on both hosts of m. With wait
 // it waits for running operations to finish; without, it returns the
 // *stacklock.BusyError of the operation that holds one of them.
 func (s *Service) lockHosts(ctx context.Context, m *Migration, wait bool) (func(), error) {
@@ -277,23 +287,12 @@ func (s *Service) initiate(ctx context.Context, stackName, from, targetHostID, u
 		}
 	}()
 
-	// Single-concurrency per stack.
-	hasActive, err := s.store.HasActive(ctx, stackName)
+	// finishMu: a manual rollback checks for an active migration of the
+	// stack before it claims its own.
+	s.finishMu.Lock()
+	err = s.createChecked(ctx, m, confirm)
+	s.finishMu.Unlock()
 	if err != nil {
-		return nil, err
-	}
-	if hasActive {
-		return nil, fmt.Errorf("stack %q already has an active migration", stackName)
-	}
-	if confirm != nil {
-		if err := confirm(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	now := time.Now()
-	m.StartedAt = &now
-	if err := s.store.Create(ctx, m); err != nil {
 		return nil, err
 	}
 
@@ -309,9 +308,28 @@ func (s *Service) initiate(ctx context.Context, stackName, from, targetHostID, u
 	return m, nil
 }
 
+// createChecked records m unless its stack has an unfinished migration.
+func (s *Service) createChecked(ctx context.Context, m *Migration, confirm func(context.Context) error) error {
+	hasActive, err := s.store.HasActive(ctx, m.StackName)
+	if err != nil {
+		return err
+	}
+	if hasActive {
+		return ErrMigrationActive
+	}
+	if confirm != nil {
+		if err := confirm(ctx); err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	m.StartedAt = &now
+	return s.store.Create(ctx, m)
+}
+
 // run is the migration goroutine. It advances through the 10 phases
 // holding the stack locks taken by initiate, which release gives back. A
-// rollback takes them again itself, after its waits for offline hosts.
+// rollback takes them again itself once it has waited for offline hosts.
 func (s *Service) run(ctx context.Context, migrationID string, release func()) {
 	defer release()
 	defer func() {
@@ -765,12 +783,21 @@ func (s *Service) rollback(ctx context.Context, m *Migration, stopTarget bool, r
 	}
 	release, err := s.lockHosts(ctx, m, true)
 	if err != nil {
-		// Only a server shutdown ends the wait; the migration stays
-		// rolling_back for the next start to finish.
+		// Only recovery passes a ctx that ends, at server shutdown; the
+		// migration stays rolling_back for the next start to finish.
 		slog.Warn("rollback: stack locks not taken", "id", m.ID, "stack", m.StackName, "err", err)
 		return
 	}
 	defer release()
+	// A deploy may have moved the stack while the rollback waited.
+	if moved, err := s.deployedElsewhere(ctx, m, committed); err != nil || moved != "" {
+		msg := "nothing undone: the stack was deployed on " + moved + " meanwhile"
+		if err != nil {
+			msg = "nothing undone: " + err.Error()
+		}
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", note(msg))
+		return
+	}
 	if needTarget {
 		if terr == nil {
 			if stopTarget {
@@ -939,6 +966,13 @@ func (s *Service) Rollback(ctx context.Context, migrationID string) error {
 	}
 	if s.purging[m.ID] || (m.Progress != nil && m.Progress.Purged) {
 		return ErrPurged
+	}
+	// A later migration of the stack runs or rolls back: undoing this one
+	// would fight it.
+	if active, err := s.store.HasActive(ctx, m.StackName); err != nil {
+		return err
+	} else if active {
+		return ErrMigrationActive
 	}
 	claimed, err := s.store.claimRollback(ctx, m.ID)
 	if err != nil {

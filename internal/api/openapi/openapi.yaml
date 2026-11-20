@@ -8303,7 +8303,8 @@ paths:
             compose container of the stack (it may be a Swarm stack); both
             match the failing `swarm` preflight check. Another operation
             such as a deploy holding the stack on the source or the target
-            answers `code: stack_busy` with `operation` and `since`.
+            answers `code: stack_busy` with `operation` and `since`; an
+            unfinished migration of the stack answers `code: migration_active`.
           content:
             application/json:
               schema:
@@ -8440,6 +8441,13 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            A later migration of the stack has not finished
+            (`code: migration_active`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /stacks/from-git:
     post:
       operationId: stacks.create_from_git
@@ -8645,6 +8653,15 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            Another operation such as a migration holds the stack on the
+            source host (`code: stack_busy`, with `operation` and `since`),
+            or another migration of the stack has not finished
+            (`code: migration_active`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /convert/run-to-compose:
     post:
       operationId: convert.run_to_compose

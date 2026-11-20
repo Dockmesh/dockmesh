@@ -1019,6 +1019,7 @@ func main() {
 		globals:     globalEnvStore.List,
 		notifs:      notifSvc,
 		locks:       stackLocks,
+		migrating:   migration.NewStore(database).HasActive,
 		commit: func(ctx context.Context, stack string) string {
 			if src, err := gitSourceSvc.Get(ctx, stack); err == nil && src != nil {
 				return src.LastSyncSHA

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 )
 
@@ -58,9 +59,22 @@ func (h *Handlers) refuseMigrating(w http.ResponseWriter, r *http.Request, stack
 	if !active {
 		return false
 	}
-	writeJSON(w, http.StatusConflict, map[string]string{
-		"error": "stack " + stack + " is being migrated to another host; wait until the migration or its rollback has finished",
-		"code":  "migration_active",
-	})
+	writeMigrationActive(w)
 	return true
+}
+
+// writeMigrationConflict answers 409 for a stack another operation or an
+// unfinished migration holds.
+func writeMigrationConflict(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, migration.ErrMigrationActive) {
+		writeMigrationActive(w)
+		return true
+	}
+	return writeStackBusy(w, err)
+}
+
+// writeMigrationActive answers 409 migration_active with the text of
+// migration.ErrMigrationActive.
+func writeMigrationActive(w http.ResponseWriter) {
+	writeError(w, http.StatusConflict, "the stack has a migration or migration rollback that has not finished; try again once it has")
 }

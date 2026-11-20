@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 )
 
 const (
@@ -90,6 +91,17 @@ func (s *Service) PurgeSource(ctx context.Context, migrationID string) error {
 }
 
 func (s *Service) purgeSource(ctx context.Context, m *Migration) error {
+	release, err := s.locks.TryLock(stacklock.HostKey(m.SourceHostID, m.StackName), stacklock.OpMigration)
+	if err != nil {
+		return err
+	}
+	defer release()
+	// A later migration may be moving the stack back to the source.
+	if active, err := s.store.HasActive(ctx, m.StackName); err != nil {
+		return err
+	} else if active {
+		return ErrMigrationActive
+	}
 	if s.deployments != nil {
 		dep, err := s.deployments.Get(ctx, m.StackName)
 		if err != nil {

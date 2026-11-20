@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
@@ -32,6 +33,8 @@ type gitDeployer struct {
 	clearPending func(ctx context.Context, stack string) error
 	locks        *stacklock.Locks
 	lockWait     time.Duration // gitDeployLockWait when zero
+	// migrating reports an unfinished migration of the stack.
+	migrating func(ctx context.Context, stack string) (bool, error)
 }
 
 // gitDeployLockWait is how long a git deploy waits for another operation on
@@ -77,6 +80,13 @@ func (g *gitDeployer) deployNow(ctx context.Context, stackName string) (any, err
 }
 
 func (g *gitDeployer) deployLocked(ctx context.Context, stackName, hostID string) (any, error) {
+	if g.migrating != nil {
+		if active, err := g.migrating(ctx, stackName); err != nil {
+			return nil, err
+		} else if active {
+			return nil, migration.ErrMigrationActive
+		}
+	}
 	// A pending commit left behind would deploy again on this release.
 	if g.clearPending != nil {
 		if err := g.clearPending(ctx, stackName); err != nil {
