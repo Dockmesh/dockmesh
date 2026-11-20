@@ -581,6 +581,17 @@ func (s *Service) membersOf(ctx context.Context, clusterID string) (map[string]M
 	return out, nil
 }
 
+// ManagerOf returns the id of the cluster hostID is linked to as a
+// manager, or "".
+func (s *Service) ManagerOf(ctx context.Context, hostID string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT cluster_id FROM cluster_memberships WHERE host_id = ? AND role = ?`, hostID, RoleManager).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // Run reconciles every interval until ctx ends.
 func (s *Service) Run(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)

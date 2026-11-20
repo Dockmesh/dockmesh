@@ -79,7 +79,7 @@ type UpgradeController struct {
 	holdMax        time.Duration
 
 	gate           managerGate
-	swarmState     SwarmStateFunc
+	managerCluster ManagerClusterFunc
 	managerHoldMax time.Duration
 	pollEvery      time.Duration
 	// ctx outlives requests: queued manager updates run on it.
@@ -395,21 +395,34 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 }
 
 func (c *UpgradeController) dispatch(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool) (*AgentUpgradeReq, error) {
-	if !c.allowAttempt(ag.ID, attemptTarget(req), manual) {
-		return nil, errUpgradeBackoff
-	}
-	// The agent restarts, which would cut off a deploy it is running.
 	wait := c.lockWait
 	if manual {
 		wait = c.manualLockWait
 	}
-	release, err := c.locks.Maintenance(ctx, []stacklock.Target{stacklock.Host(ag.ID)}, stacklock.OpAgentUpdate, wait)
+	return c.send(ctx, ag, req, manual, wait, 0)
+}
+
+// send dispatches the upgrade frame after the host's stack operations
+// finished, waiting at most lockWait for them; a frameTimeout above zero
+// shortens the frame's own timeout.
+func (c *UpgradeController) send(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool, lockWait, frameTimeout time.Duration) (*AgentUpgradeReq, error) {
+	if !c.allowAttempt(ag.ID, attemptTarget(req), manual) {
+		return nil, errUpgradeBackoff
+	}
+	// The agent restarts, which would cut off a deploy it is running.
+	release, err := c.locks.Maintenance(ctx, []stacklock.Target{stacklock.Host(ag.ID)}, stacklock.OpAgentUpdate, lockWait)
 	if err != nil {
 		slog.Info("agent upgrade waits for stacks", "agent", ag.ID, "err", err)
 		return req, ErrHostBusy
 	}
 	payload, _ := json.Marshal(req)
-	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
+	fctx := ctx
+	if frameTimeout > 0 {
+		var cancel context.CancelFunc
+		fctx, cancel = context.WithTimeout(ctx, frameTimeout)
+		defer cancel()
+	}
+	resp, err := ag.Request(fctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err == nil && !resp.OK {
 		err = errors.New(resp.Error)
 	}

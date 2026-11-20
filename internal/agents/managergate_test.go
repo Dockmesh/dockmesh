@@ -51,18 +51,23 @@ func newFleet(t *testing.T, hold time.Duration) *fleet {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	f.c.ctx = ctx
-	f.c.SetSwarmState(func(_ context.Context, id string) (*DaemonInfo, error) {
+	f.c.SetManagerCluster(func(_ context.Context, id string) (string, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if i, ok := f.infos[id]; ok {
-			return i, nil
+		i, ok := f.infos[id]
+		if !ok {
+			return "", errors.New("unknown")
 		}
-		return nil, errors.New("unknown")
+		if i == nil || i.Swarm == nil || i.Swarm.Role != "manager" {
+			return "", nil
+		}
+		return i.Swarm.ClusterID, nil
 	})
 	return f
 }
 
-// connect attaches a session for id reporting ver.
+// connect attaches a session for id reporting ver; info stands for the
+// host's cluster membership.
 func (f *fleet) connect(id, ver string, info *DaemonInfo) *ConnectedAgent {
 	f.mu.Lock()
 	f.infos[id] = info
@@ -251,5 +256,42 @@ func TestOfflineManagerIsSkipped(t *testing.T) {
 	}
 	if got := f.waitSent(2); got[1] != other {
 		t.Fatalf("dispatched %v", got)
+	}
+}
+
+// A queued upgrade that is not sent when its turn comes leaves a notice;
+// the agent connecting on the new version resolves it.
+func TestDroppedQueuedUpgradeNotice(t *testing.T) {
+	f := newFleet(t, time.Minute)
+	m1 := f.connect("m1", "old", managerOf("c1"))
+	m2 := f.connect("m2", "old", managerOf("c1"))
+	ctx := context.Background()
+	if _, err := f.c.upgradeOne(ctx, m1, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.c.upgradeOne(ctx, m2, true); !errors.Is(err, ErrUpgradeQueued) {
+		t.Fatal(err)
+	}
+	f.connect("m2", "old", managerOf("c1"))
+	f.comeBack("m1")
+	key := managerDroppedNoticePrefix + "m2"
+	count := func() int {
+		var n int
+		if err := f.svc.db.QueryRow(`SELECT COUNT(*) FROM notices WHERE key = ? AND resolved_at IS NULL`, key).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for count() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if count() != 1 {
+		t.Fatal("no notice for the dropped upgrade")
+	}
+	f.stays(1)
+	f.svc.resolveManagerNotices(ctx, "m2")
+	if count() != 0 {
+		t.Fatal("notice not resolved")
 	}
 }

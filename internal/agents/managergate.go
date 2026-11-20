@@ -19,19 +19,22 @@ const (
 	// managerHoldMax is how long the next manager waits for the previous
 	// one to come back with the new version.
 	managerHoldMax = 5 * time.Minute
-	// swarmStateWait bounds the live Swarm state read before an update.
-	swarmStateWait = 5 * time.Second
+	// While a manager holds its cluster's slot, its waits are short so a
+	// slow or stalling host can't keep the other managers back for long.
+	managerLockWait     = 30 * time.Second
+	managerFrameTimeout = 2 * time.Minute
 
 	managerTimeoutNoticePrefix = "agents.manager-update-timeout."
+	managerDroppedNoticePrefix = "agents.manager-update-dropped."
 )
 
-// SwarmStateFunc returns an agent host's current daemon info, live when
-// it can.
-type SwarmStateFunc func(ctx context.Context, id string) (*DaemonInfo, error)
+// ManagerClusterFunc returns the id of the cluster agent host id is a
+// linked manager of, or "".
+type ManagerClusterFunc func(ctx context.Context, id string) (string, error)
 
-// SetSwarmState sets where the controller reads whether an agent's host
-// is a Swarm manager; without it the agent's hello is used.
-func (c *UpgradeController) SetSwarmState(f SwarmStateFunc) { c.swarmState = f }
+// SetManagerCluster sets where the controller finds which cluster an
+// agent's host manages; without it no update is held back.
+func (c *UpgradeController) SetManagerCluster(f ManagerClusterFunc) { c.managerCluster = f }
 
 // managerGate lets one agent per Swarm update at a time. An agent restart
 // leaves dockerd running, so this is about Dockmesh keeping a manager to
@@ -101,25 +104,20 @@ func (g *managerGate) dequeue(id string) {
 	delete(g.queued, id)
 }
 
-// managerKey returns the Swarm cluster ID when ag's host is an active
-// manager, else "". Workers and hosts outside a Swarm update as before.
+// managerKey returns the cluster ag's host is a linked manager of, else
+// "". The link comes from the cluster's origin node list, not from what
+// the agent reports, so an agent can't put itself in another Swarm's line.
+// Workers and hosts outside a cluster update as before.
 func (c *UpgradeController) managerKey(ctx context.Context, ag *ConnectedAgent) string {
-	info := ag.Hello.Daemon
-	if c.swarmState != nil {
-		sctx, cancel := context.WithTimeout(ctx, swarmStateWait)
-		if live, err := c.swarmState(sctx, ag.ID); err == nil {
-			info = live
-		}
-		cancel()
-	}
-	if info == nil || info.Swarm == nil {
+	if c.managerCluster == nil {
 		return ""
 	}
-	sw := info.Swarm
-	if sw.NodeState != "active" || sw.Role != "manager" || sw.ClusterID == "" {
+	id, err := c.managerCluster(ctx, ag.ID)
+	if err != nil {
+		slog.Warn("agent upgrade: cluster membership unknown", "agent", ag.ID, "err", err)
 		return ""
 	}
-	return sw.ClusterID
+	return id
 }
 
 // upgradeManager updates ag now when no other manager of its Swarm is
@@ -145,15 +143,19 @@ func (c *UpgradeController) whenSlotFree(ctx context.Context, ag *ConnectedAgent
 	}
 	if cur := c.agents.GetConnected(ag.ID); cur != ag {
 		release()
+		if cur != nil && !agentIsUpToDate(cur) {
+			c.droppedNotice(ctx, ag, errors.New("the agent reconnected while it waited"))
+		}
 		return
 	}
-	if _, err := c.dispatchManager(ctx, ag, req, manual, release); err != nil {
+	if _, err := c.dispatchManager(ctx, ag, req, manual, release); err != nil && !errors.Is(err, ErrAgentCurrent) {
 		slog.Info("queued agent upgrade not dispatched", "agent", ag.ID, "err", err)
+		c.droppedNotice(ctx, ag, err)
 	}
 }
 
 func (c *UpgradeController) dispatchManager(ctx context.Context, ag *ConnectedAgent, req *AgentUpgradeReq, manual bool, release func()) (*AgentUpgradeReq, error) {
-	out, err := c.dispatch(ctx, ag, req, manual)
+	out, err := c.send(ctx, ag, req, manual, managerLockWait, managerFrameTimeout)
 	if err != nil {
 		release()
 		return out, err
@@ -172,13 +174,14 @@ func (c *UpgradeController) holdManager(ctx context.Context, ag *ConnectedAgent,
 	defer tick.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-deadline.C:
 			slog.Warn("agent on a Swarm manager not back after its update; going on with the next manager", "agent", ag.ID, "wait", c.managerHoldMax)
 			c.managerTimeoutNotice(ctx, ag)
 			return
 		case <-tick.C:
 			if cur := c.agents.GetConnected(ag.ID); cur != nil && cur != ag && agentIsUpToDate(cur) {
-				c.resolveManagerTimeoutNotice(ctx, ag.ID)
 				return
 			}
 		}
@@ -203,9 +206,33 @@ func (c *UpgradeController) managerTimeoutNotice(ctx context.Context, ag *Connec
 	}
 }
 
-func (c *UpgradeController) resolveManagerTimeoutNotice(ctx context.Context, id string) {
-	if n := c.agents.notices; n != nil {
-		if err := n.Resolve(ctx, managerTimeoutNoticePrefix+id); err != nil {
+// droppedNotice tells admins that a queued upgrade of ag was not sent.
+func (c *UpgradeController) droppedNotice(ctx context.Context, ag *ConnectedAgent, reason error) {
+	n := c.agents.notices
+	if n == nil {
+		return
+	}
+	if err := n.Raise(ctx, notices.RaiseInput{
+		Key:      managerDroppedNoticePrefix + ag.ID,
+		Audience: notices.Admins(),
+		Severity: notices.SevWarning,
+		Title:    i18n.Msg("notice.agent_manager_dropped.title", ag.Name),
+		Body:     i18n.Msg("notice.agent_manager_dropped.body", clip(reason.Error(), 300)),
+		Link:     "/hosts/" + ag.ID,
+	}); err != nil {
+		slog.Warn("manager update notice", "agent", ag.ID, "err", err)
+	}
+}
+
+// resolveManagerNotices ends the manager update notices of agent id; it
+// runs when the agent connects with the server's build and when it is
+// deleted.
+func (s *Service) resolveManagerNotices(ctx context.Context, id string) {
+	if s.notices == nil {
+		return
+	}
+	for _, p := range []string{managerTimeoutNoticePrefix, managerDroppedNoticePrefix} {
+		if err := s.notices.Resolve(ctx, p+id); err != nil {
 			slog.Warn("resolve manager update notice", "agent", id, "err", err)
 		}
 	}

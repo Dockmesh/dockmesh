@@ -398,3 +398,18 @@ func TestConflictNamesHost(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestManagerOf(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t, lab())
+	c, err := s.Create(ctx, "m1", "", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for host, want := range map[string]string{"m1": c.ID, "m2": c.ID, "w1": "", "solo": "", "nope": ""} {
+		got, err := s.ManagerOf(ctx, host)
+		if err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", host, got, err, want)
+		}
+	}
+}

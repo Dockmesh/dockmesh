@@ -126,6 +126,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if agentIsUpToDate(ag) {
 		h.svc.updateResultNotice(r.Context(), agent.ID, agent.Name, AgentUpdateResult{Status: "updated"})
 	}
+	if agentIsUpToDate(ag) {
+		h.svc.resolveManagerNotices(r.Context(), agent.ID)
+	}
 
 	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname,
 		"version", hello.Version, "protocol", hello.ProtocolVersion, "layout", hello.HelloLayout())
