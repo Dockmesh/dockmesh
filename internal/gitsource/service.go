@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
@@ -564,9 +565,13 @@ func (s *Service) sync(ctx context.Context, stackName string, firstSync bool) (*
 		switch {
 		case errors.As(derr, &busy) && deploysFiles(busy.Operation) && busy.Since.After(copiedAt):
 			slog.Info("git auto-deploy left to the running deploy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
-		case errors.As(derr, &busy):
-			s.setPending(ctx, stackName, newSHA, busy.Operation)
-			slog.Info("git auto-deploy pending: stack busy", "stack", stackName, "sha", newSHA, "operation", busy.Operation)
+		case errors.As(derr, &busy) || errors.Is(derr, migration.ErrMigrationActive):
+			op := stacklock.OpMigration
+			if busy != nil {
+				op = busy.Operation
+			}
+			s.setPending(ctx, stackName, newSHA, op)
+			slog.Info("git auto-deploy pending: stack busy", "stack", stackName, "sha", newSHA, "operation", op)
 			// The stack may have become free before the commit was stored.
 			s.goPending(func(runCtx context.Context) { s.DeployPending(runCtx, stackName) })
 		case derr != nil:
@@ -655,6 +660,9 @@ func (s *Service) deployPendingLocked(ctx context.Context, src *Source) {
 	switch {
 	case errors.As(err, &busy):
 		s.setPending(ctx, src.StackName, src.PendingDeploy.SHA, busy.Operation)
+	case errors.Is(err, migration.ErrMigrationActive):
+		// Kept for the release of the migration's locks or the next poll.
+		s.setPending(ctx, src.StackName, src.PendingDeploy.SHA, stacklock.OpMigration)
 	case err != nil:
 		_ = s.ClearPending(ctx, src.StackName)
 		slog.Warn("git pending deploy failed", "stack", src.StackName, "sha", src.PendingDeploy.SHA, "err", err)

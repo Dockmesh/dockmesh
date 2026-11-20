@@ -3,6 +3,7 @@ package gitsource
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -117,4 +119,75 @@ func TestSetPendingOnlyWithAutoDeploy(t *testing.T) {
 		mgr.Close()
 		database.Close()
 	}
+}
+
+// A commit refused by an unfinished migration stays pending and is
+// deployed once the migration has ended.
+func TestSyncPendingWhileMigrating(t *testing.T) {
+	ctx := context.Background()
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mgr, err := stacks.NewManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	repoDir := t.TempDir()
+	repo, err := git.PlainInitWithOptions(repoDir, &git.PlainInitOptions{
+		InitOptions: git.InitOptions{DefaultBranch: plumbing.NewBranchReferenceName("main")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitCompose(t, repo, repoDir, "1")
+	var migrating atomic.Bool
+	var deployed atomic.Int32
+	var svc *Service
+	deploy := func(ctx context.Context, stack string) (any, error) {
+		if migrating.Load() {
+			return nil, migration.ErrMigrationActive
+		}
+		deployed.Add(1)
+		return nil, svc.ClearPending(ctx, stack)
+	}
+	svc = New(database, nil, mgr, t.TempDir(), deploy)
+	svc.SetDeployNow(deploy)
+	defer svc.Stop()
+	if _, err := svc.Configure(ctx, "web", Input{RepoURL: repoDir, AutoDeploy: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Sync(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	migrating.Store(true)
+	before := deployed.Load()
+	commitCompose(t, repo, repoDir, "2")
+	if _, err := svc.Sync(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	svc.DeployPending(ctx, "web")
+	src, err := svc.Get(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.PendingDeploy == nil || src.PendingDeploy.Operation != stacklock.OpMigration || deployed.Load() != before {
+		t.Fatalf("while migrating: pending %+v, deploys %d→%d", src.PendingDeploy, before, deployed.Load())
+	}
+	migrating.Store(false)
+	svc.StackReleased("web", nil)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		src, err := svc.Get(ctx, "web")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.PendingDeploy == nil && deployed.Load() == before+1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pending commit not deployed after the migration: deploys %d→%d", before, deployed.Load())
 }
