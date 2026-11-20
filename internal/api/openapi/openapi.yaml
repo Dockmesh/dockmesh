@@ -7646,7 +7646,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Stack has dependents (re-send with `?force=true` to override), or another operation such as a deploy holds the stack (`code` is `stack_busy`).
+          description: Stack has dependents (re-send with `?force=true` to override), another operation such as a deploy or a migration holds the stack (`code` is `stack_busy`), or the stack has a migration or migration rollback that has not finished (`code` is `migration_active`).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8351,7 +8351,10 @@ paths:
             or its containers on the source are Swarm tasks (Swarm places
             them itself), or the source is a Swarm node without a running
             compose container of the stack (it may be a Swarm stack); both
-            match the failing `swarm` preflight check.
+            match the failing `swarm` preflight check. Another operation
+            such as a deploy holding the stack on the source or the target
+            answers `code: stack_busy` with `operation` and `since`; an
+            unfinished migration of the stack answers `code: migration_active`.
           content:
             application/json:
               schema:
@@ -8488,6 +8491,13 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            A later migration of the stack has not finished
+            (`code: migration_active`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /stacks/from-git:
     post:
       operationId: stacks.create_from_git
@@ -8693,6 +8703,15 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            Another operation such as a migration holds the stack on the
+            source host (`code: stack_busy`, with `operation` and `since`),
+            or another migration of the stack has not finished
+            (`code: migration_active`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /convert/run-to-compose:
     post:
       operationId: convert.run_to_compose
@@ -12356,7 +12375,7 @@ components:
               stack: {type: string}
               host_id: {type: string}
     StackDeployConflict:
-      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`).
+      description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy or deployment rollback of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
       content:
         application/json:
           schema:
@@ -12364,7 +12383,7 @@ components:
             required: [error, code]
             properties:
               error: {type: string}
-              code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy]}
+              code: {type: string, enum: [modified_outside, stack_on_other_host, stack_busy, migration_active]}
               stack: {type: string}
               host_id: {type: string}
               operation: {type: string, description: "With `stack_busy`: the operation that holds the stack."}

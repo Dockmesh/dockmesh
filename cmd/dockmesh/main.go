@@ -1019,6 +1019,7 @@ func main() {
 		globals:     globalEnvStore.List,
 		notifs:      notifSvc,
 		locks:       stackLocks,
+		migrating:   migration.NewStore(database).HasActive,
 		commit: func(ctx context.Context, stack string) string {
 			if src, err := gitSourceSvc.Get(ctx, stack); err == nil && src != nil {
 				return src.LastSyncSHA
@@ -1104,6 +1105,7 @@ func main() {
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	migrationSvc.SetGlobalEnv(globalEnvStore.List)
+	migrationSvc.SetLocks(stackLocks)
 	migrationSvc.SetUsage(metricsCol)
 	migrationSvc.SetVolumeIO(func(id string) (migration.VolumeIO, error) { return backupSvc.VolumeIO(id) })
 	if err := migrationSvc.Start(ctx); err != nil {

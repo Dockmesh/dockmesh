@@ -583,6 +583,7 @@
   "apierr_mfa_disable_use_self_endpoint": "use DELETE /api/v1/mfa with a code to turn off your own 2FA",
   "apierr_mfa_failed": "mfa failed",
   "apierr_mfa_token_and_code_required": "mfa_token and code required",
+  "apierr_migration_active": "this stack has a migration or migration rollback that hasn't finished; try again once it has",
   "apierr_migration_not_found": "migration not found",
   "apierr_migration_service_unavailable": "migration service unavailable",
   "apierr_missing_avatar_form_field": "missing 'avatar' form field",

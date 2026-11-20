@@ -110,6 +110,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"mfa already enrolled", "mfa_already_enrolled"},
 	{"mfa failed", "mfa_failed"},
 	{"mfa_token and code required", "mfa_token_and_code_required"},
+	{"the stack has a migration or migration rollback that has not finished; try again once it has", "migration_active"},
 	{"migration not found", "migration_not_found"},
 	{"drain not found", "drain_not_found"},
 	{"migration service unavailable", "migration_service_unavailable"},

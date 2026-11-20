@@ -65,6 +65,9 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if writeMigrationConflict(w, err) {
+		return
+	}
 	if errors.Is(err, migration.ErrNamedVolumes) || errors.Is(err, migration.ErrSwarmStack) || errors.Is(err, migration.ErrSwarmUnclear) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -183,6 +186,9 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Migrations.Rollback(r.Context(), m.ID); err != nil {
+		if writeMigrationConflict(w, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -283,6 +289,9 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Migrations.PurgeSource(r.Context(), m.ID); err != nil {
+		if writeMigrationConflict(w, err) {
+			return
+		}
 		if err == migration.ErrNotFound {
 			writeError(w, http.StatusNotFound, "migration not found")
 		} else {

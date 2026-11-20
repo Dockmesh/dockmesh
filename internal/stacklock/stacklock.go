@@ -58,6 +58,9 @@ const (
 	// a new version.
 	OpAgentUpdate = "agent update"
 	OpDelete      = "delete"
+	// OpMigration holds a stack on both hosts of a migration while it
+	// stops, copies, starts or restores it.
+	OpMigration = "migration"
 	// OpDependency leaves out which stack needs the dependency: the caller
 	// who finds it busy may have no access to that stack.
 	OpDependency = "dependency deploy"

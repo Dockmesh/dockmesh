@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/stackfiles"
@@ -865,6 +866,9 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 
 	var cleanupResult *compose.CleanupResult
 	var cleanupErr string
@@ -1193,6 +1197,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
@@ -1281,7 +1288,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	var depsDeployed []string
 	for _, dep := range prereqs {
 		if err := h.deployStackOnce(r, target, dep); err != nil {
-			if writeStackBusy(w, err) {
+			if writeMigrationConflict(w, err) {
 				return
 			}
 			writeError(w, http.StatusFailedDependency,
@@ -1511,6 +1518,13 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, snap *stac
 		return err
 	}
 	defer release()
+	if h.Migrations != nil {
+		if active, err := h.Migrations.Store().HasActive(r.Context(), name); err != nil {
+			return err
+		} else if active {
+			return migration.ErrMigrationActive
+		}
+	}
 	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
 	if err != nil {
 		return err

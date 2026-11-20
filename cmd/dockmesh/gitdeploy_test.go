@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -190,5 +191,37 @@ func writeGitTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGitDeploySkipsMigratingStack(t *testing.T) {
+	ctx := context.Background()
+	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mgr, err := stacks.NewManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetSumStore(stacks.NewSumStore(database))
+	if _, err := mgr.Create("web", "services:\n  web:\n    image: nginx\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, migrating := range []bool{true, false} {
+		local := &gitFakeHost{id: "local"}
+		g := &gitDeployer{
+			stacks: mgr, deployments: stacks.NewDeploymentStore(database), hosts: gitFakeHosts{"local": local},
+			migrating: func(context.Context, string) (bool, error) { return migrating, nil },
+		}
+		_, err := g.deploy(ctx, "web")
+		if migrating != errors.Is(err, migration.ErrMigrationActive) {
+			t.Fatalf("migrating %v: err = %v", migrating, err)
+		}
+		if want := map[bool]int{true: 0, false: 1}[migrating]; len(local.deploys) != want {
+			t.Fatalf("migrating %v: deploys %d, want %d", migrating, len(local.deploys), want)
+		}
 	}
 }
