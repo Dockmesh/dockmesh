@@ -105,8 +105,7 @@ func stateOf(nodes []agents.SwarmNode) string {
 // lostQuorum reports whether a node list error is dockerd saying the
 // Swarm has no leader.
 func lostQuorum(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "does not have a leader") || strings.Contains(msg, "quorum")
+	return strings.Contains(strings.ToLower(err.Error()), "does not have a leader")
 }
 
 // statusOf builds the status of c from what the last reconcile saw.

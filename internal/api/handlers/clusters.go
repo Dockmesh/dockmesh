@@ -55,7 +55,8 @@ func (h *Handlers) ListClusterMemberships(w http.ResponseWriter, r *http.Request
 	}
 	list, err := h.Clusters.Memberships(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("list cluster memberships", "err", err)
+		writeError(w, http.StatusInternalServerError, "list cluster memberships failed")
 		return
 	}
 	access := middleware.AccessOf(r.Context())
