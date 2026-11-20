@@ -198,6 +198,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// Host registry — local + every connected agent.
 				r.Get("/hosts", h.ListHosts)
 				r.Get("/clusters", h.ListClusters)
+				r.Get("/clusters/memberships", h.ListClusterMemberships)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(h.ClusterScope)
