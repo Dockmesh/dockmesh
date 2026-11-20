@@ -480,6 +480,9 @@
       {:else if tab === 'nodes'}
         {@render nodeTable()}
         <p class="dm-sub foot">{m.cl_nodes_foot()}</p>
+        {#if cluster?.trust.pinned_fingerprint}
+          <p class="dm-sub foot fpline" data-testid="cluster-root-fp">{m.cl_trust_fp_pinned()} <span class="dm-mono">{cluster.trust.pinned_fingerprint}</span></p>
+        {/if}
       {:else if tab === 'services'}
         {@render serviceTable()}
       {:else if tab === 'tasks'}
@@ -805,6 +808,7 @@
   .hint { margin-top: 12px; }
   .noteact { margin-top: 4px; }
   .fp { color: var(--fg); word-break: break-all; }
+  .fpline { word-break: break-all; }
   .agentc { display: inline-flex; align-items: center; gap: 6px; }
   .proof { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-xs); vertical-align: middle; }
   .proof.ok { color: var(--ok); }

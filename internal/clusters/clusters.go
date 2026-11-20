@@ -149,7 +149,9 @@ type Service struct {
 	pmu      sync.Mutex
 	proofs   map[string]proofTry
 	addrWarn map[string]string
-	now      func() time.Time
+	// sole: the cluster's origin was its only manager at the last check.
+	sole map[string]bool
+	now  func() time.Time
 }
 
 // Auditor records membership changes; audit.Service is one.
@@ -326,7 +328,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	if err != nil {
 		return Cluster{}, err
 	}
-	agreed := 0
+	agreed, blocked := 0, false
 	for other, st := range snap {
 		if other == hostID || !st.known || st.swarm == nil || st.swarm.ClusterID != id || st.swarm.Role != RoleManager {
 			continue
@@ -339,8 +341,14 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 			slog.Warn("swarm managers disagree", "cluster", id, "origin", hostID, "other", other)
 			return Cluster{}, &ConflictError{Host: other}
 		}
+		if !listsManager(nodes, st.swarm.NodeID) {
+			// The origin leaves out a host that says it manages the
+			// Swarm: don't take the origin's word for the root.
+			blocked = true
+			continue
+		}
 		r := canonicalRoot(theirs.TrustRoot)
-		if r == "" || root == "" || !listsManager(nodes, st.swarm.NodeID) {
+		if r == "" || root == "" {
 			continue
 		}
 		if r != root {
@@ -349,7 +357,7 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		}
 		agreed++
 	}
-	if !pinnable(agreed, nodes) {
+	if blocked || !pinnable(agreed, soleManager(nodes, snap, id, hostID)) {
 		root = ""
 	}
 	if name == "" {

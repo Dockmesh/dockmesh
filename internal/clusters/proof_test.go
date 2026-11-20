@@ -574,3 +574,43 @@ func TestStaleProofExpires(t *testing.T) {
 		t.Fatal("expired certificate counts")
 	}
 }
+
+// An origin that leaves another manager out of its node list can't pass as
+// the only manager: nothing is pinned and a changed root is not
+// admin-confirmable.
+func TestOriginHidingManagerPinsNothing(t *testing.T) {
+	ctx := context.Background()
+	f, ca := provedLab(t)
+	forged := newSwarmCA(t)
+	hidden := []agents.SwarmNode{{ID: "n1", Role: RoleManager, Leader: true}, {ID: "n3", Role: RoleWorker}}
+	f.nodes = map[string][]agents.SwarmNode{"m1": hidden, "m2": f.nodes["m2"]}
+	f.roots = map[string]string{"m1": forged.pem, "m2": ca.pem}
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	c, err := s.Create(ctx, "m1", "", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = s.Get(ctx, swarmID); c.Trust.Pinned || c.Trust.Confirmable {
+		t.Fatalf("trust %+v", c.Trust)
+	}
+}
+
+// A root bundle with a second CA is no root: the fingerprint of its first
+// certificate would not cover the second.
+func TestRootBundleRefused(t *testing.T) {
+	a, b := newSwarmCA(t), newSwarmCA(t)
+	if canonicalRoot(a.pem) == "" {
+		t.Fatal("single root refused")
+	}
+	if canonicalRoot(a.pem+b.pem) != "" {
+		t.Fatal("two-certificate root accepted")
+	}
+	leaf := a.issue(t, "n1", swarmID, RoleManager, time.Now().Add(time.Hour))
+	if canonicalRoot(leaf.pem) != "" {
+		t.Fatal("non-CA root accepted")
+	}
+}

@@ -35,15 +35,16 @@ func swarmOU(role string) string {
 	return "swarm-worker"
 }
 
-// canonicalRoot returns the CA certificates of a trust root PEM in one
-// canonical encoding, or "" when it holds none, holds anything but CA
-// certificates, or is too large.
+// canonicalRoot returns the root CA certificate of a trust root PEM in one
+// canonical encoding, or "" unless it holds exactly one CA certificate: a
+// Swarm reports a single root, and a fingerprint of the first certificate
+// must cover everything that is trusted.
 func canonicalRoot(p string) string {
 	if p == "" || len(p) > agents.MaxTrustRootPEM {
 		return ""
 	}
 	certs, err := parseCerts([]byte(p))
-	if err != nil || len(certs) == 0 {
+	if err != nil || len(certs) != 1 {
 		return ""
 	}
 	var b bytes.Buffer
