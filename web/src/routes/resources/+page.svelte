@@ -413,8 +413,16 @@
     if (volumeUsedBy(v) > 0 || v.Labels?.['dockmesh.managed'] === 'true') return false;
     return v.Labels?.['com.docker.volume.anonymous'] !== undefined || /^[0-9a-f]{64}$/.test(v.Name);
   }
-  function volumeStackOwner(v: VolumeRow): string | null {
-    return v.Labels?.['com.docker.compose.project'] ?? null;
+  // A compose project on the host, or a stack deployed to a Swarm (whose
+  // volumes and networks exist per node).
+  function stackOwner(labels: Record<string, string> | null | undefined): { name: string; swarm: boolean } | null {
+    const project = labels?.['com.docker.compose.project'];
+    if (project) return { name: project, swarm: false };
+    const swarm = labels?.['com.docker.stack.namespace'];
+    return swarm ? { name: swarm, swarm: true } : null;
+  }
+  function volumeStackOwner(v: VolumeRow) {
+    return stackOwner(v.Labels);
   }
   function volumeUsedBy(v: VolumeRow): number {
     return volumeUsage.get(vKey(v)) ?? 0;
@@ -609,8 +617,8 @@
   function networkContainerCount(n: NetworkRow): number {
     return n.Containers ? Object.keys(n.Containers).length : 0;
   }
-  function networkOwner(n: NetworkRow): string | null {
-    return n.Labels?.['com.docker.compose.project'] ?? null;
+  function networkOwner(n: NetworkRow) {
+    return stackOwner(n.Labels);
   }
   function isSystem(n: NetworkRow): boolean { return SYSTEM_NETWORKS.has(n.Name); }
 
@@ -1058,7 +1066,7 @@
                 {#if anon}<span class="dm-pill dm-pill-warning res-mini-pill">{m.resources_f_anon()}</span>{/if}
               </a>
               {#if owner}
-                <div class="res-col-tag-sha font-mono">{m.resources_stack_prefix()} <span class="accent">{owner}</span></div>
+                <div class="res-col-tag-sha font-mono">{owner.swarm ? m.resources_swarm_stack_prefix() : m.resources_stack_prefix()} <span class="accent">{owner.name}</span></div>
               {/if}
             </div>
             <div>
@@ -1181,7 +1189,7 @@
                 {#if isSystem(n)}<span class="dm-pill dm-pill-neutral res-mini-pill">{m.resources_system()}</span>{/if}
               </a>
               {#if owner}
-                <div class="res-col-tag-sha font-mono">{m.resources_stack_prefix()} <span class="accent">{owner}</span></div>
+                <div class="res-col-tag-sha font-mono">{owner.swarm ? m.resources_swarm_stack_prefix() : m.resources_stack_prefix()} <span class="accent">{owner.name}</span></div>
               {:else}
                 <div class="res-col-tag-sha font-mono">{m.resources_id_prefix()} {n.Id.slice(0, 12)}</div>
               {/if}

@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: the topology page can show a cluster''s services and the overlay networks they attach to; the cluster network list names the attached services, and volumes and networks of a Swarm stack show as Swarm stack X with, per stack, the nodes that hold each volume'
+time: 2026-11-20T14:46:32.750595708Z

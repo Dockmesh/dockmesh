@@ -77,12 +77,12 @@ func (f *volumeHost) ID() string                                 { return f.id }
 func (f *volumeHost) Name() string                               { return f.id + "-name" }
 func (f *volumeHost) ListVolumes(context.Context) ([]any, error) { return f.vols, f.err }
 
-func vol(name, stack, driver string) map[string]any {
+func vol(name, stack string) map[string]any {
 	labels := map[string]any{}
 	if stack != "" {
 		labels["com.docker.stack.namespace"] = stack
 	}
-	return map[string]any{"Name": name, "Driver": driver, "Labels": labels}
+	return map[string]any{"Name": name, "Driver": "local", "Labels": labels}
 }
 
 // Stack volumes are grouped per stack with the member hosts that hold a
@@ -97,10 +97,10 @@ func TestClusterVolumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.h.Hosts = host.NewFixedRegistry(
-		&volumeHost{id: "m1", vols: []any{vol("app_data", "app", "local"), vol("other", "", "local"), vol("app_nfs", "app", "local")}},
-		&volumeHost{id: "m2", vols: []any{vol("app_data", "app", "local"), vol("db_pg", "db", "local")}},
+		&volumeHost{id: "m1", vols: []any{vol("app_data", "app"), vol("other", ""), vol("app_nfs", "app")}},
+		&volumeHost{id: "m2", vols: []any{vol("app_data", "app"), vol("db_pg", "db")}},
 		&volumeHost{id: "w1", err: errors.New("agent offline")},
-		&volumeHost{id: "solo", vols: []any{vol("app_data", "app", "local")}},
+		&volumeHost{id: "solo", vols: []any{vol("app_data", "app")}},
 	)
 	u := e.user("root", "admin")
 	ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})

@@ -3262,6 +3262,7 @@
   "networks_scope_flags": "Scope-Flags",
   "networks_sub_host": "Host {host}",
   "networks_sub_stack": "Stack {stack}",
+  "networks_sub_swarm_stack": "Swarm-Stack {stack}",
   "networks_sub_system": "System",
   "networks_subnet": "Subnetz",
   "networks_system_network": "System-Netzwerk",
@@ -4382,6 +4383,7 @@
   "resources_show": "Zeigen",
   "resources_show_system": "Systemnetzwerke anzeigen",
   "resources_stack_prefix": "Stack:",
+  "resources_swarm_stack_prefix": "Swarm-Stack:",
   "resources_stat_anonymous": "Anonym",
   "resources_stat_attachable": "Attachable",
   "resources_stat_attached": "mit einem Container verbunden",
@@ -5937,6 +5939,7 @@
   "volumes_size_note_mid": "Im Tab",
   "volumes_sub_host": "Host {host}",
   "volumes_sub_stack": "Stack {stack}",
+  "volumes_sub_swarm_stack": "Swarm-Stack {stack}",
   "volumes_tab_files": "Dateien",
   "volumes_truncated_notice": "Nur das erste 1 MiB wird angezeigt. Für die ganze Datei herunterladen.",
   "volumes_truncated_preview": "gekürzte Vorschau",
@@ -6467,5 +6470,27 @@
   "hosts_setup_failed": "Etwas ist schiefgelaufen: {message}. Versuch es noch einmal.",
   "hosts_setup_waiting_picker": "Schließe zuerst die Einrichtung von {name} ab.",
   "setup_disk_not_stacks_place": "nicht direkt in oder eine Ebene unter /srv, /opt, /data, /mnt oder /media",
-  "hosts_setup_current_ok": "Das ist das Stack-Verzeichnis in Verwendung."
+  "hosts_setup_current_ok": "Das ist das Stack-Verzeichnis in Verwendung.",
+  "topology_view_label": "Graph",
+  "topology_view_host": "Host-Netzwerk",
+  "topology_view_cluster": "Swarm-Cluster {name}",
+  "topology_services": "Services",
+  "topology_n_services": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} Service",
+        "countPlural=*": "{count} Services"
+      }
+    }
+  ],
+  "topology_tasks": "Tasks",
+  "topology_tasks_running": "{tasks} laufen",
+  "topology_truncated": "Der Manager hat nur einen Teil seiner Services oder Netzwerke geliefert."
 }

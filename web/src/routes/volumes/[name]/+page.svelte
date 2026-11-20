@@ -246,6 +246,7 @@
   const canWrite = $derived(allowed('volumes.delete'));
   const canBrowse = $derived(allowed('volumes.browse'));
   const owner = $derived(inspect?.Labels?.['com.docker.compose.project'] ?? null);
+  const swarmStack = $derived(owner ? null : (inspect?.Labels?.['com.docker.stack.namespace'] ?? null));
   const labelEntries = $derived(inspect?.Labels ? Object.entries(inspect.Labels) : []);
   const optionsEntries = $derived(inspect?.Options ? Object.entries(inspect.Options) : []);
 </script>
@@ -261,7 +262,7 @@
       <div class="vol-detail-title-text">
         <h1 class="ed-title vol-detail-title">{name}</h1>
         <p class="ed-subtitle vol-detail-subtitle">
-          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.volumes_sub_host({ host: hostId })}{owner ? ` · ${m.volumes_sub_stack({ stack: owner })}` : ''}
+          {inspect?.Driver ?? '—'} · {inspect?.Scope ?? '—'} · {m.volumes_sub_host({ host: hostId })}{owner ? ` · ${m.volumes_sub_stack({ stack: owner })}` : ''}{swarmStack ? ` · ${m.volumes_sub_swarm_stack({ stack: swarmStack })}` : ''}
         </p>
       </div>
       <div class="ed-actions">
