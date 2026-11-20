@@ -382,6 +382,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/ws/events", gateTicket},
 	{"GET", "/api/v1/ws/exec/{id}", gateTicket},
 	{"GET", "/api/v1/ws/stats/{id}", gateTicket},
+	{"GET", "/api/v1/ws/clusters/{id}/services/{service}/logs", gateTicket},
 	{"GET", "/install/agent.sh", gatePublic},
 	{"GET", "/install/{name}", gatePublic},
 	{"POST", "/api/v1/setup/validate-data-dir", gatePublic},

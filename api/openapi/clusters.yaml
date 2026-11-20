@@ -324,6 +324,77 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /ws/clusters/{id}/services/{service}/logs:
+    get:
+      operationId: ws.clusters.service_logs
+      tags: [clusters]
+      summary: WebSocket stream of a Swarm service's task logs
+      description: |
+        Streams the logs of every task of the service, read through the
+        cluster's manager. Pass `?ticket=<jwt>` from
+        `POST /ws/ticket?for=containers.logs`; the caller needs
+        `containers.logs` on the cluster. Each text frame is one
+        `SwarmLogLine` JSON object. When the stream fails after the
+        upgrade, a last frame `{"error": "..."}` comes before the close.
+        Of the log metadata only the task and node ids are passed on;
+        attributes a log driver adds from labels or env are dropped. At
+        most 32 service log streams are open at once.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: service
+          in: path
+          required: true
+          description: Service ID or name.
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}
+        - name: ticket
+          in: query
+          required: true
+          schema: {type: string}
+        - name: tail
+          in: query
+          description: Existing lines per task to send first.
+          schema: {type: integer, minimum: 0, maximum: 5000, default: 100}
+        - name: since
+          in: query
+          description: Only lines from this point on; a duration back from now (`15m`, at most 90 days), an RFC 3339 time or unix seconds.
+          schema: {type: string}
+        - name: follow
+          in: query
+          description: Keep the stream open for new lines; `0` or `false` ends it after the existing lines.
+          schema: {type: boolean, default: true}
+      responses:
+        "101":
+          description: Upgraded to WebSocket; frames are `SwarmLogLine` objects.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmLogLine"}
+        "400":
+          description: Invalid service id, tail or since.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Missing or invalid ticket.
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429":
+          description: Too many service log streams are open.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /clusters/candidates:
     get:
       operationId: clusters.candidates
@@ -498,6 +569,18 @@ components:
               image: {type: string}
               updated_at: {type: string, format: date-time}
         truncated: {type: boolean}
+    SwarmLogLine:
+      type: object
+      required: [task, task_id, node_id, stream, msg]
+      properties:
+        ts: {type: string, format: date-time}
+        task: {type: string, description: "`<service>.<slot>`, or `<service>.<node id>` for global services."}
+        task_id: {type: string}
+        node: {type: string, description: Host name of the node the task runs on.}
+        node_id: {type: string}
+        stream: {type: string, enum: [stdout, stderr]}
+        msg: {type: string, description: The message, cut to 16 KiB.}
+        truncated: {type: boolean, description: The message was longer and has been cut.}
     ClusterNetworks:
       type: object
       required: [read_host, networks]
