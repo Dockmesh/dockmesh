@@ -29,6 +29,10 @@ type sampler interface {
 // scale.
 var errCountChanged = errors.New("replica count changed")
 
+// errMigrating defers a scale until the stack's migration or its rollback
+// has finished.
+var errMigrating = errors.New("stack has an unfinished migration")
+
 // Controller is the auto-scaling goroutine that polls metrics every
 // 30s and evaluates rules from each stack's .dockmesh.meta.json.
 //
@@ -258,7 +262,7 @@ func (c *Controller) doScale(ctx context.Context, stackName string, rule Rule, t
 	if err := c.scaleFn(ctx, stackName, t, from, to); err != nil {
 		st.phase = phaseStable
 		switch {
-		case errors.Is(err, stacklock.ErrBusy), errors.Is(err, errCountChanged):
+		case errors.Is(err, stacklock.ErrBusy), errors.Is(err, errCountChanged), errors.Is(err, errMigrating):
 			slog.Info("scaling: retrying on the next check", "stack", stackName, "service", rule.Service, "err", err)
 		default:
 			slog.Warn("scaling: action failed",
@@ -332,17 +336,29 @@ func cpuValue(s metrics.Sample, unit string) float64 {
 }
 
 // CheckedScale scales under the stack lock, from the stack files as they
-// are now, and only while the files allow the auto-scaler to act and the
-// service still runs from replicas.
-func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks, deployments *stacks.DeploymentStore) ScaleFunc {
+// are now, and only while the files allow the auto-scaler to act, the
+// service still runs from replicas and migrating reports no unfinished
+// migration of the stack.
+func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks, deployments *stacks.DeploymentStore, migrating func(ctx context.Context, stack string) (bool, error)) ScaleFunc {
 	return func(ctx context.Context, stack string, t Target, from, to int) error {
 		release, err := locks.TryLock(t.LockKey(), stacklock.OpAutoScale)
 		if err != nil {
 			return err
 		}
 		defer release()
-		// A migration or delete doesn't take the stack lock; its status does
-		// tell, and so does a move to another host since the evaluation.
+		// A migration rollback waits for its hosts without the lock and would
+		// undo a scale done meanwhile.
+		if migrating != nil {
+			active, err := migrating(ctx, stack)
+			if err != nil {
+				return err
+			}
+			if active {
+				return fmt.Errorf("%w: stack %s", errMigrating, stack)
+			}
+		}
+		// The stack may have stopped or moved to another host since the
+		// evaluation.
 		d, err := deployments.Get(ctx, stack)
 		if err != nil {
 			return err

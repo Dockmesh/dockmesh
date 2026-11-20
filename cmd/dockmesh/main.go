@@ -681,8 +681,10 @@ func main() {
 	proxySvc.SetAdminSocketDir(filepath.Dir(cfg.DBPath))
 	proxySvc.SetInContainer(proxy.DetectContainer(host.SelfContainerID))
 	stackLocks := stacklock.New()
+	migrationStore := migration.NewStore(database)
 	updaterSvc := updater.NewService(dockerCli, database)
 	updaterSvc.SetLocks(stackLocks)
+	updaterSvc.SetMigrating(migrationStore.HasActive)
 	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
@@ -1002,7 +1004,7 @@ func main() {
 			}
 			return scaling.NewHostTarget(h, stack, service), nil
 		},
-		scaling.CheckedScale(stacksMgr, stackLocks, deployStore))
+		scaling.CheckedScale(stacksMgr, stackLocks, deployStore, migrationStore.HasActive))
 	jobGate.Run(ctx, "auto-scaler", func() { scaleController.Start(ctx) })
 	defer scaleController.Stop()
 
@@ -1021,7 +1023,7 @@ func main() {
 		globals:     globalEnvStore.List,
 		notifs:      notifSvc,
 		locks:       stackLocks,
-		migrating:   migration.NewStore(database).HasActive,
+		migrating:   migrationStore.HasActive,
 		commit: func(ctx context.Context, stack string) string {
 			if src, err := gitSourceSvc.Get(ctx, stack); err == nil && src != nil {
 				return src.LastSyncSHA

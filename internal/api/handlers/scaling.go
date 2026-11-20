@@ -62,6 +62,9 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
@@ -197,6 +200,9 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer release()
+	if h.refuseMigrating(w, r, name) {
+		return
+	}
 	snap, ok := h.checkStack(w, r, name)
 	if !ok {
 		return
