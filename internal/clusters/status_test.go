@@ -116,11 +116,16 @@ func TestClusterStatus(t *testing.T) {
 	}
 }
 
+// A cluster without a cluster_status row reads as not checked until its
+// first check.
 func TestClusterStatusUnknownUntilAsked(t *testing.T) {
 	f := lab()
 	s := newService(t, f)
 	ctx := context.Background()
 	if _, err := s.Create(ctx, "m1", "lab", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM cluster_status`); err != nil {
 		t.Fatal(err)
 	}
 	restarted := New(s.db, f)
@@ -141,6 +146,13 @@ func TestDeleteForgetsStatus(t *testing.T) {
 	}
 	if _, ok := s.seenOf(swarmID); ok {
 		t.Fatal("status kept after delete")
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM cluster_status`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("stored status rows after delete = %d %v", n, err)
+	}
+	if _, ok := New(s.db, f).seenOf(swarmID); ok {
+		t.Fatal("status after delete and restart")
 	}
 }
 
@@ -199,8 +211,8 @@ func TestMemberships(t *testing.T) {
 	}
 }
 
-// An unreachable origin keeps the last node list it returned; a restart
-// knows none.
+// An unreachable origin keeps the last node list it returned, also across
+// a restart.
 func TestLastNodes(t *testing.T) {
 	f := lab()
 	f.nodes["m1"] = readyNodes()
@@ -226,7 +238,8 @@ func TestLastNodes(t *testing.T) {
 	if !ok || len(again) != 4 || !knownAgain.Equal(known) {
 		t.Fatalf("origin offline: %v %v %v", again, knownAgain, ok)
 	}
-	if _, _, ok := New(s.db, f).LastNodes(swarmID); ok {
-		t.Fatal("node list after a restart")
+	stored, knownStored, ok := New(s.db, f).LastNodes(swarmID)
+	if !ok || len(stored) != 4 || !knownStored.Equal(known) {
+		t.Fatalf("after restart: %v %v %v", stored, knownStored, ok)
 	}
 }
