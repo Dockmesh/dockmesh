@@ -212,7 +212,7 @@ func storeRun(ctx context.Context, t *testing.T, svc *Service, root string, arch
 	if err := os.WriteFile(full, archive, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.finishRun(ctx, id, StatusSuccess, int64(len(archive)), path, sha256Hex(archive), nil); err != nil {
+	if err := svc.store.finishRun(ctx, id, StatusSuccess, int64(len(archive)), path, sha256Hex(archive), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	return id

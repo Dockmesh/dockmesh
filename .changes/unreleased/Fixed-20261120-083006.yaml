@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Backup runs whose job moved to another target before the update can be restored and verified again: Dockmesh also looks for the archive on the other saved targets and only uses a file with the run''s hash'
+time: 2026-11-20T08:30:06.601693641Z

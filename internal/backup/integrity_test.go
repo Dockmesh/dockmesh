@@ -233,7 +233,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.finishRun(ctx, runID, "success", tee.n, path, hex.EncodeToString(h.Sum(nil)), nil); err != nil {
+	if err := svc.store.finishRun(ctx, runID, "success", tee.n, path, hex.EncodeToString(h.Sum(nil)), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	run, err := svc.store.getRun(ctx, runID)

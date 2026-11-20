@@ -116,7 +116,7 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 		RetentionDays: j.RetentionDays, Encrypt: j.Encrypt, PreHooks: j.PreHooks,
 		PostHooks: j.PostHooks, Enabled: j.Enabled,
 	}
-	if err := s.store.updateJob(ctx, j.ID, in); err != nil {
+	if err := s.store.updateJob(ctx, j.ID, in, false); err != nil {
 		return "", "", err
 	}
 	slog.Info("system backup job path made absolute", "job", j.Name, "from", from, "to", to)

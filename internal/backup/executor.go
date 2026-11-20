@@ -172,7 +172,7 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 	op.DisallowCancel(runCtx)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)
-	if err := e.store.finishRun(ctx, runID, out.status, out.size, out.path, out.sum, out.err); err != nil {
+	if err := e.store.finishRun(ctx, runID, out.status, out.size, out.path, out.sum, loc, out.err); err != nil {
 		slog.Warn("backup finish run", "run", runID, "err", err)
 	}
 	if target != nil {
@@ -701,7 +701,7 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 		return
 	}
 	for _, r := range partial {
-		if err := e.deleteArchive(ctx, runID, job, target, loc, r); err != nil {
+		if err := e.deleteArchive(ctx, job, target, loc, r, true); err != nil {
 			e.logf(ctx, runID, "warn", "retention: delete partial archive of run %d: %s", r.ID, err)
 		}
 	}
@@ -726,7 +726,7 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 		if !drop {
 			continue
 		}
-		if err := e.deleteArchive(ctx, runID, job, target, loc, r); err != nil {
+		if err := e.deleteArchive(ctx, job, target, loc, r, false); err != nil {
 			e.logf(ctx, runID, "warn", "retention: delete %s: %s", r.TargetPath, err)
 			continue
 		}
@@ -736,8 +736,10 @@ func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, ta
 
 // deleteArchive removes a run's archive from where the run wrote it. cur
 // is the job's target now, at location curLoc. A run whose target can't
-// be opened any more stays unpruned, so its archive is never forgotten.
-func (e *Executor) deleteArchive(ctx context.Context, runID int64, job *Job, cur targets.Target, curLoc *RunLocation, r Run) error {
+// be opened any more, or whose archive isn't where it was looked for,
+// stays unpruned, so its archive is never forgotten. A failed run's
+// partial file may never have been written, so not finding it is fine.
+func (e *Executor) deleteArchive(ctx context.Context, job *Job, cur targets.Target, curLoc *RunLocation, r Run, partial bool) error {
 	t := cur
 	if r.Location != nil && !sameRunLocation(r.Location, curLoc) {
 		at, err := targetAt(ctx, e.store, e.notices, &r, job, r.Location)
@@ -746,18 +748,38 @@ func (e *Executor) deleteArchive(ctx context.Context, runID int64, job *Job, cur
 		}
 		t = at
 	}
-	err := t.Delete(ctx, r.TargetPath)
-	if errors.Is(err, fs.ErrNotExist) && t != cur && r.Location.Inferred {
-		err = cur.Delete(ctx, r.TargetPath)
+	// Where the run wrote is a guess, so only a file with its hash goes.
+	del := func(t targets.Target) error {
+		if !partial && guessed(&r) && r.SHA256 != "" {
+			match, err := holdsArchive(ctx, t, &r)
+			if err != nil {
+				return err
+			}
+			if !match {
+				return errOtherFile
+			}
+		}
+		return t.Delete(ctx, r.TargetPath)
+	}
+	err := del(t)
+	if (errors.Is(err, fs.ErrNotExist) || errors.Is(err, errOtherFile)) && t != cur && r.Location.Inferred {
+		err = del(cur)
 	}
 	switch {
+	case errors.Is(err, errOtherFile):
+		return fmt.Errorf("the file at %s is not the archive of run %d, so it is kept and the run stays listed", r.TargetPath, r.ID)
+	case errors.Is(err, fs.ErrNotExist) && partial: // nothing to delete; prune below
 	case errors.Is(err, fs.ErrNotExist) && r.Location == nil:
-		e.logf(ctx, runID, "warn", "retention: archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target", r.ID)
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target, so the run stays listed", r.ID)
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("archive of run %d is not at %s, so the run stays listed", r.ID, r.Location.describe())
+	case err != nil:
 		return err
 	}
 	return e.store.markPruned(ctx, r.ID)
 }
+
+var errOtherFile = errors.New("file does not match the run's archive")
 
 // -----------------------------------------------------------------------------
 // helpers

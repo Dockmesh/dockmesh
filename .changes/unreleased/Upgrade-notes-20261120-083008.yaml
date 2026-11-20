@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Retention no longer marks a backup run removed when it can't find the run's archive; such runs stay listed with a warning in the run log, so an archive at an unknown place is never forgotten
+time: 2026-11-20T08:30:08.052537489Z
+custom:
+    Audience: all
+    Id: backup-retention-keeps-unfound

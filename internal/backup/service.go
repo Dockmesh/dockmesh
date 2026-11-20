@@ -240,7 +240,7 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := s.prepareJobSwitch(ctx, prev, in.TargetID); err != nil {
 		return nil, err
 	}
-	if err := s.store.updateJob(ctx, id, in); err != nil {
+	if err := s.store.updateJob(ctx, id, in, prev.TargetID != in.TargetID); err != nil {
 		return nil, err
 	}
 	j, err := s.store.getJob(ctx, id)
