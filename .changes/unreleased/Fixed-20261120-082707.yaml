@@ -1,0 +1,3 @@
+kind: Fixed
+body: An agent no longer stays offline after Docker is stopped and started again; a Docker start also brings back an agent that is not running
+time: 2026-11-20T08:27:07.407182078Z
