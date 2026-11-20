@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Agents in the current layout get the new service unit with their next update; agents still in the older layout (the host page shows the install command to run again) keep stopping with Docker until that command is run on the host
+time: 2026-11-20T08:27:07.825732697Z
+custom:
+    Audience: admins
+    Id: agent-unit-docker-restart
