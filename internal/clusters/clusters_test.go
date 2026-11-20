@@ -398,3 +398,46 @@ func TestConflictNamesHost(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// A cluster is read through its origin only while the origin is the
+// linked manager node of this Swarm right now.
+func TestReadHost(t *testing.T) {
+	ctx := context.Background()
+	f := lab()
+	s := newService(t, f)
+	c, err := s.Create(ctx, "m1", "", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		set  func()
+		want error
+	}{
+		{"origin is the manager", func() {}, nil},
+		{"origin offline", func() { f.failing["m1"] = true }, ErrUnreadable},
+		{"origin demoted", func() { f.infos["m1"] = swarmInfo("", "n1", RoleWorker) }, ErrUnreadable},
+		{"origin left the swarm", func() { f.infos["m1"] = &agents.DaemonInfo{Swarm: &agents.SwarmState{NodeState: "inactive"}} }, ErrUnreadable},
+		{"origin claims another node", func() { f.infos["m1"] = swarmInfo(swarmID, "n9", RoleManager) }, ErrUnreadable},
+		{"origin in another swarm", func() { f.infos["m1"] = swarmInfo("other", "n1", RoleManager) }, ErrUnreadable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f.mu.Lock()
+			f.infos["m1"] = swarmInfo(swarmID, "n1", RoleManager)
+			f.failing = map[string]bool{}
+			tt.set()
+			f.mu.Unlock()
+			got, err := s.ReadHost(ctx, c.ID)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("err %v, want %v", err, tt.want)
+			}
+			if err == nil && got != "m1" {
+				t.Fatalf("read host %q", got)
+			}
+		})
+	}
+	if _, err := s.ReadHost(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown cluster: %v", err)
+	}
+}

@@ -28,6 +28,9 @@ var (
 	ErrBadName    = errors.New("invalid name: 1 to 64 letters, digits, spaces, '.', '-' or '_'")
 	ErrNotManager = errors.New("the host is not a manager of an active Swarm")
 	ErrNotFound   = errors.New("cluster not found")
+	// ErrUnreadable: the cluster's origin is offline or no longer the
+	// manager node it was linked as.
+	ErrUnreadable = errors.New("the cluster's origin manager can't be read right now")
 )
 
 // ConflictError refuses a create because Host, another host claiming to
@@ -433,21 +436,46 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// askOrigin returns the origin's node list, or nil when the origin is not
-// the linked manager node of this Swarm right now.
-func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) []agents.SwarmNode {
+// ReadHost returns the host the cluster's Swarm state is read through:
+// its origin, checked live to still be the linked manager node of this
+// Swarm. Manager failover replaces this later.
+func (s *Service) ReadHost(ctx context.Context, id string) (string, error) {
+	c, err := s.get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	hctx, cancel := context.WithTimeout(ctx, hostTimeout)
+	defer cancel()
+	info, err := s.hosts.CurrentDaemonInfo(hctx, c.OriginHost)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	if !originIsLinkedManager(c, info) {
+		return "", ErrUnreadable
+	}
+	return c.OriginHost, nil
+}
+
+// originIsLinkedManager reports whether info shows c's origin as the
+// active manager node it is linked as.
+func originIsLinkedManager(c Cluster, info *agents.DaemonInfo) bool {
 	var linked string
 	for _, m := range c.Members {
 		if m.HostID == c.OriginHost {
 			linked = m.NodeID
 		}
 	}
+	return linked != "" && activeManager(info) && info.Swarm.ClusterID == c.ID && info.Swarm.NodeID == linked
+}
+
+// askOrigin returns the origin's node list, or nil when the origin is not
+// the linked manager node of this Swarm right now.
+func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) []agents.SwarmNode {
 	st := snap[c.OriginHost]
-	sw := st.swarm
-	if linked == "" || !st.known || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager ||
-		sw.ClusterID != c.ID || sw.NodeID != linked {
+	if !st.known || !originIsLinkedManager(c, &agents.DaemonInfo{Swarm: st.swarm}) {
 		return nil
 	}
+	linked := st.swarm.NodeID
 	nodes, err := s.nodesOf(ctx, c.OriginHost)
 	if err != nil {
 		slog.Debug("swarm node list failed", "cluster", c.ID, "host", c.OriginHost, "err", err)

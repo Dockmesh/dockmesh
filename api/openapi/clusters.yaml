@@ -138,6 +138,192 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /clusters/{id}/nodes:
+    get:
+      operationId: clusters.nodes
+      tags: [clusters]
+      summary: Nodes of the cluster's Swarm
+      description: |
+        Needs `hosts.view` on the cluster (global or `cluster` scope; a host
+        scope on a node is not enough). Every node of the Swarm, including
+        nodes without a Dockmesh agent, as the cluster's origin manager
+        lists them.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterNodes"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/services:
+    get:
+      operationId: clusters.services
+      tags: [clusters]
+      summary: Services of the cluster's Swarm
+      description: |
+        Needs `stacks.view` on the cluster. At most 1000 services by name
+        with running and desired task counts; `truncated` is set when the
+        manager had more.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterServices"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/services/{service}:
+    get:
+      operationId: clusters.service
+      tags: [clusters]
+      summary: Inspect one Swarm service
+      description: |
+        Needs `stacks.view` on the cluster. Environment variables come as
+        names only and secrets and configs as references (id, name, target
+        file); their values and data, command and arguments and driver
+        options are never returned.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: service
+          in: path
+          required: true
+          description: Service ID or name.
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterService"}
+        "400":
+          description: Invalid service id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/tasks:
+    get:
+      operationId: clusters.tasks
+      tags: [clusters]
+      summary: Tasks of the cluster's Swarm
+      description: |
+        Needs `stacks.view` on the cluster. At most 5000 tasks, newest
+        first; `truncated` is set when the manager had more.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: service
+          in: query
+          required: false
+          description: Only the tasks of this service (ID or name).
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterTasks"}
+        "400":
+          description: Invalid service id.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/networks:
+    get:
+      operationId: clusters.networks
+      tags: [clusters]
+      summary: Networks with Swarm scope
+      description: |
+        Needs `networks.view` on the cluster. Overlay and ingress networks
+        (at most 500, by name); `truncated` is set when the manager had
+        more.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Read through the cluster's manager; `read_host` names it.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterNetworks"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /clusters/candidates:
     get:
       operationId: clusters.candidates
@@ -169,6 +355,173 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
 components:
   schemas:
+    ClusterNodes:
+      type: object
+      required: [read_host, nodes]
+      properties:
+        read_host: {type: string}
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, role]
+            properties:
+              id: {type: string}
+              hostname: {type: string}
+              role: {type: string, enum: [manager, worker]}
+              state: {type: string}
+              availability: {type: string}
+              leader: {type: boolean}
+              reachability: {type: string}
+              addr: {type: string, description: The node's address as the manager sees it.}
+              engine_version: {type: string}
+              nano_cpus: {type: integer, format: int64}
+              memory_bytes: {type: integer, format: int64}
+    SwarmService:
+      type: object
+      required: [id, name, mode, running_tasks, desired_tasks, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        image: {type: string}
+        mode: {type: string, enum: [replicated, global, replicated-job, global-job, ""]}
+        replicas: {type: integer, format: int64}
+        running_tasks: {type: integer, format: int64}
+        desired_tasks: {type: integer, format: int64}
+        stack: {type: string, description: The `com.docker.stack.namespace` label.}
+        ports:
+          type: array
+          items:
+            type: object
+            required: [target_port]
+            properties:
+              protocol: {type: string}
+              target_port: {type: integer}
+              published_port: {type: integer}
+              publish_mode: {type: string}
+        update_state: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ClusterServices:
+      type: object
+      required: [read_host, services]
+      properties:
+        read_host: {type: string}
+        services:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmService"}
+        truncated: {type: boolean}
+    SwarmRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        target: {type: string, description: File name inside the task.}
+    SwarmUpdatePolicy:
+      type: object
+      required: [parallelism]
+      properties:
+        parallelism: {type: integer, format: int64}
+        delay_ns: {type: integer, format: int64}
+        failure_action: {type: string}
+        order: {type: string}
+    ClusterService:
+      allOf:
+        - {$ref: "#/components/schemas/SwarmService"}
+        - type: object
+          required: [read_host]
+          properties:
+            read_host: {type: string}
+            labels:
+              type: object
+              additionalProperties: {type: string}
+            env_keys:
+              type: array
+              description: Names of the environment variables; values are never returned.
+              items: {type: string}
+            secrets:
+              type: array
+              items: {$ref: "#/components/schemas/SwarmRef"}
+            configs:
+              type: array
+              items: {$ref: "#/components/schemas/SwarmRef"}
+            networks:
+              type: array
+              items:
+                type: object
+                required: [id]
+                properties:
+                  id: {type: string}
+                  aliases:
+                    type: array
+                    items: {type: string}
+            mounts:
+              type: array
+              items:
+                type: object
+                required: [type, target]
+                properties:
+                  type: {type: string}
+                  source: {type: string}
+                  target: {type: string}
+                  read_only: {type: boolean}
+            constraints:
+              type: array
+              items: {type: string}
+            max_replicas_per_node: {type: integer, format: int64}
+            limit_nano_cpus: {type: integer, format: int64}
+            limit_memory_bytes: {type: integer, format: int64}
+            update_config: {$ref: "#/components/schemas/SwarmUpdatePolicy"}
+            rollback_config: {$ref: "#/components/schemas/SwarmUpdatePolicy"}
+            update_message: {type: string}
+    ClusterTasks:
+      type: object
+      required: [read_host, tasks]
+      properties:
+        read_host: {type: string}
+        tasks:
+          type: array
+          items:
+            type: object
+            required: [id, service_id, desired_state, state, updated_at]
+            properties:
+              id: {type: string}
+              service_id: {type: string}
+              node_id: {type: string}
+              slot: {type: integer}
+              desired_state: {type: string}
+              state: {type: string}
+              message: {type: string}
+              error: {type: string}
+              container_id: {type: string}
+              image: {type: string}
+              updated_at: {type: string, format: date-time}
+        truncated: {type: boolean}
+    ClusterNetworks:
+      type: object
+      required: [read_host, networks]
+      properties:
+        read_host: {type: string}
+        networks:
+          type: array
+          items:
+            type: object
+            required: [id, name, driver, created_at]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              driver: {type: string}
+              attachable: {type: boolean}
+              ingress: {type: boolean}
+              internal: {type: boolean}
+              encrypted: {type: boolean}
+              subnets:
+                type: array
+                items: {type: string}
+              stack: {type: string}
+              created_at: {type: string, format: date-time}
+        truncated: {type: boolean}
     Cluster:
       type: object
       required: [id, name, origin_host, created_at, members]

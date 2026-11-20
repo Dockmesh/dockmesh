@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -268,4 +269,166 @@ func (h *Handlers) reloadRoles(ctx context.Context) error {
 		return nil
 	}
 	return h.Roles.Load(ctx)
+}
+
+// ClusterScope records the cluster of /clusters/{id}/... read routes as
+// the request's resource, so RequirePerm checks the route's permission on
+// that cluster's scope.
+func (h *Handlers) ClusterScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := rbac.Resource{ClusterID: chi.URLParam(r, "id")}
+		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
+	})
+}
+
+// swarmRef is a service ID or name as dockerd accepts them.
+var swarmRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// clusterReadHost resolves the host a cluster is read through and writes
+// the error response when there is none.
+func (h *Handlers) clusterReadHost(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if h.Clusters == nil || h.Hosts == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return "", false
+	}
+	hostID, err := h.Clusters.ReadHost(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeClusterReadError(w, err)
+		return "", false
+	}
+	return hostID, true
+}
+
+func writeClusterReadError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, clusters.ErrNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, agents.ErrSwarmServiceNotFound):
+		writeError(w, http.StatusNotFound, "service not found")
+	case errors.Is(err, clusters.ErrUnreadable), errors.Is(err, agents.ErrNotSwarmManager),
+		errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker),
+		errors.Is(err, host.ErrAgentNoSwarmNodes), errors.Is(err, host.ErrAgentNoSwarmRead):
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	default:
+		slog.Warn("cluster read", "err", err)
+		writeError(w, http.StatusBadGateway, "cannot read the cluster's Swarm state")
+	}
+}
+
+type clusterNodesResponse struct {
+	ReadHost string             `json:"read_host"`
+	Nodes    []agents.SwarmNode `json:"nodes"`
+}
+
+// ClusterNodes lists every node of the cluster's Swarm, including nodes
+// without an agent, read through the cluster's manager.
+//
+//	GET /api/v1/clusters/{id}/nodes
+func (h *Handlers) ClusterNodes(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := h.clusterReadHost(w, r)
+	if !ok {
+		return
+	}
+	nodes, err := h.Hosts.SwarmNodes(r.Context(), hostID)
+	if err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clusterNodesResponse{ReadHost: hostID, Nodes: nodes})
+}
+
+type clusterServicesResponse struct {
+	ReadHost string `json:"read_host"`
+	agents.SwarmServicesResp
+}
+
+// ClusterServices lists the cluster's Swarm services with task counts.
+//
+//	GET /api/v1/clusters/{id}/services
+func (h *Handlers) ClusterServices(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := h.clusterReadHost(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.Hosts.SwarmServices(r.Context(), hostID)
+	if err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clusterServicesResponse{ReadHost: hostID, SwarmServicesResp: res})
+}
+
+type clusterServiceResponse struct {
+	ReadHost string `json:"read_host"`
+	agents.SwarmServiceDetail
+}
+
+// ClusterService inspects one service. Env comes as variable names only,
+// secrets and configs as references; no value is ever returned.
+//
+//	GET /api/v1/clusters/{id}/services/{service}
+func (h *Handlers) ClusterService(w http.ResponseWriter, r *http.Request) {
+	service := chi.URLParam(r, "service")
+	if !swarmRef.MatchString(service) {
+		writeError(w, http.StatusBadRequest, "invalid service id")
+		return
+	}
+	hostID, ok := h.clusterReadHost(w, r)
+	if !ok {
+		return
+	}
+	d, err := h.Hosts.SwarmService(r.Context(), hostID, service)
+	if err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clusterServiceResponse{ReadHost: hostID, SwarmServiceDetail: d})
+}
+
+type clusterTasksResponse struct {
+	ReadHost string `json:"read_host"`
+	agents.SwarmTasksResp
+}
+
+// ClusterTasks lists the cluster's tasks, newest first, only those of the
+// service query parameter when it is set.
+//
+//	GET /api/v1/clusters/{id}/tasks
+func (h *Handlers) ClusterTasks(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	if service != "" && !swarmRef.MatchString(service) {
+		writeError(w, http.StatusBadRequest, "invalid service id")
+		return
+	}
+	hostID, ok := h.clusterReadHost(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.Hosts.SwarmTasks(r.Context(), hostID, service)
+	if err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clusterTasksResponse{ReadHost: hostID, SwarmTasksResp: res})
+}
+
+type clusterNetworksResponse struct {
+	ReadHost string `json:"read_host"`
+	agents.SwarmNetworksResp
+}
+
+// ClusterNetworks lists the networks with Swarm scope (overlay, ingress).
+//
+//	GET /api/v1/clusters/{id}/networks
+func (h *Handlers) ClusterNetworks(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := h.clusterReadHost(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.Hosts.SwarmNetworks(r.Context(), hostID)
+	if err != nil {
+		writeClusterReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clusterNetworksResponse{ReadHost: hostID, SwarmNetworksResp: res})
 }

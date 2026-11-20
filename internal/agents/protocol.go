@@ -66,6 +66,12 @@ const (
 	// FrameReqSwarmNodes asks a Swarm manager for its node list
 	// (SwarmNodesResp); only sent to agents advertising CapSwarmNodes.
 	FrameReqSwarmNodes = "req.swarm.nodes"
+	// The Swarm read frames are answered only by a manager and only sent
+	// to agents advertising CapSwarmRead.
+	FrameReqSwarmServices       = "req.swarm.services"        // SwarmServicesResp
+	FrameReqSwarmServiceInspect = "req.swarm.service.inspect" // ResourceIDReq → SwarmServiceDetail
+	FrameReqSwarmTasks          = "req.swarm.tasks"           // SwarmTasksReq → SwarmTasksResp
+	FrameReqSwarmNetworks       = "req.swarm.networks"        // SwarmNetworksResp
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
@@ -214,6 +220,9 @@ const (
 	CapNetworkTopology = "networks.topology"
 	// CapSwarmNodes, agent: answers req.swarm.nodes.
 	CapSwarmNodes = "swarm.nodes"
+	// CapSwarmRead, agent: answers the Swarm service, task and network
+	// read frames, and refuses every Swarm frame unless it is a manager.
+	CapSwarmRead = "swarm.read"
 )
 
 // Stream control ops beyond the exec "resize".

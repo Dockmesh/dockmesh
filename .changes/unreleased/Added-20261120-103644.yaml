@@ -1,0 +1,3 @@
+kind: Added
+body: 'Swarm clusters: read the nodes, services, tasks and overlay networks of a cluster through its manager (API only for now); service details show env variable names and secret and config names, never their values'
+time: 2026-11-20T10:36:44.196629518Z

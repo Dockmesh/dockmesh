@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"net/netip"
 	"strings"
 
 	"github.com/moby/moby/api/types/swarm"
@@ -16,6 +17,10 @@ type SwarmNode struct {
 	Availability string `json:"availability,omitempty"`
 	Leader       bool   `json:"leader,omitempty"`
 	Reachability string `json:"reachability,omitempty"`
+	Addr         string `json:"addr,omitempty"`
+	Engine       string `json:"engine_version,omitempty"`
+	NanoCPUs     int64  `json:"nano_cpus,omitempty"`
+	MemoryBytes  int64  `json:"memory_bytes,omitempty"`
 }
 
 // SwarmNodesResp is the agent's answer to FrameReqSwarmNodes.
@@ -36,6 +41,10 @@ func SwarmNodesFrom(nodes []swarm.Node) []SwarmNode {
 			Role:         string(n.Spec.Role),
 			State:        string(n.Status.State),
 			Availability: string(n.Spec.Availability),
+			Addr:         n.Status.Addr,
+			Engine:       n.Description.Engine.EngineVersion,
+			NanoCPUs:     n.Description.Resources.NanoCPUs,
+			MemoryBytes:  n.Description.Resources.MemoryBytes,
 		}
 		if n.ManagerStatus != nil {
 			sn.Leader = n.ManagerStatus.Leader
@@ -69,9 +78,22 @@ func SanitizeSwarmNodes(nodes []SwarmNode) []SwarmNode {
 			Availability: token(n.Availability, 16, ""),
 			Leader:       n.Leader && n.Role == "manager",
 			Reachability: token(n.Reachability, 16, ""),
+			Addr:         addr(n.Addr),
+			Engine:       token(strings.ToLower(n.Engine), 64, ".-+~"),
+			NanoCPUs:     max(n.NanoCPUs, 0),
+			MemoryBytes:  max(n.MemoryBytes, 0),
 		})
 	}
 	return out
+}
+
+// addr returns s when it is an IP address, else "".
+func addr(s string) string {
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return ""
+	}
+	return a.String()
 }
 
 // hostname returns s when it is a plausible host name (letters, digits,
