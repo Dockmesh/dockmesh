@@ -230,16 +230,19 @@
 
   async function bulkUpgrade() {
     bulkBusy = true;
-    let ok = 0, fail = 0;
+    let ok = 0, queued = 0, fail = 0;
     for (const id of selected) {
       const r = rows.find((x) => x.id === id);
       if (!r || r.kind === 'local') continue;
-      try { await api.agents.upgrade(id); ok++; }
-      catch { fail++; }
+      try {
+        const res = await api.agents.upgrade(id);
+        if (res.status === 'queued') queued++; else ok++;
+      } catch { fail++; }
     }
     bulkBusy = false;
     selected = new Set();
-    toast[fail === 0 ? 'success' : 'info'](m.hosts_n_upgraded({ n: ok }), fail > 0 ? m.hosts_n_failed({ n: fail }) : undefined);
+    const detail = [queued > 0 ? m.hosts_n_queued({ n: queued }) : '', fail > 0 ? m.hosts_n_failed({ n: fail }) : ''].filter(Boolean).join(' · ');
+    toast[fail === 0 ? 'success' : 'info'](m.hosts_n_upgraded({ n: ok }), detail || undefined);
     await loadAll();
   }
   async function bulkRevoke() {

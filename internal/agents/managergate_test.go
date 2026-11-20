@@ -88,6 +88,12 @@ func (f *fleet) comeBack(id string) {
 	f.connect(id, version.Version, info)
 }
 
+func (f *fleet) offline(id string) {
+	f.svc.mu.Lock()
+	delete(f.svc.connected, id)
+	f.svc.mu.Unlock()
+}
+
 func (f *fleet) sent() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -176,8 +182,7 @@ func TestManagersUpdateOneAtATime(t *testing.T) {
 }
 
 // A manager that is not back within the hold time lets the next one go
-// on, with a notice for admins; one that comes back late does not undo
-// that.
+// on, with a notice for admins; coming back late sends nothing more.
 func TestManagerTimeoutGoesOnWithNotice(t *testing.T) {
 	f := newFleet(t, 50*time.Millisecond)
 	m1 := f.connect("m1", "old", managerOf("c1"))
@@ -202,6 +207,8 @@ func TestManagerTimeoutGoesOnWithNotice(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("%d timeout notices", n)
 	}
+	f.comeBack("m1")
+	f.stays(2)
 }
 
 // A manager that is offline is never waited for, and one that goes
@@ -209,31 +216,28 @@ func TestManagerTimeoutGoesOnWithNotice(t *testing.T) {
 func TestOfflineManagerIsSkipped(t *testing.T) {
 	f := newFleet(t, time.Minute)
 	f.connect("m1", "old", managerOf("c1"))
-	m2 := f.connect("m2", "old", managerOf("c1"))
+	f.connect("m2", "old", managerOf("c1"))
 	f.connect("m3", "old", managerOf("c1"))
 	ctx := context.Background()
 
 	// m2 drops off before the update starts; the evaluator only sees the
 	// connected agents.
-	detachM2 := f.svc.AttachLoopback(m2)
-	detachM2()
+	f.offline("m2")
 	f.c.settings = mapSettings{UpgradeModeKey: UpgradeModeAuto}
 	f.c.Evaluate(ctx)
 	f.waitSent(1)
 	f.stays(1)
-	if s := f.sent(); s[0] != "m1" && s[0] != "m3" {
-		t.Fatalf("dispatched %v", s)
-	}
 	first := f.sent()[0]
+	if first != "m1" && first != "m3" {
+		t.Fatalf("dispatched %v", f.sent())
+	}
 	other := "m3"
 	if first == "m3" {
 		other = "m1"
 	}
 
 	// The queued one goes offline; when the first is back nobody is left.
-	f.svc.mu.Lock()
-	delete(f.svc.connected, other)
-	f.svc.mu.Unlock()
+	f.offline(other)
 	f.comeBack(first)
 	f.stays(1)
 	if slices.Contains(f.sent(), "m2") {

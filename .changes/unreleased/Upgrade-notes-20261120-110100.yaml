@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'On Swarm managers, agent updates now wait for each other: `POST /api/v1/agents/{id}/upgrade` can answer 202 with status `queued`, and "Update all" on several managers of one Swarm takes a few minutes longer'
+body: 'Agent upgrades on the managers of one Swarm wait for each other: `POST /api/v1/agents/{id}/upgrade` can answer 202 with status `queued`, and upgrading several managers of one Swarm takes a few minutes longer'
 time: 2026-11-20T11:01:00.000000000Z
 custom:
     Audience: admins

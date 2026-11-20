@@ -2762,6 +2762,7 @@
   "hosts_n_pending": "{n} pending",
   "hosts_n_revoked": "{n} revoked",
   "hosts_n_upgraded": "{n} upgraded",
+  "hosts_n_queued": "{n} queued behind another Swarm manager",
   "hosts_names_offline": "{names} offline",
   "hosts_no_access": "No access",
   "hosts_no_access_hint": "Host management needs the hosts.view permission.",

@@ -143,8 +143,7 @@ func (c *UpgradeController) whenSlotFree(ctx context.Context, ag *ConnectedAgent
 	if err != nil {
 		return
 	}
-	if cur := c.agents.GetConnected(ag.ID); cur != ag || agentIsUpToDate(ag) {
-		// Gone, reconnected meanwhile, or no longer behind.
+	if cur := c.agents.GetConnected(ag.ID); cur != ag {
 		release()
 		return
 	}
@@ -164,8 +163,7 @@ func (c *UpgradeController) dispatchManager(ctx context.Context, ag *ConnectedAg
 }
 
 // holdManager keeps the Swarm's slot until ag is back with the server's
-// build, or managerHoldMax passed; then the next manager goes on and
-// admins get a notice.
+// build, or raises a notice for admins after managerHoldMax.
 func (c *UpgradeController) holdManager(ctx context.Context, ag *ConnectedAgent, release func()) {
 	defer release()
 	deadline := time.NewTimer(c.managerHoldMax)
