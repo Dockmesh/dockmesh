@@ -176,6 +176,16 @@ export interface Cluster {
   members: ClusterMember[];
 }
 
+export interface ClusterAccess {
+  assignments: { id: number; username: string; role: string; via?: string }[];
+  invites: { id: number; email_hint?: string; role: string; expired: boolean }[];
+  mappings: { kind: 'oidc' | 'saml' | 'ldap' | 'oauth2'; provider: string; group: string; role: string }[];
+  tokens: { id: number; name: string; owner?: string }[];
+  counts: { assignments: number; invites: number; mappings: number; tokens: number };
+  // False when names the caller may not see were left out of the lists.
+  complete: boolean;
+}
+
 export interface ClusterCandidate {
   cluster_id: string;
   managers: { host_id: string; host_name: string; node_id: string }[];
@@ -2289,6 +2299,8 @@ export const api = {
     candidates: () => request<ClusterCandidate[]>('/clusters/candidates'),
     create: (hostId: string, name?: string) =>
       request<Cluster>('/clusters', { method: 'POST', body: JSON.stringify({ host_id: hostId, name: name ?? '' }) }),
+    access: (id: string) => request<ClusterAccess>(`/clusters/${encodeURIComponent(id)}/access`),
+    delete: (id: string) => request<void>(`/clusters/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
 
   hosts: {

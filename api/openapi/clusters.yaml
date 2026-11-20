@@ -76,8 +76,18 @@ paths:
     delete:
       operationId: clusters.delete
       tags: [clusters]
-      summary: Delete a cluster and its memberships
-      description: Needs the global-only `clusters.create`. Nothing changes on the Swarm. Audited as `cluster.delete`.
+      summary: Delete a cluster, its memberships and the access on its scope
+      description: |
+        Needs the global-only `clusters.create`. In one transaction with the
+        cluster, deletes the role assignments and IdP group mappings on its
+        `cluster` scope, revokes API tokens restricted to it (never widens
+        them), and drops the cluster from unused invites; an invite left
+        with no scope expires. `GET /clusters/{id}/access` lists all of it
+        beforehand. The caller must be able to grant every assignment and
+        group mapping role on the cluster scope, and needs
+        `tokens.manage_others` when another user's token would be revoked.
+        Nothing changes on the Swarm. Audited as `cluster.delete` with the
+        counts per kind and the revoked token ids.
       parameters:
         - name: id
           in: path
@@ -85,6 +95,46 @@ paths:
           schema: {type: string}
       responses:
         "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403":
+          description: |
+            Missing `clusters.create`, or (code `cluster_access_above_own`)
+            the cluster holds access above the caller's own; the message
+            names the assignment, mapping or token that blocks the delete.
+            Nothing was deleted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500":
+          description: Deleting failed and nothing changed, or (code `cluster_deleted_cache_stale`) everything was deleted but the permission cache could not be reloaded.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /clusters/{id}/access:
+    get:
+      operationId: clusters.access
+      tags: [clusters]
+      summary: What deleting a cluster removes
+      description: |
+        Needs the global-only `clusters.create`. Lists the role assignments,
+        unused invites, IdP group mappings (OIDC, SAML, LDAP, OAuth2) and
+        active API tokens on the cluster's scope. `counts` always covers
+        everything; the lists name users, invites and mappings only for
+        callers with `users.view` on everything, and other users' tokens
+        only with `tokens.manage_others`. `complete` is false when names
+        were left out.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Access on the cluster scope.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ClusterAccess"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
@@ -138,3 +188,55 @@ components:
               node_id: {type: string}
               role: {type: string, enum: [manager, worker]}
               linked_at: {type: string, format: date-time}
+    ClusterAccess:
+      type: object
+      required: [assignments, invites, mappings, tokens, counts, complete]
+      properties:
+        counts:
+          type: object
+          required: [assignments, invites, mappings, tokens]
+          properties:
+            assignments: {type: integer}
+            invites: {type: integer}
+            mappings: {type: integer}
+            tokens: {type: integer}
+        complete: {type: boolean}
+        assignments:
+          type: array
+          items:
+            type: object
+            required: [id, username, role]
+            properties:
+              id: {type: integer, format: int64}
+              username: {type: string}
+              role: {type: string}
+              via: {type: string, description: IdP group of an assignment made by a group mapping.}
+        invites:
+          type: array
+          items:
+            type: object
+            required: [id, role, expired]
+            properties:
+              id: {type: integer, format: int64}
+              email_hint: {type: string}
+              role: {type: string}
+              expired: {type: boolean, description: The invite has no other scope and expires with the delete.}
+        mappings:
+          type: array
+          items:
+            type: object
+            required: [kind, provider, group, role]
+            properties:
+              kind: {type: string, enum: [oidc, saml, ldap, oauth2]}
+              provider: {type: string}
+              group: {type: string}
+              role: {type: string}
+        tokens:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: {type: integer, format: int64}
+              name: {type: string}
+              owner: {type: string}
