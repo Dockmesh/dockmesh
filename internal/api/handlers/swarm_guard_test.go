@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,20 +17,33 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/operations"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/dockmesh/dockmesh/internal/updater"
 )
 
 var swarmTaskLabels = map[string]string{
-	updater.LabelSwarmServiceID:   "x1y2z3",
-	updater.LabelSwarmServiceName: "web",
+	swarmtask.LabelServiceID:   "x1y2z3",
+	swarmtask.LabelServiceName: "web",
 }
 
 // swarmGuardEnv is an authz env whose Docker daemon knows a Swarm task
 // container "task", a second one "task2" and a plain container "plain",
 // and fails every other call.
 func swarmGuardEnv(t *testing.T) (*authzEnv, context.Context) {
+	e, ctx, _ := swarmGuardEnvRestarts(t)
+	return e, ctx
+}
+
+// swarmGuardEnvRestarts also returns the ids the fake daemon was asked to
+// restart; it answers those with 204.
+func swarmGuardEnvRestarts(t *testing.T) (*authzEnv, context.Context, func() []string) {
 	t.Helper()
+	var (
+		mu        sync.Mutex
+		restarted []string
+	)
 	containers := map[string]map[string]string{
 		"task":  swarmTaskLabels,
 		"task2": swarmTaskLabels,
@@ -38,6 +52,18 @@ func swarmGuardEnv(t *testing.T) (*authzEnv, context.Context) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
+		if strings.HasSuffix(path, "/_ping") {
+			w.Header().Set("Api-Version", "1.47")
+			_, _ = w.Write([]byte("OK"))
+			return
+		}
+		if i := strings.Index(path, "/containers/"); i >= 0 && r.Method == http.MethodPost && strings.HasSuffix(path, "/restart") {
+			mu.Lock()
+			restarted = append(restarted, strings.TrimSuffix(path[i+len("/containers/"):], "/restart"))
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if i := strings.Index(path, "/containers/"); i >= 0 && strings.HasSuffix(path, "/json") {
 			id := strings.TrimSuffix(path[i+len("/containers/"):], "/json")
 			if labels, ok := containers[id]; ok {
@@ -65,10 +91,16 @@ func swarmGuardEnv(t *testing.T) (*authzEnv, context.Context) {
 
 	e := newAuthzEnv(t)
 	e.h.Docker = dc
+	e.h.Hosts = host.NewRegistry(dc, nil)
 	e.h.Updater = updater.NewService(dc, e.db)
 	e.h.Operations = operations.New(e.db)
 	u := e.user("root", "admin")
-	return e, middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})
+	ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID)})
+	return e, ctx, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), restarted...)
+	}
 }
 
 func swarmGuardCall(ctx context.Context, handler http.HandlerFunc, id string, body any) *httptest.ResponseRecorder {
@@ -116,6 +148,41 @@ func TestUpdateAndRollbackRefuseSwarmTask(t *testing.T) {
 			}
 			if tt.wantSwarm && (got.Service != "web" || got.Error != "Managed by Swarm service web.") {
 				t.Fatalf("body %s", rr.Body)
+			}
+		})
+	}
+}
+
+// Restart answers 409 swarm_managed for a Swarm task container and never
+// reaches the daemon; a plain container restarts as before.
+func TestRestartRefusesSwarmTask(t *testing.T) {
+	tests := []struct {
+		name          string
+		container     string
+		want          int
+		wantRestarted bool
+	}{
+		{"task", "task", http.StatusConflict, false},
+		{"plain", "plain", http.StatusNoContent, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, ctx, restarted := swarmGuardEnvRestarts(t)
+			rr := swarmGuardCall(ctx, e.h.RestartContainer, tt.container, nil)
+			if rr.Code != tt.want {
+				t.Fatalf("status %d, want %d: %s", rr.Code, tt.want, rr.Body)
+			}
+			if got := restarted(); (len(got) == 1 && got[0] == tt.container) != tt.wantRestarted || len(got) > 1 {
+				t.Fatalf("daemon restarts %v, want restarted=%v", got, tt.wantRestarted)
+			}
+			if !tt.wantRestarted {
+				var got swarmSkip
+				if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.Code != codeSwarmManaged || got.Service != "web" {
+					t.Fatalf("body %s", rr.Body)
+				}
 			}
 		})
 	}

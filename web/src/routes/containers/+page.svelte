@@ -251,9 +251,13 @@
     items.push({ label: m.containers_menu_inspect(), href: detailHref(c, 'inspect') });
     if (canControl) {
       items.push({ separator: true });
-      if (running) {
-        const hint = c.swarm_service ? m.containers_swarm_new_task() : undefined;
-        items.push({ label: m.common_restart(), hint, onclick: () => action(c, 'restart') }, { label: m.common_stop(), hint, onclick: () => action(c, 'stop') });
+      if (running && c.swarm_service) {
+        items.push(
+          { label: m.containers_swarm_replace_task(), hint: m.containers_swarm_replace_hint(), onclick: () => replaceTask(c) },
+          { label: m.common_stop(), hint: m.containers_swarm_new_task(), onclick: () => action(c, 'stop') },
+        );
+      } else if (running) {
+        items.push({ label: m.common_restart(), onclick: () => action(c, 'restart') }, { label: m.common_stop(), onclick: () => action(c, 'stop') });
       } else {
         items.push({ label: m.common_start(), onclick: () => action(c, 'start') });
       }
@@ -347,6 +351,16 @@
     }
   }
 
+  async function replaceTask(c: Container) {
+    try {
+      await api.containers.stop(c.Id, c.host_id ?? hosts.id);
+      toast.success(m.containers_swarm_replace_done(), nameOf(c));
+      await load();
+    } catch (err) {
+      toast.error(m.containers_op_failed({ op: opName('stop') }), err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function bulkAction(op: 'start' | 'stop' | 'restart' | 'remove') {
     if (selected.size === 0) return;
     if (op === 'remove' && !(await confirm.ask({
@@ -356,8 +370,10 @@
       confirmLabel: m.common_remove(), danger: true,
     }))) return;
     bulkBusy = true;
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, swarmSkipped = 0;
     for (const c of containers.filter((c) => selected.has(c.Id))) {
+      // The server refuses these; counting them apart says why.
+      if (op === 'restart' && c.swarm_service) { swarmSkipped++; continue; }
       try {
         const h = c.host_id ?? hosts.id;
         if (op === 'start')        await api.containers.start(c.Id, h);
@@ -367,7 +383,11 @@
         ok++;
       } catch { fail++; }
     }
-    toast.success(m.containers_bulk_result({ op: opName(op), ok }) + (fail ? m.containers_bulk_result_failed({ fail }) : ''));
+    toast.success(
+      m.containers_bulk_result({ op: opName(op), ok }) +
+        (fail ? m.containers_bulk_result_failed({ fail }) : '') +
+        (swarmSkipped ? m.containers_bulk_result_swarm_skipped({ count: swarmSkipped }) : ''),
+    );
     selected = new Set();
     bulkBusy = false;
     await load();

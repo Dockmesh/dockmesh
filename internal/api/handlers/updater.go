@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
 )
@@ -43,7 +44,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	op := h.startImageUpdateOp(dr, id, "", false)
 	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
 	op.Finish(err)
-	if svc, ok := updater.AsSwarmManaged(err); ok {
+	if svc, ok := swarmtask.AsManaged(err); ok {
 		writeSwarmManaged(w, svc)
 		return
 	}
@@ -92,7 +93,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Updater.Rollback(r.Context(), id, req.HistoryID, middleware.UserID(r.Context()))
-	if svc, ok := updater.AsSwarmManaged(err); ok {
+	if svc, ok := swarmtask.AsManaged(err); ok {
 		writeSwarmManaged(w, svc)
 		return
 	}
@@ -206,7 +207,7 @@ func (h *Handlers) writeIfSwarmTask(w http.ResponseWriter, r *http.Request, cont
 	if err != nil || info.Config == nil {
 		return false
 	}
-	if svc := updater.SwarmService(info.Config.Labels); svc != "" {
+	if svc := swarmtask.Service(info.Config.Labels); svc != "" {
 		writeSwarmManaged(w, svc)
 		return true
 	}
@@ -220,7 +221,7 @@ func writeSwarmManaged(w http.ResponseWriter, service string) {
 func newSwarmSkip(containerID, service string) swarmSkip {
 	return swarmSkip{
 		ContainerID: containerID,
-		Error:       (&updater.SwarmManagedError{Service: service}).Error(),
+		Error:       (&swarmtask.ManagedError{Service: service}).Error(),
 		Code:        codeSwarmManaged,
 		Service:     service,
 	}

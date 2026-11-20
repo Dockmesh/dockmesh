@@ -36,6 +36,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/swarmtask"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -214,7 +215,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
 	info := inspected.Container
-	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
+	if err := swarmtask.Refuse(containerLabels(&info)); err != nil {
 		return nil, err
 	}
 	st, err := s.stackTarget(ctx, &info)
@@ -362,7 +363,7 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
 	info := inspected.Container
-	if err := refuseSwarmTask(containerLabels(&info)); err != nil {
+	if err := swarmtask.Refuse(containerLabels(&info)); err != nil {
 		return nil, err
 	}
 	var e Entry

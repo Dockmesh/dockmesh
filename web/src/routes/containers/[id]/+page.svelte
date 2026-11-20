@@ -77,7 +77,7 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
-  // Same rule as updater.SwarmService on the server.
+  // Same rule as swarmtask.Service on the server.
   const swarmService = $derived.by(() => {
     const labels = info?.Config?.Labels as Record<string, string> | undefined;
     const id = labels?.['com.docker.swarm.service.id'];
@@ -857,6 +857,16 @@
     }
   }
 
+  async function replaceTask() {
+    try {
+      await api.containers.stop(id, targetHost);
+      toast.success(m.containers_swarm_replace_done());
+      await loadInfo();
+    } catch (err) {
+      toast.error(m.containers_op_failed({ op: OP_NAME.stop() }), err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   // Kill is separate because it's destructive + carries a signal. Default
   // signal "" lets Docker pick SIGKILL.
   async function killContainer() {
@@ -1071,8 +1081,11 @@
       {#if canControl}
         {#if info.State?.Paused}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> {m.containers_detail_resume()}</button>
+        {:else if info.State?.Running && swarmService}
+          <span class="dm-sub">{m.containers_swarm_new_task()}</span>
+          <button type="button" class="dm-btn dm-btn-primary" title={m.containers_swarm_replace_hint()} onclick={replaceTask}><RotateCw size={14} /> {m.containers_swarm_replace_task()}</button>
+          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else if info.State?.Running}
-          {#if swarmService}<span class="dm-sub">{m.containers_swarm_new_task()}</span>{/if}
           <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> {m.common_restart()}</button>
           <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> {m.common_stop()}</button>
         {:else}

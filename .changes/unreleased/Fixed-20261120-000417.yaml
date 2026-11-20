@@ -1,0 +1,3 @@
+kind: Fixed
+body: Restarting a Swarm task container is refused (409 swarm_managed), since Docker brought the old container back next to Swarm's replacement; the container page and list offer Replace task instead, which stops it so Swarm starts a new task
+time: 2026-11-20T00:04:17.003984874Z
