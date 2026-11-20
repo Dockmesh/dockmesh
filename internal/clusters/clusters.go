@@ -155,6 +155,8 @@ type Service struct {
 	addrWarn map[string]string
 	// sole: the cluster's origin was its only manager at the last check.
 	sole map[string]bool
+	// reader is the host each cluster is read through (see readers).
+	reader map[string]string
 	now  func() time.Time
 }
 
@@ -540,92 +542,43 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, c := range clusters {
-		list, state := s.askOrigin(ctx, c, snap)
+		list, state, by := s.askManagers(ctx, c, snap)
 		nodes := list.Nodes
 		s.record(c.ID, state, nodes, time.Now())
 		if nodes == nil {
 			continue
 		}
 		s.mu.Lock()
-		err := s.link(ctx, c.ID, c.OriginHost, nodes, snap)
+		err := s.link(ctx, c.ID, by, nodes, snap)
 		s.mu.Unlock()
 		if err != nil {
 			return fmt.Errorf("cluster %s: %w", c.Name, err)
 		}
-		if err := s.reconcileIdentity(ctx, c.ID, list, snap); err != nil {
+		if err := s.reconcileIdentity(ctx, c.ID, by, list, snap); err != nil {
 			return fmt.Errorf("cluster %s: %w", c.Name, err)
 		}
 	}
 	return nil
 }
 
-// ReadHost returns the host the cluster's Swarm state is read through:
-// its origin, checked live to still be the linked manager node of this
-// Swarm.
-func (s *Service) ReadHost(ctx context.Context, id string) (string, error) {
-	c, err := s.get(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	hctx, cancel := context.WithTimeout(ctx, hostTimeout)
-	defer cancel()
-	info, err := s.hosts.CurrentDaemonInfo(hctx, c.OriginHost)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrUnreadable, err)
-	}
-	if !originIsLinkedManager(c, info) {
-		return "", ErrUnreadable
-	}
-	return c.OriginHost, nil
-}
-
 // linkedNode returns the node ID c's origin is linked as, or "".
-func linkedNode(c Cluster) string {
+func linkedNode(c Cluster) string { return nodeOf(c, c.OriginHost) }
+
+// nodeOf returns the node ID host is linked as in c, or "".
+func nodeOf(c Cluster, host string) string {
 	for _, m := range c.Members {
-		if m.HostID == c.OriginHost {
+		if m.HostID == host {
 			return m.NodeID
 		}
 	}
 	return ""
 }
 
-// originIsLinkedManager reports whether info shows c's origin as the
-// active manager node it is linked as.
-func originIsLinkedManager(c Cluster, info *agents.DaemonInfo) bool {
-	linked := linkedNode(c)
+// isLinkedManager reports whether info shows host as the active manager
+// node of c it is linked as.
+func isLinkedManager(c Cluster, host string, info *agents.DaemonInfo) bool {
+	linked := nodeOf(c, host)
 	return linked != "" && activeManager(info) && info.Swarm.ClusterID == c.ID && info.Swarm.NodeID == linked
-}
-
-// askOrigin returns the origin's node list and the cluster state it
-// shows. The list is nil when the origin is not the linked manager node
-// of this Swarm right now. A linked origin whose dockerd no longer knows
-// the cluster, or refuses the list for want of a leader, has lost quorum.
-func (s *Service) askOrigin(ctx context.Context, c Cluster, snap map[string]hostState) (agents.SwarmNodesResp, string) {
-	var none agents.SwarmNodesResp
-	linked := linkedNode(c)
-	st := snap[c.OriginHost]
-	sw := st.swarm
-	if linked == "" || !st.known || st.offline || sw == nil || sw.NodeState != "active" || sw.Role != RoleManager || sw.NodeID != linked {
-		return none, StateUnreachable
-	}
-	if sw.ClusterID == "" {
-		return none, StateNoQuorum
-	}
-	if !originIsLinkedManager(c, &agents.DaemonInfo{Swarm: sw}) {
-		return none, StateUnreachable
-	}
-	list, err := s.nodesOf(ctx, c.OriginHost)
-	if err != nil {
-		slog.Debug("swarm node list failed", "cluster", c.ID, "host", c.OriginHost, "err", err)
-		if lostQuorum(err) {
-			return none, StateNoQuorum
-		}
-		return none, StateUnreachable
-	}
-	if !listsManager(list.Nodes, linked) {
-		return none, StateUnreachable
-	}
-	return list, stateOf(list.Nodes)
 }
 
 // claims reports whether a host's Swarm state claims node n of cluster

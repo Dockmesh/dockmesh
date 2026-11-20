@@ -208,6 +208,9 @@ export interface ClusterStatus {
   leader?: string;
   checked_at?: string;
   known_at?: string;
+  read_host?: string;
+  verified_managers: number;
+  failover: boolean;
 }
 
 export interface ClusterMembership {

@@ -46,12 +46,15 @@ export function clusterSummary(st: ClusterStatus | undefined): string {
   return parts.join(' · ');
 }
 
-/** The group row's second line: what the managing node last said. */
-export function clusterLine(st: ClusterStatus | undefined): string {
+/** The group row's second line: what the managing node last said, and
+ *  which host it was read through when readName is given. */
+export function clusterLine(st: ClusterStatus | undefined, readName?: string): string {
   if (!st || st.state === 'unknown') return m.cluster_line_not_checked();
   if (st.state === 'unreachable') return st.known_at ? m.cluster_line_last_known({ ago: fmtAgo(st.known_at) }) : clusterStateLabel(st.state);
   if (st.state === 'no_quorum') return m.cluster_line_no_quorum();
-  return st.leader ? m.cluster_line_leader({ leader: st.leader, ago: fmtAgo(st.checked_at) }) : m.cluster_line_checked({ ago: fmtAgo(st.checked_at) });
+  const base = st.leader ? m.cluster_line_leader({ leader: st.leader, ago: fmtAgo(st.checked_at) }) : m.cluster_line_checked({ ago: fmtAgo(st.checked_at) });
+  if (!readName) return base;
+  return `${base} · ${st.failover ? m.cluster_line_read_failover({ host: readName }) : m.cluster_line_read({ host: readName })}`;
 }
 
 /** "Manager · reachable · leader" for a host page. */

@@ -144,6 +144,10 @@
   const originNode = $derived(nodes.find((n) => n.host_id === cluster?.origin_host));
   // Hosts the caller can't view are named by their node's hostname.
   const originName = $derived(cluster ? (hostNames[cluster.origin_host] ?? (originNode ? nodeLabel(originNode) : cluster.origin_host)) : '');
+  const readId = $derived(st?.read_host ?? cluster?.origin_host ?? '');
+  const readNode = $derived(nodes.find((n) => n.host_id === readId));
+  const readName = $derived(readId ? (hostNames[readId] ?? (readNode ? nodeLabel(readNode) : readId)) : '');
+  const failover = $derived(!!st?.failover);
   const managers = $derived(st?.managers ?? nodes.filter((n) => n.role === 'manager').length);
   const reachable = $derived(st?.managers_reachable ?? 0);
   const quorum = $derived(Math.floor(managers / 2) + 1);
@@ -335,7 +339,7 @@
     </div>
     <div class="dm-sub sub" data-testid="cluster-sub">
       {m.cl_sub_swarm()} · {m.cl_sub_id()} <span class="dm-mono" title={cluster.id}>{cluster.id.slice(0, 12)}</span>
-      · {m.cl_sub_managed({ host: originName })}{originNode?.leader ? ` (${m.cl_mgr_leader().toLowerCase()})` : ''}
+      · {m.cl_sub_managed({ host: readName })}{readNode?.leader ? ` (${m.cl_mgr_leader().toLowerCase()})` : ''}{failover ? ` · ${m.cl_sub_failover({ host: readName })}` : ''}
       · {m.cl_sub_added({ ago: fmtAgo(cluster.created_at) })}
     </div>
 
@@ -379,7 +383,7 @@
         <Info size={14} strokeWidth={1.8} />
         <div>
           <span>
-            {m.cl_res_read({ host: originName })}
+            {failover ? m.cl_res_failover({ host: readName, n: st?.verified_managers ?? 0 }) : `${m.cl_res_read({ host: readName })} ${m.cl_res_need_two()}`}
             {managers < 3 ? m.cl_res_small() : managers === 3 ? m.cl_res_one() : m.cl_res_many({ n: managers - quorum })}
           </span>
         </div>
