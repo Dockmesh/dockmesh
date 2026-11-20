@@ -37,7 +37,6 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"cannot read the cluster's Swarm state", "cluster_swarm_unreadable"},
 	{"service not found", "swarm_service_not_found"},
 	{"invalid service id", "invalid_service_id"},
-	{"the cluster's origin manager can't be read right now", "cluster_origin_unreadable"},
 	{"the cluster and its access were deleted, but the permission cache could not be reloaded; restart Dockmesh so the removed roles stop applying", "cluster_deleted_cache_stale"},
 	{"host is not a name Caddy can serve", "setup_proxy_host_invalid"},
 	{"cert_file and key_file must be absolute paths", "cert_paths_not_absolute"},
