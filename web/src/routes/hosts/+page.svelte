@@ -563,7 +563,7 @@
             <span role="cell" class="caret" title={open ? m.hosts_cluster_collapse({ name: g.name }) : m.hosts_cluster_expand({ name: g.name })}>
               {#if open}<ChevronDown size={13} strokeWidth={2} />{:else}<ChevronRight size={13} strokeWidth={2} />{/if}
             </span>
-            <span role="cell" class="dm-nm">
+            <span role="cell" class="dm-nm gnm">
               <span class="nmline">
                 <span class="gname">{g.name}</span>
                 {#if g.cluster}
@@ -572,7 +572,6 @@
               </span>
               <small>{g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}</small>
             </span>
-            <span role="cell" class="dm-dim">{m.hosts_kind_cluster()}</span>
             <span role="cell" class="gline dm-dim dm-trunc">{g.cluster ? clusterLine(st) : ''}</span>
             <span role="cell"></span>
             <span role="cell"></span>
@@ -622,7 +621,7 @@
         <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
         {#if membership[r.id]}
           {@const ms = membership[r.id]}
-          <span class="dm-pill" title={m.hosts_cluster_member_title({ cluster: ms.cluster_name })}>{ms.role === 'manager' ? m.hosts_cluster_role_manager() : m.hosts_cluster_role_worker()}</span>
+          <span class="dm-pill" title={m.hosts_cluster_member_title({ cluster: ms.cluster_name })}>{ms.role === 'manager' ? m.hosts_member_role_manager() : m.hosts_member_role_worker()}</span>
           {#if ms.node?.leader}<span class="lead">{m.hosts_cluster_leader()}</span>{/if}
         {/if}
         {#if waitingSetup(r)}
@@ -742,6 +741,7 @@
   .grp { cursor: pointer; }
   .grp .caret { display: inline-flex; align-items: center; color: var(--muted); }
   .grp .gname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grp .gnm { grid-column: span 2; }
   .grp .gline { grid-column: span 3; font-size: var(--fs-xs); }
   .child .dm-nm { padding-left: 18px; }
   .lead { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--accent); }
