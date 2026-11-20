@@ -458,6 +458,12 @@ func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
 		{"recorded location emptied outside", func(t *testing.T, lt *locTest, r *Run) {
 			hide(t, lt.rootA, r.TargetPath)
 		}},
+		{"another file at a legacy run's path", func(t *testing.T, lt *locTest, r *Run) {
+			legacy(t, lt.svc, r.ID)
+			if err := os.WriteFile(filepath.Join(lt.rootA, filepath.FromSlash(r.TargetPath)), []byte("not this run's archive"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -471,6 +477,9 @@ func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
 			}
 			if got.PrunedAt != nil {
 				t.Fatal("retention marked a run pruned whose archive it did not find")
+			}
+			if tc.name == "another file at a legacy run's path" && !exists(lt.rootA, old.TargetPath) {
+				t.Fatal("retention deleted a file that is not the run's archive")
 			}
 		})
 	}

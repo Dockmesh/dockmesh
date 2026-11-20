@@ -310,7 +310,8 @@ func (s *store) finishRun(ctx context.Context, runID int64, status string, size 
 // touch another job's archives or files Dockmesh didn't record.
 func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, target_path, finished_at, started_at, target_id, target_location
+		SELECT id, target_path, finished_at, started_at, target_id, target_location,
+		       COALESCE(sha256, ''), COALESCE(size_bytes, 0)
 		FROM backup_runs
 		WHERE job_id = ? AND status IN ('success', 'success_with_warnings')
 		  AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
@@ -325,7 +326,7 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 		var finished sql.NullTime
 		var tid sql.NullInt64
 		var loc sql.NullString
-		if err := rows.Scan(&r.ID, &r.TargetPath, &finished, &r.StartedAt, &tid, &loc); err != nil {
+		if err := rows.Scan(&r.ID, &r.TargetPath, &finished, &r.StartedAt, &tid, &loc, &r.SHA256, &r.SizeBytes); err != nil {
 			return nil, err
 		}
 		if finished.Valid {

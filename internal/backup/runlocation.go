@@ -204,7 +204,11 @@ func holdsArchive(ctx context.Context, t targets.Target, run *Run) (bool, error)
 	}
 	defer rc.Close()
 	h := sha256.New()
-	n, err := io.Copy(h, ctxReader{ctx: ctx, r: rc})
+	var src io.Reader = ctxReader{ctx: ctx, r: rc}
+	if run.SizeBytes > 0 {
+		src = io.LimitReader(src, run.SizeBytes+1)
+	}
+	n, err := io.Copy(h, src)
 	if err != nil {
 		return false, err
 	}
@@ -431,6 +435,7 @@ func (s *store) stampLegacyRuns(ctx context.Context, loc *RunLocation, targetID,
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_runs SET target_id = ?, target_location = ?
 		WHERE target_location IS NULL AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
+		  AND status != 'running'
 		  AND (? = 0 OR job_id IN (SELECT id FROM backup_jobs WHERE target_id = ?))
 		  AND (? = 0 OR job_id = ?)
 		  AND started_at >= COALESCE(

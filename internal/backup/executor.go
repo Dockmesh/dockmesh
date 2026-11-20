@@ -748,11 +748,26 @@ func (e *Executor) deleteArchive(ctx context.Context, job *Job, cur targets.Targ
 		}
 		t = at
 	}
-	err := t.Delete(ctx, r.TargetPath)
-	if errors.Is(err, fs.ErrNotExist) && t != cur && r.Location.Inferred {
-		err = cur.Delete(ctx, r.TargetPath)
+	// Where the run wrote is a guess, so only a file with its hash goes.
+	del := func(t targets.Target) error {
+		if !partial && guessed(&r) && r.SHA256 != "" {
+			match, err := holdsArchive(ctx, t, &r)
+			if err != nil {
+				return err
+			}
+			if !match {
+				return errOtherFile
+			}
+		}
+		return t.Delete(ctx, r.TargetPath)
+	}
+	err := del(t)
+	if (errors.Is(err, fs.ErrNotExist) || errors.Is(err, errOtherFile)) && t != cur && r.Location.Inferred {
+		err = del(cur)
 	}
 	switch {
+	case errors.Is(err, errOtherFile):
+		return fmt.Errorf("the file at %s is not the archive of run %d, so it is kept and the run stays listed", r.TargetPath, r.ID)
 	case errors.Is(err, fs.ErrNotExist) && partial: // nothing to delete; prune below
 	case errors.Is(err, fs.ErrNotExist) && r.Location == nil:
 		return fmt.Errorf("archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target, so the run stays listed", r.ID)
@@ -763,6 +778,8 @@ func (e *Executor) deleteArchive(ctx context.Context, job *Job, cur targets.Targ
 	}
 	return e.store.markPruned(ctx, r.ID)
 }
+
+var errOtherFile = errors.New("file does not match the run's archive")
 
 // -----------------------------------------------------------------------------
 // helpers
