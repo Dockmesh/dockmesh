@@ -295,7 +295,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	ctxConn, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if agentLayout == agents.LayoutManaged {
-		go reconnectForResult(ctxConn, conn, dataDir())
+		go reconnectForResult(ctxConn, conn, dataDir(), hello.UpdateResult)
 	}
 	go reportUninstall(ctxConn, conn, dataDir())
 	// A failed write closes the socket so the read loop doesn't wait on

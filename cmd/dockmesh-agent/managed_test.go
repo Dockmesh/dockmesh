@@ -179,6 +179,7 @@ func TestUpdateResultReportedUntilWelcomed(t *testing.T) {
 	}{
 		{rootupdate.StatusRolledBack, false},
 		{rootupdate.StatusFailed, true},
+		{rootupdate.StatusUnconfirmed, true},
 	} {
 		b, _ := json.Marshal(rootupdate.Result{Status: tt.status, From: "v0.6.0", To: "v0.6.1", Reason: "health"})
 		p := filepath.Join(updateDir(data), rootupdate.ResultFile)

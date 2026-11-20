@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: An agent update from 0.6.0-rc.1 still runs the root updater of rc.1. If the agent's host loses the server during that update, the host may report the update as unfinished while the agent runs rc.1 again; the notice names the command that finishes it on the host
+time: 2026-11-20T20:24:12.991290841Z
+custom:
+    Audience: admins
+    Id: agent-update-unconfirmed
