@@ -3,10 +3,8 @@ package scaling
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
-	"github.com/dockmesh/dockmesh/internal/db/dbtest"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -26,13 +24,8 @@ func TestCheckedScaleRefusesActiveMigration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, _, dir := scalingEnv(t)
+			m, _, dir, database := scalingEnvDB(t)
 			saveMeta(t, m, dir, validRules)
-			database, err := dbtest.Open(filepath.Join(t.TempDir(), "deploy.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { database.Close() })
 			deployments := stacks.NewDeploymentStore(database)
 			if err := deployments.Set(context.Background(), "app", "agent-1", "deployed"); err != nil {
 				t.Fatal(err)
@@ -52,7 +45,7 @@ func TestCheckedScaleRefusesActiveMigration(t *testing.T) {
 				return tt.active, tt.hookErr
 			}
 
-			err = CheckedScale(m, locks, deployments, migrating)(context.Background(), "app", target, 1, 2)
+			err := CheckedScale(m, locks, deployments, migrating)(context.Background(), "app", target, 1, 2)
 			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}

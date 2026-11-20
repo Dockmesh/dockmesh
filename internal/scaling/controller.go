@@ -29,7 +29,8 @@ type sampler interface {
 // scale.
 var errCountChanged = errors.New("replica count changed")
 
-// errMigrating means the stack has an unfinished migration.
+// errMigrating defers a scale until the stack's migration or its rollback
+// has finished.
 var errMigrating = errors.New("stack has an unfinished migration")
 
 // Controller is the auto-scaling goroutine that polls metrics every

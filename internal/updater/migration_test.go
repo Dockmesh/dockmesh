@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +14,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/dockmesh/dockmesh/internal/stacks"
-	"github.com/moby/moby/client"
 )
 
 // stackContainerDocker answers the inspect of container web of stack app
@@ -76,12 +73,7 @@ func TestUpdateRefusesActiveMigration(t *testing.T) {
 				}
 			}
 			fake := &stackContainerDocker{}
-			srv := httptest.NewServer(fake)
-			t.Cleanup(srv.Close)
-			cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.43"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := fakeClient(t, fake)
 			locks := stacklock.New()
 			s := NewService(docker.Wrap(cli), database)
 			s.SetLocks(locks)

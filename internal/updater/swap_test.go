@@ -51,7 +51,13 @@ func (f *fakeDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeDocker) client(t *testing.T) *client.Client {
 	t.Helper()
-	srv := httptest.NewServer(f)
+	return fakeClient(t, f)
+}
+
+// fakeClient is a Docker client talking to h.
+func fakeClient(t *testing.T, h http.Handler) *client.Client {
+	t.Helper()
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	cli, err := client.New(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithAPIVersion("1.43"))
 	if err != nil {

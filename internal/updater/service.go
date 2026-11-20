@@ -89,8 +89,7 @@ type Service struct {
 	history      deployRecorder
 	rollbackKeep int
 
-	locks *stacklock.Locks
-	// migrating reports an unfinished migration of the stack.
+	locks     *stacklock.Locks
 	migrating func(ctx context.Context, stack string) (bool, error)
 
 	mu   sync.Mutex
@@ -142,7 +141,7 @@ func (s *Service) refuseMigrating(ctx context.Context, st *stackTarget) error {
 	}
 	active, err := s.migrating(ctx, st.stack)
 	if err != nil {
-		return err
+		return fmt.Errorf("check migration state: %w", err)
 	}
 	if active {
 		return migration.ErrMigrationActive

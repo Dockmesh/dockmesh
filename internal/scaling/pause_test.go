@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +16,12 @@ import (
 const validRules = `{"scaling":{"enabled":true,"rules":[{"service":"web","min_replicas":1,"max_replicas":2,"scale_up":{"metric":"cpu","threshold_percent":80}}]}}`
 
 func scalingEnv(t *testing.T) (*stacks.Manager, *notices.Service, string) {
+	m, n, dir, _ := scalingEnvDB(t)
+	return m, n, dir
+}
+
+// scalingEnvDB is scalingEnv with its database.
+func scalingEnvDB(t *testing.T) (*stacks.Manager, *notices.Service, string, *sql.DB) {
 	t.Helper()
 	database, err := dbtest.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -36,7 +43,7 @@ func scalingEnv(t *testing.T) (*stacks.Manager, *notices.Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return m, n, dir
+	return m, n, dir, database
 }
 
 // saveMeta writes the meta file the way the API does, so its checksum is
