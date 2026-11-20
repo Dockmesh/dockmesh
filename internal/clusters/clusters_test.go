@@ -100,10 +100,18 @@ func (f *fakeHosts) SwarmProve(_ context.Context, id string, req agents.SwarmPro
 	return p(req)
 }
 
+// JoinedAt reports a fixed old session start unless the host is offline,
+// failing, or set in joined.
 func (f *fakeHosts) JoinedAt(id string) time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.joined[id]
+	if t, ok := f.joined[id]; ok {
+		return t
+	}
+	if f.status[id] == "offline" || f.failing[id] {
+		return time.Time{}
+	}
+	return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func (f *fakeHosts) RemoteIP(id string) string {

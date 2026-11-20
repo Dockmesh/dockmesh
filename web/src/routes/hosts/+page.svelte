@@ -561,7 +561,7 @@
           {@const open = !collapsed.has(g.id)}
           {@const summary = g.cluster ? clusterSummary(st) : m.hosts_cluster_name_only()}
           {@const spread = g.cluster ? spreadLine(spreadBy[g.id]) : null}
-          {@const line = g.cluster ? clusterLine(st) : ''}
+          {@const line = g.cluster ? clusterLine(st, st?.read_host ? rows.find((r) => r.id === st.read_host)?.name : undefined) : ''}
           {@const fresh = spreadBy[g.id]?.stale ? null : spreadBy[g.id]}
           <div
             class="dm-tr grp"

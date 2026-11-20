@@ -11024,15 +11024,18 @@ components:
     ClusterStatus:
       type: object
       description: |
-        The cluster as its origin manager showed it at the last check (every
-        minute). `healthy`: every node ready and every manager reachable;
+        The cluster as the manager it is read through showed it at the last
+        check (every minute). Reads go through a manager host that proved its
+        node identity: the current one while it answers, else the leader,
+        the origin, then the others; an unverified origin only as the last
+        choice. `healthy`: every node ready and every manager reachable;
         `degraded`: a node is not ready or a manager is unreachable, quorum
-        held; `no_quorum`: the origin is online but its Swarm has no leader;
-        `unreachable`: the origin's agent is offline, can't list nodes or is
-        no longer the linked manager node; `unknown`: not checked since the
-        server started. The counts come from the last node list the origin
-        returned (`known_at`), so they keep the last known shape while the
-        cluster is unreachable or without quorum.
+        held; `no_quorum`: a linked manager is online but its Swarm has no
+        leader; `unreachable`: no linked manager's agent is online, can list
+        nodes and is still the linked manager node; `unknown`: never checked.
+        The counts come from the last node list returned (`known_at`), so
+        they keep the last known shape while the cluster is unreachable or
+        without quorum.
       required: [state, managers, managers_reachable, workers, nodes_down, nodes_without_agent]
       properties:
         state: {type: string, enum: [healthy, degraded, no_quorum, unreachable, unknown]}
@@ -11043,7 +11046,10 @@ components:
         nodes_without_agent: {type: integer, description: Nodes no Dockmesh host is linked to.}
         leader: {type: string, description: Host name of the leader node.}
         checked_at: {type: string, format: date-time}
-        known_at: {type: string, format: date-time, description: When the origin last returned its node list.}
+        known_at: {type: string, format: date-time, description: When a manager last returned the node list.}
+        read_host: {type: string, description: The host the last check read through; set while the cluster is healthy or degraded.}
+        verified_managers: {type: integer, description: Manager hosts that proved their node identity (the server's own host counts).}
+        failover: {type: boolean, description: Reads move to another verified manager when the current one goes away; needs two verified managers and no pending root CA.}
     ClusterMembership:
       type: object
       required: [host_id, cluster_id, cluster_name, node_id, role]

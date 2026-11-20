@@ -34,6 +34,12 @@ type Status struct {
 	Leader            string     `json:"leader,omitempty"`
 	CheckedAt         *time.Time `json:"checked_at,omitempty"`
 	KnownAt           *time.Time `json:"known_at,omitempty"`
+	// ReadHost is the manager host the last check read through.
+	ReadHost string `json:"read_host,omitempty"`
+	// VerifiedManagers counts the manager hosts that proved their node
+	// identity; Failover is set when reads can move to another of them.
+	VerifiedManagers int  `json:"verified_managers"`
+	Failover         bool `json:"failover"`
 }
 
 // NodeStatus is one linked node's entry in the last node list.
@@ -190,6 +196,9 @@ func (s *Service) forget(clusterID string) {
 	s.smu.Lock()
 	delete(s.seen, clusterID)
 	s.smu.Unlock()
+	s.pmu.Lock()
+	delete(s.reader, clusterID)
+	s.pmu.Unlock()
 }
 
 func (s *Service) seenOf(clusterID string) (seen, bool) {
@@ -223,11 +232,16 @@ func lostQuorum(err error) bool {
 
 // statusOf builds the status of c from what the last reconcile saw.
 func (s *Service) statusOf(c Cluster) *Status {
+	vm := verifiedManagers(c)
+	failover := vm >= 2 && !c.Trust.Pending
 	v, ok := s.seenOf(c.ID)
 	if !ok {
-		return &Status{State: StateUnknown}
+		return &Status{State: StateUnknown, VerifiedManagers: vm, Failover: failover}
 	}
-	st := &Status{State: v.state}
+	st := &Status{State: v.state, VerifiedManagers: vm, Failover: failover}
+	if v.state == StateHealthy || v.state == StateDegraded {
+		st.ReadHost = s.readerOf(c.ID)
+	}
 	checked := v.checkedAt
 	st.CheckedAt = &checked
 	if v.nodes == nil {

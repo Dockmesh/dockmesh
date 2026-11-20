@@ -104,31 +104,31 @@ func (s *Service) annotate(c *Cluster) {
 	c.Trust.Confirmable = c.Trust.Pending && s.sole[c.ID]
 }
 
-// pinnable reports whether a root the origin reports may be pinned: the
-// origin alone could make up a root and prove itself against it, so a
+// pinnable reports whether a root a manager reports may be pinned: that
+// host alone could make up a root and prove itself against it, so a
 // second manager host must report the same root unless the Swarm has a
 // single manager.
 func pinnable(agreed int, sole bool) bool {
 	return agreed > 0 || sole
 }
 
-// otherManagers returns the hosts besides origin whose own daemon says it
+// otherManagers returns the hosts besides host whose own daemon says it
 // manages cluster id, offline ones by their last hello.
-func otherManagers(snap map[string]hostState, id, origin string) []string {
+func otherManagers(snap map[string]hostState, id, host string) []string {
 	var out []string
 	for h, st := range snap {
-		if h != origin && st.known && st.swarm != nil && st.swarm.ClusterID == id && st.swarm.Role == RoleManager {
+		if h != host && st.known && st.swarm != nil && st.swarm.ClusterID == id && st.swarm.Role == RoleManager {
 			out = append(out, h)
 		}
 	}
 	return out
 }
 
-// soleManager reports whether the origin is the Swarm's only manager. The
-// origin's node list alone can't tell, since the origin may leave managers
-// out, so no other host may claim to manage the Swarm either.
-func soleManager(nodes []agents.SwarmNode, snap map[string]hostState, id, origin string) bool {
-	return managersIn(nodes) == 1 && len(otherManagers(snap, id, origin)) == 0
+// soleManager reports whether host is the Swarm's only manager. Its node
+// list alone can't tell, since host may leave managers out, so no other
+// host may claim to manage the Swarm either.
+func soleManager(nodes []agents.SwarmNode, snap map[string]hostState, id, host string) bool {
+	return managersIn(nodes) == 1 && len(otherManagers(snap, id, host)) == 0
 }
 
 func managersIn(nodes []agents.SwarmNode) int {
@@ -141,9 +141,9 @@ func managersIn(nodes []agents.SwarmNode) int {
 	return n
 }
 
-// reconcileIdentity pins or rotates the trust root from the origin's list,
+// reconcileIdentity pins or rotates the trust root from the list of by,
 // proves the members that are due and refreshes the cluster's notices.
-func (s *Service) reconcileIdentity(ctx context.Context, id string, list agents.SwarmNodesResp, snap map[string]hostState) error {
+func (s *Service) reconcileIdentity(ctx context.Context, id, by string, list agents.SwarmNodesResp, snap map[string]hostState) error {
 	c, err := s.get(ctx, id)
 	if err != nil {
 		return err
@@ -152,9 +152,9 @@ func (s *Service) reconcileIdentity(ctx context.Context, id string, list agents.
 	if s.sole == nil {
 		s.sole = map[string]bool{}
 	}
-	s.sole[id] = soleManager(list.Nodes, snap, id, c.OriginHost)
+	s.sole[id] = soleManager(list.Nodes, snap, id, by)
 	s.pmu.Unlock()
-	rotated, err := s.checkTrust(ctx, c, canonicalRoot(list.TrustRoot), list.Nodes, snap)
+	rotated, err := s.checkTrust(ctx, c, by, canonicalRoot(list.TrustRoot), list.Nodes, snap)
 	if err != nil {
 		return err
 	}
@@ -170,21 +170,21 @@ func (s *Service) reconcileIdentity(ctx context.Context, id string, list agents.
 	return nil
 }
 
-// checkTrust compares the root the origin reports with the pinned one.
+// checkTrust compares the root by reports with the pinned one.
 // An unpinned cluster pins it when no other manager host reports another
 // root. A changed root waits as pending and replaces the pinned one once
 // two verified managers report it. rotated reports a replacement.
-func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, nodes []agents.SwarmNode, snap map[string]hostState) (rotated bool, err error) {
+func (s *Service) checkTrust(ctx context.Context, c Cluster, by, reported string, nodes []agents.SwarmNode, snap map[string]hostState) (rotated bool, err error) {
 	if reported == "" {
 		return false, nil
 	}
 	switch {
 	case c.trustRoot == "":
 		var agreed []string
-		for _, other := range otherManagers(snap, c.ID, c.OriginHost) {
+		for _, other := range otherManagers(snap, c.ID, by) {
 			st := snap[other]
 			if !listsManager(nodes, st.swarm.NodeID) {
-				slog.Warn("a host claims to manage the Swarm but the origin does not list it; not pinning", "cluster", c.ID, "origin", c.OriginHost, "other", other)
+				slog.Warn("a host claims to manage the Swarm but the manager read through does not list it; not pinning", "cluster", c.ID, "reader", by, "other", other)
 				return false, nil
 			}
 			if st.offline {
@@ -198,11 +198,11 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 			case r == reported:
 				agreed = append(agreed, other)
 			case r != "":
-				slog.Warn("swarm managers report different trust roots; not pinning", "cluster", c.ID, "origin", c.OriginHost, "other", other)
+				slog.Warn("swarm managers report different trust roots; not pinning", "cluster", c.ID, "reader", by, "other", other)
 				return false, nil
 			}
 		}
-		if !pinnable(len(agreed), soleManager(nodes, snap, c.ID, c.OriginHost)) {
+		if !pinnable(len(agreed), soleManager(nodes, snap, c.ID, by)) {
 			return false, nil
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ? WHERE id = ? AND trust_root IS NULL`, reported, c.ID)
@@ -210,7 +210,7 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 			return false, err
 		}
 		if n, _ := res.RowsAffected(); n > 0 && s.audit != nil {
-			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "pinned", "reported_by": c.OriginHost, "agreed_by": agreed})
+			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "pinned", "reported_by": by, "agreed_by": agreed})
 		}
 		return false, nil
 
@@ -229,7 +229,7 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 		}
 		slog.Warn("swarm trust root changed; waiting for two verified managers", "cluster", c.ID)
 	}
-	agreed := s.agreeingManagers(ctx, c, reported, snap)
+	agreed := s.agreeingManagers(ctx, c, by, reported, snap)
 	if len(agreed) < 2 {
 		return false, nil
 	}
@@ -243,8 +243,8 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, reported string, no
 }
 
 // agreeingManagers returns the verified manager members that are online
-// and whose own node list reports root, the origin's report included.
-func (s *Service) agreeingManagers(ctx context.Context, c Cluster, root string, snap map[string]hostState) []string {
+// and whose own node list reports root, by's report included.
+func (s *Service) agreeingManagers(ctx context.Context, c Cluster, by, root string, snap map[string]hostState) []string {
 	var out []string
 	for _, m := range c.Members {
 		if m.Role != RoleManager || !m.Verified {
@@ -253,7 +253,7 @@ func (s *Service) agreeingManagers(ctx context.Context, c Cluster, root string, 
 		if st := snap[m.HostID]; !st.known || st.offline {
 			continue
 		}
-		if m.HostID != c.OriginHost {
+		if m.HostID != by {
 			theirs, err := s.nodesOf(ctx, m.HostID)
 			if err != nil || canonicalRoot(theirs.TrustRoot) != root {
 				continue

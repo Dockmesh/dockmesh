@@ -104,8 +104,9 @@ func (g *managerGate) dequeue(id string) {
 }
 
 // managerKey returns the cluster ag's host is a linked manager of, else
-// "". The link comes from the cluster's origin node list, not from what
-// the agent reports, so an agent can't put itself in another Swarm's line.
+// "". The link comes from a manager's node list (the origin's, or a
+// verified manager's that may only add members), not from what the agent
+// reports, so an agent can't put itself in another Swarm's line.
 // Workers and hosts outside a cluster update as before.
 func (c *UpgradeController) managerKey(ctx context.Context, ag *ConnectedAgent) string {
 	if c.managerCluster == nil {
