@@ -103,10 +103,10 @@ func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id 
 }
 
 // countAdmins counts the assignments of an admin role on everything and on
-// any scope.
+// any scope that reaches hosts; a cluster scope reaches none of them.
 func (h *Handlers) countAdmins(as []rbac.Assignment) (global, anyScope int) {
 	for _, a := range as {
-		if !h.Roles.IsAdminRole(a.Role) {
+		if !h.Roles.IsAdminRole(a.Role) || a.Scope.Type == rbac.ScopeCluster {
 			continue
 		}
 		anyScope++

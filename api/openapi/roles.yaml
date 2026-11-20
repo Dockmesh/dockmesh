@@ -240,6 +240,7 @@ paths:
                 extra: {type: string, example: terminal}
                 host: {type: string, description: Host id. A deployed stack is checked on its deployment host, an undeployed one on the host it was created for.}
                 host_tag: {type: string, description: "Any host with this tag. Can't be combined with host or stack."}
+                cluster: {type: string, description: "A Swarm cluster id. Can't be combined with host, host_tag or stack."}
                 stack: {type: string}
       responses:
         "200":

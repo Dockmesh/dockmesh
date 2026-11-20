@@ -11,14 +11,17 @@ const (
 	ScopeHost    = "host"
 	ScopeHostTag = "host_tag"
 	ScopeStack   = "stack"
+	ScopeCluster = "cluster"
 )
 
 // Scope is where an assignment applies. Host is the host id for host and
-// stack scopes; Value is the tag or the stack name. Stack names are
-// unique across the instance (one deployment host per stack). A stack
-// scope with a Host matches the stack while it is deployed there; without
-// a Host it matches the stack wherever it runs and while it is not
-// deployed.
+// stack scopes and the Swarm cluster id for a cluster scope; Value is the
+// tag or the stack name. A cluster scope covers the cluster's own
+// resources only, never the hosts that are its nodes, and a host scope
+// never covers the cluster. Stack names are unique across the instance
+// (one deployment host per stack). A stack scope with a Host matches the
+// stack while it is deployed there; without a Host it matches the stack
+// wherever it runs and while it is not deployed.
 type Scope struct {
 	Type  string `json:"type"`
 	Host  string `json:"host,omitempty"`
@@ -49,6 +52,10 @@ func (s Scope) Validate() error {
 		if s.Value == "" {
 			return fmt.Errorf("a stack scope needs a stack name")
 		}
+	case ScopeCluster:
+		if s.Host == "" || s.Value != "" {
+			return fmt.Errorf("a cluster scope needs a cluster and no value")
+		}
 	default:
 		return fmt.Errorf("unknown scope type %q", s.Type)
 	}
@@ -62,6 +69,8 @@ func (s Scope) String() string {
 		return "host " + s.Host
 	case ScopeHostTag:
 		return "host tag " + s.Value
+	case ScopeCluster:
+		return "cluster " + s.Host
 	case ScopeStack:
 		if s.Host == "" {
 			return "stack " + s.Value
@@ -74,11 +83,13 @@ func (s Scope) String() string {
 
 // Resource is what a request acts on. Host-level resources (images,
 // volumes, the host itself) leave Stack empty; a stack that is not
-// deployed leaves HostID empty.
+// deployed leaves HostID empty. A cluster's own resources (its node
+// list) set ClusterID and leave HostID empty.
 type Resource struct {
 	HostID    string
 	HostTags  []string
 	StackName string
+	ClusterID string
 }
 
 func (s Scope) matches(res Resource) bool {
@@ -91,6 +102,8 @@ func (s Scope) matches(res Resource) bool {
 		return res.HostID != "" && slices.Contains(res.HostTags, s.Value)
 	case ScopeStack:
 		return res.StackName != "" && res.StackName == s.Value && (s.Host == "" || res.HostID == s.Host)
+	case ScopeCluster:
+		return res.ClusterID != "" && res.ClusterID == s.Host
 	}
 	return false
 }
@@ -431,6 +444,8 @@ func ScopeContains(c, s Scope, tags func(hostID string) []string) bool {
 		}
 	case ScopeStack:
 		return s.Type == ScopeStack && s.Value == c.Value && (c.Host == "" || c.Host == s.Host)
+	case ScopeCluster:
+		return s.Type == ScopeCluster && s.Host == c.Host
 	}
 	return false
 }

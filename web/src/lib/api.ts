@@ -612,7 +612,7 @@ export interface CustomRole {
   assignments?: number;
 }
 
-export type ScopeType = 'global' | 'host' | 'host_tag' | 'stack';
+export type ScopeType = 'global' | 'host' | 'host_tag' | 'stack' | 'cluster';
 
 export interface Scope {
   type: ScopeType;

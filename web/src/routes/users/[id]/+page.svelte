@@ -6,7 +6,7 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError,
-    type ApiToken, type Assignment, type CustomRole, type HostInfo, type RoleCatalog, type StackListEntry,
+    type ApiToken, type Assignment, type CustomRole, type HostInfo, type Cluster, type RoleCatalog, type StackListEntry,
     type UserRow, type AccessCheckResult, type Session
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -17,7 +17,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { assignmentLabel, isGlobal, levelIndex, roleDisplay, scopeLabel, type HostNames } from '$lib/access';
+  import { assignmentLabel, isGlobal, levelIndex, roleDisplay, scopeLabel, withClusterNames, type HostNames } from '$lib/access';
   import AssignmentDialog from '$lib/components/access/AssignmentDialog.svelte';
   import { Plus, Trash2, Check, X } from 'lucide-svelte';
   import { fmtDate, fmtDateTime } from '$lib/i18n';
@@ -38,19 +38,21 @@
   let activity = $state<Array<{ id: number; ts: string; action: string; target?: string }>>([]);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  const hostNames = $derived<HostNames>(Object.fromEntries(hosts.map((h) => [h.id, h.name])));
+  let clusters = $state<Cluster[]>([]);
+  const hostNames = $derived<HostNames>(withClusterNames(Object.fromEntries(hosts.map((h) => [h.id, h.name])), clusters));
   const isSelf = $derived(auth.user?.id === id);
 
   async function loadAll() {
     loadError = null;
     try {
-      const [u, all, r, c, h, s] = await Promise.all([
+      const [u, all, r, c, h, s, cl] = await Promise.all([
         api.users.get(id),
         api.users.list().catch(() => [] as UserRow[]),
         api.roles.list().catch(() => [] as CustomRole[]),
         api.roles.catalog().catch(() => null),
         api.hosts.list().catch(() => [] as HostInfo[]),
-        api.stacks.list().catch(() => [] as StackListEntry[])
+        api.stacks.list().catch(() => [] as StackListEntry[]),
+        api.clusters.list().catch(() => [] as Cluster[])
       ]);
       user = u;
       users = all;
@@ -58,6 +60,7 @@
       catalog = c;
       hosts = h.filter((x) => x.kind !== 'all' && x.status !== 'revoked');
       stacks = s;
+      clusters = cl;
       draftEmail = u.email ?? '';
       draftName = u.display_name ?? '';
       if (allowed('tokens.manage_others') || isSelf) {

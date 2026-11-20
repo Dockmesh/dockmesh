@@ -16,12 +16,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// ListClusters returns every cluster with its linked hosts. Clusters are
-// not a scope target, so only a global hosts.view sees them.
+// ListClusters returns the clusters the caller holds hosts.view on (a
+// global or cluster scope) with their linked hosts. A host scope on a
+// node never shows its cluster.
 //
 //	GET /api/v1/clusters
 func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
-	if h.Clusters == nil || !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsView) {
+	if h.Clusters == nil {
 		writeJSON(w, http.StatusOK, []clusters.Cluster{})
 		return
 	}
@@ -30,7 +31,14 @@ func (h *Handlers) ListClusters(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	access := middleware.AccessOf(r.Context())
+	out := []clusters.Cluster{}
+	for _, c := range list {
+		if access.AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: c.ID}) {
+			out = append(out, c)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ListClusterCandidates lists Swarms that have a manager host but no

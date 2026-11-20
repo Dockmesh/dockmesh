@@ -32,6 +32,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"backups unavailable", "backups_unavailable"},
 	{"caddyfile required", "caddyfile_required"},
 	{"cannot read the host's Swarm state", "swarm_state_unreadable"},
+	{"cluster can't be combined with host, host_tag or stack", "cluster_exclusive"},
 	{"clusters are not available", "clusters_unavailable"},
 	{"host is not a name Caddy can serve", "setup_proxy_host_invalid"},
 	{"cert_file and key_file must be absolute paths", "cert_paths_not_absolute"},
