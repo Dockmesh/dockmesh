@@ -141,7 +141,6 @@
   const reachable = $derived(st?.managers_reachable ?? 0);
   const quorum = $derived(Math.floor(managers / 2) + 1);
   const tolerance = $derived(Math.max(0, reachable - quorum));
-  const managersWithAgent = $derived(nodes.filter((n) => n.role === 'manager' && n.host_id).length);
   const downNodes = $derived(nodes.filter((n) => n.state !== 'ready' || (n.role === 'manager' && n.reachability && n.reachability !== 'reachable')));
 
   const problems = $derived(tasks ? taskProblems(tasks) : new Map<string, TaskProblem>());
@@ -334,7 +333,6 @@
         <div>
           <span>
             {m.cl_res_read({ host: originName })}
-            {managersWithAgent >= 2 ? m.cl_res_agents({ n: managersWithAgent }) : m.cl_res_agents_few()}
             {managers < 3 ? m.cl_res_small() : managers === 3 ? m.cl_res_one() : m.cl_res_many({ n: managers - quorum })}
           </span>
         </div>
