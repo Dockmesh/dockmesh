@@ -2,14 +2,14 @@
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type Assignment, type CustomRole, type HostInfo, type RoleCatalog, type UserRow } from '$lib/api';
+  import { api, ApiError, type Assignment, type CustomRole, type HostInfo, type RoleCatalog, type UserRow, type Cluster } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtAgo } from '$lib/format';
   import { Skeleton, EmptyState, Switch } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { areaSummaries, roleOneLine, scopeLabel, type HostNames } from '$lib/access';
+  import { areaSummaries, roleOneLine, scopeLabel, withClusterNames, type HostNames } from '$lib/access';
   import AssignmentDialog from '$lib/components/access/AssignmentDialog.svelte';
   import { Copy, Plus, Trash2 } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
@@ -42,16 +42,17 @@
   async function loadAll() {
     loadError = null;
     try {
-      const [c, rs, us, hs] = await Promise.all([
+      const [c, rs, us, hs, cl] = await Promise.all([
         api.roles.catalog(),
         api.roles.list().catch(() => [] as CustomRole[]),
         api.users.list().catch(() => [] as UserRow[]),
-        api.hosts.list().catch(() => [] as HostInfo[])
+        api.hosts.list().catch(() => [] as HostInfo[]),
+        api.clusters.list().catch(() => [] as Cluster[])
       ]);
       catalog = c;
       roles = rs;
       users = us;
-      hostNames = Object.fromEntries(hs.map((h) => [h.id, h.name]));
+      hostNames = withClusterNames(Object.fromEntries(hs.map((h) => [h.id, h.name])), cl);
       if (isNew) {
         const from = page.url.searchParams.get('from');
         const base = from ? rs.find((r) => r.name === from) : undefined;

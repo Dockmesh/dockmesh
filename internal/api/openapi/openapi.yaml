@@ -2585,8 +2585,8 @@ paths:
       tags: [clusters]
       summary: List clusters and their linked hosts
       description: |
-        Only a global `hosts.view` sees clusters; everyone else gets an empty
-        list. A host is linked when a manager's node list contains the node
+        Lists the clusters the caller holds `hosts.view` on, globally or on a
+        `cluster` scope; a host scope on a node shows nothing. A host is linked when a manager's node list contains the node
         ID the host reports; the role is the manager's view.
       responses:
         "200":
@@ -6302,6 +6302,7 @@ paths:
                 extra: {type: string, example: terminal}
                 host: {type: string, description: Host id. A deployed stack is checked on its deployment host, an undeployed one on the host it was created for.: ''}
                 host_tag: {type: string, description: "Any host with this tag. Can't be combined with host or stack."}
+                cluster: {type: string, description: "A Swarm cluster id. Can't be combined with host, host_tag or stack."}
                 stack: {type: string}
       responses:
         "200":
@@ -10323,8 +10324,11 @@ components:
         yet, was created for `host`); without `host` it matches the stack
         anywhere and while it is not deployed. A host or host tag scope
         reaches an undeployed stack only through the host it was created for.
+        `cluster` carries the Swarm cluster id in `host`; it covers the
+        cluster's own resources (its node list), never the hosts that are
+        its nodes, and no host or host tag scope covers a cluster.
       properties:
-        type: {type: string, enum: [global, host, host_tag, stack]}
+        type: {type: string, enum: [global, host, host_tag, stack, cluster]}
         host: {type: string, example: local}
         value: {type: string, example: web}
     Assignment:

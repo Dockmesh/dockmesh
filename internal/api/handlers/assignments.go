@@ -161,6 +161,7 @@ type accessCheckRequest struct {
 	Host    string `json:"host,omitempty"`
 	HostTag string `json:"host_tag,omitempty"`
 	Stack   string `json:"stack,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
 }
 
 type accessCheckResponse struct {
@@ -209,6 +210,13 @@ func (h *Handlers) CheckAccess(w http.ResponseWriter, r *http.Request) {
 	if req.HostTag != "" {
 		// Any host with the tag: no host id an assignment could name.
 		res = rbac.Resource{HostID: "tag:" + req.HostTag, HostTags: []string{req.HostTag}}
+	}
+	if req.Cluster != "" {
+		if req.Host != "" || req.HostTag != "" || req.Stack != "" {
+			writeError(w, http.StatusBadRequest, "cluster can't be combined with host, host_tag or stack")
+			return
+		}
+		res = rbac.Resource{ClusterID: req.Cluster}
 	}
 	access := h.Roles.AccessFor(req.UserID)
 	out := accessCheckResponse{Allowed: true, Needed: needed, Closest: []rbac.Assignment{}}

@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError,
-    type CustomRole, type RoleCatalog, type UserRow, type InviteRow, type Scope, type HostInfo
+    type CustomRole, type RoleCatalog, type UserRow, type InviteRow, type Scope, type HostInfo, type Cluster
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { urlTab } from '$lib/urlTab.svelte';
@@ -14,7 +14,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { copyWithToast } from '$lib/clipboard';
-  import { assignmentLabel, roleOneLine, scopeLabel, type HostNames } from '$lib/access';
+  import { assignmentLabel, roleOneLine, scopeLabel, withClusterNames, type HostNames } from '$lib/access';
   import ScopePicker from '$lib/components/access/ScopePicker.svelte';
   import AssignmentDialog from '$lib/components/access/AssignmentDialog.svelte';
   import { Plus, Users as UsersIcon, Send } from 'lucide-svelte';
@@ -35,17 +35,18 @@
 
   async function loadAll() {
     try {
-      const [u, r, c, h, inv] = await Promise.all([
+      const [u, r, c, h, inv, cl] = await Promise.all([
         api.users.list(),
         api.roles.list().catch(() => [] as CustomRole[]),
         api.roles.catalog().catch(() => null),
         api.hosts.list().catch(() => [] as HostInfo[]),
-        allowed('users.create') ? api.users.listInvites().catch(() => [] as InviteRow[]) : Promise.resolve([] as InviteRow[])
+        allowed('users.create') ? api.users.listInvites().catch(() => [] as InviteRow[]) : Promise.resolve([] as InviteRow[]),
+        api.clusters.list().catch(() => [] as Cluster[])
       ]);
       users = u;
       roles = r;
       catalog = c;
-      hostNames = Object.fromEntries(h.map((x) => [x.id, x.name]));
+      hostNames = withClusterNames(Object.fromEntries(h.map((x) => [x.id, x.name])), cl);
       invites = inv ?? [];
     } catch (err) {
       toast.error(m.users_load_failed(), err instanceof ApiError ? err.message : undefined);
