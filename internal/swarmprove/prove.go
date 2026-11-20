@@ -210,9 +210,10 @@ func ensureImage(ctx context.Context, cli API) error {
 	return nil
 }
 
-// sign signs msg with the PEM key and overwrites the copies it holds. The
-// crypto library may make internal copies it does not clear; none is kept,
-// logged or returned.
+// sign signs msg with the PEM key and overwrites the encoded key bytes it
+// holds. The parsed key lives until the garbage collector frees it; Go's
+// crypto offers no way to clear it, and it is never kept, logged or
+// returned.
 func sign(keyPEM, msg []byte) ([]byte, error) {
 	blk, _ := pem.Decode(keyPEM)
 	if blk == nil {
@@ -243,17 +244,6 @@ func sign(keyPEM, msg []byte) ([]byte, error) {
 	default:
 		return nil, ErrBadKey
 	}
-	defer zero(key)
 	digest := sha256.Sum256(msg)
 	return key.Sign(rand.Reader, digest[:], crypto.SHA256)
-}
-
-// zero overwrites the private scalar in place.
-func zero(k *ecdsa.PrivateKey) {
-	if k == nil || k.D == nil {
-		return
-	}
-	words := k.D.Bits()
-	clear(words)
-	k.D.SetInt64(0)
 }

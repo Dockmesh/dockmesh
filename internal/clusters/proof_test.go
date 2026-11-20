@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -240,7 +241,7 @@ func TestFakeAgentClaimingNodeStaysUnverified(t *testing.T) {
 	f, ca := provedLab(t)
 	later := time.Now().Add(90 * 24 * time.Hour)
 	// n5 is a manager node without a Dockmesh agent; "fake" claims it.
-	nodes := append(f.nodes["m1"], agents.SwarmNode{ID: "n5", Role: RoleManager})
+	nodes := append(slices.Clone(f.nodes["m1"]), agents.SwarmNode{ID: "n5", Role: RoleManager})
 	f.nodes = map[string][]agents.SwarmNode{"m1": nodes, "m2": nodes}
 	f.infos["fake"] = swarmInfo(swarmID, "n5", RoleManager)
 	own := ca.issue(t, "n4", swarmID, RoleWorker, later)

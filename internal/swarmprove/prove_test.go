@@ -170,14 +170,3 @@ func TestProveRefuses(t *testing.T) {
 		})
 	}
 }
-
-func TestZeroClearsScalar(t *testing.T) {
-	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	words := k.D.Bits()
-	zero(k)
-	for _, w := range words[:cap(words)] {
-		if w != 0 {
-			t.Fatal("scalar words left")
-		}
-	}
-}
