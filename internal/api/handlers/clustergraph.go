@@ -74,7 +74,7 @@ func (h *Handlers) missingOn(r *http.Request, res rbac.Resource, extra ...rbac.P
 // network, hidden by default like bridge and host.
 func clusterGraph(nets []agents.SwarmNetwork, svcs []agents.SwarmService) topology.Graph {
 	g := topology.Graph{Networks: []topology.Network{}, Containers: []topology.Container{}, Links: []topology.Link{}}
-	ids := make(map[string]string, 2*len(nets))
+	ids := map[string]string{}
 	for _, n := range nets {
 		g.Networks = append(g.Networks, topology.Network{
 			ID: n.ID, Name: n.Name, Driver: n.Driver, Scope: "swarm",
