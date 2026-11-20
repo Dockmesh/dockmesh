@@ -54,7 +54,7 @@ type Membership struct {
 	Node        *NodeStatus `json:"node,omitempty"`
 }
 
-// seen is what the last reconcile learned from a cluster's origin.
+// seen is the last known outcome of asking a cluster's origin.
 type seen struct {
 	state     string
 	checkedAt time.Time
@@ -110,15 +110,14 @@ func (s *Service) record(clusterID, state string, nodes []agents.SwarmNode, at t
 			nodes = COALESCE(excluded.nodes, cluster_status.nodes), known_at = COALESCE(excluded.known_at, cluster_status.known_at)`,
 		clusterID, state, at.UTC(), nodesJSON, knownAt); err != nil {
 		slog.Warn("cluster status: store", "cluster", clusterID, "err", err)
-		if raw != nil {
-			// Make the next check write the list again.
-			s.smu.Lock()
-			if v, ok := s.seen[clusterID]; ok {
-				v.nodesSum = [sha256.Size]byte{}
-				s.seen[clusterID] = v
-			}
-			s.smu.Unlock()
+		// Make the next check write the list again, also when this one
+		// skipped it: the row may be gone with a deleted cluster.
+		s.smu.Lock()
+		if v, ok := s.seen[clusterID]; ok {
+			v.nodesSum = [sha256.Size]byte{}
+			s.seen[clusterID] = v
 		}
+		s.smu.Unlock()
 	}
 }
 

@@ -103,7 +103,7 @@ type Service struct {
 	audit Auditor
 	// mu serialises the membership writes of Create, Reconcile and Delete.
 	mu sync.Mutex
-	// smu guards seen, what the last reconcile learned per cluster.
+	// smu guards seen, the last known status per cluster.
 	smu      sync.Mutex
 	seen     map[string]seen
 	loadOnce sync.Once

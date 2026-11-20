@@ -139,3 +139,26 @@ func TestStatusUnchangedListNotRewritten(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+// A check that lands after its cluster was deleted must not keep the
+// cluster, created again for the same Swarm, from storing its node list.
+func TestLateRecordAfterDelete(t *testing.T) {
+	f := lab()
+	f.nodes["m1"] = readyNodes()
+	s := newService(t, f)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, "m1", "lab", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Delete(ctx, swarmID, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.record(swarmID, StateHealthy, readyNodes(), time.Now())
+	if _, err := s.Create(ctx, "m1", "lab", ""); err != nil {
+		t.Fatal(err)
+	}
+	rows := statusRows(t, s.db)
+	if len(rows) != 1 || !rows[0].Nodes.Valid || rows[0].Nodes.String == "" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}

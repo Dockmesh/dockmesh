@@ -116,8 +116,8 @@ func TestClusterStatus(t *testing.T) {
 	}
 }
 
-// A cluster without a stored status, such as one created before the
-// status was stored, reads as not checked until its first check.
+// A cluster without a cluster_status row reads as not checked until its
+// first check.
 func TestClusterStatusUnknownUntilAsked(t *testing.T) {
 	f := lab()
 	s := newService(t, f)
