@@ -338,7 +338,9 @@ paths:
         upgrade, a last frame `{"error": "..."}` comes before the close.
         Of the log metadata only the task and node ids are passed on;
         attributes a log driver adds from labels or env are dropped. At
-        most 32 service log streams are open at once.
+        most 32 service log streams are open at once, 4 per user or API
+        token; the server pings every 30 s and drops a peer that stops
+        answering.
       parameters:
         - name: id
           in: path
@@ -381,7 +383,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "429":
-          description: Too many service log streams are open.
+          description: Too many service log streams are open, in total or for this caller.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -391,7 +393,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "503":
-          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames.
+          description: The cluster's manager is offline, no longer the linked manager node, not a manager anymore, or its agent is too old for the Swarm read frames or the service log stream.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
