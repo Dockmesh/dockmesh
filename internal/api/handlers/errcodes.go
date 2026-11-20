@@ -34,6 +34,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"cannot read the host's Swarm state", "swarm_state_unreadable"},
 	{"cluster can't be combined with host, host_tag or stack", "cluster_exclusive"},
 	{"clusters are not available", "clusters_unavailable"},
+	{"the cluster and its access were deleted, but the permission cache could not be reloaded; restart Dockmesh so the removed roles stop applying", "cluster_deleted_cache_stale"},
 	{"host is not a name Caddy can serve", "setup_proxy_host_invalid"},
 	{"cert_file and key_file must be absolute paths", "cert_paths_not_absolute"},
 	{"cannot delete yourself", "cannot_delete_yourself"},

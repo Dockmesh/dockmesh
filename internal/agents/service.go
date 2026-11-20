@@ -123,6 +123,9 @@ type Service struct {
 	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
 	notifs  *notifications.Service
 	notices *notices.Service
+	// layoutNoticeMu keeps concurrent hellos from replacing the legacy
+	// layout notice at the same time.
+	layoutNoticeMu sync.Mutex
 	// metricsSink stores agent history; nil turns it off.
 	metricsSink MetricsSink
 	intakeMu    sync.Mutex
@@ -602,6 +605,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			slog.Warn("resolve agent .env notice", "agent", id, "err", err)
 		}
 	}
+	s.syncLegacyLayoutNotice(ctx)
 	return nil
 }
 
@@ -736,6 +740,15 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 	s.connected[ag.ID] = ag
 	s.mu.Unlock()
 
+	var prevLayout sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT layout FROM agents WHERE id = ?`, ag.ID).Scan(&prevLayout); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.mu.Lock()
+		if s.connected[ag.ID] == ag {
+			delete(s.connected, ag.ID)
+		}
+		s.mu.Unlock()
+		return err
+	}
 	d := hello.Daemon
 	// Set online_since on the transition; preserve a previous value if
 	// the agent reconnected within a short window (briefly flapped) by
@@ -757,6 +770,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       swarm_node_state = ?,
 		       swarm_role = ?,
 		       swarm_cluster_id = ?,
+		       layout = ?,
 		       last_seen_at = CURRENT_TIMESTAMP,
 		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
@@ -768,6 +782,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		d.swarmCol(func(s *SwarmState) string { return s.NodeState }),
 		d.swarmCol(func(s *SwarmState) string { return s.Role }),
 		d.swarmCol(func(s *SwarmState) string { return s.ClusterID }),
+		hello.HelloLayout(),
 		ag.ID, ag.certFP, ag.certFP)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n != 1 {
@@ -783,6 +798,10 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		}
 		s.mu.Unlock()
 		return err
+	}
+	// Only a change re-lists the notice; the periodic sync covers the rest.
+	if prevLayout.String != hello.HelloLayout() {
+		s.syncLegacyLayoutNotice(ctx)
 	}
 	return nil
 }
@@ -957,5 +976,6 @@ func (s *Service) markUninstalled(ctx context.Context, ag *ConnectedAgent) error
 		delete(s.connected, ag.ID)
 	}
 	s.mu.Unlock()
+	s.syncLegacyLayoutNotice(ctx)
 	return nil
 }

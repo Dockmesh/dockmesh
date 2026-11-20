@@ -183,7 +183,7 @@ When several hosts manage the Swarm, pick the one to create it from. That host b
 
 The cluster's id is the Swarm's cluster ID. A host joins the cluster as a node only when the origin's node list contains the node ID that host reports, so a host can't add itself by claiming a cluster. Its role (manager or worker) comes from that node list. Dockmesh refreshes the links every minute from the origin: a host that left the Swarm or was revoked or removed in Dockmesh is unlinked, while a host it can't reach keeps its link. While the origin is unreachable or no longer a manager, the links stay as they were. Links and unlinks appear in the audit log. Nodes without a Dockmesh agent are not hosts and are not linked. Listing the nodes needs an agent of this version on the origin.
 
-`DELETE /api/v1/clusters/{id}` (also `clusters.create`) removes a cluster created from the wrong host; the Swarm itself is not touched.
+**Delete…** on the cluster's line of the Hosts page (also `clusters.create`; API `DELETE /api/v1/clusters/{id}`) removes a cluster, for example one created from the wrong host; the Swarm itself is not touched. Access on the cluster goes with it: role assignments and IdP group mappings on the cluster are deleted, API tokens restricted to it are revoked, and unused invites lose the cluster (an invite with nothing else left expires). The confirmation lists each of them by name before you type the cluster's name, and the audit entry records the counts.
 
 The host list marks linked hosts with their role and cluster. Hosts that are not in a Swarm behave exactly as before.
 

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,6 +97,47 @@ func TestRenderAgentUnitGolden(t *testing.T) {
 			}
 			checkGolden(t, tt.golden, got)
 		})
+	}
+}
+
+// TestAgentUnitDockerDependency pins how the agent unit relates to
+// docker.service: a Docker stop must not take the agent down with it
+// (Requires=, BindsTo=, PartOf=), and a Docker start brings back an agent
+// that is not running (WantedBy=, which `systemctl enable` links).
+func TestAgentUnitDockerDependency(t *testing.T) {
+	for _, user := range []string{"", "dockmesh-agent"} {
+		unit, err := RenderAgentUnit(AgentUnit{
+			Binary:  "/usr/local/bin/dockmesh-agent",
+			EnvFile: "/etc/dockmesh-agent/agent.env",
+			User:    user,
+			DataDir: "/var/lib/dockmesh-agent",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := map[string][]string{}
+		for _, line := range strings.Split(string(unit), "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok {
+				values[k] = append(values[k], strings.Fields(v)...)
+			}
+		}
+		tests := []struct {
+			key  string
+			want bool
+		}{
+			{"Wants", true},
+			{"After", true},
+			{"WantedBy", true},
+			{"Requires", false},
+			{"Requisite", false},
+			{"BindsTo", false},
+			{"PartOf", false},
+		}
+		for _, tt := range tests {
+			if got := slices.Contains(values[tt.key], "docker.service"); got != tt.want {
+				t.Errorf("user %q: %s= lists docker.service: %v, want %v", user, tt.key, got, tt.want)
+			}
+		}
 	}
 }
 

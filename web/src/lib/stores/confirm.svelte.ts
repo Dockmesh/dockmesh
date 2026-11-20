@@ -16,6 +16,8 @@ export interface ConfirmOptions {
 	// Body is an optional second paragraph, typically explaining side
 	// effects or what won't happen (e.g. "containers keep running").
 	body?: string;
+	// Items lists what the action affects, one line each, below the body.
+	items?: string[];
 	confirmLabel?: string;
 	cancelLabel?: string;
 	// When true, confirm button renders with the danger variant (red

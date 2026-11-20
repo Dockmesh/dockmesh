@@ -5,7 +5,7 @@
 Description=Dockmesh Agent
 Documentation=https://dockmesh.dev/docs
 After=network-online.target docker.service
-Wants=network-online.target
+Wants=network-online.target docker.service
 StartLimitIntervalSec=0
 
 [Service]
@@ -32,4 +32,4 @@ LockPersonality=true
 ReadWritePaths="/var/lib/dockmesh-agent"
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target docker.service
