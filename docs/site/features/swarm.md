@@ -3,9 +3,9 @@ title: Docker Swarm
 description: See a Docker Swarm's nodes, services, tasks and logs read-only, and what Dockmesh does not manage there.
 ---
 
-Dockmesh can add a Docker Swarm as a cluster and show it read-only. The **Hosts** page shows the cluster's state and its nodes, and the **Topology** page its services and overlay networks. The API also lists its nodes, services, tasks and stack volumes and streams service logs. Dockmesh does not deploy stacks to the Swarm or change its services, nodes, secrets or configs.
+Dockmesh can add a Docker Swarm as a cluster and show it read-only. The **Hosts** page shows the cluster's state and its linked node hosts, and the **Topology** page its services and overlay networks. The API also lists its nodes, services, tasks and stack volumes and streams service logs. Dockmesh does not deploy stacks to the Swarm or change its services, nodes, secrets or configs.
 
-Hosts that are not Swarm nodes are unaffected. On a host that is a Swarm node, Dockmesh leaves the Swarm's task containers alone and refuses to migrate Swarm stacks even before a cluster exists. Everything else on this page starts once someone creates a cluster.
+Hosts that are not Swarm nodes are unaffected. On a host that is a Swarm node, Dockmesh leaves the Swarm's task containers alone, refuses to migrate Swarm stacks and labels Swarm stack volumes and networks, even before a cluster exists. The Hosts page then offers to create one. Everything else on this page needs a cluster.
 
 ## What Dockmesh shows
 
