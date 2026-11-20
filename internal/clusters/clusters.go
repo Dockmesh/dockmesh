@@ -291,19 +291,36 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 	return s.get(ctx, id)
 }
 
-// Delete removes a cluster and its memberships; nothing changes on the
-// Swarm. It is the way out of a cluster created from the wrong host.
-func (s *Service) Delete(ctx context.Context, id string) (Cluster, error) {
+// Delete removes a cluster, its memberships and everything granting or
+// restricting access on its scope (see Access), in one transaction;
+// nothing changes on the Swarm. It is the way out of a cluster created
+// from the wrong host. The caller reloads the role cache.
+func (s *Service) Delete(ctx context.Context, id string) (Cluster, Access, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, err := s.get(ctx, id)
 	if err != nil {
-		return Cluster{}, err
+		return Cluster{}, Access{}, err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id); err != nil {
-		return Cluster{}, err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Cluster{}, Access{}, err
 	}
-	return c, nil
+	defer func() { _ = tx.Rollback() }()
+	a, invites, err := accessOf(ctx, tx, id)
+	if err != nil {
+		return Cluster{}, Access{}, err
+	}
+	if err := removeAccess(ctx, tx, id, invites); err != nil {
+		return Cluster{}, Access{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id); err != nil {
+		return Cluster{}, Access{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Cluster{}, Access{}, err
+	}
+	return c, a, nil
 }
 
 func (s *Service) get(ctx context.Context, id string) (Cluster, error) {

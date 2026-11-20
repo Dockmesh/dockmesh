@@ -8,7 +8,7 @@
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
-    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate
+    type Agent, type AgentUpgradePolicy, type HostInfo, type Cluster, type ClusterCandidate, type ClusterAccess
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
@@ -333,6 +333,41 @@
     }
   }
 
+  function accessLines(a: ClusterAccess): string[] {
+    return [
+      ...a.assignments.map((x) => m.hosts_cluster_delete_assignment({ user: x.username, role: x.role, via: x.via ? m.hosts_cluster_delete_via({ group: x.via }) : '' })),
+      ...a.mappings.map((x) => m.hosts_cluster_delete_mapping({ kind: x.kind.toUpperCase(), provider: x.provider, group: x.group, role: x.role })),
+      ...a.invites.map((x) => (x.expired ? m.hosts_cluster_delete_invite_expired : m.hosts_cluster_delete_invite)({ email: x.email_hint || `#${x.id}`, role: x.role })),
+      ...a.tokens.map((x) => m.hosts_cluster_delete_token({ name: x.name, owner: x.owner ? m.hosts_cluster_delete_owner({ owner: x.owner }) : '' }))
+    ];
+  }
+
+  async function deleteCluster(c: Cluster) {
+    let access: ClusterAccess;
+    try {
+      access = await api.clusters.access(c.id);
+    } catch (err) {
+      toast.error(m.hosts_cluster_delete_failed(), err instanceof ApiError ? err.message : undefined);
+      return;
+    }
+    const items = accessLines(access);
+    if (!(await confirm.ask({
+      title: m.hosts_cluster_delete_title({ name: c.name }),
+      message: m.hosts_cluster_delete_message({ count: c.members.length }),
+      body: items.length > 0
+        ? m.hosts_cluster_delete_access({ assignments: access.assignments.length, mappings: access.mappings.length, invites: access.invites.length, tokens: access.tokens.length })
+        : m.hosts_cluster_delete_no_access(),
+      items, confirmLabel: m.hosts_cluster_delete(), danger: true, typeToConfirm: c.name
+    }))) return;
+    try {
+      await api.clusters.delete(c.id);
+      toast.success(m.hosts_cluster_deleted({ name: c.name }));
+      await loadAll();
+    } catch (err) {
+      toast.error(m.hosts_cluster_delete_failed(), err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   const COLS = '22px 14px minmax(180px, 1.6fr) 64px 100px 100px 100px minmax(110px, 200px) minmax(90px, 150px) 40px';
 </script>
 
@@ -391,6 +426,20 @@
         {/each}
       </div>
     {/each}
+
+    {#if allowed('clusters.create')}
+      {#each clusterList as c (c.id)}
+        <div class="cluster-row" data-testid="cluster-row">
+          <Network size={14} strokeWidth={1.8} />
+          <span class="dm-trunc">
+            <b>{c.name}</b>
+            <span class="dm-dim">{m.hosts_cluster_summary({ count: c.members.length })}</span>
+          </span>
+          <span class="dm-sp"></span>
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" data-testid="delete-cluster" onclick={() => deleteCluster(c)}>{m.hosts_cluster_delete_ellipsis()}</button>
+        </div>
+      {/each}
+    {/if}
 
     {#if !loading && rows.length > 0}
       <div class="dm-toolbar">
@@ -590,6 +639,11 @@
     display: flex; align-items: center; gap: 10px;
     border: 1px solid var(--accent); background: var(--accent-soft); color: inherit;
     border-radius: var(--r); padding: 8px 14px; font-size: var(--fs-sm); min-width: 0; margin-bottom: 10px;
+  }
+  .cluster-row {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border); border-radius: var(--r); padding: 6px 14px;
+    font-size: var(--fs-sm); min-width: 0; margin-bottom: 10px;
   }
   .policy {
     display: flex; align-items: center; gap: 10px;

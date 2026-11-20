@@ -339,10 +339,10 @@ func TestDelete(t *testing.T) {
 	if _, err := s.Create(ctx, "m1", "prod", ""); err != nil {
 		t.Fatal(err)
 	}
-	if c, err := s.Delete(ctx, swarmID); err != nil || len(c.Members) != 3 {
+	if c, _, err := s.Delete(ctx, swarmID); err != nil || len(c.Members) != 3 {
 		t.Fatalf("delete: %+v %v", c, err)
 	}
-	if _, err := s.Delete(ctx, swarmID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Delete(ctx, swarmID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
 	var n int

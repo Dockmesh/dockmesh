@@ -168,3 +168,68 @@ func TestListClustersByScope(t *testing.T) {
 		})
 	}
 }
+
+func clusterIDCall(ctx context.Context, handler http.HandlerFunc, method, id string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", id)
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rc))
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	return rr
+}
+
+// The access preview names what a delete removes; the delete drops the
+// cluster role from the cached access at once, and both answer 404 for
+// an unknown cluster.
+func TestDeleteClusterRemovesAccess(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.Clusters = clusters.New(e.db, swarmHosts{})
+	if _, err := e.h.Clusters.Create(context.Background(), "local", "prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	root := e.user("root", "admin")
+	ctx := middleware.WithIdentity(context.Background(), middleware.Identity{UserID: root.ID, Access: e.h.Roles.AccessFor(root.ID)})
+	v := e.user("carol", "viewer")
+	if _, err := e.db.Exec(`DELETE FROM role_assignments WHERE user_id = ?`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.h.Roles.AddAssignment(context.Background(), rbac.Assignment{UserID: v.ID, Role: "viewer", Scope: rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"}, Source: rbac.SourceManual}); err != nil {
+		t.Fatal(err)
+	}
+	onCluster := func() bool {
+		return e.h.Roles.AccessFor(v.ID).AllowsOn(rbac.PermHostsView, rbac.Resource{ClusterID: "c1"})
+	}
+	if !onCluster() {
+		t.Fatal("cluster assignment does not grant hosts.view")
+	}
+
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		method  string
+		id      string
+		want    int
+	}{
+		{"access unknown", e.h.ClusterAccess, http.MethodGet, "nope", http.StatusNotFound},
+		{"access", e.h.ClusterAccess, http.MethodGet, "c1", http.StatusOK},
+		{"delete unknown", e.h.DeleteCluster, http.MethodDelete, "nope", http.StatusNotFound},
+		{"delete", e.h.DeleteCluster, http.MethodDelete, "c1", http.StatusNoContent},
+		{"access after delete", e.h.ClusterAccess, http.MethodGet, "c1", http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		rr := clusterIDCall(ctx, tt.handler, tt.method, tt.id)
+		if rr.Code != tt.want {
+			t.Fatalf("%s: status %d, want %d: %s", tt.name, rr.Code, tt.want, rr.Body)
+		}
+		if tt.name == "access" {
+			var a clusters.Access
+			if err := json.Unmarshal(rr.Body.Bytes(), &a); err != nil || len(a.Assignments) != 1 || a.Assignments[0].Username != "carol" {
+				t.Fatalf("access %s", rr.Body)
+			}
+		}
+	}
+	if onCluster() {
+		t.Fatal("cluster role still in the cached access after delete")
+	}
+}

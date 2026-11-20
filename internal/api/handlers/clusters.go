@@ -106,8 +106,29 @@ func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
-// DeleteCluster removes a cluster and its memberships; the Swarm itself
-// is not touched.
+// ClusterAccess lists the role assignments, invites, IdP group mappings
+// and API tokens that deleting the cluster removes or revokes.
+//
+//	GET /api/v1/clusters/{id}/access
+func (h *Handlers) ClusterAccess(w http.ResponseWriter, r *http.Request) {
+	if h.Clusters == nil {
+		writeError(w, http.StatusServiceUnavailable, "clusters are not available")
+		return
+	}
+	a, err := h.Clusters.AccessOf(r.Context(), chi.URLParam(r, "id"))
+	if errors.Is(err, clusters.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+// DeleteCluster removes a cluster, its memberships and the access on its
+// scope; tokens restricted to it are revoked. The Swarm itself is not
+// touched.
 //
 //	DELETE /api/v1/clusters/{id}
 func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +137,7 @@ func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	c, err := h.Clusters.Delete(r.Context(), id)
+	c, removed, err := h.Clusters.Delete(r.Context(), id)
 	if errors.Is(err, clusters.ErrNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -124,10 +145,20 @@ func (h *Handlers) DeleteCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.Roles.Load(r.Context()); err != nil {
+		slog.Error("reload roles after cluster delete", "cluster", id, "err", err)
+	}
 	hosts := make([]string, 0, len(c.Members))
 	for _, m := range c.Members {
 		hosts = append(hosts, m.HostID)
 	}
-	h.audit(r, audit.ActionClusterDelete, id, map[string]any{"name": c.Name, "origin": c.OriginHost, "members": hosts})
+	tokens := make([]int64, 0, len(removed.Tokens))
+	for _, t := range removed.Tokens {
+		tokens = append(tokens, t.ID)
+	}
+	h.audit(r, audit.ActionClusterDelete, id, map[string]any{
+		"name": c.Name, "origin": c.OriginHost, "members": hosts,
+		"removed": removed.Counts(), "revoked_tokens": tokens,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
