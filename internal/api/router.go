@@ -203,6 +203,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermClustersCreate))
 				r.Get("/clusters/candidates", h.ListClusterCandidates)
 				r.Post("/clusters", h.CreateCluster)
+				r.Get("/clusters/{id}/access", h.ClusterAccess)
 				r.Delete("/clusters/{id}", h.DeleteCluster)
 			})
 

@@ -42,6 +42,11 @@
 			{#if req.body}
 				<p class="cf-body">{req.body}</p>
 			{/if}
+			{#if req.items?.length}
+				<ul class="cf-items">
+					{#each req.items as item, i (i)}<li>{item}</li>{/each}
+				</ul>
+			{/if}
 			{#if req.typeToConfirm}
 				<div class="dm-field">
 					<label for="cf-word">{m.ui_confirm_type_before()}<b class="dm-mono">{req.typeToConfirm}</b>{m.ui_confirm_type_after()}</label>
@@ -71,4 +76,8 @@
 	.cf { display: flex; flex-direction: column; gap: 12px; }
 	.cf p { margin: 0; }
 	.cf-body { color: var(--muted); font-size: var(--fs-sm); }
+	.cf-items {
+		margin: 0; padding: 6px 10px 6px 26px; max-height: 180px; overflow-y: auto;
+		border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm);
+	}
 </style>
