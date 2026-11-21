@@ -1,5 +1,5 @@
 kind: Upgrade notes
-body: 'Draining a host now also needs Stacks: Manage on each of its stacks and Deploy on the host the stack moves to; custom roles with only Hosts: Manage can no longer drain'
+body: 'Draining a host now also needs Stacks: Manage on each of its stacks, both on the drained host and on the host each stack moves to; custom roles with only Hosts: Manage can no longer drain'
 time: 2026-11-19T21:21:00.53021549Z
 custom:
     Audience: admins
