@@ -12,6 +12,8 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
   let result = $state<SwarmDeployResult | null>(null);
+  let prune = $state(false);
+  const leftovers = $derived(preview?.prune ? [...preview.prune.services, ...preview.prune.networks] : []);
 
   $effect(() => {
     if (!open) return;
@@ -35,6 +37,7 @@
     busy = true;
     error = null;
     result = null;
+    prune = false;
     try {
       preview = await api.stacks.swarmPreview(name, cluster);
     } catch (err) {
@@ -50,7 +53,7 @@
     busy = true;
     error = null;
     try {
-      result = await api.stacks.swarmDeploy(name, preview.cluster_id, preview.plan_hash, preview.modified_outside.length > 0);
+      result = await api.stacks.swarmDeploy(name, preview.cluster_id, preview.plan_hash, prune, preview.modified_outside.length > 0);
     } catch (err) {
       if (err instanceof ApiError && err.body?.outcome) {
         result = err.body as SwarmDeployResult;
@@ -126,6 +129,30 @@
         {/if}
       </div>
 
+      {#if preview.prune_unknown}
+        <div class="flex items-start gap-2 text-xs text-[var(--color-warning-400)]">
+          <AlertTriangle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          {preview.prune_unknown}
+        </div>
+      {/if}
+
+      {#if preview.prune && leftovers.length > 0}
+        <section class="border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] rounded-md p-2 space-y-1">
+          <h3 class="text-xs font-semibold">{m.stacks_swd_prune_title({ count: leftovers.length })}</h3>
+          <p class="text-xs text-[var(--fg-muted)]">{m.stacks_swd_prune_intro()}</p>
+          {#if preview.prune.services.length > 0}
+            <p class="text-xs">{m.stacks_swd_prune_services()} <span class="dm-mono">{preview.prune.services.join(', ')}</span></p>
+          {/if}
+          {#if preview.prune.networks.length > 0}
+            <p class="text-xs">{m.stacks_swd_prune_networks()} <span class="dm-mono">{preview.prune.networks.join(', ')}</span></p>
+          {/if}
+          <label class="flex items-center gap-2 text-xs">
+            <input type="checkbox" bind:checked={prune} disabled={busy || !!result} />
+            {m.stacks_swd_prune_confirm({ count: leftovers.length })}
+          </label>
+        </section>
+      {/if}
+
       {#if result}
         <section class="border border-[var(--border)] rounded-md p-2 space-y-1">
           <h3 class="text-xs font-semibold">{outcomeText(result.outcome)}</h3>
@@ -133,6 +160,18 @@
             {m.stacks_swd_via({ manager: result.manager })}{#if result.checked_via} · {m.stacks_swd_checked({ host: result.checked_via })}{/if}
           </p>
           {#if result.error}<p class="text-xs text-[var(--color-danger-400)]">{result.error}</p>{/if}
+          {#if result.prune_error}<p class="text-xs text-[var(--color-danger-400)]">{m.stacks_swd_prune_failed({ reason: result.prune_error })}</p>{/if}
+          {#if result.pruned}
+            <p class="text-xs">
+              {m.stacks_swd_pruned()}
+              <span class="dm-mono">{[...result.pruned.services, ...result.pruned.networks].map((x) => `${x.name} (${x.action})`).join(', ')}</span>
+            </p>
+          {/if}
+          {#if result.not_pruned && !result.prune_error}
+            <p class="text-xs text-[var(--fg-muted)]">
+              {m.stacks_swd_not_pruned()} <span class="dm-mono">{[...result.not_pruned.services, ...result.not_pruned.networks].join(', ')}</span>
+            </p>
+          {/if}
           <table class="w-full text-xs border-collapse">
             <thead>
               <tr class="text-left text-[var(--fg-muted)] border-b border-[var(--border)]">
