@@ -58,6 +58,9 @@ type SwarmService struct {
 	Stack        string      `json:"stack,omitempty"`
 	Ports        []SwarmPort `json:"ports,omitempty"`
 	UpdateState  string      `json:"update_state,omitempty"`
+	// SpecHash is the dockmesh.spec-hash label of a service Dockmesh
+	// deployed.
+	SpecHash string `json:"spec_hash,omitempty"`
 	// Networks are the ids (or names, as the spec gives them) of the
 	// networks the service's tasks attach to, ingress included.
 	Networks []string `json:"networks,omitempty"`
@@ -181,6 +184,7 @@ func serviceSummary(s swarm.Service) SwarmService {
 		ID:        s.ID,
 		Name:      s.Spec.Name,
 		Stack:     s.Spec.Labels[LabelStackNamespace],
+		SpecHash:  s.Spec.Labels[LabelSpecHash],
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}
@@ -386,6 +390,9 @@ func sanitizeService(s SwarmService) (SwarmService, bool) {
 	s.Image = text(s.Image, maxTextLen)
 	s.Stack = text(s.Stack, 128)
 	s.UpdateState = token(s.UpdateState, 32, "_")
+	if !specHashRe.MatchString(s.SpecHash) {
+		s.SpecHash = ""
+	}
 	s.Networks = texts(s.Networks, 128)
 	s.Constraints = texts(s.Constraints, 256)
 	if len(s.Ports) > maxListItems {

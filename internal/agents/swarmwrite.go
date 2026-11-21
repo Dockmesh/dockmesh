@@ -103,9 +103,6 @@ func refuse(format string, args ...any) error {
 // ValidStackName reports whether s is a stack name the write frames accept.
 func ValidStackName(s string) bool { return len(s) <= 63 && swarmStackName.MatchString(s) }
 
-// ServiceName is the Swarm name of a stack's service, as the CLI names it.
-func ServiceName(stack, service string) string { return stack + "_" + service }
-
 // Validate checks a deploy request against what the converter produces.
 // The agent runs it before touching the daemon, the server before
 // sending; nothing outside that shape is ever written.

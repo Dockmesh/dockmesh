@@ -353,6 +353,12 @@ func TestRemove(t *testing.T) {
 			actions: []string{"removed", "missing", "removed"},
 		},
 		{
+			name:    "network gone meanwhile counts as removed",
+			daemon:  fakeDaemon{networks: []network.Summary{{Network: network.Network{Name: "web_x", ID: "gone", Labels: own}}}},
+			req:     agents.SwarmRemoveReq{Stack: "web", Networks: []string{"web_x"}},
+			actions: []string{"removed"},
+		},
+		{
 			name: "service of another stack refuses before any removal",
 			daemon: fakeDaemon{services: []swarm.Service{
 				{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: own}}},
@@ -379,7 +385,9 @@ func TestRemove(t *testing.T) {
 			wantErr: agents.ErrNotSwarmManager.Error(),
 		},
 	}
+	old := networkRemoveWait
 	networkRemoveWait = time.Millisecond
+	t.Cleanup(func() { networkRemoveWait = old })
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := tt.daemon

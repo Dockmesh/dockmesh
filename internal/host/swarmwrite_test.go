@@ -34,14 +34,13 @@ func TestRemoteSwarmWriteErrors(t *testing.T) {
 		t.Fatalf("agent without the capability: %v", err)
 	}
 	tests := []struct {
-		name    string
-		agent   error
-		want    error
-		unknown bool
+		name  string
+		agent error
+		want  error
 	}{
-		{"worker", agents.ErrNotSwarmManager, agents.ErrNotSwarmManager, false},
-		{"refused", fmt.Errorf("%w: service web_app exists and is not part of stack web", agents.ErrSwarmWriteRefused), agents.ErrSwarmWriteRefused, false},
-		{"daemon error before writing", errors.New("read swarm state: down"), nil, false},
+		{"worker", agents.ErrNotSwarmManager, agents.ErrNotSwarmManager},
+		{"refused", fmt.Errorf("%w: service web_app exists and is not part of stack web", agents.ErrSwarmWriteRefused), agents.ErrSwarmWriteRefused},
+		{"daemon error before writing", errors.New("read swarm state: down"), nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,8 +52,8 @@ func TestRemoteSwarmWriteErrors(t *testing.T) {
 			if tt.want != nil && !errors.Is(err, tt.want) {
 				t.Fatalf("err %v, want %v", err, tt.want)
 			}
-			if errors.Is(err, ErrSwarmWriteUnknown) != tt.unknown {
-				t.Fatalf("err %v: unknown = %t, want %t", err, !tt.unknown, tt.unknown)
+			if errors.Is(err, ErrSwarmWriteUnknown) {
+				t.Fatalf("err %v: an answered error reported as unknown outcome", err)
 			}
 		})
 	}
@@ -93,5 +92,8 @@ func TestRegistrySwarmDeployValidates(t *testing.T) {
 	var reg Registry
 	if _, err := reg.SwarmDeploy(context.Background(), "a1", r); !errors.Is(err, agents.ErrSwarmWriteRefused) {
 		t.Fatalf("err %v, want a refusal before picking a host", err)
+	}
+	if _, err := reg.SwarmRemove(context.Background(), "a1", agents.SwarmRemoveReq{Stack: "web", Services: []string{"api_app"}}); !errors.Is(err, agents.ErrSwarmWriteRefused) {
+		t.Fatalf("remove err %v, want a refusal before picking a host", err)
 	}
 }
