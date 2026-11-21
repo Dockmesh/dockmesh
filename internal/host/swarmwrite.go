@@ -229,7 +229,7 @@ func (h *LocalHost) swarmAdopt(ctx context.Context, req agents.SwarmAdoptReq) (a
 }
 
 // ErrAgentNoSwarmService: the agent predates the Swarm service actions.
-var ErrAgentNoSwarmService = errors.New("the agent is too old to roll back or resume a Swarm service; upgrade it")
+var ErrAgentNoSwarmService = errors.New("the agent is too old for this action on a Swarm service; upgrade it")
 
 type swarmServiceActor interface {
 	swarmServiceAction(ctx context.Context, req agents.SwarmServiceActionReq) (agents.SwarmWriteResult, error)
@@ -254,7 +254,11 @@ func (r *Registry) SwarmServiceAction(ctx context.Context, id string, req agents
 
 func (h *RemoteHost) swarmServiceAction(ctx context.Context, req agents.SwarmServiceActionReq) (agents.SwarmWriteResult, error) {
 	var out agents.SwarmWriteResult
-	err := h.swarmFrame(ctx, agents.CapSwarmService, ErrAgentNoSwarmService, agents.FrameReqSwarmServiceAction, req, &out)
+	cap := agents.CapSwarmService
+	if req.Action == agents.SwarmServiceScale {
+		cap = agents.CapSwarmScale
+	}
+	err := h.swarmFrame(ctx, cap, ErrAgentNoSwarmService, agents.FrameReqSwarmServiceAction, req, &out)
 	return out, err
 }
 

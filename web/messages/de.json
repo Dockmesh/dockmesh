@@ -6824,5 +6824,13 @@
   "apierr_swarm_adopt_nothing": "Kein Service des Stacks kann übernommen werden",
   "apierr_swarm_adopt_files_failed": "Die Services wurden als Dockmesh-Services markiert, aber das Schreiben der Stack-Dateien schlug fehl; den Stack erneut übernehmen",
   "apierr_swarm_adopt_record_failed": "Speichern des Clusters des Stacks fehlgeschlagen; den Stack erneut übernehmen",
-  "apierr_swarm_service_name_invalid": "Ungültiger Service-Name"
+  "apierr_swarm_service_name_invalid": "Ungültiger Service-Name",
+  "cl_svc_scale": "Skalieren",
+  "cl_scale_title": "{name} skalieren",
+  "cl_scale_intro": "Swarm startet oder stoppt Tasks, bis der Service so viele hat. Wartende Tasks zeigen Swarms Grund im Tab Tasks.",
+  "cl_scale_now": "jetzt {n} von {total}",
+  "cl_scale_apply": "Skalieren",
+  "cl_scale_force": "Trotzdem skalieren",
+  "cl_scale_done": "{name} auf {n} skaliert",
+  "cl_scale_file": "Die Compose-Datei setzt {n} Replicas; der nächste Deploy setzt den Service darauf zurück."
 }

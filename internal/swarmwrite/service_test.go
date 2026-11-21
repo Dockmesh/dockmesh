@@ -80,3 +80,45 @@ func adoptedWith() swarm.Service {
 	s.PreviousSpec = &prev
 	return s
 }
+
+func TestServiceScale(t *testing.T) {
+	n := func(v uint64) *uint64 { return &v }
+	scale := func(r *uint64) agents.SwarmServiceActionReq {
+		return agents.SwarmServiceActionReq{Stack: "shop", Service: "shop_web", ID: "1", Action: agents.SwarmServiceScale, Replicas: r}
+	}
+	replicated := ownedWith(swarm.UpdateStateCompleted, true)
+	replicated.Spec.Mode = swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: n(2)}}
+	global := ownedWith("", false)
+	global.Spec.Mode = swarm.ServiceMode{Global: &swarm.GlobalService{}}
+	job := ownedWith("", false)
+	job.Spec.Mode = swarm.ServiceMode{ReplicatedJob: &swarm.ReplicatedJob{}}
+
+	f := &fakeDaemon{services: []swarm.Service{replicated}}
+	if _, err := ServiceAction(context.Background(), f, scale(n(4))); err != nil {
+		t.Fatal(err)
+	}
+	u := f.updates[0]
+	if *u.Spec.Mode.Replicated.Replicas != 4 || u.Rollback != "" || u.Spec.Labels[agents.LabelSpecHash] != hash || u.Version.Index != 5 {
+		t.Fatalf("update %+v", u)
+	}
+	if *replicated.Spec.Mode.Replicated.Replicas != 2 {
+		t.Fatal("the scale changed the service read from the daemon")
+	}
+	for name, tc := range map[string]struct {
+		svc swarm.Service
+		req agents.SwarmServiceActionReq
+	}{
+		"global":       {global, scale(n(2))},
+		"paused":       {ownedWith(swarm.UpdateStatePaused, true), scale(n(2))},
+		"updating":     {ownedWith(swarm.UpdateStateUpdating, true), scale(n(2))},
+		"job":          {job, scale(n(2))},
+		"over 100":     {replicated, scale(n(101))},
+		"no count":     {replicated, scale(nil)},
+		"rollback + n": {replicated, agents.SwarmServiceActionReq{Stack: "shop", Service: "shop_web", ID: "1", Action: agents.SwarmServiceRollback, Replicas: n(1)}},
+	} {
+		f := &fakeDaemon{services: []swarm.Service{tc.svc}}
+		if _, err := ServiceAction(context.Background(), f, tc.req); !errors.Is(err, agents.ErrSwarmWriteRefused) || len(f.updates) != 0 {
+			t.Errorf("%s: %v, %d writes", name, err, len(f.updates))
+		}
+	}
+}

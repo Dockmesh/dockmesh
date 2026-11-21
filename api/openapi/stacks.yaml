@@ -1000,7 +1000,15 @@ paths:
       operationId: stacks.scale_set
       tags: [stacks]
       summary: Scale a single service to N replicas
-      description: New replicas are built from the stack files on disk, so files changed outside Dockmesh are refused like a deploy until the request confirms them.
+      description: |
+        New replicas are built from the stack files on disk, so files changed outside Dockmesh are refused like a deploy until the request confirms them.
+
+        For a stack deployed to a Swarm cluster the replica count of the replicated service is set through a verified
+        manager (`stacks.deploy` on the stack on its cluster); Swarm starts or stops the tasks. Global and job services
+        answer 409 `swarm_not_replicated`, a service whose update is running or paused 409 `swarm_update_unfinished`, a
+        service no longer in the stack's file 409 `swarm_service_not_in_file`. The `container_name` and host-port guards don't apply there; the 0..100 limit,
+        the stateful warning and the migration guard do. When the compose file sets `deploy.replicas`, `file_replicas`
+        says so: the next deploy sets the service back to it.
       parameters:
         - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
@@ -1024,9 +1032,13 @@ paths:
                 type: object
                 properties:
                   service: {type: string}
-                  replicas: {type: integer}
-                  created: {type: array, items: {type: string}}
-                  removed: {type: array, items: {type: string}}
+                  previous: {type: integer}
+                  current: {type: integer}
+                  created: {type: integer, description: Replicas added.}
+                  removed: {type: integer, description: Replicas removed.}
+                  cluster_id: {type: string, description: Set for a stack on a Swarm cluster.}
+                  manager: {type: string, description: Manager host the scale went through (cluster stacks).}
+                  file_replicas: {type: integer, description: "The compose file's deploy.replicas (cluster stacks); the next deploy applies it."}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}

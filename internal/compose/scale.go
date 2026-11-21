@@ -23,6 +23,28 @@ var dbImagePrefixes = []string{
 	"neo4j", "cassandra", "memcached", "etcd",
 }
 
+// StatefulImage returns the name of image without registry, tag and
+// digest ("docker.io/library/postgres:15-alpine" is postgres) and whether
+// it is one of the known databases.
+func StatefulImage(image string) (string, bool) {
+	base := strings.ToLower(image)
+	if i := strings.Index(base, "@"); i >= 0 {
+		base = base[:i]
+	}
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	if i := strings.Index(base, ":"); i >= 0 {
+		base = base[:i]
+	}
+	for _, p := range dbImagePrefixes {
+		if base == p {
+			return base, true
+		}
+	}
+	return base, false
+}
+
 // ScaleCheck is the pre-flight analysis returned by CheckScale so the
 // handler / UI can show appropriate warnings before committing.
 type ScaleCheck struct {
@@ -79,21 +101,9 @@ func (s *Service) CheckScale(ctx context.Context, proj *composetypes.Project, se
 
 	// Stateful check — volumes mounted AND image matches a DB pattern.
 	check.HasVolumes = len(svc.Volumes) > 0
-	img := strings.ToLower(svc.Image)
-	for _, prefix := range dbImagePrefixes {
-		// Match "postgres", "postgres:15", "docker.io/library/postgres:15-alpine"
-		base := img
-		if idx := strings.LastIndex(base, "/"); idx >= 0 {
-			base = base[idx+1:]
-		}
-		if idx := strings.Index(base, ":"); idx >= 0 {
-			base = base[:idx]
-		}
-		if base == prefix {
-			check.IsStateful = true
-			check.StatefulImage = prefix
-			break
-		}
+	check.StatefulImage, check.IsStateful = StatefulImage(svc.Image)
+	if !check.IsStateful {
+		check.StatefulImage = ""
 	}
 
 	return check, nil

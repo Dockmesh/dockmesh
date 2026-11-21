@@ -250,6 +250,9 @@ const (
 	// CapSwarmService, agent: answers req.swarm.service.action on a
 	// manager.
 	CapSwarmService = "swarm.service"
+	// CapSwarmScale, agent: also answers the scale action of
+	// req.swarm.service.action.
+	CapSwarmScale = "swarm.scale"
 )
 
 // Stream control ops beyond the exec "resize".

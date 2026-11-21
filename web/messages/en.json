@@ -6824,5 +6824,13 @@
   "apierr_swarm_adopt_nothing": "No service of the stack can be adopted",
   "apierr_swarm_adopt_files_failed": "The services were marked as Dockmesh's, but writing the stack files failed; adopt the stack again",
   "apierr_swarm_adopt_record_failed": "Recording the stack's cluster failed; adopt the stack again",
-  "apierr_swarm_service_name_invalid": "Invalid service name"
+  "apierr_swarm_service_name_invalid": "Invalid service name",
+  "cl_svc_scale": "Scale",
+  "cl_scale_title": "Scale {name}",
+  "cl_scale_intro": "Swarm starts or stops tasks until the service runs this many. Pending tasks show Swarm's reason in the Tasks tab.",
+  "cl_scale_now": "now {n} of {total}",
+  "cl_scale_apply": "Scale",
+  "cl_scale_force": "Scale anyway",
+  "cl_scale_done": "{name} scaled to {n}",
+  "cl_scale_file": "The compose file sets {n} replicas; the next deploy sets the service back to it."
 }
