@@ -101,8 +101,8 @@ func (e *swarmDeployEnv) adoptPreview(t *testing.T, user, stack string) (int, ad
 	return rr.Code, p, rr.Body.String()
 }
 
-func (e *swarmDeployEnv) adopt(user, stack, hash string) (int, string) {
-	rr := e.do(http.MethodPost, "/api/v1/clusters/c1/stacks/"+stack+"/adopt", e.login(user).AccessToken, swarmAdoptRequest{PlanHash: hash})
+func (e *swarmDeployEnv) adoptShop(user, hash string) (int, string) {
+	rr := e.do(http.MethodPost, "/api/v1/clusters/c1/stacks/shop/adopt", e.login(user).AccessToken, swarmAdoptRequest{PlanHash: hash})
 	return rr.Code, rr.Body.String()
 }
 
@@ -128,7 +128,7 @@ func TestSwarmAdopt(t *testing.T) {
 		t.Fatal("the preview wrote something")
 	}
 
-	code, body = e.adopt("root", "shop", p.PlanHash)
+	code, body = e.adoptShop("root", p.PlanHash)
 	if code != http.StatusCreated {
 		t.Fatalf("adopt %d: %s", code, body)
 	}
@@ -163,7 +163,7 @@ func TestSwarmAdopt(t *testing.T) {
 func TestSwarmAdoptLabelMatchesDeploy(t *testing.T) {
 	e, f := newAdoptEnv(t)
 	_, p, _ := e.adoptPreview(t, "root", "shop")
-	if code, body := e.adopt("root", "shop", p.PlanHash); code != http.StatusCreated {
+	if code, body := e.adoptShop("root", p.PlanHash); code != http.StatusCreated {
 		t.Fatalf("adopt %d: %s", code, body)
 	}
 	code, out, body := e.deploy("root", "shop", e.planHash(t, "shop"))
@@ -183,7 +183,7 @@ func TestSwarmAdoptRefusals(t *testing.T) {
 	e, f := newAdoptEnv(t)
 	_, p, _ := e.adoptPreview(t, "root", "shop")
 	f.services[0].Version.Index = 8
-	if code, body := e.adopt("root", "shop", p.PlanHash); code != http.StatusConflict || !strings.Contains(body, "swarm_plan_changed") {
+	if code, body := e.adoptShop("root", p.PlanHash); code != http.StatusConflict || !strings.Contains(body, "swarm_plan_changed") {
 		t.Fatalf("changed since the preview: %d: %s", code, body)
 	}
 	if code, _, body := e.adoptPreview(t, "root", "other"); code != http.StatusConflict {
@@ -197,7 +197,7 @@ func TestSwarmAdoptRefusals(t *testing.T) {
 	}
 	_, p, _ = e.adoptPreview(t, "root", "shop")
 	f.adoptErr = agents.ErrSwarmWriteRefused
-	if code, body := e.adopt("root", "shop", p.PlanHash); code != http.StatusConflict {
+	if code, body := e.adoptShop("root", p.PlanHash); code != http.StatusConflict {
 		t.Fatalf("refused label write: %d: %s", code, body)
 	}
 	if e.mgr.Has("shop") {
@@ -225,7 +225,7 @@ func TestSwarmAdoptAccess(t *testing.T) {
 		}
 	}
 	_, p, _ := e.adoptPreview(t, "u-adopt-c1", "shop")
-	if code, body := e.adopt("u-adopt-c1", "shop", p.PlanHash); code != http.StatusCreated {
+	if code, body := e.adoptShop("u-adopt-c1", p.PlanHash); code != http.StatusCreated {
 		t.Fatalf("adopt with a cluster role: %d: %s", code, body)
 	}
 }
