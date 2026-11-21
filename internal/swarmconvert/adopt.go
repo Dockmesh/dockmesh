@@ -265,6 +265,8 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 					key = volumeKey(m.Source, topVols)
 					vol["external"] = true
 					vol["name"] = esc(m.Source)
+				} else if prev, seen := topVols[key]; seen {
+					vol = prev.(map[string]any)
 				} else if o := m.VolumeOptions; o != nil {
 					if l := without(o.Labels, LabelNamespace); len(l) > 0 {
 						vol["labels"] = escMap(l)

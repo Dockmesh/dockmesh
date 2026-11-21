@@ -352,12 +352,13 @@ func (h *Handlers) SwarmAdopt(w http.ResponseWriter, r *http.Request) {
 			"cluster": clusterID, "manager": manager, "outcome": "failed", "stage": stage, "error": err.Error(),
 		})
 	}
-	if taken, err := h.stackNameTaken(wctx, stack); err != nil || taken {
-		if err == nil {
-			err = errAdoptNameTaken
-		}
+	if taken, err := h.stackNameTaken(wctx, stack); err != nil {
 		failed("write_files", err)
 		writeError(w, http.StatusInternalServerError, "the services were marked as Dockmesh's but writing the stack files failed; adopt it again")
+		return
+	} else if taken {
+		failed("write_files", errAdoptNameTaken)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errAdoptNameTaken.Error() + ": " + stack, "code": "stack_exists"})
 		return
 	}
 	if _, err := h.Stacks.Create(stack, b.adopted.Compose, b.adopted.Env); err != nil {

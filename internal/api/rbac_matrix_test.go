@@ -562,8 +562,10 @@ func login(t *testing.T, authSvc *auth.Service, name string) string {
 // alsoNeeds are routes gated on a second permission besides their entry
 // in routeGates.
 var alsoNeeds = map[string]rbac.Perm{
-	"POST /api/v1/containers/{id}/files":   rbac.PermContainersExec,
-	"DELETE /api/v1/containers/{id}/files": rbac.PermContainersExec,
+	"POST /api/v1/containers/{id}/files":              rbac.PermContainersExec,
+	"DELETE /api/v1/containers/{id}/files":            rbac.PermContainersExec,
+	"GET /api/v1/clusters/{id}/stacks/{stack}/adopt":  rbac.PermContainersEnv,
+	"POST /api/v1/clusters/{id}/stacks/{stack}/adopt": rbac.PermContainersEnv,
 }
 
 // clusterScoped are routes on a cluster's own resources: a host scope,
