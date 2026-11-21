@@ -64,22 +64,30 @@ func (h *Handlers) refuseMigrating(w http.ResponseWriter, r *http.Request, stack
 	return true
 }
 
-// guardStack takes the lock of stack on the host scope checks use for it
+// guardStack takes the lock of stack on the target scope checks use for it
 // and refuses an unfinished migration. On ok=false the answer is written.
 func (h *Handlers) guardStack(w http.ResponseWriter, r *http.Request, stack, op string) (release func(), ok bool) {
-	var hostID string
+	var target stacks.Target
 	if h.Deployments != nil {
 		var err error
-		if hostID, err = h.Deployments.HostOf(r.Context(), stack); err != nil {
-			if errors.Is(err, stacks.ErrClusterTarget) {
-				writeStackTargetError(w, err)
-			} else {
-				writeError(w, http.StatusInternalServerError, err.Error())
-			}
+		if target, err = h.Deployments.TargetOf(r.Context(), stack); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return nil, false
 		}
 	}
-	return h.guardStackOn(w, r, hostID, stack, op)
+	if target.Kind != stacks.TargetCluster {
+		return h.guardStackOn(w, r, target.ID, stack, op)
+	}
+	release, err := h.StackLocks.TryLock(stacklock.ClusterKey(target.ID, stack), op)
+	if err != nil {
+		writeStackBusy(w, err)
+		return nil, false
+	}
+	if h.refuseMigrating(w, r, stack) {
+		release()
+		return nil, false
+	}
+	return release, true
 }
 
 // guardStackOn is guardStack for a stack whose host is known.

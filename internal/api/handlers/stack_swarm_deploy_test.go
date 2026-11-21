@@ -438,3 +438,28 @@ func TestHostDeployRefusesClusterDependency(t *testing.T) {
 		t.Fatalf("%d: %s", rr.Code, rr.Body)
 	}
 }
+
+// The files of a stack on a cluster can be edited; the save holds the
+// stack's cluster lock.
+func TestSwarmStackFilesSave(t *testing.T) {
+	e := newSwarmDeployEnv(t)
+	e.router.With(middleware.NewAuth(e.h.Auth), e.h.StackScope, middleware.RequirePerm(rbac.PermStacksUpdate)).Put("/api/v1/stacks/{name}", e.h.UpdateStack)
+	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.h.Deployments.SetCluster(context.Background(), "web", "c1", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	body := stackRequest{Compose: strings.Replace(webStack, "postgres:17", "postgres:18", 1), Env: "TOKEN=s3cret\n", Force: true}
+	if rr := e.do(http.MethodPut, "/api/v1/stacks/web", e.login("root").AccessToken, body); rr.Code != http.StatusOK {
+		t.Fatalf("save %d: %s", rr.Code, rr.Body)
+	}
+	release, err := e.h.StackLocks.TryLock(stacklock.ClusterKey("c1", "web"), stacklock.OpDeploy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if rr := e.do(http.MethodPut, "/api/v1/stacks/web", e.login("root").AccessToken, body); rr.Code != http.StatusConflict {
+		t.Fatalf("save while deploying %d: %s", rr.Code, rr.Body)
+	}
+}
