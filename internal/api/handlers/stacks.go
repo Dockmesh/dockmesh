@@ -1584,7 +1584,7 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, snap *stac
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDeploy)
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpStop)
 	if err != nil {
 		writeStackBusy(w, err)
 		return
