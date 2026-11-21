@@ -4,7 +4,7 @@
 // NOTICE); the golden cases in internal/swarmgolden pin it to what the CLI
 // sends.
 //
-// Every compose key the converter does not map yet is listed in
+// Every compose key the converter does not map is listed in
 // Result.NotConverted, never dropped silently.
 package swarmconvert
 
@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"time"
@@ -59,7 +60,7 @@ func (n NotConverted) String() string {
 	return s
 }
 
-// Convert converts project as stack stack. The project is loaded with its
+// Convert converts project into the specs of the stack named stack. The project is loaded with its
 // environment resolved, as for a host deploy.
 func Convert(project *types.Project, stack string) (*Result, error) {
 	if stack == "" {
@@ -137,6 +138,10 @@ func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, b
 	if err != nil {
 		return swarm.ServiceSpec{}, false, err
 	}
+	restart, err := convertRestartPolicy(svc.Deploy)
+	if err != nil {
+		return swarm.ServiceSpec{}, false, err
+	}
 	spec := swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: scoped(stack, svc.Name), Labels: labels},
 		TaskTemplate: swarm.TaskSpec{
@@ -149,7 +154,7 @@ func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, b
 				Healthcheck: healthcheck,
 				Privileges:  &swarm.Privileges{},
 			},
-			RestartPolicy: convertRestartPolicy(svc.Deploy),
+			RestartPolicy: restart,
 		},
 		Mode:         mode,
 		EndpointSpec: endpoint,
@@ -165,14 +170,14 @@ func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, b
 }
 
 // onlyDefaultNetwork reports whether svc is attached to the stack's
-// default network alone, which compose-go adds to services without
-// `networks:`. Any other attachment waits for the network conversion.
+// default network alone and without settings, as compose-go attaches
+// services without `networks:`.
 func onlyDefaultNetwork(svc types.ServiceConfig) bool {
 	if len(svc.Networks) != 1 {
 		return false
 	}
 	cfg, ok := svc.Networks[defaultNetwork]
-	return ok && cfg == nil
+	return ok && (cfg == nil || reflect.DeepEqual(*cfg, types.ServiceNetworkConfig{}))
 }
 
 func convertEnvironment(env types.MappingWithEquals) []string {
@@ -245,17 +250,22 @@ func convertMode(deploy *types.DeployConfig) (swarm.ServiceMode, error) {
 	return mode, nil
 }
 
-func convertRestartPolicy(deploy *types.DeployConfig) *swarm.RestartPolicy {
+func convertRestartPolicy(deploy *types.DeployConfig) (*swarm.RestartPolicy, error) {
 	if deploy == nil || deploy.RestartPolicy == nil {
-		return nil
+		return nil, nil
 	}
 	p := deploy.RestartPolicy
+	switch swarm.RestartPolicyCondition(p.Condition) {
+	case "", swarm.RestartPolicyConditionNone, swarm.RestartPolicyConditionOnFailure, swarm.RestartPolicyConditionAny:
+	default:
+		return nil, fmt.Errorf("deploy.restart_policy.condition %q is not none, on-failure or any", p.Condition)
+	}
 	return &swarm.RestartPolicy{
 		Condition:   swarm.RestartPolicyCondition(p.Condition),
 		Delay:       durationPtr(p.Delay),
 		MaxAttempts: p.MaxAttempts,
 		Window:      durationPtr(p.Window),
-	}
+	}, nil
 }
 
 func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, error) {
@@ -267,7 +277,7 @@ func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, erro
 			PublishMode: swarm.PortConfigPublishMode(p.Mode),
 		}
 		if p.Published != "" {
-			n, err := strconv.ParseUint(p.Published, 10, 32)
+			n, err := strconv.ParseUint(p.Published, 10, 16)
 			if err != nil {
 				return nil, fmt.Errorf("ports: published port %q is not a single port", p.Published)
 			}
@@ -295,7 +305,6 @@ var converted = map[string]bool{
 	"deploy.replicas":        true,
 	"deploy.labels":          true,
 	"deploy.restart_policy":  true,
-	"deploy.mode=replicated": true,
 }
 
 // hints names the Swarm key for compose keys a Swarm ignores.
@@ -340,8 +349,9 @@ func notConverted(svc types.ServiceConfig) ([]NotConverted, error) {
 				}
 			}
 		case "deploy":
-			for _, dk := range sortedKeys(v.(map[string]any)) {
-				dv := v.(map[string]any)[dk]
+			dm := v.(map[string]any)
+			for _, dk := range sortedKeys(dm) {
+				dv := dm[dk]
 				switch {
 				case empty(dv):
 				case dk == "mode":
@@ -358,13 +368,12 @@ func notConverted(svc types.ServiceConfig) ([]NotConverted, error) {
 			}
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
 }
 
 // projectNotConverted lists the top-level keys besides services that the
 // converter leaves out: every network but the default one, volumes,
-// secrets and configs.
+// secrets, configs, jobs and models.
 func projectNotConverted(project *types.Project) []NotConverted {
 	var out []NotConverted
 	for _, name := range sortedKeys(project.Networks) {
@@ -382,6 +391,12 @@ func projectNotConverted(project *types.Project) []NotConverted {
 	for _, name := range sortedKeys(project.Configs) {
 		out = append(out, NotConverted{Key: "configs." + name})
 	}
+	for _, name := range sortedKeys(project.Jobs) {
+		out = append(out, NotConverted{Key: "jobs." + name})
+	}
+	for _, name := range sortedKeys(project.Models) {
+		out = append(out, NotConverted{Key: "models." + name})
+	}
 	return out
 }
 
@@ -389,17 +404,12 @@ func projectNotConverted(project *types.Project) []NotConverted {
 // adds by itself: only its name set.
 func isPlainDefault(n types.NetworkConfig) bool {
 	n.Name = ""
-	raw, err := json.Marshal(n)
-	if err != nil {
-		return false
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return false
-	}
-	return empty(m)
+	return reflect.DeepEqual(n, types.NetworkConfig{})
 }
 
+// empty reports whether a value from compose-go's JSON form was left
+// unset. Anything written counts as set, even `{}` or a zero inside it;
+// compose-go omits unset fields, so only these remain.
 func empty(v any) bool {
 	switch t := v.(type) {
 	case nil:
@@ -409,21 +419,9 @@ func empty(v any) bool {
 	case bool:
 		return !t
 	case map[string]any:
-		// A key with a null value was written (`networks: {back:}`);
-		// only keys holding empty values count as unset.
-		for _, el := range t {
-			if el == nil || !empty(el) {
-				return false
-			}
-		}
-		return true
+		return len(t) == 0
 	case []any:
-		for _, el := range t {
-			if !empty(el) {
-				return false
-			}
-		}
-		return true
+		return len(t) == 0
 	}
 	return false
 }
@@ -437,7 +435,7 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// Strings formats ns one per line, for messages and tests.
+// Strings returns the String form of each entry, for messages and tests.
 func Strings(ns []NotConverted) []string {
 	out := make([]string, len(ns))
 	for i, n := range ns {

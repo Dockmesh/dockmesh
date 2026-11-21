@@ -1,7 +1,7 @@
 Dockmesh
 Licensed under the GNU Affero General Public License v3.0 only (see LICENSE).
 
-This product includes software that follows the design of third-party
+Parts of this product follow the design of the following third-party
 open-source software:
 
 docker/cli (https://github.com/docker/cli)

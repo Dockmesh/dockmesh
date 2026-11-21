@@ -2,14 +2,10 @@ package swarmconvert
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/compose-spec/compose-go/v2/types"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/swarmgolden"
@@ -17,8 +13,8 @@ import (
 
 const casesDir = "../swarmgolden/testdata/cases"
 
-// What each case leaves for the later converter pieces. A case missing
-// here must convert completely.
+// What each case reports as not converted; a case missing here must
+// convert completely.
 var wantNotConverted = map[string][]string{
 	"basic-web":        {"web: deploy.placement", "web: deploy.resources", "web: deploy.update_config"},
 	"fixture-app":      {"volumes.data", "app: restart (use deploy.restart_policy)", "app: volumes"},
@@ -61,7 +57,7 @@ func TestGoldenCases(t *testing.T) {
 			for _, d := range diffs {
 				t.Errorf("%s", d)
 			}
-			if got, want := Strings(res.NotConverted), wantNotConverted[c.Name]; !reflect.DeepEqual(got, want) && (len(got) > 0 || len(want) > 0) {
+			if got, want := Strings(res.NotConverted), wantNotConverted[c.Name]; !slices.Equal(got, want) {
 				t.Errorf("not converted:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 			}
 			if len(c.Meta.Pending) > 0 && len(res.NotConverted) == 0 {
@@ -75,7 +71,8 @@ func TestGoldenCases(t *testing.T) {
 				wantNets = append(wantNets, n.Name+" "+n.Driver+" "+n.Labels[LabelNamespace])
 			}
 			sort.Strings(gotNets)
-			if !reflect.DeepEqual(gotNets, wantNets) {
+			sort.Strings(wantNets)
+			if !slices.Equal(gotNets, wantNets) {
 				t.Errorf("networks %v, want %v", gotNets, wantNets)
 			}
 		})
@@ -90,8 +87,12 @@ func TestGoldenCases(t *testing.T) {
 // Keys compose-go knows but the converter doesn't map are reported, never
 // dropped; this covers keys no golden case uses.
 func TestNotConvertedKeys(t *testing.T) {
-	dir := t.TempDir()
-	src := `services:
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"service keys", `services:
   app:
     image: alpine:3.24
     user: "1000"
@@ -100,6 +101,8 @@ func TestNotConvertedKeys(t *testing.T) {
     privileged: true
     cap_add: [NET_ADMIN]
     networks: [back]
+    ulimits:
+      nofile: 0
     ports:
       - target: 80
         published: 8080
@@ -115,40 +118,29 @@ secrets:
 configs:
   conf:
     external: true
-`
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(src), 0o600); err != nil {
-		t.Fatal(err)
+`, []string{
+			"configs.conf", "networks.back", "secrets.token",
+			"app: cap_add", "app: deploy.endpoint_mode", "app: deploy.mode", "app: networks", "app: ports.host_ip",
+			"app: privileged", "app: stop_grace_period", "app: ulimits", "app: user", "app: working_dir",
+		}},
+		{"empty network settings stay default", "services:\n  app:\n    image: alpine\n    networks:\n      default: {}\n", nil},
+		{"default network with an alias", "services:\n  app:\n    image: alpine\n    networks:\n      default:\n        aliases: [web]\n", []string{"app: networks"}},
+		{"default network with settings", "services:\n  app:\n    image: alpine\nnetworks:\n  default:\n    enable_ipv4: false\n", []string{"networks.default"}},
+		{"jobs and models", "services:\n  app:\n    image: alpine\njobs:\n  j:\n    image: alpine\n    privileged: true\n    triggers:\n      manual: true\nmodels:\n  m:\n    model: ai/x\n", []string{"jobs.j", "models.m"}},
 	}
-	project, err := loadProject(dir, "keys")
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := convertYAML(t, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := Strings(res.NotConverted); !slices.Equal(got, tc.want) {
+				t.Fatalf("not converted:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(tc.want, "\n  "))
+			}
+			attached := len(res.Services[0].TaskTemplate.Networks) > 0
+			if reported := slices.Contains(Strings(res.NotConverted), "app: networks"); attached == reported {
+				t.Fatalf("network attached %v, reported %v: exactly one must hold", attached, reported)
+			}
+		})
 	}
-	res, err := Convert(project, "keys")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"configs.conf",
-		"networks.back",
-		"secrets.token",
-		"app: cap_add",
-		"app: deploy.endpoint_mode",
-		"app: deploy.mode",
-		"app: networks",
-		"app: ports.host_ip",
-		"app: privileged",
-		"app: stop_grace_period",
-		"app: user",
-		"app: working_dir",
-	}
-	if got := Strings(res.NotConverted); !reflect.DeepEqual(got, want) {
-		t.Fatalf("not converted:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
-	}
-	if len(res.Networks) != 0 || len(res.Services[0].TaskTemplate.Networks) != 0 {
-		t.Fatalf("an explicit network was converted: %+v", res.Networks)
-	}
-}
-
-func loadProject(dir, stack string) (*types.Project, error) {
-	return compose.LoadProject(context.Background(), dir, stack, "")
 }

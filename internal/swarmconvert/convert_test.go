@@ -1,11 +1,16 @@
 package swarmconvert
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/dockmesh/dockmesh/internal/compose"
 )
 
 func convertYAML(t *testing.T, src string) (*Result, error) {
@@ -21,11 +26,17 @@ func convertYAML(t *testing.T, src string) (*Result, error) {
 	return Convert(project, "unit")
 }
 
+func loadProject(dir, stack string) (*types.Project, error) {
+	return compose.LoadProject(context.Background(), dir, stack, "")
+}
+
 func TestConvertRefuses(t *testing.T) {
 	cases := []struct {
 		name, src, want string
 	}{
 		{"port range to one port", "services:\n  a:\n    image: alpine\n    ports:\n      - \"8080-8081:80\"\n", "not a single port"},
+		{"published port out of range", "services:\n  a:\n    image: alpine\n    ports:\n      - target: 80\n        published: \"70000\"\n", "not a single port"},
+		{"unknown restart condition", "services:\n  a:\n    image: alpine\n    deploy:\n      restart_policy:\n        condition: bogus\n", "restart_policy.condition"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,8 +54,9 @@ func TestConvertEnvironmentWithoutValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := res.Services[0].TaskTemplate.ContainerSpec.Env
-	if want := []string{"KEY_ONLY", "SET=1"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("env %v", got)
+	want := []string{"KEY_ONLY", "SET=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("env %v, want %v", got, want)
 	}
 }
 
