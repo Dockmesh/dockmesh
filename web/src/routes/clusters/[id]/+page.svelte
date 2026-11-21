@@ -21,8 +21,9 @@
   import { latest } from '$lib/latest';
   import { urlTab } from '$lib/urlTab.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { Skeleton, EmptyState, StatBar, StatusChip, Tabs, LiveIndicator, Segmented } from '$lib/components/ui';
+  import { Button, Skeleton, EmptyState, StatBar, StatusChip, Tabs, LiveIndicator, Segmented } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
+  import AdoptStackDialog from './_AdoptStackDialog.svelte';
   import { AlertTriangle, Info, CircleSlash, CircleDashed, Network, Waypoints, ShieldCheck, ShieldAlert } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
@@ -162,6 +163,15 @@
   const distSvcById = $derived(Object.fromEntries((dist?.services ?? []).map((s) => [s.id, s])) as Record<string, ClusterDistService>);
   const stacks = $derived(servicesByStack(services ?? []));
   const namedStacks = $derived(stacks.filter((g) => g.stack !== ''));
+  // A stack whose every service carries the spec hash is Dockmesh's.
+  const isOwn = (g: { services: SwarmService[] }) => g.services.length > 0 && g.services.every((s) => !!s.spec_hash);
+  const externalStacks = $derived(namedStacks.filter((g) => !isOwn(g)));
+  let adoptStack = $state('');
+  let adoptOpen = $state(false);
+  function openAdopt(stack: string) {
+    adoptStack = stack;
+    adoptOpen = true;
+  }
   const desired = $derived((services ?? []).reduce((a, s) => a + s.desired_tasks, 0));
   const running = $derived(services ? services.reduce((a, s) => a + s.running_tasks, 0) : (dist?.tasks ?? 0));
   const waitText = $derived(readError ?? (readOnly ? m.cl_stale_none() : m.cl_loading()));
@@ -193,7 +203,7 @@
       note: cstate === 'healthy' || cstate === 'degraded' ? (nodes.find((n) => n.leader)?.host_id ? m.cl_has_agent() : m.cl_no_agent_short()) : ''
     },
     ...(svcDenied ? [] : [
-      { label: m.cl_fig_services(), value: services?.length ?? '—', note: services ? (namedStacks.length === 1 ? m.cl_stacks_external_one() : m.cl_stacks_external({ n: namedStacks.length })) : '' },
+      { label: m.cl_fig_services(), value: services?.length ?? '—', note: services ? (externalStacks.length === 1 ? m.cl_stacks_external_one() : m.cl_stacks_external({ n: externalStacks.length })) : '' },
       {
         label: m.cl_fig_tasks(),
         value: readOnly ? '—' : running,
@@ -503,6 +513,10 @@
   {/if}
 </section>
 
+{#if adoptOpen}
+  <AdoptStackDialog bind:open={adoptOpen} cluster={id} stack={adoptStack} onadopted={loadAll} />
+{/if}
+
 {#snippet bar(v: number | undefined)}
   {#if v == null}
     <span class="dm-dim">—</span>
@@ -670,7 +684,7 @@
         <div class="dm-tr dm-grp stackrow" role="row" style="grid-template-columns: 1fr">
           <span role="cell">
             <b>{g.stack || m.cl_no_stack()}</b>
-            {#if g.stack}<span class="dm-pill ext" title={m.cl_external_title()}>{m.cl_external()}</span>{/if}
+            {#if g.stack && isOwn(g)}<span class="dm-pill ext" title={m.cl_dockmesh_title()}>{m.cl_dockmesh()}</span>{:else if g.stack}<span class="dm-pill ext" title={m.cl_external_title()}>{m.cl_external()}</span>{/if}
             <span class="dm-dim"> · {g.services.length === 1 ? m.cl_services_one() : m.cl_services({ n: g.services.length })} · {m.cl_of({ n: g.services.reduce((a, s) => a + s.running_tasks, 0), total: g.services.reduce((a, s) => a + s.desired_tasks, 0) })} {m.cl_tasks_word()}</span>
           </span>
         </div>
@@ -758,8 +772,17 @@
         {@const want = g.services.reduce((a, s) => a + s.desired_tasks, 0)}
         <div class="dm-tr" role="row" style="grid-template-columns: {STACK_COLS}">
           <span role="cell"><span class="dm-dot {run >= want ? 'ok' : run === 0 ? 'bad' : 'warn'}"></span></span>
-          <span role="cell" class="dm-nm"><span class="nm">{g.stack}</span></span>
-          <span role="cell"><span class="dm-pill ext">{m.cl_external()}</span> <span class="dm-dim small">{m.cl_external_title()}</span></span>
+          <span role="cell" class="dm-nm">{#if isOwn(g)}<a class="nm lnk" href="/stacks/{encodeURIComponent(g.stack)}">{g.stack}</a>{:else}<span class="nm">{g.stack}</span>{/if}</span>
+          <span role="cell">
+            {#if isOwn(g)}
+              <span class="dm-pill ext">{m.cl_dockmesh()}</span> <span class="dm-dim small">{m.cl_dockmesh_title()}</span>
+            {:else}
+              <span class="dm-pill ext">{m.cl_external()}</span> <span class="dm-dim small">{m.cl_external_title()}</span>
+              {#if allowed('stacks.adopt') && !readOnly}
+                <Button size="xs" class="adoptbtn" onclick={() => openAdopt(g.stack)} data-testid="adopt-stack">{m.cl_adopt()}</Button>
+              {/if}
+            {/if}
+          </span>
           <span role="cell" class="r dm-num">{g.services.length}</span>
           <span role="cell" class="r dm-num" class:warnc={run < want}>{run}/{want}</span>
         </div>
@@ -838,6 +861,7 @@
   .badc { color: var(--bad); }
   .lnk { color: var(--fg); text-decoration: none; }
   .lnk:hover { text-decoration: underline; }
+  :global(.adoptbtn) { margin-left: 8px; }
   .small { font-size: var(--fs-xs); }
   .na { color: var(--subtle); font-size: var(--fs-xs); grid-column: span 2; }
   .r { text-align: right; }

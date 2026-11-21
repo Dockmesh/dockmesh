@@ -261,9 +261,34 @@ export interface SwarmService {
   desired_tasks: number;
   stack?: string;
   update_state?: string;
+  /** Set on services Dockmesh deployed or adopted. */
+  spec_hash?: string;
   constraints?: string[];
   created_at: string;
   updated_at: string;
+}
+
+export interface SwarmAdoptPreview {
+  stack: string;
+  cluster_id: string;
+  manager: string;
+  compose: string;
+  env_keys: string[];
+  services: { name: string; id: string; changes: string[] }[];
+  not_carried: SwarmPreviewFinding[];
+  refusals: SwarmPreviewFinding[];
+  warnings: SwarmPreviewFinding[];
+  kept_networks: string[];
+  plan_hash: string;
+}
+
+export interface SwarmAdoptResult {
+  stack: string;
+  cluster_id: string;
+  manager: string;
+  outcome: 'applied' | 'partial' | 'unknown';
+  error?: string;
+  services: SwarmWriteResult[];
 }
 
 export interface SwarmTask {
@@ -2532,7 +2557,14 @@ export const api = {
     tasks: (id: string) =>
       request<{ read_host: string; tasks: SwarmTask[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/tasks`),
     networks: (id: string) =>
-      request<{ read_host: string; networks: SwarmNetwork[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/networks`)
+      request<{ read_host: string; networks: SwarmNetwork[]; truncated?: boolean }>(`/clusters/${encodeURIComponent(id)}/networks`),
+    adoptPreview: (id: string, stack: string) =>
+      request<SwarmAdoptPreview>(`/clusters/${encodeURIComponent(id)}/stacks/${encodeURIComponent(stack)}/adopt`),
+    adopt: (id: string, stack: string, planHash: string) =>
+      request<SwarmAdoptResult>(`/clusters/${encodeURIComponent(id)}/stacks/${encodeURIComponent(stack)}/adopt`, {
+        method: 'POST',
+        body: JSON.stringify({ plan_hash: planHash })
+      })
   },
 
   hosts: {

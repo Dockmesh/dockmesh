@@ -288,7 +288,7 @@ func requestTimeout(frameType string) time.Duration {
 		return 15 * time.Minute
 	case FrameReqAgentUpgrade:
 		return 11 * time.Minute
-	case FrameReqSwarmStackDeploy, FrameReqSwarmStackRemove:
+	case FrameReqSwarmStackDeploy, FrameReqSwarmStackRemove, FrameReqSwarmStackAdopt:
 		return SwarmWriteWait
 	case FrameReqStacksDirApply:
 		return stacksDirApplyWait

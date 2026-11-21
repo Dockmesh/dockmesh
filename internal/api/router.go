@@ -360,6 +360,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/templates/{id}/export", h.ExportTemplate)
 			})
 
+			// An External Swarm stack becomes a Dockmesh stack; the handler
+			// checks stacks.adopt on the stack's name on the cluster.
+			r.Group(func(r chi.Router) {
+				r.Use(h.ClusterScope)
+				r.Use(middleware.RequirePerm(rbac.PermStacksAdopt))
+				r.Get("/clusters/{id}/stacks/{stack}/adopt", h.SwarmAdoptPreview)
+				r.Post("/clusters/{id}/stacks/{stack}/adopt", h.SwarmAdopt)
+			})
+
 			// -------------------------- STACK DEPLOY -------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermStacksDeploy))

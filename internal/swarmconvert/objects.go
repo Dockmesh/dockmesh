@@ -3,6 +3,7 @@ package swarmconvert
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/moby/moby/api/types/swarm"
@@ -43,6 +44,11 @@ func convertSecrets(svc types.ServiceConfig, secrets types.Secrets) ([]*swarm.Se
 		name, uid, gid, mode, err := fileRef(types.FileReferenceConfig(ref))
 		if err != nil {
 			return nil, fmt.Errorf("secrets %w", err)
+		}
+		// compose-go turns the default target into /run/secrets/<name>; the
+		// CLI sends the bare name, which Swarm mounts at the same place.
+		if rest, ok := strings.CutPrefix(name, "/run/secrets/"); ok && rest != "" && !strings.Contains(rest, "/") {
+			name = rest
 		}
 		out = append(out, &swarm.SecretReference{
 			SecretName: s.Name,

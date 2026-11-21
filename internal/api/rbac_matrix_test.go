@@ -207,6 +207,8 @@ var routeGates = []struct {
 	{"GET", "/api/v1/clusters/{id}/tasks", rbac.PermStacksView},
 	{"GET", "/api/v1/clusters/{id}/networks", rbac.PermNetworksView},
 	{"GET", "/api/v1/clusters/{id}/volumes", rbac.PermVolumesView},
+	{"GET", "/api/v1/clusters/{id}/stacks/{stack}/adopt", rbac.PermStacksAdopt},
+	{"POST", "/api/v1/clusters/{id}/stacks/{stack}/adopt", rbac.PermStacksAdopt},
 	{"PUT", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"POST", "/api/v1/hosts/{id}/tags", rbac.PermHostsTag},
 	{"DELETE", "/api/v1/hosts/{id}/tags/{tag}", rbac.PermHostsTag},
@@ -560,20 +562,24 @@ func login(t *testing.T, authSvc *auth.Service, name string) string {
 // alsoNeeds are routes gated on a second permission besides their entry
 // in routeGates.
 var alsoNeeds = map[string]rbac.Perm{
-	"POST /api/v1/containers/{id}/files":   rbac.PermContainersExec,
-	"DELETE /api/v1/containers/{id}/files": rbac.PermContainersExec,
+	"POST /api/v1/containers/{id}/files":              rbac.PermContainersExec,
+	"DELETE /api/v1/containers/{id}/files":            rbac.PermContainersExec,
+	"GET /api/v1/clusters/{id}/stacks/{stack}/adopt":  rbac.PermContainersEnv,
+	"POST /api/v1/clusters/{id}/stacks/{stack}/adopt": rbac.PermContainersEnv,
 }
 
 // clusterScoped are routes on a cluster's own resources: a host scope,
 // even on one of its nodes, never reaches them.
 var clusterScoped = map[string]bool{
-	"GET /api/v1/clusters/{id}/nodes":              true,
-	"GET /api/v1/clusters/{id}/distribution":       true,
-	"GET /api/v1/clusters/{id}/services":           true,
-	"GET /api/v1/clusters/{id}/services/{service}": true,
-	"GET /api/v1/clusters/{id}/tasks":              true,
-	"GET /api/v1/clusters/{id}/networks":           true,
-	"GET /api/v1/clusters/{id}/volumes":            true,
+	"GET /api/v1/clusters/{id}/nodes":                 true,
+	"GET /api/v1/clusters/{id}/distribution":          true,
+	"GET /api/v1/clusters/{id}/services":              true,
+	"GET /api/v1/clusters/{id}/services/{service}":    true,
+	"GET /api/v1/clusters/{id}/tasks":                 true,
+	"GET /api/v1/clusters/{id}/networks":              true,
+	"GET /api/v1/clusters/{id}/volumes":               true,
+	"GET /api/v1/clusters/{id}/stacks/{stack}/adopt":  true,
+	"POST /api/v1/clusters/{id}/stacks/{stack}/adopt": true,
 }
 
 // fleetWide are routes whose handler also needs the permission on

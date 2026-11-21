@@ -38,6 +38,9 @@ func (f *fakeDaemon) Info(context.Context, client.InfoOptions) (client.SystemInf
 }
 
 func prefixed(f client.Filters, name string) bool {
+	if len(f.Clone()["name"]) == 0 {
+		return true
+	}
 	for n := range f.Clone()["name"] {
 		if strings.HasPrefix(name, n) {
 			return true

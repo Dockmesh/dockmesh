@@ -1,0 +1,3 @@
+kind: Added
+body: 'Adopt a stack deployed with docker stack deploy from the cluster page: Dockmesh shows the compose file it would keep, what the next deploy would change and what it can''t carry over, then marks the services as its own without redeploying them'
+time: 2026-11-21T20:40:01.565467763Z
