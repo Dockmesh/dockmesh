@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
@@ -31,13 +32,23 @@ const (
 
 const defaultNetwork = "default"
 
+// stackName is the stacks manager's name rule. Names without `_` keep
+// `<stack>_<key>` from one stack apart from another stack's names.
+var stackName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
 // Result is the converted stack.
 type Result struct {
 	Services []swarm.ServiceSpec
-	Networks []network.CreateRequest
+	// Networks are the networks the deploy creates; ExternalNetworks the
+	// ones it has to find on the Swarm.
+	Networks         []network.CreateRequest
+	ExternalNetworks []string
 	// NotConverted lists the compose keys that are set but not part of
 	// the specs above, sorted by service and key.
 	NotConverted []NotConverted
+	// Warnings say where a converted spec behaves differently on a Swarm
+	// than on one host, sorted by service and key.
+	Warnings []Warning
 }
 
 // NotConverted is one compose key the converter left out. Service is ""
@@ -60,11 +71,27 @@ func (n NotConverted) String() string {
 	return s
 }
 
+// Warning is a converted key that behaves differently on a Swarm than on
+// one host.
+type Warning struct {
+	Service string `json:"service,omitempty"`
+	Key     string `json:"key"`
+	Message string `json:"message"`
+}
+
+func (w Warning) String() string {
+	s := w.Key + ": " + w.Message
+	if w.Service != "" {
+		s = w.Service + ": " + s
+	}
+	return s
+}
+
 // Convert converts project into the specs of the stack named stack. The project is loaded with its
 // environment resolved, as for a host deploy.
 func Convert(project *types.Project, stack string) (*Result, error) {
-	if stack == "" {
-		return nil, fmt.Errorf("no stack name")
+	if !stackName.MatchString(stack) {
+		return nil, fmt.Errorf("stack name %q is not lower-case letters, digits and dashes", stack)
 	}
 	res := &Result{}
 	names := make([]string, 0, len(project.Services))
@@ -72,31 +99,40 @@ func Convert(project *types.Project, stack string) (*Result, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	usesDefault := false
 	for _, name := range names {
 		svc := project.Services[name]
-		spec, def, err := convertService(stack, svc)
+		spec, err := convertService(stack, svc, project)
 		if err != nil {
 			return nil, fmt.Errorf("service %s: %w", name, err)
 		}
-		usesDefault = usesDefault || def
 		res.Services = append(res.Services, spec)
 		left, err := notConverted(svc)
 		if err != nil {
 			return nil, fmt.Errorf("service %s: %w", name, err)
 		}
 		res.NotConverted = append(res.NotConverted, left...)
+		res.Warnings = append(res.Warnings, serviceWarnings(svc, project)...)
 	}
-	if usesDefault {
-		res.Networks = append(res.Networks, network.CreateRequest{
-			Name:   scoped(stack, defaultNetwork),
-			Driver: "overlay",
-			Labels: map[string]string{LabelNamespace: stack},
-		})
+	nets, external, err := convertNetworks(stack, project)
+	if err != nil {
+		return nil, err
 	}
-	res.NotConverted = append(res.NotConverted, projectNotConverted(project)...)
+	res.Networks, res.ExternalNetworks = nets, external
+	left, err := projectNotConverted(project)
+	if err != nil {
+		return nil, err
+	}
+	res.NotConverted = append(res.NotConverted, left...)
+	res.Warnings = append(res.Warnings, networkWarnings(project)...)
 	sort.SliceStable(res.NotConverted, func(i, j int) bool {
 		a, b := res.NotConverted[i], res.NotConverted[j]
+		if a.Service != b.Service {
+			return a.Service < b.Service
+		}
+		return a.Key < b.Key
+	})
+	sort.SliceStable(res.Warnings, func(i, j int) bool {
+		a, b := res.Warnings[i], res.Warnings[j]
 		if a.Service != b.Service {
 			return a.Service < b.Service
 		}
@@ -107,9 +143,9 @@ func Convert(project *types.Project, stack string) (*Result, error) {
 
 func scoped(stack, name string) string { return stack + "_" + name }
 
-func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, bool, error) {
+func convertService(stack string, svc types.ServiceConfig, project *types.Project) (swarm.ServiceSpec, error) {
 	if svc.Image == "" {
-		return swarm.ServiceSpec{}, false, fmt.Errorf("no image")
+		return swarm.ServiceSpec{}, fmt.Errorf("no image")
 	}
 	labels := map[string]string{}
 	if svc.Deploy != nil {
@@ -128,21 +164,45 @@ func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, b
 
 	healthcheck, err := convertHealthcheck(svc.HealthCheck)
 	if err != nil {
-		return swarm.ServiceSpec{}, false, err
+		return swarm.ServiceSpec{}, err
 	}
 	mode, err := convertMode(svc.Deploy)
 	if err != nil {
-		return swarm.ServiceSpec{}, false, err
+		return swarm.ServiceSpec{}, err
 	}
 	endpoint, err := convertEndpoint(svc.Ports)
 	if err != nil {
-		return swarm.ServiceSpec{}, false, err
+		return swarm.ServiceSpec{}, err
+	}
+	if endpoint.Mode, err = convertEndpointMode(svc.Deploy); err != nil {
+		return swarm.ServiceSpec{}, err
 	}
 	restart, err := convertRestartPolicy(svc.Deploy)
 	if err != nil {
-		return swarm.ServiceSpec{}, false, err
+		return swarm.ServiceSpec{}, err
 	}
-	spec := swarm.ServiceSpec{
+	resources, err := convertResources(svc.Deploy)
+	if err != nil {
+		return swarm.ServiceSpec{}, err
+	}
+	var update, rollback *swarm.UpdateConfig
+	if svc.Deploy != nil {
+		if update, err = convertUpdateConfig("update_config", svc.Deploy.UpdateConfig); err != nil {
+			return swarm.ServiceSpec{}, err
+		}
+		if rollback, err = convertUpdateConfig("rollback_config", svc.Deploy.RollbackConfig); err != nil {
+			return swarm.ServiceSpec{}, err
+		}
+	}
+	mounts, err := convertMounts(stack, svc, project.Volumes)
+	if err != nil {
+		return swarm.ServiceSpec{}, err
+	}
+	networks, err := convertServiceNetworks(stack, svc, project.Networks)
+	if err != nil {
+		return swarm.ServiceSpec{}, err
+	}
+	return swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: scoped(stack, svc.Name), Labels: labels},
 		TaskTemplate: swarm.TaskSpec{
 			ContainerSpec: &swarm.ContainerSpec{
@@ -152,32 +212,19 @@ func convertService(stack string, svc types.ServiceConfig) (swarm.ServiceSpec, b
 				Args:        []string(svc.Command),
 				Env:         convertEnvironment(svc.Environment),
 				Healthcheck: healthcheck,
+				Mounts:      mounts,
 				Privileges:  &swarm.Privileges{},
 			},
+			Resources:     resources,
 			RestartPolicy: restart,
+			Placement:     convertPlacement(svc.Deploy),
+			Networks:      networks,
 		},
-		Mode:         mode,
-		EndpointSpec: endpoint,
-	}
-	def := onlyDefaultNetwork(svc)
-	if def {
-		spec.TaskTemplate.Networks = []swarm.NetworkAttachmentConfig{{
-			Target:  scoped(stack, defaultNetwork),
-			Aliases: []string{svc.Name},
-		}}
-	}
-	return spec, def, nil
-}
-
-// onlyDefaultNetwork reports whether svc is attached to the stack's
-// default network alone and without settings, as compose-go attaches
-// services without `networks:`.
-func onlyDefaultNetwork(svc types.ServiceConfig) bool {
-	if len(svc.Networks) != 1 {
-		return false
-	}
-	cfg, ok := svc.Networks[defaultNetwork]
-	return ok && (cfg == nil || reflect.DeepEqual(*cfg, types.ServiceNetworkConfig{}))
+		Mode:           mode,
+		UpdateConfig:   update,
+		RollbackConfig: rollback,
+		EndpointSpec:   endpoint,
+	}, nil
 }
 
 func convertEnvironment(env types.MappingWithEquals) []string {
@@ -237,37 +284,6 @@ func durationPtr(d *types.Duration) *time.Duration {
 	return &v
 }
 
-func convertMode(deploy *types.DeployConfig) (swarm.ServiceMode, error) {
-	mode := swarm.ServiceMode{Replicated: &swarm.ReplicatedService{}}
-	if deploy == nil || deploy.Replicas == nil {
-		return mode, nil
-	}
-	if *deploy.Replicas < 0 {
-		return mode, fmt.Errorf("deploy.replicas must not be negative")
-	}
-	n := uint64(*deploy.Replicas)
-	mode.Replicated.Replicas = &n
-	return mode, nil
-}
-
-func convertRestartPolicy(deploy *types.DeployConfig) (*swarm.RestartPolicy, error) {
-	if deploy == nil || deploy.RestartPolicy == nil {
-		return nil, nil
-	}
-	p := deploy.RestartPolicy
-	switch swarm.RestartPolicyCondition(p.Condition) {
-	case "", swarm.RestartPolicyConditionNone, swarm.RestartPolicyConditionOnFailure, swarm.RestartPolicyConditionAny:
-	default:
-		return nil, fmt.Errorf("deploy.restart_policy.condition %q is not none, on-failure or any", p.Condition)
-	}
-	return &swarm.RestartPolicy{
-		Condition:   swarm.RestartPolicyCondition(p.Condition),
-		Delay:       durationPtr(p.Delay),
-		MaxAttempts: p.MaxAttempts,
-		Window:      durationPtr(p.Window),
-	}, nil
-}
-
 func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, error) {
 	out := &swarm.EndpointSpec{}
 	for _, p := range ports {
@@ -289,22 +305,46 @@ func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, erro
 	return out, nil
 }
 
-// converted lists the compose keys convertService maps. Keys are the JSON
-// names compose-go writes; nested keys are dotted.
-var converted = map[string]bool{
-	"image":                 true,
-	"environment":           true,
-	"command":               true,
-	"entrypoint":            true,
-	"labels":                true,
-	"healthcheck":           true,
-	"ports.mode":            true,
-	"ports.target":          true,
-	"ports.published":       true,
-	"ports.protocol":        true,
-	"deploy.replicas":       true,
-	"deploy.labels":         true,
-	"deploy.restart_policy": true,
+// serviceKeys says how the converter treats each key of a service in
+// compose-go's JSON form: converted keys are mapped completely, walked
+// keys are maps or lists of maps whose own keys are looked up one level
+// down. Every other key that is set is reported as not converted.
+var serviceKeys = keyTable{
+	converted: set(
+		"image", "environment", "command", "entrypoint", "labels", "healthcheck",
+		"ports.mode", "ports.target", "ports.published", "ports.protocol",
+		"deploy.replicas", "deploy.labels", "deploy.restart_policy", "deploy.mode", "deploy.endpoint_mode",
+		"deploy.placement.constraints", "deploy.placement.preferences", "deploy.placement.max_replicas_per_node",
+		"deploy.update_config.parallelism", "deploy.update_config.delay", "deploy.update_config.failure_action",
+		"deploy.update_config.monitor", "deploy.update_config.max_failure_ratio", "deploy.update_config.order",
+		"deploy.rollback_config.parallelism", "deploy.rollback_config.delay", "deploy.rollback_config.failure_action",
+		"deploy.rollback_config.monitor", "deploy.rollback_config.max_failure_ratio", "deploy.rollback_config.order",
+		"deploy.resources.limits.cpus", "deploy.resources.limits.memory", "deploy.resources.limits.pids",
+		"deploy.resources.reservations.cpus", "deploy.resources.reservations.memory",
+		"deploy.resources.reservations.generic_resources",
+		"volumes.type", "volumes.source", "volumes.target", "volumes.read_only", "volumes.consistency",
+		"volumes.bind.propagation", "volumes.volume.nocopy", "volumes.volume.subpath",
+		"volumes.tmpfs.size", "volumes.image.subpath",
+		"networks.aliases", "networks.driver_opts",
+	),
+	walked: set(
+		"ports", "deploy", "deploy.placement", "deploy.update_config", "deploy.rollback_config",
+		"deploy.resources", "deploy.resources.limits", "deploy.resources.reservations",
+		"volumes", "volumes.bind", "volumes.volume", "volumes.tmpfs", "volumes.image",
+	),
+	// Service networks are keyed by network name; the walk goes through
+	// the names to the settings of each attachment.
+	named: set("networks"),
+}
+
+var networkKeys = keyTable{
+	converted: set("name", "driver", "driver_opts", "internal", "attachable", "labels", "external",
+		"ipam.driver", "ipam.config.subnet"),
+	walked: set("ipam", "ipam.config"),
+}
+
+var volumeKeys = keyTable{
+	converted: set("name", "driver", "driver_opts", "labels", "external"),
 }
 
 // hints names the Swarm key for compose keys a Swarm ignores.
@@ -312,78 +352,133 @@ var hints = map[string]string{
 	"restart": "deploy.restart_policy",
 }
 
-// notConverted lists the keys of svc that convertService leaves out. It
-// walks compose-go's JSON form, so a key compose-go learns later shows up
-// here instead of vanishing.
-func notConverted(svc types.ServiceConfig) ([]NotConverted, error) {
-	raw, err := json.Marshal(svc)
+type keyTable struct {
+	converted, walked, named map[string]bool
+}
+
+func set(keys ...string) map[string]bool {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	return m
+}
+
+// unmapped returns the dotted paths below v that t does not convert,
+// sorted and without duplicates. v is compose-go's JSON form, so a key
+// compose-go learns later shows up here instead of vanishing.
+func (t keyTable) unmapped(v any) []string {
+	seen := map[string]bool{}
+	var walk func(path string, v any)
+	walkMap := func(path string, v any) {
+		m, ok := v.(map[string]any)
+		if !ok {
+			if !empty(v) {
+				seen[path] = true
+			}
+			return
+		}
+		for k, el := range m {
+			if path != "" {
+				k = path + "." + k
+			}
+			walk(k, el)
+		}
+	}
+	walk = func(path string, v any) {
+		switch {
+		case empty(v) || t.converted[path]:
+		case t.named[path]:
+			m, ok := v.(map[string]any)
+			if !ok {
+				seen[path] = true
+				return
+			}
+			for _, el := range m {
+				walkMap(path, el)
+			}
+		case t.walked[path]:
+			if list, ok := v.([]any); ok {
+				for _, el := range list {
+					walkMap(path, el)
+				}
+				return
+			}
+			walkMap(path, v)
+		default:
+			seen[path] = true
+		}
+	}
+	walkMap("", v)
+	return sortedKeys(seen)
+}
+
+func jsonForm(v any) (any, error) {
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, err
 	}
-	var out []NotConverted
-	add := func(key string) {
-		out = append(out, NotConverted{Service: svc.Name, Key: key, Hint: hints[key]})
+	return out, nil
+}
+
+// notConverted lists the keys of svc that convertService leaves out.
+func notConverted(svc types.ServiceConfig) ([]NotConverted, error) {
+	v, err := jsonForm(svc)
+	if err != nil {
+		return nil, err
 	}
-	for _, k := range sortedKeys(m) {
-		v := m[k]
-		if empty(v) {
-			continue
-		}
-		switch k {
-		case "networks":
-			if !onlyDefaultNetwork(svc) {
-				add(k)
-			}
-		case "ports":
-			seen := map[string]bool{}
-			for _, p := range v.([]any) {
-				for pk, pv := range p.(map[string]any) {
-					if !empty(pv) && !converted["ports."+pk] && !seen[pk] {
-						seen[pk] = true
-						add("ports." + pk)
-					}
-				}
-			}
-		case "deploy":
-			dm := v.(map[string]any)
-			for _, dk := range sortedKeys(dm) {
-				dv := dm[dk]
-				switch {
-				case empty(dv):
-				case dk == "mode":
-					if dv != "replicated" {
-						add("deploy.mode")
-					}
-				case !converted["deploy."+dk]:
-					add("deploy." + dk)
-				}
-			}
-		default:
-			if !converted[k] {
-				add(k)
-			}
-		}
+	// The name is the map key of the service, not a setting.
+	delete(v.(map[string]any), "name")
+	keys := serviceKeys.unmapped(v)
+	out := make([]NotConverted, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, NotConverted{Service: svc.Name, Key: k, Hint: hints[k]})
 	}
 	return out, nil
 }
 
 // projectNotConverted lists the top-level keys besides services that the
-// converter leaves out: every network but the default one, volumes,
+// converter leaves out: settings of the used networks and volumes it
+// doesn't map, networks no service uses, volumes no service mounts,
 // secrets, configs, jobs and models.
-func projectNotConverted(project *types.Project) []NotConverted {
+func projectNotConverted(project *types.Project) ([]NotConverted, error) {
+	usedNets := usedNetworks(project)
+	usedVols := map[string]bool{}
+	for _, svc := range project.Services {
+		for _, v := range svc.Volumes {
+			if v.Type == types.VolumeTypeVolume || v.Type == "" {
+				usedVols[v.Source] = true
+			}
+		}
+	}
 	var out []NotConverted
 	for _, name := range sortedKeys(project.Networks) {
-		if name == defaultNetwork && isPlainDefault(project.Networks[name]) {
+		if !usedNets[name] {
+			if name != defaultNetwork || !isPlainDefault(project.Networks[name]) {
+				out = append(out, NotConverted{Key: "networks." + name})
+			}
 			continue
 		}
-		out = append(out, NotConverted{Key: "networks." + name})
+		left, err := topLevelUnmapped(networkKeys, "networks."+name, project.Networks[name])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, left...)
 	}
 	for _, name := range sortedKeys(project.Volumes) {
-		out = append(out, NotConverted{Key: "volumes." + name})
+		if !usedVols[name] {
+			out = append(out, NotConverted{Key: "volumes." + name})
+			continue
+		}
+		left, err := topLevelUnmapped(volumeKeys, "volumes."+name, project.Volumes[name])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, left...)
 	}
 	for _, name := range sortedKeys(project.Secrets) {
 		out = append(out, NotConverted{Key: "secrets." + name})
@@ -397,7 +492,20 @@ func projectNotConverted(project *types.Project) []NotConverted {
 	for _, name := range sortedKeys(project.Models) {
 		out = append(out, NotConverted{Key: "models." + name})
 	}
-	return out
+	return out, nil
+}
+
+func topLevelUnmapped(t keyTable, prefix string, v any) ([]NotConverted, error) {
+	form, err := jsonForm(v)
+	if err != nil {
+		return nil, err
+	}
+	keys := t.unmapped(form)
+	out := make([]NotConverted, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, NotConverted{Key: prefix + "." + k})
+	}
+	return out, nil
 }
 
 // isPlainDefault reports whether the default network is the one compose-go
@@ -408,16 +516,14 @@ func isPlainDefault(n types.NetworkConfig) bool {
 }
 
 // empty reports whether a value from compose-go's JSON form was left
-// unset. Anything written counts as set, even `{}` or a zero inside it;
-// compose-go omits unset fields, so only these remain.
+// unset. compose-go omits unset fields, so a value that is present counts
+// as set, even false or 0; only empty strings, maps and lists don't.
 func empty(v any) bool {
 	switch t := v.(type) {
 	case nil:
 		return true
 	case string:
 		return t == ""
-	case bool:
-		return !t
 	case map[string]any:
 		return len(t) == 0
 	case []any:

@@ -1,0 +1,26 @@
+services:
+  full:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      update_config:
+        parallelism: 2
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0.25
+        order: start-first
+      rollback_config:
+        parallelism: 0
+        delay: 2s
+        failure_action: continue
+        monitor: 5s
+        max_failure_ratio: 0.5
+        order: stop-first
+  defaults:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      update_config:
+        delay: 1s
+      rollback_config: {}

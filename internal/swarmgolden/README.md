@@ -17,6 +17,9 @@ testdata/
     compose.yaml             the input, deployed as stack gt-<name>
     golden.env               optional; variables for interpolation (the CLI got them as its environment)
     case.yaml                optional; pending and accepted differences, see below
+    external-networks        optional; one network name per line (`gt-…`), created as swarm
+                             overlay networks before the deploy and removed after it, for
+                             cases that declare networks external
     recorded/
       requests.jsonl         every services/create and networks/create body the CLI sent, one per line
       service-specs.json     `.Spec` of `docker service inspect` after the deploy (the spec as the daemon stored it)

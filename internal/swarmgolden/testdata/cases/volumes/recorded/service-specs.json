@@ -1,0 +1,216 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-volumes"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-volumes_app",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-volumes"
+        },
+        "Mounts": [
+          {
+            "Source": "gt-volumes_data",
+            "Target": "/data",
+            "Type": "volume",
+            "VolumeOptions": {
+              "Labels": {
+                "backup": "yes",
+                "com.docker.stack.namespace": "gt-volumes"
+              }
+            }
+          },
+          {
+            "ReadOnly": true,
+            "Source": "gt-volumes_cache",
+            "Target": "/cache",
+            "Type": "volume",
+            "VolumeOptions": {
+              "DriverConfig": {
+                "Name": "local",
+                "Options": {
+                  "device": "tmpfs",
+                  "o": "size=8m",
+                  "type": "tmpfs"
+                }
+              },
+              "Labels": {
+                "com.docker.stack.namespace": "gt-volumes"
+              },
+              "NoCopy": true
+            }
+          },
+          {
+            "Target": "/scratch",
+            "Type": "volume"
+          },
+          {
+            "Target": "/run/app",
+            "TmpfsOptions": {
+              "SizeBytes": 16777216
+            },
+            "Type": "tmpfs"
+          },
+          {
+            "ReadOnly": true,
+            "Source": "/var/log",
+            "Target": "/host-log",
+            "Type": "bind"
+          },
+          {
+            "Source": "gt-volumes-outside",
+            "Target": "/outside",
+            "Type": "volume",
+            "VolumeOptions": {}
+          },
+          {
+            "BindOptions": {
+              "Propagation": "rprivate"
+            },
+            "ReadOnly": true,
+            "Source": "/etc/hostname",
+            "Target": "/etc/node-hostname",
+            "Type": "bind"
+          }
+        ],
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "app"
+          ],
+          "Target": "l2bp64ynbj10xpgjhx12bfrin"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-volumes"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-volumes_pinned",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-volumes"
+        },
+        "Mounts": [
+          {
+            "Source": "gt-volumes_data",
+            "Target": "/data",
+            "Type": "volume",
+            "VolumeOptions": {
+              "Labels": {
+                "backup": "yes",
+                "com.docker.stack.namespace": "gt-volumes"
+              }
+            }
+          }
+        ],
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "pinned"
+          ],
+          "Target": "l2bp64ynbj10xpgjhx12bfrin"
+        }
+      ],
+      "Placement": {
+        "Constraints": [
+          "node.role == manager"
+        ]
+      },
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

@@ -1,0 +1,26 @@
+version: "3.13"
+services:
+  constrained:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == manager
+          - node.platform.os == linux
+        preferences:
+          - spread: node.id
+        max_replicas_per_node: 1
+    image: alpine:3.24
+  spread:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      placement:
+        preferences:
+          - spread: node.labels.zone
+          - spread: node.id
+    image: alpine:3.24

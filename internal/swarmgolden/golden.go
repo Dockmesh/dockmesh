@@ -37,7 +37,10 @@ type Case struct {
 	StackConfig []byte
 	Services    []swarm.ServiceSpec
 	Networks    []network.CreateRequest
-	Meta        Meta
+	// ExternalNetworks are the networks the recording created before the
+	// deploy because the case declares them external.
+	ExternalNetworks []string
+	Meta             Meta
 }
 
 // Stack is the stack name the case was recorded with.
@@ -103,6 +106,11 @@ func Load(dir string) (Case, error) {
 		return c, err
 	}
 	if c.Env, err = readEnv(filepath.Join(dir, "golden.env")); err != nil {
+		return c, err
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "external-networks")); err == nil {
+		c.ExternalNetworks = strings.Fields(string(raw))
+	} else if !os.IsNotExist(err) {
 		return c, err
 	}
 	if c.StackConfig, err = os.ReadFile(filepath.Join(dir, "recorded", "stack-config.yaml")); err != nil {

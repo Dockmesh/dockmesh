@@ -7,12 +7,25 @@ dir=$1 stack=$2
 [[ $stack =~ ^gt-[a-z0-9][a-z0-9-]*$ ]] || { echo "bad stack name $stack" >&2; exit 2; }
 cd "$dir" || exit 1
 proxy=
+# external-networks names swarm networks the case declares external; they
+# are created before the deploy and removed after it.
+externals=()
+if [ -f external-networks ]; then
+  while IFS= read -r name || [ -n "$name" ]; do
+    [ -z "$name" ] && continue
+    [[ $name =~ ^gt-[a-z0-9][a-z0-9-]*$ ]] || { echo "bad external network name" >&2; exit 2; }
+    externals+=("$name")
+  done < external-networks
+fi
 cleanup() {
   [ -n "$proxy" ] && kill "$proxy" 2>/dev/null
   docker stack rm "$stack" > /dev/null 2>&1
   for _ in $(seq 120); do
     [ -z "$(docker network ls -q --filter "label=com.docker.stack.namespace=$stack")" ] && break
     sleep 1
+  done
+  for name in "${externals[@]}"; do
+    for _ in $(seq 30); do docker network rm "$name" > /dev/null 2>&1 && break; sleep 1; done
   done
   # Volumes stay after `stack rm`; only this manager's copies are removed.
   docker volume ls -q --filter "label=com.docker.stack.namespace=$stack" | xargs -r docker volume rm > /dev/null 2>&1
@@ -31,6 +44,9 @@ if [ -f golden.env ]; then
     vars+=("$line")
   done < golden.env
 fi
+for name in "${externals[@]}"; do
+  docker network create --driver overlay --scope swarm --label gt-external=1 "$name" > /dev/null || exit 1
+done
 env "${vars[@]}" docker stack config -c compose.yaml > stack-config.yaml 2> stack-config.err || true
 python3 ../sockproxy.py "$dir/docker.sock" "$dir/requests.jsonl" 2> proxy.log &
 proxy=$!
