@@ -227,6 +227,7 @@ func TestSwarmDeployRefusals(t *testing.T) {
 		"onhost": "services:\n  web:\n    image: nginx\n",
 		"bad":    "services:\n  web:\n    image: nginx\n    privileged: true\n",
 		"named":  "services:\n  web:\n    image: nginx\n    networks: [n]\nnetworks:\n  n:\n    name: other_default\n",
+		"label":  "services:\n  web:\n    image: nginx\n    deploy:\n      mode: global\n    labels:\n      com.docker.compose.project: victim\n",
 	} {
 		if _, err := e.mgr.Create(name, src, ""); err != nil {
 			t.Fatal(err)
@@ -243,6 +244,7 @@ func TestSwarmDeployRefusals(t *testing.T) {
 		{"onhost", "x", http.StatusConflict, "stack_other_target"},
 		{"bad", "x", http.StatusUnprocessableEntity, "swarm_refused"},
 		{"named", "x", http.StatusUnprocessableEntity, "swarm_refused"},
+		{"label", "x", http.StatusUnprocessableEntity, "reserved for Dockmesh"},
 		{"missing", "x", http.StatusNotFound, ""},
 	}
 	for _, tt := range tests {
@@ -312,6 +314,15 @@ func TestSwarmDeployGuards(t *testing.T) {
 	}
 	if code, _, body := e.deploy("root", "web", hash); code != http.StatusConflict || !strings.Contains(body, "stack_busy") {
 		t.Fatalf("locked: %d: %s", code, body)
+	}
+	release()
+
+	release, err = e.h.StackLocks.TryLock(stacklock.TargetKey("web"), stacklock.OpDeploy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _, body := e.deploy("root", "web", hash); code != http.StatusConflict || !strings.Contains(body, "stack_busy") {
+		t.Fatalf("deploy elsewhere running: %d: %s", code, body)
 	}
 	release()
 
@@ -458,7 +469,7 @@ func TestHostDeployRefusesClusterDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := e.do(http.MethodPost, "/hostdeploy/web", e.login("root").AccessToken, nil)
-	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "runs on Swarm cluster c1") {
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "runs on a Swarm cluster") {
 		t.Fatalf("%d: %s", rr.Code, rr.Body)
 	}
 }

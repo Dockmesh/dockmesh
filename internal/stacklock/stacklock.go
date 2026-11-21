@@ -45,6 +45,11 @@ type Key struct {
 // HostKey is the key of stack on host id.
 func HostKey(id, stack string) Key { return Key{Target: Host(id), Stack: stack} }
 
+// TargetKey holds stack by name whatever its target, for the operations
+// that may give a stack its target: two of them must not each find it
+// free and deploy it to two different places.
+func TargetKey(stack string) Key { return Key{Target: Target{Kind: "stack"}, Stack: stack} }
+
 // ClusterKey is the key of stack on Swarm cluster id.
 func ClusterKey(id, stack string) Key {
 	return Key{Target: Target{Kind: KindCluster, ID: id}, Stack: stack}
