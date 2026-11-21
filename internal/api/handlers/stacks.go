@@ -765,6 +765,11 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "compose required")
 		return
 	}
+	release, ok := h.guardStack(w, r, name, stacklock.OpSave)
+	if !ok {
+		return
+	}
+	defer release()
 	readEnv := h.canReadStackEnv(r, name)
 	outside, err := h.Stacks.ModifiedOutside(name)
 	if err != nil {
@@ -1572,6 +1577,11 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
+	release, ok := h.guardStackOn(w, r, target.ID(), name, stacklock.OpStop)
+	if !ok {
+		return
+	}
+	defer release()
 	// Dependents check (same policy as DeleteStack). Stopping a base
 	// stack that living dependents need is a foot-gun; 409 unless forced.
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {

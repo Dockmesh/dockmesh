@@ -58,6 +58,10 @@ const (
 	// a new version.
 	OpAgentUpdate = "agent update"
 	OpDelete      = "delete"
+	OpStop        = "stop"
+	OpSave        = "file save"
+	OpEnvironment = "environment change"
+	OpContainer   = "container action"
 	// OpMigration holds a stack on both hosts of a migration while it
 	// stops, copies, starts or restores it.
 	OpMigration = "migration"

@@ -7,6 +7,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -110,6 +111,11 @@ func (h *Handlers) SetActiveEnvironment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	release, ok := h.guardStack(w, r, name, stacklock.OpEnvironment)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if err := h.updateMeta(name, dir, func(meta *scaling.MetaFile) bool {
 		meta.ActiveEnvironment = req.Active

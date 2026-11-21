@@ -238,6 +238,22 @@ components:
               code: {type: string, enum: [stack_on_other_host]}
               stack: {type: string}
               host_id: {type: string}
+    ContainerStackConflict:
+      description: The container belongs to a managed stack that another operation is changing (`stack_busy`, with `operation` and `since`), or whose migration or migration rollback has not finished (`migration_active`).
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/StackBusyError"
+              - $ref: "#/components/schemas/Error"
+    StackWriteConflict:
+      description: Another operation is changing the stack (`stack_busy`, with `operation` and `since`), or the stack has a migration or migration rollback that has not finished (`migration_active`).
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/StackBusyError"
+              - $ref: "#/components/schemas/Error"
     StackDeployConflict:
       description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy, deployment rollback or rolling update of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
       content:
