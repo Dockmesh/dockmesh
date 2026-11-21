@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
@@ -30,6 +31,10 @@ const (
 )
 
 const defaultNetwork = "default"
+
+// stackName is the stacks manager's name rule. Names without `_` keep
+// `<stack>_<key>` from one stack apart from another stack's names.
+var stackName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // Result is the converted stack.
 type Result struct {
@@ -85,8 +90,8 @@ func (w Warning) String() string {
 // Convert converts project into the specs of the stack named stack. The project is loaded with its
 // environment resolved, as for a host deploy.
 func Convert(project *types.Project, stack string) (*Result, error) {
-	if stack == "" {
-		return nil, fmt.Errorf("no stack name")
+	if !stackName.MatchString(stack) {
+		return nil, fmt.Errorf("stack name %q is not lower-case letters, digits and dashes", stack)
 	}
 	res := &Result{}
 	names := make([]string, 0, len(project.Services))

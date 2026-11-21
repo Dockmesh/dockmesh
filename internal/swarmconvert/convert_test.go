@@ -43,6 +43,8 @@ func TestConvertRefuses(t *testing.T) {
 		{"unknown failure action", "services:\n  a:\n    image: alpine\n    deploy:\n      update_config:\n        failure_action: retry\n", "update_config.failure_action"},
 		{"rollback that rolls back", "services:\n  a:\n    image: alpine\n    deploy:\n      rollback_config:\n        failure_action: rollback\n", "rollback_config.failure_action"},
 		{"too precise cpus", "services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n        limits:\n          cpus: \"0.0000000001\"\n", "too precise"},
+		{"two keys for one network", "services:\n  a:\n    image: alpine\n    networks: [n, m]\nnetworks:\n  n:\n    name: same\n  m:\n    name: same\n    internal: true\n", "both name the network same"},
+		{"generic resource without a spec", "services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n        reservations:\n          generic_resources:\n            - x-note: 1\n", "discrete_resource_spec"},
 		{"bad subnet", "services:\n  a:\n    image: alpine\n    networks: [n]\nnetworks:\n  n:\n    ipam:\n      config:\n        - subnet: nonsense\n", "subnet"},
 	}
 	for _, tc := range cases {
@@ -79,8 +81,10 @@ func TestConvertNamespaceLabelWins(t *testing.T) {
 }
 
 func TestConvertNeedsStackAndImage(t *testing.T) {
-	if _, err := Convert(nil, ""); err == nil {
-		t.Fatal("empty stack name accepted")
+	for _, name := range []string{"", "a_b", "A", "-a"} {
+		if _, err := Convert(nil, name); err == nil {
+			t.Fatalf("stack name %q accepted", name)
+		}
 	}
 	if _, err := convertYAML(t, "services:\n  a:\n    build: .\n"); err == nil || !strings.Contains(err.Error(), "no image") {
 		t.Fatalf("err %v, want no image", err)

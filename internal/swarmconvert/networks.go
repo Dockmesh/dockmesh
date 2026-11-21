@@ -80,9 +80,14 @@ func convertNetworks(stack string, project *types.Project) ([]network.CreateRequ
 	used := usedNetworks(project)
 	var creates []network.CreateRequest
 	var external []string
+	byName := map[string]string{}
 	for _, key := range sortedKeys(used) {
 		nw := project.Networks[key]
 		name := networkName(stack, key, nw)
+		if other, dup := byName[name]; dup {
+			return nil, nil, fmt.Errorf("networks %s and %s both name the network %s", other, key, name)
+		}
+		byName[name] = key
 		if nw.External {
 			external = append(external, name)
 			continue
