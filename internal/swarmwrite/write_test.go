@@ -396,6 +396,11 @@ func TestValidateDeploy(t *testing.T) {
 		{"runtime config", func(r *agents.SwarmDeployReq) {
 			r.Services[0].Spec.TaskTemplate.ContainerSpec.Configs = []*swarm.ConfigReference{{ConfigName: "c", Runtime: &swarm.ConfigReferenceRuntimeTarget{}}}
 		}, "by name only"},
+		{"reserved container label", func(r *agents.SwarmDeployReq) {
+			r.Services[0].Spec.TaskTemplate.ContainerSpec.Labels["com.docker.compose.project"] = "victim"
+		}, "reserved for Dockmesh"},
+		{"reserved service label", func(r *agents.SwarmDeployReq) { r.Services[0].Spec.Labels["dockmesh.component"] = "x" }, "reserved for Dockmesh"},
+		{"reserved network label", func(r *agents.SwarmDeployReq) { r.Networks[0].Labels["dockmesh.component"] = "x" }, "reserved for Dockmesh"},
 		{"duplicate service", func(r *agents.SwarmDeployReq) { r.Services = append(r.Services, r.Services[0]) }, "listed twice"},
 	}
 	for _, tt := range tests {
