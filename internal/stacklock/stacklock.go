@@ -61,6 +61,9 @@ const (
 	OpScale       = "scale"
 	OpRolling     = "rolling update"
 	OpImageUpdate = "image update"
+	// OpSwarmUpdate holds a stack on a cluster while Swarm rolls out an
+	// update of its services.
+	OpSwarmUpdate = "Swarm rolling update"
 	OpRollback    = "image rollback"
 	OpGitDeploy   = "git auto-deploy"
 	OpAutoScale   = "auto-scaling"

@@ -17,6 +17,7 @@
   import { fmtAgo, fmtMem } from '$lib/format';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { fmtNumber } from '$lib/i18n';
   import { latest } from '$lib/latest';
   import { urlTab } from '$lib/urlTab.svelte';
@@ -166,6 +167,36 @@
   // A stack whose every service carries the spec hash is Dockmesh's.
   const isOwn = (g: { services: SwarmService[] }) => g.services.length > 0 && g.services.every((s) => !!s.spec_hash);
   const externalStacks = $derived(namedStacks.filter((g) => !isOwn(g)));
+  let acting = $state('');
+  const updateLabel = (st: string) =>
+    ({
+      updating: m.cl_upd_updating(),
+      paused: m.cl_upd_paused(),
+      rollback_started: m.cl_upd_rolling_back(),
+      rollback_paused: m.cl_upd_rollback_paused(),
+      rollback_completed: m.cl_upd_rolled_back()
+    })[st] ?? st;
+  const updateTone = (st: string) => (st === 'paused' || st === 'rollback_paused' ? 'dm-pill-danger' : st === 'rollback_completed' ? 'dm-pill-warning' : 'dm-pill-info');
+  async function serviceAction(stack: string, service: string, s: SwarmService, action: 'rollback' | 'resume') {
+    const ok = await confirm.ask({
+      title: action === 'rollback' ? m.cl_svc_rollback_title({ name: s.name }) : m.cl_svc_resume_title({ name: s.name }),
+      message: action === 'rollback' ? m.cl_svc_rollback_msg() : m.cl_svc_resume_msg(),
+      body: s.update_message || undefined,
+      confirmLabel: action === 'rollback' ? m.cl_svc_rollback() : m.cl_svc_resume(),
+      danger: action === 'rollback'
+    });
+    if (!ok) return;
+    acting = s.id;
+    try {
+      await api.stacks.swarmServiceAction(stack, service, action);
+      toast.success(action === 'rollback' ? m.cl_svc_rollback_done({ name: s.name }) : m.cl_svc_resume_done({ name: s.name }));
+      loadAll();
+    } catch (e) {
+      toast.error(action === 'rollback' ? m.cl_svc_rollback_failed() : m.cl_svc_resume_failed(), e instanceof ApiError ? e.message : undefined);
+    } finally {
+      acting = '';
+    }
+  }
   let adoptStack = $state('');
   let adoptOpen = $state(false);
   function openAdopt(stack: string) {
@@ -693,7 +724,23 @@
           {@const pin = pinningConstraint(s.constraints)}
           <div class="dm-tr" role="row" style="grid-template-columns: {SVC_COLS}">
             <span role="cell"><span class="dm-dot {svcTone(s)}"></span></span>
-            <span role="cell" class="dm-nm svcname"><span class="nm" title={s.name}>{s.name}</span></span>
+            <span role="cell" class="dm-nm svcname">
+              <span class="nmline">
+                <span class="nm" title={s.name}>{s.name}</span>
+                {#if s.update_state && s.update_state !== 'completed'}
+                  <span class="dm-pill {updateTone(s.update_state)}" title={s.update_message ?? ''} data-testid="update-state">{updateLabel(s.update_state)}</span>
+                {/if}
+              </span>
+              {#if s.spec_hash && g.stack && !readOnly}
+                {@const short = s.name.slice(g.stack.length + 1)}
+                {#if (s.update_state === 'paused' || s.update_state === 'rollback_paused') && allowed('stacks.deploy')}
+                  <Button size="xs" class="svcact" disabled={acting === s.id} onclick={() => serviceAction(g.stack, short, s, 'resume')}>{m.cl_svc_resume()}</Button>
+                {/if}
+                {#if s.rollback && s.update_state !== 'rollback_started' && allowed('stacks.operate')}
+                  <Button size="xs" class="svcact" disabled={acting === s.id} onclick={() => serviceAction(g.stack, short, s, 'rollback')}>{m.cl_svc_rollback()}</Button>
+                {/if}
+              {/if}
+            </span>
             <span role="cell" class="dm-dim">{s.mode || '—'}</span>
             <span role="cell" class="r dm-num" class:warnc={s.running_tasks < s.desired_tasks}>{s.running_tasks}/{s.desired_tasks}</span>
             <span role="cell" class="dm-trunc" title={nodesOf(s)}>{nodesOf(s)}</span>
@@ -862,6 +909,7 @@
   .lnk { color: var(--fg); text-decoration: none; }
   .lnk:hover { text-decoration: underline; }
   :global(.adoptbtn) { margin-left: 8px; }
+  :global(.svcact) { margin: 2px 4px 0 0; }
   .small { font-size: var(--fs-xs); }
   .na { color: var(--subtle); font-size: var(--fs-xs); grid-column: span 2; }
   .r { text-align: right; }

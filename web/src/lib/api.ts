@@ -261,6 +261,9 @@ export interface SwarmService {
   desired_tasks: number;
   stack?: string;
   update_state?: string;
+  update_message?: string;
+  /** The service has a previous spec Swarm can roll back to. */
+  rollback?: boolean;
   /** Set on services Dockmesh deployed or adopted. */
   spec_hash?: string;
   constraints?: string[];
@@ -2268,6 +2271,11 @@ export const api = {
         body: JSON.stringify({ plan_hash: planHash, prune })
       });
     },
+    swarmServiceAction: (name: string, service: string, action: 'rollback' | 'resume') =>
+      request<SwarmWriteResult & { stack: string; service: string; cluster_id: string; manager: string }>(
+        `/stacks/${encodeURIComponent(name)}/swarm-services/${encodeURIComponent(service)}/${action}`,
+        { method: 'POST' }
+      ),
     // Recovery — when compose.yaml is missing/empty but containers
     // are still running with the project label. Reconstructs the
     // compose from inspect data, returns warnings.

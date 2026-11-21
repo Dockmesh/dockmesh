@@ -3,7 +3,7 @@ title: Docker Swarm
 description: See a Docker Swarm's nodes, services, tasks and logs, deploy stacks to it, and what Dockmesh does not manage there.
 ---
 
-Dockmesh can add a Docker Swarm as a cluster, show it and deploy stacks to it. The **Hosts** page shows the cluster's state and its linked node hosts, the cluster page its nodes, services, tasks, stacks and networks and how the work is spread over the nodes, and the **Topology** page its services and overlay networks. The API also lists its stack volumes and streams service logs. Dockmesh deploys a stack to the Swarm as `docker stack deploy` would ([Deploying a stack to a Swarm](#deploying-a-stack-to-a-swarm)); it does not scale or roll back services or change nodes, secrets or configs.
+Dockmesh can add a Docker Swarm as a cluster, show it and deploy stacks to it. The **Hosts** page shows the cluster's state and its linked node hosts, the cluster page its nodes, services, tasks, stacks and networks and how the work is spread over the nodes, and the **Topology** page its services and overlay networks. The API also lists its stack volumes and streams service logs. Dockmesh deploys a stack to the Swarm as `docker stack deploy` would ([Deploying a stack to a Swarm](#deploying-a-stack-to-a-swarm)); it shows Swarm's update state per service and can roll back or resume an update, but does not scale services or change nodes, secrets or configs.
 
 Hosts that are not Swarm nodes are unaffected. On a host that is a Swarm node, Dockmesh leaves the Swarm's task containers alone, refuses to migrate Swarm stacks and labels Swarm stack volumes and networks, even before a cluster exists. The Hosts page then offers to create one. Everything else on this page needs a cluster.
 
@@ -30,6 +30,15 @@ On a stack's page, **Preview Swarm deploy…** converts its compose file for a c
 - **Same target.** A stack deployed on a host is not moved to a cluster, and a stack on a cluster is not deployed on a host. Dependencies must already run on the same cluster.
 - **Environment.** The deploy uses the stack's active environment. Its values are part of the service specs, readable with `docker service inspect` on a manager; use Swarm secrets for real secrets.
 
+## Updates, rollback and resume
+
+The cluster page's **Services** tab shows Swarm's update state next to each service while it isn't completed: *updating*, *update paused*, *rolling back*, *rollback paused* or *rolled back*, with Swarm's reason as the tooltip. Swarm pauses an update when tasks of the new spec fail, as the service's `update_config` says (`failure_action: pause` by default). For services of a Dockmesh stack:
+
+- **Roll back** asks Swarm to roll the service back to its previous spec, Swarm's own rollback as `docker service rollback` does it. It needs Stacks: Operate on the stack's cluster (the Operator role has it): going back to a known state is a safety action.
+- **Resume** continues a paused update with the same spec and image for the tasks it hasn't reached yet. If the cause is still there, Swarm pauses again; to change what is rolled out, edit the file and deploy. Resuming makes the spec being rolled out the service's previous spec, so a later **Roll back** no longer returns to the spec before this update; roll back instead of resuming to get there. It needs Stacks: Deploy.
+
+Both go through a verified manager and are audited. While Swarm rolls a stack's services out after a deploy, rollback or resume, Dockmesh holds the stack, so no second deploy or resume starts on top of it; **Roll back** is still possible, a paused update frees the stack, and after 30 minutes it is freed anyway. Roll back is offered only when the service's previous spec is one Dockmesh deployed, so not right after adopting a stack. External stacks are read-only.
+
 ## Adopting a stack deployed with `docker stack deploy`
 
 The cluster page's **Stacks** tab marks stacks deployed with `docker stack deploy` as **External**. **Adopt** reads such a stack through a verified manager and shows the compose file Dockmesh would keep for it before anything is written:
@@ -43,7 +52,7 @@ The cluster page's **Stacks** tab marks stacks deployed with `docker stack deplo
 
 ## Not supported
 
-- Scaling a Swarm service, rolling back or resuming an update from Dockmesh.
+- Scaling a Swarm service from Dockmesh.
 - Creating or removing Swarm secrets and configs, changing node availability, adding or removing nodes.
 - Proxy routes to a Swarm service. A route can point at a published port of a node like any other upstream.
 - Backups of a Swarm stack as a whole. A volume job on a node host backs up the copy of the volume on that node.
@@ -61,7 +70,8 @@ A role can be assigned on a cluster (scope type `cluster`). It covers the cluste
 - service logs with `containers.logs` (Containers: View or Stacks: View);
 - the stack volumes per node with Volumes: View and Hosts: View;
 - adopting an External stack with `stacks.adopt` (Stacks: Manage) and `containers.env`;
-- deploying the stacks already on the cluster with Stacks: Deploy. A stack that is not deployed anywhere yet has no target; its first deploy to a cluster needs an assignment on everything or on the stack.
+- deploying the stacks already on the cluster with Stacks: Deploy, which also resumes a paused update;
+- rolling back a service of a stack on the cluster with Stacks: Operate. A stack that is not deployed anywhere yet has no target; its first deploy to a cluster needs an assignment on everything or on the stack.
 
 A deploy runs its services on any node of the Swarm, so Stacks: Deploy on a cluster reaches every node. It does not cover the hosts that are its nodes or their containers; give those a host or host tag assignment. A role on a host that is a node does not reach the cluster: such a user sees "Member of cluster X" on the host, without the cluster's state, other nodes or services. Creating and deleting clusters needs `clusters.create`, which is only granted on everything. See [Permissions](../concepts/permissions.md).
 
