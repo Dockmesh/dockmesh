@@ -52,7 +52,7 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.canReadStackEnv(r, name) {
-		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, h.stackRes(r, name), "stack "+name)
+		h.writeScopeDenied(w, r, rbac.PermContainersEnv, h.stackRes(r, name), "env of stack "+name)
 		return
 	}
 	if _, err := h.Clusters.Get(r.Context(), id); errors.Is(err, clusters.ErrNotFound) {

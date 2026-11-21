@@ -597,9 +597,6 @@ export interface StackDependencies {
   dependents: string[];
 }
 
-// Resources that a stack delete would touch (networks / volumes / images).
-// External volumes and images still used by other projects are already
-// filtered out of the plan.
 export interface SwarmPreviewFinding {
   service?: string;
   key: string;
@@ -620,6 +617,9 @@ export interface SwarmPreview {
   modified_outside: string[];
 }
 
+// Resources that a stack delete would touch (networks / volumes / images).
+// External volumes and images still used by other projects are already
+// filtered out of the plan.
 export interface StackCleanupPlan {
   networks: string[];
   volumes: string[];

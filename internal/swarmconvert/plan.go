@@ -176,15 +176,10 @@ func NewPlan(project, unresolved *types.Project, stack string) *Plan {
 		if n.Service != "" && n.Key == "depends_on" && waitsForCondition(project.Services[n.Service]) {
 			key = "depends_on.condition"
 		}
-		if n.Service != "" && n.Key == "build" {
+		if n.Service != "" && n.Key == "build" && project.Services[n.Service].Image == "" {
 			continue
 		}
 		add(finding(n.Service, n.Key, key))
-	}
-	for _, name := range sortedKeys(project.Services) {
-		if svc := project.Services[name]; svc.Build != nil && svc.Image != "" {
-			add(finding(name, "build", "build"))
-		}
 	}
 	foreignNames(project, stack, add)
 	for _, w := range res.Warnings {
