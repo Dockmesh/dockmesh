@@ -1175,6 +1175,12 @@ func writeAdoptError(w http.ResponseWriter, err error) {
 
 func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDeploy)
+	if err != nil {
+		writeStackBusy(w, err)
+		return
+	}
+	defer targetRelease()
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeStackTargetError(w, err)
@@ -1228,7 +1234,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		for _, depName := range order[:len(order)-1] {
 			if cur := h.stackRes(r, depName); cur.ClusterID != "" {
 				writeJSON(w, http.StatusConflict, map[string]string{
-					"error": "Dependencies must deploy to the same target. " + depName + " runs on Swarm cluster " + cur.ClusterID + ".",
+					"error": "Dependencies must deploy to the same target. " + depName + " runs on a Swarm cluster.",
 					"code":  "dependency_other_target",
 				})
 				return

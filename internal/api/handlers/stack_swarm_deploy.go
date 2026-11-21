@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
@@ -99,6 +101,7 @@ func (h *Handlers) buildSwarm(ctx context.Context, name string, snap *stacks.Sna
 		return nil, err
 	}
 	b := &swarmBuild{env: env, plan: swarmconvert.NewPlan(project, unresolved, name)}
+	b.plan.Refusals = append(b.plan.Refusals, reservedSwarmLabels(unresolved)...)
 	if b.plan.Result == nil || len(b.plan.Refusals) > 0 {
 		return b, nil
 	}
@@ -135,6 +138,38 @@ func (h *Handlers) buildSwarm(ctx context.Context, name string, snap *stacks.Sna
 	}
 	b.hash = planHash(b.req)
 	return b, nil
+}
+
+// reservedSwarmLabels refuses labels only Dockmesh and compose set. On a
+// task container they would make it count as one of Dockmesh's own or as
+// part of a host stack on every node it runs on.
+func reservedSwarmLabels(p *composetypes.Project) []swarmconvert.Finding {
+	var out []swarmconvert.Finding
+	check := func(service, key string, labels map[string]string) {
+		for _, k := range slices.Sorted(maps.Keys(labels)) {
+			if strings.HasPrefix(k, "dockmesh.") || strings.HasPrefix(k, "com.docker.compose.") {
+				out = append(out, swarmconvert.Finding{Service: service, Key: key + " " + k, Message: "This label is reserved for Dockmesh; remove it from the compose file."})
+			}
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
+		svc := p.Services[name]
+		check(name, "labels", svc.Labels)
+		if svc.Deploy != nil {
+			check(name, "deploy.labels", svc.Deploy.Labels)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.Networks)) {
+		if n := p.Networks[name]; !bool(n.External) {
+			check("", "networks "+name+" labels", n.Labels)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.Volumes)) {
+		if v := p.Volumes[name]; !bool(v.External) {
+			check("", "volumes "+name+" labels", v.Labels)
+		}
+	}
+	return out
 }
 
 // planHash names what a deploy writes; the deploy only runs when the
@@ -225,6 +260,10 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name)
 		return
 	}
+	if !h.canReadStackEnv(r, name) {
+		h.writeScopeDenied(w, r, rbac.PermContainersEnv, h.stackRes(r, name), "env of stack "+name)
+		return
+	}
 	if _, err := h.Clusters.Get(r.Context(), id); errors.Is(err, clusters.ErrNotFound) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -237,15 +276,21 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, stacks.ErrNotFound)
 		return
 	}
-	if h.refuseOtherTarget(w, r, name, id) {
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDeploy)
+	if err != nil {
+		writeStackBusy(w, err)
 		return
 	}
+	defer targetRelease()
 	release, err := h.StackLocks.TryLock(stacklock.ClusterKey(id, name), stacklock.OpDeploy)
 	if err != nil {
 		writeStackBusy(w, err)
 		return
 	}
 	defer release()
+	if h.refuseOtherTarget(w, r, name, id) {
+		return
+	}
 	if h.refuseMigrating(w, r, name) {
 		return
 	}
@@ -316,6 +361,11 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		slog.Info("swarm deploy: manager did not take the write, trying the next", "stack", name, "manager", m, "err", err)
 	}
 	if err != nil && !errors.Is(err, host.ErrSwarmWriteUnknown) {
+		if confirmed {
+			h.auditDetached(r, audit.ActionStackDeploy, name, map[string]any{
+				"cluster": id, "manager": manager, "outcome": "not_written", "error": err.Error(),
+			})
+		}
 		if writeStackBusy(w, err) {
 			return
 		}
@@ -346,11 +396,17 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.Stacks.RecordOverride(name, b.env); err != nil {
 		slog.Warn("record deployed environment override", "stack", name, "err", err)
 	}
-	h.auditSwarmWrites(r, name, id, manager, out.Networks, "network")
-	for _, s := range out.Services {
-		h.auditSwarmWrites(r, name, id, manager, []agents.SwarmWriteResult{s.SwarmWriteResult}, "service")
+	nets := out.Networks
+	if out.Outcome == swarmOutcomeUnknown && len(nets) == 0 {
+		for _, n := range b.req.Networks {
+			nets = append(nets, agents.SwarmWriteResult{Name: n.Name, Action: agents.SwarmActionUnknown})
+		}
 	}
-	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
+	h.auditSwarmWrites(r, name, id, manager, nets, "network")
+	for _, s := range out.Services {
+		h.auditSwarmService(r, name, id, manager, s)
+	}
+	h.auditDetached(r, audit.ActionStackDeploy, name, map[string]any{
 		"services": len(out.Services), "cluster": id, "manager": manager, "outcome": out.Outcome,
 	})
 	status := http.StatusOK
@@ -455,7 +511,7 @@ func (h *Handlers) auditSwarmWrites(r *http.Request, stack, clusterID, manager s
 	for _, res := range results {
 		d := map[string]any{"stack": stack, "cluster": clusterID, "manager": manager, "id": res.ID, "result": res.Action}
 		switch {
-		case kind == "network" && res.Action == agents.SwarmActionCreated:
+		case kind == "network" && (res.Action == agents.SwarmActionCreated || res.Action == agents.SwarmActionUnknown):
 			h.auditDetached(r, audit.ActionSwarmNetworkCreate, res.Name, d)
 		case kind == "network" && res.Action == agents.SwarmActionRemoved:
 			h.auditDetached(r, audit.ActionSwarmNetworkRemove, res.Name, d)
@@ -469,6 +525,19 @@ func (h *Handlers) auditSwarmWrites(r *http.Request, stack, clusterID, manager s
 	}
 }
 
+func (h *Handlers) auditSwarmService(r *http.Request, stack, clusterID, manager string, s swarmServiceOutcome) {
+	if s.Applied == nil {
+		h.auditSwarmWrites(r, stack, clusterID, manager, []agents.SwarmWriteResult{s.SwarmWriteResult}, "service")
+		return
+	}
+	if s.Action != agents.SwarmActionCreated && s.Action != agents.SwarmActionUpdated && s.Action != agents.SwarmActionUnknown {
+		return
+	}
+	h.auditDetached(r, audit.ActionSwarmServiceUpdate, s.Name, map[string]any{
+		"stack": stack, "cluster": clusterID, "manager": manager, "id": s.ID, "result": s.Action, "applied": *s.Applied,
+	})
+}
+
 // refuseOtherTarget answers 409 when the stack is deployed anywhere but
 // cluster id. Moving a stack from a host to a cluster is not offered.
 func (h *Handlers) refuseOtherTarget(w http.ResponseWriter, r *http.Request, name, clusterID string) bool {
@@ -480,7 +549,10 @@ func (h *Handlers) refuseOtherTarget(w http.ResponseWriter, r *http.Request, nam
 	if d == nil || d.TargetKind == stacks.TargetCluster && d.TargetID == clusterID {
 		return false
 	}
-	msg := "stack " + name + " runs on host " + d.TargetID + "; moving a stack from a host to a Swarm is not supported"
+	msg := "stack " + name + " runs on a host; moving a stack from a host to a Swarm is not supported"
+	if d.TargetKind == stacks.TargetHost && h.hostVisible(r, d.TargetID) {
+		msg = "stack " + name + " runs on host " + d.TargetID + "; moving a stack from a host to a Swarm is not supported"
+	}
 	if d.TargetKind == stacks.TargetCluster {
 		msg = "stack " + name + " runs on another Swarm cluster"
 	}
@@ -514,7 +586,10 @@ func (h *Handlers) refuseDependencyTargets(w http.ResponseWriter, r *http.Reques
 		}
 		msg := "Dependencies must deploy to the same target. " + dep + " is not deployed to this cluster; deploy it there first."
 		if d != nil && d.TargetKind == stacks.TargetHost {
-			msg = "Dependencies must deploy to the same target. " + dep + " runs on host " + d.TargetID + "."
+			msg = "Dependencies must deploy to the same target. " + dep + " runs on a host."
+			if h.hostVisible(r, d.TargetID) {
+				msg = "Dependencies must deploy to the same target. " + dep + " runs on host " + d.TargetID + "."
+			}
 		}
 		writeJSON(w, http.StatusConflict, map[string]string{"error": msg, "code": "dependency_other_target"})
 		return true
