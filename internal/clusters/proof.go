@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -233,13 +234,61 @@ func (s *Service) checkTrust(ctx context.Context, c Cluster, by, reported string
 	if len(agreed) < 2 {
 		return false, nil
 	}
-	if err := s.acceptRoot(ctx, c.ID, reported); err != nil {
+	if _, err := s.acceptRoot(ctx, c.ID, reported); err != nil {
 		return false, err
 	}
 	if s.audit != nil {
 		s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "rotated", "agreed_by": agreed})
 	}
 	return true, nil
+}
+
+// checkPendingRoot accepts c's pending root once two verified managers
+// report it, for when no reader answered: reads stay on the origin while a
+// root is pending, so this is how a rotation is accepted while it is away.
+// A non-origin report never clears or replaces the pending root, and that
+// manager serves no reads and changes no memberships.
+func (s *Service) checkPendingRoot(ctx context.Context, c Cluster, snap map[string]hostState) error {
+	var hosts []string
+	for _, m := range c.Members {
+		if m.Role == RoleManager && m.Verified && m.HostID != c.OriginHost {
+			hosts = append(hosts, m.HostID)
+		}
+	}
+	sort.Strings(hosts)
+	for _, h := range hosts {
+		list, _ := s.askManager(ctx, c, h, snap)
+		if list.Nodes == nil || canonicalRoot(list.TrustRoot) != c.trustPending {
+			continue
+		}
+		agreed := s.agreeingManagers(ctx, c, h, c.trustPending, snap)
+		if len(agreed) < 2 {
+			return nil
+		}
+		accepted, err := s.acceptRoot(ctx, c.ID, c.trustPending)
+		if err != nil || !accepted {
+			return err
+		}
+		if s.audit != nil {
+			s.audit.Write(ctx, "", audit.ActionClusterTrustRoot, c.ID, map[string]any{"change": "rotated", "agreed_by": agreed})
+		}
+		if c, err = s.get(ctx, c.ID); err != nil {
+			return err
+		}
+		// Every member, not only those h lists: h alone could leave some
+		// out and keep their old-root proofs standing.
+		nodes := make([]agents.SwarmNode, 0, len(c.Members))
+		for _, m := range c.Members {
+			nodes = append(nodes, agents.SwarmNode{ID: m.NodeID, Role: m.Role})
+		}
+		s.prove(ctx, c, nodes, snap, true)
+		if c, err = s.get(ctx, c.ID); err != nil {
+			return err
+		}
+		s.refreshNotices(ctx, c)
+		return nil
+	}
+	return nil
 }
 
 // agreeingManagers returns the verified manager members that are online
@@ -264,10 +313,15 @@ func (s *Service) agreeingManagers(ctx context.Context, c Cluster, by, root stri
 	return out
 }
 
-func (s *Service) acceptRoot(ctx context.Context, id, root string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ?, trust_root_pending = NULL, trust_root_pending_at = NULL WHERE id = ? AND trust_root_pending = ?`,
+// acceptRoot reports whether root was still pending and is now pinned.
+func (s *Service) acceptRoot(ctx context.Context, id, root string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE clusters SET trust_root = ?, trust_root_pending = NULL, trust_root_pending_at = NULL WHERE id = ? AND trust_root_pending = ?`,
 		root, id, root)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // ConfirmTrustRoot accepts the pending trust root of a Swarm with a single
@@ -294,7 +348,7 @@ func (s *Service) ConfirmTrustRoot(ctx context.Context, id, fingerprint, actor s
 	if others := otherManagers(snap, id, c.OriginHost); len(others) > 0 {
 		return Cluster{}, ErrConfirmNeedsManagers
 	}
-	if err := s.acceptRoot(ctx, id, c.trustPending); err != nil {
+	if _, err := s.acceptRoot(ctx, id, c.trustPending); err != nil {
 		return Cluster{}, err
 	}
 	if s.audit != nil {

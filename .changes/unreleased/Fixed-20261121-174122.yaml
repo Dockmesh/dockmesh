@@ -1,0 +1,3 @@
+kind: Fixed
+body: A Swarm root CA rotation is accepted once two verified managers report the new root, also while the cluster's origin host is down or refused; before, the cluster stayed unreachable until the origin returned
+time: 2026-11-21T17:41:22.998911177Z
