@@ -1548,7 +1548,6 @@ export interface BackupRestoreReport {
 }
 
 // runRestorable mirrors the server: the archive exists and is complete.
-// A run whose archive was found missing can still be checked again.
 export function runRestorable(r: BackupRun): boolean {
   return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at && !r.archive_missing_at;
 }

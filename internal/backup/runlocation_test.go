@@ -442,23 +442,40 @@ func TestJobSwitchRecordsTheChange(t *testing.T) {
 }
 
 func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
+	// gone: the archive is known not to be anywhere Dockmesh can look, so
+	// the run is listed as archive missing.
 	cases := []struct {
 		name string
+		gone bool
 		lose func(t *testing.T, lt *locTest, r *Run)
 	}{
-		{"legacy run not on the job's target", func(t *testing.T, lt *locTest, r *Run) {
+		{"legacy run not on the job's target", true, func(t *testing.T, lt *locTest, r *Run) {
 			legacy(t, lt.svc, r.ID)
 			hide(t, lt.rootA, r.TargetPath)
 		}},
-		{"inferred location wrong", func(t *testing.T, lt *locTest, r *Run) {
+		{"inferred location wrong", false, func(t *testing.T, lt *locTest, r *Run) {
 			legacy(t, lt.svc, r.ID)
 			hide(t, lt.rootA, r.TargetPath)
 			lt.movePath(t, lt.rootB)
 		}},
-		{"recorded location emptied outside", func(t *testing.T, lt *locTest, r *Run) {
+		{"legacy run after the target was edited", false, func(t *testing.T, lt *locTest, r *Run) {
+			legacy(t, lt.svc, r.ID)
+			hide(t, lt.rootA, r.TargetPath)
+			if _, err := lt.svc.store.db.Exec(`UPDATE backup_targets SET updated_at = datetime('now', '+1 minute') WHERE id = ?`, lt.target.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"legacy run of a target saved on upgrade", true, func(t *testing.T, lt *locTest, r *Run) {
+			legacy(t, lt.svc, r.ID)
+			hide(t, lt.rootA, r.TargetPath)
+			if _, err := lt.svc.store.db.Exec(`UPDATE backup_targets SET created_at = datetime('now', '+1 minute'), updated_at = datetime('now', '+1 minute') WHERE id = ?`, lt.target.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"recorded location emptied outside", true, func(t *testing.T, lt *locTest, r *Run) {
 			hide(t, lt.rootA, r.TargetPath)
 		}},
-		{"another file at a legacy run's path", func(t *testing.T, lt *locTest, r *Run) {
+		{"another file at a legacy run's path", false, func(t *testing.T, lt *locTest, r *Run) {
 			legacy(t, lt.svc, r.ID)
 			if err := os.WriteFile(filepath.Join(lt.rootA, filepath.FromSlash(r.TargetPath)), []byte("not this run's archive"), 0o600); err != nil {
 				t.Fatal(err)
@@ -478,12 +495,11 @@ func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
 			if got.PrunedAt != nil {
 				t.Fatal("retention marked a run pruned whose archive it did not find")
 			}
-			otherFile := tc.name == "another file at a legacy run's path"
-			if otherFile && !exists(lt.rootA, old.TargetPath) {
+			if tc.name == "another file at a legacy run's path" && !exists(lt.rootA, old.TargetPath) {
 				t.Fatal("retention deleted a file that is not the run's archive")
 			}
-			if missing := got.ArchiveMissingAt != nil; missing == otherFile {
-				t.Fatalf("archive missing = %v (%q)", missing, got.ArchiveMissingReason)
+			if missing := got.ArchiveMissingAt != nil; missing != tc.gone {
+				t.Fatalf("archive missing = %v (%q), want %v", missing, got.ArchiveMissingReason, tc.gone)
 			}
 		})
 	}

@@ -213,7 +213,7 @@
         <button type="button" class="dm-btn dm-btn-primary" onclick={() => (restorePreset = 'alongside')}>
           <Undo2 size={13} /> {systemRun ? m.backups_restore_system() : m.backups_restore_ellipsis()}
         </button>
-      {:else if archiveMissing && mayOnJob('backups.restore', run)}
+      {:else if canCheck}
         <button type="button" class="dm-btn dm-btn-primary" disabled title={m.backups_archive_missing_desc()}>
           <Undo2 size={13} /> {systemRun ? m.backups_restore_system() : m.backups_restore_ellipsis()}
         </button>

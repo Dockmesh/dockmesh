@@ -548,7 +548,7 @@
             <span class="dm-num">{r.status === 'failed' ? '—' : fmtBytes(r.size_bytes)}</span>
             <span class="dm-num dm-dim">{fmtDuration(r.started_at, r.finished_at)}</span>
             {#if r.archive_missing_at && !r.pruned_at}
-              <span class="dm-trunc small missing" title={r.target_path}>{m.backups_archive_missing()}</span>
+              <span class="dm-trunc small warn" title={r.target_path}>{m.backups_archive_missing()}</span>
             {:else}
               <span class="dm-trunc muted dm-mono small" title={r.target_path}>{r.pruned_at ? m.backups_removed_by_retention() : (r.target_path?.split('/').pop() ?? '—')}</span>
             {/if}
@@ -631,7 +631,6 @@
   .bad { color: var(--bad); }
   .op-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
   .warn { color: var(--warn); }
-  .missing { color: var(--warn); }
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
   .lock { color: var(--subtle); margin-left: 6px; display: inline-flex; vertical-align: -1px; }

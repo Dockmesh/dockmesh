@@ -367,7 +367,7 @@ func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 
 func (s *store) markPruned(ctx context.Context, runID int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE backup_runs SET pruned_at = CURRENT_TIMESTAMP WHERE id = ?`, runID)
+		`UPDATE backup_runs SET pruned_at = CURRENT_TIMESTAMP, archive_missing_at = NULL, archive_missing_reason = NULL WHERE id = ?`, runID)
 	return err
 }
 
@@ -396,9 +396,7 @@ func (s *store) removeMissingRun(ctx context.Context, runID int64) error {
 	if err != nil {
 		return err
 	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
+	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrArchivePresent
 	}
 	return nil

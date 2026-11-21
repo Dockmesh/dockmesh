@@ -775,8 +775,21 @@ func (e *Executor) deleteArchive(ctx context.Context, job *Job, cur targets.Targ
 	case errors.Is(err, errOtherFile):
 		return fmt.Errorf("the file at %s is not the archive of run %d, so it is kept and the run stays listed", r.TargetPath, r.ID)
 	case errors.Is(err, fs.ErrNotExist) && partial: // nothing to delete; prune below
-	case errors.Is(err, fs.ErrNotExist) && r.Location == nil:
-		return e.markMissing(ctx, r.ID, fmt.Sprintf("archive %s of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may be at an earlier location of the target or deleted by an older version", r.TargetPath, r.ID))
+	case errors.Is(err, fs.ErrNotExist) && guessed(&r):
+		where := "the job's target"
+		if curLoc != nil {
+			where = curLoc.describe()
+		}
+		reason, isGone, gerr := guessedArchiveGone(ctx, e.store, e.notices, &r, job, where)
+		switch {
+		case gerr != nil:
+			return gerr
+		case isGone:
+			return e.markMissing(ctx, r.ID, reason)
+		case r.Location == nil:
+			return fmt.Errorf("archive of run %d is not on the job's target; it was written before Dockmesh recorded where runs go and may still be at an earlier location of the target, so the run stays listed", r.ID)
+		}
+		return fmt.Errorf("archive of run %d is not at %s, so the run stays listed", r.ID, r.Location.describe())
 	case errors.Is(err, fs.ErrNotExist):
 		return e.markMissing(ctx, r.ID, fmt.Sprintf("archive %s of run %d is not at %s, where it was written; it was moved or deleted outside Dockmesh", r.TargetPath, r.ID, r.Location.describe()))
 	case err != nil:
