@@ -77,7 +77,7 @@ var ruleCases = map[string]struct {
 	"networks.*":              {"services:\n  a:\n    image: alpine\nnetworks:\n  spare: {}\n", "", "networks.spare"},
 	"networks other name":     {"services:\n  a:\n    image: alpine\n    networks: [n]\nnetworks:\n  n:\n    name: shared\n", "", "networks.n"},
 	"volumes.*":               {"services:\n  a:\n    image: alpine\nvolumes:\n  spare: {}\n", "", "volumes.spare"},
-	"volumes other name":      {"services:\n  a:\n    image: alpine\n    volumes: [v:/v]\nvolumes:\n  v:\n    name: other_data\n", "", "volumes.v"},
+	"volumes other name":      {"services:\n  a:\n    image: alpine\n    volumes: [vol:/v]\nvolumes:\n  vol:\n    name: other_data\n", "", "volumes.vol"},
 }
 
 // ruleOf maps a case name to its rule; extra cases for one rule add a
