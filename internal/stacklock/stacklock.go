@@ -17,7 +17,10 @@ import (
 // TargetKind says what a stack is deployed to.
 type TargetKind string
 
-const KindHost TargetKind = "host"
+const (
+	KindHost    TargetKind = "host"
+	KindCluster TargetKind = "cluster"
+)
 
 // Target is what a stack runs on.
 type Target struct {
@@ -41,6 +44,11 @@ type Key struct {
 
 // HostKey is the key of stack on host id.
 func HostKey(id, stack string) Key { return Key{Target: Host(id), Stack: stack} }
+
+// ClusterKey is the key of stack on Swarm cluster id.
+func ClusterKey(id, stack string) Key {
+	return Key{Target: Target{Kind: KindCluster, ID: id}, Stack: stack}
+}
 
 // Operation names shown to whoever finds a stack busy.
 const (

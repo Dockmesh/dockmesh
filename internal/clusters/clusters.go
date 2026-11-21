@@ -32,6 +32,8 @@ var (
 	// ErrUnreadable: the cluster's origin is offline or no longer the
 	// manager node it was linked as.
 	ErrUnreadable = errors.New("the cluster's origin manager can't be read right now")
+	// ErrNoWriter: no manager with a verified node identity is online.
+	ErrNoWriter = errors.New("no manager agent with a verified node identity is online for this cluster")
 )
 
 // ConflictError refuses a create because Host, another host claiming to

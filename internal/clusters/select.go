@@ -180,3 +180,38 @@ func verifiedManagers(c Cluster) int {
 	}
 	return n
 }
+
+// WriteHosts returns the managers a write to cluster id may go through, in
+// the order reads use: only members that proved their node identity, each
+// checked live to still be the linked manager node. Unlike reads, an
+// unverified origin never takes a write.
+func (s *Service) WriteHosts(ctx context.Context, id string) ([]string, error) {
+	c, err := s.get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	verified := map[string]bool{}
+	for _, m := range c.Members {
+		if m.Role == RoleManager && m.Verified {
+			verified[m.HostID] = true
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*hostTimeout)
+	defer cancel()
+	var out []string
+	for _, h := range s.readers(c, s.lastNodes(id)) {
+		if !verified[h] || h != "local" && s.hosts.JoinedAt(h).IsZero() {
+			continue
+		}
+		hctx, cancel := context.WithTimeout(ctx, hostTimeout)
+		info, err := s.hosts.CurrentDaemonInfo(hctx, h)
+		cancel()
+		if err == nil && isLinkedManager(c, h, info) {
+			out = append(out, h)
+		}
+	}
+	if len(out) == 0 {
+		return nil, ErrNoWriter
+	}
+	return out, nil
+}
