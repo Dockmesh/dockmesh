@@ -376,6 +376,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/stacks/{name}/swarm-preview", h.SwarmPreview)
 				r.Post("/stacks/{name}/swarm-deploy", h.SwarmDeploy)
 				r.Post("/stacks/{name}/swarm-services/{service}/resume", h.SwarmServiceResume)
+				r.Get("/stacks/{name}/swarm-image-updates", h.SwarmImageUpdates)
 				// Service scaling (P.8)
 				r.Get("/stacks/{name}/scale", h.ListServiceScale)
 				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)

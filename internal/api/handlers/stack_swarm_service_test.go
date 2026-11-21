@@ -25,6 +25,26 @@ type serviceSwarm struct {
 	// modes overrides the mode of a service by name; the others run
 	// replicated with one task.
 	modes map[string]string
+	// images sets the pinned image of a service by name; digests is what
+	// the registry has per reference.
+	images  map[string]string
+	digests map[string]string
+	checks  []agents.SwarmImageCheckReq
+}
+
+func (f *serviceSwarm) SwarmCheckImages(_ context.Context, _ string, req agents.SwarmImageCheckReq) (agents.SwarmImageCheckResp, error) {
+	f.smu.Lock()
+	defer f.smu.Unlock()
+	f.checks = append(f.checks, req)
+	out := agents.SwarmImageCheckResp{}
+	for _, i := range req.Images {
+		if d, ok := f.digests[i.Image]; ok {
+			out.Results = append(out.Results, agents.SwarmImageDigest{Image: i.Image, Digest: d})
+		} else {
+			out.Results = append(out.Results, agents.SwarmImageDigest{Image: i.Image, Error: "manifest unknown"})
+		}
+	}
+	return out, nil
 }
 
 func (f *serviceSwarm) setState(s string) {
@@ -41,6 +61,9 @@ func (f *serviceSwarm) SwarmServices(ctx context.Context, h string) (agents.Swar
 	for i := range out.Services {
 		out.Services[i].UpdateState = f.state
 		out.Services[i].Mode, out.Services[i].Replicas = "replicated", &one
+		if img, ok := f.images[out.Services[i].Name]; ok {
+			out.Services[i].Image = img
+		}
 		if m, ok := f.modes[out.Services[i].Name]; ok {
 			out.Services[i].Mode, out.Services[i].Replicas = m, nil
 		}
@@ -66,6 +89,7 @@ func newServiceEnv(t *testing.T) (*swarmDeployEnv, *serviceSwarm) {
 		r.With(middleware.RequirePerm(rbac.PermStacksOperate)).Post("/api/v1/stacks/{name}/swarm-services/{service}/rollback", e.h.SwarmServiceRollback)
 		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/swarm-services/{service}/resume", e.h.SwarmServiceResume)
 		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/services/{service}/scale", e.h.ScaleService)
+		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Get("/api/v1/stacks/{name}/swarm-image-updates", e.h.SwarmImageUpdates)
 	})
 	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
 		t.Fatal(err)

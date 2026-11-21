@@ -85,6 +85,8 @@ const (
 	FrameReqSwarmStackAdopt  = "req.swarm.stack.adopt"  // SwarmAdoptReq → SwarmAdoptResp
 	// Only sent to agents advertising CapSwarmService.
 	FrameReqSwarmServiceAction = "req.swarm.service.action" // SwarmServiceActionReq → SwarmWriteResult
+	// Only sent to agents advertising CapSwarmImages.
+	FrameReqSwarmImagesCheck = "req.swarm.images.check" // SwarmImageCheckReq → SwarmImageCheckResp
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
@@ -253,6 +255,8 @@ const (
 	// CapSwarmScale, agent: also answers the scale action of
 	// req.swarm.service.action.
 	CapSwarmScale = "swarm.scale"
+	// CapSwarmImages, agent: answers req.swarm.images.check on a manager.
+	CapSwarmImages = "swarm.images"
 )
 
 // Stream control ops beyond the exec "resize".

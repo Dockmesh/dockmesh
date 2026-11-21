@@ -577,7 +577,7 @@ func (h *Handlers) auditSwarmRemoves(r *http.Request, stack, clusterID, manager 
 func writeNotSent(err error) bool {
 	var busy *stacklock.BusyError
 	return errors.Is(err, host.ErrAgentOffline) || errors.Is(err, agents.ErrNotSwarmManager) ||
-		errors.Is(err, host.ErrAgentNoSwarmWrite) || errors.Is(err, host.ErrAgentNoSwarmAdopt) || errors.Is(err, host.ErrAgentNoSwarmService) || errors.As(err, &busy)
+		errors.Is(err, host.ErrAgentNoSwarmWrite) || errors.Is(err, host.ErrAgentNoSwarmAdopt) || errors.Is(err, host.ErrAgentNoSwarmService) || errors.Is(err, host.ErrAgentNoSwarmImages) || errors.As(err, &busy)
 }
 
 func writeSwarmWriteError(w http.ResponseWriter, err error) {
@@ -585,7 +585,7 @@ func writeSwarmWriteError(w http.ResponseWriter, err error) {
 	case errors.Is(err, agents.ErrSwarmWriteRefused):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "swarm_write_refused"})
 	case errors.Is(err, clusters.ErrNoWriter), errors.Is(err, host.ErrAgentOffline),
-		errors.Is(err, agents.ErrNotSwarmManager), errors.Is(err, host.ErrAgentNoSwarmWrite), errors.Is(err, host.ErrAgentNoSwarmAdopt), errors.Is(err, host.ErrAgentNoSwarmService),
+		errors.Is(err, agents.ErrNotSwarmManager), errors.Is(err, host.ErrAgentNoSwarmWrite), errors.Is(err, host.ErrAgentNoSwarmAdopt), errors.Is(err, host.ErrAgentNoSwarmService), errors.Is(err, host.ErrAgentNoSwarmImages),
 		errors.Is(err, host.ErrNoDocker):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:

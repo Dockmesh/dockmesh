@@ -292,6 +292,8 @@ func requestTimeout(frameType string) time.Duration {
 		return SwarmWriteWait
 	case FrameReqStacksDirApply:
 		return stacksDirApplyWait
+	case FrameReqSwarmImagesCheck:
+		return 3 * time.Minute
 	case FrameReqContainerStop, FrameReqContainerRestart, FrameReqContainerRemove,
 		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqVolumePrune, FrameReqNetworkPrune,
 		FrameReqStackCheckScale,

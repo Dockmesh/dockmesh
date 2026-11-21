@@ -23,9 +23,13 @@ import (
 // it did instead of the server giving up first.
 const Timeout = agents.SwarmWriteWait - time.Minute
 
+type infoAPI interface {
+	Info(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error)
+}
+
 // API is the part of the Docker client the write frames use.
 type API interface {
-	Info(ctx context.Context, options client.InfoOptions) (client.SystemInfoResult, error)
+	infoAPI
 	ServiceList(ctx context.Context, options client.ServiceListOptions) (client.ServiceListResult, error)
 	ServiceCreate(ctx context.Context, options client.ServiceCreateOptions) (client.ServiceCreateResult, error)
 	ServiceUpdate(ctx context.Context, serviceID string, options client.ServiceUpdateOptions) (client.ServiceUpdateResult, error)
@@ -44,7 +48,7 @@ var (
 	networkRemoveWait  = 2 * time.Second
 )
 
-func requireManager(ctx context.Context, cli API) error {
+func requireManager(ctx context.Context, cli infoAPI) error {
 	res, err := cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return fmt.Errorf("read swarm state: %w", err)

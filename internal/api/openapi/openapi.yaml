@@ -8489,6 +8489,63 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/swarm-image-updates:
+    get:
+      operationId: stacks.swarmImageUpdates
+      tags: [stacks]
+      summary: Check the images of a stack on a Swarm cluster for updates
+      description: |
+        Needs `stacks.deploy` on the stack on its cluster. Compares the digest each service of the stack is pinned to
+        with the digest the registry has now, read through a verified manager with the registry credentials Dockmesh
+        holds for it. Nothing is written. An update is a deploy of the stack (`POST /stacks/{name}/swarm-deploy`): it
+        resolves the digests anew and Swarm rolls the services out as their `update_config` says, with its own
+        rollback on failure.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: One row per service of the stack.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stack, cluster_id, manager, services]
+                properties:
+                  stack: {type: string}
+                  cluster_id: {type: string}
+                  manager: {type: string}
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      required: [service, image, update]
+                      properties:
+                        service: {type: string}
+                        image: {type: string, description: Reference without the pinned digest.}
+                        running_digest: {type: string}
+                        registry_digest: {type: string}
+                        update: {type: boolean}
+                        error: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: The stack is not on a Swarm cluster (`stack_not_on_cluster`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: No verified manager is online, or its agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /stacks/{name}/swarm-services/{service}/rollback:
     post:
       operationId: stacks.swarmServiceRollback

@@ -6832,5 +6832,18 @@
   "cl_scale_apply": "Skalieren",
   "cl_scale_force": "Trotzdem skalieren",
   "cl_scale_done": "{name} auf {n} skaliert",
-  "cl_scale_file": "Die Compose-Datei setzt {n} Replicas; der nächste Deploy setzt den Service darauf zurück."
+  "cl_scale_file": "Die Compose-Datei setzt {n} Replicas; der nächste Deploy setzt den Service darauf zurück.",
+  "cl_img_check": "Images prüfen",
+  "cl_img_title": "Images von {name}",
+  "cl_img_intro": "Vergleicht den Digest, auf den jeder Service gepinnt ist, mit dem der Registry, über einen Manager. Ein Update deployt die Dateien des Stacks erneut: Die Digests werden neu aufgelöst und Swarm rollt die Services aus, wie ihre update_config es sagt, und rollt bei Fehlern wie konfiguriert zurück oder pausiert. Der Tab Services zeigt den Stand.",
+  "cl_img_checking": "Registry wird über einen Manager gefragt…",
+  "cl_img_running": "Läuft",
+  "cl_img_registry": "Registry",
+  "cl_img_update": "Update verfügbar",
+  "cl_img_current": "aktuell",
+  "cl_img_apply": "{n} Service(s) aktualisieren",
+  "cl_img_started": "Der Deploy wurde angewendet; Swarm rollt die Services aus.",
+  "cl_img_failed": "Der Deploy wurde nicht vollständig angewendet.",
+  "cl_img_not_deployable": "Der Stack kann gerade nicht auf diesen Cluster deployt werden; öffne seine Vorschau auf der Stack-Seite.",
+  "cl_img_modified": "Die Dateien des Stacks wurden außerhalb von Dockmesh geändert; prüfe und deploye sie auf der Stack-Seite."
 }
