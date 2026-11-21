@@ -809,6 +809,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermBackupsDelete))
 				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
 				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
+				r.Delete("/backups/runs/{id}", h.DeleteBackupRun)
 			})
 			r.With(middleware.RequirePerm(rbac.PermBackupsRun)).Post("/backups/jobs/{id}/run", h.RunBackupJob)
 			r.Group(func(r chi.Router) {

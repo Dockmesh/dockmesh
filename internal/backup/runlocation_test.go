@@ -478,8 +478,12 @@ func TestRetentionKeepsRunsItCannotFind(t *testing.T) {
 			if got.PrunedAt != nil {
 				t.Fatal("retention marked a run pruned whose archive it did not find")
 			}
-			if tc.name == "another file at a legacy run's path" && !exists(lt.rootA, old.TargetPath) {
+			otherFile := tc.name == "another file at a legacy run's path"
+			if otherFile && !exists(lt.rootA, old.TargetPath) {
 				t.Fatal("retention deleted a file that is not the run's archive")
+			}
+			if missing := got.ArchiveMissingAt != nil; missing == otherFile {
+				t.Fatalf("archive missing = %v (%q)", missing, got.ArchiveMissingReason)
 			}
 		})
 	}

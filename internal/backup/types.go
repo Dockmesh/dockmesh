@@ -114,6 +114,11 @@ type Run struct {
 	Sources    []Source   `json:"sources"`
 	// PrunedAt is set once the archive was deleted from the target.
 	PrunedAt *time.Time `json:"pruned_at,omitempty"`
+	// ArchiveMissingAt is set when the archive was looked for on a
+	// reachable target and wasn't there; ArchiveMissingReason says where
+	// it was looked for. Both clear once the archive is read again.
+	ArchiveMissingAt     *time.Time `json:"archive_missing_at,omitempty"`
+	ArchiveMissingReason string     `json:"archive_missing_reason,omitempty"`
 	// TargetID is the saved target the run wrote to; runs from before
 	// this was recorded have none.
 	TargetID int64 `json:"target_id,omitempty"`
@@ -136,6 +141,10 @@ const (
 func (r *Run) Restorable() bool {
 	return (r.Status == StatusSuccess || r.Status == StatusSuccessWithWarnings) && r.PrunedAt == nil
 }
+
+// ErrArchivePresent refuses to remove a run from the list whose archive
+// was not found missing.
+var ErrArchivePresent = errors.New("only a run whose archive is missing can be removed from the list; a run with an archive goes through the job's retention")
 
 // ErrNotRestorable is returned when a run failed or its archive is gone.
 var ErrNotRestorable = errors.New("run has no restorable archive (failed, still running, or removed by retention)")

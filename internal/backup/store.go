@@ -307,14 +307,15 @@ func (s *store) finishRun(ctx context.Context, runID int64, status string, size 
 
 // keptRuns returns the job's runs whose archive is still on the target,
 // newest first. Retention only deletes files listed here, so it can't
-// touch another job's archives or files Dockmesh didn't record.
+// touch another job's archives or files Dockmesh didn't record. Runs
+// whose archive was found missing have nothing to delete.
 func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, target_path, finished_at, started_at, target_id, target_location,
 		       COALESCE(sha256, ''), COALESCE(size_bytes, 0)
 		FROM backup_runs
 		WHERE job_id = ? AND status IN ('success', 'success_with_warnings')
-		  AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
+		  AND pruned_at IS NULL AND archive_missing_at IS NULL AND COALESCE(target_path, '') != ''
 		ORDER BY id DESC`, jobID)
 	if err != nil {
 		return nil, err
@@ -370,6 +371,39 @@ func (s *store) markPruned(ctx context.Context, runID int64) error {
 	return err
 }
 
+// markArchiveMissing records that run's archive was not where it was
+// looked for; the first time it was found missing is kept.
+func (s *store) markArchiveMissing(ctx context.Context, runID int64, reason string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE backup_runs SET archive_missing_at = COALESCE(archive_missing_at, CURRENT_TIMESTAMP),
+			archive_missing_reason = ?
+		WHERE id = ? AND pruned_at IS NULL`, reason, runID)
+	return err
+}
+
+func (s *store) clearArchiveMissing(ctx context.Context, runID int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE backup_runs SET archive_missing_at = NULL, archive_missing_reason = NULL
+		WHERE id = ? AND archive_missing_at IS NOT NULL`, runID)
+	return err
+}
+
+// removeMissingRun deletes a run whose archive was found missing, with
+// its log.
+func (s *store) removeMissingRun(ctx context.Context, runID int64) error {
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM backup_runs WHERE id = ? AND archive_missing_at IS NOT NULL AND pruned_at IS NULL`, runID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrArchivePresent
+	}
+	return nil
+}
+
 func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -378,7 +412,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
-		       target_id, target_location
+		       target_id, target_location, archive_missing_at, COALESCE(archive_missing_reason, '')
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
 }
 
@@ -388,7 +422,7 @@ func (s *store) latestRuns(ctx context.Context) ([]Run, error) {
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
-		       target_id, target_location
+		       target_id, target_location, archive_missing_at, COALESCE(archive_missing_reason, '')
 		FROM backup_runs
 		WHERE id IN (SELECT MAX(id) FROM backup_runs GROUP BY job_id)
 		ORDER BY id DESC`)
@@ -403,14 +437,19 @@ func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run
 	out := []Run{}
 	for rows.Next() {
 		var r Run
-		var finished, pruned sql.NullTime
+		var finished, pruned, missingAt sql.NullTime
 		var encInt int
 		var srcs string
 		var tid sql.NullInt64
 		var loc sql.NullString
 		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
-			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc); err != nil {
+			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc,
+			&missingAt, &r.ArchiveMissingReason); err != nil {
 			return nil, err
+		}
+		if missingAt.Valid {
+			t := missingAt.Time
+			r.ArchiveMissingAt = &t
 		}
 		r.TargetID, r.Location = tid.Int64, unmarshalLocation(tid, loc)
 		if finished.Valid {
@@ -433,20 +472,25 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 		SELECT id, job_id, job_name, host_id, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json, pruned_at,
-		       target_id, target_location
+		       target_id, target_location, archive_missing_at, COALESCE(archive_missing_reason, '')
 		FROM backup_runs WHERE id = ?`, id)
 	var r Run
-	var finished, pruned sql.NullTime
+	var finished, pruned, missingAt sql.NullTime
 	var encInt int
 	var srcs string
 	var tid sql.NullInt64
 	var loc sql.NullString
 	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.HostID, &r.Status, &r.StartedAt,
-		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc); err != nil {
+		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned, &tid, &loc,
+		&missingAt, &r.ArchiveMissingReason); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRunNotFound
 		}
 		return nil, err
+	}
+	if missingAt.Valid {
+		t := missingAt.Time
+		r.ArchiveMissingAt = &t
 	}
 	if finished.Valid {
 		t := finished.Time
