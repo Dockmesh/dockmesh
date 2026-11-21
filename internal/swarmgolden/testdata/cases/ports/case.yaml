@@ -1,0 +1,3 @@
+accepted:
+  - path: "gt-ports_long:EndpointSpec/Ports/Protocol"
+    reason: compose-go fills in the default protocol tcp for the long syntax, the CLI's loader leaves it empty; the daemon applies tcp either way

@@ -1,0 +1,12 @@
+Dockmesh
+Licensed under the GNU Affero General Public License v3.0 only (see LICENSE).
+
+Parts of this product follow the design of the following third-party
+open-source software:
+
+docker/cli (https://github.com/docker/cli)
+Copyright 2013-2017 Docker, Inc.
+Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+The compose to Swarm service conversion in internal/swarmconvert follows the
+mapping of docker/cli's cli/compose/convert package.
