@@ -80,8 +80,12 @@ func TestSwarmWriteErrorWithoutAnswer(t *testing.T) {
 		fmt.Errorf("agent request %q timed out: %w", agents.FrameReqSwarmStackDeploy, context.DeadlineExceeded),
 		context.Canceled,
 	} {
-		if got := agentSwarmWriteError(err); !errors.Is(got, ErrSwarmWriteUnknown) {
+		got := agentSwarmWriteError(err)
+		if !errors.Is(got, ErrSwarmWriteUnknown) {
 			t.Errorf("%v → %v, want unknown outcome", err, got)
+		}
+		if errors.Is(got, agents.ErrAgentGone) || errors.Is(got, context.Canceled) {
+			t.Errorf("%v → %v still matches a transport error", err, got)
 		}
 	}
 }

@@ -24,6 +24,8 @@ type fakeDaemon struct {
 	services   []swarm.Service
 	networks   []network.Summary
 	failCreate string
+	cutOff     bool
+	secrets    []swarm.Secret
 	netBusy    int
 	writes     []string
 	updates    []client.ServiceUpdateOptions
@@ -54,7 +56,19 @@ func (f *fakeDaemon) ServiceList(_ context.Context, o client.ServiceListOptions)
 	return client.ServiceListResult{Items: out}, nil
 }
 
-func (f *fakeDaemon) ServiceCreate(_ context.Context, o client.ServiceCreateOptions) (client.ServiceCreateResult, error) {
+func (f *fakeDaemon) SecretList(context.Context, client.SecretListOptions) (client.SecretListResult, error) {
+	return client.SecretListResult{Items: f.secrets}, nil
+}
+
+func (f *fakeDaemon) ConfigList(context.Context, client.ConfigListOptions) (client.ConfigListResult, error) {
+	return client.ConfigListResult{}, nil
+}
+
+func (f *fakeDaemon) ServiceCreate(ctx context.Context, o client.ServiceCreateOptions) (client.ServiceCreateResult, error) {
+	if f.cutOff {
+		<-ctx.Done()
+		return client.ServiceCreateResult{}, ctx.Err()
+	}
 	if o.Spec.Name == f.failCreate {
 		return client.ServiceCreateResult{}, errors.New("no such image")
 	}
@@ -128,7 +142,7 @@ func deployReq(services ...string) agents.SwarmDeployReq {
 		Stack: stack,
 		Networks: []network.CreateRequest{{
 			Name: stack + "_default", Driver: "overlay",
-			Labels: map[string]string{agents.LabelStackNamespace: stack},
+			Labels: map[string]string{agents.LabelStackNamespace: stack, agents.LabelDockmeshStack: stack},
 		}},
 	}
 	for _, s := range services {
@@ -140,8 +154,10 @@ func deployReq(services ...string) agents.SwarmDeployReq {
 func ptr[T any](v T) *T { return &v }
 
 func TestDeploy(t *testing.T) {
-	own := map[string]string{agents.LabelStackNamespace: "web"}
-	other := map[string]string{agents.LabelStackNamespace: "other"}
+	own := map[string]string{agents.LabelStackNamespace: "web", agents.LabelDockmeshStack: "web"}
+	ownSvc := map[string]string{agents.LabelStackNamespace: "web", agents.LabelSpecHash: hash}
+	cli := map[string]string{agents.LabelStackNamespace: "web"}
+	other := map[string]string{agents.LabelStackNamespace: "other", agents.LabelDockmeshStack: "other"}
 	tests := []struct {
 		name    string
 		daemon  fakeDaemon
@@ -166,11 +182,11 @@ func TestDeploy(t *testing.T) {
 		{
 			name: "existing service is updated with its version, replicas kept",
 			daemon: fakeDaemon{
-				networks: []network.Summary{{Network: network.Network{Name: "web_default", ID: "n1", Driver: "overlay", Labels: own}}},
+				networks: []network.Summary{{Network: network.Network{Name: "web_default", ID: "n1", Driver: "overlay", Scope: "swarm", Labels: own}}},
 				services: []swarm.Service{{
 					ID: "s1", Meta: swarm.Meta{Version: swarm.Version{Index: 7}},
 					Spec: swarm.ServiceSpec{
-						Annotations:  swarm.Annotations{Name: "web_app", Labels: own},
+						Annotations:  swarm.Annotations{Name: "web_app", Labels: ownSvc},
 						Mode:         swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: ptr(uint64(4))}},
 						TaskTemplate: swarm.TaskSpec{ForceUpdate: 3},
 					},
@@ -191,7 +207,7 @@ func TestDeploy(t *testing.T) {
 		{
 			name: "existing network with drift is kept and warned about",
 			daemon: fakeDaemon{networks: []network.Summary{{Network: network.Network{
-				Name: "web_default", ID: "n1", Driver: "overlay", Internal: true, Labels: own,
+				Name: "web_default", ID: "n1", Driver: "overlay", Scope: "swarm", Internal: true, Labels: own,
 			}}}},
 			req:    func() agents.SwarmDeployReq { return deployReq("app") },
 			writes: []string{"create web_app"},
@@ -204,10 +220,72 @@ func TestDeploy(t *testing.T) {
 		{
 			name: "network of another stack refuses before any write",
 			daemon: fakeDaemon{networks: []network.Summary{{Network: network.Network{
-				Name: "web_default", Driver: "overlay", Labels: other,
+				Name: "web_default", Driver: "overlay", Scope: "swarm", Labels: other,
 			}}}},
 			req:     func() agents.SwarmDeployReq { return deployReq("app") },
-			wantErr: "network web_default exists and is not part of stack web",
+			wantErr: "network web_default exists and was not created by Dockmesh for stack web",
+		},
+		{
+			name: "network of a CLI stack with the same name refuses",
+			daemon: fakeDaemon{networks: []network.Summary{{Network: network.Network{
+				Name: "web_default", Driver: "overlay", Scope: "swarm", Labels: cli,
+			}}}},
+			req:     func() agents.SwarmDeployReq { return deployReq("app") },
+			wantErr: "not created by Dockmesh",
+		},
+		{
+			name: "local network with the name refuses",
+			daemon: fakeDaemon{networks: []network.Summary{{Network: network.Network{
+				Name: "web_default", Driver: "bridge", Scope: "local", Labels: own,
+			}}}},
+			req:     func() agents.SwarmDeployReq { return deployReq("app") },
+			wantErr: "not scoped to the Swarm",
+		},
+		{
+			name: "existing network less isolated than the file refuses",
+			daemon: fakeDaemon{networks: []network.Summary{{Network: network.Network{
+				Name: "web_default", Driver: "overlay", Scope: "swarm", Labels: own,
+			}}}},
+			req: func() agents.SwarmDeployReq {
+				r := deployReq("app")
+				r.Networks[0].Options = map[string]string{"encrypted": ""}
+				return r
+			},
+			wantErr: "is not encrypted",
+		},
+		{
+			name: "service of a CLI stack with the same name refuses",
+			daemon: fakeDaemon{services: []swarm.Service{{
+				ID: "s9", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: cli}},
+			}}},
+			req:     func() agents.SwarmDeployReq { return deployReq("app") },
+			wantErr: "not deployed by Dockmesh",
+		},
+		{
+			name: "external secret resolved by name",
+			daemon: fakeDaemon{secrets: []swarm.Secret{
+				{ID: "sec1", Spec: swarm.SecretSpec{Annotations: swarm.Annotations{Name: "db_pass"}}},
+			}},
+			req: func() agents.SwarmDeployReq {
+				r := deployReq("app")
+				r.Services[0].Spec.TaskTemplate.ContainerSpec.Secrets = []*swarm.SecretReference{{SecretName: "db_pass"}}
+				return r
+			},
+			writes: []string{"netcreate web_default", "create web_app"},
+			check: func(t *testing.T, f *fakeDaemon, _ agents.SwarmDeployResp) {
+				if id := f.creates[0].Spec.TaskTemplate.ContainerSpec.Secrets[0].SecretID; id != "sec1" {
+					t.Errorf("secret id %q", id)
+				}
+			},
+		},
+		{
+			name: "unknown external secret refuses",
+			req: func() agents.SwarmDeployReq {
+				r := deployReq("app")
+				r.Services[0].Spec.TaskTemplate.ContainerSpec.Secrets = []*swarm.SecretReference{{SecretName: "nope"}}
+				return r
+			},
+			wantErr: "external secret nope not found",
 		},
 		{
 			name: "service without the stack label refuses before any write",
@@ -215,7 +293,7 @@ func TestDeploy(t *testing.T) {
 				ID: "s9", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_db"}},
 			}}},
 			req:     func() agents.SwarmDeployReq { return deployReq("app", "db") },
-			wantErr: "service web_db exists and is not part of stack web",
+			wantErr: "service web_db exists and was not deployed by Dockmesh for stack web",
 		},
 		{
 			name: "missing external network refuses",
@@ -310,7 +388,14 @@ func TestValidateDeploy(t *testing.T) {
 		}, "doesn't name"},
 		{"bridge network", func(r *agents.SwarmDeployReq) { r.Networks[0].Driver = "bridge" }, "only overlay"},
 		{"ingress network", func(r *agents.SwarmDeployReq) { r.Networks[0].Ingress = true }, "ingress"},
-		{"network without label", func(r *agents.SwarmDeployReq) { r.Networks[0].Labels = nil }, "lacks the stack label"},
+		{"network without label", func(r *agents.SwarmDeployReq) { delete(r.Networks[0].Labels, agents.LabelDockmeshStack) }, "lacks the stack labels"},
+		{"network of another name", func(r *agents.SwarmDeployReq) { r.Networks[0].Name = "b_default" }, "named web_<network>"},
+		{"secret by id", func(r *agents.SwarmDeployReq) {
+			r.Services[0].Spec.TaskTemplate.ContainerSpec.Secrets = []*swarm.SecretReference{{SecretID: "x", SecretName: "s"}}
+		}, "by name only"},
+		{"runtime config", func(r *agents.SwarmDeployReq) {
+			r.Services[0].Spec.TaskTemplate.ContainerSpec.Configs = []*swarm.ConfigReference{{ConfigName: "c", Runtime: &swarm.ConfigReferenceRuntimeTarget{}}}
+		}, "by name only"},
 		{"duplicate service", func(r *agents.SwarmDeployReq) { r.Services = append(r.Services, r.Services[0]) }, "listed twice"},
 	}
 	for _, tt := range tests {
@@ -332,7 +417,8 @@ func TestValidateDeploy(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	own := map[string]string{agents.LabelStackNamespace: "web"}
+	own := map[string]string{agents.LabelStackNamespace: "web", agents.LabelDockmeshStack: "web"}
+	ownSvc := map[string]string{agents.LabelStackNamespace: "web", agents.LabelSpecHash: hash}
 	tests := []struct {
 		name    string
 		daemon  fakeDaemon
@@ -344,8 +430,8 @@ func TestRemove(t *testing.T) {
 		{
 			name: "services before networks, gone ones missing",
 			daemon: fakeDaemon{
-				services: []swarm.Service{{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: own}}}},
-				networks: []network.Summary{{Network: network.Network{Name: "web_default", ID: "n1", Labels: own}}},
+				services: []swarm.Service{{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: ownSvc}}}},
+				networks: []network.Summary{{Network: network.Network{Name: "web_default", ID: "n1", Scope: "swarm", Labels: own}}},
 				netBusy:  2,
 			},
 			req:     agents.SwarmRemoveReq{Stack: "web", Services: []string{"web_app", "web_old"}, Networks: []string{"web_default"}},
@@ -354,24 +440,24 @@ func TestRemove(t *testing.T) {
 		},
 		{
 			name:    "network gone meanwhile counts as removed",
-			daemon:  fakeDaemon{networks: []network.Summary{{Network: network.Network{Name: "web_x", ID: "gone", Labels: own}}}},
+			daemon:  fakeDaemon{networks: []network.Summary{{Network: network.Network{Name: "web_x", ID: "gone", Scope: "swarm", Labels: own}}}},
 			req:     agents.SwarmRemoveReq{Stack: "web", Networks: []string{"web_x"}},
 			actions: []string{"removed"},
 		},
 		{
 			name: "service of another stack refuses before any removal",
 			daemon: fakeDaemon{services: []swarm.Service{
-				{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: own}}},
-				{ID: "s2", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_x"}}},
+				{ID: "s1", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_app", Labels: ownSvc}}},
+				{ID: "s2", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "web_x", Labels: map[string]string{agents.LabelStackNamespace: "web"}}}},
 			}},
 			req:     agents.SwarmRemoveReq{Stack: "web", Services: []string{"web_app", "web_x"}},
-			wantErr: "service web_x is not part of stack web",
+			wantErr: "service web_x was not deployed by Dockmesh for stack web",
 		},
 		{
 			name:    "network of another stack refuses",
-			daemon:  fakeDaemon{networks: []network.Summary{{Network: network.Network{Name: "shared", ID: "n2"}}}},
+			daemon:  fakeDaemon{networks: []network.Summary{{Network: network.Network{Name: "shared", ID: "n2", Scope: "swarm", Labels: map[string]string{agents.LabelStackNamespace: "web"}}}}},
 			req:     agents.SwarmRemoveReq{Stack: "web", Networks: []string{"shared"}},
-			wantErr: "network shared is not part of stack web",
+			wantErr: "network shared was not created by Dockmesh for stack web",
 		},
 		{
 			name:    "name outside the stack refuses",
@@ -415,5 +501,19 @@ func TestRemove(t *testing.T) {
 				t.Fatalf("actions = %v, want %v", got, tt.actions)
 			}
 		})
+	}
+}
+
+// A write cut off by the deadline is reported as unknown, never as failed.
+func TestDeployCutOff(t *testing.T) {
+	f := fakeDaemon{cutOff: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	resp, err := Deploy(ctx, &f, deployReq("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Services) != 1 || resp.Services[0].Action != agents.SwarmActionUnknown || resp.Error == "" {
+		t.Fatalf("resp %+v", resp)
 	}
 }
