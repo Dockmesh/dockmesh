@@ -144,3 +144,40 @@ func TestAdoptDriverOptionsGoToTheEnvironmentFile(t *testing.T) {
 		t.Fatalf("compose:\n%s\nenv %q", a.Compose, a.Env)
 	}
 }
+
+// Secrets and configs mounted at their default place keep the CLI's bare
+// target, so a deploy after adopting doesn't replace the tasks.
+func TestAdoptSecretAndConfigTargets(t *testing.T) {
+	spec := swarm.ServiceSpec{
+		Annotations: swarm.Annotations{Name: "s_app", Labels: map[string]string{LabelNamespace: "s"}},
+		TaskTemplate: swarm.TaskSpec{ContainerSpec: &swarm.ContainerSpec{
+			Image:   "alpine",
+			Labels:  map[string]string{LabelNamespace: "s"},
+			Secrets: []*swarm.SecretReference{{File: &swarm.SecretReferenceFileTarget{Name: "token", UID: "0", GID: "0", Mode: 0o444}, SecretID: "x", SecretName: "s_token"}},
+			Configs: []*swarm.ConfigReference{{File: &swarm.ConfigReferenceFileTarget{Name: "conf", UID: "0", GID: "0", Mode: 0o444}, ConfigID: "y", ConfigName: "s_conf"}},
+		}},
+		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{}},
+	}
+	a, err := AdoptStack("s", []swarm.Service{{ID: "x", Spec: spec}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(a.Compose), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := compose.LoadProject(context.Background(), dir, "s", a.Env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Convert(p, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Services[0]
+	for _, path := range Diff(spec, got, nil) {
+		if strings.Contains(path, "Secrets") || strings.Contains(path, "Configs") {
+			t.Errorf("%s differs: secrets %+v configs %+v", path, *got.TaskTemplate.ContainerSpec.Secrets[0].File, *got.TaskTemplate.ContainerSpec.Configs[0].File)
+		}
+	}
+}
