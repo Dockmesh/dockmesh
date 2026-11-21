@@ -151,10 +151,9 @@ func newSwarmDeployEnv(t *testing.T) *swarmDeployEnv {
 
 func (e *swarmDeployEnv) planHash(t *testing.T, stack string) string {
 	t.Helper()
-	rr := e.do(http.MethodGet, "/api/v1/stacks/"+stack+"/swarm-preview?cluster=c1", e.login("root").AccessToken, nil)
-	var p swarmPreviewResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil || p.PlanHash == "" {
-		t.Fatalf("preview %d: %s", rr.Code, rr.Body)
+	p := e.preview(t, stack)
+	if p.PlanHash == "" {
+		t.Fatalf("preview of %s without a plan hash: %+v", stack, p)
 	}
 	return p.PlanHash
 }
