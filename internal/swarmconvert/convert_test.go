@@ -45,6 +45,7 @@ func TestConvertRefuses(t *testing.T) {
 		{"too precise cpus", "services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n        limits:\n          cpus: \"0.0000000001\"\n", "too precise"},
 		{"two keys for one network", "services:\n  a:\n    image: alpine\n    networks: [n, m]\nnetworks:\n  n:\n    name: same\n  m:\n    name: same\n    internal: true\n", "both name the network same"},
 		{"generic resource without a spec", "services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n        reservations:\n          generic_resources:\n            - x-note: 1\n", "discrete_resource_spec"},
+		{"secret mode out of range", "services:\n  a:\n    image: alpine\n    secrets:\n      - source: s\n        mode: 0o777777\nsecrets:\n  s:\n    external: true\n", "not a file mode"},
 		{"bad subnet", "services:\n  a:\n    image: alpine\n    networks: [n]\nnetworks:\n  n:\n    ipam:\n      config:\n        - subnet: nonsense\n", "subnet"},
 	}
 	for _, tc := range cases {

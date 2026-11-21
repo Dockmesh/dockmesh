@@ -22,6 +22,7 @@
   import { Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, User, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
+  import SwarmPreviewDialog from '../_SwarmPreviewDialog.svelte';
   import SaveConflictDialog from '../_SaveConflictDialog.svelte';
   import DiffView from '../_DiffView.svelte';
   import { diffLines } from '$lib/diffLines';
@@ -1509,6 +1510,7 @@
   }
 
   let showDelete = $state(false);
+  let showSwarmPreview = $state(false);
   function openDelete() {
     if (!anyBusy) showDelete = true;
   }
@@ -1549,6 +1551,7 @@
       out.push({ label: m.stacks_d_edit_deps(), icon: Layers, onclick: openDepsEditor });
     }
     out.push({ label: m.stacks_d_reload_disk(), icon: RefreshCw, onclick: load });
+    if (canDeploy) out.push({ label: m.stacks_swp_menu(), icon: Eye, onclick: () => (showSwarmPreview = true) });
     if (allowed('stacks.delete')) {
       out.push({ separator: true });
       out.push({ label: m.stacks_d_delete_stack(), icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
@@ -2712,6 +2715,7 @@
   oncancel={() => (saveConflict = null)}
 />
 
+<SwarmPreviewDialog bind:open={showSwarmPreview} {name} />
 <DeleteStackDialog bind:open={showDelete} {name} host={stackHost} containers={services.length} ondeleted={() => goto('/stacks')} />
 
 <style>

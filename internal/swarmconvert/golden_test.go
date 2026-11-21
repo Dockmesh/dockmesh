@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compose-spec/compose-go/v2/types"
+
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/swarmgolden"
 )
@@ -46,7 +48,7 @@ func bindMount(src string) string {
 		"and each node has its own content."
 }
 
-func loadCase(t *testing.T, c swarmgolden.Case) *Result {
+func loadCaseProject(t *testing.T, c swarmgolden.Case) *types.Project {
 	t.Helper()
 	var env strings.Builder
 	for k, v := range c.Env {
@@ -56,7 +58,12 @@ func loadCase(t *testing.T, c swarmgolden.Case) *Result {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := Convert(project, c.Stack())
+	return project
+}
+
+func loadCase(t *testing.T, c swarmgolden.Case) *Result {
+	t.Helper()
+	res, err := Convert(loadCaseProject(t, c), c.Stack())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +161,6 @@ configs:
   conf:
     external: true
 `, []string{
-			"configs.conf", "secrets.token",
 			"app: cap_add", "app: ports.host_ip",
 			"app: privileged", "app: stop_grace_period", "app: ulimits", "app: user", "app: working_dir",
 		}},
