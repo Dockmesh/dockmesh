@@ -31,6 +31,38 @@ type fakeSwarm struct {
 	err     error
 	resp    *agents.SwarmDeployResp
 	applied bool
+	// extra and extraNets run on the cluster besides the last deploy.
+	extra     []agents.SwarmService
+	extraNets []agents.SwarmNetwork
+	truncated bool
+	removes   []agents.SwarmRemoveReq
+}
+
+func (f *fakeSwarm) SwarmRemove(_ context.Context, _ string, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removes = append(f.removes, req)
+	out := agents.SwarmRemoveResp{}
+	for _, s := range req.Services {
+		out.Services = append(out.Services, agents.SwarmWriteResult{Name: s, Action: agents.SwarmActionRemoved})
+	}
+	for _, n := range req.Networks {
+		out.Networks = append(out.Networks, agents.SwarmWriteResult{Name: n, Action: agents.SwarmActionRemoved})
+	}
+	return out, nil
+}
+
+func (f *fakeSwarm) SwarmNetworks(context.Context, string) (agents.SwarmNetworksResp, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := agents.SwarmNetworksResp{Networks: append([]agents.SwarmNetwork{}, f.extraNets...), Truncated: f.truncated}
+	if f.applied && len(f.deploys) > 0 {
+		last := f.deploys[len(f.deploys)-1]
+		for _, n := range last.Networks {
+			out.Networks = append(out.Networks, agents.SwarmNetwork{ID: "n-" + n.Name, Name: n.Name, Stack: last.Stack, Dockmesh: true})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSwarm) SwarmDeploy(_ context.Context, hostID string, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error) {
@@ -57,7 +89,7 @@ func (f *fakeSwarm) SwarmDeploy(_ context.Context, hostID string, req agents.Swa
 func (f *fakeSwarm) SwarmServices(context.Context, string) (agents.SwarmServicesResp, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out agents.SwarmServicesResp
+	out := agents.SwarmServicesResp{Services: append([]agents.SwarmService{}, f.extra...)}
 	if !f.applied || len(f.deploys) == 0 {
 		return out, nil
 	}
@@ -119,16 +151,19 @@ func newSwarmDeployEnv(t *testing.T) *swarmDeployEnv {
 
 func (e *swarmDeployEnv) planHash(t *testing.T, stack string) string {
 	t.Helper()
-	rr := e.do(http.MethodGet, "/api/v1/stacks/"+stack+"/swarm-preview?cluster=c1", e.login("root").AccessToken, nil)
-	var p swarmPreviewResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil || p.PlanHash == "" {
-		t.Fatalf("preview %d: %s", rr.Code, rr.Body)
+	p := e.preview(t, stack)
+	if p.PlanHash == "" {
+		t.Fatalf("preview of %s without a plan hash: %+v", stack, p)
 	}
 	return p.PlanHash
 }
 
 func (e *swarmDeployEnv) deploy(user, stack, hash string) (int, swarmDeployResponse, string) {
-	rr := e.do(http.MethodPost, "/api/v1/stacks/"+stack+"/swarm-deploy?cluster=c1", e.login(user).AccessToken, swarmDeployRequest{PlanHash: hash})
+	return e.deployWith(user, stack, swarmDeployRequest{PlanHash: hash})
+}
+
+func (e *swarmDeployEnv) deployWith(user, stack string, body swarmDeployRequest) (int, swarmDeployResponse, string) {
+	rr := e.do(http.MethodPost, "/api/v1/stacks/"+stack+"/swarm-deploy?cluster=c1", e.login(user).AccessToken, body)
 	var out swarmDeployResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	return rr.Code, out, rr.Body.String()
@@ -439,6 +474,87 @@ func TestHostDeployRefusesClusterDependency(t *testing.T) {
 	}
 }
 
+func (e *swarmDeployEnv) preview(t *testing.T, stack string) swarmPreviewResponse {
+	t.Helper()
+	rr := e.do(http.MethodGet, "/api/v1/stacks/"+stack+"/swarm-preview?cluster=c1", e.login("root").AccessToken, nil)
+	var p swarmPreviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatalf("preview %d: %s", rr.Code, rr.Body)
+	}
+	return p
+}
+
+const otherHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// Services and networks the file no longer has are listed in the preview
+// and removed only when the deploy asks for it; objects without
+// Dockmesh's marks are never listed.
+func TestSwarmDeployPrune(t *testing.T) {
+	e := newSwarmDeployEnv(t)
+	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, body := e.deploy("root", "web", e.planHash(t, "web")); code != http.StatusOK {
+		t.Fatalf("first deploy %d: %s", code, body)
+	}
+	e.fake.extra = []agents.SwarmService{
+		{ID: "o1", Name: "web_old", Stack: "web", SpecHash: otherHash},
+		{ID: "o2", Name: "web_cli", Stack: "web"},
+		{ID: "o3", Name: "api_old", Stack: "api", SpecHash: otherHash},
+	}
+	e.fake.extraNets = []agents.SwarmNetwork{
+		{ID: "n1", Name: "web_back", Stack: "web", Dockmesh: true},
+		{ID: "n2", Name: "web_clinet", Stack: "web"},
+	}
+
+	p := e.preview(t, "web")
+	if p.Prune == nil || strings.Join(p.Prune.Services, ",") != "web_old" || strings.Join(p.Prune.Networks, ",") != "web_back" {
+		t.Fatalf("prune %+v", p.Prune)
+	}
+
+	code, out, body := e.deploy("root", "web", p.PlanHash)
+	if code != http.StatusOK || out.NotPruned == nil || out.Pruned != nil || len(e.fake.removes) != 0 {
+		t.Fatalf("deploy without prune %d: %s", code, body)
+	}
+
+	code, out, body = e.deployWith("root", "web", swarmDeployRequest{PlanHash: e.preview(t, "web").PlanHash, Prune: true})
+	if code != http.StatusOK || out.Pruned == nil || len(e.fake.removes) != 1 {
+		t.Fatalf("deploy with prune %d: %s", code, body)
+	}
+	rm := e.fake.removes[0]
+	if rm.Stack != "web" || strings.Join(rm.Services, ",") != "web_old" || strings.Join(rm.Networks, ",") != "web_back" {
+		t.Fatalf("remove %+v", rm)
+	}
+
+	// A new leftover after the preview changes the plan.
+	stale := e.preview(t, "web").PlanHash
+	e.fake.extra = append(e.fake.extra, agents.SwarmService{ID: "o4", Name: "web_new", Stack: "web", SpecHash: otherHash})
+	if code, _, body := e.deployWith("root", "web", swarmDeployRequest{PlanHash: stale, Prune: true}); code != http.StatusConflict || !strings.Contains(body, "swarm_plan_changed") {
+		t.Fatalf("stale prune %d: %s", code, body)
+	}
+	if len(e.fake.removes) != 1 {
+		t.Fatalf("removes %+v", e.fake.removes)
+	}
+}
+
+// Nothing is pruned after a deploy that did not apply completely.
+func TestSwarmDeployPruneOnlyAfterApplied(t *testing.T) {
+	e := newSwarmDeployEnv(t)
+	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.extra = []agents.SwarmService{{ID: "o1", Name: "web_old", Stack: "web", SpecHash: otherHash}}
+	p := e.preview(t, "web")
+	e.fake.resp = &agents.SwarmDeployResp{
+		Services: []agents.SwarmWriteResult{{Name: "web_db", Action: agents.SwarmActionFailed, Error: "no such image"}},
+		Error:    "web_db: no such image",
+	}
+	code, out, body := e.deployWith("root", "web", swarmDeployRequest{PlanHash: p.PlanHash, Prune: true})
+	if code != http.StatusBadGateway || out.PruneError == "" || out.NotPruned == nil || len(e.fake.removes) != 0 {
+		t.Fatalf("%d: %s", code, body)
+	}
+}
+
 // The files of a stack on a cluster can be edited; the save holds the
 // stack's cluster lock.
 func TestSwarmStackFilesSave(t *testing.T) {
@@ -461,5 +577,28 @@ func TestSwarmStackFilesSave(t *testing.T) {
 	defer release()
 	if rr := e.do(http.MethodPut, "/api/v1/stacks/web", e.login("root").AccessToken, body); rr.Code != http.StatusConflict {
 		t.Fatalf("save while deploying %d: %s", rr.Code, rr.Body)
+	}
+}
+
+// When the leftovers can't be read, a deploy without prune still runs and
+// one with prune is refused.
+func TestSwarmDeployPruneUnknown(t *testing.T) {
+	e := newSwarmDeployEnv(t)
+	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.truncated = true
+	p := e.preview(t, "web")
+	if p.PruneUnknown == "" || p.Prune != nil || p.PlanHash == "" {
+		t.Fatalf("preview %+v", p)
+	}
+	if code, _, body := e.deployWith("root", "web", swarmDeployRequest{PlanHash: p.PlanHash, Prune: true}); code != http.StatusConflict || !strings.Contains(body, "swarm_prune_unknown") {
+		t.Fatalf("prune with unknown leftovers %d: %s", code, body)
+	}
+	if code, _, body := e.deploy("root", "web", p.PlanHash); code != http.StatusOK {
+		t.Fatalf("deploy without prune %d: %s", code, body)
+	}
+	if len(e.fake.removes) != 0 {
+		t.Fatalf("removes %+v", e.fake.removes)
 	}
 }

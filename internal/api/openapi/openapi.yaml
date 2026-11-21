@@ -8333,6 +8333,13 @@ paths:
                 plan_hash:
                   type: string
                   description: The `plan_hash` of the preview being confirmed.
+                prune:
+                  type: boolean
+                  description: |
+                    Remove what the preview listed under `prune` (services and
+                    networks Dockmesh created for the stack that the file no
+                    longer has), only after every write of the deploy was applied.
+                    Without it they keep running and are listed in `not_pruned`.
       responses:
         "200":
           description: Every write was applied.
@@ -8348,7 +8355,8 @@ paths:
             `swarm_plan_changed`, `stack_other_target`, `dependency_other_target`,
             `swarm_write_refused` (a name belongs to an object Dockmesh did not
             create for this stack), `swarm_environment_not_active`,
-            `modified_outside`, `migration_active` or `stack_busy`.
+            `modified_outside`, `migration_active`, `stack_busy`, or `swarm_prune_unknown`
+            (prune asked for while the cluster's services and networks can't be read).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -13037,6 +13045,11 @@ components:
         plan_hash:
           type: string
           description: Confirmation for the deploy; absent when not deployable.
+        prune:
+          $ref: "#/components/schemas/SwarmPrune"
+        prune_unknown:
+          type: string
+          description: Set instead of `prune` when the cluster's services and networks can't be read; the plan then deploys only without `prune`.
         refusals:
           type: array
           items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
@@ -13107,6 +13120,32 @@ components:
         warnings:
           type: array
           items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        pruned:
+          type: object
+          description: What a deploy with `prune` removed.
+          properties:
+            services:
+              type: array
+              items: {$ref: "#/components/schemas/SwarmWriteResult"}
+            networks:
+              type: array
+              items: {$ref: "#/components/schemas/SwarmWriteResult"}
+        not_pruned:
+          $ref: "#/components/schemas/SwarmPrune"
+        prune_error:
+          type: string
+          description: Why pruning did not happen or did not finish; the answer is 502.
+    SwarmPrune:
+      type: object
+      description: Services Dockmesh deployed and networks it created for the stack that its file no longer has.
+      required: [services, networks]
+      properties:
+        services:
+          type: array
+          items: {type: string}
+        networks:
+          type: array
+          items: {type: string}
     SwarmPreviewFinding:
       type: object
       required: [key, message]

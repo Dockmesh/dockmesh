@@ -20,9 +20,13 @@ type swarmPreviewResponse struct {
 	ClusterID   string `json:"cluster_id"`
 	Environment string `json:"environment,omitempty"`
 	Deployable  bool   `json:"deployable"`
-	// PlanHash names what a deploy would write; the deploy needs it as
-	// the confirmation. Empty when the stack is not deployable.
-	PlanHash         string                  `json:"plan_hash,omitempty"`
+	// PlanHash names what a deploy would write and prune; the deploy
+	// needs it as the confirmation. Empty when the stack is not
+	// deployable.
+	PlanHash string `json:"plan_hash,omitempty"`
+	// Prune is removed by a deploy only when it asks for it.
+	Prune            *swarmPrune             `json:"prune,omitempty"`
+	PruneUnknown     string                  `json:"prune_unknown,omitempty"`
 	Refusals         []swarmconvert.Finding  `json:"refusals"`
 	Warnings         []swarmconvert.Finding  `json:"warnings"`
 	Services         []swarm.ServiceSpec     `json:"services"`
@@ -87,7 +91,6 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		ClusterID:        id,
 		Environment:      b.env,
 		Deployable:       len(plan.Refusals) == 0,
-		PlanHash:         b.hash,
 		Refusals:         nonNil(plan.Refusals),
 		Warnings:         nonNil(plan.Warnings),
 		Services:         []swarm.ServiceSpec{},
@@ -96,6 +99,12 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		ModifiedOutside:  nonNil(snap.Changed),
 	}
 	if out.Deployable {
+		if prune, err := h.pruneCandidates(r.Context(), id, b.req); err != nil {
+			slog.Info("swarm preview: prune candidates", "stack", name, "err", err)
+			out.PruneUnknown, out.PlanHash = errPruneUnknown.Error(), planHash(b.req, unknownPrune)
+		} else {
+			out.Prune, out.PlanHash = &prune, planHash(b.req, prune)
+		}
 		for _, s := range b.req.Services {
 			out.Services = append(out.Services, s.Spec)
 		}

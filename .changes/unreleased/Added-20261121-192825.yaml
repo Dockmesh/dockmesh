@@ -1,0 +1,3 @@
+kind: Added
+body: The Swarm deploy preview lists services and networks the compose file no longer has; a deploy removes them only when that is ticked and only after every write was applied
+time: 2026-11-21T19:28:25.24168078Z
