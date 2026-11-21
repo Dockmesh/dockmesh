@@ -131,11 +131,13 @@ func (h *Handlers) buildAdopt(ctx context.Context, clusterID, stack string) (*ad
 		}
 		out.view.Services = append(out.view.Services, v)
 	}
+	// The environment file is left out: it follows from the specs the
+	// versions pin, and a hash over it would let a caller without the
+	// right to read env values test guesses of them.
 	raw, err := json.Marshal(struct {
 		Compose  string      `json:"compose"`
-		Env      string      `json:"env"`
 		Services []versioned `json:"services"`
-	}{a.Compose, a.Env, seen})
+	}{a.Compose, seen})
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +161,12 @@ func (h *Handlers) adoptAllowed(w http.ResponseWriter, r *http.Request) (cluster
 	res := h.stackTargetReq(stacks.Target{Kind: stacks.TargetCluster, ID: clusterID}, stack)
 	if !middleware.AllowedOn(r.Context(), rbac.PermStacksAdopt, res) {
 		h.writeScopeDenied(w, r, rbac.PermStacksAdopt, res, "stack "+stack)
+		return "", "", false
+	}
+	// The preview shows commands and labels the read API hides, and the
+	// stack's environment file gets the values from the cluster.
+	if !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
+		h.writeScopeDenied(w, r, rbac.PermContainersEnv, res, "env of stack "+stack)
 		return "", "", false
 	}
 	if _, err := h.Clusters.Get(r.Context(), clusterID); errors.Is(err, clusters.ErrNotFound) {
@@ -338,13 +346,27 @@ func (h *Handlers) SwarmAdopt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, out)
 		return
 	}
+	failed := func(stage string, err error) {
+		slog.Error("adopt swarm stack", "stage", stage, "stack", stack, "err", err)
+		h.auditDetached(r, audit.ActionStackAdopt, stack, map[string]any{
+			"cluster": clusterID, "manager": manager, "outcome": "failed", "stage": stage, "error": err.Error(),
+		})
+	}
+	if taken, err := h.stackNameTaken(wctx, stack); err != nil || taken {
+		if err == nil {
+			err = errAdoptNameTaken
+		}
+		failed("write_files", err)
+		writeError(w, http.StatusInternalServerError, "the services were marked as Dockmesh's but writing the stack files failed; adopt it again")
+		return
+	}
 	if _, err := h.Stacks.Create(stack, b.adopted.Compose, b.adopted.Env); err != nil {
-		slog.Error("adopt swarm stack: write files", "stack", stack, "err", err)
+		failed("write_files", err)
 		writeError(w, http.StatusInternalServerError, "the services were marked as Dockmesh's but writing the stack files failed; adopt it again")
 		return
 	}
 	if err := h.Deployments.SetCluster(wctx, stack, clusterID, "deployed"); err != nil {
-		slog.Error("adopt swarm stack: record target", "stack", stack, "err", err)
+		failed("record_target", err)
 		if derr := h.Stacks.Delete(wctx, stack); derr != nil {
 			slog.Warn("adopt swarm stack: drop files", "stack", stack, "err", derr)
 		}

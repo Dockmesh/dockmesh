@@ -53,6 +53,38 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 	var env []string
 	envNames := map[string]bool{}
 	netKeys, secretKeys, configKeys := map[string]string{}, map[string]string{}, map[string]string{}
+	// toEnv moves value to the environment file, which is stored
+	// encrypted, and returns the reference the compose file uses.
+	toEnv := func(service, key, varName, value string) (string, bool) {
+		if strings.ContainsAny(value, "\r\n") || strings.TrimRight(value, " \t") != value {
+			a.Findings = append(a.Findings, Finding{Service: service, Key: key,
+				Message: "The value has a line break or trailing blanks and can't go into the environment file; set it there by hand."})
+			return "", false
+		}
+		v0 := envVarUnsafe.ReplaceAllString(strings.ToUpper(varName), "_")
+		if v0 == "" || v0[0] >= '0' && v0[0] <= '9' {
+			v0 = "_" + v0
+		}
+		vn := v0
+		for i := 2; envNames[vn]; i++ {
+			vn = v0 + "_" + strconv.Itoa(i)
+		}
+		envNames[vn] = true
+		env = append(env, vn+"="+value)
+		a.EnvKeys = append(a.EnvKeys, vn)
+		return "${" + vn + "}", true
+	}
+	// driverOpts writes driver options through the environment file:
+	// they often carry credentials, e.g. of a CIFS volume.
+	driverOpts := func(service, key, prefix string, opts map[string]string) map[string]string {
+		out := map[string]string{}
+		for _, k := range slices.Sorted(maps.Keys(opts)) {
+			if ref, ok := toEnv(service, key+" "+k, prefix+"_"+k, opts[k]); ok {
+				out[esc(k)] = ref
+			}
+		}
+		return out
+	}
 	prefix := stack + "_"
 
 	for _, s := range services {
@@ -87,24 +119,12 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 					list = append(list, esc(k))
 					continue
 				}
-				if strings.ContainsAny(v, "\r\n") || strings.TrimRight(v, " \t") != v {
-					a.Findings = append(a.Findings, Finding{Service: name, Key: "environment " + k,
-						Message: "The value has a line break or trailing blanks and can't go into the environment file; set it there by hand."})
+				ref, ok := toEnv(name, "environment "+k, name+"_"+k, v)
+				if !ok {
 					list = append(list, esc(k)+"=")
 					continue
 				}
-				v0 := envVarUnsafe.ReplaceAllString(strings.ToUpper(name+"_"+k), "_")
-				if v0 == "" || v0[0] >= '0' && v0[0] <= '9' {
-					v0 = "_" + v0
-				}
-				vn := v0
-				for i := 2; envNames[vn]; i++ {
-					vn = v0 + "_" + strconv.Itoa(i)
-				}
-				envNames[vn] = true
-				env = append(env, vn+"="+v)
-				a.EnvKeys = append(a.EnvKeys, vn)
-				list = append(list, esc(k)+"=${"+vn+"}")
+				list = append(list, esc(k)+"="+ref)
 			}
 			out["environment"] = list
 		}
@@ -254,7 +274,7 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 							vol["driver"] = esc(o.DriverConfig.Name)
 						}
 						if len(o.DriverConfig.Options) > 0 {
-							vol["driver_opts"] = escMap(o.DriverConfig.Options)
+							vol["driver_opts"] = driverOpts("", "volumes "+key+" driver_opts", "VOL_"+key, o.DriverConfig.Options)
 						}
 					}
 				}
@@ -319,7 +339,7 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 				cfg["aliases"] = aliases
 			}
 			if len(att.DriverOpts) > 0 {
-				cfg["driver_opts"] = escMap(att.DriverOpts)
+				cfg["driver_opts"] = driverOpts(name, "networks "+key+" driver_opts", name+"_NET_"+key, att.DriverOpts)
 			}
 			if len(cfg) > 0 {
 				svcNets[key] = cfg

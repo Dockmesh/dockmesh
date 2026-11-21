@@ -207,14 +207,16 @@ func TestSwarmAdoptRefusals(t *testing.T) {
 
 func TestSwarmAdoptAccess(t *testing.T) {
 	e, _ := newAdoptEnv(t)
-	e.role("adopt-c1", []rbac.Perm{rbac.PermStacksView, rbac.PermStacksAdopt}, rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"})
+	e.role("adopt-c1", []rbac.Perm{rbac.PermStacksView, rbac.PermStacksAdopt, rbac.PermContainersEnv}, rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"})
+	e.role("noenv-c1", []rbac.Perm{rbac.PermStacksView, rbac.PermStacksAdopt}, rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"})
 	e.role("deploy-c1", []rbac.Perm{rbac.PermStacksView, rbac.PermStacksDeploy}, rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"})
 	e.role("adopt-local", []rbac.Perm{rbac.PermStacksView, rbac.PermStacksAdopt}, rbac.Scope{Type: rbac.ScopeHost, Host: "local"})
-	for _, u := range []string{"adopt-c1", "deploy-c1", "adopt-local"} {
+	for _, u := range []string{"adopt-c1", "noenv-c1", "deploy-c1", "adopt-local"} {
 		e.user("u-"+u, u)
 	}
 	for user, want := range map[string]int{
 		"u-deploy-c1":   http.StatusForbidden,
+		"u-noenv-c1":    http.StatusForbidden,
 		"u-adopt-local": http.StatusForbidden,
 		"u-adopt-c1":    http.StatusOK,
 	} {

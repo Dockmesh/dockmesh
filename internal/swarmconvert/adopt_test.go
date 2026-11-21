@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/swarm"
 
@@ -120,5 +121,26 @@ func TestAdoptEnvironmentStaysOutOfTheFile(t *testing.T) {
 	}
 	if len(a.Findings) != 1 || a.Findings[0].Key != "environment MULTI" {
 		t.Fatalf("findings %v", a.Findings)
+	}
+}
+
+func TestAdoptDriverOptionsGoToTheEnvironmentFile(t *testing.T) {
+	spec := swarm.ServiceSpec{
+		Annotations: swarm.Annotations{Name: "s_app", Labels: map[string]string{LabelNamespace: "s"}},
+		TaskTemplate: swarm.TaskSpec{ContainerSpec: &swarm.ContainerSpec{
+			Image: "alpine",
+			Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: "s_data", Target: "/data", VolumeOptions: &mount.VolumeOptions{
+				Labels:       map[string]string{LabelNamespace: "s"},
+				DriverConfig: &mount.Driver{Name: "local", Options: map[string]string{"o": "username=u,password=pw"}},
+			}}},
+		}},
+		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{}},
+	}
+	a, err := AdoptStack("s", []swarm.Service{{ID: "x", Spec: spec}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(a.Compose, "password=pw") || !strings.Contains(a.Env, "VOL_DATA_O=username=u,password=pw") {
+		t.Fatalf("compose:\n%s\nenv %q", a.Compose, a.Env)
 	}
 }

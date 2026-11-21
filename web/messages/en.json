@@ -6802,5 +6802,6 @@
   "cl_adopt_confirm": "Adopt as Dockmesh stack",
   "cl_adopt_done": "Stack {name} adopted",
   "cl_adopt_open": "Open stack",
-  "cl_adopt_failed": "Not every service could be marked; no stack was created. Adopting again is safe."
+  "cl_adopt_failed": "Not every service could be marked; no stack was created. Adopting again is safe.",
+  "cl_adopt_visible": "Commands, labels and healthchecks are written to the compose file, which everyone with Stacks: View on the stack can read. Environment values and driver options go to the encrypted environment file."
 }

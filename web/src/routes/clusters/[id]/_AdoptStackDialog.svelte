@@ -132,6 +132,7 @@
 
       <section class="space-y-1">
         <h3 class="text-xs font-medium">{m.cl_adopt_file()}</h3>
+        <p class="text-xs text-[var(--fg-muted)]">{m.cl_adopt_visible()}</p>
         <pre class="dm-mono text-xs max-h-72 overflow-auto p-2 rounded-md border border-[var(--border)] bg-[var(--bg-subtle)]">{preview.compose}</pre>
       </section>
       {#if preview.env_keys.length > 0}

@@ -6802,5 +6802,6 @@
   "cl_adopt_confirm": "Als Dockmesh-Stack übernehmen",
   "cl_adopt_done": "Stack {name} übernommen",
   "cl_adopt_open": "Stack öffnen",
-  "cl_adopt_failed": "Nicht jeder Service konnte markiert werden; es wurde kein Stack angelegt. Erneutes Übernehmen ist sicher."
+  "cl_adopt_failed": "Nicht jeder Service konnte markiert werden; es wurde kein Stack angelegt. Erneutes Übernehmen ist sicher.",
+  "cl_adopt_visible": "Befehle, Labels und Healthchecks stehen in der Compose-Datei, die jeder mit Stacks: Ansehen auf dem Stack lesen kann. Environment-Werte und Treiber-Optionen kommen in die verschlüsselte Environment-Datei."
 }

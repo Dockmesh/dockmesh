@@ -3212,9 +3212,9 @@ paths:
       tags: [clusters]
       summary: Preview adopting an External Swarm stack
       description: |
-        Needs `stacks.adopt` on the stack on the cluster. Reads the stack's
+        Needs `stacks.adopt` and `containers.env` on the stack on the cluster. Reads the stack's
         services through a verified manager and writes them down as a
-        compose file. Environment values go to the stack's environment file
+        compose file. Environment values and driver options go to the stack's environment file
         and are never returned, only the variable names. Lists what the
         running services have that the file can't hold, and per service the
         fields a deploy from the file would change. Nothing is written.
@@ -3252,7 +3252,7 @@ paths:
       tags: [clusters]
       summary: Adopt an External Swarm stack
       description: |
-        Needs `stacks.adopt` on the stack on the cluster. Confirms the
+        Needs `stacks.adopt` and `containers.env` on the stack on the cluster. Confirms the
         preview by its `plan_hash`. Each service gets the
         `dockmesh.spec-hash` label in a label-only update (no task is
         replaced), then the compose and environment files are written and

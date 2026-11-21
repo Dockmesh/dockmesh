@@ -34,12 +34,12 @@ On a stack's page, **Preview Swarm deploy…** converts its compose file for a c
 
 The cluster page's **Stacks** tab marks stacks deployed with `docker stack deploy` as **External**. **Adopt** reads such a stack through a verified manager and shows the compose file Dockmesh would keep for it before anything is written:
 
-- **The file.** Services, images (without the digest), commands, labels, healthchecks, ports, replicas and mode, restart policy, placement, resources, update and rollback config, mounts, networks, and references to secrets and configs. Environment values go to the stack's environment file, which is stored encrypted; the preview shows only the variable names.
+- **The file.** Services, images (without the digest), commands, labels, healthchecks, ports, replicas and mode, restart policy, placement, resources, update and rollback config, mounts, networks, and references to secrets and configs. Environment values and volume and network driver options go to the stack's environment file, which is stored encrypted; the preview shows only the variable names. Commands, labels and healthchecks stay in the compose file, which everyone with Stacks: View on the stack can read.
 - **What the next deploy would change.** Per service, the spec fields in which a deploy from this file differs from what runs. Settings the file can't hold are listed under **Not carried over**; a deploy from Dockmesh would drop them.
 - **Networks stay.** Networks the CLI created for the stack are used as external networks. Dockmesh never changes or removes them, also not when pruning.
 - **Refused.** A stack whose file Dockmesh would refuse to deploy (see the refuse list above) can't be adopted.
 
-**Adopt as Dockmesh stack** confirms exactly that preview; if a service changed on the cluster since, it asks for a new preview. Each service gets the `dockmesh.spec-hash` label in a label-only update: no task is replaced and nothing is redeployed. Then the stack's files are written and the stack is recorded on the cluster. If not every service could be labelled, no stack is created and adopting again is safe. Adopting needs Stacks: Manage (`stacks.adopt`) on the stack on the cluster, and a name no Dockmesh stack uses.
+**Adopt as Dockmesh stack** confirms exactly that preview; if a service changed on the cluster since, it asks for a new preview. Each service gets the `dockmesh.spec-hash` label in a label-only update: no task is replaced and nothing is redeployed. Then the stack's files are written and the stack is recorded on the cluster. If not every service could be labelled, no stack is created and adopting again is safe. Adopting needs Stacks: Manage (`stacks.adopt`) and `containers.env` on the stack on the cluster, and a name no Dockmesh stack uses.
 
 ## Not supported
 
@@ -60,7 +60,7 @@ A role can be assigned on a cluster (scope type `cluster`). It covers the cluste
 - the topology with Networks: View and Stacks: View;
 - service logs with `containers.logs` (Containers: View or Stacks: View);
 - the stack volumes per node with Volumes: View and Hosts: View;
-- adopting an External stack with `stacks.adopt` (Stacks: Manage);
+- adopting an External stack with `stacks.adopt` (Stacks: Manage) and `containers.env`;
 - deploying the stacks already on the cluster with Stacks: Deploy. A stack that is not deployed anywhere yet has no target; its first deploy to a cluster needs an assignment on everything or on the stack.
 
 A deploy runs its services on any node of the Swarm, so Stacks: Deploy on a cluster reaches every node. It does not cover the hosts that are its nodes or their containers; give those a host or host tag assignment. A role on a host that is a node does not reach the cluster: such a user sees "Member of cluster X" on the host, without the cluster's state, other nodes or services. Creating and deleting clusters needs `clusters.create`, which is only granted on everything. See [Permissions](../concepts/permissions.md).
