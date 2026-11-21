@@ -1,0 +1,3 @@
+kind: Fixed
+body: Stopping a stack, saving its files, changing its active environment and starting, stopping, restarting, pausing, killing or removing one of its containers are refused (409 migration_active) while the stack's migration or migration rollback has not finished, and while another operation such as a deploy is changing the stack (409 stack_busy)
+time: 2026-11-21T14:55:57.599582897Z

@@ -101,6 +101,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/start:
     post:
       operationId: containers.start
@@ -114,6 +115,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/stop:
     post:
       operationId: containers.stop
@@ -127,6 +129,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/restart:
     post:
       operationId: containers.restart
@@ -146,10 +149,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: The container is a Swarm task.
+          description: The container is a Swarm task (`swarm_managed`), or it belongs to a managed stack that another operation is changing (`stack_busy`) or whose migration or migration rollback has not finished (`migration_active`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/SwarmManagedError"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
+                  - $ref: "#/components/schemas/Error"
   /containers/{id}/pause:
     post:
       operationId: containers.pause
@@ -166,6 +173,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/unpause:
     post:
       operationId: containers.unpause
@@ -179,6 +187,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/kill:
     post:
       operationId: containers.kill
@@ -203,6 +212,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/update:
     post:
       operationId: containers.update
