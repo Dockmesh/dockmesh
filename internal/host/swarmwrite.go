@@ -73,7 +73,7 @@ func (h *RemoteHost) swarmWrite(ctx context.Context, frameType string, payload, 
 		return agentSwarmWriteError(err)
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("%w: decode %s: %w", ErrSwarmWriteUnknown, frameType, err)
+		return fmt.Errorf("%w: decode %s: %s", ErrSwarmWriteUnknown, frameType, err.Error())
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func agentSwarmWriteError(err error) error {
 	msg, answered := strings.CutPrefix(err.Error(), "agent: ")
 	switch {
 	case !answered:
-		return fmt.Errorf("%w: %w", ErrSwarmWriteUnknown, err)
+		return fmt.Errorf("%w: %s", ErrSwarmWriteUnknown, err.Error())
 	case msg == agents.ErrNotSwarmManager.Error():
 		return agents.ErrNotSwarmManager
 	case strings.HasPrefix(msg, agents.ErrSwarmWriteRefused.Error()):

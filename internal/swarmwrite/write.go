@@ -33,6 +33,8 @@ type API interface {
 	NetworkList(ctx context.Context, options client.NetworkListOptions) (client.NetworkListResult, error)
 	NetworkCreate(ctx context.Context, name string, options client.NetworkCreateOptions) (client.NetworkCreateResult, error)
 	NetworkRemove(ctx context.Context, networkID string, options client.NetworkRemoveOptions) (client.NetworkRemoveResult, error)
+	SecretList(ctx context.Context, options client.SecretListOptions) (client.SecretListResult, error)
+	ConfigList(ctx context.Context, options client.ConfigListOptions) (client.ConfigListResult, error)
 }
 
 // networkRemoveTries covers tasks that still hold the network for a few
@@ -80,12 +82,13 @@ func servicesNamed(ctx context.Context, cli API, names []string) (map[string]swa
 }
 
 // networksNamed returns the Swarm-scoped networks whose name is exactly one
-// of names. Two networks with one name are an error: which one a service
+// of names, and the names also taken by a network of another scope on this
+// node. Two Swarm networks with one name are an error: which one a service
 // would get is not defined.
-func networksNamed(ctx context.Context, cli API, names []string) (map[string]network.Summary, error) {
-	out := map[string]network.Summary{}
+func networksNamed(ctx context.Context, cli API, names []string) (map[string]network.Summary, map[string]bool, error) {
+	out, local := map[string]network.Summary{}, map[string]bool{}
 	if len(names) == 0 {
-		return out, nil
+		return out, local, nil
 	}
 	f := client.Filters{}
 	want := map[string]bool{}
@@ -95,18 +98,79 @@ func networksNamed(ctx context.Context, cli API, names []string) (map[string]net
 	}
 	res, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: f})
 	if err != nil {
-		return nil, fmt.Errorf("list networks: %w", err)
+		return nil, nil, fmt.Errorf("list networks: %w", err)
 	}
 	for _, n := range res.Items {
 		if !want[n.Name] {
 			continue
 		}
+		if n.Scope != "swarm" {
+			local[n.Name] = true
+			continue
+		}
 		if _, dup := out[n.Name]; dup {
-			return nil, fmt.Errorf("%w: more than one network is named %s", agents.ErrSwarmWriteRefused, n.Name)
+			return nil, nil, fmt.Errorf("%w: more than one network is named %s", agents.ErrSwarmWriteRefused, n.Name)
 		}
 		out[n.Name] = n
 	}
-	return out, nil
+	return out, local, nil
+}
+
+// ownedNetwork and ownedService report whether Dockmesh created the object
+// for stack.
+func ownedNetwork(n network.Summary, stack string) bool {
+	return n.Labels[agents.LabelStackNamespace] == stack && n.Labels[agents.LabelDockmeshStack] == stack
+}
+
+func ownedService(s swarm.Service, stack string) bool {
+	return s.Spec.Labels[agents.LabelStackNamespace] == stack && s.Spec.Labels[agents.LabelSpecHash] != ""
+}
+
+// resolveRefs fills in the ids of the secrets and configs the services
+// reference by name. Names the Swarm doesn't know refuse the deploy.
+func resolveRefs(ctx context.Context, cli API, svcs []agents.SwarmServiceWrite) error {
+	sf, cf := client.Filters{}, client.Filters{}
+	var anyS, anyC bool
+	for _, w := range svcs {
+		for _, r := range w.Spec.TaskTemplate.ContainerSpec.Secrets {
+			sf, anyS = sf.Add("name", r.SecretName), true
+		}
+		for _, r := range w.Spec.TaskTemplate.ContainerSpec.Configs {
+			cf, anyC = cf.Add("name", r.ConfigName), true
+		}
+	}
+	secrets, configs := map[string]string{}, map[string]string{}
+	if anyS {
+		res, err := cli.SecretList(ctx, client.SecretListOptions{Filters: sf})
+		if err != nil {
+			return fmt.Errorf("list secrets: %w", err)
+		}
+		for _, x := range res.Items {
+			secrets[x.Spec.Name] = x.ID
+		}
+	}
+	if anyC {
+		res, err := cli.ConfigList(ctx, client.ConfigListOptions{Filters: cf})
+		if err != nil {
+			return fmt.Errorf("list configs: %w", err)
+		}
+		for _, x := range res.Items {
+			configs[x.Spec.Name] = x.ID
+		}
+	}
+	for _, w := range svcs {
+		for _, r := range w.Spec.TaskTemplate.ContainerSpec.Secrets {
+			if r.SecretID = secrets[r.SecretName]; r.SecretID == "" {
+				return fmt.Errorf("%w: external secret %s not found", agents.ErrSwarmWriteRefused, r.SecretName)
+			}
+		}
+		for _, r := range w.Spec.TaskTemplate.ContainerSpec.Configs {
+			if r.ConfigID = configs[r.ConfigName]; r.ConfigID == "" {
+				return fmt.Errorf("%w: external config %s not found", agents.ErrSwarmWriteRefused, r.ConfigName)
+			}
+		}
+	}
+	return nil
 }
 
 // Deploy applies req. Refusals and failed checks return an error before
@@ -128,22 +192,32 @@ func Deploy(ctx context.Context, cli API, req agents.SwarmDeployReq) (agents.Swa
 		netNames = append(netNames, n.Name)
 	}
 	netNames = append(netNames, req.ExternalNetworks...)
-	nets, err := networksNamed(ctx, cli, netNames)
+	nets, local, err := networksNamed(ctx, cli, netNames)
 	if err != nil {
 		return agents.SwarmDeployResp{}, err
 	}
 	for _, name := range req.ExternalNetworks {
-		n, ok := nets[name]
-		if !ok {
-			return agents.SwarmDeployResp{}, fmt.Errorf("%w: external network %s not found", agents.ErrSwarmWriteRefused, name)
+		if _, ok := nets[name]; ok {
+			continue
 		}
-		if n.Scope != "swarm" {
+		if local[name] {
 			return agents.SwarmDeployResp{}, fmt.Errorf("%w: external network %s is not scoped to the Swarm", agents.ErrSwarmWriteRefused, name)
 		}
+		return agents.SwarmDeployResp{}, fmt.Errorf("%w: external network %s not found", agents.ErrSwarmWriteRefused, name)
 	}
 	for _, want := range req.Networks {
-		if n, ok := nets[want.Name]; ok && n.Labels[agents.LabelStackNamespace] != req.Stack {
-			return agents.SwarmDeployResp{}, fmt.Errorf("%w: network %s exists and is not part of stack %s", agents.ErrSwarmWriteRefused, want.Name, req.Stack)
+		if local[want.Name] {
+			return agents.SwarmDeployResp{}, fmt.Errorf("%w: a network named %s that is not scoped to the Swarm exists on this manager", agents.ErrSwarmWriteRefused, want.Name)
+		}
+		n, ok := nets[want.Name]
+		if !ok {
+			continue
+		}
+		if !ownedNetwork(n, req.Stack) {
+			return agents.SwarmDeployResp{}, fmt.Errorf("%w: network %s exists and was not created by Dockmesh for stack %s", agents.ErrSwarmWriteRefused, want.Name, req.Stack)
+		}
+		if err := lessIsolated(n, want); err != nil {
+			return agents.SwarmDeployResp{}, err
 		}
 	}
 
@@ -156,9 +230,12 @@ func Deploy(ctx context.Context, cli API, req agents.SwarmDeployReq) (agents.Swa
 		return agents.SwarmDeployResp{}, err
 	}
 	for name, s := range existing {
-		if s.Spec.Labels[agents.LabelStackNamespace] != req.Stack {
-			return agents.SwarmDeployResp{}, fmt.Errorf("%w: service %s exists and is not part of stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
+		if !ownedService(s, req.Stack) {
+			return agents.SwarmDeployResp{}, fmt.Errorf("%w: service %s exists and was not deployed by Dockmesh for stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
 		}
+	}
+	if err := resolveRefs(ctx, cli, req.Services); err != nil {
+		return agents.SwarmDeployResp{}, err
 	}
 
 	out := agents.SwarmDeployResp{Networks: []agents.SwarmWriteResult{}, Services: []agents.SwarmWriteResult{}}
@@ -171,8 +248,9 @@ func Deploy(ctx context.Context, cli API, req agents.SwarmDeployReq) (agents.Swa
 		}
 		res, err := cli.NetworkCreate(ctx, want.Name, createOptions(want))
 		if err != nil {
-			out.Networks = append(out.Networks, agents.SwarmWriteResult{Name: want.Name, Action: agents.SwarmActionFailed, Error: err.Error()})
-			out.Error = fmt.Sprintf("create network %s: %v", want.Name, err)
+			r := failed(ctx, want.Name, "", err)
+			out.Networks = append(out.Networks, r)
+			out.Error = fmt.Sprintf("create network %s: %s", want.Name, r.Error)
 			return out, nil
 		}
 		out.Networks = append(out.Networks, agents.SwarmWriteResult{Name: want.Name, ID: res.ID, Action: agents.SwarmActionCreated, Warnings: res.Warning})
@@ -181,7 +259,7 @@ func Deploy(ctx context.Context, cli API, req agents.SwarmDeployReq) (agents.Swa
 	for _, w := range req.Services {
 		r := writeService(ctx, cli, w, existing)
 		out.Services = append(out.Services, r)
-		if r.Action == agents.SwarmActionFailed {
+		if r.Action == agents.SwarmActionFailed || r.Action == agents.SwarmActionUnknown {
 			out.Error = fmt.Sprintf("%s: %s", w.Spec.Name, r.Error)
 			return out, nil
 		}
@@ -198,7 +276,7 @@ func writeService(ctx context.Context, cli API, w agents.SwarmServiceWrite, exis
 			Spec: spec, EncodedRegistryAuth: w.RegistryAuth, QueryRegistry: true,
 		})
 		if err != nil {
-			return agents.SwarmWriteResult{Name: name, Action: agents.SwarmActionFailed, Error: err.Error()}
+			return failed(ctx, name, "", err)
 		}
 		return agents.SwarmWriteResult{Name: name, ID: res.ID, Action: agents.SwarmActionCreated, Warnings: res.Warnings}
 	}
@@ -212,9 +290,18 @@ func writeService(ctx context.Context, cli API, w agents.SwarmServiceWrite, exis
 		Version: cur.Version, Spec: spec, EncodedRegistryAuth: w.RegistryAuth, QueryRegistry: true,
 	})
 	if err != nil {
-		return agents.SwarmWriteResult{Name: name, ID: cur.ID, Action: agents.SwarmActionFailed, Error: err.Error()}
+		return failed(ctx, name, cur.ID, err)
 	}
 	return agents.SwarmWriteResult{Name: name, ID: cur.ID, Action: agents.SwarmActionUpdated, Warnings: res.Warnings}
+}
+
+// failed is the result of a write that returned err. A write cut off by
+// the deadline or a cancel may still have been applied by the daemon.
+func failed(ctx context.Context, name, id string, err error) agents.SwarmWriteResult {
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return agents.SwarmWriteResult{Name: name, ID: id, Action: agents.SwarmActionUnknown, Error: "cut off before the daemon answered; it may have been applied"}
+	}
+	return agents.SwarmWriteResult{Name: name, ID: id, Action: agents.SwarmActionFailed, Error: err.Error()}
 }
 
 func createOptions(r network.CreateRequest) client.NetworkCreateOptions {
@@ -229,6 +316,21 @@ func createOptions(r network.CreateRequest) client.NetworkCreateOptions {
 		Options:    r.Options,
 		Labels:     r.Labels,
 	}
+}
+
+// lessIsolated refuses an existing network that is open where the file
+// asks for an internal or encrypted one: the services would join it as it
+// is.
+func lessIsolated(have network.Summary, want network.CreateRequest) error {
+	if want.Internal && !have.Internal {
+		return fmt.Errorf("%w: network %s exists and is not internal; remove it to create it as the file asks", agents.ErrSwarmWriteRefused, want.Name)
+	}
+	if _, enc := want.Options["encrypted"]; enc {
+		if _, ok := have.Options["encrypted"]; !ok {
+			return fmt.Errorf("%w: network %s exists and is not encrypted; remove it to create it as the file asks", agents.ErrSwarmWriteRefused, want.Name)
+		}
+	}
+	return nil
 }
 
 // networkDrift names what an existing network has other than the file
@@ -280,17 +382,17 @@ func Remove(ctx context.Context, cli API, req agents.SwarmRemoveReq) (agents.Swa
 		return agents.SwarmRemoveResp{}, err
 	}
 	for name, s := range svcs {
-		if s.Spec.Labels[agents.LabelStackNamespace] != req.Stack {
-			return agents.SwarmRemoveResp{}, fmt.Errorf("%w: service %s is not part of stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
+		if !ownedService(s, req.Stack) {
+			return agents.SwarmRemoveResp{}, fmt.Errorf("%w: service %s was not deployed by Dockmesh for stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
 		}
 	}
-	nets, err := networksNamed(ctx, cli, req.Networks)
+	nets, _, err := networksNamed(ctx, cli, req.Networks)
 	if err != nil {
 		return agents.SwarmRemoveResp{}, err
 	}
 	for name, n := range nets {
-		if n.Labels[agents.LabelStackNamespace] != req.Stack {
-			return agents.SwarmRemoveResp{}, fmt.Errorf("%w: network %s is not part of stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
+		if !ownedNetwork(n, req.Stack) {
+			return agents.SwarmRemoveResp{}, fmt.Errorf("%w: network %s was not created by Dockmesh for stack %s", agents.ErrSwarmWriteRefused, name, req.Stack)
 		}
 	}
 

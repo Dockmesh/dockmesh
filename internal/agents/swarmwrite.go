@@ -12,8 +12,14 @@ import (
 	"github.com/moby/moby/api/types/swarm"
 )
 
-// LabelSpecHash holds the hash of the service spec Dockmesh wrote.
-const LabelSpecHash = "dockmesh.spec-hash"
+// Labels that mark Swarm objects Dockmesh created: services carry the hash
+// of the spec Dockmesh wrote, networks the stack they were created for. The
+// CLI's namespace label alone is no proof, `docker stack deploy` sets it
+// too.
+const (
+	LabelSpecHash      = "dockmesh.spec-hash"
+	LabelDockmeshStack = "dockmesh.stack"
+)
 
 // SwarmWriteWait is how long the server waits for a write frame's answer.
 // The agent stops a minute earlier, so it reports what it did.
@@ -33,6 +39,9 @@ const (
 	SwarmActionRemoved = "removed"
 	SwarmActionMissing = "missing"
 	SwarmActionFailed  = "failed"
+	// SwarmActionUnknown: the write was cut off; the daemon may have
+	// applied it.
+	SwarmActionUnknown = "unknown"
 )
 
 // SwarmDeployReq deploys one stack's networks and services through a
@@ -155,8 +164,11 @@ func validNetwork(stack string, n network.CreateRequest) error {
 	if !swarmObjName.MatchString(n.Name) {
 		return refuse("invalid network name")
 	}
-	if n.Labels[LabelStackNamespace] != stack {
-		return refuse("network %s lacks the stack label", n.Name)
+	if !strings.HasPrefix(n.Name, stack+"_") {
+		return refuse("network %s: networks a stack creates are named %s_<network>", n.Name, stack)
+	}
+	if n.Labels[LabelStackNamespace] != stack || n.Labels[LabelDockmeshStack] != stack {
+		return refuse("network %s lacks the stack labels", n.Name)
 	}
 	if n.Driver != "overlay" {
 		return refuse("network %s: only overlay networks are created", n.Name)
@@ -209,6 +221,16 @@ func validService(stack string, spec swarm.ServiceSpec, networks map[string]bool
 		}
 		if m.Type == mount.TypeBind && !strings.HasPrefix(m.Source, "/") {
 			return refuse("service %s: bind sources must be absolute", spec.Name)
+		}
+	}
+	for _, sr := range c.Secrets {
+		if sr == nil || sr.SecretID != "" || !swarmObjName.MatchString(sr.SecretName) {
+			return refuse("service %s: secrets are referenced by name only", spec.Name)
+		}
+	}
+	for _, cr := range c.Configs {
+		if cr == nil || cr.ConfigID != "" || cr.Runtime != nil || !swarmObjName.MatchString(cr.ConfigName) {
+			return refuse("service %s: configs are referenced by name only", spec.Name)
 		}
 	}
 	for _, a := range t.Networks {
