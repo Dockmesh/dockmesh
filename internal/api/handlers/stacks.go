@@ -1523,13 +1523,29 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // still run via a direct DeployStack call later if the operator
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep.
+var errDependencyMoved = errors.New("the dependency was deployed to another target meanwhile")
+
 func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, snap *stacks.Snapshot) error {
 	name, detail := snap.Name, snap.Detail
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDependency)
+	if err != nil {
+		return err
+	}
+	defer targetRelease()
 	release, err := h.StackLocks.TryLock(stacklock.HostKey(target.ID(), name), stacklock.OpDependency)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if h.Deployments != nil {
+		d, err := h.Deployments.Get(r.Context(), name)
+		if err != nil {
+			return err
+		}
+		if d != nil && d.TargetID != "" && (d.TargetKind != stacks.TargetHost || d.TargetID != target.ID()) {
+			return errDependencyMoved
+		}
+	}
 	if h.Migrations != nil {
 		if active, err := h.Migrations.Store().HasActive(r.Context(), name); err != nil {
 			return err
@@ -1568,6 +1584,12 @@ func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, snap *stac
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDeploy)
+	if err != nil {
+		writeStackBusy(w, err)
+		return
+	}
+	defer targetRelease()
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeStackTargetError(w, err)

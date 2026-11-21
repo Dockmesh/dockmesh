@@ -251,6 +251,9 @@ func validService(stack string, spec swarm.ServiceSpec, networks map[string]bool
 		if m.Type == mount.TypeBind && !strings.HasPrefix(m.Source, "/") {
 			return refuse("service %s: bind sources must be absolute", spec.Name)
 		}
+		if m.VolumeOptions != nil && reservedIn(m.VolumeOptions.Labels) {
+			return refuse("service %s: volume labels carry a label reserved for Dockmesh", spec.Name)
+		}
 	}
 	for _, sr := range c.Secrets {
 		if sr == nil || sr.SecretID != "" || !swarmObjName.MatchString(sr.SecretName) {
