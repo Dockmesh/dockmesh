@@ -22,6 +22,9 @@ type Deployment struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Target returns where the deployment deploys to.
+func (d *Deployment) Target() Target { return Target{Kind: d.TargetKind, ID: d.TargetID} }
+
 // Target kinds of a deployment.
 const (
 	TargetHost    = "host"
@@ -31,14 +34,12 @@ const (
 // Target is where a stack deploys to: a host or a Swarm cluster. The zero
 // value means the stack has no target yet.
 type Target struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	Kind string
+	ID   string
 }
 
 // HostTarget is the target of a stack on host id.
 func HostTarget(id string) Target { return Target{Kind: TargetHost, ID: id} }
-
-func (t Target) IsZero() bool { return t.ID == "" }
 
 // ErrClusterTarget is returned where only a host target can be handled.
 var ErrClusterTarget = errors.New("stack targets a Swarm cluster; this operation supports host targets only")
@@ -225,9 +226,6 @@ func (s *DeploymentStore) DeleteTarget(ctx context.Context, stackName string) er
 	_, err := s.db.ExecContext(ctx, `DELETE FROM stack_targets WHERE stack_name = ?`, stackName)
 	return err
 }
-
-// Target returns where the deployment deploys to.
-func (d *Deployment) Target() Target { return Target{Kind: d.TargetKind, ID: d.TargetID} }
 
 // TargetOf returns the target scope checks use for a stack: its deployment
 // target, or the host it was created for while it is not deployed. The

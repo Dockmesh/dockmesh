@@ -12683,9 +12683,7 @@ components:
         target_kind:
           type: string
           enum: [host, cluster]
-          description: |
-            What the stack deploys to. Every deployment made so far is `host`;
-            `cluster` (a Swarm cluster) is reserved for Swarm stacks.
+          description: "`host` for a deployment on a host, `cluster` for one on a Swarm cluster."
         target_id:
           type: string
           description: Host id for `host`, Swarm cluster id for `cluster`.

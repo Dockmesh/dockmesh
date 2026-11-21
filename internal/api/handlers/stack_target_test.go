@@ -21,11 +21,13 @@ func TestStackOnClusterTarget(t *testing.T) {
 		r.Use(e.h.StackScope)
 		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/deploy", e.h.DeployStack)
 		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/stop", e.h.StopStack)
+		r.With(middleware.RequirePerm(rbac.PermStacksDelete)).Delete("/api/v1/stacks/{name}", e.h.DeleteStack)
+		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}/cleanup-preview", e.h.CleanupPreview)
 	})
 	if _, err := e.db.Exec(`INSERT INTO stack_deployments (stack_name, target_kind, target_id, host_id) VALUES ('swarm', 'cluster', 'c1', '')`); err != nil {
 		t.Fatal(err)
 	}
-	perms := []rbac.Perm{rbac.PermStacksView, rbac.PermStacksDeploy}
+	perms := []rbac.Perm{rbac.PermStacksView, rbac.PermStacksDeploy, rbac.PermStacksDelete}
 	e.role("on-local", perms, rbac.Scope{Type: rbac.ScopeHost, Host: "local"})
 	e.role("on-c1", perms, rbac.Scope{Type: rbac.ScopeCluster, Host: "c1"})
 	e.role("stack-on-c1", perms, rbac.Scope{Type: rbac.ScopeStack, Host: "c1", Value: "swarm"})
@@ -36,20 +38,23 @@ func TestStackOnClusterTarget(t *testing.T) {
 	}
 
 	cases := []struct {
-		user, path string
-		want       int
+		method, user, path string
+		want               int
 	}{
-		{"root", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
-		{"root", "/api/v1/stacks/swarm/deploy?host=local", http.StatusConflict},
-		{"root", "/api/v1/stacks/swarm/stop", http.StatusConflict},
-		{"u-on-c1", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
-		{"u-stack-on-c1", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
-		{"u-on-local", "/api/v1/stacks/swarm/deploy", http.StatusForbidden},
-		{"u-stack-on-local", "/api/v1/stacks/swarm/deploy", http.StatusForbidden},
+		{http.MethodDelete, "root", "/api/v1/stacks/swarm?stop=true&volumes=true&networks=true&images=true", http.StatusConflict},
+		{http.MethodDelete, "u-on-c1", "/api/v1/stacks/swarm?stop=true&volumes=true", http.StatusConflict},
+		{http.MethodGet, "root", "/api/v1/stacks/swarm/cleanup-preview", http.StatusConflict},
+		{http.MethodPost, "root", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
+		{http.MethodPost, "root", "/api/v1/stacks/swarm/deploy?host=local", http.StatusConflict},
+		{http.MethodPost, "root", "/api/v1/stacks/swarm/stop", http.StatusConflict},
+		{http.MethodPost, "u-on-c1", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
+		{http.MethodPost, "u-stack-on-c1", "/api/v1/stacks/swarm/deploy", http.StatusConflict},
+		{http.MethodPost, "u-on-local", "/api/v1/stacks/swarm/deploy", http.StatusForbidden},
+		{http.MethodPost, "u-stack-on-local", "/api/v1/stacks/swarm/deploy", http.StatusForbidden},
 	}
 	for _, tc := range cases {
-		t.Run(tc.user+" "+tc.path, func(t *testing.T) {
-			rr := e.do(http.MethodPost, tc.path, e.login(tc.user).AccessToken, nil)
+		t.Run(tc.method+" "+tc.user+" "+tc.path, func(t *testing.T) {
+			rr := e.do(tc.method, tc.path, e.login(tc.user).AccessToken, nil)
 			if rr.Code != tc.want {
 				t.Fatalf("%d, want %d: %s", rr.Code, tc.want, rr.Body)
 			}

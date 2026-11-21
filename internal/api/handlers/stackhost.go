@@ -73,3 +73,21 @@ func (h *Handlers) refuseOtherHost(w http.ResponseWriter, r *http.Request, name 
 	writeJSON(w, http.StatusConflict, body)
 	return true
 }
+
+// deploymentHost is the host stack name's deployment runs on, "" without
+// one. A stack on a Swarm cluster has no such host: it is answered with
+// 409 and ok=false, so callers never fall back to the local host.
+func (h *Handlers) deploymentHost(w http.ResponseWriter, r *http.Request, name string) (hostID string, ok bool) {
+	if h.Deployments == nil {
+		return "", true
+	}
+	d, err := h.Deployments.Get(r.Context(), name)
+	if err != nil || d == nil {
+		return "", true
+	}
+	if d.TargetKind == stacks.TargetCluster {
+		writeStackTargetError(w, stacks.ErrClusterTarget)
+		return "", false
+	}
+	return d.HostID, true
+}

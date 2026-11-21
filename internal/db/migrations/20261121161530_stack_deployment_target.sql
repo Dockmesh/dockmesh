@@ -1,8 +1,8 @@
 -- stack_deployment_target
 -- A deployment names its target: a host or a Swarm cluster. Every existing
 -- row is a host deployment with its target id equal to its host id. The
--- key is (stack, target) so several targets per stack only need the
--- unique index on stack_name dropped; until then a stack has one target.
+-- key is (stack, target); idx_stack_deployments_one_target keeps one
+-- target per stack.
 -- host_id stays the host a host deployment runs on and is empty for a
 -- cluster, so host-only code never mistakes a cluster for a host.
 CREATE TABLE stack_deployments_new (

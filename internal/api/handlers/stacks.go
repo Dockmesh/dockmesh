@@ -210,11 +210,9 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve which host the project's containers live on. Prefer the
 	// deployment row; fall back to local docker.
-	var deployHostID string
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			deployHostID = d.HostID
-		}
+	deployHostID, ok := h.deploymentHost(w, r, name)
+	if !ok {
+		return
 	}
 	var target host.Host
 	if h.Hosts != nil {
@@ -856,11 +854,9 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	// Look up which host this stack was deployed to BEFORE deleting,
 	// so we can tell the agent to remove its local copy (and run the
 	// cleanup on the right host).
-	var deployHostID string
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			deployHostID = d.HostID
-		}
+	deployHostID, ok := h.deploymentHost(w, r, name)
+	if !ok {
+		return
 	}
 	lockHost := deployHostID
 	if lockHost == "" && h.Deployments != nil {
@@ -984,11 +980,9 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 // cleanup flags. Read-only; does not mutate.
 func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	var deployHostID string
-	if h.Deployments != nil {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
-			deployHostID = d.HostID
-		}
+	deployHostID, ok := h.deploymentHost(w, r, name)
+	if !ok {
+		return
 	}
 	var target host.Host
 	if h.Hosts != nil {
@@ -1616,7 +1610,7 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		// A stack created for an offline host but never deployed runs
 		// nowhere; that is an empty status, not an outage.
 		if h.Deployments != nil {
-			if d, gerr := h.Deployments.Get(r.Context(), name); gerr == nil && (d == nil || d.HostID == "") {
+			if d, gerr := h.Deployments.Get(r.Context(), name); gerr == nil && (d == nil || d.TargetID == "") {
 				writeJSON(w, http.StatusOK, []any{})
 				return
 			}
@@ -1628,7 +1622,7 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 	// probe through for it, so a caller limited to other hosts gets the
 	// empty status instead of a 403 for the default host.
 	if h.Deployments != nil && !h.hostVisible(r, target.ID()) {
-		if d, err := h.Deployments.Get(r.Context(), name); err == nil && (d == nil || d.HostID == "") {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && (d == nil || d.TargetID == "") {
 			writeJSON(w, http.StatusOK, []any{})
 			return
 		}
