@@ -1,0 +1,120 @@
+package host
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/swarmwrite"
+)
+
+// ErrAgentNoSwarmWrite: the agent predates the Swarm write frames.
+var ErrAgentNoSwarmWrite = errors.New("the agent is too old to deploy to a Swarm; upgrade it")
+
+// ErrSwarmWriteUnknown wraps a write frame that got no answer: the manager
+// may have applied all of it, part of it or nothing.
+var ErrSwarmWriteUnknown = errors.New("the manager did not answer; the outcome of the write is unknown")
+
+type swarmWriter interface {
+	swarmDeploy(ctx context.Context, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error)
+	swarmRemove(ctx context.Context, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error)
+}
+
+func (r *Registry) writer(id string) (swarmWriter, error) {
+	h, err := r.Pick(id)
+	if err != nil {
+		return nil, err
+	}
+	sw, ok := h.(swarmWriter)
+	if !ok {
+		return nil, ErrUnknownHost
+	}
+	return sw, nil
+}
+
+// SwarmDeploy sends a stack deploy to manager host id. The request is
+// validated here too, so a malformed one never leaves the server.
+func (r *Registry) SwarmDeploy(ctx context.Context, id string, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error) {
+	if err := req.Validate(); err != nil {
+		return agents.SwarmDeployResp{}, err
+	}
+	w, err := r.writer(id)
+	if err != nil {
+		return agents.SwarmDeployResp{}, err
+	}
+	return w.swarmDeploy(ctx, req)
+}
+
+// SwarmRemove sends a stack remove to manager host id.
+func (r *Registry) SwarmRemove(ctx context.Context, id string, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error) {
+	if err := req.Validate(); err != nil {
+		return agents.SwarmRemoveResp{}, err
+	}
+	w, err := r.writer(id)
+	if err != nil {
+		return agents.SwarmRemoveResp{}, err
+	}
+	return w.swarmRemove(ctx, req)
+}
+
+func (h *RemoteHost) swarmWrite(ctx context.Context, frameType string, payload, out any) error {
+	ag, err := h.live()
+	if err != nil {
+		return err
+	}
+	if !ag.Hello.Has(agents.CapSwarmWrite) {
+		return ErrAgentNoSwarmWrite
+	}
+	data, err := h.request(ctx, frameType, payload)
+	if err != nil {
+		return agentSwarmWriteError(err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("%w: decode %s: %s", ErrSwarmWriteUnknown, frameType, err.Error())
+	}
+	return nil
+}
+
+// agentSwarmWriteError tells an error the agent answered from no answer
+// at all. The agent answers with an error only before its first write.
+func agentSwarmWriteError(err error) error {
+	msg, answered := strings.CutPrefix(err.Error(), "agent: ")
+	switch {
+	case !answered:
+		return fmt.Errorf("%w: %s", ErrSwarmWriteUnknown, err.Error())
+	case msg == agents.ErrNotSwarmManager.Error():
+		return agents.ErrNotSwarmManager
+	case strings.HasPrefix(msg, agents.ErrSwarmWriteRefused.Error()):
+		return fmt.Errorf("%w%s", agents.ErrSwarmWriteRefused, strings.TrimPrefix(msg, agents.ErrSwarmWriteRefused.Error()))
+	}
+	return errors.New(msg)
+}
+
+func (h *RemoteHost) swarmDeploy(ctx context.Context, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error) {
+	var out agents.SwarmDeployResp
+	err := h.swarmWrite(ctx, agents.FrameReqSwarmStackDeploy, req, &out)
+	return out, err
+}
+
+func (h *RemoteHost) swarmRemove(ctx context.Context, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error) {
+	var out agents.SwarmRemoveResp
+	err := h.swarmWrite(ctx, agents.FrameReqSwarmStackRemove, req, &out)
+	return out, err
+}
+
+func (h *LocalHost) swarmDeploy(ctx context.Context, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return agents.SwarmDeployResp{}, ErrNoDocker
+	}
+	return swarmwrite.Deploy(ctx, h.cli.Raw(), req)
+}
+
+func (h *LocalHost) swarmRemove(ctx context.Context, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return agents.SwarmRemoveResp{}, ErrNoDocker
+	}
+	return swarmwrite.Remove(ctx, h.cli.Raw(), req)
+}

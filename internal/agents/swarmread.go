@@ -58,6 +58,9 @@ type SwarmService struct {
 	Stack        string      `json:"stack,omitempty"`
 	Ports        []SwarmPort `json:"ports,omitempty"`
 	UpdateState  string      `json:"update_state,omitempty"`
+	// SpecHash is the dockmesh.spec-hash label of a service Dockmesh
+	// deployed.
+	SpecHash string `json:"spec_hash,omitempty"`
 	// Networks are the ids (or names, as the spec gives them) of the
 	// networks the service's tasks attach to, ingress included.
 	Networks []string `json:"networks,omitempty"`
@@ -130,16 +133,18 @@ type SwarmTask struct {
 
 // SwarmNetwork is a network with Swarm scope (overlay, ingress).
 type SwarmNetwork struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Driver     string    `json:"driver"`
-	Attachable bool      `json:"attachable,omitempty"`
-	Ingress    bool      `json:"ingress,omitempty"`
-	Internal   bool      `json:"internal,omitempty"`
-	Encrypted  bool      `json:"encrypted,omitempty"`
-	Subnets    []string  `json:"subnets,omitempty"`
-	Stack      string    `json:"stack,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Driver     string   `json:"driver"`
+	Attachable bool     `json:"attachable,omitempty"`
+	Ingress    bool     `json:"ingress,omitempty"`
+	Internal   bool     `json:"internal,omitempty"`
+	Encrypted  bool     `json:"encrypted,omitempty"`
+	Subnets    []string `json:"subnets,omitempty"`
+	Stack      string   `json:"stack,omitempty"`
+	// Dockmesh is set on networks Dockmesh created for Stack.
+	Dockmesh  bool      `json:"dockmesh,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SwarmTasksReq filters the task list to one service when ServiceID is set.
@@ -181,6 +186,7 @@ func serviceSummary(s swarm.Service) SwarmService {
 		ID:        s.ID,
 		Name:      s.Spec.Name,
 		Stack:     s.Spec.Labels[LabelStackNamespace],
+		SpecHash:  s.Spec.Labels[LabelSpecHash],
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}
@@ -332,6 +338,7 @@ func SwarmNetworksFrom(list []network.Summary) SwarmNetworksResp {
 		sn := SwarmNetwork{
 			ID: n.ID, Name: n.Name, Driver: n.Driver, Attachable: n.Attachable,
 			Ingress: n.Ingress, Internal: n.Internal, Stack: n.Labels[LabelStackNamespace],
+			Dockmesh:  n.Labels[LabelDockmeshStack] != "" && n.Labels[LabelDockmeshStack] == n.Labels[LabelStackNamespace],
 			CreatedAt: n.Created,
 		}
 		_, sn.Encrypted = n.Options["encrypted"]
@@ -386,6 +393,9 @@ func sanitizeService(s SwarmService) (SwarmService, bool) {
 	s.Image = text(s.Image, maxTextLen)
 	s.Stack = text(s.Stack, 128)
 	s.UpdateState = token(s.UpdateState, 32, "_")
+	if !specHashRe.MatchString(s.SpecHash) {
+		s.SpecHash = ""
+	}
 	s.Networks = texts(s.Networks, 128)
 	s.Constraints = texts(s.Constraints, 256)
 	if len(s.Ports) > maxListItems {
