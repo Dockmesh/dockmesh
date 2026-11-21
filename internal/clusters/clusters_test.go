@@ -239,6 +239,12 @@ func TestCreateRefuses(t *testing.T) {
 			f.nodes["m2"] = []agents.SwarmNode{{ID: "n1", Role: RoleManager}}
 		}, ErrNotManager},
 		{"bad name", "m1", "../x", nil, ErrBadName},
+		{"cluster id named like the local host", "m1", "", func(f *fakeHosts) {
+			f.infos["m1"].Swarm.ClusterID = "local"
+		}, ErrBadID},
+		{"cluster id shaped like an agent id", "m1", "", func(f *fakeHosts) {
+			f.infos["m1"].Swarm.ClusterID = "3f2b8c1e-6a4d-4f0e-9b7a-1c2d3e4f5a6b"
+		}, ErrBadID},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

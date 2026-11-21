@@ -1,0 +1,3 @@
+kind: Added
+body: The API names the target of every stack deployment (`target_kind`, `target_id`); deployments made so far are host targets with their host id, and stack scopes can name a Swarm cluster as the target
+time: 2026-11-21T16:24:50.286126889Z

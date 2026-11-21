@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: 'Existing stack deployments become host targets with the same host id; nothing else changes. Going back to an earlier version afterwards needs the database snapshot written before the migration (`dockmesh.db.pre-migrate-*.bak`), as described under Upgrade, Rolling back: with only the old binary, deploys and stops of stacks fail'
+time: 2026-11-21T16:24:50.709474823Z
+custom:
+    Audience: admins
+    Id: stack-deployment-target

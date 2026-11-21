@@ -31,7 +31,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	if h.refuseOtherHost(w, r, name, target) {
@@ -150,7 +150,7 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	name := chi.URLParam(r, "name")
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	if h.refuseOtherHost(w, r, name, target) {
@@ -258,7 +258,7 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -287,7 +287,7 @@ func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ListServiceScale(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickStackHost(r, chi.URLParam(r, "name"))
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	name := chi.URLParam(r, "name")

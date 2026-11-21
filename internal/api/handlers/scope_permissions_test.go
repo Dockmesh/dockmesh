@@ -888,7 +888,7 @@ func TestStackRestoreTargetNeedsStackRights(t *testing.T) {
 	for _, stmt := range []string{
 		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (1, 'web', 'local', 'local', '[{"type":"stack","name":"web"}]')`,
 		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (12, 1, 'web', 'success', '[{"type":"stack","name":"web"}]')`,
-		`INSERT INTO stack_deployments (stack_name, host_id, status) VALUES ('prod', 'agent-1', 'deployed')`,
+		`INSERT INTO stack_deployments (stack_name, target_id, host_id, status) VALUES ('prod', 'agent-1', 'agent-1', 'deployed')`,
 	} {
 		if _, err := e.db.Exec(stmt); err != nil {
 			t.Fatal(err)

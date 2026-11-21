@@ -125,7 +125,7 @@ func (h *Handlers) CreateCluster(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, clusters.ErrExists), errors.Is(err, clusters.ErrNameTaken), errors.Is(err, clusters.ErrConflict):
 		writeError(w, http.StatusConflict, err.Error())
 		return
-	case errors.Is(err, clusters.ErrBadName), errors.Is(err, clusters.ErrNotManager):
+	case errors.Is(err, clusters.ErrBadName), errors.Is(err, clusters.ErrNotManager), errors.Is(err, clusters.ErrBadID):
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	case errors.Is(err, host.ErrUnknownHost), errors.Is(err, agents.ErrNotFound):
