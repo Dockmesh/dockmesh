@@ -32,7 +32,6 @@ import (
 // swarmOps is the part of the host registry the Swarm executor uses.
 type swarmOps interface {
 	SwarmDeploy(ctx context.Context, hostID string, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error)
-	SwarmRemove(ctx context.Context, hostID string, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error)
 	SwarmServices(ctx context.Context, hostID string) (agents.SwarmServicesResp, error)
 	RegistryAuthFor(ctx context.Context, hostID string, images []string) (map[string]string, error)
 }
@@ -144,7 +143,7 @@ func planHash(req agents.SwarmDeployReq) string {
 	b, err := json.Marshal(struct {
 		Networks []network.CreateRequest `json:"networks"`
 		External []string                `json:"external"`
-		Services []agents.SwarmServiceWrite
+		Services []agents.SwarmServiceWrite `json:"services"`
 	}{req.Networks, req.ExternalNetworks, req.Services})
 	if err != nil {
 		return ""

@@ -54,10 +54,6 @@ func (f *fakeSwarm) SwarmDeploy(_ context.Context, hostID string, req agents.Swa
 	return out, nil
 }
 
-func (f *fakeSwarm) SwarmRemove(context.Context, string, agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error) {
-	return agents.SwarmRemoveResp{}, nil
-}
-
 func (f *fakeSwarm) SwarmServices(context.Context, string) (agents.SwarmServicesResp, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -344,7 +340,7 @@ func TestSwarmDeployUnknownOutcome(t *testing.T) {
 			}
 			d, _ := e.h.Deployments.Get(context.Background(), "web")
 			if d == nil || d.TargetKind != stacks.TargetCluster {
-				t.Fatalf("deployment %+v: a write that may have landed is recorded", d)
+				t.Fatalf("deployment %+v: want a cluster target recorded after a write that may have landed", d)
 			}
 		})
 	}
@@ -368,9 +364,11 @@ func TestSwarmDeployPartialAndNotSent(t *testing.T) {
 	}
 
 	e.fake.resp, e.fake.err = nil, agents.ErrNotSwarmManager
-	e.fake.deploys = nil
 	if code, _, body := e.deploy("root", "web", e.planHash(t, "web")); code != http.StatusServiceUnavailable {
 		t.Fatalf("not a manager: %d: %s", code, body)
+	}
+	if len(e.fake.deploys) != 2 {
+		t.Fatalf("%d writes, want one per deploy", len(e.fake.deploys))
 	}
 }
 
