@@ -70,12 +70,18 @@ func (r *Registry) RegistryAuthFor(ctx context.Context, id string, images []stri
 }
 
 func (h *RemoteHost) swarmWrite(ctx context.Context, frameType string, payload, out any) error {
+	return h.swarmFrame(ctx, agents.CapSwarmWrite, ErrAgentNoSwarmWrite, frameType, payload, out)
+}
+
+// swarmFrame sends a frame that writes to the Swarm to an agent with
+// capability cap; tooOld answers an agent without it.
+func (h *RemoteHost) swarmFrame(ctx context.Context, cap string, tooOld error, frameType string, payload, out any) error {
 	ag, err := h.live()
 	if err != nil {
 		return err
 	}
-	if !ag.Hello.Has(agents.CapSwarmWrite) {
-		return ErrAgentNoSwarmWrite
+	if !ag.Hello.Has(cap) {
+		return tooOld
 	}
 	data, err := h.request(ctx, frameType, payload)
 	if err != nil {
@@ -87,19 +93,28 @@ func (h *RemoteHost) swarmWrite(ctx context.Context, frameType string, payload, 
 	return nil
 }
 
-// agentSwarmWriteError tells an error the agent answered from no answer
-// at all. The agent answers with an error only before its first write.
-func agentSwarmWriteError(err error) error {
+// agentAnswerError maps an answered error of a read frame to the agents'
+// sentinels; no answer stays the transport error.
+func agentAnswerError(err error) error {
 	msg, answered := strings.CutPrefix(err.Error(), "agent: ")
 	switch {
 	case !answered:
-		return fmt.Errorf("%w: %s", ErrSwarmWriteUnknown, err.Error())
+		return err
 	case msg == agents.ErrNotSwarmManager.Error():
 		return agents.ErrNotSwarmManager
 	case strings.HasPrefix(msg, agents.ErrSwarmWriteRefused.Error()):
 		return fmt.Errorf("%w%s", agents.ErrSwarmWriteRefused, strings.TrimPrefix(msg, agents.ErrSwarmWriteRefused.Error()))
 	}
 	return errors.New(msg)
+}
+
+// agentSwarmWriteError tells an error the agent answered from no answer
+// at all. The agent answers with an error only before its first write.
+func agentSwarmWriteError(err error) error {
+	if !strings.HasPrefix(err.Error(), "agent: ") {
+		return fmt.Errorf("%w: %s", ErrSwarmWriteUnknown, err.Error())
+	}
+	return agentAnswerError(err)
 }
 
 func (h *RemoteHost) swarmDeploy(ctx context.Context, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error) {
@@ -185,7 +200,7 @@ func (h *RemoteHost) swarmExport(ctx context.Context, req agents.SwarmExportReq)
 	}
 	data, err := h.request(ctx, agents.FrameReqSwarmStackExport, req)
 	if err != nil {
-		return out, agentSwarmWriteError(err)
+		return out, agentAnswerError(err)
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return out, fmt.Errorf("decode %s: %w", agents.FrameReqSwarmStackExport, err)
@@ -195,14 +210,7 @@ func (h *RemoteHost) swarmExport(ctx context.Context, req agents.SwarmExportReq)
 
 func (h *RemoteHost) swarmAdopt(ctx context.Context, req agents.SwarmAdoptReq) (agents.SwarmAdoptResp, error) {
 	var out agents.SwarmAdoptResp
-	ag, err := h.live()
-	if err != nil {
-		return out, err
-	}
-	if !ag.Hello.Has(agents.CapSwarmAdopt) {
-		return out, ErrAgentNoSwarmAdopt
-	}
-	err = h.swarmWrite(ctx, agents.FrameReqSwarmStackAdopt, req, &out)
+	err := h.swarmFrame(ctx, agents.CapSwarmAdopt, ErrAgentNoSwarmAdopt, agents.FrameReqSwarmStackAdopt, req, &out)
 	return out, err
 }
 

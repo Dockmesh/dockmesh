@@ -70,10 +70,7 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 		out := map[string]any{}
 		image := spec.Labels[LabelImage]
 		if image == "" {
-			image = c.Image
-			if i := strings.Index(image, "@sha256:"); i > 0 {
-				image = image[:i]
-			}
+			image = stripDigest(c.Image)
 		}
 		out["image"] = esc(image)
 		if len(c.Command) > 0 {
@@ -96,7 +93,7 @@ func AdoptStack(stack string, services []swarm.Service, networks []network.Summa
 					list = append(list, esc(k)+"=")
 					continue
 				}
-				v0 := strings.ToUpper(envVarUnsafe.ReplaceAllString(strings.ToUpper(name+"_"+k), "_"))
+				v0 := envVarUnsafe.ReplaceAllString(strings.ToUpper(name+"_"+k), "_")
 				if v0 == "" || v0[0] >= '0' && v0[0] <= '9' {
 					v0 = "_" + v0
 				}
@@ -522,4 +519,11 @@ func fileRefOut(source, target, uid, gid string, mode uint32) map[string]any {
 		m["mode"] = mode
 	}
 	return m
+}
+
+func stripDigest(image string) string {
+	if i := strings.Index(image, "@sha256:"); i > 0 {
+		return image[:i]
+	}
+	return image
 }

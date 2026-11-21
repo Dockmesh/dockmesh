@@ -256,7 +256,10 @@ func (h *Handlers) SwarmAdopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	if taken, err := h.stackNameTaken(r.Context(), stack); err != nil || taken {
+	if taken, err := h.stackNameTaken(r.Context(), stack); err != nil {
+		writeError(w, http.StatusInternalServerError, "check stack name failed")
+		return
+	} else if taken {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": errAdoptNameTaken.Error() + ": " + stack, "code": "stack_exists"})
 		return
 	}

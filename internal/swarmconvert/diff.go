@@ -15,8 +15,9 @@ import (
 // Diff names the fields in which the spec a deploy writes differs from
 // the spec a service runs with, as dotted paths ("TaskTemplate.ContainerSpec.User").
 // netNames maps network ids to names, as the converter names networks.
-// What every deploy sets anew is left out: the image digest, the
-// platforms, the spec hash and the ids of secrets and configs.
+// What every deploy sets anew (the image digest, the platforms, the spec
+// hash, the force-update counter, the ids of secrets and configs) and
+// what the daemon fills in with its defaults are left out.
 func Diff(running, deploy swarm.ServiceSpec, netNames map[string]string) []string {
 	a, b := diffForm(running, netNames), diffForm(deploy, netNames)
 	var out []string
@@ -31,9 +32,7 @@ func diffForm(spec swarm.ServiceSpec, netNames map[string]string) any {
 	t := spec.TaskTemplate
 	if c := t.ContainerSpec; c != nil {
 		cc := *c
-		if i := strings.Index(cc.Image, "@sha256:"); i > 0 {
-			cc.Image = cc.Image[:i]
-		}
+		cc.Image = stripDigest(cc.Image)
 		if cc.Isolation == "default" {
 			cc.Isolation = ""
 		}
@@ -87,11 +86,11 @@ func diffForm(spec swarm.ServiceSpec, netNames map[string]string) any {
 	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
-		return nil
+		panic("swarmconvert: marshal service spec: " + err.Error())
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil
+		panic("swarmconvert: unmarshal service spec: " + err.Error())
 	}
 	return pruneZero(v)
 }

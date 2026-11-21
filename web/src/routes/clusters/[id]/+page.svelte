@@ -513,6 +513,10 @@
   {/if}
 </section>
 
+{#if adoptOpen}
+  <AdoptStackDialog bind:open={adoptOpen} cluster={id} stack={adoptStack} onadopted={loadAll} />
+{/if}
+
 {#snippet bar(v: number | undefined)}
   {#if v == null}
     <span class="dm-dim">—</span>
@@ -788,10 +792,6 @@
   {/if}
 {/snippet}
 
-{#if adoptOpen}
-  <AdoptStackDialog bind:open={adoptOpen} cluster={id} stack={adoptStack} onadopted={loadAll} />
-{/if}
-
 {#snippet networkTable()}
   {#if !networks}
     <p class="dm-sub">{waitText}</p>
@@ -860,8 +860,8 @@
   .warnc { color: var(--warn); }
   .badc { color: var(--bad); }
   .lnk { color: var(--fg); text-decoration: none; }
-  :global(.adoptbtn) { margin-left: 8px; }
   .lnk:hover { text-decoration: underline; }
+  :global(.adoptbtn) { margin-left: 8px; }
   .small { font-size: var(--fs-xs); }
   .na { color: var(--subtle); font-size: var(--fs-xs); grid-column: span 2; }
   .r { text-align: right; }
