@@ -1,0 +1,6 @@
+kind: Upgrade notes
+body: Runs whose archive an older version's retention deleted without marking them (upgrades from 0.4) show up as archive missing after the job's next run. Nothing is deleted; remove them from the run list once checked.
+time: 2026-11-21T15:09:01.170979098Z
+custom:
+    Audience: all
+    Id: archive-missing-runs

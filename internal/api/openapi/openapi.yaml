@@ -1961,7 +1961,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; (`code` `archive_missing`) the archive was looked for on a reachable target and is not there; the message says where it was looked for, and the run is listed as archive missing until a later read finds it; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2009,12 +2009,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404":
-          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          description: Run not found, or (`code` `archive_not_found`) its archive can't be read where it was written (target deleted, changed type or moved to another server, no host key recorded); the message names the place it most likely is.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; the restore was cancelled before anything was written; (`code` `archive_missing`) the archive was looked for on a reachable target and is not there; the message says where it was looked for, and the run is listed as archive missing until a later read finds it; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2048,12 +2048,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404":
-          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          description: Run not found, or (`code` `archive_not_found`) its archive can't be read where it was written (target deleted, changed type or moved to another server, no host key recorded); the message names the place it most likely is.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "409":
-          description: Run not restorable (failed, pruned), or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          description: Run not restorable (failed, pruned), (`code` `archive_missing`) the archive was looked for on a reachable target and is not there; the message says where it was looked for, and the run is listed as archive missing until a later read finds it; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2129,7 +2129,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run not restorable, another restore is being staged, or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          description: Run not restorable, another restore is being staged, (`code` `archive_missing`) the archive was looked for on a reachable target and is not there; the message says where it was looked for, and the run is listed as archive missing until a later read finds it; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -2519,6 +2519,30 @@ paths:
             application/json:
               schema: {type: object, additionalProperties: true}
         "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: backups.run_remove
+      tags: [backups]
+      summary: Remove a run whose archive is missing from the list
+      description: |
+        Only for a run listed as archive missing (`archive_missing_at`
+        set); its log goes with it and the removal is audited. Runs with
+        an archive are removed by the job's retention only. 404 for a run
+        the caller cannot see.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: "(`code` `archive_present`) the run's archive was not found missing."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /backups/runs/{id}/log:
     get:
       operationId: backups.run_log
@@ -2583,12 +2607,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409":
-          description: Run not in success state, or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
+          description: Run not in success state, (`code` `archive_missing`) the archive was looked for on a reachable target and is not there; the message says where it was looked for, and the run is listed as archive missing until a later read finds it; or (`code` `run_job_deleted`) the run's job was deleted, the run recorded no target and its archive is on none of the saved targets; the message says how to get it back.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "404":
-          description: Run not found, or (`code` `archive_not_found`) its archive is not where it was written; the message names the place it most likely is.
+          description: Run not found, or (`code` `archive_not_found`) its archive can't be read where it was written (target deleted, changed type or moved to another server, no host key recorded); the message names the place it most likely is.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -10586,6 +10610,8 @@ components:
         encrypted: {type: boolean}
         error: {type: string}
         pruned_at: {type: string, format: date-time, description: Set when the archive was deleted (retention); the run can no longer be restored.}
+        archive_missing_at: {type: string, format: date-time, description: "Set when the archive was looked for on a reachable target (by retention, a restore, verify or download) and was not there. Restore answers 409 `archive_missing`; the run can be removed from the list. Cleared when a later read finds the archive."}
+        archive_missing_reason: {type: string, description: "Where the archive was looked for. Only in `GET /backups/runs/{id}`, and without servers or paths for callers who can't see the run's target."}
         target_id: {type: integer, format: int64, description: "Saved target the run wrote to. Restore, verify, download and retention use the target's settings as they were at that time with its current credentials, so later path, bucket or prefix edits and job moves don't change where the archive is read; after the target moved to another server or user, the run answers 404 `archive_not_found` until it points back. Absent for runs from before this was recorded."}
         sources:
           type: array

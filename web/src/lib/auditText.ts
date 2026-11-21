@@ -51,6 +51,7 @@ const ACTIONS: Record<string, [Phrase, Sentence]> = {
   'backup.key_export': [m.audit_act_backup_key_export, m.audit_sen_backup_key_export],
   'backup.restore': [m.audit_act_backup_restore, m.audit_sen_backup_restore],
   'backup.run': [m.audit_act_backup_run, m.audit_sen_backup_run],
+  'backup.run_remove': [m.audit_act_backup_run_remove, m.audit_sen_backup_run_remove],
   'backup.verify_run': [m.audit_act_backup_verify_run, m.audit_sen_backup_verify_run],
   'backup.verify_upload': [m.audit_act_backup_verify_upload, m.audit_sen_backup_verify_upload],
   'container.browse': [m.audit_act_container_browse, m.audit_sen_container_browse],

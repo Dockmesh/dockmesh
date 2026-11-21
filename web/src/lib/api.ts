@@ -1482,6 +1482,10 @@ export interface BackupRun {
   error?: string;
   sources: BackupSource[];
   pruned_at?: string;
+  // Set when the archive was looked for on a reachable target and was not
+  // there; the reason only comes with getRun.
+  archive_missing_at?: string;
+  archive_missing_reason?: string;
   target_id?: number;
 }
 
@@ -1544,8 +1548,9 @@ export interface BackupRestoreReport {
 }
 
 // runRestorable mirrors the server: the archive exists and is complete.
+// A run whose archive was found missing can still be checked again.
 export function runRestorable(r: BackupRun): boolean {
-  return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at;
+  return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at && !r.archive_missing_at;
 }
 
 export interface DiskMount {
@@ -2790,6 +2795,7 @@ export const api = {
       request<void>(`/backups/jobs/${id}/review/${mode}`, { method: 'POST' }),
     listRuns: (limit = 100) => request<BackupRun[]>(`/backups/runs?limit=${limit}`),
     getRun: (runId: number) => request<BackupRun>(`/backups/runs/${runId}`),
+    removeRun: (runId: number) => request<void>(`/backups/runs/${runId}`, { method: 'DELETE' }),
     // Captured log lines for one run. Empty array until the executor
     // has written at least the "start: ..." narration line.
     runLog: (runId: number) => request<Array<{
