@@ -82,7 +82,11 @@ func (h *Handlers) deploymentHost(w http.ResponseWriter, r *http.Request, name s
 		return "", true
 	}
 	d, err := h.Deployments.Get(r.Context(), name)
-	if err != nil || d == nil {
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return "", false
+	}
+	if d == nil {
 		return "", true
 	}
 	if d.TargetKind == stacks.TargetCluster {
