@@ -66,8 +66,8 @@ func (n NotConverted) String() string {
 	return s
 }
 
-// Warning is a converted key whose effect depends on the node a task
-// lands on, with the text the deploy preview shows.
+// Warning is a converted key that behaves differently on a Swarm than on
+// one host.
 type Warning struct {
 	Service string `json:"service,omitempty"`
 	Key     string `json:"key"`
@@ -441,15 +441,9 @@ func notConverted(svc types.ServiceConfig) ([]NotConverted, error) {
 // doesn't map, networks no service uses, volumes no service mounts,
 // secrets, configs, jobs and models.
 func projectNotConverted(project *types.Project) ([]NotConverted, error) {
-	usedNets := map[string]bool{}
+	usedNets := usedNetworks(project)
 	usedVols := map[string]bool{}
 	for _, svc := range project.Services {
-		if len(svc.Networks) == 0 {
-			usedNets[defaultNetwork] = true
-		}
-		for key := range svc.Networks {
-			usedNets[key] = true
-		}
 		for _, v := range svc.Volumes {
 			if v.Type == types.VolumeTypeVolume || v.Type == "" {
 				usedVols[v.Source] = true
@@ -517,16 +511,14 @@ func isPlainDefault(n types.NetworkConfig) bool {
 }
 
 // empty reports whether a value from compose-go's JSON form was left
-// unset. Anything written counts as set, even `{}` or a zero inside it;
-// compose-go omits unset fields, so only these remain.
+// unset. compose-go omits unset fields, so a value that is present counts
+// as set, even false or 0; only empty strings, maps and lists don't.
 func empty(v any) bool {
 	switch t := v.(type) {
 	case nil:
 		return true
 	case string:
 		return t == ""
-	case bool:
-		return false
 	case map[string]any:
 		return len(t) == 0
 	case []any:

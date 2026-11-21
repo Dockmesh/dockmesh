@@ -142,14 +142,14 @@ func convertResources(deploy *types.DeployConfig) (*swarm.ResourceRequirements, 
 		}
 		res := &swarm.Resources{NanoCPUs: cpus, MemoryBytes: int64(r.Reservations.MemoryBytes)}
 		for _, g := range r.Reservations.GenericResources {
-			var out swarm.GenericResource
+			var gr swarm.GenericResource
 			if g.DiscreteResourceSpec != nil {
-				out.DiscreteResourceSpec = &swarm.DiscreteGenericResource{
+				gr.DiscreteResourceSpec = &swarm.DiscreteGenericResource{
 					Kind:  g.DiscreteResourceSpec.Kind,
 					Value: g.DiscreteResourceSpec.Value,
 				}
 			}
-			res.GenericResources = append(res.GenericResources, out)
+			res.GenericResources = append(res.GenericResources, gr)
 		}
 		out.Reservations = res
 	}

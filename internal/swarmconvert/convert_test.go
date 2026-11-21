@@ -108,8 +108,6 @@ func TestNanoCPUs(t *testing.T) {
 	}
 }
 
-// Every network a service names must exist as written in the file or be
-// the default; the converter never invents one.
 func TestServiceNetworksAndAliases(t *testing.T) {
 	res, err := convertYAML(t, "services:\n  a:\n    image: alpine\n    networks:\n      n:\n        aliases: [x]\n      default: {}\nnetworks:\n  n:\n    name: shared-name\n")
 	if err != nil {

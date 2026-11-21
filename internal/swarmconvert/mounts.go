@@ -31,10 +31,10 @@ func convertMount(stack string, v types.ServiceVolumeConfig, volumes types.Volum
 		Consistency: mount.Consistency(v.Consistency),
 	}
 	only := func(allowed string) error {
-		for name, set := range map[string]bool{
+		for name, present := range map[string]bool{
 			"bind": v.Bind != nil, "volume": v.Volume != nil, "tmpfs": v.Tmpfs != nil, "image": v.Image != nil,
 		} {
-			if set && name != allowed {
+			if present && name != allowed {
 				return fmt.Errorf("%s options are incompatible with type %s", name, m.Type)
 			}
 		}

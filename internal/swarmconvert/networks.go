@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/moby/moby/api/types/network"
@@ -12,9 +13,8 @@ import (
 
 const defaultNetworkDriver = "overlay"
 
-// networkName is the engine name of a compose network: compose-go has
-// already set it to `<stack>_<key>`, the key for external networks, or
-// the `name:` of the file, which is what the CLI uses too.
+// networkName is the engine name of a compose network, which compose-go
+// has set; the implicit default network has no entry in project.Networks.
 func networkName(stack, key string, nw types.NetworkConfig) string {
 	if nw.Name != "" {
 		return nw.Name
@@ -29,7 +29,7 @@ func isUserDefined(name string) bool {
 	case "default", "bridge", "host", "none":
 		return false
 	}
-	return len(name) < len("container:") || name[:len("container:")] != "container:"
+	return !strings.HasPrefix(name, "container:")
 }
 
 func convertServiceNetworks(stack string, svc types.ServiceConfig, networks types.Networks) ([]swarm.NetworkAttachmentConfig, error) {
@@ -57,11 +57,9 @@ func convertServiceNetworks(stack string, svc types.ServiceConfig, networks type
 	return out, nil
 }
 
-// convertNetworks returns the create requests for the networks the
-// services use, and the names of the external ones the deploy has to
-// find on the Swarm. Networks no service uses are not created, as with
-// the CLI.
-func convertNetworks(stack string, project *types.Project) ([]network.CreateRequest, []string, error) {
+// usedNetworks is the set of networks the services attach to; a service
+// without networks is on the default one.
+func usedNetworks(project *types.Project) map[string]bool {
 	used := map[string]bool{}
 	for _, svc := range project.Services {
 		if len(svc.Networks) == 0 {
@@ -71,6 +69,15 @@ func convertNetworks(stack string, project *types.Project) ([]network.CreateRequ
 			used[key] = true
 		}
 	}
+	return used
+}
+
+// convertNetworks returns the create requests for the networks the
+// services use, and the names of the external ones the deploy has to
+// find on the Swarm. Networks no service uses are not created, as with
+// the CLI.
+func convertNetworks(stack string, project *types.Project) ([]network.CreateRequest, []string, error) {
+	used := usedNetworks(project)
 	var creates []network.CreateRequest
 	var external []string
 	for _, key := range sortedKeys(used) {
