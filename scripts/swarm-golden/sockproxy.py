@@ -2,8 +2,8 @@
 """Logs the create requests the docker CLI sends to the daemon.
 
 Listens on a unix socket, forwards every request to the Docker socket and
-appends the JSON body of each service, network, volume, secret and config
-create request to a log file, one JSON object per line. Every request is
+appends the JSON body of each service and network create request to a
+log file, one JSON object per line. Every request is
 sent upstream with "Connection: close" so each one passes through here.
 
 Usage: sockproxy.py <listen.sock> <log.jsonl> [/var/run/docker.sock]
@@ -17,7 +17,7 @@ import threading
 
 LISTEN, LOG = sys.argv[1], sys.argv[2]
 UPSTREAM = sys.argv[3] if len(sys.argv) > 3 else "/var/run/docker.sock"
-LOGGED = re.compile(r"^/v[0-9.]+/(services|networks|volumes|secrets|configs)/create$")
+LOGGED = re.compile(r"^/v[0-9.]+/(services|networks)/create$")
 lock = threading.Lock()
 
 
@@ -94,9 +94,9 @@ def handle(client):
 def main():
     if os.path.exists(LISTEN):
         os.unlink(LISTEN)
+    os.umask(0o077)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(LISTEN)
-    os.chmod(LISTEN, 0o600)
     srv.listen(64)
     while True:
         client, _ = srv.accept()

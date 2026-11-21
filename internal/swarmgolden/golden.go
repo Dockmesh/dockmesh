@@ -45,9 +45,8 @@ func (c Case) Stack() string { return StackPrefix + c.Name }
 
 // Meta is a case's optional case.yaml.
 type Meta struct {
-	// Pending lists spec paths a later converter piece produces; until
-	// then the converter must report the compose keys behind them as not
-	// converted, and the comparison skips them.
+	// Pending lists spec paths a later converter piece produces; the
+	// comparison skips them.
 	Pending []string `yaml:"pending"`
 	// Accepted lists permanent differences to the CLI, each with the
 	// decision behind it.
@@ -98,7 +97,7 @@ func LoadAll(dir string) ([]Case, error) {
 // Load reads one case directory. Specs are decoded strictly, so a field
 // the CLI sends that the API types don't know fails the load.
 func Load(dir string) (Case, error) {
-	c := Case{Name: filepath.Base(dir), Dir: dir, Env: map[string]string{}}
+	c := Case{Name: filepath.Base(dir), Dir: dir}
 	var err error
 	if c.Compose, err = os.ReadFile(filepath.Join(dir, "compose.yaml")); err != nil {
 		return c, err

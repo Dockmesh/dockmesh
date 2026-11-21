@@ -4,10 +4,10 @@ services:
     command:
       - sh
       - -c
-      - echo $GATE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity
+      - echo $FIXTURE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity
     environment:
-      APP_SECRET: golden-not-a-secret
-      GATE_MARK: gate-app
+      APP_VALUE: fixture-value
+      FIXTURE_MARK: fixture-app
     image: alpine:3.20
     restart: unless-stopped
     volumes:

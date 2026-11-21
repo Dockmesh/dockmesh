@@ -11,20 +11,26 @@ host=$1
 shift
 here=$(cd "$(dirname "$0")" && pwd)
 cases_dir=$(cd "$here/../../internal/swarmgolden/testdata/cases" && pwd)
-remote=/tmp/swarm-golden
 cases=("$@")
 if [ ${#cases[@]} -eq 0 ]; then
   for d in "$cases_dir"/*/; do cases+=("$(basename "$d")"); done
 fi
+for c in "${cases[@]}"; do
+  [[ $c =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "bad case name: $c" >&2; exit 2; }
+  [ -f "$cases_dir/$c/compose.yaml" ] || { echo "no case $c" >&2; exit 2; }
+done
 
-ssh "$host" "mkdir -p $remote && cat > $remote/sockproxy.py" < "$here/sockproxy.py"
+remote=$(ssh "$host" mktemp -d /tmp/swarm-golden.XXXXXXXX)
+[[ $remote =~ ^/tmp/swarm-golden\.[A-Za-z0-9]+$ ]] || { echo "unexpected remote dir" >&2; exit 1; }
+trap 'ssh "$host" rm -rf "$remote"' EXIT
+ssh "$host" "cat > $remote/sockproxy.py" < "$here/sockproxy.py"
 ssh "$host" "docker version --format '{{.Server.Version}}'" > "$cases_dir/../engine-version"
 for c in "${cases[@]}"; do
   echo "== $c"
   src=$cases_dir/$c
-  ssh "$host" "rm -rf $remote/$c && mkdir -p $remote/$c"
+  ssh "$host" "mkdir $remote/$c"
   for f in compose.yaml golden.env; do
-    [ -f "$src/$f" ] && ssh "$host" "cat > $remote/$c/$f" < "$src/$f"
+    if [ -f "$src/$f" ]; then ssh "$host" "cat > $remote/$c/$f" < "$src/$f"; fi
   done
   ssh "$host" bash -s "$remote/$c" "gt-$c" < "$here/remote.sh"
   mkdir -p "$src/recorded"
@@ -33,4 +39,3 @@ for c in "${cases[@]}"; do
   done
   tail -1 "$src/recorded/deploy.log"
 done
-ssh "$host" "rm -rf $remote"

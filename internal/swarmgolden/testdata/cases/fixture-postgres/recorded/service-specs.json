@@ -5,14 +5,14 @@
     },
     "Labels": {
       "com.docker.stack.image": "postgres:16-alpine",
-      "com.docker.stack.namespace": "gt-gate-postgres"
+      "com.docker.stack.namespace": "gt-fixture-postgres"
     },
     "Mode": {
       "Replicated": {
         "Replicas": 1
       }
     },
-    "Name": "gt-gate-postgres_db",
+    "Name": "gt-fixture-postgres_db",
     "RollbackConfig": {
       "FailureAction": "pause",
       "MaxFailureRatio": 0,
@@ -31,16 +31,16 @@
         "Image": "postgres:16-alpine",
         "Isolation": "default",
         "Labels": {
-          "com.docker.stack.namespace": "gt-gate-postgres"
+          "com.docker.stack.namespace": "gt-fixture-postgres"
         },
         "Mounts": [
           {
-            "Source": "gt-gate-postgres_pgdata",
+            "Source": "gt-fixture-postgres_pgdata",
             "Target": "/var/lib/postgresql/data",
             "Type": "volume",
             "VolumeOptions": {
               "Labels": {
-                "com.docker.stack.namespace": "gt-gate-postgres"
+                "com.docker.stack.namespace": "gt-fixture-postgres"
               }
             }
           }
@@ -58,7 +58,7 @@
           "Aliases": [
             "db"
           ],
-          "Target": "ordxt65cme42gwq79y5jhda5k"
+          "Target": "qxxbj1gzsm14noclaaa61su0v"
         }
       ],
       "Placement": {},

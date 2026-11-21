@@ -1,9 +1,10 @@
 Ignoring unsupported options: restart
 
-Creating network gt-gate-app_default
-Creating service gt-gate-app_app
+Creating network gt-fixture-nginx_default
+Creating service gt-fixture-nginx_web
 overall progress: 0 out of 1 tasks
 1/1:  
+overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
@@ -58,5 +59,5 @@ verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
-verify: Service 0v2jmkra891u2htl4n3lb5amh converged
+verify: Service ylottbn8dyx9cybr35bl6dc6i converged
 exit 0

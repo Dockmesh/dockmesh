@@ -4,11 +4,28 @@
 # Usage: remote.sh <case dir> <stack name>
 set -u
 dir=$1 stack=$2
+[[ $stack =~ ^gt-[a-z0-9][a-z0-9-]*$ ]] || { echo "bad stack name $stack" >&2; exit 2; }
 cd "$dir" || exit 1
-rm -f requests.jsonl service-specs.json stack-config.yaml deploy.log docker.sock
-set -a
-[ -f golden.env ] && . ./golden.env
-set +a
+proxy=
+cleanup() {
+  [ -n "$proxy" ] && kill "$proxy" 2>/dev/null
+  docker stack rm "$stack" > /dev/null 2>&1
+  for _ in $(seq 120); do
+    [ -z "$(docker network ls -q --filter "label=com.docker.stack.namespace=$stack")" ] && break
+    sleep 1
+  done
+  # Volumes stay after `stack rm`; only this manager's copies are removed.
+  docker volume ls -q --filter "label=com.docker.stack.namespace=$stack" | xargs -r docker volume rm > /dev/null 2>&1
+}
+trap cleanup EXIT
+# golden.env is data, never sourced: plain KEY=VALUE lines only.
+if [ -f golden.env ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ -z $line || $line == \#* ]] && continue
+    [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || { echo "bad golden.env line" >&2; exit 2; }
+    export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+  done < golden.env
+fi
 docker stack config -c compose.yaml > stack-config.yaml 2> stack-config.err || true
 python3 ../sockproxy.py "$dir/docker.sock" "$dir/requests.jsonl" 2> proxy.log &
 proxy=$!
@@ -17,12 +34,8 @@ DOCKER_HOST="unix://$dir/docker.sock" timeout 300 \
   docker stack deploy --detach=false --resolve-image never -c compose.yaml "$stack" > deploy.log 2>&1
 echo "exit $?" >> deploy.log
 kill "$proxy"
+proxy=
 # Only the stored specs: the rest of the inspect output is runtime state
 # (task addresses, node ids) that differs per run.
 docker service ls --filter "label=com.docker.stack.namespace=$stack" -q | xargs -r docker service inspect |
   python3 -c 'import json,sys; s=sorted((x["Spec"] for x in json.load(sys.stdin)), key=lambda x: x["Name"]); json.dump(s, sys.stdout, indent=2, sort_keys=True)' > service-specs.json
-docker stack rm "$stack" > /dev/null
-for _ in $(seq 120); do
-  [ -z "$(docker network ls -q --filter "label=com.docker.stack.namespace=$stack")" ] && break
-  sleep 1
-done

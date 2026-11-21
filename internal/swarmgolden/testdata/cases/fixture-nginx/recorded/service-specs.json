@@ -13,14 +13,14 @@
     },
     "Labels": {
       "com.docker.stack.image": "nginx:1.27-alpine",
-      "com.docker.stack.namespace": "gt-gate-nginx"
+      "com.docker.stack.namespace": "gt-fixture-nginx"
     },
     "Mode": {
       "Replicated": {
         "Replicas": 1
       }
     },
-    "Name": "gt-gate-nginx_web",
+    "Name": "gt-fixture-nginx_web",
     "RollbackConfig": {
       "FailureAction": "pause",
       "MaxFailureRatio": 0,
@@ -34,7 +34,7 @@
         "Image": "nginx:1.27-alpine",
         "Isolation": "default",
         "Labels": {
-          "com.docker.stack.namespace": "gt-gate-nginx"
+          "com.docker.stack.namespace": "gt-fixture-nginx"
         },
         "Privileges": {
           "CredentialSpec": null,
@@ -49,7 +49,7 @@
           "Aliases": [
             "web"
           ],
-          "Target": "j6nrn1tqa6zj6gmk2ey4r5h3b"
+          "Target": "1lh7pxfi340q87r4h6x52p7ew"
         }
       ],
       "Placement": {},

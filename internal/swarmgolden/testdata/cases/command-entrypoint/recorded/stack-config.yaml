@@ -14,9 +14,9 @@ services:
     image: alpine:3.24
   shell:
     command:
-      - sleep
       - "3600"
     entrypoint:
-      - /bin/sh
-      - -c
+      - env
+      - MODE=golden
+      - sleep
     image: alpine:3.24

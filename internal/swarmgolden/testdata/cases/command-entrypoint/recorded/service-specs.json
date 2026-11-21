@@ -45,7 +45,7 @@
           "Aliases": [
             "command-only"
           ],
-          "Target": "gler2mc94v0q83vpdzgsl4drf"
+          "Target": "jqiq288gbhpu0k1c4hj2i4ua5"
         }
       ],
       "Placement": {},
@@ -114,7 +114,7 @@
           "Aliases": [
             "list"
           ],
-          "Target": "gler2mc94v0q83vpdzgsl4drf"
+          "Target": "jqiq288gbhpu0k1c4hj2i4ua5"
         }
       ],
       "Placement": {},
@@ -158,12 +158,12 @@
     "TaskTemplate": {
       "ContainerSpec": {
         "Args": [
-          "sleep",
           "3600"
         ],
         "Command": [
-          "/bin/sh",
-          "-c"
+          "env",
+          "MODE=golden",
+          "sleep"
         ],
         "DNSConfig": {},
         "Image": "alpine:3.24",
@@ -184,7 +184,7 @@
           "Aliases": [
             "shell"
           ],
-          "Target": "gler2mc94v0q83vpdzgsl4drf"
+          "Target": "jqiq288gbhpu0k1c4hj2i4ua5"
         }
       ],
       "Placement": {},

@@ -3,7 +3,8 @@
 Dockmesh converts compose files into Swarm service specs itself, on the
 server, and follows what `docker stack deploy` does. These cases pin that
 behaviour: each one is a compose file next to the exact specs the docker CLI
-sent to a real Swarm for it. Converter tests load a case, convert the same
+sent to a real Swarm for it. The package loads the cases and compares specs
+(`LoadAll`, `CompareServices`), so the converter's tests can convert the same
 compose file with the same stack name and compare the result with the
 recording. Nothing here talks to Docker at test time.
 
@@ -43,35 +44,37 @@ accepted:           # permanent, deliberate differences to the CLI
 A path is `<service spec name>:<key>/<key>/…` or `*:<key>/…` for every service
 of the case, with the JSON names of the Docker API types; label names keep
 their dots (`Labels/com.docker.stack.image`). The comparison drops the key and
-everything below it. A pending path must come with the converter reporting
-the compose keys behind it as not converted; remove the entry when the piece
-that converts it lands. Every accepted entry needs a reason.
+everything below it. Remove a pending entry when the converter produces that
+part of the spec. Every accepted entry needs a reason.
 
 ## Adding a case
 
 1. Create `testdata/cases/<name>/compose.yaml` (lower-case name, digits and
    dashes). Use images the lab registry mirror has, no `build:`, no host
    paths, no secrets. Keep it small: one topic per case, one service per
-   variant of that topic.
+   variant of that topic. `fixture-*` cases are the compose files of the lab
+   fixtures as they are, with their own image tags.
 2. Record it on a Swarm manager of the lab (see below).
 3. Read the recorded `requests.jsonl` and `deploy.log`; check that the CLI did
    what the case is about.
-4. Run the converter tests; add `case.yaml` entries only for what the
-   converter does not produce yet or deliberately does differently.
+4. Run `go test ./internal/swarmgolden/ ./internal/swarmconvert/`; add
+   `case.yaml` entries only for what the converter does not produce yet or
+   deliberately does differently.
 
 ## Recording
 
 `scripts/swarm-golden/record.sh <ssh host of a manager> [case ...]`
 
 It needs SSH access to a Swarm manager with the docker CLI and python3. Per
-case it copies the files to `/tmp/swarm-golden/<case>`, runs
+case it copies the files to a fresh `/tmp/swarm-golden.*` directory, runs
 `docker stack config`, then `docker stack deploy --detach=false
 --resolve-image never` through `sockproxy.py`, a small unix-socket proxy
 that writes the create requests the CLI sends to the daemon. It then reads
 back the service specs, removes the stack, waits until its networks are
 gone and copies the recordings into `recorded/`. Without case names it
 records every case. The stack names start with `gt-`; use a Swarm that runs
-nothing else under that prefix.
+nothing else under that prefix. A case is deployed as it is written, so read
+every compose file of a case from outside the project before recording it.
 
 Record everything again when the lab's Docker Engine changes, update
 `testdata/engine-version` and `engineVersion` in `golden_test.go` and review
