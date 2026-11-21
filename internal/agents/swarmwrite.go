@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -160,6 +161,25 @@ func (r SwarmDeployReq) Validate() error {
 	return nil
 }
 
+// reservedLabel reports whether key is a label only Dockmesh or compose
+// set: on a task container it would make the container count as one of
+// Dockmesh's own or as part of a host stack.
+func reservedLabel(key string, allowed ...string) bool {
+	if slices.Contains(allowed, key) {
+		return false
+	}
+	return strings.HasPrefix(key, "dockmesh.") || strings.HasPrefix(key, "com.docker.compose.")
+}
+
+func reservedIn(labels map[string]string, allowed ...string) bool {
+	for k := range labels {
+		if reservedLabel(k, allowed...) {
+			return true
+		}
+	}
+	return false
+}
+
 func validNetwork(stack string, n network.CreateRequest) error {
 	if !swarmObjName.MatchString(n.Name) {
 		return refuse("invalid network name")
@@ -169,6 +189,9 @@ func validNetwork(stack string, n network.CreateRequest) error {
 	}
 	if n.Labels[LabelStackNamespace] != stack || n.Labels[LabelDockmeshStack] != stack {
 		return refuse("network %s lacks the stack labels", n.Name)
+	}
+	if reservedIn(n.Labels, LabelDockmeshStack) {
+		return refuse("network %s carries a label reserved for Dockmesh", n.Name)
 	}
 	if n.Driver != "overlay" {
 		return refuse("network %s: only overlay networks are created", n.Name)
@@ -196,6 +219,9 @@ func validService(stack string, spec swarm.ServiceSpec, networks map[string]bool
 	if !specHashRe.MatchString(spec.Labels[LabelSpecHash]) {
 		return refuse("service %s lacks the spec hash", spec.Name)
 	}
+	if reservedIn(spec.Labels, LabelSpecHash) {
+		return refuse("service %s carries a label reserved for Dockmesh", spec.Name)
+	}
 	t := spec.TaskTemplate
 	if t.Runtime != "" && t.Runtime != swarm.RuntimeContainer || t.PluginSpec != nil || t.NetworkAttachmentSpec != nil {
 		return refuse("service %s: only container services are deployed", spec.Name)
@@ -206,6 +232,9 @@ func validService(stack string, spec swarm.ServiceSpec, networks map[string]bool
 	}
 	if c.Labels[LabelStackNamespace] != stack {
 		return refuse("service %s: container labels lack the stack label", spec.Name)
+	}
+	if reservedIn(c.Labels) {
+		return refuse("service %s: container labels carry a label reserved for Dockmesh", spec.Name)
 	}
 	if p := c.Privileges; p != nil && (p.CredentialSpec != nil || p.SELinuxContext != nil || p.Seccomp != nil || p.AppArmor != nil || p.NoNewPrivileges) {
 		return refuse("service %s: privileges are not set by a stack deploy", spec.Name)
