@@ -1127,6 +1127,15 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		res, err := swarmwrite.Adopt(ctx, cli, req)
 		respond(conn, f.ID, res, err)
 
+	case agents.FrameReqSwarmImagesCheck:
+		var req agents.SwarmImageCheckReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrSwarmWriteRefused)
+			break
+		}
+		res, err := swarmwrite.CheckImages(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
 	case agents.FrameReqSwarmServiceAction:
 		var req agents.SwarmServiceActionReq
 		if err := json.Unmarshal(f.Payload, &req); err != nil {

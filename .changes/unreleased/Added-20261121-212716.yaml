@@ -1,0 +1,3 @@
+kind: Added
+body: Dockmesh stacks on a Swarm cluster can be checked for image updates through a manager and updated with a deploy, which Swarm rolls out and rolls back as the services' update_config says
+time: 2026-11-21T21:27:16.135543338Z

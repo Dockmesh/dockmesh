@@ -26,6 +26,7 @@
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import AdoptStackDialog from './_AdoptStackDialog.svelte';
   import ScaleServiceDialog from './_ScaleServiceDialog.svelte';
+  import ImageUpdateDialog from './_ImageUpdateDialog.svelte';
   import { AlertTriangle, Info, CircleSlash, CircleDashed, Network, Waypoints, ShieldCheck, ShieldAlert } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
@@ -198,6 +199,8 @@
       acting = '';
     }
   }
+  let imageStack = $state('');
+  let imageOpen = $state(false);
   let scaleOf = $state<{ stack: string; service: SwarmService } | null>(null);
   let scaleOpen = $state(false);
   let adoptStack = $state('');
@@ -547,6 +550,10 @@
   {/if}
 </section>
 
+{#if imageOpen}
+  <ImageUpdateDialog bind:open={imageOpen} cluster={id} stack={imageStack} onupdated={loadAll} />
+{/if}
+
 {#if scaleOpen && scaleOf}
   <ScaleServiceDialog bind:open={scaleOpen} stack={scaleOf.stack} service={scaleOf.service} onscaled={loadAll} />
 {/if}
@@ -833,10 +840,13 @@
           <span role="cell">
             {#if isOwn(g)}
               <span class="dm-pill ext">{m.cl_dockmesh()}</span> <span class="dm-dim small">{m.cl_dockmesh_title()}</span>
+              {#if allowed('stacks.deploy') && !readOnly}
+                <Button size="xs" class="rowbtn" onclick={() => { imageStack = g.stack; imageOpen = true; }} data-testid="image-check">{m.cl_img_check()}</Button>
+              {/if}
             {:else}
               <span class="dm-pill ext">{m.cl_external()}</span> <span class="dm-dim small">{m.cl_external_title()}</span>
               {#if allowed('stacks.adopt') && !readOnly}
-                <Button size="xs" class="adoptbtn" onclick={() => openAdopt(g.stack)} data-testid="adopt-stack">{m.cl_adopt()}</Button>
+                <Button size="xs" class="rowbtn" onclick={() => openAdopt(g.stack)} data-testid="adopt-stack">{m.cl_adopt()}</Button>
               {/if}
             {/if}
           </span>
@@ -918,7 +928,7 @@
   .badc { color: var(--bad); }
   .lnk { color: var(--fg); text-decoration: none; }
   .lnk:hover { text-decoration: underline; }
-  :global(.adoptbtn) { margin-left: 8px; }
+  :global(.rowbtn) { margin-left: 8px; }
   :global(.svcact) { margin: 2px 4px 0 0; }
   .small { font-size: var(--fs-xs); }
   .na { color: var(--subtle); font-size: var(--fs-xs); grid-column: span 2; }

@@ -268,3 +268,53 @@ func (h *LocalHost) swarmServiceAction(ctx context.Context, req agents.SwarmServ
 	}
 	return swarmwrite.ServiceAction(ctx, h.cli.Raw(), req)
 }
+
+// ErrAgentNoSwarmImages: the agent predates the Swarm image check.
+var ErrAgentNoSwarmImages = errors.New("the agent is too old to check the images of a Swarm stack; upgrade it")
+
+type swarmImageChecker interface {
+	swarmCheckImages(ctx context.Context, req agents.SwarmImageCheckReq) (agents.SwarmImageCheckResp, error)
+}
+
+// SwarmCheckImages reads the registry digests of images through manager
+// host id.
+func (r *Registry) SwarmCheckImages(ctx context.Context, id string, req agents.SwarmImageCheckReq) (agents.SwarmImageCheckResp, error) {
+	if err := req.Validate(); err != nil {
+		return agents.SwarmImageCheckResp{}, err
+	}
+	h, err := r.Pick(id)
+	if err != nil {
+		return agents.SwarmImageCheckResp{}, err
+	}
+	c, ok := h.(swarmImageChecker)
+	if !ok {
+		return agents.SwarmImageCheckResp{}, ErrUnknownHost
+	}
+	return c.swarmCheckImages(ctx, req)
+}
+
+func (h *RemoteHost) swarmCheckImages(ctx context.Context, req agents.SwarmImageCheckReq) (agents.SwarmImageCheckResp, error) {
+	var out agents.SwarmImageCheckResp
+	ag, err := h.live()
+	if err != nil {
+		return out, err
+	}
+	if !ag.Hello.Has(agents.CapSwarmImages) {
+		return out, ErrAgentNoSwarmImages
+	}
+	data, err := h.request(ctx, agents.FrameReqSwarmImagesCheck, req)
+	if err != nil {
+		return out, agentAnswerError(err)
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return out, fmt.Errorf("decode %s: %w", agents.FrameReqSwarmImagesCheck, err)
+	}
+	return out, nil
+}
+
+func (h *LocalHost) swarmCheckImages(ctx context.Context, req agents.SwarmImageCheckReq) (agents.SwarmImageCheckResp, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return agents.SwarmImageCheckResp{}, ErrNoDocker
+	}
+	return swarmwrite.CheckImages(ctx, h.cli.Raw(), req)
+}

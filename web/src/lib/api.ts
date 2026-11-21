@@ -271,6 +271,13 @@ export interface SwarmService {
   updated_at: string;
 }
 
+export interface SwarmImageCheck {
+  stack: string;
+  cluster_id: string;
+  manager: string;
+  services: { service: string; image: string; running_digest?: string; registry_digest?: string; update: boolean; error?: string }[];
+}
+
 export interface SwarmAdoptPreview {
   stack: string;
   cluster_id: string;
@@ -2273,6 +2280,7 @@ export const api = {
         body: JSON.stringify({ plan_hash: planHash, prune })
       });
     },
+    swarmImageUpdates: (name: string) => request<SwarmImageCheck>(`/stacks/${encodeURIComponent(name)}/swarm-image-updates`),
     swarmServiceAction: (name: string, service: string, action: 'rollback' | 'resume') =>
       request<SwarmWriteResult & { stack: string; service: string; cluster_id: string; manager: string }>(
         `/stacks/${encodeURIComponent(name)}/swarm-services/${encodeURIComponent(service)}/${action}`,
