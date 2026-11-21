@@ -63,6 +63,33 @@ func (h *Handlers) refuseMigrating(w http.ResponseWriter, r *http.Request, stack
 	return true
 }
 
+// guardStack takes the lock of stack on the host scope checks use for it
+// and refuses an unfinished migration. On ok=false the answer is written.
+func (h *Handlers) guardStack(w http.ResponseWriter, r *http.Request, stack, op string) (release func(), ok bool) {
+	var hostID string
+	if h.Deployments != nil {
+		var err error
+		if hostID, err = h.Deployments.HostOf(r.Context(), stack); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return nil, false
+		}
+	}
+	return h.guardStackOn(w, r, hostID, stack, op)
+}
+
+// guardStackOn is guardStack for a stack whose host is known.
+func (h *Handlers) guardStackOn(w http.ResponseWriter, r *http.Request, hostID, stack, op string) (release func(), ok bool) {
+	release, ok = h.lockStack(w, hostID, stack, op)
+	if !ok {
+		return nil, false
+	}
+	if h.refuseMigrating(w, r, stack) {
+		release()
+		return nil, false
+	}
+	return release, true
+}
+
 // writeMigrationConflict answers 409 for a stack another operation or an
 // unfinished migration holds.
 func writeMigrationConflict(w http.ResponseWriter, err error) bool {

@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/stacklock"
 	"github.com/go-chi/chi/v5"
 	"github.com/moby/moby/api/types/container"
 )
@@ -249,6 +250,53 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	return h.requireNotOwnContainer(w, r, perm, hostID, containerID)
+}
+
+// requireContainerWrite is requireContainerScope for a call that changes
+// the container. A container of a managed stack also takes the stack lock
+// and is refused while the stack's migration has not finished; release
+// the lock once the call is done.
+func (h *Handlers) requireContainerWrite(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) (release func(), ok bool) {
+	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
+	if !h.allowedOn(r, scopeReq, perm) {
+		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
+		return nil, false
+	}
+	if !h.requireNotOwnContainer(w, r, perm, hostID, containerID) {
+		return nil, false
+	}
+	if scopeReq.StackName == "" || h.Stacks == nil || !h.Stacks.Has(scopeReq.StackName) {
+		return func() {}, true
+	}
+	involved, err := h.stackInvolvesHost(r.Context(), scopeReq.StackName, hostID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if !involved {
+		return func() {}, true
+	}
+	return h.guardStackOn(w, r, hostID, scopeReq.StackName, stacklock.OpContainer)
+}
+
+// stackInvolvesHost reports whether stack lives on hostID or migrates
+// from or to it. A container elsewhere that merely carries the stack's
+// project name is not guarded: its 409 would tell a caller scoped to
+// that host about a stack it can't see.
+func (h *Handlers) stackInvolvesHost(ctx context.Context, stack, hostID string) (bool, error) {
+	if h.Deployments != nil {
+		on, err := h.Deployments.HostOf(ctx, stack)
+		if err != nil {
+			return false, err
+		}
+		if stacklock.Host(on) == stacklock.Host(hostID) {
+			return true, nil
+		}
+	}
+	if h.Migrations == nil {
+		return false, nil
+	}
+	return h.Migrations.Store().HasActiveOn(ctx, stack, stacklock.Host(hostID).ID)
 }
 
 // requireStackScope is requireContainerScope for a stack on hostID.

@@ -226,9 +226,11 @@ func (h *Handlers) KillContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, target.ID(), id) {
+	release, ok := h.requireContainerWrite(w, r, rbac.PermContainersUpdate, target.ID(), id)
+	if !ok {
 		return
 	}
+	defer release()
 	var body struct {
 		Signal string `json:"signal"`
 	}
@@ -257,9 +259,11 @@ func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersDelete, target.ID(), id) {
+	release, ok := h.requireContainerWrite(w, r, rbac.PermContainersDelete, target.ID(), id)
+	if !ok {
 		return
 	}
+	defer release()
 	force := r.URL.Query().Get("force") == "true"
 	if err := target.RemoveContainer(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -278,9 +282,11 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, target.ID(), id) {
+	release, ok := h.requireContainerWrite(w, r, rbac.PermContainersUpdate, target.ID(), id)
+	if !ok {
 		return
 	}
+	defer release()
 	switch op {
 	case "start":
 		err = target.StartContainer(r.Context(), id)

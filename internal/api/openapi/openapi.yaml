@@ -3298,6 +3298,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/start:
     post:
       operationId: containers.start
@@ -3311,6 +3312,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/stop:
     post:
       operationId: containers.stop
@@ -3324,6 +3326,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/restart:
     post:
       operationId: containers.restart
@@ -3343,10 +3346,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: The container is a Swarm task.
+          description: The container is a Swarm task (`swarm_managed`), or it belongs to a managed stack that another operation is changing (`stack_busy`) or whose migration or migration rollback has not finished (`migration_active`).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/SwarmManagedError"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SwarmManagedError"
+                  - $ref: "#/components/schemas/StackBusyError"
+                  - $ref: "#/components/schemas/Error"
   /containers/{id}/pause:
     post:
       operationId: containers.pause
@@ -3363,6 +3370,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/unpause:
     post:
       operationId: containers.unpause
@@ -3376,6 +3384,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/kill:
     post:
       operationId: containers.kill
@@ -3400,6 +3409,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/ContainerStackConflict"}
   /containers/{id}/update:
     post:
       operationId: containers.update
@@ -8033,10 +8043,14 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: A stack file changed on disk since the versions sent were loaded. Nothing was written.
+          description: A stack file changed on disk since the versions sent were loaded (`stack_modified_on_disk`), another operation is changing the stack (`stack_busy`), or the stack has a migration or migration rollback that has not finished (`migration_active`). Nothing was written.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/StackModifiedOnDisk"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/StackModifiedOnDisk"
+                  - $ref: "#/components/schemas/StackBusyError"
+                  - $ref: "#/components/schemas/Error"
     delete:
       operationId: stacks.delete
       tags: [stacks]
@@ -8485,6 +8499,7 @@ paths:
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackWriteConflict"}
   /stacks/{name}/stop:
     post:
       operationId: stacks.stop
@@ -8498,7 +8513,23 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409": {$ref: "#/components/responses/StackOnOtherHost"}
+        "409":
+          description: The stack is on another host (`stack_on_other_host`), another operation is changing it (`stack_busy`), its migration or migration rollback has not finished (`migration_active`), or other stacks depend on it (`force_needed`; repeat with `force=true`).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [stack_on_other_host, stack_busy, migration_active]}
+                  stack: {type: string}
+                  host_id: {type: string}
+                  operation: {type: string}
+                  since: {type: string, format: date-time}
+                  dependents: {type: array, items: {type: string}}
+                  force_needed: {type: boolean}
+                  message: {type: string}
   /stacks/{name}/status:
     get:
       operationId: stacks.status
@@ -11224,7 +11255,7 @@ components:
         code: {type: string, enum: [stack_busy]}
         operation:
           type: string
-          description: What holds the stack, e.g. `deploy`, `scale`, `rolling update`, `image update`, `image rollback`, `git auto-deploy`, `auto-scaling`, `dependency deploy` or `maintenance`.
+          description: What holds the stack, e.g. `deploy`, `stop`, `file save`, `environment change`, `container action`, `scale`, `rolling update`, `image update`, `image rollback`, `git auto-deploy`, `auto-scaling`, `dependency deploy`, `migration` or `maintenance`.
         since: {type: string, format: date-time}
     HistoryReason:
       type: string
@@ -13228,6 +13259,22 @@ components:
               code: {type: string, enum: [stack_on_other_host]}
               stack: {type: string}
               host_id: {type: string}
+    ContainerStackConflict:
+      description: The container belongs to a managed stack that another operation is changing (`stack_busy`, with `operation` and `since`), or whose migration or migration rollback has not finished (`migration_active`).
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/StackBusyError"
+              - $ref: "#/components/schemas/Error"
+    StackWriteConflict:
+      description: Another operation is changing the stack (`stack_busy`, with `operation` and `since`), or the stack has a migration or migration rollback that has not finished (`migration_active`).
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/StackBusyError"
+              - $ref: "#/components/schemas/Error"
     StackDeployConflict:
       description: Stack files (compose.yaml, .env, .dockmesh.meta.json or a compose.<env>.yaml override) changed outside Dockmesh (`modified_outside`; repeat with `confirm_external=1` after reviewing `files`), the stack is on another host (`stack_on_other_host`; `host_id` is set only when the caller may see that host), or another operation is changing the stack (`stack_busy`, with `operation` and `since`; a running migration shows as `migration`). A deploy, deployment rollback or rolling update of a stack whose migration or migration rollback has not finished is refused with `migration_active`.
       content:
