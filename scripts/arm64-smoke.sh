@@ -126,9 +126,13 @@ done
 step "uninstall"
 api DELETE '/api/v1/stacks/smoke?host=local' >/dev/null || true
 bash "$HERE/uninstall.sh" --purge 2>&1 | tee "$WORK/uninstall.log"
-# The backup archive is the only thing the purge leaves.
+# The backup archive is the only thing the purge leaves, plus the marker
+# that tells the next install this data root was purged.
 grep -q 'keep    /var/lib/dockmesh/data/backups: ' "$WORK/uninstall.log" || fail "the purge did not keep the local backups"
-LEFT="$(find /var/lib/dockmesh -mindepth 1 ! -path /var/lib/dockmesh/data ! -path '/var/lib/dockmesh/data/backups' ! -path '/var/lib/dockmesh/data/backups/*' 2>&1)"
+if [ ! -f /var/lib/dockmesh/.dockmesh-purged ] || [ -L /var/lib/dockmesh/.dockmesh-purged ]; then
+  fail "the purge did not write /var/lib/dockmesh/.dockmesh-purged"
+fi
+LEFT="$(find /var/lib/dockmesh -mindepth 1 ! -path /var/lib/dockmesh/.dockmesh-purged ! -path /var/lib/dockmesh/data ! -path '/var/lib/dockmesh/data/backups' ! -path '/var/lib/dockmesh/data/backups/*' 2>&1)"
 [ -z "$LEFT" ] || fail "the purge left files besides the backups: $LEFT"
 rm -rf /var/lib/dockmesh
 for p in /usr/local/bin/dockmesh /var/lib/dockmesh /etc/dockmesh /etc/systemd/system/dockmesh.service; do
