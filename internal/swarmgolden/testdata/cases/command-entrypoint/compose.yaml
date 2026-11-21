@@ -1,0 +1,12 @@
+services:
+  list:
+    image: alpine:3.24
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 3600"]
+  shell:
+    image: alpine:3.24
+    entrypoint: /bin/sh -c
+    command: sleep 3600
+  command-only:
+    image: alpine:3.24
+    command: sleep 3600

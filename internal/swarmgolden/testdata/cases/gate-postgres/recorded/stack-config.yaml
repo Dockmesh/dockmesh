@@ -1,0 +1,15 @@
+version: "3.13"
+services:
+  db:
+    environment:
+      POSTGRES_DB: labdb
+      POSTGRES_PASSWORD: lab-fixture-only
+      POSTGRES_USER: lab
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+volumes:
+  pgdata: {}

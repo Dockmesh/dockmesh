@@ -1,0 +1,3 @@
+services:
+  app:
+    image: nginx:1.29-alpine

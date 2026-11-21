@@ -1,0 +1,22 @@
+version: "3.13"
+services:
+  app:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      labels:
+        service.label: s
+        shared: from-service
+    image: alpine:3.24
+    labels:
+      container.label: c
+      shared: from-container
+  list:
+    command:
+      - sleep
+      - "3600"
+    image: alpine:3.24
+    labels:
+      a: "1"
+      b: "2"

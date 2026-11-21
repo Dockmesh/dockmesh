@@ -1,0 +1,37 @@
+version: "3.13"
+services:
+  long:
+    image: nginx:1.29-alpine
+    ports:
+      - mode: ingress
+        target: 80
+        published: 18083
+        protocol: tcp
+      - mode: host
+        target: 81
+        published: 18084
+  short:
+    image: nginx:1.29-alpine
+    ports:
+      - mode: ingress
+        target: 80
+        published: 18081
+        protocol: tcp
+      - mode: ingress
+        target: 80
+        published: 18082
+        protocol: udp
+      - mode: ingress
+        target: 8090
+        published: 18090
+        protocol: tcp
+      - mode: ingress
+        target: 8091
+        published: 18091
+        protocol: tcp
+  unpublished:
+    image: nginx:1.29-alpine
+    ports:
+      - mode: ingress
+        target: 80
+        protocol: tcp

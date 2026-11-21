@@ -1,0 +1,17 @@
+services:
+  app:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    labels:
+      container.label: c
+      shared: from-container
+    deploy:
+      labels:
+        service.label: s
+        shared: from-service
+  list:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    labels:
+      - a=1
+      - b=2

@@ -1,0 +1,17 @@
+services:
+  cmd:
+    image: nginx:1.29-alpine
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+  shell:
+    image: nginx:1.29-alpine
+    healthcheck:
+      test: wget -qO- http://127.0.0.1/ || exit 1
+  disabled:
+    image: nginx:1.29-alpine
+    healthcheck:
+      disable: true

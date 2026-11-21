@@ -1,0 +1,85 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.20",
+      "com.docker.stack.namespace": "gt-gate-app"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-gate-app_app",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sh",
+          "-c",
+          "echo $GATE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity"
+        ],
+        "DNSConfig": {},
+        "Env": [
+          "APP_SECRET=golden-not-a-secret",
+          "GATE_MARK=gate-app"
+        ],
+        "Image": "alpine:3.20",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-gate-app"
+        },
+        "Mounts": [
+          {
+            "Source": "gt-gate-app_data",
+            "Target": "/data",
+            "Type": "volume",
+            "VolumeOptions": {
+              "Labels": {
+                "com.docker.stack.namespace": "gt-gate-app"
+              }
+            }
+          }
+        ],
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "app"
+          ],
+          "Target": "xh6uwg4yqvassr7phev14c8jq"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]
