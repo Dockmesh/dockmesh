@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -59,7 +60,8 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "load cluster: "+err.Error())
+		slog.Error("swarm preview: load cluster", "cluster", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "load cluster failed")
 		return
 	}
 	if !h.Stacks.Has(name) {
@@ -113,7 +115,7 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 
 func writeComposeLoadError(w http.ResponseWriter, err error) {
 	if errors.Is(err, compose.ErrEnvironmentNotFound) {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "environment not found")
 		return
 	}
 	writeError(w, http.StatusUnprocessableEntity, err.Error())

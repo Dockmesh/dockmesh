@@ -50,6 +50,7 @@ var ruleCases = map[string]struct {
 	"tmpfs":                                 {"services:\n  a:\n    image: alpine\n    tmpfs: [/run]\n", "a", "tmpfs"},
 	"volumes.tmpfs.mode":                    {"services:\n  a:\n    image: alpine\n    volumes:\n      - type: tmpfs\n        target: /t\n        tmpfs:\n          mode: 0o700\n", "a", "volumes.tmpfs.mode"},
 	"volumes relative bind":                 {"services:\n  a:\n    image: alpine\n    volumes: [./data:/data]\n", "a", "volumes /data"},
+	"volumes relative bind device":          {"services:\n  a:\n    image: alpine\n    volumes: [data:/data]\nvolumes:\n  data:\n    driver_opts:\n      type: none\n      o: bind\n      device: ./data\n", "", "volumes.data"},
 	"networks.ipv4_address":                 {"services:\n  a:\n    image: alpine\n    networks:\n      n:\n        ipv4_address: 198.18.0.5\nnetworks:\n  n:\n    ipam:\n      config:\n        - subnet: 198.18.0.0/24\n", "a", "networks.ipv4_address"},
 	"networks.ipv6_address":                 {"services:\n  a:\n    image: alpine\n    networks:\n      n:\n        ipv6_address: 2001:db8::5\nnetworks:\n  n: {}\n", "a", "networks.ipv6_address"},
 	"networks.mac_address":                  {"services:\n  a:\n    image: alpine\n    networks:\n      n:\n        mac_address: 02:42:ac:11:00:02\nnetworks:\n  n: {}\n", "a", "networks.mac_address"},
@@ -79,13 +80,19 @@ var ruleCases = map[string]struct {
 	"volumes other name":      {"services:\n  a:\n    image: alpine\n    volumes: [v:/v]\nvolumes:\n  v:\n    name: other_data\n", "", "volumes.v"},
 }
 
+// ruleOf maps a case name to its rule; extra cases for one rule add a
+// suffix after the rule key.
+func ruleOf(caseName string) string {
+	if caseName == "volumes relative bind device" {
+		return "volumes relative bind"
+	}
+	return caseName
+}
+
 func TestEveryRule(t *testing.T) {
-	for _, r := range Rules {
-		t.Run(r.Key, func(t *testing.T) {
-			tc, ok := ruleCases[r.Key]
-			if !ok {
-				t.Fatalf("no case for rule %q", r.Key)
-			}
+	for name, tc := range ruleCases {
+		r := rulesByKey[ruleOf(name)]
+		t.Run(name, func(t *testing.T) {
 			p := planYAML(t, tc.src)
 			want := Finding{Service: tc.service, Key: tc.key, Message: r.Message, Hint: r.Hint}
 			in, other := p.Warnings, p.Refusals
@@ -100,8 +107,13 @@ func TestEveryRule(t *testing.T) {
 			}
 		})
 	}
+	for _, r := range Rules {
+		if _, ok := ruleCases[r.Key]; !ok {
+			t.Errorf("no case for rule %q", r.Key)
+		}
+	}
 	for key := range ruleCases {
-		if _, ok := rulesByKey[key]; !ok {
+		if _, ok := rulesByKey[ruleOf(key)]; !ok {
 			t.Errorf("case for rule %q, which does not exist", key)
 		}
 	}

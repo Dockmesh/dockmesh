@@ -73,7 +73,7 @@ var Rules = []Rule{
 	{Key: "networks.ipv4_address", Refuse: true, Message: "Swarm assigns task addresses itself; a fixed address can't be kept."},
 	{Key: "networks.ipv6_address", Refuse: true, Message: "Swarm assigns task addresses itself; a fixed address can't be kept."},
 	{Key: "networks.mac_address", Refuse: true, Message: "Swarm assigns task MAC addresses itself; a fixed address can't be kept."},
-	{Key: "networks host", Refuse: true, Message: "The host and bridge networks are local to each node; Swarm services can't attach to them. Attach the service to an overlay network instead."},
+	{Key: "networks host", Refuse: true, Message: "The host, bridge and none networks are local to each node; Swarm services can't attach to them. Attach the service to an overlay network instead."},
 	{Key: "secrets.*", Refuse: true, Message: "Secrets and configs owned by a Swarm stack are not supported yet. Use an external secret or config."},
 	{Key: "configs.*", Refuse: true, Message: "Secrets and configs owned by a Swarm stack are not supported yet. Use an external secret or config."},
 	{Key: "jobs.*", Refuse: true, Message: "Jobs are not deployed to a Swarm.", Hint: "deploy.mode: replicated-job"},
@@ -154,6 +154,11 @@ func NewPlan(project, unresolved *types.Project, stack string) *Plan {
 		}
 	}
 	if unresolved != nil {
+		for _, key := range sortedKeys(unresolved.Volumes) {
+			if dev, ok := bindDevice(unresolved.Volumes[key]); ok && !filepath.IsAbs(dev) {
+				add(finding("", "volumes."+key, "volumes relative bind"))
+			}
+		}
 		for _, name := range sortedKeys(unresolved.Services) {
 			for _, v := range unresolved.Services[name].Volumes {
 				if v.Type == types.VolumeTypeBind && !filepath.IsAbs(v.Source) {
@@ -201,7 +206,7 @@ func foreignNames(project *types.Project, stack string, add func(Finding, bool))
 		}
 		name := networkName(stack, key, nw)
 		switch {
-		case name == "host" || name == "bridge":
+		case name == "host" || name == "bridge" || name == "none":
 			add(finding("", "networks."+key, "networks host"))
 		case !bool(nw.External) && !strings.HasPrefix(name, stack+"_"):
 			add(finding("", "networks."+key, "networks other name"))
@@ -213,6 +218,20 @@ func foreignNames(project *types.Project, stack string, add func(Finding, bool))
 			add(finding("", "volumes."+key, "volumes other name"))
 		}
 	}
+}
+
+// bindDevice returns the device of a local volume whose driver options
+// make it a bind mount of a host path.
+func bindDevice(v types.VolumeConfig) (string, bool) {
+	if v.External || (v.Driver != "" && v.Driver != "local") {
+		return "", false
+	}
+	for _, o := range strings.Split(v.DriverOpts["o"], ",") {
+		if o == "bind" || o == "rbind" {
+			return v.DriverOpts["device"], true
+		}
+	}
+	return "", false
 }
 
 // waitsForCondition reports whether svc waits for a dependency to be

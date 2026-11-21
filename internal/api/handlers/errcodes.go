@@ -35,6 +35,8 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"cluster can't be combined with host, host_tag or stack", "cluster_exclusive"},
 	{"clusters are not available", "clusters_unavailable"},
 	{"cluster is required", "cluster_required"},
+	{"load cluster failed", "cluster_load_failed"},
+	{"environment not found", "environment_not_found"},
 	{"confirming the trust root failed", "cluster_trust_root_confirm_failed"},
 	{"fingerprint required", "fingerprint_required"},
 	{"cannot read the cluster's Swarm state", "cluster_swarm_unreadable"},
