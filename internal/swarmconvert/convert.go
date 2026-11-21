@@ -292,19 +292,19 @@ func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, erro
 // converted lists the compose keys convertService maps. Keys are the JSON
 // names compose-go writes; nested keys are dotted.
 var converted = map[string]bool{
-	"image":                  true,
-	"environment":            true,
-	"command":                true,
-	"entrypoint":             true,
-	"labels":                 true,
-	"healthcheck":            true,
-	"ports.mode":             true,
-	"ports.target":           true,
-	"ports.published":        true,
-	"ports.protocol":         true,
-	"deploy.replicas":        true,
-	"deploy.labels":          true,
-	"deploy.restart_policy":  true,
+	"image":                 true,
+	"environment":           true,
+	"command":               true,
+	"entrypoint":            true,
+	"labels":                true,
+	"healthcheck":           true,
+	"ports.mode":            true,
+	"ports.target":          true,
+	"ports.published":       true,
+	"ports.protocol":        true,
+	"deploy.replicas":       true,
+	"deploy.labels":         true,
+	"deploy.restart_policy": true,
 }
 
 // hints names the Swarm key for compose keys a Swarm ignores.
