@@ -375,6 +375,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/stacks/{name}/deploy", h.DeployStack)
 				r.Get("/stacks/{name}/swarm-preview", h.SwarmPreview)
 				r.Post("/stacks/{name}/swarm-deploy", h.SwarmDeploy)
+				r.Post("/stacks/{name}/swarm-services/{service}/resume", h.SwarmServiceResume)
 				// Service scaling (P.8)
 				r.Get("/stacks/{name}/scale", h.ListServiceScale)
 				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)
@@ -400,6 +401,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Migration (P.9) — separate sensitive perm because it
 			// moves data between hosts.
 			r.With(middleware.RequirePerm(rbac.PermStacksOperate)).Post("/stacks/{name}/stop", h.StopStack)
+			r.With(middleware.RequirePerm(rbac.PermStacksOperate)).Post("/stacks/{name}/swarm-services/{service}/rollback", h.SwarmServiceRollback)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermStacksMigrate))
 				r.Post("/stacks/{name}/migrate", h.InitiateMigration)

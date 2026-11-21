@@ -58,6 +58,12 @@ type SwarmService struct {
 	Stack        string      `json:"stack,omitempty"`
 	Ports        []SwarmPort `json:"ports,omitempty"`
 	UpdateState  string      `json:"update_state,omitempty"`
+	// UpdateMessage is Swarm's reason for the update state, e.g. why it
+	// paused.
+	UpdateMessage string `json:"update_message,omitempty"`
+	// Rollback is set when the service has a previous spec Swarm can
+	// roll back to.
+	Rollback bool `json:"rollback,omitempty"`
 	// SpecHash is the dockmesh.spec-hash label of a service Dockmesh
 	// deployed.
 	SpecHash string `json:"spec_hash,omitempty"`
@@ -113,7 +119,6 @@ type SwarmServiceDetail struct {
 	LimitMemory    int64                 `json:"limit_memory_bytes,omitempty"`
 	UpdateConfig   *SwarmUpdatePolicy    `json:"update_config,omitempty"`
 	RollbackConfig *SwarmUpdatePolicy    `json:"rollback_config,omitempty"`
-	UpdateMessage  string                `json:"update_message,omitempty"`
 }
 
 // SwarmTask is one task of a service.
@@ -220,7 +225,12 @@ func serviceSummary(s swarm.Service) SwarmService {
 	}
 	if s.UpdateStatus != nil {
 		sv.UpdateState = string(s.UpdateStatus.State)
+		sv.UpdateMessage = s.UpdateStatus.Message
 	}
+	// Only a previous spec Dockmesh deployed is offered for a rollback.
+	sv.Rollback = s.PreviousSpec != nil && s.PreviousSpec.Labels[LabelSpecHash] != "" &&
+		s.PreviousSpec.Labels[LabelStackNamespace] == sv.Stack &&
+		!strings.HasPrefix(sv.UpdateState, "rollback_")
 	for _, n := range s.Spec.TaskTemplate.Networks {
 		sv.Networks = appendNew(sv.Networks, n.Target)
 	}
@@ -282,9 +292,6 @@ func SwarmServiceDetailFrom(s swarm.Service) SwarmServiceDetail {
 	}
 	d.UpdateConfig = updatePolicy(s.Spec.UpdateConfig)
 	d.RollbackConfig = updatePolicy(s.Spec.RollbackConfig)
-	if s.UpdateStatus != nil {
-		d.UpdateMessage = s.UpdateStatus.Message
-	}
 	return SanitizeSwarmServiceDetail(d)
 }
 
@@ -393,6 +400,7 @@ func sanitizeService(s SwarmService) (SwarmService, bool) {
 	s.Image = text(s.Image, maxTextLen)
 	s.Stack = text(s.Stack, 128)
 	s.UpdateState = token(s.UpdateState, 32, "_")
+	s.UpdateMessage = maskCredentials(text(s.UpdateMessage, maxTextLen))
 	if !specHashRe.MatchString(s.SpecHash) {
 		s.SpecHash = ""
 	}
@@ -446,7 +454,6 @@ func SanitizeSwarmServiceDetail(d SwarmServiceDetail) SwarmServiceDetail {
 	}
 	d.UpdateConfig = sanitizePolicy(d.UpdateConfig)
 	d.RollbackConfig = sanitizePolicy(d.RollbackConfig)
-	d.UpdateMessage = maskCredentials(text(d.UpdateMessage, maxTextLen))
 	return d
 }
 

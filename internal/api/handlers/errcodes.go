@@ -37,6 +37,7 @@ var errorCodeList = []struct{ msg, code string }{ //nolint:gosec // G101: error 
 	{"cluster is required", "cluster_required"},
 	{"plan_hash from the preview is required", "swarm_plan_hash_required"},
 	{"invalid stack name", "stack_name_invalid"},
+	{"invalid service name", "swarm_service_name_invalid"},
 	{"check stack name failed", "stack_name_check_failed"},
 	{"no service of the stack can be adopted", "swarm_adopt_nothing"},
 	{"the services were marked as Dockmesh's but writing the stack files failed; adopt it again", "swarm_adopt_files_failed"},

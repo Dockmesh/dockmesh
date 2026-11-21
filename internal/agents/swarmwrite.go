@@ -110,6 +110,10 @@ func refuse(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrSwarmWriteRefused, fmt.Sprintf(format, args...))
 }
 
+// ValidObjectName reports whether s is a Swarm object name the write
+// frames accept.
+func ValidObjectName(s string) bool { return swarmObjName.MatchString(s) }
+
 // ValidStackName reports whether s is a stack name the write frames accept.
 func ValidStackName(s string) bool { return len(s) <= 63 && swarmStackName.MatchString(s) }
 

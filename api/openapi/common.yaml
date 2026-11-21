@@ -22,7 +22,12 @@ components:
               target_port: {type: integer}
               published_port: {type: integer}
               publish_mode: {type: string}
-        update_state: {type: string}
+        update_state:
+          type: string
+          description: Swarm's update state, e.g. `updating`, `paused`, `completed`, `rollback_started`, `rollback_paused`, `rollback_completed`.
+        update_message: {type: string, description: Swarm's reason for the update state.}
+        rollback: {type: boolean, description: The service has a previous spec Swarm can roll back to.}
+        spec_hash: {type: string, description: The `dockmesh.spec-hash` label of a service Dockmesh deployed or adopted.}
         networks:
           type: array
           description: Ids (or names, as the spec gives them) of the networks the service's tasks attach to, ingress included.

@@ -135,6 +135,7 @@ func newSwarmDeployEnv(t *testing.T) *swarmDeployEnv {
 	e.h.Migrations = migration.NewService(e.db, host.NewFixedRegistry(), mgr, e.h.Deployments)
 	fake := &fakeSwarm{applied: true}
 	e.h.SwarmOps = fake
+	e.h.swarmNoGrace = true
 	e.router.Group(func(r chi.Router) {
 		r.Use(middleware.NewAuth(e.h.Auth))
 		r.Use(e.h.StackScope)
