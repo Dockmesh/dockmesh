@@ -405,7 +405,7 @@ func Remove(ctx context.Context, cli API, req agents.SwarmRemoveReq) (agents.Swa
 		}
 		r := agents.SwarmWriteResult{Name: name, ID: s.ID, Action: agents.SwarmActionRemoved}
 		if _, err := cli.ServiceRemove(ctx, s.ID, client.ServiceRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
-			r.Action, r.Error = agents.SwarmActionFailed, err.Error()
+			r = failed(ctx, name, s.ID, err)
 		}
 		out.Services = append(out.Services, r)
 	}
@@ -417,7 +417,7 @@ func Remove(ctx context.Context, cli API, req agents.SwarmRemoveReq) (agents.Swa
 		}
 		r := agents.SwarmWriteResult{Name: name, ID: n.ID, Action: agents.SwarmActionRemoved}
 		if err := removeNetwork(ctx, cli, n.ID); err != nil {
-			r.Action, r.Error = agents.SwarmActionFailed, err.Error()
+			r = failed(ctx, name, n.ID, err)
 		}
 		out.Networks = append(out.Networks, r)
 	}
