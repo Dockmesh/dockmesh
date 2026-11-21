@@ -76,6 +76,10 @@ const (
 	// Swarm node key (SwarmProveResp); only sent to agents advertising
 	// CapSwarmProve. Answered on managers and workers.
 	FrameReqSwarmProve = "req.swarm.prove"
+	// The Swarm write frames are answered only by a manager and only sent
+	// to agents advertising CapSwarmWrite.
+	FrameReqSwarmStackDeploy = "req.swarm.stack.deploy" // SwarmDeployReq → SwarmDeployResp
+	FrameReqSwarmStackRemove = "req.swarm.stack.remove" // SwarmRemoveReq → SwarmRemoveResp
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
@@ -232,6 +236,9 @@ const (
 	// CapSwarmLogs, agent: serves the StreamKindSwarmServiceLogs stream
 	// kind on a manager.
 	CapSwarmLogs = "swarm.logs"
+	// CapSwarmWrite, agent: answers the Swarm stack deploy and remove
+	// frames on a manager.
+	CapSwarmWrite = "swarm.write"
 )
 
 // Stream control ops beyond the exec "resize".

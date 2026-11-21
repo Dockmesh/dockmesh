@@ -57,6 +57,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/swarmprove"
 	"github.com/dockmesh/dockmesh/internal/swarmread"
+	"github.com/dockmesh/dockmesh/internal/swarmwrite"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/gorilla/websocket"
 	"github.com/moby/moby/api/types/container"
@@ -1089,6 +1090,24 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		agents.FrameReqSwarmTasks, agents.FrameReqSwarmNetworks:
 		data, err := swarmread.Read(ctx, cli, f.Type, f.Payload)
 		respond(conn, f.ID, data, err)
+
+	case agents.FrameReqSwarmStackDeploy:
+		var req agents.SwarmDeployReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrSwarmWriteRefused)
+			break
+		}
+		res, err := swarmwrite.Deploy(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqSwarmStackRemove:
+		var req agents.SwarmRemoveReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrSwarmWriteRefused)
+			break
+		}
+		res, err := swarmwrite.Remove(ctx, cli, req)
+		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqSwarmProve:
 		var req agents.SwarmProveReq
