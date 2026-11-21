@@ -40,6 +40,10 @@ func serviceWarnings(svc types.ServiceConfig, project *types.Project) []Warning 
 			}
 			vol := project.Volumes[v.Source]
 			switch {
+			case bindDeviceOK(vol):
+				dev, _ := bindDevice(vol)
+				add(key, "Bind mount of "+dev+" (volume "+v.Source+"): the path must exist on every node the service can run on, Swarm does not create it, "+
+					"and each node has its own content.")
 			case bool(vol.External):
 				add(key, "External volume "+v.Source+" is looked up on the node each task runs on; it has to exist there.")
 			case (vol.Driver == "" || vol.Driver == "local") && len(vol.DriverOpts) == 0:
@@ -54,6 +58,11 @@ func serviceWarnings(svc types.ServiceConfig, project *types.Project) []Warning 
 		}
 	}
 	return out
+}
+
+func bindDeviceOK(v types.VolumeConfig) bool {
+	_, ok := bindDevice(v)
+	return ok
 }
 
 // networkWarnings lists the networks whose settings cost something on a

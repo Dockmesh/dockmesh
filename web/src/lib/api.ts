@@ -597,6 +597,26 @@ export interface StackDependencies {
   dependents: string[];
 }
 
+export interface SwarmPreviewFinding {
+  service?: string;
+  key: string;
+  message: string;
+  hint?: string;
+}
+
+export interface SwarmPreview {
+  stack: string;
+  cluster_id: string;
+  environment?: string;
+  deployable: boolean;
+  refusals: SwarmPreviewFinding[];
+  warnings: SwarmPreviewFinding[];
+  services: Array<Record<string, unknown> & { Name?: string }>;
+  networks: Array<Record<string, unknown> & { Name?: string }>;
+  external_networks: string[];
+  modified_outside: string[];
+}
+
 // Resources that a stack delete would touch (networks / volumes / images).
 // External volumes and images still used by other projects are already
 // filtered out of the plan.
@@ -2182,6 +2202,8 @@ export const api = {
     },
     cleanupPreview: (name: string) =>
       request<StackCleanupPlan>(`/stacks/${encodeURIComponent(name)}/cleanup-preview`),
+    swarmPreview: (name: string, cluster: string) =>
+      request<SwarmPreview>(`/stacks/${encodeURIComponent(name)}/swarm-preview?cluster=${encodeURIComponent(cluster)}`),
     // Recovery — when compose.yaml is missing/empty but containers
     // are still running with the project label. Reconstructs the
     // compose from inspect data, returns warnings.

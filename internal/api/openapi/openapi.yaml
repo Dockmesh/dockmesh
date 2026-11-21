@@ -8225,6 +8225,55 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/swarm-preview:
+    get:
+      operationId: stacks.swarm_preview
+      tags: [stacks]
+      summary: Preview a deploy of a stack to a Swarm cluster
+      description: |
+        Converts the stack's compose file (with the active or the given
+        environment override) into the Swarm service and network specs a
+        deploy to the cluster would send, and lists what it refuses and
+        warns about. Nothing is written to the cluster. A preview with
+        refusals is not deployable. Keys the converter does not map are
+        refused unless they are known to be harmless, in which case they are
+        listed as warnings.
+
+        The specs contain the stack's env values in plaintext, so the caller
+        needs `stacks.deploy` on the stack on that cluster and the right to
+        read the stack's env where it is deployed now.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: cluster
+          in: query
+          required: true
+          description: Id of the cluster the deploy would target.
+          schema: {type: string}
+        - name: environment
+          in: query
+          required: false
+          description: Environment override to merge; defaults to the stack's active environment.
+          schema: {type: string}
+      responses:
+        "200":
+          description: Preview.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmPreview"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The compose file could not be loaded.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Clusters are not available.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /stacks/{name}/deploy:
     post:
       operationId: stacks.deploy
@@ -12880,6 +12929,54 @@ components:
       properties:
         path: {type: string, description: Relative to the stack directory.}
         reason: {type: string}
+    SwarmPreview:
+      type: object
+      required: [stack, cluster_id, deployable, refusals, warnings, services, networks, external_networks, modified_outside]
+      properties:
+        stack: {type: string}
+        cluster_id: {type: string}
+        environment:
+          type: string
+          description: Environment override that was merged; absent for the base file.
+        deployable:
+          type: boolean
+          description: True when there are no refusals.
+        refusals:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        warnings:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        services:
+          type: array
+          description: Docker Engine `ServiceSpec` objects, one per service; empty when the file could not be converted.
+          items: {type: object, additionalProperties: true}
+        networks:
+          type: array
+          description: Docker Engine network create requests for the networks the stack creates.
+          items: {type: object, additionalProperties: true}
+        external_networks:
+          type: array
+          description: Networks declared external that must exist on the cluster.
+          items: {type: string}
+        modified_outside:
+          type: array
+          description: Stack files changed outside Dockmesh since they were last confirmed.
+          items: {type: string}
+    SwarmPreviewFinding:
+      type: object
+      required: [key, message]
+      properties:
+        service:
+          type: string
+          description: Service the key belongs to; absent for top-level keys.
+        key:
+          type: string
+          description: Compose path of the key, e.g. `privileged` or `networks.back`.
+        message: {type: string}
+        hint:
+          type: string
+          description: The key that does this on a Swarm, when there is one.
     StackCleanupPlan:
       type: object
       description: |

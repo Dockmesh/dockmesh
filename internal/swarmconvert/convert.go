@@ -10,6 +10,7 @@ package swarmconvert
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -35,6 +36,8 @@ const defaultNetwork = "default"
 // stackName is the stacks manager's name rule. Names without `_` keep
 // `<stack>_<key>` from one stack apart from another stack's names.
 var stackName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+var errNoImage = errors.New("no image")
 
 // Result is the converted stack.
 type Result struct {
@@ -145,7 +148,7 @@ func scoped(stack, name string) string { return stack + "_" + name }
 
 func convertService(stack string, svc types.ServiceConfig, project *types.Project) (swarm.ServiceSpec, error) {
 	if svc.Image == "" {
-		return swarm.ServiceSpec{}, fmt.Errorf("no image")
+		return swarm.ServiceSpec{}, errNoImage
 	}
 	labels := map[string]string{}
 	if svc.Deploy != nil {
@@ -202,6 +205,14 @@ func convertService(stack string, svc types.ServiceConfig, project *types.Projec
 	if err != nil {
 		return swarm.ServiceSpec{}, err
 	}
+	secrets, err := convertSecrets(svc, project.Secrets)
+	if err != nil {
+		return swarm.ServiceSpec{}, err
+	}
+	configs, err := convertConfigs(svc, project.Configs)
+	if err != nil {
+		return swarm.ServiceSpec{}, err
+	}
 	return swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: scoped(stack, svc.Name), Labels: labels},
 		TaskTemplate: swarm.TaskSpec{
@@ -213,6 +224,8 @@ func convertService(stack string, svc types.ServiceConfig, project *types.Projec
 				Env:         convertEnvironment(svc.Environment),
 				Healthcheck: healthcheck,
 				Mounts:      mounts,
+				Secrets:     secrets,
+				Configs:     configs,
 				Privileges:  &swarm.Privileges{},
 			},
 			Resources:     resources,
@@ -311,7 +324,9 @@ func convertEndpoint(ports []types.ServicePortConfig) (*swarm.EndpointSpec, erro
 // down. Every other key that is set is reported as not converted.
 var serviceKeys = keyTable{
 	converted: set(
-		"image", "environment", "command", "entrypoint", "labels", "healthcheck",
+		"image", "environment", "env_file", "command", "entrypoint", "labels", "healthcheck",
+		"secrets.source", "secrets.target", "secrets.uid", "secrets.gid", "secrets.mode",
+		"configs.source", "configs.target", "configs.uid", "configs.gid", "configs.mode",
 		"ports.mode", "ports.target", "ports.published", "ports.protocol",
 		"deploy.replicas", "deploy.labels", "deploy.restart_policy", "deploy.mode", "deploy.endpoint_mode",
 		"deploy.placement.constraints", "deploy.placement.preferences", "deploy.placement.max_replicas_per_node",
@@ -331,6 +346,7 @@ var serviceKeys = keyTable{
 		"ports", "deploy", "deploy.placement", "deploy.update_config", "deploy.rollback_config",
 		"deploy.resources", "deploy.resources.limits", "deploy.resources.reservations",
 		"volumes", "volumes.bind", "volumes.volume", "volumes.tmpfs", "volumes.image",
+		"secrets", "configs",
 	),
 	// Service networks are keyed by network name; the walk goes through
 	// the names to the settings of each attachment.
@@ -481,10 +497,14 @@ func projectNotConverted(project *types.Project) ([]NotConverted, error) {
 		out = append(out, left...)
 	}
 	for _, name := range sortedKeys(project.Secrets) {
-		out = append(out, NotConverted{Key: "secrets." + name})
+		if !project.Secrets[name].External {
+			out = append(out, NotConverted{Key: "secrets." + name})
+		}
 	}
 	for _, name := range sortedKeys(project.Configs) {
-		out = append(out, NotConverted{Key: "configs." + name})
+		if !project.Configs[name].External {
+			out = append(out, NotConverted{Key: "configs." + name})
+		}
 	}
 	for _, name := range sortedKeys(project.Jobs) {
 		out = append(out, NotConverted{Key: "jobs." + name})

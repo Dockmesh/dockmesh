@@ -148,6 +148,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/templates/{id}", rbac.PermTemplatesView},
 	{"GET", "/api/v1/templates/{id}/export", rbac.PermTemplatesView},
 	{"POST", "/api/v1/stacks/{name}/deploy", rbac.PermStacksDeploy},
+	{"GET", "/api/v1/stacks/{name}/swarm-preview", rbac.PermStacksDeploy},
 	{"GET", "/api/v1/stacks/{name}/scale", rbac.PermStacksDeploy},
 	{"GET", "/api/v1/stacks/{name}/services/{service}/scale", rbac.PermStacksDeploy},
 	{"POST", "/api/v1/stacks/{name}/services/{service}/scale", rbac.PermStacksDeploy},
