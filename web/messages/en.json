@@ -6803,5 +6803,10 @@
   "cl_adopt_done": "Stack {name} adopted",
   "cl_adopt_open": "Open stack",
   "cl_adopt_failed": "Not every service could be marked; no stack was created. Adopting again is safe.",
-  "cl_adopt_visible": "Commands, labels and healthchecks are written to the compose file, which everyone with Stacks: View on the stack can read. Environment values and driver options go to the encrypted environment file."
+  "cl_adopt_visible": "Commands, labels and healthchecks are written to the compose file, which everyone with Stacks: View on the stack can read. Environment values and driver options go to the encrypted environment file.",
+  "apierr_stack_name_invalid": "Invalid stack name",
+  "apierr_stack_name_check_failed": "Checking the stack name failed",
+  "apierr_swarm_adopt_nothing": "No service of the stack can be adopted",
+  "apierr_swarm_adopt_files_failed": "The services were marked as Dockmesh's, but writing the stack files failed; adopt the stack again",
+  "apierr_swarm_adopt_record_failed": "Recording the stack's cluster failed; adopt the stack again"
 }

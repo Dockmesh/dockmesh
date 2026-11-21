@@ -6803,5 +6803,10 @@
   "cl_adopt_done": "Stack {name} übernommen",
   "cl_adopt_open": "Stack öffnen",
   "cl_adopt_failed": "Nicht jeder Service konnte markiert werden; es wurde kein Stack angelegt. Erneutes Übernehmen ist sicher.",
-  "cl_adopt_visible": "Befehle, Labels und Healthchecks stehen in der Compose-Datei, die jeder mit Stacks: Ansehen auf dem Stack lesen kann. Environment-Werte und Treiber-Optionen kommen in die verschlüsselte Environment-Datei."
+  "cl_adopt_visible": "Befehle, Labels und Healthchecks stehen in der Compose-Datei, die jeder mit Stacks: Ansehen auf dem Stack lesen kann. Environment-Werte und Treiber-Optionen kommen in die verschlüsselte Environment-Datei.",
+  "apierr_stack_name_invalid": "Ungültiger Stack-Name",
+  "apierr_stack_name_check_failed": "Prüfen des Stack-Namens fehlgeschlagen",
+  "apierr_swarm_adopt_nothing": "Kein Service des Stacks kann übernommen werden",
+  "apierr_swarm_adopt_files_failed": "Die Services wurden als Dockmesh-Services markiert, aber das Schreiben der Stack-Dateien schlug fehl; den Stack erneut übernehmen",
+  "apierr_swarm_adopt_record_failed": "Speichern des Clusters des Stacks fehlgeschlagen; den Stack erneut übernehmen"
 }
