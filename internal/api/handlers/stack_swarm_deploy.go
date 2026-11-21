@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -32,7 +33,9 @@ import (
 // swarmOps is the part of the host registry the Swarm executor uses.
 type swarmOps interface {
 	SwarmDeploy(ctx context.Context, hostID string, req agents.SwarmDeployReq) (agents.SwarmDeployResp, error)
+	SwarmRemove(ctx context.Context, hostID string, req agents.SwarmRemoveReq) (agents.SwarmRemoveResp, error)
 	SwarmServices(ctx context.Context, hostID string) (agents.SwarmServicesResp, error)
+	SwarmNetworks(ctx context.Context, hostID string) (agents.SwarmNetworksResp, error)
 	RegistryAuthFor(ctx context.Context, hostID string, images []string) (map[string]string, error)
 }
 
@@ -50,7 +53,6 @@ type swarmBuild struct {
 	env  string
 	plan *swarmconvert.Plan
 	req  agents.SwarmDeployReq
-	hash string
 }
 
 // buildSwarm converts snap the way a deploy to a cluster sends it: the
@@ -133,18 +135,75 @@ func (h *Handlers) buildSwarm(ctx context.Context, name string, snap *stacks.Sna
 		b.plan.Refusals = append(b.plan.Refusals, swarmconvert.Finding{Key: "spec", Message: err.Error()})
 		return b, nil
 	}
-	b.hash = planHash(b.req)
 	return b, nil
 }
 
-// planHash names what a deploy writes; the deploy only runs when the
-// caller confirms the hash its preview showed.
-func planHash(req agents.SwarmDeployReq) string {
+// swarmPrune lists what the cluster runs for a stack that its file no
+// longer has: services Dockmesh deployed and networks it created.
+type swarmPrune struct {
+	Services []string `json:"services"`
+	Networks []string `json:"networks"`
+}
+
+func (p swarmPrune) empty() bool { return len(p.Services) == 0 && len(p.Networks) == 0 }
+
+var errPruneUnknown = errors.New("the cluster's services and networks can't be read, so what a deploy would leave behind is unknown")
+
+// pruneCandidates reads the cluster for what a deploy of req would leave
+// behind. Only objects carrying Dockmesh's marks for the stack are listed;
+// the agent checks the marks again before it removes anything.
+func (h *Handlers) pruneCandidates(ctx context.Context, clusterID string, req agents.SwarmDeployReq) (swarmPrune, error) {
+	out := swarmPrune{Services: []string{}, Networks: []string{}}
+	reader, err := h.Clusters.ReadHost(ctx, clusterID)
+	if err != nil {
+		return out, fmt.Errorf("%w: %w", errPruneUnknown, err)
+	}
+	svcs, err := h.swarm().SwarmServices(ctx, reader)
+	if err != nil {
+		return out, fmt.Errorf("%w: %w", errPruneUnknown, err)
+	}
+	nets, err := h.swarm().SwarmNetworks(ctx, reader)
+	if err != nil {
+		return out, fmt.Errorf("%w: %w", errPruneUnknown, err)
+	}
+	if svcs.Truncated || nets.Truncated {
+		return out, errPruneUnknown
+	}
+	keep := map[string]bool{}
+	for _, s := range req.Services {
+		keep[s.Spec.Name] = true
+	}
+	for _, n := range req.Networks {
+		keep[n.Name] = true
+	}
+	for _, n := range req.ExternalNetworks {
+		keep[n] = true
+	}
+	for _, s := range svcs.Services {
+		if s.Stack == req.Stack && s.SpecHash != "" && !keep[s.Name] {
+			out.Services = append(out.Services, s.Name)
+		}
+	}
+	for _, n := range nets.Networks {
+		if n.Stack == req.Stack && n.Dockmesh && !keep[n.Name] {
+			out.Networks = append(out.Networks, n.Name)
+		}
+	}
+	slices.Sort(out.Services)
+	slices.Sort(out.Networks)
+	return out, nil
+}
+
+// planHash names what a deploy writes and what it would leave behind or
+// prune; the deploy only runs when the caller confirms the hash its
+// preview showed.
+func planHash(req agents.SwarmDeployReq, prune swarmPrune) string {
 	b, err := json.Marshal(struct {
 		Networks []network.CreateRequest    `json:"networks"`
 		External []string                   `json:"external"`
 		Services []agents.SwarmServiceWrite `json:"services"`
-	}{req.Networks, req.ExternalNetworks, req.Services})
+		Prune    swarmPrune                 `json:"prune"`
+	}{req.Networks, req.ExternalNetworks, req.Services, prune})
 	if err != nil {
 		return ""
 	}
@@ -165,6 +224,9 @@ func writeSwarmBuildError(w http.ResponseWriter, err error) {
 
 type swarmDeployRequest struct {
 	PlanHash string `json:"plan_hash"`
+	// Prune removes what the preview listed under prune, once every
+	// write of the deploy was applied.
+	Prune bool `json:"prune,omitempty"`
 }
 
 type swarmServiceOutcome struct {
@@ -189,6 +251,11 @@ type swarmDeployResponse struct {
 	Networks   []agents.SwarmWriteResult `json:"networks"`
 	Services   []swarmServiceOutcome     `json:"services"`
 	Warnings   []swarmconvert.Finding    `json:"warnings"`
+	// Pruned is what was removed with prune; NotPruned what the cluster
+	// still runs that the file no longer has.
+	Pruned     *agents.SwarmRemoveResp `json:"pruned,omitempty"`
+	NotPruned  *swarmPrune             `json:"not_pruned,omitempty"`
+	PruneError string                  `json:"prune_error,omitempty"`
 }
 
 const (
@@ -267,7 +334,13 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if b.hash != body.PlanHash {
+	prune, err := h.pruneCandidates(r.Context(), id, b.req)
+	if err != nil {
+		slog.Info("swarm deploy: prune candidates", "stack", name, "err", err)
+		writeError(w, http.StatusServiceUnavailable, errPruneUnknown.Error())
+		return
+	}
+	if planHash(b.req, prune) != body.PlanHash {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "the stack or its environment changed since the preview; preview it again", "code": "swarm_plan_changed",
 		})
@@ -339,6 +412,17 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		out.Outcome = swarmOutcomeApplied
 	}
 	h.readBack(wctx, id, b.req, &out)
+	if !prune.empty() {
+		switch {
+		case !body.Prune:
+			out.NotPruned = &prune
+		case out.Outcome != swarmOutcomeApplied:
+			out.NotPruned = &prune
+			out.PruneError = "nothing was pruned because the deploy did not apply completely"
+		default:
+			h.pruneSwarm(wctx, r, name, id, manager, prune, &out)
+		}
+	}
 
 	if err := h.Deployments.SetCluster(wctx, name, id, "deployed"); err != nil {
 		slog.Warn("set stack deployment", "stack", name, "cluster", id, "err", err)
@@ -354,11 +438,36 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		"services": len(out.Services), "cluster": id, "manager": manager, "outcome": out.Outcome,
 	})
 	status := http.StatusOK
-	if out.Outcome != swarmOutcomeApplied {
+	if out.Outcome != swarmOutcomeApplied || out.PruneError != "" {
 		status = http.StatusBadGateway
 	}
 	out.Services = nonNil(out.Services)
 	writeJSON(w, status, out)
+}
+
+// pruneSwarm removes what the confirmed plan listed for pruning through the
+// manager that applied the deploy.
+func (h *Handlers) pruneSwarm(ctx context.Context, r *http.Request, stack, clusterID, manager string, prune swarmPrune, out *swarmDeployResponse) {
+	release, err := h.StackLocks.TryLock(stacklock.HostKey(manager, stack), stacklock.OpDeploy)
+	if err != nil {
+		out.NotPruned, out.PruneError = &prune, err.Error()
+		return
+	}
+	defer release()
+	res, err := h.swarm().SwarmRemove(ctx, manager, agents.SwarmRemoveReq{Stack: stack, Services: prune.Services, Networks: prune.Networks})
+	if err != nil {
+		out.NotPruned, out.PruneError = &prune, err.Error()
+		return
+	}
+	out.Pruned = &res
+	for _, x := range append(slices.Clone(res.Services), res.Networks...) {
+		if x.Action == agents.SwarmActionFailed || x.Action == agents.SwarmActionUnknown {
+			out.PruneError = x.Name + ": " + x.Error
+			break
+		}
+	}
+	h.auditSwarmWrites(r, stack, clusterID, manager, res.Services, "service")
+	h.auditSwarmWrites(r, stack, clusterID, manager, res.Networks, "network")
 }
 
 // writeNotSent reports whether err proves the manager never got the write:
