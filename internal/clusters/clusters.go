@@ -546,7 +546,8 @@ func (s *Service) snapshot(ctx context.Context) (map[string]hostState, error) {
 // refreshes its memberships from the origin's node list. While the origin
 // can't be asked, the reader's list only adds members, so a manager that
 // took over can't unlink or demote anyone; with no manager answering the
-// last known members stay.
+// last known members stay, and a pending root is checked through the
+// verified managers (see checkPendingRoot).
 func (s *Service) Reconcile(ctx context.Context) error {
 	clusters, err := s.List(ctx)
 	if err != nil || len(clusters) == 0 {
@@ -561,6 +562,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		nodes := list.Nodes
 		s.record(c.ID, state, nodes, time.Now())
 		if nodes == nil {
+			if c.Trust.Pending {
+				if err := s.checkPendingRoot(ctx, c, snap); err != nil {
+					return fmt.Errorf("cluster %s: %w", c.Name, err)
+				}
+			}
 			continue
 		}
 		src, srcNodes, addOnly := by, nodes, false

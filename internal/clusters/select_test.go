@@ -3,11 +3,13 @@ package clusters
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/audit"
 )
 
 func setOffline(f *fakeHosts, host string, off bool) {
@@ -232,5 +234,191 @@ func TestRefusedOriginCantDemote(t *testing.T) {
 	c, _ := s.Get(context.Background(), swarmID)
 	if roles(c)["m2"] != "n2/manager" {
 		t.Fatalf("members %v", roles(c))
+	}
+}
+
+// threeManagers is provedLab with a third manager m3 (node n5).
+func threeManagers(t *testing.T) (*fakeHosts, *swarmCA) {
+	f, ca := provedLab(t)
+	nodes := append(slices.Clone(f.nodes["m1"]), agents.SwarmNode{ID: "n5", Role: RoleManager})
+	f.nodes = map[string][]agents.SwarmNode{"m1": nodes, "m2": nodes, "m3": nodes}
+	f.infos["m3"] = swarmInfo(swarmID, "n5", RoleManager)
+	f.roots["m3"] = ca.pem
+	f.provers["m3"] = ca.issue(t, "n5", swarmID, RoleManager, time.Now().Add(90*24*time.Hour)).prover(t)
+	return f, ca
+}
+
+type rotationAudit struct{ agreedBy [][]string }
+
+func (a *rotationAudit) Write(_ context.Context, _, action, _ string, details any) {
+	d, _ := details.(map[string]any)
+	if action == audit.ActionClusterTrustRoot && d["change"] == "rotated" {
+		got, _ := d["agreed_by"].([]string)
+		a.agreedBy = append(a.agreedBy, got)
+	}
+}
+
+// A rotation is accepted through the verified managers while the origin is
+// away, still only when two of them agree, and none of them serves reads
+// while the root is pending.
+func TestRotationWithoutOrigin(t *testing.T) {
+	ctx := context.Background()
+	later := time.Now().Add(90 * 24 * time.Hour)
+	cases := []struct {
+		name string
+		// origin is "down" (agent offline) or "refused" (its proof fails).
+		origin   string
+		m3Proves bool
+		// reporting are the managers whose node list reports the new root.
+		reporting []string
+		// m2Lies: m2 reports another root than the pending one.
+		m2Lies   string
+		accepted bool
+	}{
+		{"origin down, m2 and m3 agree", "down", true, []string{"m2", "m3"}, "", true},
+		{"origin refused, m2 and m3 agree", "refused", true, []string{"m2", "m3"}, "", true},
+		{"origin down, only m2 reports it", "down", true, []string{"m2"}, "", false},
+		{"origin down, m3 unverified", "down", false, []string{"m2", "m3"}, "", false},
+		{"origin down, m2 reports the old root", "down", true, []string{"m3"}, "old", false},
+		{"origin down, m2 reports a third root", "down", true, []string{"m3"}, "third", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, ca := threeManagers(t)
+			if !tc.m3Proves {
+				delete(f.provers, "m3")
+			}
+			if tc.origin == "refused" {
+				f.provers["m1"] = ca.issue(t, "n9", swarmID, RoleManager, later).prover(t)
+			}
+			s := newService(t, f)
+			s.SetServerID("server-1")
+			rec := &rotationAudit{}
+			s.SetAudit(rec)
+			if _, err := s.Create(ctx, "m1", "", "u1"); err != nil {
+				t.Fatal(err)
+			}
+			// The root changes on the host reads go through first, so it is
+			// pending before the origin goes away.
+			next := newSwarmCA(t)
+			first := "m1"
+			if tc.origin == "refused" {
+				first = "m2"
+			}
+			f.mu.Lock()
+			f.roots[first] = next.pem
+			f.mu.Unlock()
+			if err := s.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if c, _ := s.Get(ctx, swarmID); !c.Trust.Pending {
+				t.Fatalf("not pending: %+v", c.Trust)
+			}
+			if tc.origin == "down" {
+				setOffline(f, "m1", true)
+			}
+			w1Proofs := f.provedCount("w1")
+			f.mu.Lock()
+			for _, h := range tc.reporting {
+				f.roots[h] = next.pem
+			}
+			switch tc.m2Lies {
+			case "old":
+				f.roots["m2"] = ca.pem
+			case "third":
+				f.roots["m2"] = newSwarmCA(t).pem
+			}
+			f.provers["w1"] = next.issue(t, "n3", swarmID, RoleWorker, later).prover(t)
+			for h, n := range map[string]string{"m1": "n1", "m2": "n2", "m3": "n5"} {
+				if f.provers[h] != nil && (tc.origin != "refused" || h != "m1") {
+					f.provers[h] = next.issue(t, n, swarmID, RoleManager, later).prover(t)
+				}
+			}
+			f.mu.Unlock()
+			var before Trust
+			for i := range 2 {
+				if err := s.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				c, _ := s.Get(ctx, swarmID)
+				if i == 1 && c.Trust.Pending && !reflect.DeepEqual(c.Trust, before) {
+					t.Fatalf("second reconcile changed the trust state: %+v, was %+v", c.Trust, before)
+				}
+				before = c.Trust
+			}
+			if c, _ := s.Get(ctx, swarmID); c.Trust.Pending {
+				if c.trustPending != canonicalRoot(next.pem) {
+					t.Fatal("pending root replaced")
+				}
+				if got, err := s.ReadHost(ctx, swarmID); !errors.Is(err, ErrUnreadable) {
+					t.Fatalf("read through %q while the root is pending (%v)", got, err)
+				}
+				for _, h := range s.readers(c, nil) {
+					if h != c.OriginHost {
+						t.Fatalf("reader %s while the root is pending", h)
+					}
+				}
+			}
+			c, _ := s.Get(ctx, swarmID)
+			if got := !c.Trust.Pending && c.trustRoot == canonicalRoot(next.pem); got != tc.accepted {
+				t.Fatalf("accepted %v, want %v: %+v", got, tc.accepted, c.Trust)
+			}
+			if !tc.accepted {
+				if !c.Trust.Pending || c.trustPending != canonicalRoot(next.pem) {
+					t.Fatalf("pending root lost: %+v", c.Trust)
+				}
+				if len(rec.agreedBy) != 0 {
+					t.Fatalf("rotation audited: %v", rec.agreedBy)
+				}
+				if c.trustRoot != canonicalRoot(ca.pem) {
+					t.Fatal("pinned root changed")
+				}
+				return
+			}
+			if len(rec.agreedBy) != 1 || !slices.Equal(rec.agreedBy[0], []string{"m2", "m3"}) {
+				t.Fatalf("agreed by %v", rec.agreedBy)
+			}
+			if f.provedCount("w1") == w1Proofs {
+				t.Fatal("w1 not proved again against the new root")
+			}
+			if got := proofs(c); got["m2"] != ProofVerified || got["m3"] != ProofVerified || got["w1"] != ProofVerified {
+				t.Fatalf("after rotation %v", got)
+			}
+			if err := s.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := s.ReadHost(ctx, swarmID); err != nil || (got != "m2" && got != "m3") {
+				t.Fatalf("read host after rotation %q, %v", got, err)
+			}
+		})
+	}
+}
+
+// A single-manager Swarm still waits for an admin when its manager is
+// away: there is no second manager to agree.
+func TestSingleManagerRotationNeedsAdminWithoutOrigin(t *testing.T) {
+	ctx := context.Background()
+	f, _ := provedLab(t)
+	f.nodes = map[string][]agents.SwarmNode{"m1": {{ID: "n1", Role: RoleManager, Leader: true}, {ID: "n3", Role: RoleWorker}}}
+	delete(f.infos, "m2")
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	if _, err := s.Create(ctx, "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	next := newSwarmCA(t)
+	f.mu.Lock()
+	f.roots = map[string]string{"m1": next.pem}
+	f.mu.Unlock()
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setOffline(f, "m1", true)
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.Get(ctx, swarmID)
+	if !c.Trust.Pending || !c.Trust.Confirmable || c.trustRoot == canonicalRoot(next.pem) {
+		t.Fatalf("trust %+v", c.Trust)
 	}
 }
