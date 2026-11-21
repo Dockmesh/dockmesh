@@ -87,6 +87,12 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "deploy history store not configured")
 		return
 	}
+	targetRelease, err := h.StackLocks.TryLock(stacklock.TargetKey(name), stacklock.OpDeploy)
+	if err != nil {
+		writeStackBusy(w, err)
+		return
+	}
+	defer targetRelease()
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
 		writeStackTargetError(w, err)
