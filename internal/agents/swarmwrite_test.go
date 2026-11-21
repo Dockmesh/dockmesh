@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/network"
@@ -22,14 +23,18 @@ func TestServiceListCarriesSpecHash(t *testing.T) {
 
 func TestNetworkListMarksDockmeshNetworks(t *testing.T) {
 	nw := func(name string, labels map[string]string) network.Summary {
-		return network.Summary{Network: network.Network{Name: name, ID: "id-" + name, Scope: "swarm", Labels: labels}}
+		return network.Summary{Network: network.Network{Name: name, ID: strings.ReplaceAll(name, "_", ""), Scope: "swarm", Labels: labels}}
 	}
 	got := SwarmNetworksFrom([]network.Summary{
 		nw("web_default", map[string]string{LabelStackNamespace: "web", LabelDockmeshStack: "web"}),
 		nw("web_cli", map[string]string{LabelStackNamespace: "web"}),
 		nw("web_odd", map[string]string{LabelStackNamespace: "web", LabelDockmeshStack: "api"}),
 	}).Networks
-	if len(got) != 3 || !got[0].Dockmesh || got[1].Dockmesh || got[2].Dockmesh {
+	mark := map[string]bool{}
+	for _, n := range got {
+		mark[n.Name] = n.Dockmesh
+	}
+	if len(got) != 3 || !mark["web_default"] || mark["web_cli"] || mark["web_odd"] {
 		t.Fatalf("networks %+v", got)
 	}
 }
