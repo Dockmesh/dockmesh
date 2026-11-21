@@ -207,6 +207,11 @@ func (h *Handlers) CheckAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res := rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID), StackName: req.Stack}
+	if req.Stack != "" {
+		if sr := h.stackTargetRes(r.Context(), req.Stack); sr.ClusterID != "" {
+			res = sr
+		}
+	}
 	if req.HostTag != "" {
 		// Any host with the tag: no host id an assignment could name.
 		res = rbac.Resource{HostID: "tag:" + req.HostTag, HostTags: []string{req.HostTag}}

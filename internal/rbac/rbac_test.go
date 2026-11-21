@@ -281,3 +281,43 @@ func TestScopeValidate(t *testing.T) {
 		}
 	}
 }
+
+// A stack scope's host may name the Swarm cluster the stack is deployed
+// to; a host scope still never reaches a stack on a cluster.
+func TestStackScopeOnClusterTarget(t *testing.T) {
+	deploy := PermsFor(Levels{"stacks": "deploy"}, nil)
+	onCluster := Resource{ClusterID: "c1", StackName: "web"}
+	cases := []struct {
+		name  string
+		scope Scope
+		res   Resource
+		want  bool
+	}{
+		{"stack on its cluster", Scope{Type: ScopeStack, Host: "c1", Value: "web"}, onCluster, true},
+		{"stack without target", Scope{Type: ScopeStack, Value: "web"}, onCluster, true},
+		{"stack on another cluster", Scope{Type: ScopeStack, Host: "c2", Value: "web"}, onCluster, false},
+		{"other stack on the cluster", Scope{Type: ScopeStack, Host: "c1", Value: "db"}, onCluster, false},
+		{"cluster scope", Scope{Type: ScopeCluster, Host: "c1"}, onCluster, true},
+		{"host scope named like the cluster", Scope{Type: ScopeHost, Host: "c1"}, onCluster, false},
+		{"stack on host scope", Scope{Type: ScopeStack, Host: "m1", Value: "web"}, onCluster, false},
+		{"cluster-named stack scope on a host stack", Scope{Type: ScopeStack, Host: "c1", Value: "web"}, Resource{HostID: "m1", StackName: "web"}, false},
+		{"host stack", Scope{Type: ScopeStack, Host: "m1", Value: "web"}, Resource{HostID: "m1", StackName: "web"}, true},
+	}
+	for _, tc := range cases {
+		acc := &Access{Grants: []Grant{{Perms: deploy, Scopes: []Scope{tc.scope}}}}
+		if got := acc.AllowsOn(PermStacksDeploy, tc.res); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	c1 := Scope{Type: ScopeCluster, Host: "c1"}
+	noTags := func(string) []string { return nil }
+	if !ScopeContains(c1, Scope{Type: ScopeStack, Host: "c1", Value: "web"}, noTags) {
+		t.Error("a cluster scope must contain a stack scope on that cluster")
+	}
+	if ScopeContains(c1, Scope{Type: ScopeStack, Value: "web"}, noTags) {
+		t.Error("a cluster scope must not contain a stack scope without target")
+	}
+	if ScopeContains(c1, Scope{Type: ScopeStack, Host: "c2", Value: "web"}, noTags) {
+		t.Error("a cluster scope must not contain a stack scope on another cluster")
+	}
+}

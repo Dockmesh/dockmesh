@@ -247,6 +247,9 @@ func (s *Service) initiate(ctx context.Context, stackName, from, targetHostID, u
 	if dep == nil {
 		return nil, fmt.Errorf("stack %q has no deployment — deploy it first", stackName)
 	}
+	if dep.TargetKind == stacks.TargetCluster {
+		return nil, ErrSwarmStack
+	}
 	sourceHostID := dep.HostID
 	if from != "" && sourceHostID != from {
 		return nil, fmt.Errorf("stack %q runs on %s now, not on %s", stackName, sourceHostID, from)
@@ -930,6 +933,9 @@ func (s *Service) Preflight(ctx context.Context, stackName, targetHostID string)
 	}
 	if dep == nil {
 		return nil, fmt.Errorf("stack %q has no deployment", stackName)
+	}
+	if dep.TargetKind == stacks.TargetCluster {
+		return &PreflightResult{Checks: []PreflightCheck{{Name: "swarm", Status: CheckFail, Detail: ErrSwarmStack.Error()}}}, nil
 	}
 	m := &Migration{
 		ID:           "preflight",

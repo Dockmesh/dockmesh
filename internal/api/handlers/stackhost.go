@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -10,14 +11,31 @@ import (
 // pickStackHost is the host a request about one stack acts on: the host
 // named in ?host=, otherwise the stack's own host, otherwise local. Without
 // the fallback a call that leaves out ?host= would run an agent's stack on
-// the server.
+// the server. A stack deployed to a Swarm cluster has no host to act on:
+// stacks.ErrClusterTarget, which writeStackTargetError answers with 409.
 func (h *Handlers) pickStackHost(r *http.Request, name string) (host.Host, error) {
-	if r.URL.Query().Get("host") == "" && h.Hosts != nil {
-		if home := h.stackHost(r.Context(), name); home != "" {
-			return h.Hosts.Pick(home)
+	if h.Deployments != nil {
+		t, err := h.Deployments.TargetOf(r.Context(), name)
+		if err != nil {
+			return nil, err
+		}
+		if t.Kind == stacks.TargetCluster {
+			return nil, stacks.ErrClusterTarget
+		}
+		if r.URL.Query().Get("host") == "" && h.Hosts != nil && t.ID != "" {
+			return h.Hosts.Pick(t.ID)
 		}
 	}
 	return h.pickHost(r)
+}
+
+// writeStackTargetError answers a failed pickStackHost or HostOf.
+func writeStackTargetError(w http.ResponseWriter, err error) {
+	if errors.Is(err, stacks.ErrClusterTarget) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": "stack_on_cluster"})
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, err.Error())
 }
 
 // refuseOtherHost answers 409 when a deploy, stop, scale or rollback names

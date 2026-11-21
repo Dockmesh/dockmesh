@@ -89,7 +89,7 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	if h.refuseOtherHost(w, r, name, target) {

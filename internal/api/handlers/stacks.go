@@ -1183,7 +1183,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	if h.refuseOtherHost(w, r, name, target) {
@@ -1563,7 +1563,7 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	target, err := h.pickStackHost(r, name)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	if h.refuseOtherHost(w, r, name, target) {
@@ -1621,7 +1621,7 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStackTargetError(w, err)
 		return
 	}
 	// A stack that was never deployed runs nowhere. StackScope lets this

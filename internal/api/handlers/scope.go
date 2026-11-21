@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 	"github.com/moby/moby/api/types/container"
 )
@@ -285,11 +286,11 @@ func (h *Handlers) requireContainerWrite(w http.ResponseWriter, r *http.Request,
 // that host about a stack it can't see.
 func (h *Handlers) stackInvolvesHost(ctx context.Context, stack, hostID string) (bool, error) {
 	if h.Deployments != nil {
-		on, err := h.Deployments.HostOf(ctx, stack)
+		on, err := h.Deployments.TargetOf(ctx, stack)
 		if err != nil {
 			return false, err
 		}
-		if stacklock.Host(on) == stacklock.Host(hostID) {
+		if on.Kind != stacks.TargetCluster && stacklock.Host(on.ID) == stacklock.Host(hostID) {
 			return true, nil
 		}
 	}
@@ -339,18 +340,40 @@ func (h *Handlers) stackScopeReq(hostID, stackName string) rbac.Resource {
 	return rbac.Resource{HostID: hostID, StackName: stackName, HostTags: h.hostTags(hostID)}
 }
 
+// stackTargetReq builds the resource of a stack on target t: on its host,
+// or on its Swarm cluster, which no host scope covers.
+func (h *Handlers) stackTargetReq(t stacks.Target, stackName string) rbac.Resource {
+	if t.Kind == stacks.TargetCluster {
+		return rbac.Resource{ClusterID: t.ID, StackName: stackName}
+	}
+	return h.stackScopeReq(t.ID, stackName)
+}
+
+// stackTargetRes is the resource of stack name on the target TargetOf
+// resolves; a failed lookup leaves the stack without a target.
+func (h *Handlers) stackTargetRes(ctx context.Context, name string) rbac.Resource {
+	var t stacks.Target
+	if h.Deployments != nil {
+		if got, err := h.Deployments.TargetOf(ctx, name); err == nil {
+			t = got
+		}
+	}
+	return h.stackTargetReq(t, name)
+}
+
 // hostScopeReq builds the resource of a host.
 func (h *Handlers) hostScopeReq(hostID string) rbac.Resource {
 	return rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID)}
 }
 
 // StackScope resolves the stack of /stacks/{name}/... requests: deployed
-// stacks are checked on their deployment host, stacks that are not
-// deployed on the host they were created for. A stack with neither has no
-// host, which only assignments on everything or on that stack without a
-// host reach, for reads and writes alike: a host scope must not let anyone
-// rewrite or deploy a stack staged for another host. RequirePerm then
-// tests the route's permission on the resolved resource.
+// stacks are checked on their deployment target (a host or a Swarm
+// cluster), stacks that are not deployed on the host they were created
+// for. A stack with neither has no target, which only assignments on
+// everything or on that stack without a target reach, for reads and
+// writes alike: a host scope must not let anyone rewrite or deploy a stack
+// staged for another host. RequirePerm then tests the route's permission
+// on the resolved resource.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -359,17 +382,17 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		hostID, err := h.Deployments.HostOf(r.Context(), name)
+		target, err := h.Deployments.TargetOf(r.Context(), name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		res := h.stackScopeReq(hostID, name)
+		res := h.stackTargetReq(target, name)
 		if !middleware.AccessOf(r.Context()).Covers(res) {
 			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.callerIsAdmin(r) && h.projectHasOwnContainer(r.Context(), hostID, name) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.callerIsAdmin(r) && target.Kind != stacks.TargetCluster && h.projectHasOwnContainer(r.Context(), target.ID, name) {
 			h.denyPerm(w, r, rbac.PermSystemUpdate, "only an admin can change a stack that runs Dockmesh's own containers")
 			return
 		}
@@ -377,8 +400,8 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	})
 }
 
-// stackHost is the host scope checks use for stack name: its deployment
-// host, or the host it was created for. "" when it has neither.
+// stackHost is the host of stack name: its deployment host, or the host it
+// was created for. "" when it has neither or targets a Swarm cluster.
 func (h *Handlers) stackHost(ctx context.Context, name string) string {
 	if h.Deployments == nil {
 		return ""
@@ -399,11 +422,11 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 	}
 	out := make([]stackListEntry, 0, len(in))
 	for _, e := range in {
-		hostID := e.TargetHost
-		if e.Deployment != nil && e.Deployment.HostID != "" {
-			hostID = e.Deployment.HostID
+		target := stacks.HostTarget(e.TargetHost)
+		if e.Deployment != nil && e.Deployment.TargetID != "" {
+			target = e.Deployment.Target()
 		}
-		if h.allowedOn(r, h.stackScopeReq(hostID, e.Name)) {
+		if h.allowedOn(r, h.stackTargetReq(target, e.Name)) {
 			out = append(out, e)
 		}
 	}
@@ -476,10 +499,10 @@ func (h *Handlers) hostVisible(r *http.Request, id string) bool {
 }
 
 // stackRes is the resource of stack name: the one StackScope resolved for
-// this request, or the stack on the host stackHost names.
+// this request, or the stack on the target TargetOf names.
 func (h *Handlers) stackRes(r *http.Request, name string) rbac.Resource {
 	if res, ok := middleware.ResourceOf(r.Context()); ok && res.StackName == name {
 		return res
 	}
-	return h.stackScopeReq(h.stackHost(r.Context(), name), name)
+	return h.stackTargetRes(r.Context(), name)
 }
