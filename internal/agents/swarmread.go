@@ -133,16 +133,18 @@ type SwarmTask struct {
 
 // SwarmNetwork is a network with Swarm scope (overlay, ingress).
 type SwarmNetwork struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Driver     string    `json:"driver"`
-	Attachable bool      `json:"attachable,omitempty"`
-	Ingress    bool      `json:"ingress,omitempty"`
-	Internal   bool      `json:"internal,omitempty"`
-	Encrypted  bool      `json:"encrypted,omitempty"`
-	Subnets    []string  `json:"subnets,omitempty"`
-	Stack      string    `json:"stack,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Driver     string   `json:"driver"`
+	Attachable bool     `json:"attachable,omitempty"`
+	Ingress    bool     `json:"ingress,omitempty"`
+	Internal   bool     `json:"internal,omitempty"`
+	Encrypted  bool     `json:"encrypted,omitempty"`
+	Subnets    []string `json:"subnets,omitempty"`
+	Stack      string   `json:"stack,omitempty"`
+	// Dockmesh is set on networks Dockmesh created for Stack.
+	Dockmesh  bool      `json:"dockmesh,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SwarmTasksReq filters the task list to one service when ServiceID is set.
@@ -336,6 +338,7 @@ func SwarmNetworksFrom(list []network.Summary) SwarmNetworksResp {
 		sn := SwarmNetwork{
 			ID: n.ID, Name: n.Name, Driver: n.Driver, Attachable: n.Attachable,
 			Ingress: n.Ingress, Internal: n.Internal, Stack: n.Labels[LabelStackNamespace],
+			Dockmesh:  n.Labels[LabelDockmeshStack] != "" && n.Labels[LabelDockmeshStack] == n.Labels[LabelStackNamespace],
 			CreatedAt: n.Created,
 		}
 		_, sn.Encrypted = n.Options["encrypted"]
