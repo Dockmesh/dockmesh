@@ -22,10 +22,9 @@ type swarmPreviewResponse struct {
 	Deployable  bool   `json:"deployable"`
 	// PlanHash names what a deploy would write and prune; the deploy
 	// needs it as the confirmation. Empty when the stack is not
-	// deployable or the cluster can't be read.
+	// deployable.
 	PlanHash string `json:"plan_hash,omitempty"`
-	// Prune lists what the cluster runs for the stack that the file no
-	// longer has; a deploy removes it only when asked to.
+	// Prune is removed by a deploy only when it asks for it.
 	Prune            *swarmPrune             `json:"prune,omitempty"`
 	PruneUnknown     string                  `json:"prune_unknown,omitempty"`
 	Refusals         []swarmconvert.Finding  `json:"refusals"`
@@ -101,7 +100,8 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	if out.Deployable {
 		if prune, err := h.pruneCandidates(r.Context(), id, b.req); err != nil {
-			out.PruneUnknown = errPruneUnknown.Error()
+			slog.Info("swarm preview: prune candidates", "stack", name, "err", err)
+			out.PruneUnknown, out.PlanHash = errPruneUnknown.Error(), planHash(b.req, unknownPrune)
 		} else {
 			out.Prune, out.PlanHash = &prune, planHash(b.req, prune)
 		}

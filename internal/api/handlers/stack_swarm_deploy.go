@@ -214,7 +214,7 @@ func (h *Handlers) pruneCandidates(ctx context.Context, clusterID string, req ag
 		keep[n] = true
 	}
 	for _, s := range svcs.Services {
-		if s.Stack == req.Stack && s.SpecHash != "" && !keep[s.Name] {
+		if s.Stack == req.Stack && s.SpecHash != "" && !keep[s.Name] && strings.HasPrefix(s.Name, req.Stack+"_") {
 			out.Services = append(out.Services, s.Name)
 		}
 	}
@@ -223,10 +223,17 @@ func (h *Handlers) pruneCandidates(ctx context.Context, clusterID string, req ag
 			out.Networks = append(out.Networks, n.Name)
 		}
 	}
+	if len(out.Services) > agents.MaxSwarmWriteServices || len(out.Networks) > agents.MaxSwarmWriteNetworks {
+		return swarmPrune{Services: []string{}, Networks: []string{}}, errPruneUnknown
+	}
 	slices.Sort(out.Services)
 	slices.Sort(out.Networks)
 	return out, nil
 }
+
+// unknownPrune stands in the plan hash when the leftovers can't be read: a
+// deploy without prune still goes ahead, one with prune is refused.
+var unknownPrune = swarmPrune{Services: []string{"?"}, Networks: []string{"?"}}
 
 // planHash names what a deploy writes and what it would leave behind or
 // prune; the deploy only runs when the caller confirms the hash its
@@ -381,8 +388,11 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 	prune, err := h.pruneCandidates(r.Context(), id, b.req)
 	if err != nil {
 		slog.Info("swarm deploy: prune candidates", "stack", name, "err", err)
-		writeError(w, http.StatusServiceUnavailable, errPruneUnknown.Error())
-		return
+		if body.Prune {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": errPruneUnknown.Error(), "code": "swarm_prune_unknown"})
+			return
+		}
+		prune = unknownPrune
 	}
 	if planHash(b.req, prune) != body.PlanHash {
 		writeJSON(w, http.StatusConflict, map[string]string{
@@ -461,13 +471,13 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 		out.Outcome = swarmOutcomeApplied
 	}
 	h.readBack(wctx, id, b.req, &out)
-	if !prune.empty() {
+	if !prune.empty() && !slices.Equal(prune.Services, unknownPrune.Services) {
 		switch {
 		case !body.Prune:
 			out.NotPruned = &prune
-		case out.Outcome != swarmOutcomeApplied:
+		case out.Outcome != swarmOutcomeApplied || out.CheckedVia != "":
 			out.NotPruned = &prune
-			out.PruneError = "nothing was pruned because the deploy did not apply completely"
+			out.PruneError = "nothing was pruned because the manager did not confirm every write of the deploy"
 		default:
 			h.pruneSwarm(wctx, r, name, id, manager, prune, &out)
 		}
@@ -491,6 +501,7 @@ func (h *Handlers) SwarmDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	h.auditDetached(r, audit.ActionStackDeploy, name, map[string]any{
 		"services": len(out.Services), "cluster": id, "manager": manager, "outcome": out.Outcome,
+		"prune_requested": body.Prune, "pruned": out.Pruned != nil, "prune_error": out.PruneError,
 	})
 	status := http.StatusOK
 	if out.Outcome != swarmOutcomeApplied || out.PruneError != "" {
@@ -512,6 +523,17 @@ func (h *Handlers) pruneSwarm(ctx context.Context, r *http.Request, stack, clust
 	res, err := h.swarm().SwarmRemove(ctx, manager, agents.SwarmRemoveReq{Stack: stack, Services: prune.Services, Networks: prune.Networks})
 	if err != nil {
 		out.NotPruned, out.PruneError = &prune, err.Error()
+		action := agents.SwarmActionFailed
+		if errors.Is(err, host.ErrSwarmWriteUnknown) {
+			action = agents.SwarmActionUnknown
+		}
+		for _, n := range prune.Services {
+			res.Services = append(res.Services, agents.SwarmWriteResult{Name: n, Action: action, Error: err.Error()})
+		}
+		for _, n := range prune.Networks {
+			res.Networks = append(res.Networks, agents.SwarmWriteResult{Name: n, Action: action, Error: err.Error()})
+		}
+		h.auditSwarmRemoves(r, stack, clusterID, manager, res)
 		return
 	}
 	out.Pruned = &res
@@ -521,8 +543,25 @@ func (h *Handlers) pruneSwarm(ctx context.Context, r *http.Request, stack, clust
 			break
 		}
 	}
-	h.auditSwarmWrites(r, stack, clusterID, manager, res.Services, "service")
-	h.auditSwarmWrites(r, stack, clusterID, manager, res.Networks, "network")
+	h.auditSwarmRemoves(r, stack, clusterID, manager, res)
+}
+
+// auditSwarmRemoves writes one entry per object a prune tried to remove,
+// with its result; one already gone is left out.
+func (h *Handlers) auditSwarmRemoves(r *http.Request, stack, clusterID, manager string, res agents.SwarmRemoveResp) {
+	entry := func(x agents.SwarmWriteResult) map[string]any {
+		return map[string]any{"stack": stack, "cluster": clusterID, "manager": manager, "id": x.ID, "result": x.Action, "error": x.Error}
+	}
+	for _, x := range res.Services {
+		if x.Action != agents.SwarmActionMissing {
+			h.auditDetached(r, audit.ActionSwarmServiceRemove, x.Name, entry(x))
+		}
+	}
+	for _, x := range res.Networks {
+		if x.Action != agents.SwarmActionMissing {
+			h.auditDetached(r, audit.ActionSwarmNetworkRemove, x.Name, entry(x))
+		}
+	}
 }
 
 // writeNotSent reports whether err proves the manager never got the write:
@@ -621,14 +660,10 @@ func (h *Handlers) auditSwarmWrites(r *http.Request, stack, clusterID, manager s
 		switch {
 		case kind == "network" && (res.Action == agents.SwarmActionCreated || res.Action == agents.SwarmActionUnknown):
 			h.auditDetached(r, audit.ActionSwarmNetworkCreate, res.Name, d)
-		case kind == "network" && res.Action == agents.SwarmActionRemoved:
-			h.auditDetached(r, audit.ActionSwarmNetworkRemove, res.Name, d)
 		case kind == "service" && res.Action == agents.SwarmActionCreated:
 			h.auditDetached(r, audit.ActionSwarmServiceCreate, res.Name, d)
 		case kind == "service" && (res.Action == agents.SwarmActionUpdated || res.Action == agents.SwarmActionUnknown):
 			h.auditDetached(r, audit.ActionSwarmServiceUpdate, res.Name, d)
-		case kind == "service" && res.Action == agents.SwarmActionRemoved:
-			h.auditDetached(r, audit.ActionSwarmServiceRemove, res.Name, d)
 		}
 	}
 }

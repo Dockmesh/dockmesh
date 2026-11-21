@@ -8355,7 +8355,8 @@ paths:
             `swarm_plan_changed`, `stack_other_target`, `dependency_other_target`,
             `swarm_write_refused` (a name belongs to an object Dockmesh did not
             create for this stack), `swarm_environment_not_active`,
-            `modified_outside`, `migration_active` or `stack_busy`.
+            `modified_outside`, `migration_active`, `stack_busy`, or `swarm_prune_unknown`
+            (prune asked for while the cluster's services and networks can't be read).
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8370,7 +8371,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/SwarmDeployResult"}
         "503":
-          description: No verified manager is online, the cluster's services and networks can't be read, or clusters are not available.
+          description: No verified manager is online, or clusters are not available.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -13043,12 +13044,12 @@ components:
           description: True when there are no refusals.
         plan_hash:
           type: string
-          description: Confirmation for the deploy; absent when not deployable or when the cluster can't be read.
+          description: Confirmation for the deploy; absent when not deployable.
         prune:
           $ref: "#/components/schemas/SwarmPrune"
         prune_unknown:
           type: string
-          description: Set instead of `prune` and `plan_hash` when the cluster's services and networks can't be read.
+          description: Set instead of `prune` when the cluster's services and networks can't be read; the plan then deploys only without `prune`.
         refusals:
           type: array
           items: {$ref: "#/components/schemas/SwarmPreviewFinding"}

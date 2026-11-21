@@ -34,6 +34,7 @@ type fakeSwarm struct {
 	// extra and extraNets run on the cluster besides the last deploy.
 	extra     []agents.SwarmService
 	extraNets []agents.SwarmNetwork
+	truncated bool
 	removes   []agents.SwarmRemoveReq
 }
 
@@ -54,7 +55,7 @@ func (f *fakeSwarm) SwarmRemove(_ context.Context, _ string, req agents.SwarmRem
 func (f *fakeSwarm) SwarmNetworks(context.Context, string) (agents.SwarmNetworksResp, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := agents.SwarmNetworksResp{Networks: append([]agents.SwarmNetwork{}, f.extraNets...)}
+	out := agents.SwarmNetworksResp{Networks: append([]agents.SwarmNetwork{}, f.extraNets...), Truncated: f.truncated}
 	if f.applied && len(f.deploys) > 0 {
 		last := f.deploys[len(f.deploys)-1]
 		for _, n := range last.Networks {
@@ -577,5 +578,28 @@ func TestSwarmStackFilesSave(t *testing.T) {
 	defer release()
 	if rr := e.do(http.MethodPut, "/api/v1/stacks/web", e.login("root").AccessToken, body); rr.Code != http.StatusConflict {
 		t.Fatalf("save while deploying %d: %s", rr.Code, rr.Body)
+	}
+}
+
+// When the leftovers can't be read, a deploy without prune still runs and
+// one with prune is refused.
+func TestSwarmDeployPruneUnknown(t *testing.T) {
+	e := newSwarmDeployEnv(t)
+	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.truncated = true
+	p := e.preview(t, "web")
+	if p.PruneUnknown == "" || p.Prune != nil || p.PlanHash == "" {
+		t.Fatalf("preview %+v", p)
+	}
+	if code, _, body := e.deployWith("root", "web", swarmDeployRequest{PlanHash: p.PlanHash, Prune: true}); code != http.StatusConflict || !strings.Contains(body, "swarm_prune_unknown") {
+		t.Fatalf("prune with unknown leftovers %d: %s", code, body)
+	}
+	if code, _, body := e.deploy("root", "web", p.PlanHash); code != http.StatusOK {
+		t.Fatalf("deploy without prune %d: %s", code, body)
+	}
+	if len(e.fake.removes) != 0 {
+		t.Fatalf("removes %+v", e.fake.removes)
 	}
 }
