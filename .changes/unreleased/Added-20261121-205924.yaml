@@ -1,0 +1,3 @@
+kind: Added
+body: 'The cluster page shows Swarm''s update state and its reason per service, and services of a Dockmesh stack can be rolled back (Stacks: Operate) or a paused update resumed (Stacks: Deploy)'
+time: 2026-11-21T20:59:24.28090104Z

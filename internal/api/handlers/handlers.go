@@ -81,24 +81,29 @@ type Handlers struct {
 	Proxy             *proxy.Service
 	Updater           *updater.Service
 	StackLocks        *stacklock.Locks
-	Operations        *operations.Service
-	UpdateWatcher     *updater.Watcher
-	OIDC              *oidc.Service
-	SAML              *saml.Service
-	LDAP              *ldapauth.Service
-	OAuth2            *oauth2auth.Service
-	Metrics           *metrics.Collector
-	Notify            *notify.Service
-	Alerts            *alerts.Service
-	Backups           *backup.Service
-	BackupTargets     *targets.TargetStore
-	Secrets           *secrets.Service
-	Migrations        *migration.Service
-	Drains            *migration.DrainService
-	Agents            *agents.Service
-	Hosts             *host.Registry
-	HostTags          *hosttags.Service
-	Clusters          *clusters.Service
+	// swarmHolds maps a stack's cluster lock key to the cancel func of the
+	// goroutine that holds it while Swarm rolls out (holdWhileRollingOut).
+	swarmHolds sync.Map
+	// swarmNoGrace drops the wait for an update Swarm hasn't reported yet.
+	swarmNoGrace  bool
+	Operations    *operations.Service
+	UpdateWatcher *updater.Watcher
+	OIDC          *oidc.Service
+	SAML          *saml.Service
+	LDAP          *ldapauth.Service
+	OAuth2        *oauth2auth.Service
+	Metrics       *metrics.Collector
+	Notify        *notify.Service
+	Alerts        *alerts.Service
+	Backups       *backup.Service
+	BackupTargets *targets.TargetStore
+	Secrets       *secrets.Service
+	Migrations    *migration.Service
+	Drains        *migration.DrainService
+	Agents        *agents.Service
+	Hosts         *host.Registry
+	HostTags      *hosttags.Service
+	Clusters      *clusters.Service
 	// SwarmOps replaces Hosts for the Swarm executor's writes and reads.
 	SwarmOps        swarmOps
 	Roles           *rbac.Store

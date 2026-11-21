@@ -8489,6 +8489,112 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/swarm-services/{service}/rollback:
+    post:
+      operationId: stacks.swarmServiceRollback
+      tags: [stacks]
+      summary: Roll a Swarm service back to its previous spec
+      description: |
+        Needs `stacks.operate` on the stack on its cluster. Swarm's own rollback (`docker service rollback`) of one service of a stack deployed to a cluster. Refused while the service is already rolling back or when it has no previous spec.
+        Goes through a verified manager and is audited as `cluster.service_rollback`.
+        While Swarm then rolls the service out, the stack's cluster lock stays
+        held (at most 30 minutes); a paused update frees it.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - name: service
+          in: path
+          required: true
+          description: Service name in the compose file (without the `<stack>_` prefix).
+          schema: {type: string}
+      responses:
+        "200":
+          description: Swarm accepted the change.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmServiceActionResult"}
+        "400":
+          description: Invalid service name.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: The stack has no such service on the cluster.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: The stack is not on a cluster (`stack_not_on_cluster`), is busy (an update still rolling out, a migration), or the manager refused (`swarm_write_refused`, e.g. nothing to resume).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The write failed or got no answer (`action` failed or unknown).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmServiceActionResult"}
+        "503":
+          description: No verified manager is online, or its agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/swarm-services/{service}/resume:
+    post:
+      operationId: stacks.swarmServiceResume
+      tags: [stacks]
+      summary: Resume the paused update of a Swarm service
+      description: |
+        Needs `stacks.deploy` on the stack on its cluster. Submits the service's current spec again, which continues a paused update (or paused rollback) for the tasks it has not reached yet. The image stays pinned to the digest the update started with.
+        Goes through a verified manager and is audited as `cluster.service_resume`.
+        While Swarm then rolls the service out, the stack's cluster lock stays
+        held (at most 30 minutes); a paused update frees it.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - name: service
+          in: path
+          required: true
+          description: Service name in the compose file (without the `<stack>_` prefix).
+          schema: {type: string}
+      responses:
+        "200":
+          description: Swarm accepted the change.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmServiceActionResult"}
+        "400":
+          description: Invalid service name.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: The stack has no such service on the cluster.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: The stack is not on a cluster (`stack_not_on_cluster`), is busy (an update still rolling out, a migration), or the manager refused (`swarm_write_refused`, e.g. nothing to resume).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The write failed or got no answer (`action` failed or unknown).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmServiceActionResult"}
+        "503":
+          description: No verified manager is online, or its agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /stacks/{name}/deploy:
     post:
       operationId: stacks.deploy
@@ -11516,7 +11622,12 @@ components:
               target_port: {type: integer}
               published_port: {type: integer}
               publish_mode: {type: string}
-        update_state: {type: string}
+        update_state:
+          type: string
+          description: Swarm's update state, e.g. `updating`, `paused`, `completed`, `rollback_started`, `rollback_paused`, `rollback_completed`.
+        update_message: {type: string, description: Swarm's reason for the update state.}
+        rollback: {type: boolean, description: The service has a previous spec Swarm can roll back to.}
+        spec_hash: {type: string, description: The `dockmesh.spec-hash` label of a service Dockmesh deployed or adopted.}
         networks:
           type: array
           description: Ids (or names, as the spec gives them) of the networks the service's tasks attach to, ingress included.
@@ -13311,6 +13422,21 @@ components:
           type: array
           items: {type: string}
         networks:
+          type: array
+          items: {type: string}
+    SwarmServiceActionResult:
+      type: object
+      required: [stack, service, cluster_id, manager, name, action]
+      properties:
+        stack: {type: string}
+        service: {type: string}
+        cluster_id: {type: string}
+        manager: {type: string}
+        name: {type: string, description: Full Swarm service name.}
+        id: {type: string}
+        action: {type: string, enum: [updated, failed, unknown]}
+        error: {type: string}
+        warnings:
           type: array
           items: {type: string}
     SwarmPreviewFinding:

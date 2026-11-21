@@ -101,6 +101,8 @@ var categories = map[string]string{
 	ActionClusterTrustRoot:          CategoryChanges,
 	ActionSwarmServiceCreate:        CategoryChanges,
 	ActionSwarmServiceUpdate:        CategoryChanges,
+	ActionSwarmServiceRollback:      CategoryChanges,
+	ActionSwarmServiceResume:        CategoryChanges,
 	ActionSwarmServiceRemove:        CategoryChanges,
 	ActionSwarmNetworkCreate:        CategoryChanges,
 	ActionSwarmNetworkRemove:        CategoryChanges,
