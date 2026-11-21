@@ -42,11 +42,7 @@ func TestStackEnvironmentsFollowStackScope(t *testing.T) {
 	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: uid, Role: rbac.RoleDeployer, Scope: onAlpha}); err != nil {
 		t.Fatal(err)
 	}
-	login, err := authSvc.Login(ctx, "viewer-deployer-alpha", "correct horse battery", "test", "127.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	viewerDeployer := login.AccessToken
+	viewerDeployer := login(t, authSvc, "viewer-deployer-alpha")
 	deployerGlobal := signIn(t, authSvc, roles, "deployer-global", rbac.RoleDeployer, rbac.Global)
 	viewerGlobal := signIn(t, authSvc, roles, "viewer-global", rbac.RoleViewer, rbac.Global)
 
@@ -71,19 +67,25 @@ func TestStackEnvironmentsFollowStackScope(t *testing.T) {
 				router.ServeHTTP(rr, req)
 				return rr
 			}
-			if rr := call(http.MethodPut, "/environments/active", `{"active":"prod"}`); rr.Code != tt.want {
-				t.Errorf("PUT active: %d %s, want %d", rr.Code, rr.Body, tt.want)
-			}
 			dir, err := h.Stacks.Dir(tt.stack)
 			if err != nil {
 				t.Fatal(err)
 			}
-			meta, _ := os.ReadFile(filepath.Join(dir, stacks.MetaFileName))
+			metaPath := filepath.Join(dir, stacks.MetaFileName)
+			t.Cleanup(func() {
+				if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+					t.Error(err)
+				}
+			})
+			if rr := call(http.MethodPut, "/environments/active", `{"active":"prod"}`); rr.Code != tt.want {
+				t.Errorf("PUT active: %d %s, want %d", rr.Code, rr.Body, tt.want)
+			}
+			meta, err := os.ReadFile(metaPath)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			if set := strings.Contains(string(meta), `"prod"`); set != (tt.want == http.StatusOK) {
 				t.Errorf("active override written=%v after %d", set, tt.want)
-			}
-			if err := os.Remove(filepath.Join(dir, stacks.MetaFileName)); err != nil && !os.IsNotExist(err) {
-				t.Fatal(err)
 			}
 			if rr := call(http.MethodGet, "/environments", ""); rr.Code != tt.want {
 				t.Errorf("GET environments: %d %s, want %d", rr.Code, rr.Body, tt.want)
@@ -92,8 +94,9 @@ func TestStackEnvironmentsFollowStackScope(t *testing.T) {
 	}
 }
 
-// Every route on one stack refuses a caller whose assignments name only
-// another stack, whatever that role allows there.
+// Every route on one stack refuses what an assignment on another stack
+// grants: a caller with only that assignment never reaches the stack, and
+// one who also views everything gets no more than viewing.
 func TestStackRoutesRefuseOtherStackScope(t *testing.T) {
 	authSvc, roles, h := newMatrixEnv(t)
 	ctx := t.Context()
@@ -103,26 +106,47 @@ func TestStackRoutesRefuseOtherStackScope(t *testing.T) {
 		}
 	}
 	router := NewRouter(h, authSvc, nil, true, nil)
-	token := signIn(t, authSvc, roles, "host-admin-alpha", rbac.RoleHostAdmin, rbac.Scope{Type: rbac.ScopeStack, Host: "local", Value: "alpha"})
-	checked := 0
-	for _, g := range routeGates {
-		if !strings.HasPrefix(g.path, "/api/v1/stacks/{name}") || g.gate == gatePublic || g.gate == gateTicket || g.gate == gateSignedIn {
-			continue
-		}
-		if err := h.Deployments.Set(ctx, "web", "local", "running"); err != nil {
-			t.Fatal(err)
-		}
-		req := httptest.NewRequest(g.method, fillPath(g.path), strings.NewReader("{}"))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
-		checked++
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s %s on stack web as host-admin of alpha: %d %s, want 403", g.method, g.path, rr.Code, strings.TrimSpace(rr.Body.String()))
+	onAlpha := rbac.Scope{Type: rbac.ScopeStack, Host: "local", Value: "alpha"}
+	viewer := map[rbac.Perm]bool{}
+	for _, b := range rbac.BuiltinRoles {
+		if b.Name == rbac.RoleViewer {
+			viewer = rbac.PermsFor(b.Levels, b.Extras)
 		}
 	}
-	if checked < 30 {
-		t.Errorf("checked %d stack routes; routeGates lists more", checked)
+	uid := createUser(t, authSvc, roles, "viewer-host-admin-alpha", rbac.RoleViewer, rbac.Global)
+	if _, err := roles.AddAssignment(ctx, rbac.Assignment{UserID: uid, Role: rbac.RoleHostAdmin, Scope: onAlpha}); err != nil {
+		t.Fatal(err)
+	}
+	callers := []struct {
+		name, token string
+		allowed     map[rbac.Perm]bool
+	}{
+		{"host-admin of alpha", signIn(t, authSvc, roles, "host-admin-alpha", rbac.RoleHostAdmin, onAlpha), nil},
+		{"viewer + host-admin of alpha", login(t, authSvc, "viewer-host-admin-alpha"), viewer},
+	}
+	checked := 0
+	for _, g := range routeGates {
+		if !strings.HasPrefix(g.path, "/api/v1/stacks/{name}") || g.gate == gatePublic {
+			continue
+		}
+		checked++
+		for _, c := range callers {
+			// A wrongly allowed route may delete or stop the stack.
+			if err := h.Deployments.Set(ctx, "web", "local", "running"); err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(g.method, fillPath(g.path), strings.NewReader("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+c.token)
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+			if denied := rr.Code == http.StatusForbidden; denied == c.allowed[g.gate] {
+				t.Errorf("%s %s on stack web as %s: %d %s, want allowed=%v", g.method, g.path, c.name, rr.Code,
+					strings.TrimSpace(rr.Body.String()), c.allowed[g.gate])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no /api/v1/stacks/{name} routes in routeGates")
 	}
 }
