@@ -414,8 +414,7 @@ func TestStackWriteOpsRefuseActiveMigration(t *testing.T) {
 	}
 }
 
-// A stack another operation holds answers stack_busy and the write
-// waits for nothing.
+// A stack another operation holds answers stack_busy.
 func TestStackWriteOpsRefuseBusyStack(t *testing.T) {
 	routes := []struct {
 		name, method, path string
@@ -469,5 +468,52 @@ func TestStackWriteOpsRefuseBusyStack(t *testing.T) {
 				t.Errorf("busy stack still called the host: %v", local.took())
 			}
 		})
+	}
+}
+
+// A container on a host the stack neither lives on nor migrates from or
+// to is not refused while that stack migrates elsewhere.
+func TestContainerActionIgnoresMigrationOnOtherHosts(t *testing.T) {
+	e := newScopeEnv(t)
+	mgr, err := stacks.NewManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	local := &writeOpsHost{deployHost{recordingHost{id: "local"}}}
+	e.h.Stacks = mgr
+	e.h.Hosts = host.NewFixedRegistry(local)
+	e.h.Deployments = stacks.NewDeploymentStore(e.db)
+	e.h.StackLocks = stacklock.New()
+	e.h.Migrations = migration.NewService(e.db, e.h.Hosts, mgr, e.h.Deployments)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermContainersUpdate)).Post("/containers/{id}/restart", e.h.RestartContainer)
+	})
+	e.user("root", "admin")
+	tok := e.login("root").AccessToken
+	if _, err := mgr.Create("app", "services: {web: {image: x}}\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := e.h.Deployments.Set(ctx, "app", "agent-2", "deployed"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	m := &migration.Migration{ID: "m1", StackName: "app", SourceHostID: "agent-2", TargetHostID: "agent-3",
+		Status: migration.StatusRollingBack, StartedAt: &now, InitiatedBy: "u"}
+	if err := e.h.Migrations.Store().Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodPost, "/containers/app-web/restart", tok, nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("restart on an uninvolved host: %d %s", rr.Code, rr.Body)
+	}
+	m2 := &migration.Migration{ID: "m2", StackName: "app", SourceHostID: "agent-2", TargetHostID: "local",
+		Status: migration.StatusSyncing, StartedAt: &now, InitiatedBy: "u"}
+	if err := e.h.Migrations.Store().Create(ctx, m2); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodPost, "/containers/app-web/restart", tok, nil); rr.Code != http.StatusConflict {
+		t.Fatalf("restart on the migration's target host: %d %s", rr.Code, rr.Body)
 	}
 }

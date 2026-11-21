@@ -159,6 +159,17 @@ func (s *Store) HasActive(ctx context.Context, stackName string) (bool, error) {
 	return count > 0, err
 }
 
+// HasActiveOn is HasActive for migrations from or to hostID.
+func (s *Store) HasActiveOn(ctx context.Context, stackName, hostID string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(1) FROM migrations
+		WHERE stack_name = ? AND (source_host_id = ? OR target_host_id = ?)
+		  AND status NOT IN ('completed', 'failed', 'rolled_back')`,
+		stackName, hostID, hostID).Scan(&count)
+	return count > 0, err
+}
+
 type scanner interface{ Scan(dest ...any) error }
 
 func scanMigration(r scanner) (*Migration, error) {

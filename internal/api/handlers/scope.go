@@ -268,7 +268,35 @@ func (h *Handlers) requireContainerWrite(w http.ResponseWriter, r *http.Request,
 	if scopeReq.StackName == "" || h.Stacks == nil || !h.Stacks.Has(scopeReq.StackName) {
 		return func() {}, true
 	}
+	involved, err := h.stackInvolvesHost(r.Context(), scopeReq.StackName, hostID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if !involved {
+		return func() {}, true
+	}
 	return h.guardStackOn(w, r, hostID, scopeReq.StackName, stacklock.OpContainer)
+}
+
+// stackInvolvesHost reports whether stack lives on hostID or migrates
+// from or to it. A container elsewhere that merely carries the stack's
+// project name is not guarded: its 409 would tell a caller scoped to
+// that host about a stack it can't see.
+func (h *Handlers) stackInvolvesHost(ctx context.Context, stack, hostID string) (bool, error) {
+	if h.Deployments != nil {
+		on, err := h.Deployments.HostOf(ctx, stack)
+		if err != nil {
+			return false, err
+		}
+		if stacklock.Host(on) == stacklock.Host(hostID) {
+			return true, nil
+		}
+	}
+	if h.Migrations == nil {
+		return false, nil
+	}
+	return h.Migrations.Store().HasActiveOn(ctx, stack, stacklock.Host(hostID).ID)
 }
 
 // requireStackScope is requireContainerScope for a stack on hostID.
