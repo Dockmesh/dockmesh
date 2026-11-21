@@ -10,8 +10,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 )
 
-// ServiceAction rolls back or resumes the update of one service Dockmesh
-// deployed. Rollback is Swarm's own, to the service's previous spec.
+// ServiceAction rolls back, resumes the update of, or scales one service
+// Dockmesh deployed. Rollback is Swarm's own, to the service's previous spec.
 // Resume submits the current spec again, which restarts the paused
 // update for the tasks it hasn't reached yet; the image stays pinned to
 // the digest the update was started with.
@@ -53,6 +53,20 @@ func ServiceAction(ctx context.Context, cli API, req agents.SwarmServiceActionRe
 			return agents.SwarmWriteResult{}, fmt.Errorf("%w: service %s was rolled back; deploy to change it again", agents.ErrSwarmWriteRefused, req.Service)
 		}
 		opts.Rollback = "previous"
+	case agents.SwarmServiceScale:
+		// Any update of a service restarts a paused rollout and makes the
+		// current spec the rollback target, so a scale waits for it.
+		switch updateState(cur) {
+		case swarm.UpdateStateUpdating, swarm.UpdateStatePaused, swarm.UpdateStateRollbackStarted, swarm.UpdateStateRollbackPaused:
+			return agents.SwarmWriteResult{}, fmt.Errorf("%w: the update of service %s is not finished; resume, roll back or deploy first", agents.ErrSwarmWriteRefused, req.Service)
+		}
+		if cur.Spec.Mode.Replicated == nil {
+			return agents.SwarmWriteResult{}, fmt.Errorf("%w: service %s is not replicated; global and job services have no scale", agents.ErrSwarmWriteRefused, req.Service)
+		}
+		spec := cur.Spec
+		n := *req.Replicas
+		spec.Mode.Replicated = &swarm.ReplicatedService{Replicas: &n}
+		opts.Spec = spec
 	case agents.SwarmServiceResume:
 		if s := updateState(cur); s != swarm.UpdateStatePaused && s != swarm.UpdateStateRollbackPaused {
 			return agents.SwarmWriteResult{}, fmt.Errorf("%w: the update of service %s is not paused", agents.ErrSwarmWriteRefused, req.Service)

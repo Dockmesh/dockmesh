@@ -28,6 +28,9 @@ type scaleRequest struct {
 // Safety: refuses if container_name or hard port bindings are set.
 // Warns (but proceeds with force=true) if the service is stateful.
 func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
+	if h.scaleOnCluster(w, r) {
+		return
+	}
 	name := chi.URLParam(r, "name")
 	target, err := h.pickStackHost(r, name)
 	if err != nil {

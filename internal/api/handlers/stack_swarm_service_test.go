@@ -22,6 +22,9 @@ type serviceSwarm struct {
 	smu     sync.Mutex
 	state   string
 	actions []agents.SwarmServiceActionReq
+	// modes overrides the mode of a service by name; the others run
+	// replicated with one task.
+	modes map[string]string
 }
 
 func (f *serviceSwarm) setState(s string) {
@@ -34,8 +37,13 @@ func (f *serviceSwarm) SwarmServices(ctx context.Context, h string) (agents.Swar
 	out, err := f.fakeSwarm.SwarmServices(ctx, h)
 	f.smu.Lock()
 	defer f.smu.Unlock()
+	one := uint64(1)
 	for i := range out.Services {
 		out.Services[i].UpdateState = f.state
+		out.Services[i].Mode, out.Services[i].Replicas = "replicated", &one
+		if m, ok := f.modes[out.Services[i].Name]; ok {
+			out.Services[i].Mode, out.Services[i].Replicas = m, nil
+		}
 	}
 	return out, err
 }
@@ -57,6 +65,7 @@ func newServiceEnv(t *testing.T) (*swarmDeployEnv, *serviceSwarm) {
 		r.Use(e.h.StackScope)
 		r.With(middleware.RequirePerm(rbac.PermStacksOperate)).Post("/api/v1/stacks/{name}/swarm-services/{service}/rollback", e.h.SwarmServiceRollback)
 		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/swarm-services/{service}/resume", e.h.SwarmServiceResume)
+		r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/api/v1/stacks/{name}/services/{service}/scale", e.h.ScaleService)
 	})
 	if _, err := e.mgr.Create("web", webStack, "TOKEN=s3cret\n"); err != nil {
 		t.Fatal(err)

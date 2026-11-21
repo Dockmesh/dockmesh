@@ -25,6 +25,7 @@
   import { Button, Skeleton, EmptyState, StatBar, StatusChip, Tabs, LiveIndicator, Segmented } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import AdoptStackDialog from './_AdoptStackDialog.svelte';
+  import ScaleServiceDialog from './_ScaleServiceDialog.svelte';
   import { AlertTriangle, Info, CircleSlash, CircleDashed, Network, Waypoints, ShieldCheck, ShieldAlert } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
@@ -197,6 +198,8 @@
       acting = '';
     }
   }
+  let scaleOf = $state<{ stack: string; service: SwarmService } | null>(null);
+  let scaleOpen = $state(false);
   let adoptStack = $state('');
   let adoptOpen = $state(false);
   function openAdopt(stack: string) {
@@ -544,6 +547,10 @@
   {/if}
 </section>
 
+{#if scaleOpen && scaleOf}
+  <ScaleServiceDialog bind:open={scaleOpen} stack={scaleOf.stack} service={scaleOf.service} onscaled={loadAll} />
+{/if}
+
 {#if adoptOpen}
   <AdoptStackDialog bind:open={adoptOpen} cluster={id} stack={adoptStack} onadopted={loadAll} />
 {/if}
@@ -735,6 +742,9 @@
                 {@const short = s.name.slice(g.stack.length + 1)}
                 {#if (s.update_state === 'paused' || s.update_state === 'rollback_paused') && allowed('stacks.deploy')}
                   <Button size="xs" class="svcact" disabled={acting === s.id} onclick={() => serviceAction(g.stack, short, s, 'resume')}>{m.cl_svc_resume()}</Button>
+                {/if}
+                {#if s.mode === 'replicated' && allowed('stacks.deploy')}
+                  <Button size="xs" class="svcact" onclick={() => { scaleOf = { stack: g.stack, service: s }; scaleOpen = true; }}>{m.cl_svc_scale()}</Button>
                 {/if}
                 {#if s.rollback && s.update_state !== 'rollback_started' && allowed('stacks.operate')}
                   <Button size="xs" class="svcact" disabled={acting === s.id} onclick={() => serviceAction(g.stack, short, s, 'rollback')}>{m.cl_svc_rollback()}</Button>

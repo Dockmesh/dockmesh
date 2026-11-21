@@ -562,6 +562,8 @@ export interface ScaleResult {
   current: number;
   created: number;
   removed: number;
+  /** Stacks on a Swarm cluster: the compose file's deploy.replicas, which the next deploy applies. */
+  file_replicas?: number;
 }
 
 export interface ScalingConfig {
