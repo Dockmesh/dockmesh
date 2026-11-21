@@ -615,6 +615,27 @@ export interface SwarmPreview {
   networks: Array<Record<string, unknown> & { Name?: string }>;
   external_networks: string[];
   modified_outside: string[];
+  plan_hash?: string;
+}
+
+export interface SwarmWriteResult {
+  name: string;
+  id?: string;
+  action: 'created' | 'updated' | 'exists' | 'removed' | 'missing' | 'failed' | 'unknown';
+  error?: string;
+  warnings?: string[];
+}
+
+export interface SwarmDeployResult {
+  stack: string;
+  cluster_id: string;
+  manager: string;
+  outcome: 'applied' | 'partial' | 'unknown';
+  checked_via?: string;
+  error?: string;
+  networks: SwarmWriteResult[];
+  services: Array<SwarmWriteResult & { applied?: boolean; running_tasks: number; desired_tasks: number; update_state?: string }>;
+  warnings: SwarmPreviewFinding[];
 }
 
 // Resources that a stack delete would touch (networks / volumes / images).
@@ -2204,6 +2225,14 @@ export const api = {
       request<StackCleanupPlan>(`/stacks/${encodeURIComponent(name)}/cleanup-preview`),
     swarmPreview: (name: string, cluster: string) =>
       request<SwarmPreview>(`/stacks/${encodeURIComponent(name)}/swarm-preview?cluster=${encodeURIComponent(cluster)}`),
+    swarmDeploy: (name: string, cluster: string, planHash: string, confirmExternal = false) => {
+      const params = new URLSearchParams({ cluster });
+      if (confirmExternal) params.set('confirm_external', '1');
+      return request<SwarmDeployResult>(`/stacks/${encodeURIComponent(name)}/swarm-deploy?${params}`, {
+        method: 'POST',
+        body: JSON.stringify({ plan_hash: planHash })
+      });
+    },
     // Recovery — when compose.yaml is missing/empty but containers
     // are still running with the project label. Reconstructs the
     // compose from inspect data, returns warnings.

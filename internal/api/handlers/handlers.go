@@ -99,23 +99,25 @@ type Handlers struct {
 	Hosts             *host.Registry
 	HostTags          *hosttags.Service
 	Clusters          *clusters.Service
-	Roles             *rbac.Store
-	Settings          *settings.Store
-	GlobalEnv         *globalenv.Store
-	APITokens         *apitokens.Service
-	Registries        *registries.Service
-	GitSource         *gitsource.Service
-	Templates         *templates.Service
-	Invites           *invites.Service
-	AuditRetention    *audit.Retention
-	AuditWebhook      *audit.Webhook
-	AgentUpgrade      *agents.UpgradeController
-	Prom              *metrics.PromMetrics
-	SelfUpdate        *selfupdate.Checker
-	UpdateInstaller   *selfupdate.Installer
-	UserPrefs         *userprefs.Store
-	SetupState        *setup.State     // first-run wizard state; nil = setup never active
-	SetupCommit_      setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	// SwarmOps replaces Hosts for the Swarm executor's writes and reads.
+	SwarmOps        swarmOps
+	Roles           *rbac.Store
+	Settings        *settings.Store
+	GlobalEnv       *globalenv.Store
+	APITokens       *apitokens.Service
+	Registries      *registries.Service
+	GitSource       *gitsource.Service
+	Templates       *templates.Service
+	Invites         *invites.Service
+	AuditRetention  *audit.Retention
+	AuditWebhook    *audit.Webhook
+	AgentUpgrade    *agents.UpgradeController
+	Prom            *metrics.PromMetrics
+	SelfUpdate      *selfupdate.Checker
+	UpdateInstaller *selfupdate.Installer
+	UserPrefs       *userprefs.Store
+	SetupState      *setup.State     // first-run wizard state; nil = setup never active
+	SetupCommit_    setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	// SetupRestoreFresh hands a wizard restore of a new install to
 	// setup-apply; nil restores in place (an unfinished older install).
 	SetupRestoreFresh setup.RestorePrepareFunc

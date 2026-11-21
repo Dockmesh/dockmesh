@@ -1226,6 +1226,13 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		}
 		// Last element is name itself; everything before is a prerequisite.
 		for _, depName := range order[:len(order)-1] {
+			if cur := h.stackRes(r, depName); cur.ClusterID != "" {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"error": "Dependencies must deploy to the same target. " + depName + " runs on Swarm cluster " + cur.ClusterID + ".",
+					"code":  "dependency_other_target",
+				})
+				return
+			}
 			satisfied, sErr := h.stackRunning(r.Context(), target, depName)
 			if sErr != nil {
 				// Logging is enough — a status read failing on a dep

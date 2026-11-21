@@ -73,7 +73,7 @@ func TestSwarmPreviewAccess(t *testing.T) {
 		{"root", "/api/v1/stacks/onc1/swarm-preview", http.StatusBadRequest},
 		{"root", "/api/v1/stacks/onc1/swarm-preview?cluster=nope", http.StatusNotFound},
 		{"root", "/api/v1/stacks/missing/swarm-preview?cluster=c1", http.StatusNotFound},
-		{"root", "/api/v1/stacks/onc1/swarm-preview?cluster=c1&environment=prod", http.StatusNotFound},
+		{"root", "/api/v1/stacks/onc1/swarm-preview?cluster=c1&environment=prod", http.StatusConflict},
 		{"u-on-c1", "/api/v1/stacks/onc1/swarm-preview?cluster=c1", http.StatusOK},
 		{"u-stack-on-c1", "/api/v1/stacks/onc1/swarm-preview?cluster=c1", http.StatusOK},
 		{"u-on-local", "/api/v1/stacks/onc1/swarm-preview?cluster=c1", http.StatusForbidden},

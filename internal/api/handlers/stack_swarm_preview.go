@@ -10,17 +10,19 @@ import (
 	"github.com/moby/moby/api/types/swarm"
 
 	"github.com/dockmesh/dockmesh/internal/clusters"
-	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/swarmconvert"
 )
 
 type swarmPreviewResponse struct {
-	Stack            string                  `json:"stack"`
-	ClusterID        string                  `json:"cluster_id"`
-	Environment      string                  `json:"environment,omitempty"`
-	Deployable       bool                    `json:"deployable"`
+	Stack       string `json:"stack"`
+	ClusterID   string `json:"cluster_id"`
+	Environment string `json:"environment,omitempty"`
+	Deployable  bool   `json:"deployable"`
+	// PlanHash names what a deploy would write; the deploy needs it as
+	// the confirmation. Empty when the stack is not deployable.
+	PlanHash         string                  `json:"plan_hash,omitempty"`
 	Refusals         []swarmconvert.Finding  `json:"refusals"`
 	Warnings         []swarmconvert.Finding  `json:"warnings"`
 	Services         []swarm.ServiceSpec     `json:"services"`
@@ -31,7 +33,8 @@ type swarmPreviewResponse struct {
 
 // SwarmPreview converts a stack's files into the Swarm specs a deploy to
 // cluster would send and lists what it refuses and warns about. Nothing
-// is written. The specs carry the stack's env values, so the caller needs
+// is written. It builds from the same snapshot bytes and global env the
+// deploy uses. The specs carry the stack's env values, so the caller needs
 // deploy rights on the stack on that cluster and the right to read its
 // env where it is now.
 //
@@ -73,31 +76,18 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
-	dir, err := h.Stacks.Dir(name)
+	b, err := h.buildSwarm(r.Context(), name, snap, r.URL.Query().Get("environment"))
 	if err != nil {
-		writeStackError(w, err)
+		writeSwarmBuildError(w, err)
 		return
 	}
-	env := r.URL.Query().Get("environment")
-	if env == "" {
-		env = snap.ActiveOverride
-	}
-	project, _, err := compose.MergeEnvironment(r.Context(), dir, name, snap.Detail.Env, env, false)
-	if err != nil {
-		writeComposeLoadError(w, err)
-		return
-	}
-	unresolved, _, err := compose.MergeEnvironment(r.Context(), dir, name, snap.Detail.Env, env, true)
-	if err != nil {
-		writeComposeLoadError(w, err)
-		return
-	}
-	plan := swarmconvert.NewPlan(project, unresolved, name)
+	plan := b.plan
 	out := swarmPreviewResponse{
 		Stack:            name,
 		ClusterID:        id,
-		Environment:      env,
+		Environment:      b.env,
 		Deployable:       len(plan.Refusals) == 0,
+		PlanHash:         b.hash,
 		Refusals:         nonNil(plan.Refusals),
 		Warnings:         nonNil(plan.Warnings),
 		Services:         []swarm.ServiceSpec{},
@@ -105,20 +95,18 @@ func (h *Handlers) SwarmPreview(w http.ResponseWriter, r *http.Request) {
 		ExternalNetworks: []string{},
 		ModifiedOutside:  nonNil(snap.Changed),
 	}
-	if plan.Result != nil {
+	if out.Deployable {
+		for _, s := range b.req.Services {
+			out.Services = append(out.Services, s.Spec)
+		}
+		out.Networks = nonNil(b.req.Networks)
+		out.ExternalNetworks = nonNil(b.req.ExternalNetworks)
+	} else if plan.Result != nil {
 		out.Services = nonNil(plan.Result.Services)
 		out.Networks = nonNil(plan.Result.Networks)
 		out.ExternalNetworks = nonNil(plan.Result.ExternalNetworks)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func writeComposeLoadError(w http.ResponseWriter, err error) {
-	if errors.Is(err, compose.ErrEnvironmentNotFound) {
-		writeError(w, http.StatusNotFound, "environment not found")
-		return
-	}
-	writeError(w, http.StatusUnprocessableEntity, err.Error())
 }
 
 func nonNil[T any](s []T) []T {

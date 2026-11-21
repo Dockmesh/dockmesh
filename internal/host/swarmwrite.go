@@ -60,6 +60,15 @@ func (r *Registry) SwarmRemove(ctx context.Context, id string, req agents.SwarmR
 	return w.swarmRemove(ctx, req)
 }
 
+// RegistryAuthFor maps each image with credentials for host id to its
+// X-Registry-Auth blob.
+func (r *Registry) RegistryAuthFor(ctx context.Context, id string, images []string) (map[string]string, error) {
+	if r.auth == nil {
+		return map[string]string{}, nil
+	}
+	return r.auth.AuthForImages(ctx, id, images)
+}
+
 func (h *RemoteHost) swarmWrite(ctx context.Context, frameType string, payload, out any) error {
 	ag, err := h.live()
 	if err != nil {

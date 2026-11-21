@@ -1,0 +1,3 @@
+kind: Added
+body: 'Deploy a stack to a Swarm cluster from the Swarm preview: the deploy confirms the previewed plan, runs through a manager with a verified node identity, touches only services and networks Dockmesh created for the stack, and reports a write the manager did not answer as unknown after reading the cluster back instead of sending it again'
+time: 2026-11-21T19:13:33.845114734Z

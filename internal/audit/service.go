@@ -116,6 +116,15 @@ const (
 	ActionClusterTrustRoot      = "cluster.trust_root"
 )
 
+// Writes of a Swarm stack deploy, one entry per service and network.
+const (
+	ActionSwarmServiceCreate = "cluster.service_create"
+	ActionSwarmServiceUpdate = "cluster.service_update"
+	ActionSwarmServiceRemove = "cluster.service_remove"
+	ActionSwarmNetworkCreate = "cluster.network_create"
+	ActionSwarmNetworkRemove = "cluster.network_remove"
+)
+
 type Entry struct {
 	ID       int64     `json:"id"`
 	TS       time.Time `json:"ts"`

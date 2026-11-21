@@ -1,9 +1,9 @@
 ---
 title: Docker Swarm
-description: See a Docker Swarm's nodes, services, tasks and logs read-only, and what Dockmesh does not manage there.
+description: See a Docker Swarm's nodes, services, tasks and logs, deploy stacks to it, and what Dockmesh does not manage there.
 ---
 
-Dockmesh can add a Docker Swarm as a cluster and show it read-only. The **Hosts** page shows the cluster's state and its linked node hosts, the cluster page its nodes, services, tasks, stacks and networks and how the work is spread over the nodes, and the **Topology** page its services and overlay networks. The API also lists its stack volumes and streams service logs. Dockmesh does not deploy stacks to the Swarm or change its services, nodes, secrets or configs.
+Dockmesh can add a Docker Swarm as a cluster, show it and deploy stacks to it. The **Hosts** page shows the cluster's state and its linked node hosts, the cluster page its nodes, services, tasks, stacks and networks and how the work is spread over the nodes, and the **Topology** page its services and overlay networks. The API also lists its stack volumes and streams service logs. Dockmesh deploys a stack to the Swarm as `docker stack deploy` would ([Deploying a stack to a Swarm](#deploying-a-stack-to-a-swarm)); it does not scale or roll back services or change nodes, secrets or configs.
 
 Hosts that are not Swarm nodes are unaffected. On a host that is a Swarm node, Dockmesh leaves the Swarm's task containers alone, refuses to migrate Swarm stacks and labels Swarm stack volumes and networks, even before a cluster exists. The Hosts page then offers to create one. Everything else on this page needs a cluster.
 
@@ -18,9 +18,20 @@ Hosts that are not Swarm nodes are unaffected. On a host that is a Swarm node, D
 - **Task containers.** On any host that is a Swarm node, with or without a cluster, the containers Swarm runs for a service are not image-updated, recreated or restarted by Dockmesh; **Replace task** stops one so Swarm starts a new task ([Swarm task containers](./image-updates.md#swarm-task-containers)).
 - **Agent upgrades.** Agents on the managers of one cluster are upgraded one after another: the next once the previous has reconnected, or after five minutes ([Upgrading agents](../operations/upgrade.md#upgrading-agents)).
 
+## Deploying a stack to a Swarm
+
+On a stack's page, **Preview Swarm deploy…** converts its compose file for a cluster and lists what Dockmesh refuses and warns about. When the stack is deployable, **Deploy to …** deploys exactly the plan the preview showed; if the files, the active environment or the global environment changed since, the deploy asks for a new preview.
+
+- **Through a verified manager.** The deploy goes through a manager whose agent proved its node identity ([Node identity](./multi-host.md#node-identity)), or the server's own host when it is a manager. A manager that is offline is skipped before anything is written.
+- **Like `docker stack deploy`.** Services are named `<stack>_<service>` and networks `<stack>_<network>`. Images are pinned to their digest. Registry credentials Dockmesh holds for the manager are sent along and stored in the service, as with `--with-registry-auth`, so every node that runs a task can pull. External networks, secrets and configs must exist on the Swarm.
+- **Only its own objects.** Dockmesh updates only services and networks it created for the stack. A service or network with the same name created by `docker stack deploy` or by hand refuses the deploy; an existing network that is less isolated than the file asks (not internal, not encrypted) too. Other differences of an existing network are warnings: the network is kept as it is.
+- **The outcome as it is.** A write that fails stops the deploy; the writes before it stay. When the manager does not answer, Dockmesh does not send the write again to another manager: it reads the services back from the cluster and shows per service whether it runs the new spec.
+- **Same target.** A stack deployed on a host is not moved to a cluster, and a stack on a cluster is not deployed on a host. Dependencies must already run on the same cluster.
+- **Environment.** The deploy uses the stack's active environment. Its values are part of the service specs, readable with `docker service inspect` on a manager; use Swarm secrets for real secrets.
+
 ## Not supported
 
-- Deploying a stack to a Swarm, scaling a service, updating or rolling back a service. Stacks in Dockmesh are deployed to one host; use `docker stack deploy` on a manager for Swarm stacks.
+- Scaling a Swarm service, rolling back or resuming an update from Dockmesh.
 - Creating or removing Swarm secrets and configs, changing node availability, adding or removing nodes.
 - Proxy routes to a Swarm service. A route can point at a published port of a node like any other upstream.
 - Backups of a Swarm stack as a whole. A volume job on a node host backs up the copy of the volume on that node.
@@ -36,9 +47,10 @@ A role can be assigned on a cluster (scope type `cluster`). It covers the cluste
 - overlay networks with Networks: View;
 - the topology with Networks: View and Stacks: View;
 - service logs with `containers.logs` (Containers: View or Stacks: View);
-- the stack volumes per node with Volumes: View and Hosts: View.
+- the stack volumes per node with Volumes: View and Hosts: View;
+- deploying the stacks already on the cluster with Stacks: Deploy. A stack that is not deployed anywhere yet has no target; its first deploy to a cluster needs an assignment on everything or on the stack.
 
-It does not cover the hosts that are its nodes or their containers; give those a host or host tag assignment. A role on a host that is a node does not reach the cluster: such a user sees "Member of cluster X" on the host, without the cluster's state, other nodes or services. Creating and deleting clusters needs `clusters.create`, which is only granted on everything. See [Permissions](../concepts/permissions.md).
+A deploy runs its services on any node of the Swarm, so Stacks: Deploy on a cluster reaches every node. It does not cover the hosts that are its nodes or their containers; give those a host or host tag assignment. A role on a host that is a node does not reach the cluster: such a user sees "Member of cluster X" on the host, without the cluster's state, other nodes or services. Creating and deleting clusters needs `clusters.create`, which is only granted on everything. See [Permissions](../concepts/permissions.md).
 
 > **Warning:** A user who can open a terminal (`containers.exec`) on a node host can read the secrets of the task containers there under `/run/secrets`, just as the terminal shows a container's environment.
 
