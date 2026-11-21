@@ -1,0 +1,201 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-restart-policy"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-restart-policy_compose-restart",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-restart-policy"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "compose-restart"
+          ],
+          "Target": "vq6l97m816o4lyymhqdvq16hp"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-restart-policy"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-restart-policy_none",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-restart-policy"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "none"
+          ],
+          "Target": "vq6l97m816o4lyymhqdvq16hp"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "none",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-restart-policy"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-restart-policy_policy",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-restart-policy"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "policy"
+          ],
+          "Target": "vq6l97m816o4lyymhqdvq16hp"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "on-failure",
+        "Delay": 7000000000,
+        "MaxAttempts": 4,
+        "Window": 30000000000
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

@@ -1,0 +1,15 @@
+services:
+  app:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    environment:
+      PLAIN: value
+      FROM_DOTENV: ${GOLDEN_VAR}
+      WITH_DEFAULT: ${GOLDEN_UNSET:-fallback}
+      EMPTY: ""
+  list:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    environment:
+      - A=1
+      - B=two words

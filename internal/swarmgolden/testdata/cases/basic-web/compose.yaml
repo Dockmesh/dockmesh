@@ -1,0 +1,25 @@
+services:
+  web:
+    image: nginx:1.29-alpine
+    ports:
+      - "8081:80"
+    environment:
+      APP_MODE: golden
+    labels:
+      fixture: basic-web
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+      update_config:
+        parallelism: 1
+        delay: 5s
+      placement:
+        max_replicas_per_node: 1

@@ -1,0 +1,211 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "nginx:1.29-alpine",
+      "com.docker.stack.namespace": "gt-healthcheck"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-healthcheck_cmd",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "DNSConfig": {},
+        "Healthcheck": {
+          "Interval": 10000000000,
+          "Retries": 3,
+          "StartPeriod": 5000000000,
+          "Test": [
+            "CMD",
+            "wget",
+            "-qO-",
+            "http://127.0.0.1/"
+          ],
+          "Timeout": 3000000000
+        },
+        "Image": "nginx:1.29-alpine",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-healthcheck"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "cmd"
+          ],
+          "Target": "0p5zjt730nyfsu0jpxg2plxrd"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "nginx:1.29-alpine",
+      "com.docker.stack.namespace": "gt-healthcheck"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-healthcheck_disabled",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "DNSConfig": {},
+        "Healthcheck": {
+          "Test": [
+            "NONE"
+          ]
+        },
+        "Image": "nginx:1.29-alpine",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-healthcheck"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "disabled"
+          ],
+          "Target": "0p5zjt730nyfsu0jpxg2plxrd"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "nginx:1.29-alpine",
+      "com.docker.stack.namespace": "gt-healthcheck"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-healthcheck_shell",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "DNSConfig": {},
+        "Healthcheck": {
+          "Test": [
+            "CMD-SHELL",
+            "wget -qO- http://127.0.0.1/ || exit 1"
+          ]
+        },
+        "Image": "nginx:1.29-alpine",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-healthcheck"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "shell"
+          ],
+          "Target": "0p5zjt730nyfsu0jpxg2plxrd"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

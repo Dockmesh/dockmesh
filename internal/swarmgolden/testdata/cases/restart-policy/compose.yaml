@@ -1,0 +1,20 @@
+services:
+  policy:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 7s
+        max_attempts: 4
+        window: 30s
+  none:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      restart_policy:
+        condition: none
+  compose-restart:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    restart: unless-stopped

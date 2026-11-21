@@ -1,0 +1,20 @@
+version: "3.13"
+services:
+  app:
+    command:
+      - sleep
+      - "3600"
+    environment:
+      EMPTY: ""
+      FROM_DOTENV: from-dotenv
+      PLAIN: value
+      WITH_DEFAULT: fallback
+    image: alpine:3.24
+  list:
+    command:
+      - sleep
+      - "3600"
+    environment:
+      A: "1"
+      B: two words
+    image: alpine:3.24

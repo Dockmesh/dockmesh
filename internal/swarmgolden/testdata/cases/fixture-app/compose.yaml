@@ -1,0 +1,12 @@
+services:
+  app:
+    image: alpine:3.20
+    command: ["sh", "-c", "echo $$FIXTURE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity"]
+    environment:
+      FIXTURE_MARK: fixture-app
+      APP_VALUE: ${APP_VALUE}
+    volumes:
+      - data:/data
+    restart: unless-stopped
+volumes:
+  data: {}

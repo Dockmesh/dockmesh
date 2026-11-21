@@ -1,0 +1,33 @@
+version: "3.13"
+services:
+  web:
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 5s
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "67108864"
+      placement:
+        max_replicas_per_node: 1
+    environment:
+      APP_MODE: golden
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -qO-
+        - http://127.0.0.1/
+      timeout: 3s
+      interval: 10s
+      retries: 3
+    image: nginx:1.29-alpine
+    labels:
+      fixture: basic-web
+    ports:
+      - mode: ingress
+        target: 80
+        published: 8081
+        protocol: tcp

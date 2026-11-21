@@ -1,0 +1,18 @@
+version: "3.13"
+services:
+  app:
+    command:
+      - sh
+      - -c
+      - echo $FIXTURE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity
+    environment:
+      APP_VALUE: fixture-value
+      FIXTURE_MARK: fixture-app
+    image: alpine:3.20
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: data
+        target: /data
+volumes:
+  data: {}

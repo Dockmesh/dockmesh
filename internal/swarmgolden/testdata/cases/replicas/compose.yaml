@@ -1,0 +1,14 @@
+services:
+  three:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      replicas: 3
+  zero:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      replicas: 0
+  unset:
+    image: alpine:3.24
+    command: ["sleep", "3600"]

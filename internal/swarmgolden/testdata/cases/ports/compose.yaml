@@ -1,0 +1,21 @@
+services:
+  short:
+    image: nginx:1.29-alpine
+    ports:
+      - "18081:80"
+      - "18082:80/udp"
+      - "18090-18091:8090-8091"
+  long:
+    image: nginx:1.29-alpine
+    ports:
+      - target: 80
+        published: 18083
+        protocol: tcp
+        mode: ingress
+      - target: 81
+        published: 18084
+        mode: host
+  unpublished:
+    image: nginx:1.29-alpine
+    ports:
+      - "80"

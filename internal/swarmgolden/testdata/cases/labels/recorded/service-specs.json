@@ -1,0 +1,140 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-labels",
+      "service.label": "s",
+      "shared": "from-service"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-labels_app",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-labels",
+          "container.label": "c",
+          "shared": "from-container"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "app"
+          ],
+          "Target": "ms1jhepoyw4heyibtiokjzmpq"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  },
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.24",
+      "com.docker.stack.namespace": "gt-labels"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-labels_list",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sleep",
+          "3600"
+        ],
+        "DNSConfig": {},
+        "Image": "alpine:3.24",
+        "Isolation": "default",
+        "Labels": {
+          "a": "1",
+          "b": "2",
+          "com.docker.stack.namespace": "gt-labels"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "list"
+          ],
+          "Target": "ms1jhepoyw4heyibtiokjzmpq"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

@@ -46,3 +46,4 @@ coverage.txt
 # we can A/B-compare while the new ones bed in, not for repo history.
 /.github/shots-old/
 /web/src/lib/paraglide/
+__pycache__/

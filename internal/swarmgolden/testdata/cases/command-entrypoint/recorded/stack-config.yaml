@@ -1,0 +1,22 @@
+version: "3.13"
+services:
+  command-only:
+    command:
+      - sleep
+      - "3600"
+    image: alpine:3.24
+  list:
+    command:
+      - sleep 3600
+    entrypoint:
+      - /bin/sh
+      - -c
+    image: alpine:3.24
+  shell:
+    command:
+      - "3600"
+    entrypoint:
+      - env
+      - MODE=golden
+      - sleep
+    image: alpine:3.24

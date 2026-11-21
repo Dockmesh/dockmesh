@@ -1,0 +1,85 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "alpine:3.20",
+      "com.docker.stack.namespace": "gt-fixture-app"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-fixture-app_app",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Args": [
+          "sh",
+          "-c",
+          "echo $FIXTURE_MARK > /data/marker; hostname > /data/hostname; env > /data/env.txt; exec sleep infinity"
+        ],
+        "DNSConfig": {},
+        "Env": [
+          "APP_VALUE=fixture-value",
+          "FIXTURE_MARK=fixture-app"
+        ],
+        "Image": "alpine:3.20",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-fixture-app"
+        },
+        "Mounts": [
+          {
+            "Source": "gt-fixture-app_data",
+            "Target": "/data",
+            "Type": "volume",
+            "VolumeOptions": {
+              "Labels": {
+                "com.docker.stack.namespace": "gt-fixture-app"
+              }
+            }
+          }
+        ],
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "app"
+          ],
+          "Target": "kpnc1e7a4jo7jvisd7ib8b8f4"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

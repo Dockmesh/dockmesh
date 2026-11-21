@@ -1,0 +1,72 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip",
+      "Ports": [
+        {
+          "Protocol": "tcp",
+          "PublishMode": "ingress",
+          "PublishedPort": 8081,
+          "TargetPort": 80
+        }
+      ]
+    },
+    "Labels": {
+      "com.docker.stack.image": "nginx:1.27-alpine",
+      "com.docker.stack.namespace": "gt-fixture-nginx"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-fixture-nginx_web",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "DNSConfig": {},
+        "Image": "nginx:1.27-alpine",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-fixture-nginx"
+        },
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "web"
+          ],
+          "Target": "1lh7pxfi340q87r4h6x52p7ew"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

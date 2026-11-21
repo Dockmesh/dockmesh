@@ -1,0 +1,81 @@
+[
+  {
+    "EndpointSpec": {
+      "Mode": "vip"
+    },
+    "Labels": {
+      "com.docker.stack.image": "postgres:16-alpine",
+      "com.docker.stack.namespace": "gt-fixture-postgres"
+    },
+    "Mode": {
+      "Replicated": {
+        "Replicas": 1
+      }
+    },
+    "Name": "gt-fixture-postgres_db",
+    "RollbackConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    },
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "DNSConfig": {},
+        "Env": [
+          "POSTGRES_DB=labdb",
+          "POSTGRES_PASSWORD=lab-fixture-only",
+          "POSTGRES_USER=lab"
+        ],
+        "Image": "postgres:16-alpine",
+        "Isolation": "default",
+        "Labels": {
+          "com.docker.stack.namespace": "gt-fixture-postgres"
+        },
+        "Mounts": [
+          {
+            "Source": "gt-fixture-postgres_pgdata",
+            "Target": "/var/lib/postgresql/data",
+            "Type": "volume",
+            "VolumeOptions": {
+              "Labels": {
+                "com.docker.stack.namespace": "gt-fixture-postgres"
+              }
+            }
+          }
+        ],
+        "Privileges": {
+          "CredentialSpec": null,
+          "NoNewPrivileges": false,
+          "SELinuxContext": null
+        },
+        "StopGracePeriod": 10000000000
+      },
+      "ForceUpdate": 0,
+      "Networks": [
+        {
+          "Aliases": [
+            "db"
+          ],
+          "Target": "qxxbj1gzsm14noclaaa61su0v"
+        }
+      ],
+      "Placement": {},
+      "Resources": {},
+      "RestartPolicy": {
+        "Condition": "any",
+        "Delay": 5000000000,
+        "MaxAttempts": 0
+      },
+      "Runtime": "container"
+    },
+    "UpdateConfig": {
+      "FailureAction": "pause",
+      "MaxFailureRatio": 0,
+      "Monitor": 5000000000,
+      "Order": "stop-first",
+      "Parallelism": 1
+    }
+  }
+]

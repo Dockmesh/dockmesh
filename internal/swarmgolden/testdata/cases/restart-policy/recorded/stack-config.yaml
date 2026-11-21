@@ -1,0 +1,27 @@
+version: "3.13"
+services:
+  compose-restart:
+    command:
+      - sleep
+      - "3600"
+    image: alpine:3.24
+    restart: unless-stopped
+  none:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      restart_policy:
+        condition: none
+    image: alpine:3.24
+  policy:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 7s
+        max_attempts: 4
+        window: 30s
+    image: alpine:3.24
