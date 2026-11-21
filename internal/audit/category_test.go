@@ -28,6 +28,7 @@ var forwarders = map[string]int{
 	"auditAssignment":    1,
 	"containerAction":    3,
 	"writeVersionSwitch": 2,
+	"swarmServiceAction": 4,
 }
 
 // TestEveryEmittedActionHasCategory parses the server and agent sources,
