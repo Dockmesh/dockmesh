@@ -141,8 +141,8 @@ func (h *Handlers) buildSwarm(ctx context.Context, name string, snap *stacks.Sna
 // caller confirms the hash its preview showed.
 func planHash(req agents.SwarmDeployReq) string {
 	b, err := json.Marshal(struct {
-		Networks []network.CreateRequest `json:"networks"`
-		External []string                `json:"external"`
+		Networks []network.CreateRequest    `json:"networks"`
+		External []string                   `json:"external"`
 		Services []agents.SwarmServiceWrite `json:"services"`
 	}{req.Networks, req.ExternalNetworks, req.Services})
 	if err != nil {
