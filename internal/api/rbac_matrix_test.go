@@ -541,6 +541,12 @@ func apiToken(t *testing.T, owner, role string, scope rbac.Scope) string {
 func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role string, scope rbac.Scope) string {
 	t.Helper()
 	createUser(t, authSvc, roles, name, role, scope)
+	return login(t, authSvc, name)
+}
+
+// login signs in a user made by createUser.
+func login(t *testing.T, authSvc *auth.Service, name string) string {
+	t.Helper()
 	res, err := authSvc.Login(context.Background(), name, "correct horse battery", "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
