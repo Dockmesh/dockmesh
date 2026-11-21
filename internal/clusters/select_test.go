@@ -422,3 +422,43 @@ func TestSingleManagerRotationNeedsAdminWithoutOrigin(t *testing.T) {
 		t.Fatalf("trust %+v", c.Trust)
 	}
 }
+
+// Writes go only through verified managers, in read order; an unverified
+// origin never takes one.
+func TestWriteHosts(t *testing.T) {
+	f, _ := provedLab(t)
+	s := newService(t, f)
+	s.SetServerID("server-1")
+	if _, err := s.Create(context.Background(), "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.WriteHosts(context.Background(), swarmID)
+	if err != nil || !reflect.DeepEqual(got, []string{"m1", "m2"}) {
+		t.Fatalf("write hosts %v, %v", got, err)
+	}
+	setOffline(f, "m1", true)
+	if got, err = s.WriteHosts(context.Background(), swarmID); err != nil || !reflect.DeepEqual(got, []string{"m2"}) {
+		t.Fatalf("m1 offline: %v, %v", got, err)
+	}
+	setOffline(f, "m2", true)
+	if _, err = s.WriteHosts(context.Background(), swarmID); !errors.Is(err, ErrNoWriter) {
+		t.Fatalf("all offline: %v", err)
+	}
+
+	plain := newService(t, lab())
+	if _, err := plain.Create(context.Background(), "m1", "", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.ReadHost(context.Background(), swarmID); err != nil {
+		t.Fatalf("unverified origin still reads: %v", err)
+	}
+	if _, err := plain.WriteHosts(context.Background(), swarmID); !errors.Is(err, ErrNoWriter) {
+		t.Fatalf("unverified origin: %v, want no writer", err)
+	}
+	if _, err := plain.WriteHosts(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown cluster: %v", err)
+	}
+}

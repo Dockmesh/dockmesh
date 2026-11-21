@@ -365,6 +365,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermStacksDeploy))
 				r.Post("/stacks/{name}/deploy", h.DeployStack)
 				r.Get("/stacks/{name}/swarm-preview", h.SwarmPreview)
+				r.Post("/stacks/{name}/swarm-deploy", h.SwarmDeploy)
 				// Service scaling (P.8)
 				r.Get("/stacks/{name}/scale", h.ListServiceScale)
 				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)

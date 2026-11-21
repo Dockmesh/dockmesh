@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ApiError, type Cluster, type SwarmPreview, type SwarmPreviewFinding } from '$lib/api';
+  import { api, ApiError, type Cluster, type SwarmDeployResult, type SwarmPreview, type SwarmPreviewFinding } from '$lib/api';
   import { Button, Modal } from '$lib/components/ui';
   import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
@@ -11,10 +11,12 @@
   let preview = $state<SwarmPreview | null>(null);
   let error = $state<string | null>(null);
   let busy = $state(false);
+  let result = $state<SwarmDeployResult | null>(null);
 
   $effect(() => {
     if (!open) return;
     preview = null;
+    result = null;
     error = null;
     api.clusters
       .list()
@@ -32,6 +34,7 @@
     if (!cluster) return;
     busy = true;
     error = null;
+    result = null;
     try {
       preview = await api.stacks.swarmPreview(name, cluster);
     } catch (err) {
@@ -41,6 +44,26 @@
       busy = false;
     }
   }
+
+  async function deploy() {
+    if (!preview?.plan_hash) return;
+    busy = true;
+    error = null;
+    try {
+      result = await api.stacks.swarmDeploy(name, preview.cluster_id, preview.plan_hash, preview.modified_outside.length > 0);
+    } catch (err) {
+      if (err instanceof ApiError && err.body?.outcome) {
+        result = err.body as SwarmDeployResult;
+      } else {
+        error = err instanceof ApiError ? err.message : String(err);
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  const outcomeText = (o: SwarmDeployResult['outcome']) =>
+    o === 'applied' ? m.stacks_swd_applied() : o === 'partial' ? m.stacks_swd_partial() : m.stacks_swd_unknown();
 </script>
 
 {#snippet findings(rows: SwarmPreviewFinding[], tone: 'danger' | 'warning')}
@@ -95,10 +118,45 @@
       <div class="flex items-center gap-2 font-medium">
         {#if preview.deployable}
           <CheckCircle2 class="w-4 h-4 text-[var(--color-success-400)]" /> {m.stacks_swp_deployable()}
+          {#if preview.plan_hash && !result}
+            <Button class="ml-auto" onclick={deploy} disabled={busy}>{m.stacks_swd_deploy({ cluster: preview.cluster_id })}</Button>
+          {/if}
         {:else}
           <XCircle class="w-4 h-4 text-[var(--color-danger-400)]" /> {m.stacks_swp_refused()}
         {/if}
       </div>
+
+      {#if result}
+        <section class="border border-[var(--border)] rounded-md p-2 space-y-1">
+          <h3 class="text-xs font-semibold">{outcomeText(result.outcome)}</h3>
+          <p class="text-xs text-[var(--fg-muted)]">
+            {m.stacks_swd_via({ manager: result.manager })}{#if result.checked_via} · {m.stacks_swd_checked({ host: result.checked_via })}{/if}
+          </p>
+          {#if result.error}<p class="text-xs text-[var(--color-danger-400)]">{result.error}</p>{/if}
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="text-left text-[var(--fg-muted)] border-b border-[var(--border)]">
+                <th class="py-1 pr-3 font-medium">{m.stacks_swp_col_service()}</th>
+                <th class="py-1 pr-3 font-medium w-28">{m.stacks_swd_col_action()}</th>
+                <th class="py-1 pr-3 font-medium w-24">{m.stacks_swd_col_tasks()}</th>
+                <th class="py-1 font-medium">{m.stacks_swd_col_state()}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each result.services as s (s.name)}
+                <tr class="border-b border-[var(--border)] align-top">
+                  <td class="py-1 pr-3 dm-mono">{s.name}</td>
+                  <td class="py-1 pr-3 {s.action === 'failed' || s.applied === false ? 'text-[var(--color-danger-400)]' : ''}">
+                    {s.action}{#if s.applied !== undefined} · {s.applied ? m.stacks_swd_is_applied() : m.stacks_swd_not_applied()}{/if}
+                  </td>
+                  <td class="py-1 pr-3 tabular-nums">{s.running_tasks}/{s.desired_tasks}</td>
+                  <td class="py-1">{s.error ?? s.update_state ?? ''}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </section>
+      {/if}
 
       {#if preview.modified_outside.length > 0}
         <div class="flex items-start gap-2 text-xs text-[var(--color-warning-400)]">

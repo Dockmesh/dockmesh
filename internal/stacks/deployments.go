@@ -76,6 +76,22 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 	return err
 }
 
+// SetCluster upserts the deployment row of a stack on Swarm cluster id.
+func (s *DeploymentStore) SetCluster(ctx context.Context, stackName, clusterID, status string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO stack_deployments (stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at)
+		VALUES (?, 'cluster', ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(stack_name) DO UPDATE SET
+			target_kind = excluded.target_kind,
+			target_id   = excluded.target_id,
+			host_id     = excluded.host_id,
+			status      = excluded.status,
+			deployed_at = CASE WHEN excluded.status = 'deployed' THEN CURRENT_TIMESTAMP ELSE stack_deployments.deployed_at END,
+			updated_at  = CURRENT_TIMESTAMP`,
+		stackName, clusterID, status)
+	return err
+}
+
 // insertDeployed records a deployment on the host the stack was created
 // for, unless the stack has one by now.
 func (s *DeploymentStore) insertDeployed(ctx context.Context, stackName, hostID string) error {

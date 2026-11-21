@@ -359,10 +359,11 @@ paths:
       tags: [stacks]
       summary: Preview a deploy of a stack to a Swarm cluster
       description: |
-        Converts the stack's compose file (with the active or the given
-        environment override) into the Swarm service and network specs a
-        deploy to the cluster would send, and lists what it refuses and
-        warns about. Nothing is written to the cluster. A preview with
+        Converts the stack's compose file (with its active environment
+        override and the global environment) into the Swarm service and
+        network specs a deploy to the cluster would send, and lists what it
+        refuses and warns about. Nothing is written to the cluster. The
+        returned `plan_hash` is the confirmation a deploy needs. A preview with
         refusals is not deployable. Keys the converter does not map are
         refused unless they are known to be harmless, in which case they are
         listed as warnings.
@@ -380,7 +381,7 @@ paths:
         - name: environment
           in: query
           required: false
-          description: Environment override to merge; defaults to the stack's active environment.
+          description: Environment override to merge; must be the stack's active environment (the default).
           schema: {type: string}
       responses:
         "200":
@@ -392,6 +393,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: "`swarm_environment_not_active`: the environment is not the stack's active one."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "422":
           description: The compose file could not be loaded.
           content:
@@ -399,6 +405,93 @@ paths:
               schema: {$ref: "#/components/schemas/Error"}
         "503":
           description: Clusters are not available.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/swarm-deploy:
+    post:
+      operationId: stacks.swarm_deploy
+      tags: [stacks]
+      summary: Deploy a stack to a Swarm cluster
+      description: |
+        Deploys the stack's services and networks to the cluster through one
+        of its managers with a verified node identity, as `docker stack
+        deploy` would, from the same snapshot of the stack files the
+        preview used. The body confirms the `plan_hash` of the preview; when
+        the files, the environment or the global env changed since, the
+        answer is 409 `swarm_plan_changed`.
+
+        Needs `stacks.deploy` on the stack on that cluster. A stack deployed
+        on a host, or on another cluster, is refused; so is a dependency
+        that is not deployed to the same cluster. Only services and networks
+        Dockmesh created for this stack are updated. Images are pinned to
+        their digest; registry credentials are stored in the service spec,
+        as with `--with-registry-auth`.
+
+        A manager that is offline or no longer a manager is skipped before
+        anything is written. A write that gets no answer is never sent to
+        another manager: the outcome is read back from the cluster per
+        service (`applied`) and the answer is 502 with outcome `unknown`
+        unless every service runs the new spec.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: cluster
+          in: query
+          required: true
+          description: Id of the target cluster.
+          schema: {type: string}
+        - name: environment
+          in: query
+          required: false
+          description: Must be the stack's active environment (the default).
+          schema: {type: string}
+        - name: confirm_external
+          in: query
+          required: false
+          description: "`1` confirms stack files changed outside Dockmesh."
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_hash]
+              properties:
+                plan_hash:
+                  type: string
+                  description: The `plan_hash` of the preview being confirmed.
+      responses:
+        "200":
+          description: Every write was applied.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmDeployResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            `swarm_plan_changed`, `stack_other_target`, `dependency_other_target`,
+            `swarm_write_refused` (a name belongs to an object Dockmesh did not
+            create for this stack), `swarm_environment_not_active`,
+            `modified_outside`, `migration_active` or `stack_busy`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: "`swarm_refused` with `refusals`, or the compose file could not be loaded."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: A write failed (outcome `partial`) or its outcome is unknown.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmDeployResult"}
+        "503":
+          description: No verified manager is online, or clusters are not available.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -1753,6 +1846,9 @@ components:
         deployable:
           type: boolean
           description: True when there are no refusals.
+        plan_hash:
+          type: string
+          description: Confirmation for the deploy; absent when not deployable.
         refusals:
           type: array
           items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
@@ -1775,6 +1871,54 @@ components:
           type: array
           description: Stack files changed outside Dockmesh since they were last confirmed.
           items: {type: string}
+    SwarmWriteResult:
+      type: object
+      required: [name, action]
+      properties:
+        name: {type: string}
+        id: {type: string}
+        action:
+          type: string
+          enum: [created, updated, exists, removed, missing, failed, unknown]
+        error: {type: string}
+        warnings:
+          type: array
+          items: {type: string}
+    SwarmDeployResult:
+      type: object
+      required: [stack, cluster_id, manager, outcome, networks, services, warnings]
+      properties:
+        stack: {type: string}
+        cluster_id: {type: string}
+        manager:
+          type: string
+          description: Host id of the manager the write went through.
+        outcome:
+          type: string
+          enum: [applied, partial, unknown]
+        checked_via:
+          type: string
+          description: Host id the outcome was read back through, when the manager did not answer.
+        error: {type: string}
+        networks:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmWriteResult"}
+        services:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/SwarmWriteResult"
+              - type: object
+                properties:
+                  applied:
+                    type: boolean
+                    description: Set when the outcome was read back; whether the service runs the new spec.
+                  running_tasks: {type: integer}
+                  desired_tasks: {type: integer}
+                  update_state: {type: string}
+        warnings:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
     SwarmPreviewFinding:
       type: object
       required: [key, message]
