@@ -1,0 +1,31 @@
+version: "3.13"
+services:
+  everywhere:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      mode: global
+    image: alpine:3.24
+  once:
+    command:
+      - "true"
+    deploy:
+      mode: replicated-job
+      replicas: 2
+    image: alpine:3.24
+  rr:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      replicas: 2
+      endpoint_mode: dnsrr
+    image: alpine:3.24
+  vip:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      endpoint_mode: vip
+    image: alpine:3.24

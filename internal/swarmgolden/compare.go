@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/swarm"
 )
 
@@ -35,14 +36,34 @@ func orMissing(s string) string {
 // missing, which matches how the API types omit empty values; zero
 // scalars are compared, so Replicas 0 and an unset Replicas differ.
 func CompareServices(want, got []swarm.ServiceSpec, ignored []string) ([]Diff, error) {
-	w, err := byName(want)
+	name := func(s swarm.ServiceSpec) string { return s.Name }
+	w, err := byName(want, name)
 	if err != nil {
 		return nil, err
 	}
-	g, err := byName(got)
+	g, err := byName(got, name)
 	if err != nil {
 		return nil, err
 	}
+	return compare(w, g, ignored), nil
+}
+
+// CompareNetworks compares network create requests by name, with the same
+// rules as CompareServices and nothing ignored.
+func CompareNetworks(want, got []network.CreateRequest) ([]Diff, error) {
+	name := func(n network.CreateRequest) string { return n.Name }
+	w, err := byName(want, name)
+	if err != nil {
+		return nil, err
+	}
+	g, err := byName(got, name)
+	if err != nil {
+		return nil, err
+	}
+	return compare(w, g, nil), nil
+}
+
+func compare(w, g map[string]any, ignored []string) []Diff {
 	names := map[string]bool{}
 	for n := range w {
 		names[n] = true
@@ -71,10 +92,10 @@ func CompareServices(want, got []swarm.ServiceSpec, ignored []string) ([]Diff, e
 		}
 		out = append(out, diff(n+":", prune(wv), prune(gv))...)
 	}
-	return out, nil
+	return out
 }
 
-func byName(specs []swarm.ServiceSpec) (map[string]any, error) {
+func byName[T any](specs []T, name func(T) string) (map[string]any, error) {
 	out := map[string]any{}
 	for _, s := range specs {
 		raw, err := json.Marshal(s)
@@ -85,10 +106,10 @@ func byName(specs []swarm.ServiceSpec) (map[string]any, error) {
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, err
 		}
-		if _, dup := out[s.Name]; dup {
-			return nil, fmt.Errorf("service %s twice", s.Name)
+		if _, dup := out[name(s)]; dup {
+			return nil, fmt.Errorf("%s twice", name(s))
 		}
-		out[s.Name] = v
+		out[name(s)] = v
 	}
 	return out, nil
 }

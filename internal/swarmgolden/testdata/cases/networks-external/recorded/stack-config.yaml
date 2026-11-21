@@ -1,0 +1,16 @@
+version: "3.13"
+services:
+  app:
+    command:
+      - sleep
+      - "3600"
+    image: alpine:3.24
+    networks:
+      own: null
+      shared: null
+networks:
+  own:
+    name: gt-networks-external-own
+  shared:
+    name: gt-external-shared
+    external: true

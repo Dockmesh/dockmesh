@@ -1,0 +1,26 @@
+version: "3.13"
+services:
+  limited:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "33554432"
+          pids: 64
+        reservations:
+          cpus: "0.05"
+          memory: "16777216"
+    image: alpine:3.24
+  whole:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: "1073741824"
+    image: alpine:3.24

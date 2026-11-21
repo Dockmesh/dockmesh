@@ -1,0 +1,40 @@
+services:
+  front:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    networks:
+      edge:
+        aliases: [www]
+      back: {}
+  api:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    networks:
+      - back
+      - default
+      - secure
+  plain:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+  named:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    networks: [renamed]
+networks:
+  edge:
+    attachable: true
+    labels:
+      tier: edge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
+  back:
+    internal: true
+    ipam:
+      config:
+        - subnet: 198.18.231.0/24
+  renamed:
+    name: gt-networks-fixed-name
+  secure:
+    driver_opts:
+      encrypted: ""
+  unused: {}
