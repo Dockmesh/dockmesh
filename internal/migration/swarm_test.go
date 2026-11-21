@@ -101,3 +101,28 @@ func TestPreflightFailsSwarmStack(t *testing.T) {
 	}
 	t.Fatalf("no failed swarm check: %+v", res.Checks)
 }
+
+// A stack deployed to a Swarm cluster is refused from its deployment
+// target alone, before any host is asked.
+func TestMigrationRefusesClusterTargetStack(t *testing.T) {
+	e := newMigrationEnv(t)
+	if _, err := e.db.Exec(`DELETE FROM stack_deployments WHERE stack_name = 'web'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`INSERT INTO stack_deployments (stack_name, target_kind, target_id, host_id) VALUES ('web', 'cluster', 'c1', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Initiate(context.Background(), "web", "agent1", "u1", "", nil); !errors.Is(err, ErrSwarmStack) {
+		t.Fatalf("Initiate: err %v, want ErrSwarmStack", err)
+	}
+	res, err := e.svc.Preflight(context.Background(), "web", "agent1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Passed || len(res.Checks) != 1 || res.Checks[0].Name != "swarm" || res.Checks[0].Status != CheckFail {
+		t.Fatalf("preflight %+v, want one failed swarm check", res)
+	}
+	if e.source.stops != 0 {
+		t.Fatalf("%d stops, want none", e.source.stops)
+	}
+}

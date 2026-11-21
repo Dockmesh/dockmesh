@@ -27,6 +27,7 @@ var (
 	ErrNameTaken  = errors.New("a cluster with this name already exists")
 	ErrBadName    = errors.New("invalid name: 1 to 64 letters, digits, spaces, '.', '-' or '_'")
 	ErrNotManager = errors.New("the host is not a manager of an active Swarm")
+	ErrBadID      = errors.New("the manager reports a Swarm cluster id that is not a Swarm id")
 	ErrNotFound   = errors.New("cluster not found")
 	// ErrUnreadable: the cluster's origin is offline or no longer the
 	// manager node it was linked as.
@@ -56,6 +57,14 @@ const (
 )
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
+
+// idPattern holds every Swarm cluster id (25 lowercase base-36 digits) and
+// no host id: agent ids are UUIDs with dashes, and "local" is refused on its
+// own. A stack scope's host names a host or a cluster by id alone, so the
+// two must never be equal.
+var idPattern = regexp.MustCompile(`^[a-z0-9]{1,64}$`)
+
+func validID(id string) bool { return id != "local" && idPattern.MatchString(id) }
 
 // Hosts is what the service needs from the host registry.
 type Hosts interface {
@@ -323,6 +332,9 @@ func (s *Service) Create(ctx context.Context, hostID, name, actor string) (Clust
 		return Cluster{}, ErrNotManager
 	}
 	id, nodeID := info.Swarm.ClusterID, info.Swarm.NodeID
+	if !validID(id) {
+		return Cluster{}, ErrBadID
+	}
 	list, err := s.nodesOf(ctx, hostID)
 	if err != nil {
 		return Cluster{}, fmt.Errorf("list the Swarm's nodes: %w", err)

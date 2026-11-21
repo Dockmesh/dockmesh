@@ -3,6 +3,7 @@ package stacks
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -12,12 +13,36 @@ import (
 // "stack X is deployed on host Y with status Z".
 type Deployment struct {
 	StackName  string    `json:"stack_name"`
+	TargetKind string    `json:"target_kind"`
+	TargetID   string    `json:"target_id"`
 	HostID     string    `json:"host_id"`
 	HostName   string    `json:"host_name,omitempty"` // populated at query time, not stored
 	Status     string    `json:"status"`              // deployed | stopped | migrating | delete_pending
 	DeployedAt time.Time `json:"deployed_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
+
+// Target returns where the deployment deploys to.
+func (d *Deployment) Target() Target { return Target{Kind: d.TargetKind, ID: d.TargetID} }
+
+// Target kinds of a deployment.
+const (
+	TargetHost    = "host"
+	TargetCluster = "cluster"
+)
+
+// Target is where a stack deploys to: a host or a Swarm cluster. The zero
+// value means the stack has no target yet.
+type Target struct {
+	Kind string
+	ID   string
+}
+
+// HostTarget is the target of a stack on host id.
+func HostTarget(id string) Target { return Target{Kind: TargetHost, ID: id} }
+
+// ErrClusterTarget is returned where only a host target can be handled.
+var ErrClusterTarget = errors.New("stack targets a Swarm cluster; this operation supports host targets only")
 
 // DeploymentDeletePending marks a stack whose delete waits for its offline
 // agent host. The next deploy replaces the status and so cancels the delete.
@@ -38,14 +63,16 @@ func NewDeploymentStore(db *sql.DB) *DeploymentStore {
 // and StopStack (status=stopped).
 func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO stack_deployments (stack_name, host_id, status, deployed_at, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO stack_deployments (stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at)
+		VALUES (?, 'host', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(stack_name) DO UPDATE SET
+			target_kind = excluded.target_kind,
+			target_id   = excluded.target_id,
 			host_id     = excluded.host_id,
 			status      = excluded.status,
 			deployed_at = CASE WHEN excluded.status = 'deployed' THEN CURRENT_TIMESTAMP ELSE stack_deployments.deployed_at END,
 			updated_at  = CURRENT_TIMESTAMP`,
-		stackName, hostID, status)
+		stackName, hostID, hostID, status)
 	return err
 }
 
@@ -53,11 +80,11 @@ func (s *DeploymentStore) Set(ctx context.Context, stackName, hostID, status str
 // for, unless the stack has one by now.
 func (s *DeploymentStore) insertDeployed(ctx context.Context, stackName, hostID string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO stack_deployments (stack_name, host_id, status, deployed_at, updated_at)
-		SELECT ?, ?, 'deployed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		INSERT INTO stack_deployments (stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at)
+		SELECT ?, 'host', ?, ?, 'deployed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 		WHERE EXISTS (SELECT 1 FROM stack_targets WHERE stack_name = ? AND host_id = ?)
 		ON CONFLICT(stack_name) DO NOTHING`,
-		stackName, hostID, stackName, hostID)
+		stackName, hostID, hostID, stackName, hostID)
 	return err
 }
 
@@ -67,7 +94,7 @@ func (s *DeploymentStore) insertDeployed(ctx context.Context, stackName, hostID 
 func (s *DeploymentStore) MarkDeletePending(ctx context.Context, stackName, hostID string, stop bool) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE stack_deployments SET status = ?, delete_stop = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE stack_name = ? AND host_id = ?`, DeploymentDeletePending, stop, stackName, hostID)
+		 WHERE stack_name = ? AND target_kind = 'host' AND target_id = ?`, DeploymentDeletePending, stop, stackName, hostID)
 	if err != nil {
 		return false, err
 	}
@@ -95,7 +122,7 @@ func (s *DeploymentStore) Delete(ctx context.Context, stackName string) error {
 // Get returns the deployment for a single stack, or nil if none.
 func (s *DeploymentStore) Get(ctx context.Context, stackName string) (*Deployment, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT stack_name, host_id, status, deployed_at, updated_at
+		SELECT stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at
 		FROM stack_deployments WHERE stack_name = ?`, stackName)
 	d, err := scanDeployment(row)
 	if err == sql.ErrNoRows {
@@ -107,7 +134,7 @@ func (s *DeploymentStore) Get(ctx context.Context, stackName string) (*Deploymen
 // All returns every deployment row keyed by stack name.
 func (s *DeploymentStore) All(ctx context.Context) (map[string]*Deployment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT stack_name, host_id, status, deployed_at, updated_at
+		SELECT stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at
 		FROM stack_deployments ORDER BY stack_name`)
 	if err != nil {
 		return nil, err
@@ -124,11 +151,11 @@ func (s *DeploymentStore) All(ctx context.Context) (map[string]*Deployment, erro
 	return out, rows.Err()
 }
 
-// ByHost returns all deployments for a given host.
+// ByHost returns the deployments that target a given host.
 func (s *DeploymentStore) ByHost(ctx context.Context, hostID string) ([]*Deployment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT stack_name, host_id, status, deployed_at, updated_at
-		FROM stack_deployments WHERE host_id = ? ORDER BY stack_name`, hostID)
+		SELECT stack_name, target_kind, target_id, host_id, status, deployed_at, updated_at
+		FROM stack_deployments WHERE target_kind = 'host' AND target_id = ? ORDER BY stack_name`, hostID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +177,7 @@ type deploymentScanner interface {
 
 func scanDeployment(r deploymentScanner) (*Deployment, error) {
 	var d Deployment
-	if err := r.Scan(&d.StackName, &d.HostID, &d.Status, &d.DeployedAt, &d.UpdatedAt); err != nil {
+	if err := r.Scan(&d.StackName, &d.TargetKind, &d.TargetID, &d.HostID, &d.Status, &d.DeployedAt, &d.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -200,15 +227,33 @@ func (s *DeploymentStore) DeleteTarget(ctx context.Context, stackName string) er
 	return err
 }
 
-// HostOf returns the host scope checks use for a stack: its deployment
-// host, or the host it was created for while it is not deployed.
-func (s *DeploymentStore) HostOf(ctx context.Context, stackName string) (string, error) {
+// TargetOf returns the target scope checks use for a stack: its deployment
+// target, or the host it was created for while it is not deployed. The
+// zero Target when it has neither.
+func (s *DeploymentStore) TargetOf(ctx context.Context, stackName string) (Target, error) {
 	d, err := s.Get(ctx, stackName)
+	if err != nil {
+		return Target{}, err
+	}
+	if d != nil && d.TargetID != "" {
+		return d.Target(), nil
+	}
+	hostID, err := s.Target(ctx, stackName)
+	if err != nil || hostID == "" {
+		return Target{}, err
+	}
+	return HostTarget(hostID), nil
+}
+
+// HostOf is TargetOf for code that only handles host targets: the host id,
+// "" without a target, ErrClusterTarget for a stack on a Swarm cluster.
+func (s *DeploymentStore) HostOf(ctx context.Context, stackName string) (string, error) {
+	t, err := s.TargetOf(ctx, stackName)
 	if err != nil {
 		return "", err
 	}
-	if d != nil && d.HostID != "" {
-		return d.HostID, nil
+	if t.Kind == TargetCluster {
+		return "", ErrClusterTarget
 	}
-	return s.Target(ctx, stackName)
+	return t.ID, nil
 }

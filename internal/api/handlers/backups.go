@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/redact"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -608,8 +609,11 @@ func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Requ
 		if dep, err := h.Deployments.Get(r.Context(), stack); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return false
-		} else if dep != nil && dep.HostID != hostID && !h.requireStackScope(w, r, perm, dep.HostID, stack) {
-			return false
+		} else if dep != nil && (dep.TargetKind == stacks.TargetCluster || dep.HostID != hostID) {
+			if res := h.stackTargetReq(dep.Target(), stack); !h.allowedOn(r, res, perm) {
+				h.writeScopeDenied(w, r, perm, res, "stack "+stack)
+				return false
+			}
 		}
 	}
 	return true

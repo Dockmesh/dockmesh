@@ -441,6 +441,8 @@ export interface UnitRewriteState {
 // StackDeployment tracks which host a stack is deployed on (P.7).
 export interface StackDeployment {
   stack_name: string;
+  target_kind: 'host' | 'cluster';
+  target_id: string;
   host_id: string;
   host_name?: string;
   status: 'deployed' | 'stopped' | 'migrating' | 'delete_pending';

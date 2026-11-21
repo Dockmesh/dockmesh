@@ -200,13 +200,12 @@ func (h *Handlers) CheckAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "host_tag can't be combined with host or stack")
 		return
 	}
-	hostID := req.Host
+	res := h.stackScopeReq(req.Host, req.Stack)
 	if req.Stack != "" {
-		if sh := h.stackHost(r.Context(), req.Stack); sh != "" {
-			hostID = sh
+		if sr := h.stackTargetRes(r.Context(), req.Stack); sr.HostID != "" || sr.ClusterID != "" {
+			res = sr
 		}
 	}
-	res := rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID), StackName: req.Stack}
 	if req.HostTag != "" {
 		// Any host with the tag: no host id an assignment could name.
 		res = rbac.Resource{HostID: "tag:" + req.HostTag, HostTags: []string{req.HostTag}}

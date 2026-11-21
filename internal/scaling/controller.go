@@ -363,7 +363,7 @@ func CheckedScale(sm *stacks.Manager, locks *stacklock.Locks, deployments *stack
 		if err != nil {
 			return err
 		}
-		if d == nil || d.Status != "deployed" || stacklock.Host(d.HostID) != t.LockKey().Target {
+		if d == nil || d.Status != "deployed" || d.TargetKind != stacks.TargetHost || stacklock.Host(d.HostID) != t.LockKey().Target {
 			return fmt.Errorf("%w: stack %s is not deployed there", errCountChanged, stack)
 		}
 		v, err := Check(sm, stack)

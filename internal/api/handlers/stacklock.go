@@ -7,6 +7,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/stacklock"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 // stackBusyResponse is the 409 body for a stack another operation holds.
@@ -70,7 +71,11 @@ func (h *Handlers) guardStack(w http.ResponseWriter, r *http.Request, stack, op 
 	if h.Deployments != nil {
 		var err error
 		if hostID, err = h.Deployments.HostOf(r.Context(), stack); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			if errors.Is(err, stacks.ErrClusterTarget) {
+				writeStackTargetError(w, err)
+			} else {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
 			return nil, false
 		}
 	}
