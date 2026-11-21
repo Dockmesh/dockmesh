@@ -29,7 +29,7 @@ for c in "${cases[@]}"; do
   echo "== $c"
   src=$cases_dir/$c
   ssh "$host" "mkdir $remote/$c"
-  for f in compose.yaml golden.env; do
+  for f in compose.yaml golden.env external-networks; do
     if [ -f "$src/$f" ]; then ssh "$host" "cat > $remote/$c/$f" < "$src/$f"; fi
   done
   ssh "$host" bash -s "$remote/$c" "gt-$c" < "$here/remote.sh"

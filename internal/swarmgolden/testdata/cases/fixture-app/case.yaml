@@ -1,5 +1,3 @@
-pending:
-  - "*:TaskTemplate/ContainerSpec/Mounts"
 accepted:
   - path: "gt-fixture-app_app:TaskTemplate/RestartPolicy"
     reason: compose `restart:` is not translated on a Swarm (the CLI maps it to a restart condition); it is reported with a hint to deploy.restart_policy

@@ -1,0 +1,62 @@
+version: "3.13"
+services:
+  app:
+    command:
+      - sleep
+      - "3600"
+    image: alpine:3.24
+    volumes:
+      - type: volume
+        source: data
+        target: /data
+      - type: volume
+        source: cache
+        target: /cache
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        target: /scratch
+      - type: tmpfs
+        target: /run/app
+        tmpfs:
+          size: 16777216
+      - type: bind
+        source: /var/log
+        target: /host-log
+        read_only: true
+      - type: volume
+        source: outside
+        target: /outside
+      - type: bind
+        source: /etc/hostname
+        target: /etc/node-hostname
+        read_only: true
+        bind:
+          propagation: rprivate
+  pinned:
+    command:
+      - sleep
+      - "3600"
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    image: alpine:3.24
+    volumes:
+      - type: volume
+        source: data
+        target: /data
+volumes:
+  cache:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      o: size=8m
+      type: tmpfs
+  data:
+    labels:
+      backup: "yes"
+  outside:
+    name: gt-volumes-outside
+    external: true

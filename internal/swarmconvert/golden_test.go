@@ -3,7 +3,6 @@ package swarmconvert
 import (
 	"context"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -13,14 +12,38 @@ import (
 
 const casesDir = "../swarmgolden/testdata/cases"
 
-// What each case reports as not converted; a case missing here must
-// convert completely.
+// What each case reports as not converted and as warnings; a case
+// missing here must convert completely and without warnings.
 var wantNotConverted = map[string][]string{
-	"basic-web":        {"web: deploy.placement", "web: deploy.resources", "web: deploy.update_config"},
-	"fixture-app":      {"volumes.data", "app: restart (use deploy.restart_policy)", "app: volumes"},
+	"fixture-app":      {"app: restart (use deploy.restart_policy)"},
 	"fixture-nginx":    {"web: restart (use deploy.restart_policy)"},
-	"fixture-postgres": {"volumes.pgdata", "db: restart (use deploy.restart_policy)", "db: volumes"},
+	"fixture-postgres": {"db: restart (use deploy.restart_policy)"},
+	"networks":         {"networks.unused"},
 	"restart-policy":   {"compose-restart: restart (use deploy.restart_policy)"},
+}
+
+var wantWarnings = map[string][]string{
+	"fixture-app":      {"app: volumes /data: " + localVolume("data")},
+	"fixture-postgres": {"db: volumes /var/lib/postgresql/data: " + localVolume("pgdata")},
+	"networks":         {"networks.secure: Encrypted overlay traffic between nodes is noticeably slower than unencrypted traffic."},
+	"volumes": {
+		"app: volumes /data: " + localVolume("data"),
+		"app: volumes /etc/node-hostname: " + bindMount("/etc/hostname"),
+		"app: volumes /host-log: " + bindMount("/var/log"),
+		"app: volumes /outside: External volume outside is looked up on the node each task runs on; it has to exist there.",
+		"app: volumes /scratch: Anonymous volume: every task gets a new, empty one.",
+		"pinned: volumes /data: " + localVolume("data"),
+	},
+}
+
+func localVolume(name string) string {
+	return "Volume " + name + " is local to each node: a task that moves to another node starts with an empty volume. " +
+		"Use shared storage (volume driver options) or pin the service with a placement constraint."
+}
+
+func bindMount(src string) string {
+	return "Bind mount of " + src + ": the path must exist on every node the service can run on, Swarm does not create it, " +
+		"and each node has its own content."
 }
 
 func loadCase(t *testing.T, c swarmgolden.Case) *Result {
@@ -38,6 +61,14 @@ func loadCase(t *testing.T, c swarmgolden.Case) *Result {
 		t.Fatal(err)
 	}
 	return res
+}
+
+func warningStrings(ws []Warning) []string {
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = w.String()
+	}
+	return out
 }
 
 func TestGoldenCases(t *testing.T) {
@@ -63,23 +94,27 @@ func TestGoldenCases(t *testing.T) {
 			if len(c.Meta.Pending) > 0 && len(res.NotConverted) == 0 {
 				t.Errorf("case.yaml lists pending paths but nothing is reported as not converted")
 			}
-			var gotNets, wantNets []string
-			for _, n := range res.Networks {
-				gotNets = append(gotNets, n.Name+" "+n.Driver+" "+n.Labels[LabelNamespace])
+			if got, want := warningStrings(res.Warnings), wantWarnings[c.Name]; !slices.Equal(got, want) {
+				t.Errorf("warnings:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 			}
-			for _, n := range c.Networks {
-				wantNets = append(wantNets, n.Name+" "+n.Driver+" "+n.Labels[LabelNamespace])
+			netDiffs, err := swarmgolden.CompareNetworks(c.Networks, res.Networks)
+			if err != nil {
+				t.Fatal(err)
 			}
-			sort.Strings(gotNets)
-			sort.Strings(wantNets)
-			if !slices.Equal(gotNets, wantNets) {
-				t.Errorf("networks %v, want %v", gotNets, wantNets)
+			for _, d := range netDiffs {
+				t.Errorf("network %s", d)
+			}
+			gotExt := slices.Sorted(slices.Values(res.ExternalNetworks))
+			if want := slices.Sorted(slices.Values(c.ExternalNetworks)); !slices.Equal(gotExt, want) {
+				t.Errorf("external networks %v, want %v", gotExt, want)
 			}
 		})
 	}
-	for name := range wantNotConverted {
-		if !seen[name] {
-			t.Errorf("wantNotConverted names case %s, which does not exist", name)
+	for _, m := range []map[string][]string{wantNotConverted, wantWarnings} {
+		for name := range m {
+			if !seen[name] {
+				t.Errorf("case %s does not exist", name)
+			}
 		}
 	}
 }
@@ -119,13 +154,13 @@ configs:
   conf:
     external: true
 `, []string{
-			"configs.conf", "networks.back", "secrets.token",
-			"app: cap_add", "app: deploy.endpoint_mode", "app: deploy.mode", "app: networks", "app: ports.host_ip",
+			"configs.conf", "secrets.token",
+			"app: cap_add", "app: ports.host_ip",
 			"app: privileged", "app: stop_grace_period", "app: ulimits", "app: user", "app: working_dir",
 		}},
 		{"empty network settings stay default", "services:\n  app:\n    image: alpine\n    networks:\n      default: {}\n", nil},
-		{"default network with an alias", "services:\n  app:\n    image: alpine\n    networks:\n      default:\n        aliases: [web]\n", []string{"app: networks"}},
-		{"default network with settings", "services:\n  app:\n    image: alpine\nnetworks:\n  default:\n    enable_ipv4: false\n", []string{"networks.default"}},
+		{"network attachment settings", "services:\n  app:\n    image: alpine\n    networks:\n      default:\n        aliases: [web]\n        ipv4_address: 198.18.0.5\n        priority: 3\n", []string{"app: networks.ipv4_address", "app: networks.priority"}},
+		{"default network with settings", "services:\n  app:\n    image: alpine\nnetworks:\n  default:\n    enable_ipv4: false\n", []string{"networks.default.enable_ipv4"}},
 		{"jobs and models", "services:\n  app:\n    image: alpine\njobs:\n  j:\n    image: alpine\n    privileged: true\n    triggers:\n      manual: true\nmodels:\n  m:\n    model: ai/x\n", []string{"jobs.j", "models.m"}},
 	}
 	for _, tc := range cases {
@@ -137,9 +172,8 @@ configs:
 			if got := Strings(res.NotConverted); !slices.Equal(got, tc.want) {
 				t.Fatalf("not converted:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(tc.want, "\n  "))
 			}
-			attached := len(res.Services[0].TaskTemplate.Networks) > 0
-			if reported := slices.Contains(Strings(res.NotConverted), "app: networks"); attached == reported {
-				t.Fatalf("network attached %v, reported %v: exactly one must hold", attached, reported)
+			if len(res.Services[0].TaskTemplate.Networks) == 0 {
+				t.Fatal("service attached to no network")
 			}
 		})
 	}

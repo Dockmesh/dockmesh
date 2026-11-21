@@ -1,4 +1,0 @@
-pending:
-  - "*:TaskTemplate/Resources"
-  - "*:TaskTemplate/Placement"
-  - "*:UpdateConfig"

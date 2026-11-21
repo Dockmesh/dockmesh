@@ -1,0 +1,23 @@
+services:
+  everywhere:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      mode: global
+  rr:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      replicas: 2
+      endpoint_mode: dnsrr
+  vip:
+    image: alpine:3.24
+    command: ["sleep", "3600"]
+    deploy:
+      endpoint_mode: vip
+  once:
+    image: alpine:3.24
+    command: ["true"]
+    deploy:
+      mode: replicated-job
+      replicas: 2
