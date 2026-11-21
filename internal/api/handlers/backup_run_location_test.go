@@ -16,7 +16,7 @@ import (
 )
 
 // A target edit answers how many archives stay at the old place, and a
-// run whose archive is gone answers 404 archive_not_found naming where it
+// run whose archive is gone answers 409 archive_missing naming where it
 // was written.
 func TestBackupRunLocationAPI(t *testing.T) {
 	e := newBackupRunHostEnv(t)
@@ -66,7 +66,7 @@ func TestBackupRunLocationAPI(t *testing.T) {
 	rr = e.do(http.MethodPost, "/backups/runs/5/verify", tok, nil)
 	var body struct{ Error, Code string }
 	_ = json.Unmarshal(rr.Body.Bytes(), &body)
-	if rr.Code != http.StatusNotFound || body.Code != "archive_not_found" || !strings.Contains(body.Error, oldDir) {
+	if rr.Code != http.StatusConflict || body.Code != "archive_missing" || !strings.Contains(body.Error, oldDir) {
 		t.Fatalf("verify of a run whose archive is gone: %d %s", rr.Code, rr.Body)
 	}
 }

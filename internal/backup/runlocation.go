@@ -50,15 +50,29 @@ func sameRunLocation(a, b *RunLocation) bool {
 // ErrArchiveMissing means a run's archive is not where Dockmesh looked.
 var ErrArchiveMissing = errors.New("archive not found")
 
+// ErrArchiveGone means the places a run's archive was looked for were
+// reachable and the file was in none of them. It also matches
+// ErrArchiveMissing.
+var ErrArchiveGone = errors.New("archive missing")
+
 // ArchiveMissingError says where a run's archive was expected and why it
 // could not be read there.
-type ArchiveMissingError struct{ msg string }
+type ArchiveMissingError struct {
+	msg  string
+	gone bool
+}
 
-func (e *ArchiveMissingError) Error() string        { return e.msg }
-func (e *ArchiveMissingError) Is(target error) bool { return target == ErrArchiveMissing }
+func (e *ArchiveMissingError) Error() string { return e.msg }
+func (e *ArchiveMissingError) Is(target error) bool {
+	return target == ErrArchiveMissing || (e.gone && target == ErrArchiveGone)
+}
 
 func missing(format string, args ...any) error {
 	return &ArchiveMissingError{msg: fmt.Sprintf(format, args...)}
+}
+
+func gone(format string, args ...any) error {
+	return &ArchiveMissingError{msg: fmt.Sprintf(format, args...), gone: true}
 }
 
 // ErrRunJobGone means a run's job row no longer exists and nothing the
@@ -78,10 +92,28 @@ func jobGone(format string, args ...any) error {
 
 const stampTime = "2006-01-02 15:04 MST"
 
-// openRunArchive opens the archive of run as stored on its target. Runs
+// openRunArchive opens the archive of run as stored on its target and
+// records whether it was found: a run whose archive is gone is marked
+// archive missing, one whose archive turns up again is unmarked.
+func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.ReadCloser, error) {
+	rc, err := s.locateRunArchive(ctx, run, job)
+	switch {
+	case err == nil:
+		if cerr := s.store.clearArchiveMissing(ctx, run.ID); cerr != nil {
+			slog.Warn("backup: clear archive missing", "run", run.ID, "err", cerr)
+		}
+	case errors.Is(err, ErrArchiveGone):
+		if merr := s.store.markArchiveMissing(ctx, run.ID, err.Error()); merr != nil {
+			slog.Warn("backup: mark archive missing", "run", run.ID, "err", merr)
+		}
+	}
+	return rc, err
+}
+
+// locateRunArchive opens the archive of run as stored on its target. Runs
 // that recorded a location read from there with the current credentials
 // of their target; runs from before that read from the job's target.
-func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.ReadCloser, error) {
+func (s *Service) locateRunArchive(ctx context.Context, run *Run, job *Job) (io.ReadCloser, error) {
 	if job == nil {
 		return s.openJoblessArchive(ctx, run)
 	}
@@ -100,13 +132,15 @@ func (s *Service) openRunArchive(ctx context.Context, run *Run, job *Job) (io.Re
 		}
 		notFound = append(notFound, c.desc)
 	}
+	certain := !guessed(run)
 	if guessed(run) && run.SHA256 != "" {
-		rc, _, err := s.findOnSavedTargets(ctx, run)
+		rc, _, unreachable, err := searchSavedTargets(ctx, s.store, s.notices, run)
 		if rc != nil || err != nil {
 			return rc, err
 		}
+		certain = !unreachable
 	}
-	return nil, archiveNotFound(ctx, s.store, run, job, notFound)
+	return nil, archiveNotFound(ctx, s.store, run, job, notFound, certain)
 }
 
 // guessed reports whether nothing certain is known about where run wrote
@@ -133,7 +167,7 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 				return nil, err
 			}
 			if !loc.Inferred {
-				return nil, missing("archive %s of run %d is no longer at %s, where it was written; it was moved or deleted outside Dockmesh",
+				return nil, gone("archive %s of run %d is no longer at %s, where it was written; it was moved or deleted outside Dockmesh",
 					run.TargetPath, run.ID, loc.describe())
 			}
 		case !loc.Inferred:
@@ -144,7 +178,7 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 		return nil, jobGone("the job of run %d was deleted and the run recorded neither its target nor a hash of its archive %s, so Dockmesh can't tell which file is its archive; copy the archive from the target the job wrote to and restore it by hand",
 			run.ID, run.TargetPath)
 	}
-	rc, tried, err := s.findOnSavedTargets(ctx, run)
+	rc, tried, _, err := searchSavedTargets(ctx, s.store, s.notices, run)
 	if rc != nil || err != nil {
 		return rc, err
 	}
@@ -156,29 +190,30 @@ func (s *Service) openJoblessArchive(ctx context.Context, run *Run) (io.ReadClos
 		run.ID, where, run.TargetPath)
 }
 
-// findOnSavedTargets looks for run's archive at its path on every saved
+// searchSavedTargets looks for run's archive at its path on every saved
 // target and returns the first file with the run's hash and size, so it
 // is the run's own archive wherever it is found. tried describes the
-// targets without it.
-func (s *Service) findOnSavedTargets(ctx context.Context, run *Run) (io.ReadCloser, []string, error) {
-	ts := s.store.targets()
+// targets without it; unreachable is set when one of them couldn't be
+// read, so the archive may still be there.
+func searchSavedTargets(ctx context.Context, st *store, n *notices.Service, run *Run) (rc io.ReadCloser, tried []string, unreachable bool, err error) {
+	ts := st.targets()
 	saved, err := ts.List(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	tried := make([]string, 0, len(saved))
+	tried = make([]string, 0, len(saved))
 	for i := range saved {
-		st := &saved[i]
-		desc := fmt.Sprintf("%q", st.Name)
-		operations.FromContext(ctx).AddSecrets(targetSecretValues(st.Type, st.Config)...)
-		built, err := ts.BuildChecked(ctx, st, s.notices)
+		t := &saved[i]
+		desc := fmt.Sprintf("%q", t.Name)
+		operations.FromContext(ctx).AddSecrets(targetSecretValues(t.Type, t.Config)...)
+		built, err := ts.BuildChecked(ctx, t, n)
 		if err == nil {
 			tgt := wrapRunTarget(built)
 			var match bool
 			if match, err = holdsArchive(ctx, tgt, run); err == nil && match {
 				var rc io.ReadCloser
 				if rc, err = tgt.Read(ctx, run.TargetPath); err == nil {
-					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil, nil
+					return &hashCheckedReader{rc: rc, h: sha256.New(), want: run.SHA256, where: "backup target " + desc}, nil, false, nil
 				}
 			} else if err == nil {
 				tried = append(tried, desc+" (file does not match)")
@@ -186,12 +221,13 @@ func (s *Service) findOnSavedTargets(ctx context.Context, run *Run) (io.ReadClos
 			}
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("backup: look for the archive of a run on the saved targets", "run", run.ID, "target", st.Name, "err", err)
+			slog.Warn("backup: look for the archive of a run on the saved targets", "run", run.ID, "target", t.Name, "err", err)
 			desc += " (unreachable)"
+			unreachable = true
 		}
 		tried = append(tried, desc)
 	}
-	return nil, tried, nil
+	return nil, tried, unreachable, nil
 }
 
 // holdsArchive reports whether the file at the run's path on t has the
@@ -370,31 +406,62 @@ func atRecorded(run *Run, loc *RunLocation, owner string, cur any, checked func(
 }
 
 // archiveNotFound explains a run whose archive is in none of the places
-// tried, naming the most likely one.
-func archiveNotFound(ctx context.Context, st *store, run *Run, job *Job, tried []string) error {
+// tried, naming the most likely one. certain says every place the archive
+// could be was reachable; it counts as gone only then, and only when its
+// target wasn't moved since the run, since an earlier location of a
+// target is not searched.
+func archiveNotFound(ctx context.Context, st *store, run *Run, job *Job, tried []string, certain bool) error {
 	where := strings.Join(tried, " or ")
 	loc := run.Location
 	switch {
 	case loc != nil && loc.Inferred && loc.ChangedAt != nil:
 		return missing("archive %s of run %d was not found at %s: it was most likely written under %s before the target changed on %s, and was moved or deleted since",
 			run.TargetPath, run.ID, where, loc.describe(), loc.ChangedAt.Format(stampTime))
-	case loc != nil:
-		return missing("archive %s of run %d is no longer at %s, where it was written; it was moved or deleted outside Dockmesh",
+	case loc != nil && !loc.Inferred:
+		return gone("archive %s of run %d is no longer at %s, where it was written; it was moved or deleted outside Dockmesh",
 			run.TargetPath, run.ID, where)
+	}
+	notFound := missing
+	if certain {
+		notFound = gone
 	}
 	msg := fmt.Sprintf("archive %s of run %d was not found at %s", run.TargetPath, run.ID, where)
 	if job.TargetID > 0 {
 		if t, err := st.targets().Get(ctx, job.TargetID); err == nil && t.UpdatedAt.After(run.StartedAt) {
 			msg += fmt.Sprintf(": the run was taken on %s, before Dockmesh recorded where each run writes, and backup target %q was changed on %s, so the archive is most likely still where that target pointed before the change",
 				run.StartedAt.Format(stampTime), t.Name, t.UpdatedAt.Format(stampTime))
-			return missing("%s", msg)
+			// A target saved from a job's inline settings on upgrade
+			// was created after the run but points where the run wrote.
+			if t.UpdatedAt.After(t.CreatedAt) {
+				notFound = missing
+			}
+			return notFound("%s", msg)
 		}
 	}
 	if job.UpdatedAt.After(run.StartedAt) {
 		msg += fmt.Sprintf(": the run was taken on %s, before Dockmesh recorded where each run writes, and the job was changed on %s, so the archive is most likely on the target the job used before",
 			run.StartedAt.Format(stampTime), job.UpdatedAt.Format(stampTime))
 	}
-	return missing("%s", msg)
+	return notFound("%s", msg)
+}
+
+// guessedArchiveGone decides for a run without a certain location whose
+// archive is not on the job's target: gone (with the reason) only when
+// the run has a hash and no reachable saved target holds the file.
+func guessedArchiveGone(ctx context.Context, st *store, n *notices.Service, run *Run, job *Job, where string) (string, bool, error) {
+	if run.SHA256 == "" {
+		return "", false, nil
+	}
+	rc, _, unreachable, err := searchSavedTargets(ctx, st, n, run)
+	if err != nil {
+		return "", false, err
+	}
+	if rc != nil {
+		_ = rc.Close()
+		return "", false, nil
+	}
+	nf := archiveNotFound(ctx, st, run, job, []string{where}, !unreachable)
+	return nf.Error(), errors.Is(nf, ErrArchiveGone), nil
 }
 
 func marshalLocation(loc *RunLocation) (sql.NullInt64, sql.NullString) {

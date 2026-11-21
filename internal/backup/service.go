@@ -394,6 +394,12 @@ func (s *Service) GetRun(ctx context.Context, id int64) (*Run, error) {
 	return s.store.getRun(ctx, id)
 }
 
+// RemoveMissingRun deletes a run whose archive was found missing, with
+// its log. Any other run answers ErrArchivePresent.
+func (s *Service) RemoveMissingRun(ctx context.Context, id int64) error {
+	return s.store.removeMissingRun(ctx, id)
+}
+
 // RunLog returns the executor's captured log lines for one run in
 // chronological order. Includes phase narration, hook stdout/stderr,
 // and error lines. Used by the run-detail page's Log section.

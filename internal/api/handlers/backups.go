@@ -299,6 +299,9 @@ func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
 	out := make([]backup.Run, 0, len(runs))
 	for i := range runs {
 		if h.backupRunVisible(r, &runs[i], jobs) {
+			// The reason names the target's server and path; only the run
+			// itself shows it, to callers who may see that target.
+			runs[i].ArchiveMissingReason = ""
 			out = append(out, runs[i])
 		}
 	}
@@ -339,7 +342,39 @@ func (h *Handlers) GetBackupRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	if run.ArchiveMissingAt != nil && !h.runTargetsVisible(r, run) {
+		run.ArchiveMissingReason = hiddenArchiveReason(run.ID)
+	}
 	writeJSON(w, http.StatusOK, run)
+}
+
+// DeleteBackupRun removes a run whose archive was found missing from the
+// list. Runs with an archive are only removed by retention, so nothing
+// that can still be restored disappears.
+//
+//	DELETE /api/v1/backups/runs/{id}
+func (h *Handlers) DeleteBackupRun(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsDelete)
+	if !ok {
+		return
+	}
+	err := h.Backups.RemoveMissingRun(r.Context(), run.ID)
+	if errors.Is(err, backup.ErrArchivePresent) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "archive_present"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionBackupRunRemove, "backup-run:"+strconv.FormatInt(run.ID, 10), map[string]any{
+		"job_id": run.JobID, "job_name": run.JobName, "archive_missing_at": run.ArchiveMissingAt,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetBackupRunLog returns the captured log lines for one run, in
@@ -737,13 +772,19 @@ func (h *Handlers) writeArchiveMissing(w http.ResponseWriter, r *http.Request, r
 	switch {
 	case errors.Is(err, backup.ErrRunJobGone):
 		status, code = http.StatusConflict, "run_job_deleted"
+	case errors.Is(err, backup.ErrArchiveGone):
+		status, code = http.StatusConflict, "archive_missing"
 	case !errors.Is(err, backup.ErrArchiveMissing):
 		return false
 	}
 	msg := err.Error()
 	if run != nil && !h.runTargetsVisible(r, run) {
-		msg = fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", run.ID)
+		msg = hiddenArchiveReason(run.ID)
 	}
 	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 	return true
+}
+
+func hiddenArchiveReason(runID int64) string {
+	return fmt.Sprintf("the archive of run %d can't be read where it was written; an admin can see the details", runID)
 }

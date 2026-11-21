@@ -96,6 +96,7 @@ const (
 	ActionBackupJobRepaired  = "backup.job_repaired"
 	ActionBackupRun          = "backup.run"
 	ActionBackupRestore      = "backup.restore"
+	ActionBackupRunRemove    = "backup.run_remove"
 
 	// Outcomes of a server update, written from the root updater's result.
 	ActionUpdateApplied    = "system.update_applied"

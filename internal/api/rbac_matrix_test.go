@@ -348,6 +348,7 @@ var routeGates = []struct {
 	{"POST", "/api/v1/backups/targets/{id}/accept-host-key", rbac.PermBackupsUpdate},
 	{"PUT", "/api/v1/backups/system/enabled", rbac.PermBackupsUpdate},
 	{"DELETE", "/api/v1/backups/jobs/{id}", rbac.PermBackupsDelete},
+	{"DELETE", "/api/v1/backups/runs/{id}", rbac.PermBackupsDelete},
 	{"DELETE", "/api/v1/backups/targets/{id}", rbac.PermBackupsDelete},
 	{"POST", "/api/v1/backups/jobs/{id}/run", rbac.PermBackupsRun},
 	{"POST", "/api/v1/backups/runs/{id}/restore", rbac.PermBackupsRestore},

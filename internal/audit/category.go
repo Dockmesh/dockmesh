@@ -163,6 +163,7 @@ var categories = map[string]string{
 	"proxy.settings_update":         CategoryChanges,
 	ActionBackupRun:                 CategoryChanges,
 	ActionBackupRestore:             CategoryChanges,
+	ActionBackupRunRemove:           CategoryChanges,
 	"backup.accept_host_key":        CategoryChanges,
 	"backup.accept_target_host_key": CategoryChanges,
 

@@ -13,7 +13,9 @@
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { operations, isActive, opRef, failedStep } from '$lib/stores/operations.svelte';
   import { fmtBytes, fmtDuration, runTone, runLabel, isSystemRun, mayOnJob, cronHuman, targetTypeLabel } from '../../_format';
-  import { Copy, Lock, Undo2, Box, Play, Download } from 'lucide-svelte';
+  import { Copy, Lock, Undo2, Box, Play, Download, RefreshCw, Trash2 } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages.js';
   import { fmtDateTime, fmtTime } from '$lib/i18n';
 
@@ -112,6 +114,36 @@
     }
   }
 
+  const archiveMissing = $derived(!!run?.archive_missing_at && !run?.pruned_at);
+  const canRemove = $derived(run ? archiveMissing && mayOnJob('backups.delete', run) : false);
+  const canCheck = $derived(run ? archiveMissing && mayOnJob('backups.restore', run) : false);
+  let checking = $state(false);
+  async function checkAgain() {
+    if (!run) return;
+    checking = true;
+    try {
+      await api.backups.verifyRun(run.id);
+      toast.success(m.backups_archive_found());
+    } catch (err) {
+      toast.error(m.backups_still_missing(), err instanceof ApiError ? err.message : undefined);
+    } finally {
+      checking = false;
+      await load();
+    }
+  }
+  async function removeRun() {
+    if (!run) return;
+    const r = run;
+    if (!(await confirm.ask({ title: m.backups_remove_run_title(), message: m.backups_remove_run_message({ id: r.id, name: r.job_name }), body: m.backups_remove_run_body(), confirmLabel: m.backups_remove(), danger: true }))) return;
+    try {
+      await api.backups.removeRun(r.id);
+      toast.success(m.backups_run_removed(), r.job_name);
+      await goto('/backups?tab=runs');
+    } catch (err) {
+      toast.error(m.backups_remove_failed(), err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   let starting = $state(false);
   async function runAgain() {
     if (!job) return;
@@ -181,6 +213,10 @@
         <button type="button" class="dm-btn dm-btn-primary" onclick={() => (restorePreset = 'alongside')}>
           <Undo2 size={13} /> {systemRun ? m.backups_restore_system() : m.backups_restore_ellipsis()}
         </button>
+      {:else if canCheck}
+        <button type="button" class="dm-btn dm-btn-primary" disabled title={m.backups_archive_missing_desc()}>
+          <Undo2 size={13} /> {systemRun ? m.backups_restore_system() : m.backups_restore_ellipsis()}
+        </button>
       {/if}
     </div>
 
@@ -196,6 +232,21 @@
         }
       ]}
     />
+
+    {#if archiveMissing}
+      <div class="missing" role="status">
+        <b>{m.backups_archive_missing_title()}</b>
+        <span class="dm-sub">· {m.backups_archive_missing_since({ at: fmtDateTime(run.archive_missing_at!) })}</span>
+        <p>{m.backups_archive_missing_desc()}</p>
+        {#if run.archive_missing_reason}<p class="dm-mono">{run.archive_missing_reason}</p>{/if}
+        {#if canCheck || canRemove}
+          <div class="acts">
+            {#if canCheck}<button type="button" class="dm-btn" disabled={checking} onclick={checkAgain}><RefreshCw size={13} /> {m.backups_check_again()}</button>{/if}
+            {#if canRemove}<button type="button" class="dm-btn dm-btn-danger" onclick={removeRun}><Trash2 size={13} /> {m.backups_remove_from_list()}</button>{/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if run.error && !op}
       <div class="fail" role="alert"><b>{run.status === 'failed' ? m.common_failed() : m.common_warning()}</b><p class="dm-mono">{run.error}</p></div>
@@ -283,6 +334,10 @@
   .fail { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); border-radius: var(--r); padding: 10px 12px; }
   .fail b { color: var(--bad); }
   .fail p { margin: 4px 0 0; font-size: 12.5px; overflow-wrap: anywhere; }
+  .missing { border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); border-radius: var(--r); padding: 10px 12px; }
+  .missing b { color: var(--warn); }
+  .missing p { margin: 4px 0 0; font-size: 12.5px; overflow-wrap: anywhere; }
+  .missing .acts { display: flex; gap: 8px; margin-top: 8px; }
   .small { font-size: 12px; overflow-wrap: anywhere; }
   .log { max-height: 460px; min-height: 120px; overflow: auto; background: var(--code, var(--field)); border-radius: var(--r-sm); padding: 8px 10px; font-size: 11.5px; line-height: 1.55; }
   .ln { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }

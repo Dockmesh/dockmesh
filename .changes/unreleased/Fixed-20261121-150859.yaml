@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A backup run whose archive is not on its reachable target is listed as archive missing with the place it was looked for: restore, verify and download answer 409 archive_missing instead of 404, retention stops warning about it on every pass, Check again finds an archive that is back, and a user with the backup delete right can remove such a run from the list (audited)'
+time: 2026-11-21T15:08:59.619251836Z
