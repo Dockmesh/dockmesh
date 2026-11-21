@@ -18,19 +18,24 @@ cleanup() {
   docker volume ls -q --filter "label=com.docker.stack.namespace=$stack" | xargs -r docker volume rm > /dev/null 2>&1
 }
 trap cleanup EXIT
-# golden.env is data, never sourced: plain KEY=VALUE lines only.
+# golden.env is data, never sourced and never exported into this script:
+# upper-case KEY=VALUE lines, handed only to the two docker stack commands.
+vars=()
 if [ -f golden.env ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     [[ -z $line || $line == \#* ]] && continue
-    [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || { echo "bad golden.env line" >&2; exit 2; }
-    export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+    [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || { echo "bad golden.env line" >&2; exit 2; }
+    case ${BASH_REMATCH[1]} in
+      PATH | HOME | IFS | SHELL | USER | LD_* | DOCKER_* | BASH* | PYTHON* | COMPOSE_*) echo "reserved golden.env name" >&2; exit 2 ;;
+    esac
+    vars+=("$line")
   done < golden.env
 fi
-docker stack config -c compose.yaml > stack-config.yaml 2> stack-config.err || true
+env "${vars[@]}" docker stack config -c compose.yaml > stack-config.yaml 2> stack-config.err || true
 python3 ../sockproxy.py "$dir/docker.sock" "$dir/requests.jsonl" 2> proxy.log &
 proxy=$!
 for _ in $(seq 50); do [ -S docker.sock ] && break; sleep 0.1; done
-DOCKER_HOST="unix://$dir/docker.sock" timeout 300 \
+DOCKER_HOST="unix://$dir/docker.sock" env "${vars[@]}" timeout 300 \
   docker stack deploy --detach=false --resolve-image never -c compose.yaml "$stack" > deploy.log 2>&1
 echo "exit $?" >> deploy.log
 kill "$proxy"

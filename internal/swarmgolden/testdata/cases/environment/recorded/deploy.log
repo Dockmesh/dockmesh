@@ -1,8 +1,10 @@
 Creating network gt-environment_default
-Creating service gt-environment_list
 Creating service gt-environment_app
+Creating service gt-environment_list
 overall progress: 0 out of 1 tasks
 1/1:  
+overall progress: 0 out of 1 tasks
+overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
 overall progress: 0 out of 1 tasks
@@ -39,7 +41,7 @@ verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
-verify: Service o9nuxslu0zdt309vj7uemo3vs converged
+verify: Service al094md8hzcagufq32cytrgvn converged
 overall progress: 0 out of 1 tasks
 1/1:  
 overall progress: 1 out of 1 tasks
@@ -68,5 +70,5 @@ verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
 verify: Waiting 1 seconds to verify that tasks are stable...
-verify: Service kcw5cnhu6n1an5hxgmy5qv3wo converged
+verify: Service 9f8oqyhmw3e9h5r8gnrhm1i6o converged
 exit 0
