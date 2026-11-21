@@ -80,6 +80,9 @@ const (
 	// to agents advertising CapSwarmWrite.
 	FrameReqSwarmStackDeploy = "req.swarm.stack.deploy" // SwarmDeployReq → SwarmDeployResp
 	FrameReqSwarmStackRemove = "req.swarm.stack.remove" // SwarmRemoveReq → SwarmRemoveResp
+	// The adopt frames are only sent to agents advertising CapSwarmAdopt.
+	FrameReqSwarmStackExport = "req.swarm.stack.export" // SwarmExportReq → SwarmExportResp
+	FrameReqSwarmStackAdopt  = "req.swarm.stack.adopt"  // SwarmAdoptReq → SwarmAdoptResp
 	// FrameReqNetworkTopology asks for the host's topology.Graph; only
 	// sent to agents advertising CapNetworkTopology.
 	FrameReqNetworkTopology = "req.networks.topology"
@@ -239,6 +242,9 @@ const (
 	// CapSwarmWrite, agent: answers the Swarm stack deploy and remove
 	// frames on a manager.
 	CapSwarmWrite = "swarm.write"
+	// CapSwarmAdopt, agent: answers the Swarm stack export and adopt
+	// frames on a manager.
+	CapSwarmAdopt = "swarm.adopt"
 )
 
 // Stream control ops beyond the exec "resize".

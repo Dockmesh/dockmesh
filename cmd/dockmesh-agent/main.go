@@ -1109,6 +1109,24 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		res, err := swarmwrite.Remove(ctx, cli, req)
 		respond(conn, f.ID, res, err)
 
+	case agents.FrameReqSwarmStackExport:
+		var req agents.SwarmExportReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrSwarmWriteRefused)
+			break
+		}
+		res, err := swarmwrite.Export(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqSwarmStackAdopt:
+		var req agents.SwarmAdoptReq
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			respond(conn, f.ID, nil, agents.ErrSwarmWriteRefused)
+			break
+		}
+		res, err := swarmwrite.Adopt(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
 	case agents.FrameReqSwarmProve:
 		var req agents.SwarmProveReq
 		if err := json.Unmarshal(f.Payload, &req); err != nil {

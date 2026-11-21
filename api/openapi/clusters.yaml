@@ -579,8 +579,175 @@ paths:
                 items: {$ref: "#/components/schemas/ClusterMembership"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /clusters/{id}/stacks/{stack}/adopt:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: stack
+        in: path
+        required: true
+        description: Name of the External stack (its `com.docker.stack.namespace`).
+        schema: {type: string, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"}
+    get:
+      operationId: clusters.adoptPreview
+      tags: [clusters]
+      summary: Preview adopting an External Swarm stack
+      description: |
+        Needs `stacks.adopt` on the stack on the cluster. Reads the stack's
+        services through a verified manager and writes them down as a
+        compose file. Environment values go to the stack's environment file
+        and are never returned, only the variable names. Lists what the
+        running services have that the file can't hold, and per service the
+        fields a deploy from the file would change. Nothing is written.
+      responses:
+        "200":
+          description: The preview; confirm it with its `plan_hash`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmAdoptPreview"}
+        "400":
+          description: Invalid stack name.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: A Dockmesh stack with this name exists (`stack_exists`), or the manager refused (`swarm_adopt_refused`, e.g. no service carries the stack's label).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: The manager answered with an error.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: No verified manager is online, or its agent is too old to adopt a stack.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    post:
+      operationId: clusters.adopt
+      tags: [clusters]
+      summary: Adopt an External Swarm stack
+      description: |
+        Needs `stacks.adopt` on the stack on the cluster. Confirms the
+        preview by its `plan_hash`. Each service gets the
+        `dockmesh.spec-hash` label in a label-only update (no task is
+        replaced), then the compose and environment files are written and
+        the stack is recorded on the cluster. Nothing is deployed; networks
+        the CLI created are used as external networks and never changed or
+        removed by Dockmesh. Audited as `stack.adopt`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_hash]
+              properties:
+                plan_hash: {type: string}
+      responses:
+        "201":
+          description: Adopted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmAdoptResult"}
+        "400":
+          description: Missing `plan_hash` or invalid stack name.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            The name is taken (`stack_exists`), the stack changed since the
+            preview (`swarm_plan_changed`), the manager refused
+            (`swarm_adopt_refused`), or the stack is busy.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: A deploy from the adopted file would be refused (`swarm_refused`, with `refusals`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Writing the stack files or recording the cluster failed; adopting again is safe.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: Not every service was labelled (`outcome` partial or unknown); no stack was created, adopting again is safe.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SwarmAdoptResult"}
+        "503":
+          description: No verified manager is online, or its agent is too old to adopt a stack.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
 components:
   schemas:
+    SwarmAdoptPreview:
+      type: object
+      required: [stack, cluster_id, manager, compose, env_keys, services, not_carried, refusals, warnings, kept_networks, plan_hash]
+      properties:
+        stack: {type: string}
+        cluster_id: {type: string}
+        manager: {type: string, description: Host the stack was read through.}
+        compose: {type: string, description: The compose file the stack gets.}
+        env_keys:
+          type: array
+          description: Variables of the stack's environment file; values are never returned.
+          items: {type: string}
+        services:
+          type: array
+          items:
+            type: object
+            required: [name, id, changes]
+            properties:
+              name: {type: string}
+              id: {type: string}
+              changes:
+                type: array
+                description: Spec fields a deploy from the file would change, as dotted paths.
+                items: {type: string}
+        not_carried:
+          type: array
+          description: Parts of the running services the file can't hold.
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        refusals:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        warnings:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmPreviewFinding"}
+        kept_networks:
+          type: array
+          description: Networks the CLI created; the file uses them as external networks.
+          items: {type: string}
+        plan_hash: {type: string}
+    SwarmAdoptResult:
+      type: object
+      required: [stack, cluster_id, manager, outcome, services]
+      properties:
+        stack: {type: string}
+        cluster_id: {type: string}
+        manager: {type: string}
+        outcome:
+          type: string
+          enum: [applied, partial, unknown]
+        error: {type: string}
+        services:
+          type: array
+          items: {$ref: "#/components/schemas/SwarmWriteResult"}
     ClusterNodes:
       type: object
       required: [read_host, nodes]
